@@ -1,0 +1,14 @@
+{
+  "extends": "@soupnet/config/tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src/**/*"],
+  "references": [
+    { "path": "../config" },
+    { "path": "../contracts" },
+    { "path": "../db" }
+  ]
+}

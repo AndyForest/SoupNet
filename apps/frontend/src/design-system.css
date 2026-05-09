@@ -1,0 +1,275 @@
+/* ═══════════════════════════════════════════════════════════════════
+   Soup.net Design System — Garden Gallery
+   Clean, warm, technical. Tonal layering, no borders for sectioning.
+   ═══════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Color tokens ─────────────────────────────────────────────── */
+  --color-primary: #051a0f;
+  --color-on-primary: #ffffff;
+  --color-primary-container: #1a2f23;
+  --color-secondary: #974730;
+  --color-on-secondary: #ffffff;
+  --color-surface: #fbfaee;
+  --color-on-surface: #1b1c15;
+  --color-on-surface-variant: #5f5e5e;
+  --color-surface-container-lowest: #ffffff;
+  --color-surface-container-low: #f6f3ea;
+  --color-surface-container: #f0efe3;
+  --color-surface-container-high: #e9e9dd;
+  --color-surface-container-highest: #e4e3d7;
+  --color-surface-dim: #dddcd0;
+  --color-outline-variant: #c4c4b4;
+  --color-error: #ba1a1a;
+  --color-on-error: #ffffff;
+  --color-success: #2d6a2e;
+
+  /* ── Typography ───────────────────────────────────────────────── */
+  --font-headline: 'Newsreader', Georgia, serif;
+  --font-body: 'Newsreader', Georgia, serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  /* ── Spacing scale ────────────────────────────────────────────── */
+  --space-xs: 0.25rem;
+  --space-sm: 0.5rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2rem;
+  --space-2xl: 2.75rem;
+  --space-3xl: 4rem;
+
+  /* ── Radii ────────────────────────────────────────────────────── */
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-full: 9999px;
+
+  /* ── Layout ───────────────────────────────────────────────────── */
+  --sidebar-width: 220px;
+  --content-max-width: 960px;
+
+  /* ── Transitions ──────────────────────────────────────────────── */
+  --transition-fast: 150ms ease;
+}
+
+/* ── Reset ──────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { font-size: 16px; }
+
+body {
+  font-family: var(--font-body);
+  color: var(--color-on-surface);
+  background: var(--color-surface);
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Typography ─────────────────────────────────────────────────── */
+h1, h2, h3, h4 {
+  font-family: var(--font-headline);
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  color: var(--color-primary);
+}
+
+h1 { font-size: 2rem; }
+h2 { font-size: 1.5rem; }
+h3 { font-size: 1.15rem; }
+h4 { font-size: 1rem; font-weight: 600; }
+
+p { margin-bottom: var(--space-sm); }
+p:last-child { margin-bottom: 0; }
+
+small, .text-sm { font-size: 0.875rem; }
+.text-xs { font-size: 0.75rem; font-family: var(--font-headline); }
+
+.text-label {
+  font-family: var(--font-headline);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-on-surface-variant);
+}
+
+.text-mono {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+}
+
+/* ── Links ──────────────────────────────────────────────────────── */
+a {
+  color: var(--color-secondary);
+  text-decoration: none;
+  transition: color var(--transition-fast);
+}
+a:hover { text-decoration: underline; }
+
+/* ── Buttons ────────────────────────────────────────────────────── */
+button, .btn {
+  font-family: var(--font-headline);
+  font-size: 0.875rem;
+  font-weight: 600;
+  padding: 0.6rem 1.25rem;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background var(--transition-fast), opacity var(--transition-fast);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  line-height: 1.4;
+}
+
+.btn-primary, button:not([class*="btn-"]):not(.btn-secondary):not(.btn-danger):not(.btn-ghost) {
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+}
+.btn-primary:hover, button:not([class*="btn-"]):not(.btn-secondary):not(.btn-danger):not(.btn-ghost):hover {
+  background: var(--color-primary-container);
+}
+
+.btn-secondary {
+  background: var(--color-surface-container-high);
+  color: var(--color-on-surface);
+}
+.btn-secondary:hover {
+  background: var(--color-surface-dim);
+}
+
+.btn-danger {
+  background: var(--color-error);
+  color: var(--color-on-error);
+}
+.btn-danger:hover { opacity: 0.85; }
+
+.btn-ghost {
+  background: transparent;
+  color: var(--color-secondary);
+  padding: 0.4rem 0.75rem;
+}
+.btn-ghost:hover {
+  background: var(--color-surface-container-low);
+}
+
+button:disabled, .btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── Inputs ─────────────────────────────────────────────────────── */
+input, textarea, select {
+  width: 100%;
+  padding: 0.6rem 0.85rem;
+  background: var(--color-surface-container-high);
+  border: none;
+  border-radius: var(--radius-md);
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  color: var(--color-on-surface);
+  transition: background var(--transition-fast), box-shadow var(--transition-fast);
+}
+input:focus, textarea:focus, select:focus {
+  outline: none;
+  background: var(--color-surface-container-lowest);
+  box-shadow: 0 0 0 2px var(--color-primary);
+}
+input::placeholder, textarea::placeholder {
+  color: var(--color-outline-variant);
+}
+
+label {
+  display: block;
+  font-family: var(--font-headline);
+  font-weight: 500;
+  font-size: 0.85rem;
+  margin-bottom: var(--space-xs);
+  color: var(--color-on-surface-variant);
+}
+
+/* ── Cards ──────────────────────────────────────────────────────── */
+.card {
+  background: var(--color-surface-container-lowest);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+}
+
+.card-elevated {
+  background: var(--color-surface-container-lowest);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  box-shadow: 0 2px 12px rgba(27, 28, 21, 0.04);
+}
+
+/* ── Pills / Chips ──────────────────────────────────────────────── */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.6rem;
+  border-radius: var(--radius-full);
+  font-family: var(--font-headline);
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  background: var(--color-surface-container-high);
+  color: var(--color-on-surface-variant);
+}
+
+.pill-primary {
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+}
+
+.pill-secondary {
+  background: var(--color-secondary);
+  color: var(--color-on-secondary);
+}
+
+/* ── Utility ────────────────────────────────────────────────────── */
+.container {
+  max-width: var(--content-max-width);
+  margin: 0 auto;
+  padding: var(--space-md) var(--space-lg);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── Card grids ─────────────────────────────────────────────────── */
+/* Responsive multi-card layouts. Below 600px, always single column —
+   prevents the 2+1 "orphan card" reflow when 3 cards can fit in 2 columns
+   but not 3, and also prevents viewport overflow on narrow phones. */
+.grid-2-cards,
+.grid-3-cards {
+  display: grid;
+  gap: var(--space-lg);
+  grid-template-columns: 1fr;
+}
+@media (min-width: 600px) {
+  .grid-2-cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .grid-3-cards {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+/* ── Scrollbar ──────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--color-outline-variant);
+  border-radius: var(--radius-full);
+}

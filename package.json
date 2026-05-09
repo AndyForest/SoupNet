@@ -1,0 +1,36 @@
+{
+  "name": "soupnet",
+  "version": "0.0.1",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=24.0.0",
+    "npm": ">=10.0.0"
+  },
+  "scripts": {
+    "dev:backend": "npm run dev --workspace=apps/backend",
+    "dev:frontend": "npm run dev --workspace=apps/frontend",
+    "dev:mcp": "npm run dev --workspace=apps/mcp-server",
+    "dev:storybook": "npm run storybook --workspace=apps/frontend",
+    "build": "npm run build --workspaces --if-present",
+    "build:packages": "npm run build -w packages/contracts -w packages/db -w packages/domain -w packages/client-sdk",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "test:ci": "node scripts/test-ci-local.mjs",
+    "generate:openapi": "npm run generate --workspace=packages/contracts",
+    "generate:api-client": "npm run generate --workspace=packages/api-client",
+    "generate:data-model": "npx tsx scripts/generate-data-model-docs.ts",
+    "screenshot": "node scripts/screenshot.mjs",
+    "clean": "find . -name 'node_modules' -not -path '*/.git/*' -prune -exec rm -rf {} + && find . -name 'dist' -not -path '*/.git/*' -prune -exec rm -rf {} +"
+  },
+  "devDependencies": {
+    "puppeteer": "^24.42.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.1"
+  }
+}

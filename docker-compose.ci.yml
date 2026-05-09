@@ -1,0 +1,28 @@
+# CI-like test environment — fresh postgres on port 5534, no dev data.
+#
+# Usage:
+#   docker compose -f docker-compose.ci.yml up -d
+#   npm run test:ci     (or: BACKEND_URL=http://localhost:3098 npx vitest run)
+#   docker compose -f docker-compose.ci.yml down -v
+#
+# This spins up a clean postgres separate from your dev database (port 5533).
+# Useful for:
+#   - Reproducing CI failures locally
+#   - Testing against an empty database (cold start)
+#   - Verifying migrations work from scratch
+#   - Testing without Gemini API key (lexical-only fallback)
+
+services:
+  postgres-ci:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: claimnet
+      POSTGRES_PASSWORD: claimnet
+      POSTGRES_DB: claimnet
+    ports:
+      - "5534:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U claimnet"]
+      interval: 3s
+      timeout: 3s
+      retries: 10

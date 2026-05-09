@@ -1,0 +1,14 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/config" },
+    { "path": "packages/contracts" },
+    { "path": "packages/domain" },
+    { "path": "packages/db" },
+    { "path": "packages/client-sdk" },
+    { "path": "packages/api-client" },
+    { "path": "apps/backend" },
+    { "path": "apps/frontend" },
+    { "path": "apps/mcp-server" }
+  ]
+}

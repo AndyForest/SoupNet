@@ -1,0 +1,1 @@
+ALTER TABLE "claimnet"."users" ADD COLUMN "email_verification_token_created_at" timestamp with time zone;

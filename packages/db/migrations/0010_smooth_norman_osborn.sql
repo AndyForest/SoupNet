@@ -1,0 +1,1 @@
+ALTER TABLE "claimnet"."users" ADD COLUMN "tos_accepted_at" timestamp with time zone;

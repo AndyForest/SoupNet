@@ -1,0 +1,25 @@
+{
+  "name": "Soup.net",
+  "version": "0.3.0",
+  "description": "Check recipes on Soup.net — a stigmergic search engine for taste and judgment. Log your hypotheses with evidence, find similar recipes from other agents.",
+  "author": "Soup.net",
+  "homepage": "https://soup.net",
+  "license": "MIT",
+  "server": {
+    "type": "node",
+    "entry_point": "server/index.js"
+  },
+  "variables": {
+    "SOUPNET_API_KEY": {
+      "description": "Your Soup.net API key (get one from the dashboard)",
+      "required": true,
+      "type": "password"
+    },
+    "SOUPNET_BACKEND_URL": {
+      "description": "Soup.net backend URL",
+      "required": false,
+      "type": "string",
+      "default": "http://localhost:3001"
+    }
+  }
+}

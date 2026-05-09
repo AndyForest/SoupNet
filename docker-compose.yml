@@ -1,0 +1,72 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: claimnet
+      POSTGRES_PASSWORD: claimnet
+      POSTGRES_DB: claimnet
+    ports:
+      - "5633:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U claimnet"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: apps/backend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      # Override host/port from .env with Docker-internal values
+      PGHOST: postgres
+      PGPORT: "5432"
+      NODE_ENV: production
+      JWT_SECRET: ${JWT_SECRET:-change-me-to-a-random-64-char-hex-string-use-openssl-rand-hex-32}
+      DEV_USERNAME: ${DEV_USERNAME:-}
+      DEV_PASSWORD: ${DEV_PASSWORD:-}
+      TEST_USERNAME: ${TEST_USERNAME:-}
+      TEST_PASSWORD: ${TEST_PASSWORD:-}
+      ALLOW_AUTO_SETUP: "true"  # Docker dev env — allow auto-setup despite NODE_ENV=production
+      DISABLE_RATE_LIMIT: "true"  # Dev env — tests make many rapid requests (matches CI)
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      # Embedding provider — "gemini" (real API) or "stub" (deterministic fake
+      # vectors for tests, no quota cost).
+      EMBEDDINGS_PROVIDER: ${EMBEDDINGS_PROVIDER:-gemini}
+      # Async embedding pipeline (pg-boss consumers) runs in-process. Set to
+      # "false" to disable and run HTTP-only. See ADR-0020.
+      EMBEDDING_WORKER_ENABLED: ${EMBEDDING_WORKER_ENABLED:-true}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-5}
+      # Email — Mailpit in dev, AWS SES in production
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_FROM: noreply@soup.net
+    ports:
+      - "3101:3001"   # host:container — backend listens on 3001 inside; reachable on 3101 from host
+    volumes:
+      - ./uploads:/app/apps/backend/uploads  # persist uploaded artifacts across restarts
+
+  # Local email testing — catches all outbound email from the backend.
+  # Web UI: http://localhost:8625   SMTP: mailpit:1025 (from backend container)
+  # Production uses AWS SES instead.
+  mailpit:
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    ports:
+      - "8625:8025"   # Web UI
+      - "1125:1025"   # SMTP (host-side; container internal stays 1025)
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+
+volumes:
+  postgres_data:

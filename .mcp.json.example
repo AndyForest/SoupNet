@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "soupnet": {
+      "type": "http",
+      "url": "https://mcp.soup.net/mcp",
+      "headers": {
+        "Authorization": "Bearer your-api-key-here"
+      }
+    },
+    "soupnet-local": {
+      "type": "http",
+      "url": "http://localhost:3101/mcp",
+      "headers": {
+        "Authorization": "Bearer your-api-key-here"
+      }
+    }
+  }
+}

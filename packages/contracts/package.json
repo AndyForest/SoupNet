@@ -1,0 +1,31 @@
+{
+  "name": "@soupnet/contracts",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./openapi": {
+      "import": "./dist/openapi-registry.js",
+      "types": "./dist/openapi-registry.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc --build tsconfig.json && tsup src/index.ts src/openapi-registry.ts --format esm --no-splitting",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint -c ../../eslint.config.js src/",
+    "generate": "tsx scripts/generate-openapi.ts"
+  },
+  "dependencies": {
+    "@asteasolutions/zod-to-openapi": "^7.0.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@soupnet/config": "*",
+    "tsx": "^4.0.0",
+    "typescript": "^5.7.0"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "name": "@soupnet/mcp-server",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc --project tsconfig.json",
+    "bundle": "bash bundle.sh",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint -c ../../eslint.config.js src/"
+  },
+  "dependencies": {
+    "@soupnet/contracts": "*",
+    "@soupnet/client-sdk": "*",
+    "@soupnet/domain": "*",
+    "@hono/node-server": "^1.0.0",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "hono": "^4.0.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@soupnet/config": "*",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.7.0"
+  }
+}

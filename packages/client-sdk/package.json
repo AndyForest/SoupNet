@@ -1,0 +1,25 @@
+{
+  "name": "@soupnet/client-sdk",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc --build tsconfig.json && tsup src/index.ts --format esm --no-splitting",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint -c ../../eslint.config.js src/"
+  },
+  "dependencies": {
+    "@soupnet/contracts": "*",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@soupnet/config": "*",
+    "typescript": "^5.7.0"
+  }
+}

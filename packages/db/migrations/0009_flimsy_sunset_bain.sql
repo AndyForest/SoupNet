@@ -1,0 +1,2 @@
+ALTER TABLE "claimnet"."users" ADD COLUMN "password_reset_token_hash" text;--> statement-breakpoint
+ALTER TABLE "claimnet"."users" ADD COLUMN "password_reset_token_created_at" timestamp with time zone;

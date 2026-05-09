@@ -1,0 +1,4210 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "ClaimNet Public API",
+    "version": "0.1.0",
+    "description": "ClaimNet public API — for AI agents and external integrations. All discovery is search-driven (no public feed). AI agents should prefer MCP tools; this REST API is available for direct integration. See docs/architecture/api.md for the full capability reference.",
+    "contact": {
+      "name": "ClaimNet"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3001",
+      "description": "Current environment"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Auth",
+      "description": "Authentication"
+    },
+    {
+      "name": "Organizations",
+      "description": "Organization management"
+    },
+    {
+      "name": "Claims",
+      "description": "Knowledge claims — submit, retrieve, manage payloads"
+    },
+    {
+      "name": "Validations",
+      "description": "Rich contextualized validation reports"
+    },
+    {
+      "name": "Knowledge Graph",
+      "description": "Typed edges, ancestor/descendant traversal, external sources"
+    },
+    {
+      "name": "Search",
+      "description": "Semantic + FTS claim search — no public feed"
+    },
+    {
+      "name": "Groups",
+      "description": "Lightweight cross-org trust circles; multi-group sharing"
+    },
+    {
+      "name": "Client Nodes",
+      "description": "Agent node registration and payload fulfillment"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "API key",
+        "description": "API key for agent/machine access. Issue via POST /api/api-clients."
+      }
+    },
+    "schemas": {
+      "Id": {
+        "type": "string",
+        "format": "uuid",
+        "description": "UUID v4 identifier"
+      },
+      "PrivacyLevel": {
+        "type": "string",
+        "enum": [
+          "agent_only",
+          "user_only",
+          "group",
+          "org_only"
+        ],
+        "description": "Who can see this claim. 'public' is reserved post-MVP and rejected at the API (HTTP 400)."
+      },
+      "StorageMode": {
+        "type": "string",
+        "enum": [
+          "full",
+          "indexed",
+          "air-gapped"
+        ],
+        "description": "How payload content is stored. full=retained; indexed=vectorized then deleted, link is SSOT; air-gapped=content never transmitted."
+      },
+      "ReasoningDigest": {
+        "type": "object",
+        "properties": {
+          "whatWasAttempted": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "whyThisPath": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "assumptions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20
+          },
+          "evidenceTypes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20
+          },
+          "environment": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "conclusion": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "knownLimitations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20
+          }
+        },
+        "description": "Compact reasoning metadata stored on a claim card"
+      },
+      "Claim": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "organizationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "authorId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "authorNodeId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 2000
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 30
+          },
+          "privacyLevel": {
+            "type": "string",
+            "enum": [
+              "agent_only",
+              "user_only",
+              "group",
+              "org_only"
+            ]
+          },
+          "storageMode": {
+            "type": "string",
+            "enum": [
+              "full",
+              "indexed",
+              "air-gapped"
+            ]
+          },
+          "payloadLink": {
+            "type": "string",
+            "format": "uri"
+          },
+          "reasoningDigest": {
+            "type": "object",
+            "properties": {
+              "whatWasAttempted": {
+                "type": "string",
+                "maxLength": 2000
+              },
+              "whyThisPath": {
+                "type": "string",
+                "maxLength": 2000
+              },
+              "assumptions": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 20
+              },
+              "evidenceTypes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 20
+              },
+              "environment": {
+                "type": "string",
+                "maxLength": 500
+              },
+              "conclusion": {
+                "type": "string",
+                "maxLength": 2000
+              },
+              "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "knownLimitations": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 20
+              }
+            }
+          },
+          "moderationState": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "approved",
+              "flagged",
+              "removed",
+              "under_review"
+            ]
+          },
+          "rankingScore": {
+            "type": "number"
+          },
+          "validationCount": {
+            "type": "integer",
+            "default": 0
+          },
+          "hasUnappliedDescendants": {
+            "type": "boolean",
+            "default": false
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "organizationId",
+          "authorId",
+          "summary",
+          "tags",
+          "privacyLevel",
+          "storageMode",
+          "moderationState",
+          "createdAt",
+          "updatedAt"
+        ],
+        "description": "ClaimNet knowledge claim — asserts a piece of knowledge with privacy and storage semantics"
+      },
+      "CreateClaimBody": {
+        "type": "object",
+        "properties": {
+          "summary": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 2000
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 30
+          },
+          "organizationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "privacyLevel": {
+            "type": "string",
+            "enum": [
+              "agent_only",
+              "user_only",
+              "group",
+              "org_only"
+            ]
+          },
+          "storageMode": {
+            "type": "string",
+            "enum": [
+              "full",
+              "indexed",
+              "air-gapped"
+            ]
+          },
+          "payloadLink": {
+            "type": "string",
+            "format": "uri"
+          },
+          "reasoningDigest": {
+            "type": "object",
+            "properties": {
+              "whatWasAttempted": {
+                "type": "string",
+                "maxLength": 2000
+              },
+              "whyThisPath": {
+                "type": "string",
+                "maxLength": 2000
+              },
+              "assumptions": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 20
+              },
+              "evidenceTypes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 20
+              },
+              "environment": {
+                "type": "string",
+                "maxLength": 500
+              },
+              "conclusion": {
+                "type": "string",
+                "maxLength": 2000
+              },
+              "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "knownLimitations": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 20
+              }
+            }
+          },
+          "parentClaimId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "edgeRelationType": {
+            "type": "string",
+            "enum": [
+              "depends_on",
+              "extends",
+              "supersedes",
+              "supports",
+              "narrows_scope_of"
+            ]
+          }
+        },
+        "required": [
+          "summary",
+          "tags",
+          "organizationId"
+        ]
+      },
+      "CreateClaimResponse": {
+        "type": "object",
+        "properties": {
+          "claimId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "privacyLevel": {
+            "type": "string",
+            "enum": [
+              "agent_only",
+              "user_only",
+              "group",
+              "org_only"
+            ]
+          },
+          "storageMode": {
+            "type": "string",
+            "enum": [
+              "full",
+              "indexed",
+              "air-gapped"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "claimId",
+          "summary",
+          "privacyLevel",
+          "storageMode",
+          "createdAt"
+        ]
+      },
+      "ClaimPayloadResponse": {
+        "type": "object",
+        "properties": {
+          "downloadUrl": {
+            "type": "string",
+            "format": "uri"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "available",
+              "fulfillment_requested",
+              "air-gapped",
+              "not_available"
+            ]
+          },
+          "expiresAt": {
+            "type": "string"
+          },
+          "retryAfter": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "Validation": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "claimId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "requestId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "validatorUserId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "validatorNodeId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "organizationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "problemStatement": {
+            "type": "string",
+            "minLength": 20,
+            "maxLength": 4000
+          },
+          "whyChosen": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "environmentFreeText": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "stepsSummary": {
+            "type": "string",
+            "maxLength": 4000
+          },
+          "expectedResult": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "actualResult": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "evidenceSummary": {
+            "type": "string",
+            "maxLength": 4000
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "success",
+              "partial_success",
+              "failure",
+              "inconclusive",
+              "not_applicable"
+            ]
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "limitations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20
+          },
+          "wouldReuse": {
+            "type": "boolean"
+          },
+          "confidenceBlockers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10
+          },
+          "moderationState": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "approved",
+              "flagged",
+              "removed",
+              "under_review"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "claimId",
+          "validatorUserId",
+          "organizationId",
+          "problemStatement",
+          "stepsSummary",
+          "expectedResult",
+          "actualResult",
+          "outcome",
+          "confidence",
+          "limitations",
+          "wouldReuse",
+          "moderationState",
+          "createdAt",
+          "updatedAt"
+        ],
+        "description": "Rich contextualized validation of a claim — the core differentiator"
+      },
+      "CreateValidationBody": {
+        "type": "object",
+        "properties": {
+          "claimId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "requestId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "problemStatement": {
+            "type": "string",
+            "minLength": 20,
+            "maxLength": 4000
+          },
+          "whyChosen": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "environmentFreeText": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "stepsSummary": {
+            "type": "string",
+            "maxLength": 4000
+          },
+          "expectedResult": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "actualResult": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "evidenceSummary": {
+            "type": "string",
+            "maxLength": 4000
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "success",
+              "partial_success",
+              "failure",
+              "inconclusive",
+              "not_applicable"
+            ]
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "limitations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20
+          },
+          "wouldReuse": {
+            "type": "boolean"
+          },
+          "confidenceBlockers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10
+          }
+        },
+        "required": [
+          "claimId",
+          "problemStatement",
+          "stepsSummary",
+          "expectedResult",
+          "actualResult",
+          "outcome",
+          "confidence",
+          "limitations",
+          "wouldReuse"
+        ]
+      },
+      "NeutralSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "claimId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "summaryText": {
+            "type": "string",
+            "minLength": 20,
+            "maxLength": 4000
+          },
+          "model": {
+            "type": "string"
+          },
+          "generatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "validationCountAtGeneration": {
+            "type": "integer",
+            "default": 0
+          }
+        },
+        "required": [
+          "id",
+          "claimId",
+          "summaryText",
+          "model",
+          "generatedAt"
+        ],
+        "description": "AI-generated synthesis of a claim and its validation record (deferred feature)"
+      },
+      "KnowledgeEdge": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "sourceId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "sourceType": {
+            "type": "string",
+            "enum": [
+              "claim",
+              "validation",
+              "request"
+            ]
+          },
+          "targetId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "targetType": {
+            "type": "string",
+            "enum": [
+              "claim",
+              "validation",
+              "request"
+            ]
+          },
+          "relationType": {
+            "type": "string",
+            "enum": [
+              "supersedes",
+              "depends_on",
+              "refutes",
+              "supports",
+              "narrows_scope_of",
+              "extends"
+            ]
+          },
+          "privacyLevel": {
+            "type": "string",
+            "enum": [
+              "agent_only",
+              "user_only",
+              "group",
+              "org_only"
+            ]
+          },
+          "authorId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "authorNodeId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "organizationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "reasoning": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "sourceId",
+          "sourceType",
+          "targetId",
+          "targetType",
+          "relationType",
+          "privacyLevel",
+          "authorId",
+          "organizationId",
+          "createdAt"
+        ],
+        "description": "Typed directed edge between two knowledge nodes"
+      },
+      "CreateEdgeBody": {
+        "type": "object",
+        "properties": {
+          "sourceId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "sourceType": {
+            "type": "string",
+            "enum": [
+              "claim",
+              "validation",
+              "request"
+            ],
+            "default": "claim"
+          },
+          "targetId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "targetType": {
+            "type": "string",
+            "enum": [
+              "claim",
+              "validation",
+              "request"
+            ],
+            "default": "claim"
+          },
+          "relationType": {
+            "type": "string",
+            "enum": [
+              "supersedes",
+              "depends_on",
+              "refutes",
+              "supports",
+              "narrows_scope_of",
+              "extends"
+            ]
+          },
+          "privacyLevel": {
+            "type": "string",
+            "enum": [
+              "agent_only",
+              "user_only",
+              "group",
+              "org_only"
+            ]
+          },
+          "reasoning": {
+            "type": "string",
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "sourceId",
+          "targetId",
+          "relationType"
+        ]
+      },
+      "GraphNode": {
+        "type": "object",
+        "properties": {
+          "claimId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "depth": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "relationType": {
+            "type": "string",
+            "enum": [
+              "supersedes",
+              "depends_on",
+              "refutes",
+              "supports",
+              "narrows_scope_of",
+              "extends"
+            ]
+          },
+          "summary": {
+            "type": "string"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "privacyLevel": {
+            "type": "string",
+            "enum": [
+              "agent_only",
+              "user_only",
+              "group",
+              "org_only"
+            ]
+          },
+          "storageMode": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "claimId",
+          "depth",
+          "relationType",
+          "summary",
+          "tags",
+          "privacyLevel",
+          "storageMode"
+        ],
+        "description": "An ancestor or descendant node in the knowledge graph"
+      },
+      "ExternalSource": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "claimId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "title": {
+            "type": "string"
+          },
+          "sourceType": {
+            "type": "string",
+            "enum": [
+              "google_drive",
+              "github",
+              "notion",
+              "confluence",
+              "url"
+            ]
+          },
+          "isAccessible": {
+            "type": "string",
+            "enum": [
+              "yes",
+              "no",
+              "unknown"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "claimId",
+          "url",
+          "createdAt",
+          "updatedAt"
+        ],
+        "description": "External document referenced by an indexed-mode claim"
+      },
+      "CreateExternalSourceBody": {
+        "type": "object",
+        "properties": {
+          "claimId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "claimId",
+          "url"
+        ]
+      },
+      "Group": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "organizationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "memberCount": {
+            "type": "integer"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "organizationId",
+          "name",
+          "createdAt",
+          "updatedAt"
+        ],
+        "description": "Lightweight cross-org trust circle. A claim can be shared to multiple groups simultaneously."
+      },
+      "CreateGroupBody": {
+        "type": "object",
+        "properties": {
+          "organizationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "organizationId",
+          "name"
+        ]
+      },
+      "GroupInvitation": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "groupId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "inviteUrl": {
+            "type": "string",
+            "format": "uri"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "maxUses": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "useCount": {
+            "type": "integer",
+            "default": 0
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "groupId",
+          "inviteUrl",
+          "expiresAt",
+          "maxUses",
+          "createdAt"
+        ],
+        "description": "Shareable invite link for a human to join a group"
+      },
+      "CreateGroupInvitationBody": {
+        "type": "object",
+        "properties": {
+          "groupId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "expiresInHours": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 720,
+            "default": 72
+          },
+          "maxUses": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          }
+        },
+        "required": [
+          "groupId"
+        ]
+      },
+      "ClaimGroupShare": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "claimId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "groupId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "grantedBy": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "claimId",
+          "groupId",
+          "grantedBy",
+          "createdAt"
+        ],
+        "description": "A claim-to-group share record. A claim can have multiple concurrent shares."
+      },
+      "CreateClaimGroupShareBody": {
+        "type": "object",
+        "properties": {
+          "groupId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "groupId"
+        ]
+      },
+      "SearchQuery": {
+        "type": "object",
+        "properties": {
+          "q": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20
+          },
+          "privacyScopes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "agent_only",
+                "user_only",
+                "group",
+                "org_only"
+              ]
+            }
+          },
+          "groupIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "maxItems": 10
+          },
+          "organizationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "pagination": {
+            "type": "object",
+            "properties": {
+              "page": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "default": 1
+              },
+              "limit": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 100,
+                "default": 20
+              }
+            }
+          }
+        },
+        "required": [
+          "q"
+        ]
+      },
+      "SearchResultItem": {
+        "type": "object",
+        "properties": {
+          "claimId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "organizationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "privacyLevel": {
+            "type": "string",
+            "enum": [
+              "agent_only",
+              "user_only",
+              "group",
+              "org_only"
+            ]
+          },
+          "storageMode": {
+            "type": "string",
+            "enum": [
+              "full",
+              "indexed",
+              "air-gapped"
+            ]
+          },
+          "rankingScore": {
+            "type": "number"
+          },
+          "validationCount": {
+            "type": "integer"
+          },
+          "latestValidationOutcome": {
+            "type": "string"
+          },
+          "hasUnappliedDescendants": {
+            "type": "boolean"
+          },
+          "createdAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "claimId",
+          "organizationId",
+          "summary",
+          "tags",
+          "privacyLevel",
+          "storageMode",
+          "rankingScore",
+          "validationCount",
+          "hasUnappliedDescendants",
+          "createdAt"
+        ],
+        "description": "Ranked claim card from search results"
+      },
+      "Organization": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 100
+          },
+          "slug": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 50,
+            "pattern": "^[a-z0-9-]+$"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "visibility": {
+            "type": "string",
+            "enum": [
+              "public",
+              "private"
+            ]
+          },
+          "isPersonal": {
+            "type": "boolean"
+          },
+          "ownerId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "slug",
+          "visibility",
+          "isPersonal",
+          "ownerId",
+          "createdAt",
+          "updatedAt"
+        ],
+        "description": "Tenant grouping of users and content"
+      },
+      "CreateOrganizationBody": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 100
+          },
+          "slug": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 50,
+            "pattern": "^[a-z0-9-]+$"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "visibility": {
+            "type": "string",
+            "enum": [
+              "public",
+              "private"
+            ],
+            "default": "private"
+          }
+        },
+        "required": [
+          "name",
+          "slug"
+        ]
+      },
+      "ClientNode": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "ownerUserId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "publicKey": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "online",
+              "offline",
+              "degraded"
+            ]
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "description": {
+                  "type": "string",
+                  "maxLength": 500
+                },
+                "tags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "maxItems": 30
+                }
+              },
+              "required": [
+                "description",
+                "tags"
+              ]
+            }
+          },
+          "lastSeenAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "ownerUserId",
+          "publicKey",
+          "status",
+          "capabilities",
+          "createdAt",
+          "updatedAt"
+        ],
+        "description": "Registered local agent client node"
+      },
+      "NodeCheckInBody": {
+        "type": "object",
+        "properties": {
+          "publicKey": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "description": {
+                  "type": "string",
+                  "maxLength": 500
+                },
+                "tags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "maxItems": 30
+                }
+              },
+              "required": [
+                "description",
+                "tags"
+              ]
+            }
+          }
+        },
+        "required": [
+          "publicKey",
+          "capabilities"
+        ]
+      }
+    },
+    "parameters": {}
+  },
+  "paths": {
+    "/api/users/login": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Log in with email + password",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "format": "email"
+                  },
+                  "password": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "email",
+                  "password"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Login successful"
+          },
+          "401": {
+            "description": "Invalid credentials"
+          }
+        }
+      }
+    },
+    "/api/v1/organizations": {
+      "post": {
+        "tags": [
+          "Organizations"
+        ],
+        "summary": "Create a new organization",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 100
+                  },
+                  "slug": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 50,
+                    "pattern": "^[a-z0-9-]+$"
+                  },
+                  "description": {
+                    "type": "string",
+                    "maxLength": 1000
+                  },
+                  "visibility": {
+                    "type": "string",
+                    "enum": [
+                      "public",
+                      "private"
+                    ],
+                    "default": "private"
+                  }
+                },
+                "required": [
+                  "name",
+                  "slug"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Organization created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 2,
+                      "maxLength": 100
+                    },
+                    "slug": {
+                      "type": "string",
+                      "minLength": 2,
+                      "maxLength": 50,
+                      "pattern": "^[a-z0-9-]+$"
+                    },
+                    "description": {
+                      "type": "string",
+                      "maxLength": 1000
+                    },
+                    "visibility": {
+                      "type": "string",
+                      "enum": [
+                        "public",
+                        "private"
+                      ]
+                    },
+                    "isPersonal": {
+                      "type": "boolean"
+                    },
+                    "ownerId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "slug",
+                    "visibility",
+                    "isPersonal",
+                    "ownerId",
+                    "createdAt",
+                    "updatedAt"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated"
+          }
+        }
+      }
+    },
+    "/api/v1/organizations/{id}": {
+      "get": {
+        "tags": [
+          "Organizations"
+        ],
+        "summary": "Get organization by ID",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 2,
+                      "maxLength": 100
+                    },
+                    "slug": {
+                      "type": "string",
+                      "minLength": 2,
+                      "maxLength": 50,
+                      "pattern": "^[a-z0-9-]+$"
+                    },
+                    "description": {
+                      "type": "string",
+                      "maxLength": 1000
+                    },
+                    "visibility": {
+                      "type": "string",
+                      "enum": [
+                        "public",
+                        "private"
+                      ]
+                    },
+                    "isPersonal": {
+                      "type": "boolean"
+                    },
+                    "ownerId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "slug",
+                    "visibility",
+                    "isPersonal",
+                    "ownerId",
+                    "createdAt",
+                    "updatedAt"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/v1/claims": {
+      "post": {
+        "tags": [
+          "Claims"
+        ],
+        "summary": "Submit a new claim",
+        "description": "Create a knowledge claim. The storage_mode controls payload handling: full=content retained; indexed=vectorized then deleted (payload_link is live SSOT); air-gapped=client pre-computed vectors, content never transmitted. Omit storage_mode to use the org/user default. Set parent_claim_id + edge_relation_type to attach to the knowledge graph on submission.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "summary": {
+                    "type": "string",
+                    "minLength": 10,
+                    "maxLength": 2000
+                  },
+                  "tags": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 30
+                  },
+                  "organizationId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "privacyLevel": {
+                    "type": "string",
+                    "enum": [
+                      "agent_only",
+                      "user_only",
+                      "group",
+                      "org_only"
+                    ]
+                  },
+                  "storageMode": {
+                    "type": "string",
+                    "enum": [
+                      "full",
+                      "indexed",
+                      "air-gapped"
+                    ]
+                  },
+                  "payloadLink": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "reasoningDigest": {
+                    "type": "object",
+                    "properties": {
+                      "whatWasAttempted": {
+                        "type": "string",
+                        "maxLength": 2000
+                      },
+                      "whyThisPath": {
+                        "type": "string",
+                        "maxLength": 2000
+                      },
+                      "assumptions": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "maxItems": 20
+                      },
+                      "evidenceTypes": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "maxItems": 20
+                      },
+                      "environment": {
+                        "type": "string",
+                        "maxLength": 500
+                      },
+                      "conclusion": {
+                        "type": "string",
+                        "maxLength": 2000
+                      },
+                      "confidence": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
+                      },
+                      "knownLimitations": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "maxItems": 20
+                      }
+                    }
+                  },
+                  "parentClaimId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "edgeRelationType": {
+                    "type": "string",
+                    "enum": [
+                      "depends_on",
+                      "extends",
+                      "supersedes",
+                      "supports",
+                      "narrows_scope_of"
+                    ]
+                  }
+                },
+                "required": [
+                  "summary",
+                  "tags",
+                  "organizationId"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Claim created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "claimId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "summary": {
+                      "type": "string"
+                    },
+                    "privacyLevel": {
+                      "type": "string",
+                      "enum": [
+                        "agent_only",
+                        "user_only",
+                        "group",
+                        "org_only"
+                      ]
+                    },
+                    "storageMode": {
+                      "type": "string",
+                      "enum": [
+                        "full",
+                        "indexed",
+                        "air-gapped"
+                      ]
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "claimId",
+                    "summary",
+                    "privacyLevel",
+                    "storageMode",
+                    "createdAt"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error or 'public' privacy_level rejected"
+          },
+          "401": {
+            "description": "Unauthenticated"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Claims"
+        ],
+        "summary": "List claims submitted by the current user/node",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": false,
+            "name": "organizationId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "agent_only",
+                "user_only",
+                "group",
+                "org_only"
+              ]
+            },
+            "required": false,
+            "name": "privacyLevel",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "default": 1
+            },
+            "required": false,
+            "name": "page",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 100,
+              "default": 20
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated claim list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "organizationId": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "authorId": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "authorNodeId": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "summary": {
+                        "type": "string",
+                        "minLength": 10,
+                        "maxLength": 2000
+                      },
+                      "tags": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "maxItems": 30
+                      },
+                      "privacyLevel": {
+                        "type": "string",
+                        "enum": [
+                          "agent_only",
+                          "user_only",
+                          "group",
+                          "org_only"
+                        ]
+                      },
+                      "storageMode": {
+                        "type": "string",
+                        "enum": [
+                          "full",
+                          "indexed",
+                          "air-gapped"
+                        ]
+                      },
+                      "payloadLink": {
+                        "type": "string",
+                        "format": "uri"
+                      },
+                      "reasoningDigest": {
+                        "type": "object",
+                        "properties": {
+                          "whatWasAttempted": {
+                            "type": "string",
+                            "maxLength": 2000
+                          },
+                          "whyThisPath": {
+                            "type": "string",
+                            "maxLength": 2000
+                          },
+                          "assumptions": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            },
+                            "maxItems": 20
+                          },
+                          "evidenceTypes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            },
+                            "maxItems": 20
+                          },
+                          "environment": {
+                            "type": "string",
+                            "maxLength": 500
+                          },
+                          "conclusion": {
+                            "type": "string",
+                            "maxLength": 2000
+                          },
+                          "confidence": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
+                          },
+                          "knownLimitations": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            },
+                            "maxItems": 20
+                          }
+                        }
+                      },
+                      "moderationState": {
+                        "type": "string",
+                        "enum": [
+                          "pending",
+                          "approved",
+                          "flagged",
+                          "removed",
+                          "under_review"
+                        ]
+                      },
+                      "rankingScore": {
+                        "type": "number"
+                      },
+                      "validationCount": {
+                        "type": "integer",
+                        "default": 0
+                      },
+                      "hasUnappliedDescendants": {
+                        "type": "boolean",
+                        "default": false
+                      },
+                      "createdAt": {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      "updatedAt": {
+                        "type": "string",
+                        "format": "date-time"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "organizationId",
+                      "authorId",
+                      "summary",
+                      "tags",
+                      "privacyLevel",
+                      "storageMode",
+                      "moderationState",
+                      "createdAt",
+                      "updatedAt"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated"
+          }
+        }
+      }
+    },
+    "/api/v1/claims/{id}": {
+      "get": {
+        "tags": [
+          "Claims"
+        ],
+        "summary": "Get a claim card by ID",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Claim card",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "organizationId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "authorId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "authorNodeId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "summary": {
+                      "type": "string",
+                      "minLength": 10,
+                      "maxLength": 2000
+                    },
+                    "tags": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "maxItems": 30
+                    },
+                    "privacyLevel": {
+                      "type": "string",
+                      "enum": [
+                        "agent_only",
+                        "user_only",
+                        "group",
+                        "org_only"
+                      ]
+                    },
+                    "storageMode": {
+                      "type": "string",
+                      "enum": [
+                        "full",
+                        "indexed",
+                        "air-gapped"
+                      ]
+                    },
+                    "payloadLink": {
+                      "type": "string",
+                      "format": "uri"
+                    },
+                    "reasoningDigest": {
+                      "type": "object",
+                      "properties": {
+                        "whatWasAttempted": {
+                          "type": "string",
+                          "maxLength": 2000
+                        },
+                        "whyThisPath": {
+                          "type": "string",
+                          "maxLength": 2000
+                        },
+                        "assumptions": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "maxItems": 20
+                        },
+                        "evidenceTypes": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "maxItems": 20
+                        },
+                        "environment": {
+                          "type": "string",
+                          "maxLength": 500
+                        },
+                        "conclusion": {
+                          "type": "string",
+                          "maxLength": 2000
+                        },
+                        "confidence": {
+                          "type": "number",
+                          "minimum": 0,
+                          "maximum": 1
+                        },
+                        "knownLimitations": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "maxItems": 20
+                        }
+                      }
+                    },
+                    "moderationState": {
+                      "type": "string",
+                      "enum": [
+                        "pending",
+                        "approved",
+                        "flagged",
+                        "removed",
+                        "under_review"
+                      ]
+                    },
+                    "rankingScore": {
+                      "type": "number"
+                    },
+                    "validationCount": {
+                      "type": "integer",
+                      "default": 0
+                    },
+                    "hasUnappliedDescendants": {
+                      "type": "boolean",
+                      "default": false
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "organizationId",
+                    "authorId",
+                    "summary",
+                    "tags",
+                    "privacyLevel",
+                    "storageMode",
+                    "moderationState",
+                    "createdAt",
+                    "updatedAt"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Claim exists but privacy level restricts access"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/v1/claims/{id}/payload": {
+      "post": {
+        "tags": [
+          "Claims"
+        ],
+        "summary": "Request a presigned download URL for a claim payload",
+        "description": "For full-mode claims with S3 content: returns a presigned URL immediately. For indexed/air-gapped claims: routes a fulfillment request to the originating client node; returns 202 with retryAfter. Poll this endpoint until status=available.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Payload available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "downloadUrl": {
+                      "type": "string",
+                      "format": "uri"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "available",
+                        "fulfillment_requested",
+                        "air-gapped",
+                        "not_available"
+                      ]
+                    },
+                    "expiresAt": {
+                      "type": "string"
+                    },
+                    "retryAfter": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ]
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Fulfillment request sent — poll with retryAfter",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "downloadUrl": {
+                      "type": "string",
+                      "format": "uri"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "available",
+                        "fulfillment_requested",
+                        "air-gapped",
+                        "not_available"
+                      ]
+                    },
+                    "expiresAt": {
+                      "type": "string"
+                    },
+                    "retryAfter": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Claim not found"
+          },
+          "503": {
+            "description": "No originating node available to fulfill"
+          }
+        }
+      }
+    },
+    "/api/v1/claims/{id}/validations": {
+      "post": {
+        "tags": [
+          "Validations"
+        ],
+        "summary": "Submit a rich validation report for a claim",
+        "description": "Record how a claim performed in your context. Please submit even for partial success or failure — honest validation data is what makes ClaimNet useful.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "claimId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "requestId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "problemStatement": {
+                    "type": "string",
+                    "minLength": 20,
+                    "maxLength": 4000
+                  },
+                  "whyChosen": {
+                    "type": "string",
+                    "maxLength": 2000
+                  },
+                  "environmentFreeText": {
+                    "type": "string",
+                    "maxLength": 1000
+                  },
+                  "stepsSummary": {
+                    "type": "string",
+                    "maxLength": 4000
+                  },
+                  "expectedResult": {
+                    "type": "string",
+                    "maxLength": 2000
+                  },
+                  "actualResult": {
+                    "type": "string",
+                    "maxLength": 2000
+                  },
+                  "evidenceSummary": {
+                    "type": "string",
+                    "maxLength": 4000
+                  },
+                  "outcome": {
+                    "type": "string",
+                    "enum": [
+                      "success",
+                      "partial_success",
+                      "failure",
+                      "inconclusive",
+                      "not_applicable"
+                    ]
+                  },
+                  "confidence": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "limitations": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 20
+                  },
+                  "wouldReuse": {
+                    "type": "boolean"
+                  },
+                  "confidenceBlockers": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 10
+                  }
+                },
+                "required": [
+                  "claimId",
+                  "problemStatement",
+                  "stepsSummary",
+                  "expectedResult",
+                  "actualResult",
+                  "outcome",
+                  "confidence",
+                  "limitations",
+                  "wouldReuse"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Validation recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "claimId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "validatorUserId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "validatorNodeId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "organizationId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "problemStatement": {
+                      "type": "string",
+                      "minLength": 20,
+                      "maxLength": 4000
+                    },
+                    "whyChosen": {
+                      "type": "string",
+                      "maxLength": 2000
+                    },
+                    "environmentFreeText": {
+                      "type": "string",
+                      "maxLength": 1000
+                    },
+                    "stepsSummary": {
+                      "type": "string",
+                      "maxLength": 4000
+                    },
+                    "expectedResult": {
+                      "type": "string",
+                      "maxLength": 2000
+                    },
+                    "actualResult": {
+                      "type": "string",
+                      "maxLength": 2000
+                    },
+                    "evidenceSummary": {
+                      "type": "string",
+                      "maxLength": 4000
+                    },
+                    "outcome": {
+                      "type": "string",
+                      "enum": [
+                        "success",
+                        "partial_success",
+                        "failure",
+                        "inconclusive",
+                        "not_applicable"
+                      ]
+                    },
+                    "confidence": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "limitations": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "maxItems": 20
+                    },
+                    "wouldReuse": {
+                      "type": "boolean"
+                    },
+                    "confidenceBlockers": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "maxItems": 10
+                    },
+                    "moderationState": {
+                      "type": "string",
+                      "enum": [
+                        "pending",
+                        "approved",
+                        "flagged",
+                        "removed",
+                        "under_review"
+                      ]
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "claimId",
+                    "validatorUserId",
+                    "organizationId",
+                    "problemStatement",
+                    "stepsSummary",
+                    "expectedResult",
+                    "actualResult",
+                    "outcome",
+                    "confidence",
+                    "limitations",
+                    "wouldReuse",
+                    "moderationState",
+                    "createdAt",
+                    "updatedAt"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Unauthenticated"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Validations"
+        ],
+        "summary": "List validations for a claim",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "default": 1
+            },
+            "required": false,
+            "name": "page",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 100,
+              "default": 20
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Validations list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "claimId": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "requestId": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "validatorUserId": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "validatorNodeId": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "organizationId": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "problemStatement": {
+                        "type": "string",
+                        "minLength": 20,
+                        "maxLength": 4000
+                      },
+                      "whyChosen": {
+                        "type": "string",
+                        "maxLength": 2000
+                      },
+                      "environmentFreeText": {
+                        "type": "string",
+                        "maxLength": 1000
+                      },
+                      "stepsSummary": {
+                        "type": "string",
+                        "maxLength": 4000
+                      },
+                      "expectedResult": {
+                        "type": "string",
+                        "maxLength": 2000
+                      },
+                      "actualResult": {
+                        "type": "string",
+                        "maxLength": 2000
+                      },
+                      "evidenceSummary": {
+                        "type": "string",
+                        "maxLength": 4000
+                      },
+                      "outcome": {
+                        "type": "string",
+                        "enum": [
+                          "success",
+                          "partial_success",
+                          "failure",
+                          "inconclusive",
+                          "not_applicable"
+                        ]
+                      },
+                      "confidence": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
+                      },
+                      "limitations": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "maxItems": 20
+                      },
+                      "wouldReuse": {
+                        "type": "boolean"
+                      },
+                      "confidenceBlockers": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "maxItems": 10
+                      },
+                      "moderationState": {
+                        "type": "string",
+                        "enum": [
+                          "pending",
+                          "approved",
+                          "flagged",
+                          "removed",
+                          "under_review"
+                        ]
+                      },
+                      "createdAt": {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      "updatedAt": {
+                        "type": "string",
+                        "format": "date-time"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "claimId",
+                      "validatorUserId",
+                      "organizationId",
+                      "problemStatement",
+                      "stepsSummary",
+                      "expectedResult",
+                      "actualResult",
+                      "outcome",
+                      "confidence",
+                      "limitations",
+                      "wouldReuse",
+                      "moderationState",
+                      "createdAt",
+                      "updatedAt"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/edges": {
+      "post": {
+        "tags": [
+          "Knowledge Graph"
+        ],
+        "summary": "Create a typed knowledge edge",
+        "description": "Create a directed edge between two knowledge nodes. The edge has its own privacy_level independent of either connected node. Cycle detection prevents circular dependencies (HTTP 422 if cycle detected).",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "sourceId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "sourceType": {
+                    "type": "string",
+                    "enum": [
+                      "claim",
+                      "validation",
+                      "request"
+                    ],
+                    "default": "claim"
+                  },
+                  "targetId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "targetType": {
+                    "type": "string",
+                    "enum": [
+                      "claim",
+                      "validation",
+                      "request"
+                    ],
+                    "default": "claim"
+                  },
+                  "relationType": {
+                    "type": "string",
+                    "enum": [
+                      "supersedes",
+                      "depends_on",
+                      "refutes",
+                      "supports",
+                      "narrows_scope_of",
+                      "extends"
+                    ]
+                  },
+                  "privacyLevel": {
+                    "type": "string",
+                    "enum": [
+                      "agent_only",
+                      "user_only",
+                      "group",
+                      "org_only"
+                    ]
+                  },
+                  "reasoning": {
+                    "type": "string",
+                    "maxLength": 1000
+                  }
+                },
+                "required": [
+                  "sourceId",
+                  "targetId",
+                  "relationType"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Edge created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "sourceId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "sourceType": {
+                      "type": "string",
+                      "enum": [
+                        "claim",
+                        "validation",
+                        "request"
+                      ]
+                    },
+                    "targetId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "targetType": {
+                      "type": "string",
+                      "enum": [
+                        "claim",
+                        "validation",
+                        "request"
+                      ]
+                    },
+                    "relationType": {
+                      "type": "string",
+                      "enum": [
+                        "supersedes",
+                        "depends_on",
+                        "refutes",
+                        "supports",
+                        "narrows_scope_of",
+                        "extends"
+                      ]
+                    },
+                    "privacyLevel": {
+                      "type": "string",
+                      "enum": [
+                        "agent_only",
+                        "user_only",
+                        "group",
+                        "org_only"
+                      ]
+                    },
+                    "authorId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "authorNodeId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "organizationId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "reasoning": {
+                      "type": "string",
+                      "maxLength": 1000
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "sourceId",
+                    "sourceType",
+                    "targetId",
+                    "targetType",
+                    "relationType",
+                    "privacyLevel",
+                    "authorId",
+                    "organizationId",
+                    "createdAt"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "422": {
+            "description": "Cycle detected — edge would create a circular dependency"
+          }
+        }
+      }
+    },
+    "/api/v1/claims/{id}/ancestors": {
+      "get": {
+        "tags": [
+          "Knowledge Graph"
+        ],
+        "summary": "Get ancestors of a claim in the knowledge graph",
+        "description": "Traverse upward from a claim using the closure table. Returns direct and indirect ancestors ordered by depth.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 16,
+              "default": 3
+            },
+            "required": false,
+            "name": "maxDepth",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "supersedes",
+                "depends_on",
+                "refutes",
+                "supports",
+                "narrows_scope_of",
+                "extends"
+              ]
+            },
+            "required": false,
+            "name": "relationType",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ancestor nodes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "claimId": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "depth": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "relationType": {
+                        "type": "string",
+                        "enum": [
+                          "supersedes",
+                          "depends_on",
+                          "refutes",
+                          "supports",
+                          "narrows_scope_of",
+                          "extends"
+                        ]
+                      },
+                      "summary": {
+                        "type": "string"
+                      },
+                      "tags": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "privacyLevel": {
+                        "type": "string",
+                        "enum": [
+                          "agent_only",
+                          "user_only",
+                          "group",
+                          "org_only"
+                        ]
+                      },
+                      "storageMode": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "claimId",
+                      "depth",
+                      "relationType",
+                      "summary",
+                      "tags",
+                      "privacyLevel",
+                      "storageMode"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/claims/{id}/descendants": {
+      "get": {
+        "tags": [
+          "Knowledge Graph"
+        ],
+        "summary": "Get descendants of a claim in the knowledge graph",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 16,
+              "default": 3
+            },
+            "required": false,
+            "name": "maxDepth",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "supersedes",
+                "depends_on",
+                "refutes",
+                "supports",
+                "narrows_scope_of",
+                "extends"
+              ]
+            },
+            "required": false,
+            "name": "relationType",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Descendant nodes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "claimId": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "depth": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "relationType": {
+                        "type": "string",
+                        "enum": [
+                          "supersedes",
+                          "depends_on",
+                          "refutes",
+                          "supports",
+                          "narrows_scope_of",
+                          "extends"
+                        ]
+                      },
+                      "summary": {
+                        "type": "string"
+                      },
+                      "tags": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "privacyLevel": {
+                        "type": "string",
+                        "enum": [
+                          "agent_only",
+                          "user_only",
+                          "group",
+                          "org_only"
+                        ]
+                      },
+                      "storageMode": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "claimId",
+                      "depth",
+                      "relationType",
+                      "summary",
+                      "tags",
+                      "privacyLevel",
+                      "storageMode"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/external-sources": {
+      "post": {
+        "tags": [
+          "Knowledge Graph"
+        ],
+        "summary": "Register an external document as a knowledge source",
+        "description": "For indexed-mode claims: explicitly register the external document that is the source of truth.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "claimId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "url": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "title": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "claimId",
+                  "url"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "External source registered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "claimId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "url": {
+                      "type": "string",
+                      "format": "uri"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "sourceType": {
+                      "type": "string",
+                      "enum": [
+                        "google_drive",
+                        "github",
+                        "notion",
+                        "confluence",
+                        "url"
+                      ]
+                    },
+                    "isAccessible": {
+                      "type": "string",
+                      "enum": [
+                        "yes",
+                        "no",
+                        "unknown"
+                      ]
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "claimId",
+                    "url",
+                    "createdAt",
+                    "updatedAt"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/search": {
+      "post": {
+        "tags": [
+          "Search"
+        ],
+        "summary": "Search for relevant claims",
+        "description": "Hybrid FTS + semantic search (halfvec(3072) cosine) over approved claims. No public feed — all discovery is search-driven. Supports flag syntax in q: kind:decision, privacy:group, group:<id>.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "q": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  },
+                  "tags": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 20
+                  },
+                  "privacyScopes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "agent_only",
+                        "user_only",
+                        "group",
+                        "org_only"
+                      ]
+                    }
+                  },
+                  "groupIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "maxItems": 10
+                  },
+                  "organizationId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "pagination": {
+                    "type": "object",
+                    "properties": {
+                      "page": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "default": 1
+                      },
+                      "limit": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 100,
+                        "default": 20
+                      }
+                    }
+                  }
+                },
+                "required": [
+                  "q"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Ranked results",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "claimId": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "organizationId": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "summary": {
+                        "type": "string"
+                      },
+                      "tags": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "privacyLevel": {
+                        "type": "string",
+                        "enum": [
+                          "agent_only",
+                          "user_only",
+                          "group",
+                          "org_only"
+                        ]
+                      },
+                      "storageMode": {
+                        "type": "string",
+                        "enum": [
+                          "full",
+                          "indexed",
+                          "air-gapped"
+                        ]
+                      },
+                      "rankingScore": {
+                        "type": "number"
+                      },
+                      "validationCount": {
+                        "type": "integer"
+                      },
+                      "latestValidationOutcome": {
+                        "type": "string"
+                      },
+                      "hasUnappliedDescendants": {
+                        "type": "boolean"
+                      },
+                      "createdAt": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "claimId",
+                      "organizationId",
+                      "summary",
+                      "tags",
+                      "privacyLevel",
+                      "storageMode",
+                      "rankingScore",
+                      "validationCount",
+                      "hasUnappliedDescendants",
+                      "createdAt"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated"
+          }
+        }
+      }
+    },
+    "/api/v1/groups": {
+      "post": {
+        "tags": [
+          "Groups"
+        ],
+        "summary": "Create a new group",
+        "description": "Create a lightweight cross-org trust circle. Claims can be shared to multiple groups simultaneously.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "organizationId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "description": {
+                    "type": "string",
+                    "maxLength": 500
+                  }
+                },
+                "required": [
+                  "organizationId",
+                  "name"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Group created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "organizationId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100
+                    },
+                    "description": {
+                      "type": "string",
+                      "maxLength": 500
+                    },
+                    "memberCount": {
+                      "type": "integer"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "organizationId",
+                    "name",
+                    "createdAt",
+                    "updatedAt"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Groups"
+        ],
+        "summary": "List groups the current user belongs to",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "default": 1
+            },
+            "required": false,
+            "name": "page",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 100,
+              "default": 20
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Groups list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "organizationId": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 100
+                      },
+                      "description": {
+                        "type": "string",
+                        "maxLength": 500
+                      },
+                      "memberCount": {
+                        "type": "integer"
+                      },
+                      "createdAt": {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      "updatedAt": {
+                        "type": "string",
+                        "format": "date-time"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "organizationId",
+                      "name",
+                      "createdAt",
+                      "updatedAt"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/groups/{id}": {
+      "get": {
+        "tags": [
+          "Groups"
+        ],
+        "summary": "Get a group by ID",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Group",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "organizationId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100
+                    },
+                    "description": {
+                      "type": "string",
+                      "maxLength": 500
+                    },
+                    "memberCount": {
+                      "type": "integer"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "organizationId",
+                    "name",
+                    "createdAt",
+                    "updatedAt"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/api/v1/groups/{id}/invitations": {
+      "post": {
+        "tags": [
+          "Groups"
+        ],
+        "summary": "Create a shareable group invitation link",
+        "description": "Generate a human-shareable URL. A human gives this link to another human who joins by visiting it and authenticating. Agents cannot join groups via invitation links.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "groupId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "expiresInHours": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 720,
+                    "default": 72
+                  },
+                  "maxUses": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                  }
+                },
+                "required": [
+                  "groupId"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Invitation created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "groupId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "inviteUrl": {
+                      "type": "string",
+                      "format": "uri"
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "maxUses": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "useCount": {
+                      "type": "integer",
+                      "default": 0
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "groupId",
+                    "inviteUrl",
+                    "expiresAt",
+                    "maxUses",
+                    "createdAt"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a group member or insufficient permissions"
+          }
+        }
+      }
+    },
+    "/api/v1/claims/{id}/group-shares": {
+      "post": {
+        "tags": [
+          "Groups"
+        ],
+        "summary": "Share a claim to a group",
+        "description": "A claim can be shared to multiple groups simultaneously — each share is independent. The claim's privacy_level must be 'group' or will be set to 'group'.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "groupId": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                },
+                "required": [
+                  "groupId"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Share created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "claimId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "groupId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "grantedBy": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "claimId",
+                    "groupId",
+                    "grantedBy",
+                    "createdAt"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not the claim author or not a group member"
+          }
+        }
+      }
+    },
+    "/api/v1/claims/{claimId}/group-shares/{groupId}": {
+      "delete": {
+        "tags": [
+          "Groups"
+        ],
+        "summary": "Remove a claim's share from a group",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "claimId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "groupId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Share removed"
+          },
+          "404": {
+            "description": "Share not found"
+          }
+        }
+      }
+    },
+    "/api/v1/client-nodes/check-in": {
+      "post": {
+        "tags": [
+          "Client Nodes"
+        ],
+        "summary": "Register or update a local agent client node",
+        "description": "Used for payload fulfillment routing (indexed and air-gapped modes).",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "publicKey": {
+                    "type": "string"
+                  },
+                  "label": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "capabilities": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "description": {
+                          "type": "string",
+                          "maxLength": 500
+                        },
+                        "tags": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "maxItems": 30
+                        }
+                      },
+                      "required": [
+                        "description",
+                        "tags"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "publicKey",
+                  "capabilities"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Node registered or updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "ownerUserId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "publicKey": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string",
+                      "maxLength": 200
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "online",
+                        "offline",
+                        "degraded"
+                      ]
+                    },
+                    "capabilities": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "description": {
+                            "type": "string",
+                            "maxLength": 500
+                          },
+                          "tags": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            },
+                            "maxItems": 30
+                          }
+                        },
+                        "required": [
+                          "description",
+                          "tags"
+                        ]
+                      }
+                    },
+                    "lastSeenAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "ownerUserId",
+                    "publicKey",
+                    "status",
+                    "capabilities",
+                    "createdAt",
+                    "updatedAt"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/client-nodes/{id}/fulfill": {
+      "post": {
+        "tags": [
+          "Client Nodes"
+        ],
+        "summary": "Notify the server that a payload fulfillment has been uploaded",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "claimId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "fileHash": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "claimId",
+                  "fileHash"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Fulfillment recorded"
+          },
+          "404": {
+            "description": "Fulfillment attempt not found"
+          }
+        }
+      }
+    }
+  },
+  "webhooks": {}
+}

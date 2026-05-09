@@ -1,0 +1,189 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:  # manual trigger from GitHub Actions UI
+
+env:
+  NODE_VERSION: "24"
+  AWS_REGION: us-east-1
+
+# ── Quality gates (every push + PR) ─────────────────────────────────────────
+
+jobs:
+  quality:
+    name: Typecheck + Lint + Test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: claimnet
+          POSTGRES_PASSWORD: claimnet
+          POSTGRES_DB: claimnet
+        ports:
+          - 5533:5432
+        options: >-
+          --health-cmd "pg_isready -U claimnet"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      PGHOST: localhost
+      PGPORT: "5533"
+      PGUSER: claimnet
+      PGPASSWORD: claimnet
+      PGDATABASE: claimnet
+      JWT_SECRET: ci-test-secret-64-char-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      BACKEND_URL: http://localhost:3001
+      DEV_USERNAME: ci@test.local
+      DEV_PASSWORD: ci-test-password
+      GEMINI_API_KEY: ""
+      EMBEDDINGS_PROVIDER: stub  # deterministic fake vectors; no API quota, no flakiness
+      DISABLE_RATE_LIMIT: "true"  # tests make many rapid requests
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build packages
+        run: npm run build:packages
+
+      - name: Build backend
+        run: npm run build -w apps/backend
+
+      - name: Typecheck
+        run: npm run typecheck --workspaces --if-present
+
+      - name: Lint
+        run: npm run lint --workspaces --if-present
+
+      - name: Start backend for integration tests
+        run: |
+          node apps/backend/dist/index.js &
+          # Wait for backend to be ready (migrations + auto-setup)
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            if curl -sf http://localhost:3001/health > /dev/null 2>&1; then
+              echo "Backend ready after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+        env:
+          PORT: 3001
+          ALLOW_AUTO_SETUP: "true"
+          DISABLE_RATE_LIMIT: "true"
+
+      - name: Seed CI system settings
+        run: |
+          # Login as the auto-created system user to get a token
+          TOKEN=$(curl -sf http://localhost:3001/auth/login \
+            -H "Content-Type: application/json" \
+            -d '{"email":"ci@test.local","password":"ci-test-password"}' \
+            | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.data?.token??'')})")
+
+          if [ -z "$TOKEN" ]; then
+            echo "ERROR: Failed to get admin token"
+            exit 1
+          fi
+
+          # Set signup cap high for tests (default is 0 = no signups)
+          curl -sf http://localhost:3001/admin/settings \
+            -X PUT \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $TOKEN" \
+            -d '{"signupCap": 1000}'
+
+          echo "CI system settings seeded (signup cap = 1000)"
+
+      - name: Test
+        run: npx vitest run
+
+  # ── Build + Deploy (push to main only) ───────────────────────────────────
+
+  deploy:
+    name: Build + Deploy
+    needs: quality
+    # Production deploy: manual trigger only (workflow_dispatch).
+    # Dev/staging (future): auto-deploy on push to main.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+
+    # OIDC role assumption requires id-token: write at the workflow or job
+    # level. contents: read is the default needed for actions/checkout.
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build + push backend image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $REGISTRY/claimnet-dev-backend:$IMAGE_TAG -t $REGISTRY/claimnet-dev-backend:latest -f apps/backend/Dockerfile .
+          docker push $REGISTRY/claimnet-dev-backend:$IMAGE_TAG
+          docker push $REGISTRY/claimnet-dev-backend:latest
+
+      - name: Build + deploy frontend to S3
+        env:
+          VITE_API_BASE: https://mcp.soup.net
+        run: |
+          npm ci
+          npm run build:packages
+          cd apps/frontend && npx vite build
+          aws s3 sync dist/ s3://claimnet-dev-frontend --delete
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} \
+            --paths "/*"
+
+      - name: Deploy backend to ECS
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          aws ecs update-service \
+            --cluster claimnet-dev-cluster \
+            --service claimnet-dev-backend \
+            --force-new-deployment \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Wait for deployment
+        run: |
+          aws ecs wait services-stable \
+            --cluster claimnet-dev-cluster \
+            --services claimnet-dev-backend \
+            --region ${{ env.AWS_REGION }}
+          echo "Backend deployment stable"
+
+      # Smoke test — ALB is open; runs on every deploy.
+      - name: Smoke test
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://mcp.soup.net/health || echo "000")
+          if [ "$STATUS" != "200" ]; then echo "Smoke test failed: HTTP $STATUS"; exit 1; fi
+          echo "Smoke test passed: HTTP 200"

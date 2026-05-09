@@ -1,0 +1,826 @@
+{
+  "$schema_note": "User-facing teaching corpus for AI agents writing Soup.net recipes. Teaches the whole recipe shape (recipe + evidence + references — Toulmin's claim + warrant + data) by example. Designed to grow open-ended: many entries with rank + dimensional tags; presentation surfaces a coverage-balanced subset (initially top N by rank, eventually clustered to the user's group context). Examples deliberately span domains so readers don't conclude the system is only for technical use cases. Each example declares its group + description so the voice rules can be evaluated against actual context. Curator-side analytical findings (corpus statistics, novel patterns) live in docs/briefings/soupnet-agent-voice-plan.md, not here.",
+  "schema_version": 3,
+
+  "checklist": {
+    "_note": "Coverage targets. When adding a new example, tag it with the dimensions and failure mode it covers. When reviewing the library, scan for thin coverage. Aim for at least one example per failure mode at every layer; every group specificity level represented across the library; broad domain spread.",
+    "recipe_failure_modes": [
+      { "id": "agent_voice", "summary": "agent narrates its own reasoning instead of the user's preference" },
+      { "id": "user_name_voice", "summary": "role collapses into a specific person's name" },
+      { "id": "group_implied_product", "summary": "role restates a project, product, or named collaborator the group description already provides — drop those tokens, keep the role itself; the role must always appear in the recipe" },
+      { "id": "compound_role_inflation", "summary": "project, location, or event details collapsed into [role] instead of [goal]" },
+      { "id": "missing_so_that", "summary": "reason embedded in prose rather than expressed as an explicit 'so that' warrant" },
+      { "id": "thin_no_role", "summary": "no role, no goal, context-free assertion" },
+      { "id": "two_claim_bundle", "summary": "multiple distinct decisions bundled into one recipe" },
+      { "id": "vague_choice", "summary": "the [choice] is named in pronouns or generalities ('that approach', 'this style') rather than concretely" },
+      { "id": "question_shaped", "summary": "phrased as a question or curiosity ('I want to know if…') rather than a held preference" }
+    ],
+    "evidence_failure_modes": [
+      { "id": "missing_evidence", "summary": "no supporting evidence provided" },
+      { "id": "evidence_restates_recipe", "summary": "evidence paraphrases the recipe instead of citing data the recipe is built on" },
+      { "id": "evidence_no_quote", "summary": "interpretation present, but no verbatim quoted reference attached" },
+      { "id": "generic_best_practices", "summary": "evidence appeals to industry best practices or general principles instead of citing the user's situation or words" }
+    ],
+    "reference_failure_modes": [
+      { "id": "missing_citation", "summary": "quote present but no source named" },
+      { "id": "paraphrased_as_verbatim", "summary": "claimed direct quote is actually a paraphrase of what the user said — there IS a real source, but the words don't match" },
+      { "id": "weak_citation", "summary": "source is vague ('from the conversation', 'somewhere earlier') and unverifiable" },
+      { "id": "fabricated_reference", "summary": "the quoted source does not exist or did not say what is claimed — distinct from paraphrased_as_verbatim because there is NO real source; the agent hallucinated a quote to support the recipe direction" }
+    ],
+    "slot_quality_dimensions": [
+      "role_transferability",
+      "goal_scope",
+      "choice_concreteness",
+      "reason_explicitness",
+      "evidence_grounding",
+      "reference_verifiability"
+    ],
+    "group_specificity_levels": [
+      { "id": "generic", "summary": "minimal context, e.g. 'Personal' or null description" },
+      { "id": "broad", "summary": "wide topic, e.g. 'All my software work'" },
+      { "id": "domain_specific", "summary": "a domain or practice without a named project" },
+      { "id": "project_specific", "summary": "a named project, no specific collaborators" },
+      { "id": "very_specific", "summary": "named project + named collaborators + scope" }
+    ],
+    "domains": [
+      "software_development",
+      "creative_arts",
+      "hobbies_crafts",
+      "education_teaching",
+      "wellness_fitness",
+      "volunteer_community",
+      "small_business",
+      "family_parenting",
+      "lifestyle"
+    ],
+    "checking_modes": [
+      "surfacing_assumption",
+      "logging_stated_preference",
+      "judgment_with_reasoning",
+      "broad_discovery"
+    ]
+  },
+
+  "groups": [
+    {
+      "id": "personal",
+      "name": "Personal",
+      "description": null,
+      "specificity": "generic",
+      "domain": "lifestyle"
+    },
+    {
+      "id": "all-software-work",
+      "name": "All my software work",
+      "description": "Cross-project software development — patterns, tools, judgment calls that aren't tied to a single codebase.",
+      "specificity": "broad",
+      "domain": "software_development"
+    },
+    {
+      "id": "yoga-teaching",
+      "name": "Yoga teaching practice",
+      "description": "My yoga teaching practice — sequencing, alignment cues, accommodations, class formats.",
+      "specificity": "domain_specific",
+      "domain": "wellness_fitness"
+    },
+    {
+      "id": "family-cookbook",
+      "name": "Family cookbook",
+      "description": "Recipes for our family cookbook project — collecting, testing, and editing dishes from four generations.",
+      "specificity": "project_specific",
+      "domain": "creative_arts"
+    },
+    {
+      "id": "community-spring-fundraiser",
+      "name": "Community spring fundraiser",
+      "description": "A volunteer team planning our community spring fundraiser, hosted at the local elementary school gym.",
+      "specificity": "project_specific",
+      "domain": "volunteer_community"
+    },
+    {
+      "id": "garden-planning",
+      "name": "Garden planning",
+      "description": "Planning and tending our backyard vegetable garden, USDA zone 5b, partial shade west side.",
+      "specificity": "domain_specific",
+      "domain": "hobbies_crafts"
+    },
+    {
+      "id": "indie-photo-business",
+      "name": "Indie photo business",
+      "description": "Photography portfolio, client deliverables, and business operations for my one-person studio.",
+      "specificity": "project_specific",
+      "domain": "small_business"
+    },
+    {
+      "id": "elementary-classroom",
+      "name": "First-grade classroom",
+      "description": "My first-grade classroom — lesson plans, classroom management, parent communication, end-of-day routines.",
+      "specificity": "project_specific",
+      "domain": "education_teaching"
+    },
+    {
+      "id": "parent-of-middle-schooler",
+      "name": "Parent of a middle-schooler",
+      "description": "Homework-support routines, after-school structure, and evolving independence for my middle-schooler.",
+      "specificity": "domain_specific",
+      "domain": "family_parenting"
+    },
+    {
+      "id": "soup-net-development",
+      "name": "Soup.net Development",
+      "description": "Shared group for developers working on the soup.net system",
+      "specificity": "project_specific",
+      "domain": "software_development"
+    }
+  ],
+
+  "good": [
+    {
+      "id": "good-test-infrastructure",
+      "rank": 95,
+      "domain": "software_development",
+      "group": "all-software-work",
+      "checking_mode": "judgment_with_reasoning",
+      "recipe": "As a developer working on test infrastructure for an embedding pipeline, I prefer mocking the embedding provider behind an env var (returning deterministic fake vectors) over expanding a JSONL seed fixture, so that adding new test traces never requires real API calls and tests stay fast and offline by default.",
+      "evidence": [
+        {
+          "interpretation": "The team had been hitting the real embedding provider in CI; flake rate climbed to 8% over a quarter, all from rate limits and transient 5xx during peak hours. The maintainer proposed the env-var-mock approach after the third on-call page in two weeks.",
+          "references": [
+            { "quote": "we got paged again at 2am for an embedding-quota 429 in CI — this is the third time", "source": "Engineering Slack, 2026-03-14" }
+          ]
+        },
+        {
+          "interpretation": "JSONL seed fixtures had been growing roughly 20 MB/quarter and slowing the test suite. The mock-provider approach makes adding new tests free.",
+          "references": [
+            { "quote": "every new test trace adds 30-50KB to the seed and 200ms to the suite — at this rate we'll be over 5 minutes by Q3", "source": "Test-suite perf review doc, 2026-02-28" }
+          ]
+        }
+      ],
+      "what_makes_it_good": "Recipe: transferable role, scoped goal, concrete choice contrasted with a real alternative, explicit two-part 'so that'. Evidence: two distinct interpretations each backed by a verbatim quote from a verifiable source. References: dated, attributable, and the reader could go look them up.",
+      "slot_quality": {
+        "role_transferability": "high — any team building a test harness for an embedding-backed system",
+        "goal_scope": "specific without leaking the project",
+        "choice_concreteness": "named and contrasted",
+        "reason_explicitness": "explicit, two-part",
+        "evidence_grounding": "tied to concrete operational events (CI pages, suite-perf doc)",
+        "reference_verifiability": "dated quotes from named-channel sources"
+      },
+      "dimensions_covered": ["software_development", "judgment_with_reasoning", "broad_group"]
+    },
+    {
+      "id": "good-yoga-hybrid-class",
+      "rank": 90,
+      "domain": "wellness_fitness",
+      "group": "yoga-teaching",
+      "checking_mode": "judgment_with_reasoning",
+      "recipe": "As an instructor planning sequencing for a hybrid in-person/online class, I chose to teach standing-balance poses near the front of the room rather than facing the back wall, so that online viewers see alignment from a dedicated camera angle without my back to them and in-person students still have a clear sightline to the demo.",
+      "evidence": [
+        {
+          "interpretation": "After running the first hybrid class, two online attendees said they couldn't see alignment cues during tree pose because the instructor was facing away from the camera.",
+          "references": [
+            { "quote": "we couldn't tell which foot was supposed to be load-bearing", "source": "Online attendee post-class chat, 2026-04-22" }
+          ]
+        },
+        {
+          "interpretation": "The instructor tried two camera positions before settling on this layout; the front-of-room position kept both audiences satisfied across three subsequent classes.",
+          "references": [
+            { "quote": "this works for everyone — keep doing it this way", "source": "Studio feedback after class 4, 2026-04-25" }
+          ]
+        }
+      ],
+      "what_makes_it_good": "Role drops 'yoga' since the group description carries it. Goal scopes a specific decision. Evidence shows iteration: complaint → trial → confirmation, each with a verbatim quote. References dated and attributable.",
+      "slot_quality": {
+        "role_transferability": "high within the group's implied domain",
+        "goal_scope": "specific to a class-format decision",
+        "choice_concreteness": "spatial, observable",
+        "reason_explicitness": "dual-audience, explicit",
+        "evidence_grounding": "iteration over multiple classes",
+        "reference_verifiability": "named source, dated"
+      },
+      "dimensions_covered": ["wellness_fitness", "judgment_with_reasoning", "domain_specific_group_role_drops_domain"]
+    },
+    {
+      "id": "good-classroom-parent-night",
+      "rank": 85,
+      "domain": "education_teaching",
+      "group": "elementary-classroom",
+      "checking_mode": "logging_stated_preference",
+      "recipe": "As a teacher prepping for parent night in a classroom that mixes high-academic-anxiety families and high-economic-anxiety families, I chose to display student artwork rather than test scores so that parents see what their kids made, not how they ranked, and the room reads as a celebration rather than a sorting machine.",
+      "evidence": [
+        {
+          "interpretation": "Last year's parent night used a leaderboard-style score wall; multiple parents stayed only briefly and avoided eye contact. The artwork wall in the back of the room was where every family lingered.",
+          "references": [
+            { "quote": "we walked right past the score chart — Mateo wanted to show me his frog drawing", "source": "Parent in hallway after parent night 2025, 2025-10-14" }
+          ]
+        },
+        {
+          "interpretation": "A colleague who teaches at a different school confirmed the pattern: the artwork-only display year had the highest parent-engagement attendance she'd seen in seven years.",
+          "references": [
+            { "quote": "the year I dropped scores was the year dads finally stayed past 15 minutes", "source": "Conversation with another first-grade teacher, 2025-09-02" }
+          ]
+        }
+      ],
+      "what_makes_it_good": "Role drops 'first-grade' (group provides it). Goal scopes a specific event AND a specific audience composition. Choice is concrete and contrasted with a real prior alternative. Two evidence entries from two different sources triangulate.",
+      "slot_quality": {
+        "role_transferability": "high — applies to any teacher running family-engagement events",
+        "goal_scope": "audience-aware",
+        "choice_concreteness": "binary, observable",
+        "reason_explicitness": "two-part",
+        "evidence_grounding": "anchored in observed prior-year behavior + cross-school confirmation",
+        "reference_verifiability": "dated parent quote + colleague quote with date"
+      },
+      "dimensions_covered": ["education_teaching", "logging_stated_preference", "project_specific_group"]
+    },
+    {
+      "id": "good-photo-deliverables",
+      "rank": 85,
+      "domain": "creative_arts",
+      "group": "indie-photo-business",
+      "checking_mode": "logging_stated_preference",
+      "recipe": "As a wedding photographer ramping up for peak season, I chose Lightroom Cloud over Capture One Pro for client deliverables so that I can rate and edit on my iPad on travel days and pick up on my desktop without manual sync.",
+      "evidence": [
+        {
+          "interpretation": "When comparing the two tools the central deciding factor was iPad-to-desktop sync; the photographer named travel days as the binding workflow constraint, not color science or library tools.",
+          "references": [
+            { "quote": "I need to be able to edit at 35,000 feet then pick up at home without thinking about sync", "source": "Tool-comparison conversation, 2026-04-12" }
+          ]
+        }
+      ],
+      "what_makes_it_good": "Role names the relevant specialty since 'photography' alone wouldn't carry enough context. Goal is temporal (peak season). Choice contrasts two real tools. Evidence pinpoints the deciding constraint with the photographer's exact words.",
+      "slot_quality": {
+        "role_transferability": "high — any portrait or event photographer with a multi-device workflow",
+        "goal_scope": "temporal, specific",
+        "choice_concreteness": "two named tools, rejected one explicit",
+        "reason_explicitness": "workflow-specific",
+        "evidence_grounding": "verbatim deciding-constraint quote",
+        "reference_verifiability": "dated"
+      },
+      "dimensions_covered": ["creative_arts", "small_business", "logging_stated_preference"]
+    }
+  ],
+
+  "subtleties": [
+    {
+      "id": "subtle-recipe-product-soupnet",
+      "rank": 95,
+      "domain": "software_development",
+      "group": "soup-net-development",
+      "failure_layer": "recipe",
+      "rule_invoked": "group_implied_product",
+      "looks_ok_because": "The role names a real engineering role, the choice is concrete, there is a 'so that'. Format adherence scores it 1.",
+      "subtlety": "The group description already says 'developers working on the soup.net system'. Restating 'Soup.net' in the role bloats it without adding information any other agent in this group lacks. The embedding model also treats 'Soup.net' as a low-signal proper-noun token, so clustering loses precision.",
+      "as_written": {
+        "recipe": "As a developer deploying Soup.net, I chose to allowlist Google Fonts in CSP rather than self-hosting fonts so that font updates and caching are handled by Google's CDN without manual rotation.",
+        "evidence": [
+          {
+            "interpretation": "Self-hosting fonts had added a manual quarterly rotation step that nobody owned; one rotation slipped four months and a deprecated font hash started being served.",
+            "references": [
+              { "quote": "we missed the Q1 font rotation and didn't notice until February", "source": "Postmortem doc, 2026-02-04" }
+            ]
+          }
+        ]
+      },
+      "fix": {
+        "recipe": "As a developer deploying a small SaaS, I chose to allowlist Google Fonts in CSP rather than self-hosting fonts so that font updates and caching are handled by Google's CDN without manual rotation.",
+        "evidence": [
+          {
+            "interpretation": "Self-hosting fonts had added a manual quarterly rotation step that nobody owned; one rotation slipped four months and a deprecated font hash started being served.",
+            "references": [
+              { "quote": "we missed the Q1 font rotation and didn't notice until February", "source": "Postmortem doc, 2026-02-04" }
+            ]
+          }
+        ]
+      },
+      "dimensions_covered": ["recipe_layer", "group_implied_product", "software_development", "project_specific_group"]
+    },
+    {
+      "id": "subtle-recipe-product-cookbook",
+      "rank": 88,
+      "domain": "creative_arts",
+      "group": "family-cookbook",
+      "failure_layer": "recipe",
+      "rule_invoked": "group_implied_product",
+      "looks_ok_because": "Reads naturally, the role describes a real activity, the choice is concrete, there's a 'so that'.",
+      "subtlety": "The group description already establishes this is the family cookbook project. Restating it in the role is redundant for any agent reading this group, and locks the recipe out of clustering with similar recipes from other home-cooks doing the same kind of curation.",
+      "as_written": {
+        "recipe": "As a contributor to the family cookbook collecting Thanksgiving recipes, I prefer keeping each contributor's original voice (their measurements, their slang, their stories) so that the cookbook reads as a chorus rather than a single editor's rewrite.",
+        "evidence": [
+          {
+            "interpretation": "When the curator's mother read the first edited draft she objected to the standardized measurements; she said her recipes are part of how she taught.",
+            "references": [
+              { "quote": "you took my voice out — that's how I cooked it for sixty years", "source": "Mom on the draft, 2026-03-28" }
+            ]
+          }
+        ]
+      },
+      "fix": {
+        "recipe": "As a home cook collecting holiday recipes from extended family, I prefer keeping each contributor's original voice (their measurements, their slang, their stories) so that the cookbook reads as a chorus rather than a single editor's rewrite.",
+        "evidence": [
+          {
+            "interpretation": "When the curator's mother read the first edited draft she objected to the standardized measurements; she said her recipes are part of how she taught.",
+            "references": [
+              { "quote": "you took my voice out — that's how I cooked it for sixty years", "source": "Mom on the draft, 2026-03-28" }
+            ]
+          }
+        ]
+      },
+      "dimensions_covered": ["recipe_layer", "group_implied_product", "creative_arts", "project_specific_group"]
+    },
+    {
+      "id": "subtle-recipe-compound-fundraiser",
+      "rank": 88,
+      "domain": "volunteer_community",
+      "group": "community-spring-fundraiser",
+      "failure_layer": "recipe",
+      "rule_invoked": "compound_role_inflation",
+      "looks_ok_because": "The role string is grammatical and informative. A reader can tell exactly what is being organized. Format adherence scores it 1.",
+      "subtlety": "The role names not just *who* (a parent volunteer) but *what* the broader event is (community spring fundraiser) and *where* it happens (school gym) — and both event and venue are already in the group description ('A volunteer team planning our community spring fundraiser, hosted at the local elementary school gym'). The recipe loses transferability: another volunteer running a similar auction at any other event won't match. The fix keeps the meaningful distinguishing detail (silent auction) and drops what the group already provides.",
+      "as_written": {
+        "recipe": "As a parent volunteer organizing the silent auction for the community spring fundraiser at the school gym, I chose to centralize sign-ups in a Google Sheet so that volunteers can self-assign without waiting for a coordinator.",
+        "evidence": [
+          {
+            "interpretation": "Last year's email-thread sign-ups created a coordinator bottleneck — every assignment routed through one person.",
+            "references": [
+              { "quote": "everyone was just waiting around for me to assign things", "source": "Last-year coordinator at retro meeting, 2026-03-04" }
+            ]
+          }
+        ]
+      },
+      "fix": {
+        "recipe": "As a parent volunteer running a silent auction, I chose to centralize sign-ups in a Google Sheet so that volunteers can self-assign without waiting for a coordinator.",
+        "evidence": [
+          {
+            "interpretation": "Last year's email-thread sign-ups created a coordinator bottleneck — every assignment routed through one person.",
+            "references": [
+              { "quote": "everyone was just waiting around for me to assign things", "source": "Last-year coordinator at retro meeting, 2026-03-04" }
+            ]
+          }
+        ]
+      },
+      "dimensions_covered": ["recipe_layer", "compound_role_inflation", "volunteer_community", "project_specific_group"]
+    },
+    {
+      "id": "subtle-recipe-missing-sothat-garden",
+      "rank": 80,
+      "domain": "hobbies_crafts",
+      "group": "garden-planning",
+      "failure_layer": "recipe",
+      "rule_invoked": "missing_so_that",
+      "looks_ok_because": "The recipe contains a reason — it just isn't structured as a 'so that' warrant. Many readers will parse the implicit reason correctly.",
+      "subtlety": "The Toulmin warrant is the bridge from data to claim. Without an explicit 'so that', the recipe is a preference statement, not a justified preference. Downstream agents reconstruct the warrant from context, often imperfectly. Format adherence scores these as perfect; the structure is weaker than the score suggests.",
+      "as_written": {
+        "recipe": "As a backyard gardener, I prefer raised beds for tomatoes for better drainage.",
+        "evidence": [
+          {
+            "interpretation": "Previous in-ground tomato beds suffered root rot two seasons running after summer rains pooled in the heavy clay subsoil.",
+            "references": [
+              { "quote": "the dirt's like concrete when it dries and a swamp when it rains", "source": "Gardener's notes, 2026-04-15" }
+            ]
+          }
+        ]
+      },
+      "fix": {
+        "recipe": "As a backyard gardener planting tomatoes in heavy clay soil, I chose raised beds with composted topsoil so that drainage stays adequate during summer rains and root development isn't stunted by waterlogging.",
+        "evidence": [
+          {
+            "interpretation": "Previous in-ground tomato beds suffered root rot two seasons running after summer rains pooled in the heavy clay subsoil.",
+            "references": [
+              { "quote": "the dirt's like concrete when it dries and a swamp when it rains", "source": "Gardener's notes, 2026-04-15" }
+            ]
+          }
+        ]
+      },
+      "dimensions_covered": ["recipe_layer", "missing_so_that", "hobbies_crafts", "domain_specific_group"]
+    },
+    {
+      "id": "subtle-recipe-thin-coffee",
+      "rank": 75,
+      "domain": "lifestyle",
+      "group": "personal",
+      "failure_layer": "recipe",
+      "rule_invoked": "thin_no_role",
+      "looks_ok_because": "A reader can guess what the author meant. The preference is real. Format adherence scores it as partial.",
+      "subtlety": "Without a [role], the recipe makes a context-free assertion. 'Hand-grinding coffee beats pre-ground' has no scope: better for whom, drinking what, on what equipment? The new trigger framing also says: if you have no grounded hypothesis about the user's role here, ask, don't fabricate.",
+      "as_written": {
+        "recipe": "Hand-grinding coffee beats pre-ground.",
+        "evidence": []
+      },
+      "fix": {
+        "recipe": "As a daily home espresso drinker calibrating shots on a 9-bar machine, I chose hand-grinding fresh whole beans over pre-ground so that grind size can be tuned to extraction time without changing beans.",
+        "evidence": [
+          {
+            "interpretation": "When the user shifted from pre-ground to whole-bean, shot extraction times dropped from 28-32s back into a 25-28s window without changing the bean or dose; this was reproducible across three weeks of daily logs.",
+            "references": [
+              { "quote": "back to 26 today, hand-grind makes the whole difference", "source": "Espresso log spreadsheet, 2026-04-08" }
+            ]
+          }
+        ]
+      },
+      "dimensions_covered": ["recipe_layer", "thin_no_role", "lifestyle", "generic_group"]
+    },
+    {
+      "id": "subtle-recipe-agent-voice-disguised",
+      "rank": 92,
+      "domain": "software_development",
+      "group": "soup-net-development",
+      "failure_layer": "recipe",
+      "rule_invoked": "agent_voice",
+      "looks_ok_because": "The grammar is fine, there is a role, and 'AI agent' appears within a longer phrase that sounds like it could be a real role.",
+      "subtlety": "From a real session. The role is the agent narrating its own work, dressed up. The user is the one with the consolidation problem; their role is product owner / design lead. The agent is doing the work for them, not having the taste call. The corpus search loses utility because no human will ever have the role 'AI agent'.",
+      "as_written": {
+        "recipe": "As an AI agent consolidating two competing AI-generated design briefings (DESIGN.md + sitemap.md) for the user, I prefer to use the more comprehensive output as the foundation and verify its specific claims against screenshots, rather than mechanically merging both, so that the final document is internally coherent rather than a Frankenstein composite.",
+        "evidence": [
+          {
+            "interpretation": "Two agents produced briefings of different depths against the same brief; the more comprehensive one had token-system structure the other lacked.",
+            "references": [
+              { "quote": "Sitemap2's DESIGN.md is ~21KB with full token system; sitemap1's is ~7KB with a smaller token set", "source": "Comparison notes, 2026-04-26" }
+            ]
+          }
+        ]
+      },
+      "fix": {
+        "recipe": "As a product owner reviewing competing AI-generated design briefings, I prefer to use the more comprehensive output as the foundation and verify its specific claims against screenshots, rather than mechanically merging both, so that the final document is internally coherent rather than a Frankenstein composite.",
+        "evidence": [
+          {
+            "interpretation": "Two agents produced briefings of different depths against the same brief; the more comprehensive one had token-system structure the other lacked.",
+            "references": [
+              { "quote": "Sitemap2's DESIGN.md is ~21KB with full token system; sitemap1's is ~7KB with a smaller token set", "source": "Comparison notes, 2026-04-26" }
+            ]
+          }
+        ]
+      },
+      "dimensions_covered": ["recipe_layer", "agent_voice", "software_development", "project_specific_group"]
+    },
+    {
+      "id": "subtle-recipe-username-business",
+      "rank": 78,
+      "domain": "small_business",
+      "group": "indie-photo-business",
+      "failure_layer": "recipe",
+      "rule_invoked": "user_name_voice",
+      "looks_ok_because": "Names a real person doing a real activity. The choice is concrete and the reasoning makes sense.",
+      "subtlety": "The role is a specific person's name. Another indie business owner facing the same call won't match — the name is a proxy for context that should be expressed as a transferable role.",
+      "as_written": {
+        "recipe": "As Sarah running her photography business, she prefers to invoice clients in CAD even when shooting destination weddings abroad, so that bookkeeping and tax filing stay in one currency.",
+        "evidence": [
+          {
+            "interpretation": "After last year's three-currency tax filing took two weekends, the business owner committed to single-currency invoicing.",
+            "references": [
+              { "quote": "I'm done with multi-currency at tax time, never again", "source": "Note to self after 2025 tax filing, 2026-04-22" }
+            ]
+          }
+        ]
+      },
+      "fix": {
+        "recipe": "As an indie service business operator working with cross-border clients, I prefer to invoice in my home currency even when work happens elsewhere, so that bookkeeping and tax filing stay in one currency.",
+        "evidence": [
+          {
+            "interpretation": "After last year's three-currency tax filing took two weekends, the business owner committed to single-currency invoicing.",
+            "references": [
+              { "quote": "I'm done with multi-currency at tax time, never again", "source": "Note to self after 2025 tax filing, 2026-04-22" }
+            ]
+          }
+        ]
+      },
+      "dimensions_covered": ["recipe_layer", "user_name_voice", "small_business", "creative_arts"]
+    },
+    {
+      "id": "subtle-recipe-two-claim-foster",
+      "rank": 78,
+      "domain": "family_parenting",
+      "group": "parent-of-middle-schooler",
+      "failure_layer": "recipe",
+      "rule_invoked": "two_claim_bundle",
+      "looks_ok_because": "Each component sentence is reasonable, the warrant is plausible, all parts are true preferences. Format adherence sees one recipe.",
+      "subtlety": "Three distinct decisions are bundled: (1) talk to the teacher early, (2) use the school portal for daily updates, (3) let the kid pick their classroom seat. Each deserves its own recipe with its own evidence — bundled, the warrant covers only the union and downstream agents can't cluster the individual decisions with related recipes elsewhere.",
+      "as_written": {
+        "recipe": "As a foster parent settling a child into a new school, I chose to talk to the teacher early AND I prefer using the school portal for daily updates AND I want the kid to pick their own classroom seat, because consistency helps with transitions.",
+        "evidence": [
+          {
+            "interpretation": "The previous transition went smoother when small choices were within the kid's control.",
+            "references": [
+              { "quote": "she did better when she got to pick", "source": "Conversation with the previous foster parent, 2025-08-12" }
+            ]
+          }
+        ]
+      },
+      "fix": {
+        "recipe": "As a foster parent settling a child into a new school, I want the kid to pick their own classroom seat so that small daily choices are within their control during a transition that's not.",
+        "evidence": [
+          {
+            "interpretation": "The previous transition went smoother when small choices were within the kid's control. The previous foster parent named seat choice as the specific lever.",
+            "references": [
+              { "quote": "she did better when she got to pick where she sat — that was the thing", "source": "Conversation with the previous foster parent, 2025-08-12" }
+            ]
+          }
+        ]
+      },
+      "dimensions_covered": ["recipe_layer", "two_claim_bundle", "family_parenting", "domain_specific_group"]
+    },
+    {
+      "id": "subtle-recipe-vague-knit",
+      "rank": 70,
+      "domain": "hobbies_crafts",
+      "group": "personal",
+      "failure_layer": "recipe",
+      "rule_invoked": "vague_choice",
+      "looks_ok_because": "The recipe has all four slots filled. A reader who's a knitter might guess what 'that approach' means.",
+      "subtlety": "The [choice] is named only in pronouns ('that approach'). A reader who isn't already inside the conversation has no idea what was chosen. Recipes need to be readable standalone — the corpus's downstream value depends on it.",
+      "as_written": {
+        "recipe": "As a knitter starting a new sweater pattern, I prefer that approach because it works better for me.",
+        "evidence": [
+          {
+            "interpretation": "Tried the other way on the last sweater and didn't like the result.",
+            "references": []
+          }
+        ]
+      },
+      "fix": {
+        "recipe": "As a knitter starting a top-down raglan, I chose magic loop over double-pointed needles for the sleeves so that I don't have ladders at the needle joins.",
+        "evidence": [
+          {
+            "interpretation": "On the last raglan finished with DPNs, the sleeves had visible ladders along the needle-change lines that didn't block out fully.",
+            "references": [
+              { "quote": "the ladders never came out — magic loop next time", "source": "Project notes for the previous sweater, 2026-03-02" }
+            ]
+          }
+        ]
+      },
+      "dimensions_covered": ["recipe_layer", "vague_choice", "hobbies_crafts", "generic_group"]
+    },
+    {
+      "id": "subtle-recipe-question-shaped",
+      "rank": 72,
+      "domain": "software_development",
+      "group": "personal",
+      "failure_layer": "recipe",
+      "rule_invoked": "question_shaped",
+      "looks_ok_because": "Format adherence sees a role and an 'I want' clause; it parses as a recipe.",
+      "subtlety": "This is a question, not a held preference. The agent is using check_recipe as a search query rather than logging genuine taste. Recipes work because they're genuinely believed; fabricated ones degrade future checks. If the agent just wants to find something, the corpus's filter parameter (web) is the right tool, or asking the user is.",
+      "as_written": {
+        "recipe": "As a developer, I want to know if dark mode is preferred for development environments.",
+        "evidence": []
+      },
+      "fix": {
+        "recipe": "(no recipe — the agent should ask the user whether they have a preference, OR use the filter parameter on the web /check endpoint to keyword-search the corpus without logging anything)",
+        "evidence": []
+      },
+      "dimensions_covered": ["recipe_layer", "question_shaped", "software_development", "generic_group"]
+    },
+    {
+      "id": "subtle-evidence-missing-fundraiser",
+      "rank": 88,
+      "domain": "volunteer_community",
+      "group": "community-spring-fundraiser",
+      "failure_layer": "evidence",
+      "rule_invoked": "missing_evidence",
+      "looks_ok_because": "The recipe is well-formed, the choice is concrete, the reason is explicit. Only on close read is it clear nothing supports the claim.",
+      "subtlety": "Recipes without evidence are bare assertions. They still log, but downstream agents have no warrant to reason from. The fix is to gather the evidence before submitting — even one quoted observation is dramatically better than zero.",
+      "as_written": {
+        "recipe": "As a parent volunteer running a silent auction, I chose to centralize sign-ups in a Google Sheet so that volunteers can self-assign without waiting for a coordinator.",
+        "evidence": []
+      },
+      "fix": {
+        "recipe": "As a parent volunteer running a silent auction, I chose to centralize sign-ups in a Google Sheet so that volunteers can self-assign without waiting for a coordinator.",
+        "evidence": [
+          {
+            "interpretation": "Last year's email-thread sign-ups bottlenecked on a single coordinator who became a single point of failure for assignment.",
+            "references": [
+              { "quote": "everyone was just waiting around for me to assign things", "source": "Last-year coordinator at retro meeting, 2026-03-04" }
+            ]
+          }
+        ]
+      },
+      "dimensions_covered": ["evidence_layer", "missing_evidence", "volunteer_community", "project_specific_group"]
+    },
+    {
+      "id": "subtle-evidence-restates-recipe-yoga",
+      "rank": 85,
+      "domain": "wellness_fitness",
+      "group": "yoga-teaching",
+      "failure_layer": "evidence",
+      "rule_invoked": "evidence_restates_recipe",
+      "looks_ok_because": "The structure is right — there's an evidence entry with an interpretation and a quote. The shape passes inspection.",
+      "subtlety": "The 'evidence' is a paraphrase of the recipe itself, with the source listed as the recipe. This is circular — the warrant has to come from data the recipe is built on, not from the recipe. The fix grounds the evidence in an actual observation (online attendees' specific complaint).",
+      "as_written": {
+        "recipe": "As an instructor planning sequencing for a hybrid in-person/online class, I chose to teach standing-balance poses near the front of the room so that online viewers see alignment from a dedicated camera angle.",
+        "evidence": [
+          {
+            "interpretation": "She wants online students to see balance poses clearly from a dedicated angle.",
+            "references": [
+              { "quote": "I want online students to see the balance poses clearly", "source": "Restated from the recipe's reasoning" }
+            ]
+          }
+        ]
+      },
+      "fix": {
+        "recipe": "As an instructor planning sequencing for a hybrid in-person/online class, I chose to teach standing-balance poses near the front of the room so that online viewers see alignment from a dedicated camera angle.",
+        "evidence": [
+          {
+            "interpretation": "After the first hybrid class, two online attendees said they couldn't see alignment cues during tree pose because the instructor was facing away from the camera.",
+            "references": [
+              { "quote": "we couldn't tell which foot was supposed to be load-bearing", "source": "Online attendee post-class chat, 2026-04-22" }
+            ]
+          }
+        ]
+      },
+      "dimensions_covered": ["evidence_layer", "evidence_restates_recipe", "wellness_fitness", "domain_specific_group"]
+    },
+    {
+      "id": "subtle-evidence-no-quote-photo",
+      "rank": 80,
+      "domain": "creative_arts",
+      "group": "indie-photo-business",
+      "failure_layer": "evidence",
+      "rule_invoked": "evidence_no_quote",
+      "looks_ok_because": "The interpretation paragraph is plausible and reads like real warrant. Format-adherence scoring doesn't catch the missing reference.",
+      "subtlety": "Interpretation without a verbatim quoted reference leaves the warrant ungrounded. Downstream agents have no way to verify the claim. The fix attaches the actual deciding quote.",
+      "as_written": {
+        "recipe": "As a wedding photographer ramping up for peak season, I chose Lightroom Cloud over Capture One Pro for client deliverables so that I can rate and edit on my iPad on travel days.",
+        "evidence": [
+          {
+            "interpretation": "Sarah prefers cloud sync because she travels a lot for shoots.",
+            "references": []
+          }
+        ]
+      },
+      "fix": {
+        "recipe": "As a wedding photographer ramping up for peak season, I chose Lightroom Cloud over Capture One Pro for client deliverables so that I can rate and edit on my iPad on travel days and pick up on my desktop without manual sync.",
+        "evidence": [
+          {
+            "interpretation": "When comparing the two tools the central deciding factor was iPad-to-desktop sync; the photographer named travel days as the binding workflow constraint.",
+            "references": [
+              { "quote": "I need to be able to edit at 35,000 feet then pick up at home without thinking about sync", "source": "Tool-comparison conversation, 2026-04-12" }
+            ]
+          }
+        ]
+      },
+      "dimensions_covered": ["evidence_layer", "evidence_no_quote", "creative_arts", "small_business"]
+    },
+    {
+      "id": "subtle-evidence-best-practices-cookbook",
+      "rank": 75,
+      "domain": "creative_arts",
+      "group": "family-cookbook",
+      "failure_layer": "evidence",
+      "rule_invoked": "generic_best_practices",
+      "looks_ok_because": "The interpretation invokes a plausible principle. The 'source' even names a field.",
+      "subtlety": "Appealing to best practices isn't grounding. The corpus needs evidence from the user's situation or words, not from generic principles. The fix replaces the principle appeal with the actual moment that drove the decision.",
+      "as_written": {
+        "recipe": "As a home cook collecting holiday recipes from extended family, I prefer keeping each contributor's original voice so that the cookbook reads as a chorus.",
+        "evidence": [
+          {
+            "interpretation": "Best practice in oral history work is to preserve original voice.",
+            "references": [
+              { "quote": "preserving voice is foundational to ethnographic recipe documentation", "source": "general practice in food anthropology" }
+            ]
+          }
+        ]
+      },
+      "fix": {
+        "recipe": "As a home cook collecting holiday recipes from extended family, I prefer keeping each contributor's original voice (their measurements, their slang, their stories) so that the cookbook reads as a chorus rather than a single editor's rewrite.",
+        "evidence": [
+          {
+            "interpretation": "When the curator's mother read the first edited draft she objected to the standardized measurements; she said her recipes are part of how she taught.",
+            "references": [
+              { "quote": "you took my voice out — that's how I cooked it for sixty years", "source": "Mom on the draft, 2026-03-28" }
+            ]
+          }
+        ]
+      },
+      "dimensions_covered": ["evidence_layer", "generic_best_practices", "creative_arts", "project_specific_group"]
+    },
+    {
+      "id": "subtle-reference-paraphrased-parent",
+      "rank": 82,
+      "domain": "family_parenting",
+      "group": "parent-of-middle-schooler",
+      "failure_layer": "reference",
+      "rule_invoked": "paraphrased_as_verbatim",
+      "looks_ok_because": "The quote reads as something the kid plausibly said. The source is dated. The interpretation lines up.",
+      "subtlety": "The 'verbatim' quote is actually a third-person paraphrase of what the kid said. References must be exact substrings of the source — if you can't find the exact string, it's interpretation, not data. The fix uses the actual words.",
+      "as_written": {
+        "recipe": "As a parent of a middle-schooler, I prefer letting her lead her own homework time so that she practices the independence she's asking for.",
+        "evidence": [
+          {
+            "interpretation": "Kid wants to do her homework herself.",
+            "references": [
+              { "quote": "she wants to do her homework herself", "source": "Conversation, 2026-04-10" }
+            ]
+          }
+        ]
+      },
+      "fix": {
+        "recipe": "As a parent of a middle-schooler, I prefer letting her lead her own homework time so that she practices the independence she's asking for.",
+        "evidence": [
+          {
+            "interpretation": "The kid framed the ask as a hovering complaint and an explicit confidence claim.",
+            "references": [
+              { "quote": "stop hovering, I got this", "source": "Conversation, 2026-04-10" }
+            ]
+          }
+        ]
+      },
+      "dimensions_covered": ["reference_layer", "paraphrased_as_verbatim", "family_parenting", "domain_specific_group"]
+    },
+    {
+      "id": "subtle-reference-missing-citation-yoga",
+      "rank": 75,
+      "domain": "wellness_fitness",
+      "group": "yoga-teaching",
+      "failure_layer": "reference",
+      "rule_invoked": "missing_citation",
+      "looks_ok_because": "The quote is a real verbatim string and the interpretation makes sense. Only the source line is missing.",
+      "subtlety": "A quote without a source is unverifiable. Two months from now, neither the agent nor any other agent can find where this came from to confirm it still holds. References need source + date.",
+      "as_written": {
+        "recipe": "As an instructor planning sequencing for a hybrid in-person/online class, I chose to teach standing-balance poses near the front so that online viewers see alignment from a dedicated angle.",
+        "evidence": [
+          {
+            "interpretation": "Online attendees couldn't see alignment from the prior camera position.",
+            "references": [
+              { "quote": "we couldn't tell which foot was supposed to be load-bearing", "source": "" }
+            ]
+          }
+        ]
+      },
+      "fix": {
+        "recipe": "As an instructor planning sequencing for a hybrid in-person/online class, I chose to teach standing-balance poses near the front so that online viewers see alignment from a dedicated angle.",
+        "evidence": [
+          {
+            "interpretation": "Online attendees couldn't see alignment from the prior camera position.",
+            "references": [
+              { "quote": "we couldn't tell which foot was supposed to be load-bearing", "source": "Online attendee post-class chat, 2026-04-22" }
+            ]
+          }
+        ]
+      },
+      "dimensions_covered": ["reference_layer", "missing_citation", "wellness_fitness", "domain_specific_group"]
+    },
+    {
+      "id": "subtle-reference-fabricated-photo",
+      "rank": 90,
+      "domain": "small_business",
+      "group": "indie-photo-business",
+      "failure_layer": "reference",
+      "rule_invoked": "fabricated_reference",
+      "looks_ok_because": "The quote is plausible — the kind of thing a wedding-photo client might say. The source line names a specific session and date, looking attributable. The interpretation matches the recipe direction.",
+      "subtlety": "The client never said this. The agent extrapolated from a general truth ('clients use phones a lot') to a specific fabricated event ('this client said this exact thing on this date'). Distinct from paraphrased_as_verbatim because there's no real source being paraphrased — the source itself is invented. Hallucinations like this are corrosive: future agents reading the corpus treat the fabricated quote as data and build on it. The fix is to use only what was actually observed, even if the resulting evidence is weaker.",
+      "as_written": {
+        "recipe": "As a wedding photographer ramping up for peak season, I chose Lightroom Cloud over Capture One Pro for client deliverables so that clients can rate galleries on their phones during commute days.",
+        "evidence": [
+          {
+            "interpretation": "Several clients explicitly requested phone-based gallery rating during their commutes.",
+            "references": [
+              { "quote": "I always look at galleries on my phone on the train", "source": "Client feedback during onboarding session, 2026-03-15" }
+            ]
+          }
+        ]
+      },
+      "fix": {
+        "recipe": "As a wedding photographer ramping up for peak season, I chose Lightroom Cloud over Capture One Pro for client deliverables so that clients can rate galleries on whatever device they happen to have.",
+        "evidence": [
+          {
+            "interpretation": "The photographer noticed that two industry-blog reviews of Lightroom Cloud both highlighted client mobile-rating workflows. No specific client of theirs has stated this preference yet, but the pattern is well-documented elsewhere.",
+            "references": [
+              { "quote": "they're checking the gallery on their phone before they get home", "source": "PetaPixel review of Lightroom Cloud workflow, 2026-04-08" }
+            ]
+          }
+        ]
+      },
+      "dimensions_covered": ["reference_layer", "fabricated_reference", "small_business", "creative_arts"]
+    },
+    {
+      "id": "subtle-reference-weak-citation-classroom",
+      "rank": 70,
+      "domain": "education_teaching",
+      "group": "elementary-classroom",
+      "failure_layer": "reference",
+      "rule_invoked": "weak_citation",
+      "looks_ok_because": "There's a quote and there's a 'source'. The structure is right.",
+      "subtlety": "'From the conversation' or 'somewhere earlier' is a non-citation. A future agent has no anchor to verify the claim. References need a named, dated, locatable source — even an informal one ('parent in hallway, 2025-10-14') is dramatically better than 'from the conversation'.",
+      "as_written": {
+        "recipe": "As a teacher prepping for parent night, I chose to display student artwork rather than test scores so that the room reads as a celebration rather than a sorting machine.",
+        "evidence": [
+          {
+            "interpretation": "Parents engaged more with artwork than scores last year.",
+            "references": [
+              { "quote": "we walked right past the score chart — Mateo wanted to show me his frog drawing", "source": "from the conversation" }
+            ]
+          }
+        ]
+      },
+      "fix": {
+        "recipe": "As a teacher prepping for parent night, I chose to display student artwork rather than test scores so that parents see what their kids made, not how they ranked.",
+        "evidence": [
+          {
+            "interpretation": "A parent at last year's parent night explicitly walked past the leaderboard score wall and went straight to the artwork wall.",
+            "references": [
+              { "quote": "we walked right past the score chart — Mateo wanted to show me his frog drawing", "source": "Parent in hallway after parent night 2025, 2025-10-14" }
+            ]
+          }
+        ]
+      },
+      "dimensions_covered": ["reference_layer", "weak_citation", "education_teaching", "project_specific_group"]
+    }
+  ]
+}

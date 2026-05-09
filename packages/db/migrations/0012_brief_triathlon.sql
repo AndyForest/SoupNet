@@ -1,0 +1,1 @@
+ALTER TABLE "claimnet"."references" ADD COLUMN "region_meta" jsonb;
