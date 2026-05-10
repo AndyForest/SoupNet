@@ -71,19 +71,3 @@ This file is the way concurrent AI sessions coordinate without explicit messagin
 ---
 
 ## Unsorted
-
-### `[IMPL]` Residual Group → Recipe Book sweep in long-form docs
-
-The 2026-05-10 rename pass landed all the user/agent surfaces (frontend UI, MCP tool names, /recipe-books REST routes with /groups → 308 redirects, JSON wire-format `*RecipeBookIds` fields, email/HTML copy, recipe guide, principles). The schema-level vocabulary (`groups` table, `group_members` table, `groupId` TS field, internal `readGroupIds` service-layer types) intentionally stays per the schema deferral.
-
-What's still using "group" verbatim and should be swept on the next pass:
-
-- `docs/design-thinking.md` — many remaining mentions in agent archetype sections (post line 280) and in user-story prose. The principal sections (User Archetypes, Collaboration user stories, Configurable defaults) are renamed.
-- `docs/engineering-principles.md` — mentions "groups" as a feature concept; should likely keep schema-level "group" only where it describes the schema, otherwise rename.
-- `docs/architecture/overview.md`, `docs/architecture/data-model.md`, `docs/architecture/data-flow.md`, `docs/architecture/api.md` — architecture docs describing the data model can use "group" for schema-level discussion but should call the user-facing concept "recipe book" the first time it's introduced.
-- `docs/adr/0016-groups.md` — historical ADR. Title and body intentionally NOT renamed (historical record). Add a frontmatter note pointing to the rename ADR (TODO).
-- ADR for the rename itself — write a new ADR documenting the Group → Recipe Book rename, the deferral of the schema-level rename, and the 308-redirect/JSON wire-format-rename pattern.
-
-### `[DECISION NEEDED]` Schema-level Group → RecipeBook rename
-
-Tracked as a follow-up to the 2026-05-10 user-surface rename. Renaming `claimnet.groups` → `claimnet.recipe_books` (and `group_members` → `recipe_book_members`, columns `group_id` → `recipe_book_id`) is a destructive migration that touches every API key, every audit-log row, every Drizzle query. Defer until the user-surface rename has bedded in for at least one cycle. When ready: write an ADR with the migration plan (rename + view-alias, dual-read-period, then drop alias).

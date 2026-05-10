@@ -32,9 +32,9 @@ References optionally support multimodal file attachments (`file_url`, `file_mim
 
 **Users** support local JWT auth (bcrypt passwords) with `provider`/`external_id` fields for future OIDC federation. System-level roles: `'system'` (root) and `'tenant'` (normal). Email verification is tracked with token + expiry.
 
-**Organizations** are multi-tenant containers. Every user gets a personal org (`is_personal = true`) on signup. Organizations own groups.
+**Organizations** are multi-tenant containers. Every user gets a personal org (`is_personal = true`) on signup. Organizations own recipe books.
 
-**Groups** are the primary access-control unit. Traces and API keys are scoped to groups. Group slugs are unique within their organization. Member roles: `'owner'`, `'admin'`, `'member'`.
+**Recipe books** (table name: `groups`, member-link table: `group_members` — schema-level vocabulary kept per the deferred rename in ADR-0016) are the primary access-control unit. Traces and API keys are scoped to recipe books. Slugs are unique within their organization. Member roles: `'owner'`, `'admin'`, `'member'`.
 
 **Invitations** allow adding members by email. They reserve a slot against the global signup cap (stored in `system_settings`). System admin invitations can bypass the cap.
 
@@ -42,11 +42,11 @@ References optionally support multimodal file attachments (`file_url`, `file_mim
 
 ## API key design
 
-Keys are group-scoped with separate read/write permissions:
+Keys are recipe-book-scoped with separate read/write permissions. Wire-format names use `recipeBook` vocabulary (`readRecipeBookIds`, `writeRecipeBookIds`, `defaultWriteRecipeBookId`); DB columns retain the schema-level `group` vocabulary per ADR-0016:
 
-- `read_group_ids` — which groups this key can search
-- `write_group_ids` — which groups this key can write traces to
-- `default_write_group_id` — where traces go when no group is specified
+- `read_group_ids` — which recipe books this key can search
+- `write_group_ids` — which recipe books this key can write traces to
+- `default_write_group_id` — where traces go when no recipe book is specified
 
 Two key types: `'daily'` (auto-rotating, generated on login) and `'scoped'` (manually created with specific permissions). Keys authenticate both the web search page (for AI agents) and the MCP endpoint (Bearer token).
 
@@ -56,7 +56,7 @@ The `api_key_id` on traces and linking tables enables per-agent coverage trackin
 
 ## Idempotency
 
-Traces use a three-column unique constraint: `(api_key_id, group_id, claim_text_hash)`. The `claim_text_hash` is a SHA-256 of the claim text. This means the same agent submitting the same recipe to the same group produces the same trace — searches are naturally idempotent.
+Traces use a three-column unique constraint: `(api_key_id, group_id, claim_text_hash)`. The `claim_text_hash` is a SHA-256 of the claim text. This means the same agent submitting the same recipe to the same recipe book produces the same trace — searches are naturally idempotent.
 
 ---
 
@@ -78,7 +78,7 @@ embedding_sources → embedding_chunk_strategies → embedding_chunks → embedd
 
 **Vector cache:** Content-addressed by SHA-256 of source text. Avoids redundant Gemini API calls for identical content. No source text stored (PII-safe — hash is one-way, vector is not reversible).
 
-**vector_source:** `'server'` (computed by ClaimNet via Gemini API) or `'client'` (computed client-side in air-gapped mode). Client vectors are group-scoped only.
+**vector_source:** `'server'` (computed by ClaimNet via Gemini API) or `'client'` (computed client-side in air-gapped mode). Client vectors are recipe-book-scoped only.
 
 ---
 

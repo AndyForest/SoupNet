@@ -92,7 +92,7 @@ This also makes the documentation evolvable — we can ship new followups withou
 
 > **Open question (Andy):** What's the right granularity for followup guides? Some candidates:
 > - Per agent capability profile (web-only, MCP-with-elicitation, MCP-with-subagents)
-> - Per use case (first-time setup, divergent checks, group collaboration, file uploads)
+> - Per use case (first-time setup, divergent checks, recipe-book collaboration, file uploads)
 > - Per "skill level" (beginner / intermediate / advanced)
 >
 > My intuition is "per use case" because that's how a developer thinks about needing help, but I don't have enough data yet.
@@ -144,10 +144,10 @@ This requires:
 
 > **Open question (Andy):** Privacy model. Some options:
 > - **Opt-in flag on individual recipes** — users mark specific recipes as public-showcase-eligible
-> - **Dedicated public group** — recipes go in a "public" group on creation, public visibility is implicit
+> - **Dedicated public recipe book** — recipes go in a "public" recipe book on creation, public visibility is implicit
 > - **Curation queue** — power users propose recipes for the showcase, you (as system admin) approve them
 >
-> My gut says "dedicated public group with curation queue at first, individual opt-in flag once we trust the model" but you'll have stronger opinions.
+> My gut says "dedicated public recipe book with curation queue at first, individual opt-in flag once we trust the model" but you'll have stronger opinions.
 
 ---
 

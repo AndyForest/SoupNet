@@ -28,13 +28,13 @@ Before building wide, build thin and deep. Implement complete paths from the use
 
 **For ClaimNet, the first tracer bullet is:**
 
-1. **Search-as-logging:** User creates a group → gets a search URL with embedded API key → AI agent visits the search page → submits a trace (claim + evidence + references) via GET → trace is logged → vector embedding computed → search results returned. This cuts through the entire system: web page → endpoint → service → Drizzle write → vector pipeline → hybrid search → response.
+1. **Search-as-logging:** User creates a recipe book → gets a search URL with embedded API key → AI agent visits the search page → submits a trace (claim + evidence + references) via GET → trace is logged → vector embedding computed → search results returned. This cuts through the entire system: web page → endpoint → service → Drizzle write → vector pipeline → hybrid search → response.
 
 **What this finds early:**
 - Three-entity schema correctness (traces, evidence, references, linking tables)
 - Vector pipeline integration with new source types
 - GET-based form encoding limits and workarounds
-- API key scoping and group access
+- API key scoping and recipe-book access
 - Search result ranking with coverage signals
 
 Build this flow end-to-end (with stub implementations where needed) before building any other features.
@@ -128,9 +128,9 @@ Embeddings NEVER block primary writes on the async path. The sync path writes a 
 Access control has **two strictly separate credential populations**, matching the two client populations:
 
 - **Human SPA users → JWT only.** Issued at login, stored in `localStorage`, verified by `requireAuth` middleware. 7-day lifetime, stateless, one symmetric secret.
-- **AI agents → API key only.** Issued by a human via the Keys page, hashed at rest, verified by API-key middleware. Scoped to groups, short-lived (daily) or bounded (scoped), revocable individually.
+- **AI agents → API key only.** Issued by a human via the Keys page, hashed at rest, verified by API-key middleware. Scoped to recipe books, short-lived (daily) or bounded (scoped), revocable individually.
 
-**The two populations never mix.** An AI agent never holds a JWT — agents authenticate exclusively with API keys. This is a deliberate, load-bearing security boundary: API keys are group-scoped, short-lived, append-only by design, and revocable without touching the owning human's session. A compromised agent should cost the user one key, not their account. Routes that accept JWT do not fall back to API keys and vice versa; cross-presenting either credential to the wrong surface returns 401.
+**The two populations never mix.** An AI agent never holds a JWT — agents authenticate exclusively with API keys. This is a deliberate, load-bearing security boundary: API keys are recipe-book-scoped, short-lived, append-only by design, and revocable without touching the owning human's session. A compromised agent should cost the user one key, not their account. Routes that accept JWT do not fall back to API keys and vice versa; cross-presenting either credential to the wrong surface returns 401.
 
 Rules — **JWT-protected (human SPA) routes:**
 
@@ -141,8 +141,8 @@ Rules — **JWT-protected (human SPA) routes:**
 
 Rules — **API-key-protected (agent) routes:**
 
-- API key validation checks expiry, revocation, and group scope on every request.
-- Write operations additionally check the key's write-group set; read operations check the read-group set. Keys never grant access to groups they were not scoped to at creation.
+- API key validation checks expiry, revocation, and recipe-book scope on every request. (At the schema level, scope is stored as `read_group_ids` / `write_group_ids` arrays per the deferred Group → Recipe Book schema rename — see ADR-0016.)
+- Write operations additionally check the key's write-recipe-book set; read operations check the read-recipe-book set. Keys never grant access to recipe books they were not scoped to at creation.
 - JWT routes and API-key routes are mounted on disjoint paths — the same handler never accepts both. Helpers that sit between the two (e.g., services that need "current user" context) take the resolved principal as a typed argument, not a raw header.
 
 Auth is designed to be swappable: `users.provider` + `users.external_id` support future OIDC federation on the JWT side. API-key issuance is independent of the human auth provider.

@@ -1,5 +1,7 @@
 # ClaimNet API Capabilities
 
+> **Doc status (2026-05-10):** This document still describes the pre-pivot claims/validations API surface (claims, validations, `claim_group_shares`, `/api/v1/groups/...`). The current backend exposes `/check`, `/traces`, `/uploads`, `/recipe-books/*` (with `/groups/*` 308-redirecting), and the remote MCP at `POST /mcp` — see `CLAUDE.md` and `docs/architecture/data-flow.md` for the live shape. Backlog tracks the full consolidation. References to "group" below should be read as the schema-level term for what the user sees as a **recipe book** (see ADR-0016).
+
 **This document is the narrative source of truth for everything ClaimNet exposes.**
 
 All other API-related files derive from or point back here:

@@ -167,3 +167,50 @@ Agents navigating the graph respect the privacy envelope at each hop. The graph 
   - Rationale: the Soup.net-surfaced "inviting in your AI agent" framing (see `docs/design-thinking.md §"The 'inviting in your AI agent' moment"`) reframed the invitation as the moment a collaborator's AI agent gains team context — post-accept onboarding is now first-class, so explicit Accept is the natural click-point rather than a silent auto-join.
 - **Group archival (decided):** Archived groups are fully read-only — no new claims can be shared to them. Claims remain accessible for reference.
 - **Agent-editable group descriptions (decided):** Agents can update group descriptions via `PUT /groups/:id/description` (API key auth) and `update_group_description` MCP tool. Changes take effect immediately with notification. Agents are encouraged to recipe-check before updating. Changes logged in audit_log with api_key_id.
+
+---
+
+## Update 2026-05-10 — User-surface rename to "Recipe Book"; schema-level rename deferred
+
+### What changed
+
+The user/agent-facing concept previously called "group" is now called "recipe book" everywhere a user, agent, or marketing reader sees it. The schema-level vocabulary stays on "group" (deferred — see the Decision below).
+
+Surfaces renamed (commit `bd59f23`):
+- **Frontend UI:** all labels, page titles, button text. Route paths `/app/groups` → `/app/recipe-books` with TanStack Router redirects from the old paths.
+- **Backend REST API:** `/recipe-books/*` mounted as the canonical path. Legacy `/groups/*` 308-redirects (308 over 301 so POST/PUT/DELETE preserve method+body — matters for cached briefing-link curls hitting `POST /groups/:id/invite`).
+- **MCP tools:** `list_my_groups` → `list_my_recipe_books`, `update_group_description` → `update_recipe_book_description`, `check_recipe` parameters `group` → `recipe_book` and `read_groups` → `read_recipe_books`. Tool descriptions and result text updated. The `/check` page query params accept both new and legacy names so existing briefing URLs in agent context windows continue to resolve.
+- **HTTP wire format on `/keys/*`:** `readGroupIds`/`writeGroupIds`/`defaultWriteGroupId` → `readRecipeBookIds`/`writeRecipeBookIds`/`defaultWriteRecipeBookId`. `writeGroupId` → `writeRecipeBookId`. Mapped at the route boundary (`toWireKey` / `toWireKeyListItem` in `apps/backend/src/routes/keys.ts`); internal service-layer types and DB columns stay on the schema-level vocabulary.
+- **Email + invitation blurb:** "invited you to a recipe book on Soup.net".
+- **Agent briefings, recipe guide, agent-voice copy** (`packages/domain/src/recipe-guide-content.ts`).
+- **Recipe-book descriptions on Soup.net** updated for both `soup-net-development` and `soupnet-oss`; the self-hoster boundary test ("would a self-hoster running this stack on their own infrastructure need this judgment?") is preserved verbatim.
+- **Layer 1 regression test** (`apps/backend/src/routes/mcp-tool-descriptions.test.ts`) reads the MCP route source and asserts the four invariants of the rename so a future drift fails CI.
+
+What stays on schema-level "group" vocabulary:
+- Drizzle tables `claimnet.groups`, `claimnet.group_members`, columns `group_id`, TS field `groupId`.
+- Internal service-layer types in `api-key.service.ts`, `trace.service.ts`, audit-log action strings (`group.description_updated`, `targetType: "group"`).
+- React Query cache keys (`["groups"]`, `["group-members", id]`).
+- Recipe Map query params (`?groupId=`).
+- Migration filenames (e.g., `0007_group_scoped_keys.sql` — immutable history).
+- Historical ADRs and case studies that describe the term in use at the time.
+
+### Decision: schema-level rename is deferred
+
+A second-pass rename of `claimnet.groups` → `claimnet.recipe_books` (and the column / TS-field cascade) is **not done now**. The user-surface rename is sufficient for the launch-readiness goal; the residual translation tax sits in a small mapper layer in `routes/keys.ts` and a one-line CLAUDE.md hint that the schema-level vocabulary differs from the brand.
+
+**Rationale.** The deciding question was "does the wire-format mapper bother future contributors more than reading 'groups' in the DB does?" The mapper is ~30 lines with a 4-line explanatory comment — boring once seen. Reading "groups" in the DB is a recurring small papercut, but each instance is small and the schema-vs-brand note in CLAUDE.md dispatches most of the confusion. The blast radius of a schema rename (hundreds of raw-SQL references across `routes/`, `services/`, frontend cache parsers, plus a coordinated migration with audit-log drift and immutable migration filenames that would still say "group") is genuinely big, and a rename-and-revert is dramatically harder than a code-merge-and-revert.
+
+### Trigger conditions to revisit
+
+Lift the deferral when any of these fire:
+
+1. **The wire-format mapper grows teeth.** If `toWireKey` / `toWireKeyListItem` has to handle a third translated field beyond `readGroupIds` / `writeGroupIds` / `defaultWriteGroupId`, the mapper is becoming architecture rather than a shim — that's the signal to do the schema rename instead of extending the mapper.
+2. **Vocabulary drift creates bugs.** If a new contributor writes service-layer code and accidentally extends the legacy "groups" vocabulary in a way that ships a bug (e.g., a new column, a new cache key, a new audit-log action), that's evidence the schema-level "group" name is actively misleading.
+3. **Another destructive migration is happening anyway.** If a migration is already touching `claimnet.groups` for an unrelated reason, the marginal cost of including the rename is low — bundle them.
+4. **A self-hosting operator pushes back.** If a hosted-deployment customer or active self-hoster says the DB-level naming is confusing them in operations / monitoring / queries, that's direct evidence the deferral cost has exceeded the migration cost.
+
+When the rename is done, the migration plan should document: a transitional view (`CREATE VIEW groups AS SELECT * FROM recipe_books`) for one deploy cycle, a one-time strategy for audit-log `targetType` strings (handle both forever, or one-time UPDATE with explicit accept of the audit-log purity violation), and the resulting deletion of the wire-format mapper layer.
+
+### Pointer
+
+Implementation lives in the commits surrounding `bd59f23 feat(plan-03): rename Group → Recipe Book on user-agent surface`. Decision context: plan-03 briefing (Andy chose A1/B1/C1/D1 — the aggressive rename — for the user surface, and the schema-rename deferral was carried over from plan-02's locked decisions).

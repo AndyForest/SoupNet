@@ -37,7 +37,7 @@ flowchart TB
 
 **JWT auth (human users):**
 - `POST /auth/login` returns a JWT signed with `JWT_SECRET` (7-day expiry)
-- Used for all SPA API routes (`/groups`, `/keys`, `/traces`, `/admin`)
+- Used for all SPA API routes (`/recipe-books` — legacy `/groups` 308-redirects, `/keys`, `/traces`, `/admin`)
 - `requireAuth` middleware validates JWT and sets `c.get("user")`
 
 **API key auth (AI agents):**
@@ -163,12 +163,14 @@ flowchart TD
 
 ---
 
-## 5. Group-Scoped Access Model
+## 5. Recipe-Book-Scoped Access Model
+
+The user-facing concept is "recipe book"; the schema-level table is still `groups` per the deferred rename in ADR-0016. The diagram below uses the schema-level names because it describes the literal table layout.
 
 ```mermaid
 flowchart LR
     U[User] -->|member of| GM[group_members<br/>role: owner/admin/member]
-    GM -->|belongs to| G[Group<br/>slug, name, description]
+    GM -->|belongs to| G[Recipe Book<br/>table: groups<br/>slug, name, description]
     G -->|org_id| O[Organization]
 
     AK[API Key] -->|read_group_ids| G
@@ -178,14 +180,14 @@ flowchart LR
     T[Trace] -->|group_id| G
     T -->|api_key_id| AK
 
-    subgraph "Per-call group selection"
+    subgraph "Per-call recipe-book selection"
         direction TB
-        P1["Agent sends group=slug"] --> P2["Resolve slug within key's write groups"]
-        P3["No group specified"] --> P4["Use key's default_write_group_id"]
+        P1["Agent sends recipe_book=slug<br/>(legacy: group=slug)"] --> P2["Resolve slug within key's write recipe books"]
+        P3["No recipe book specified"] --> P4["Use key's default_write_group_id"]
     end
 ```
 
-**Privacy-narrow by default:** Keys default to the most private write group. Agents must explicitly specify `group=slug` to write to a shared group. Read access spans all readable groups unless restricted with `read_groups`.
+**Privacy-narrow by default:** Keys default to the most private write recipe book. Agents must explicitly specify `recipe_book=slug` to write to a shared book. Read access spans all readable recipe books unless restricted with `read_recipe_books` (legacy alias: `read_groups`).
 
 ---
 

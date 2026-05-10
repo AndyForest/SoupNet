@@ -74,7 +74,7 @@ The three-entity model is inspired by two sources:
 
 N:N linking tables (`trace_evidence`, `trace_references`, `evidence_references`) carry the `api_key_id` that created each link — that's how coverage diversity gets scored. One key reinforcing itself counts less than multiple independent keys converging on the same recipe.
 
-Identity and access: `users` × `organizations` × `groups` × `group_members` × `invitations`. Groups are the unit of sharing; API keys are scoped to groups with independent read/write sets. See `data-model.md` for the full table list (embedding pipeline, vector cache, uploads, audit log, system settings).
+Identity and access: `users` × `organizations` × `groups` × `group_members` × `invitations`. The user-facing concept is **recipe books**; the schema-level table names stay `groups` / `group_members` per the deferred rename (ADR-0016). Recipe books are the unit of sharing; API keys are scoped to recipe books with independent read/write sets. See `data-model.md` for the full table list (embedding pipeline, vector cache, uploads, audit log, system settings).
 
 ## Core flow (one sentence)
 
