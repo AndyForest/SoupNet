@@ -5,7 +5,7 @@ import { describe, it, expect } from "vitest";
  * These are public pages (no auth needed). Tests verify status codes,
  * content-type, and key content markers.
  *
- * Run with: source .env && BACKEND_URL=http://localhost:3001 npx vitest run
+ * Run with: source .env && BACKEND_URL=http://localhost:3101 npx vitest run
  */
 
 const BASE = process.env["BACKEND_URL"] ?? "";

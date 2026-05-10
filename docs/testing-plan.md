@@ -48,7 +48,7 @@ npm run test:ci                   # full CI reproduction — see below
 
 `npm run test:ci` reproduces the exact CI environment locally using `docker-compose.ci.yml`:
 
-1. Spins up a fresh postgres on port **5534** (separate from dev on 5533)
+1. Spins up a fresh postgres on port **5534** (separate from dev on 5633)
 2. Builds packages + backend
 3. Starts the backend (runs migrations from scratch, creates system user)
 4. Seeds system settings (signup cap)
@@ -103,16 +103,16 @@ Lightweight — assert status, content-type, and key content markers. No auth ne
 
 When an agent modifies HTML routes, CSS, or frontend components, it provides the human with a verification checklist. The agent cannot see the browser — the human confirms.
 
-**Prerequisites:** Backend running on localhost:3001.
+**Prerequisites:** Backend running on localhost:3101.
 
 | URL | What to verify |
 |-----|---------------|
-| http://localhost:3001/docs/recipe-check-guide | Page loads. All sections render (How this works, Examples, Tips). "Recipe Check Scenarios" link works. |
-| http://localhost:3001/docs/recipe-scenarios | Page loads (no 500 error). Markdown renders as HTML — headings, code blocks, blockquotes visible. No raw markdown. "Back to recipe check guide" link works. |
-| http://localhost:3001/docs/mcp-setup | Page loads. Config snippets show with YOUR_API_KEY placeholder. macOS/Windows configs in details toggles. |
-| http://localhost:3001/docs/mcp-setup?key=TEST123 | Same as above, but snippets show "TEST123" instead of "YOUR_API_KEY". |
-| http://localhost:3001/check | Check page loads. Form submits without error. "Recipe Check Guide" link navigates correctly. |
-| http://localhost:5173 | Frontend SPA loads. Navigation works. Dashboard shows groups and keys (if logged in). |
+| http://localhost:3101/docs/recipe-check-guide | Page loads. All sections render (How this works, Examples, Tips). "Recipe Check Scenarios" link works. |
+| http://localhost:3101/docs/recipe-scenarios | Page loads (no 500 error). Markdown renders as HTML — headings, code blocks, blockquotes visible. No raw markdown. "Back to recipe check guide" link works. |
+| http://localhost:3101/docs/mcp-setup | Page loads. Config snippets show with YOUR_API_KEY placeholder. macOS/Windows configs in details toggles. |
+| http://localhost:3101/docs/mcp-setup?key=TEST123 | Same as above, but snippets show "TEST123" instead of "YOUR_API_KEY". |
+| http://localhost:3101/check | Check page loads. Form submits without error. "Recipe Check Guide" link navigates correctly. |
+| http://localhost:5273 | Frontend SPA loads. Navigation works. Dashboard shows groups and keys (if logged in). |
 
 **Surfacing test data for manual checks:** When asking the human to test the `/check` page, the agent should fetch a recent recipe from the database and provide it as copy-paste text in the chat. This avoids the human having to dig through the DB themselves. Example query:
 ```sql
@@ -135,19 +135,19 @@ Future: A `/check/recent` endpoint to surface the most recent recipe for an API 
 
 ### Layer 4b: Local MCP Testing
 
-Tests MCP tool behavior and session lifecycle against the local Docker backend. The `.mcp.json` file includes a `soupnet-local` server pointing to `http://localhost:3001/mcp`.
+Tests MCP tool behavior and session lifecycle against the local Docker backend. The `.mcp.json` file includes a `soupnet-local` server pointing to `http://localhost:3101/mcp`.
 
-**Prerequisites:** Backend running on localhost:3001. A valid API key in `.mcp.json` under `soupnet-local`. If the key has expired, generate a new scoped key:
+**Prerequisites:** Backend running on localhost:3101. A valid API key in `.mcp.json` under `soupnet-local`. If the key has expired, generate a new scoped key:
 
 ```bash
 # Login, then create a scoped key (replace password from .env)
-TOKEN=$(curl -s http://localhost:3001/auth/login -X POST \
+TOKEN=$(curl -s http://localhost:3101/auth/login -X POST \
   -H 'Content-Type: application/json' \
   -d '{"email":"andy@soup.net","password":"YOUR_DEV_PASSWORD"}' | \
   node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>process.stdout.write(JSON.parse(d).data.token))")
 
 # Create a 30-day scoped key (adjust group IDs from your local DB)
-curl -s http://localhost:3001/keys/scoped -X POST \
+curl -s http://localhost:3101/keys/scoped -X POST \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"readGroupIds":["<group-id>"],"writeGroupIds":["<group-id>"],"defaultWriteGroupId":"<group-id>","expiresAt":"2026-05-04T00:00:00Z","label":"local-mcp-dev"}'

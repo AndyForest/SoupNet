@@ -3,7 +3,7 @@ import { defineConfig } from "drizzle-kit";
 function getDatabaseUrl(): string {
   if (process.env["DATABASE_URL"]) return process.env["DATABASE_URL"];
   const host = process.env["PGHOST"] ?? "localhost";
-  const port = process.env["PGPORT"] ?? "5533";
+  const port = process.env["PGPORT"] ?? "5633";
   const user = process.env["PGUSER"] ?? "claimnet";
   const password = process.env["PGPASSWORD"] ?? "claimnet";
   const database = process.env["PGDATABASE"] ?? "claimnet";

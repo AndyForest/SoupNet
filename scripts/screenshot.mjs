@@ -18,7 +18,7 @@
  * the auth phase is skipped to save time.
  *
  * Prereqs:
- *   - Both dev servers running: frontend on :5173, backend on :3001.
+ *   - Both dev servers running: frontend on :5273, backend on :3101.
  *   - Puppeteer available: `npm install --no-save puppeteer`.
  *   - Auth env vars set (DEV_USERNAME / DEV_PASSWORD typically; see README).
  */
@@ -56,8 +56,8 @@ const matchesFilter = (name) => FILTERS.length === 0 || FILTERS.some((f) => name
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
-const FRONTEND = process.env["SCREENSHOT_FRONTEND_URL"] ?? "http://localhost:5173";
-const BACKEND = process.env["SCREENSHOT_BACKEND_URL"] ?? "http://localhost:3001";
+const FRONTEND = process.env["SCREENSHOT_FRONTEND_URL"] ?? "http://localhost:5273";
+const BACKEND = process.env["SCREENSHOT_BACKEND_URL"] ?? "http://localhost:3101";
 
 // Auth — system-role user so admin pages are accessible. No fallback for
 // password; we never want a credential in source. Auth is only required if
@@ -121,7 +121,7 @@ const AGENT_ROUTES = [
   { path: "/docs/recipe-scenarios", name: "docs-recipe-scenarios" },
   { path: "/docs/mcp-setup", name: "docs-mcp-setup" },
   { path: "/docs/bootstrap", name: "docs-bootstrap" },
-  // /check on :3001 requires an API key in the URL; capture only with a
+  // /check on :3101 requires an API key in the URL; capture only with a
   // throwaway key, which this script doesn't mint. Skipped.
 ];
 
@@ -230,7 +230,7 @@ async function run() {
 
   // Phase 4: agent-facing HTML on backend (no auth needed).
   if (FILTERED_AGENT.length > 0) {
-    console.log("Phase 4: agent-facing HTML (backend :3001)");
+    console.log("Phase 4: agent-facing HTML (backend :3101)");
     const agentCtx = await browser.createBrowserContext();
     const agentPage = await agentCtx.newPage();
     for (const r of FILTERED_AGENT) {

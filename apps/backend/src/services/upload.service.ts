@@ -102,7 +102,7 @@ export function getOwnHostname(): string {
  * would type in a browser. Ext comes from the MIME type so it's predictable.
  */
 function buildFileUrl(uploadId: string, mimeType: string): string {
-  const base = process.env["BACKEND_URL"] ?? "http://localhost:3001";
+  const base = process.env["BACKEND_URL"] ?? "http://localhost:3101";
   const ext = MIME_TO_EXT[mimeType] ?? "";
   return `${base.replace(/\/$/, "")}/uploads/${uploadId}${ext}`;
 }

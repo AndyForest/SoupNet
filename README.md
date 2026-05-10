@@ -22,22 +22,22 @@ cp .env.example .env
 # GEMINI_API_KEY is optional locally — leave EMBEDDINGS_PROVIDER=stub for tests.
 
 docker compose up --build -d    # postgres + backend (with in-process embedding worker) + mailpit
-npm run dev:frontend            # Vite SPA on :5173 (separate terminal)
+npm run dev:frontend            # Vite SPA on :5273 (separate terminal)
 ```
 
-Open `http://localhost:5173` — log in, generate a recipe check link, and start checking recipes.
+Open `http://localhost:5273` — log in, generate a recipe check link, and start checking recipes.
 
 ---
 
-Mailpit Web UI for local dev: http://localhost:8525 
+Mailpit Web UI for local dev: http://localhost:8625 
 
 ## Architecture
 
 ```
-apps/backend       Hono HTTP server (port 3001) — auth, REST API, /check recipe page,
+apps/backend       Hono HTTP server (port 3101) — auth, REST API, /check recipe page,
                    remote MCP endpoint (/mcp), plus in-process pg-boss embedding consumers
                    (src/embedding-worker/). See ADR-0020, ADR-0021.
-apps/frontend      Vite React SPA (port 5173) — dashboard, recipe map, admin pages
+apps/frontend      Vite React SPA (port 5273) — dashboard, recipe map, admin pages
 apps/mcp-server    Stdio MCP server (bundled as soupnet.mcpb for Claude Desktop)
 
 packages/db        Drizzle schema + migrations — single claimnet schema, single source of truth
@@ -52,7 +52,7 @@ packages/config    Shared tsconfig, ESLint config
 
 ## MCP setup
 
-The primary path is **remote MCP over Streamable HTTP** (stateless, ADR-0021). Point your agent at the backend's `/mcp` endpoint with an API key as a Bearer token — works the same whether you run locally (`http://localhost:3001/mcp`) or against the deployed instance (`https://mcp.soup.net/mcp`).
+The primary path is **remote MCP over Streamable HTTP** (stateless, ADR-0021). Point your agent at the backend's `/mcp` endpoint with an API key as a Bearer token — works the same whether you run locally (`http://localhost:3101/mcp`) or against the deployed instance (`https://mcp.soup.net/mcp`).
 
 **1. Generate an API key** — Log in to the SPA, open **API keys**, create a daily or scoped key, copy the raw value.
 
@@ -60,7 +60,7 @@ The primary path is **remote MCP over Streamable HTTP** (stateless, ADR-0021). P
 
 **Claude Code** — per-project `.mcp.json` at the repo root (or `~/.claude/.mcp.json` for global). One-liner:
 ```
-claude mcp add --transport http soupnet http://localhost:3001/mcp --header "Authorization: Bearer YOUR_KEY"
+claude mcp add --transport http soupnet http://localhost:3101/mcp --header "Authorization: Bearer YOUR_KEY"
 ```
 
 Or in `.mcp.json`:
@@ -69,7 +69,7 @@ Or in `.mcp.json`:
   "mcpServers": {
     "soupnet": {
       "type": "http",
-      "url": "http://localhost:3001/mcp",
+      "url": "http://localhost:3101/mcp",
       "headers": { "Authorization": "Bearer YOUR_KEY" }
     }
   }
@@ -82,7 +82,7 @@ Or in `.mcp.json`:
   "servers": {
     "soupnet": {
       "type": "http",
-      "url": "http://localhost:3001/mcp",
+      "url": "http://localhost:3101/mcp",
       "headers": { "Authorization": "Bearer YOUR_KEY" }
     }
   },
@@ -95,7 +95,7 @@ Or in `.mcp.json`:
 {
   "mcpServers": {
     "soupnet": {
-      "serverUrl": "http://localhost:3001/mcp",
+      "serverUrl": "http://localhost:3101/mcp",
       "headers": { "Authorization": "Bearer YOUR_KEY" }
     }
   }
@@ -124,8 +124,8 @@ npm run dev:frontend             # Vite dev server (separate terminal)
 ```bash
 docker compose up -d postgres    # just the database
 npm run build:packages           # build internal packages
-source .env && npm run dev:backend   # Hono with tsx watch on :3001
-npm run dev:frontend             # Vite on :5173
+source .env && npm run dev:backend   # Hono with tsx watch on :3101
+npm run dev:frontend             # Vite on :5273
 ```
 
 **Database migrations:**

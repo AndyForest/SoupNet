@@ -6,7 +6,7 @@ let transporter: Transporter | null = null;
 function getTransporter(): Transporter {
   if (!transporter) {
     const smtpHost = process.env["SMTP_HOST"] ?? "localhost";
-    const smtpPort = parseInt(process.env["SMTP_PORT"] ?? "1025", 10);
+    const smtpPort = parseInt(process.env["SMTP_PORT"] ?? "1125", 10);
     const smtpUser = process.env["SMTP_USER"];
     const smtpPass = process.env["SMTP_PASS"];
     const smtpSecure = process.env["SMTP_SECURE"] === "true";
@@ -22,7 +22,7 @@ function getTransporter(): Transporter {
 }
 
 const FROM_ADDRESS = process.env["EMAIL_FROM"] ?? "noreply@soup.net";
-const APP_URL = process.env["FRONTEND_URL"] ?? "http://localhost:5173";
+const APP_URL = process.env["FRONTEND_URL"] ?? "http://localhost:5273";
 
 /** HTML-escape dynamic values inserted into email templates. */
 function escHtml(s: string): string {

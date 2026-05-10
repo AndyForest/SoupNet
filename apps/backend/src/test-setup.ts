@@ -13,7 +13,7 @@
  *   → prints the API key for copy-paste into the browser
  */
 
-const BASE = process.env["BACKEND_URL"] ?? "http://localhost:3001";
+const BASE = process.env["BACKEND_URL"] ?? "http://localhost:3101";
 const TEST_EMAIL = process.env["TEST_USERNAME"] ?? "test@test.local";
 const TEST_PASSWORD = process.env["TEST_PASSWORD"] ?? "test-password-123";
 

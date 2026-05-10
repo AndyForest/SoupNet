@@ -10,8 +10,8 @@ Soup.net is a stigmergic search engine for taste and judgment. AI agents check r
 
 npm workspaces monorepo. Node 24 LTS, npm ≥10.
 
-- **apps/backend** — Hono HTTP server (port 3001). JWT + API-key auth, REST API, `/check` recipe page for AI agents, remote MCP endpoint at `POST /mcp`. Runs the pg-boss embedding consumers in-process (`src/embedding-worker/`); see ADR-0020.
-- **apps/frontend** — Vite React SPA (port 5173). TanStack Router + Query. User dashboard for managing groups, API keys, recipe map.
+- **apps/backend** — Hono HTTP server (port 3101). JWT + API-key auth, REST API, `/check` recipe page for AI agents, remote MCP endpoint at `POST /mcp`. Runs the pg-boss embedding consumers in-process (`src/embedding-worker/`); see ADR-0020.
+- **apps/frontend** — Vite React SPA (port 5273). TanStack Router + Query. User dashboard for managing groups, API keys, recipe map.
 - **apps/mcp-server** — Stdio MCP server (packaged as `.mcpb` for Claude Desktop). Thin proxy that forwards `check_recipe` / `get_recipe_guide` calls to backend `/check`. The remote HTTP MCP lives in backend per ADR-0007 + ADR-0021.
 - **packages/db** — Drizzle ORM schema + migrations for `claimnet` Postgres schema. Single source of truth for all tables.
 - **packages/domain** — Business logic, ranking rules, and shared agent-facing copy (recipe guide, briefings, principles). No I/O.
@@ -29,8 +29,8 @@ docker compose up --build -d
 # Or for development with hot reload:
 docker compose up -d postgres          # Start just postgres
 npm run build:packages                  # Build internal packages
-source .env && npm run dev:backend      # Hono server with tsx watch on :3001
-npm run dev:frontend                    # Vite dev server on :5173
+source .env && npm run dev:backend      # Hono server with tsx watch on :3101
+npm run dev:frontend                    # Vite dev server on :5273
 
 # Database migrations (Drizzle only — single schema)
 cd packages/db && npx drizzle-kit generate   # Generate migration from schema changes
@@ -72,7 +72,7 @@ If it fails, fix before committing. Do not skip. Do not invent per-workspace var
 
 After tests pass, check `docs/testing-plan.md` Layer 4 for manual browser verification — tell the human what URLs to check and what to look for. **If backend code changed, run `docker compose up --build -d` before handing off to the human** — `test:ci` uses its own isolated stack (`docker-compose.ci.yml` on port 5534) and does NOT rebuild the dev containers the human tests against. Commit only after gates pass and human confirms.
 
-**MCP testing:** When modifying MCP routes, tools, session handling, or auth, test via the `soupnet-local` MCP server in `.mcp.json` (points to `http://localhost:3001/mcp`). Call `list_my_groups` or `check_recipe` through the local MCP to verify. For session changes, test recovery by running `docker compose restart backend` then calling any tool — it should work without `/mcp` reconnect. See `docs/testing-plan.md` Layer 4b for details.
+**MCP testing:** When modifying MCP routes, tools, session handling, or auth, test via the `soupnet-local` MCP server in `.mcp.json` (points to `http://localhost:3101/mcp`). Call `list_my_groups` or `check_recipe` through the local MCP to verify. For session changes, test recovery by running `docker compose restart backend` then calling any tool — it should work without `/mcp` reconnect. See `docs/testing-plan.md` Layer 4b for details.
 
 ## Keeping CLAUDE.md in sync
 
@@ -92,7 +92,7 @@ Quick reference:
 
 ## Database Architecture
 
-Single Postgres database on port **5533** (non-standard, intentional), single `claimnet` schema managed entirely by Drizzle.
+Single Postgres database on port **5633** (non-standard, intentional), single `claimnet` schema managed entirely by Drizzle.
 
 **Core tables:**
 - `users`, `organizations`, `groups`, `group_members`, `invitations` — identity, access, onboarding
@@ -183,8 +183,8 @@ Copy `.env.example` to `.env`. Key variables (see `.env.example` for the full li
 
 ## Infrastructure (Docker Compose)
 
-- **postgres** (pgvector/pgvector:pg17, port 5533)
-- **backend** (Hono + in-process pg-boss consumers, port 3001, Drizzle migrations at startup)
-- **mailpit** (local SMTP capture, web UI on 8525, SMTP on 1025)
+- **postgres** (pgvector/pgvector:pg17, port 5633)
+- **backend** (Hono + in-process pg-boss consumers, port 3101, Drizzle migrations at startup)
+- **mailpit** (local SMTP capture, web UI on 8625, SMTP on 1125)
 
 The application is deployment-agnostic — it only needs Postgres 17 with the `pgvector` extension and the env vars in `.env.example`. Self-hosters can run it on any container platform (Docker, Kubernetes, ECS, Fly, Hetzner, etc.).

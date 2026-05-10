@@ -16,7 +16,7 @@ Write the test first. Then write the code that passes it.
 - Ranking logic: property-based tests that verify score ordering invariants
 - Schema changes: migration tests that verify the schema can be migrated forward and backward
 
-**Tools in use:** Vitest for unit + integration. Integration tests hit the running Docker backend on :3001 — no Supertest, no testcontainers. `npm run test:ci` spins a fresh isolated Postgres on :5534 to reproduce CI exactly. See `docs/testing-plan.md`.
+**Tools in use:** Vitest for unit + integration. Integration tests hit the running Docker backend on :3101 — no Supertest, no testcontainers. `npm run test:ci` spins a fresh isolated Postgres on :5534 to reproduce CI exactly. See `docs/testing-plan.md`.
 
 ---
 
@@ -66,7 +66,7 @@ Storybook is the registry of composable frontend components with interactive exa
 
 **Testing at boundaries:**
 - Services and repositories are tested with real Drizzle queries against the running Docker backend
-- HTTP routes are tested by sending real requests to :3001 (or the isolated :5534 DB via `npm run test:ci`)
+- HTTP routes are tested by sending real requests to :3101 (or the isolated :5534 DB via `npm run test:ci`)
 - MCP tools are tested end-to-end via the `soupnet-local` MCP server against the same backend (`docs/testing-plan.md` Layer 4b)
 - Frontend component tests are still sparse — Storybook-driven interaction tests remain aspirational
 

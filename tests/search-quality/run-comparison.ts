@@ -7,14 +7,14 @@
  *
  * Usage: source .env && npx tsx tests/search-quality/run-comparison.ts
  *
- * Requires: DATABASE_URL, running backend at http://localhost:3001,
+ * Requires: DATABASE_URL, running backend at http://localhost:3101,
  * and a valid API key in SOUPNET_TEST_KEY env var.
  */
 
 import { TEST_RECIPES, EXPECTED_MATCHES } from "./fixtures";
 import type { TestRecipe, ExpectedMatch } from "./fixtures";
 
-const BASE = process.env["BACKEND_URL"] ?? "http://localhost:3001";
+const BASE = process.env["BACKEND_URL"] ?? "http://localhost:3101";
 const API_KEY = process.env["SOUPNET_TEST_KEY"];
 
 if (!API_KEY) {

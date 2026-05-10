@@ -217,8 +217,8 @@ keys.get("/briefing", async (c) => {
     isDefault: g.id === keyRow.default_write_group_id,
   }));
 
-  const backendUrl = process.env["BACKEND_URL"] ?? "http://localhost:3001";
-  const frontendUrl = process.env["FRONTEND_URL"] ?? "http://localhost:5173";
+  const backendUrl = process.env["BACKEND_URL"] ?? "http://localhost:3101";
+  const frontendUrl = process.env["FRONTEND_URL"] ?? "http://localhost:5273";
   const checkUrl = `${backendUrl}/check?key=${encodeURIComponent(rawKey)}`;
 
   const text = briefingType === "web"

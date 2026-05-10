@@ -907,7 +907,7 @@ mcpRouter.all("/", mcpRateLimit, async (c) => {
     scopes: ["mcp:tools"],
   };
 
-  const backendUrl = process.env["BACKEND_URL"] ?? `http://localhost:${process.env["PORT"] ?? "3001"}`;
+  const backendUrl = process.env["BACKEND_URL"] ?? `http://localhost:${process.env["PORT"] ?? "3101"}`;
 
   // Stateless mode: each request gets a fresh transport+server pair. The SDK
   // requires this — reusing a stateless transport across requests causes

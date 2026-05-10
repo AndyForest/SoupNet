@@ -96,7 +96,7 @@ function getMidnightUTC(): Date {
 }
 
 function buildCheckUrl(key: string): string {
-  const backendUrl = process.env["BACKEND_URL"] ?? "http://localhost:3001";
+  const backendUrl = process.env["BACKEND_URL"] ?? "http://localhost:3101";
   return `${backendUrl}/check?key=${encodeURIComponent(key)}`;
 }
 

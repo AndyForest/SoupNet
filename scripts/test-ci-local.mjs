@@ -30,7 +30,7 @@ import { readdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
 const CI_PORT = 3098;
-// CI postgres runs on 5534 to avoid colliding with dev on 5533
+// CI postgres runs on 5534 to avoid colliding with dev on 5633
 const CI_PG = {
   PGHOST: "localhost",
   PGPORT: "5534",

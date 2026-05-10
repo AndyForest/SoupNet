@@ -26,8 +26,8 @@ const app = new Hono<AppEnv>();
 // The SPA calls the backend cross-origin in both dev and prod (no Vite proxy
 // in dev — see apps/frontend/vite.config.ts). Authorization must be in
 // allowHeaders so the preflight for Bearer-token requests succeeds.
-const frontendUrl = process.env["FRONTEND_URL"] ?? "http://localhost:5173";
-const backendUrl = process.env["BACKEND_URL"] ?? "http://localhost:3001";
+const frontendUrl = process.env["FRONTEND_URL"] ?? "http://localhost:5273";
+const backendUrl = process.env["BACKEND_URL"] ?? "http://localhost:3101";
 const allowedOrigins = new Set([frontendUrl, backendUrl]);
 app.use(
   "/*",
@@ -88,7 +88,7 @@ app.route("/mcp", mcpRoutes);
 app.route("/uploads", uploadsRoutes);
 
 // Startup
-const port = parseInt(process.env["PORT"] ?? "3001", 10);
+const port = parseInt(process.env["PORT"] ?? "3101", 10);
 
 async function start() {
   // Run migrations

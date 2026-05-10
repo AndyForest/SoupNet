@@ -1,12 +1,13 @@
 // API base URL. Full URL to the backend — cross-origin in both dev and prod.
-// Dev default is the local backend at :3001 (backend CORS allows :5173 origin).
-// Prod is set at build time via VITE_API_BASE (e.g. https://mcp.soup.net).
+// Dev default is the local backend at :3101 (backend CORS allows :5273 origin).
+// Override via VITE_API_BASE in the root .env (vite.config.ts loads it via
+// envDir). CI sets VITE_API_BASE at build time for prod (e.g. https://mcp.soup.net).
 // Same-origin via a Vite proxy list was tried and removed 2026-04-19 — the
 // proxy duplicated every backend route mount and failed silently when a new
 // route wasn't added to the list.
 export const API_BASE =
   import.meta.env.VITE_API_BASE ??
-  (import.meta.env.DEV ? "http://localhost:3001" : "");
+  (import.meta.env.DEV ? "http://localhost:3101" : "");
 
 // Store JWT token in localStorage
 const TOKEN_KEY = "claimnet_token";

@@ -5,7 +5,7 @@ import { useState } from "react";
 import { Icon } from "../components/Icon.js";
 import { useClipboard } from "../hooks/useClipboard.js";
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL ?? "http://localhost:3001";
+const BACKEND_URL = import.meta.env.VITE_API_BASE ?? "http://localhost:3101";
 const MCP_URL = `${BACKEND_URL}/mcp`;
 const DOCS_URL = `${BACKEND_URL}/docs/mcp-setup`;
 

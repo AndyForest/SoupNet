@@ -162,7 +162,7 @@ Next evidence entry (interpretation of the next reference).
  */
 docs.get("/mcp-setup", (c) => {
   const apiKey = c.req.query("key") || "YOUR_API_KEY";
-  const backendUrl = process.env["BACKEND_URL"] || "http://localhost:3001";
+  const backendUrl = process.env["BACKEND_URL"] || "http://localhost:3101";
   const kq = keyQs(c.req.query("key"));
 
   // Escape for safe embedding in HTML
@@ -558,7 +558,7 @@ docs.get("/recipe-scenarios", async (c) => {
  */
 docs.get("/bootstrap", async (c) => {
   const apiKey = c.req.query("key") || "YOUR_API_KEY";
-  const soupNetUrl = process.env["BACKEND_URL"] || "http://localhost:3001";
+  const soupNetUrl = process.env["BACKEND_URL"] || "http://localhost:3101";
 
   const tryPaths = [
     resolve(process.cwd(), "public", "docs", "bootstrap-your-corpus.md"),

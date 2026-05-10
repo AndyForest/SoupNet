@@ -30,6 +30,10 @@ services:
       # Override host/port from .env with Docker-internal values
       PGHOST: postgres
       PGPORT: "5432"
+      # Backend listens on 3001 inside the container; docker maps host:3101 → container:3001.
+      # The non-docker code default is 3101 (matches host port) — this override keeps the
+      # container internal port stable so the docker mapping doesn't have to change.
+      PORT: "3001"
       NODE_ENV: production
       JWT_SECRET: ${JWT_SECRET:-change-me-to-a-random-64-char-hex-string-use-openssl-rand-hex-32}
       DEV_USERNAME: ${DEV_USERNAME:-}

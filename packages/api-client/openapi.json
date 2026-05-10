@@ -10,7 +10,7 @@
   },
   "servers": [
     {
-      "url": "http://localhost:3001",
+      "url": "http://localhost:3101",
       "description": "Current environment"
     }
   ],

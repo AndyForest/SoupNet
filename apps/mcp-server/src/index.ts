@@ -25,7 +25,7 @@ import {
   EXT_TO_MIME,
 } from "@soupnet/domain";
 
-const backendUrl = process.env["SOUPNET_BACKEND_URL"] ?? "http://localhost:3001";
+const backendUrl = process.env["SOUPNET_BACKEND_URL"] ?? "http://localhost:3101";
 const apiKey = process.env["SOUPNET_API_KEY"] ?? "";
 
 // ── Types for the JSON API response ─────────────────────────────────────────

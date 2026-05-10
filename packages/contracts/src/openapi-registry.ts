@@ -502,7 +502,7 @@ export function generateOpenApiSpec() {
       contact: { name: "ClaimNet" },
     },
     servers: [
-      { url: process.env["BACKEND_URL"] ?? "http://localhost:3001", description: "Current environment" },
+      { url: process.env["BACKEND_URL"] ?? "http://localhost:3101", description: "Current environment" },
     ],
     tags: [
       { name: "Auth", description: "Authentication" },
