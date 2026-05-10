@@ -112,7 +112,7 @@ When an agent modifies HTML routes, CSS, or frontend components, it provides the
 | http://localhost:3101/docs/mcp-setup | Page loads. Config snippets show with YOUR_API_KEY placeholder. macOS/Windows configs in details toggles. |
 | http://localhost:3101/docs/mcp-setup?key=TEST123 | Same as above, but snippets show "TEST123" instead of "YOUR_API_KEY". |
 | http://localhost:3101/check | Check page loads. Form submits without error. "Recipe Check Guide" link navigates correctly. |
-| http://localhost:5273 | Frontend SPA loads. Navigation works. Dashboard shows groups and keys (if logged in). |
+| http://localhost:5273 | Frontend SPA loads. Navigation works. Dashboard shows recipe books and keys (if logged in). |
 
 **Surfacing test data for manual checks:** When asking the human to test the `/check` page, the agent should fetch a recent recipe from the database and provide it as copy-paste text in the chat. This avoids the human having to dig through the DB themselves. Example query:
 ```sql
@@ -146,11 +146,11 @@ TOKEN=$(curl -s http://localhost:3101/auth/login -X POST \
   -d '{"email":"andy@soup.net","password":"YOUR_DEV_PASSWORD"}' | \
   node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>process.stdout.write(JSON.parse(d).data.token))")
 
-# Create a 30-day scoped key (adjust group IDs from your local DB)
+# Create a 30-day scoped key (adjust recipe-book IDs from your local DB)
 curl -s http://localhost:3101/keys/scoped -X POST \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"readGroupIds":["<group-id>"],"writeGroupIds":["<group-id>"],"defaultWriteGroupId":"<group-id>","expiresAt":"2026-05-04T00:00:00Z","label":"local-mcp-dev"}'
+  -d '{"readRecipeBookIds":["<book-id>"],"writeRecipeBookIds":["<book-id>"],"defaultWriteRecipeBookId":"<book-id>","expiresAt":"2026-05-04T00:00:00Z","label":"local-mcp-dev"}'
 ```
 
 Update the key in `.mcp.json` under `soupnet-local.headers.Authorization`, then run `/mcp` in Claude Code to reconnect.
@@ -159,7 +159,7 @@ Update the key in `.mcp.json` under `soupnet-local.headers.Authorization`, then 
 
 | Test | How | What to verify |
 |------|-----|----------------|
-| Basic connectivity | Call `list_my_groups` via `soupnet-local` | Returns groups without error |
+| Basic connectivity | Call `list_my_recipe_books` via `soupnet-local` | Returns recipe books without error |
 | Recipe check | Call `check_recipe` with a test recipe | Returns results, trace is logged |
 | Session recovery | Run `docker compose restart backend`, then call any tool | Works without `/mcp` reconnect — server creates new session transparently |
 | Key expiry | Use an expired key | Returns "Invalid or expired API key" error |
@@ -217,13 +217,13 @@ npx tsx scripts/cleanup-test-data.ts           # clean up @test.local users + al
 npx tsx scripts/cleanup-test-data.ts --status  # just show counts
 ```
 
-**E2E testing with real data:** AI agents can use the dev credentials from `.env` (`DEV_USERNAME` / `DEV_PASSWORD`) to log in, create a dedicated test group (e.g., "e2e-test-{timestamp}"), and run recipe checks against the actual system with real API keys scoped to that group. This tests the full stack including Soupnet integration without polluting personal recipes. The test group and its data can be cleaned up after the run.
+**E2E testing with real data:** AI agents can use the dev credentials from `.env` (`DEV_USERNAME` / `DEV_PASSWORD`) to log in, create a dedicated test recipe book (e.g., "e2e-test-{timestamp}"), and run recipe checks against the actual system with real API keys scoped to that recipe book. This tests the full stack including Soupnet integration without polluting personal recipes. The test recipe book and its data can be cleaned up after the run.
 
 **Rules:**
 - Never test against production API keys
 - Automated test users always use `@test.local` email addresses
-- E2E test groups should be clearly named to distinguish from real groups
-- Idempotent fixtures: same key + group + text = no duplicates
+- E2E test recipe books should be clearly named to distinguish from real ones
+- Idempotent fixtures: same key + recipe book + text = no duplicates
 
 ## Decisions
 - **Vitest** over Jest: native ESM, faster, Vite ecosystem alignment

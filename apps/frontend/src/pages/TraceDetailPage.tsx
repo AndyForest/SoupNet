@@ -57,7 +57,7 @@ export function TraceDetailPage() {
           )}
           {trace.groupName && (
             <span className="text-xs" style={{ color: "var(--color-on-surface-variant)" }}>
-              Group: {trace.groupName}
+              Recipe book: {trace.groupName}
             </span>
           )}
           <a

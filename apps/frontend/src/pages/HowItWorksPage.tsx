@@ -182,7 +182,7 @@ export function HowItWorksPage() {
             <ConnectRow
               surface="MCP agents"
               examples="Claude Code, Claude Desktop, Antigravity"
-              detail="Full tool access for recipe checking, semantic search, and group discovery, all integrated into the agent's normal workflow."
+              detail="Full tool access for recipe checking, semantic search, and recipe-book discovery, all integrated into the agent's normal workflow."
             />
             <ConnectRow
               surface="Web chatbots"

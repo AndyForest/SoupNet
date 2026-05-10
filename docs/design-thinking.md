@@ -43,7 +43,7 @@ The server does math: embeddings, vector search, clustering, ranking. AI agents 
 Soup.net does not poll Slack, scrape GitHub, or connect to databases directly. AI agents are the ingest channel. They observe, synthesize, and submit recipes. This keeps data clean (agent-curated, not raw firehose) and distributes comprehension work to the clients.
 
 ### 4. Privacy-narrow by default
-When an agent has access to multiple groups, it writes to the most private one unless it explicitly specifies otherwise. Personal taste stays personal. Group decisions are shared with the group. The human controls scope through API key configuration and the agent makes per-call decisions within that scope.
+When an agent has access to multiple recipe books, it writes to the most private one unless it explicitly specifies otherwise. Personal taste stays personal. Recipe-book decisions are shared with the book's members. The human controls scope through API key configuration and the agent makes per-call decisions within that scope.
 
 ### 5. Judgment accumulates
 What you learn about the user today makes tomorrow's agents smarter. An agent confirming a preference reinforces it. An agent checking a contradicting recipe creates a counterpoint. These accumulate into a persistent, searchable record — not just for you, but for every agent this user works with.
@@ -77,51 +77,51 @@ With Soup.net: their API key lives in `.env` or `.mcp.json`. As they work, their
 
 **Correction workflow:** User notices an outdated or wrong recipe in the dashboard. They tell their agent: "I no longer prefer X, I've switched to Y because Z." The agent checks a new recipe that captures the updated judgment with evidence. The system doesn't delete the old recipe — both exist. Over time, the newer recipe is reinforced by fresh evidence while the old one isn't. Temporal decay (planned — see [search-algorithms.md](architecture/search-algorithms.md#stigmergic-decay)) will eventually reduce the old recipe's influence on search results.
 
-### 2. The Group Collaborator
+### 2. The Recipe-Book Collaborator
 **"I'm working on a project with other people. Our AI agents should share context."**
 
 A team working on a project — parents coordinating a school event, developers on a shared codebase, designers iterating on a brand. They need a shared judgment space where everyone's agents contribute and benefit.
 
-**Key needs:** Easy, spam-safe invitation flow. Agents know which group to write to. Cross-group search (personal + project). Privacy-narrow defaults.
+**Key needs:** Easy, spam-safe invitation flow. Agents know which recipe book to write to. Cross-book search (personal + project). Privacy-narrow defaults.
 
 **Setup journey:**
-1. One person creates a group, writes a description ("Coordinating the Earth Day event — design, logistics, communications")
-2. Invites collaborators by email from the group page — Soup.net creates an invite token for that address. If the address belongs to a registered user, they see the invite on their dashboard. If not, the inviter gets a copy-pasteable blurb (with the invite URL) to send through their own channel (email, Signal, DM).
-3. Each person creates a scoped API key: read/write to personal + project group, default write = personal
-4. Agents call `list_my_groups` → see both groups with descriptions and access levels
-5. When checking a project decision → agent specifies `group="earth-day"` explicitly
-6. When checking personal taste → agent uses the default (most private group, no param needed)
-7. Search spans both groups — personal preferences inform project decisions, project decisions are visible to all members
+1. One person creates a recipe book, writes a description ("Coordinating the Earth Day event — design, logistics, communications")
+2. Invites collaborators by email from the recipe-book page — Soup.net creates an invite token for that address. If the address belongs to a registered user, they see the invite on their dashboard. If not, the inviter gets a copy-pasteable blurb (with the invite URL) to send through their own channel (email, Signal, DM).
+3. Each person creates a scoped API key: read/write to personal + project recipe book, default write = personal
+4. Agents call `list_my_recipe_books` → see both books with descriptions and access levels
+5. When checking a project decision → agent specifies `recipe_book="earth-day"` explicitly
+6. When checking personal taste → agent uses the default (most private recipe book, no param needed)
+7. Search spans both recipe books — personal preferences inform project decisions, project decisions are visible to all members
 
-**What the human sees:** On the dashboard, pending group invitations surface at the top of the activity feed (explicit Accept / Decline — never auto-joined). Below the feed, the Recipe Check Log shows checks from all agents. The Recipe Map can be scoped to a single group (`/map?groupId=...`) to see just the project's accumulated judgment, or viewed across all groups to see everything in context.
+**What the human sees:** On the dashboard, pending recipe-book invitations surface at the top of the activity feed (explicit Accept / Decline — never auto-joined). Below the feed, the Recipe Check Log shows checks from all agents. The Recipe Map can be scoped to a single recipe book (`/map?groupId=...`) to see just the project's accumulated judgment, or viewed across all books to see everything in context.
 
 #### Collaboration user stories
 
 These stories drive the collaborator-invitation UX. They inform the backlog items under "Invitation-driven growth (network effects)".
 
-- **Inviter — spam-safe unified flow.** *"I want to add Priya to our Earth Day group. I type her email and click Send invite. Soup.net confirms the invite was created and tells me: if Priya is already on Soup.net, she'll see this on her dashboard; if not, here's a message I can send her myself — with a personalized link — through email or Signal. I never learn from the response whether her email was registered, so I can't use Soup.net to fish for who's on the system."*
-- **Invitee — existing user, surfaces in-app.** *"I open my dashboard and the top of my feed shows a group invitation card: 'Andy invited you to Earth Day Planning' with the description and Accept / Decline buttons. I click Accept. I'm now a member; my next recipe check finds Andy's accumulated taste for the event."*
-- **Invitee — existing user, declines.** *"The invitation looks off-topic for me. I click Decline. The card disappears from my feed. The inviter doesn't get a notification (keeps social friction low); they'll see it as 'Declined' if they look at the group's pending invitations."*
-- **Invitee — not yet on Soup.net.** *"My friend pings me on Signal: 'I'd like to collaborate on Soup.net — here's your invite.' I click the link, register with the same email, verify via the email that Soup.net sent me. On my first login the invite is at the top of my feed — I still have to accept it explicitly. Then I land on the group's page with a prominent 'Connect your AI agent' onboarding."*
-- **Inviter — managing pending invitations.** *"I open the group page and see three pending invites: Priya hasn't accepted (sent 2 days ago), Bob's address was wrong — I click Revoke. For Priya, I click Copy link to re-send her the blurb through Signal in case she missed my first message."*
-- **No auto-accept (anti-spam principle).** *"Even after I verify my email during registration, any invitations tied to my address stay pending. I have to click Accept. This prevents someone from forcing me into groups by guessing my email and planting an invite before I sign up."*
+- **Inviter — spam-safe unified flow.** *"I want to add Priya to our Earth Day recipe book. I type her email and click Send invite. Soup.net confirms the invite was created and tells me: if Priya is already on Soup.net, she'll see this on her dashboard; if not, here's a message I can send her myself — with a personalized link — through email or Signal. I never learn from the response whether her email was registered, so I can't use Soup.net to fish for who's on the system."*
+- **Invitee — existing user, surfaces in-app.** *"I open my dashboard and the top of my feed shows a recipe-book invitation card: 'Andy invited you to Earth Day Planning' with the description and Accept / Decline buttons. I click Accept. I'm now a member; my next recipe check finds Andy's accumulated taste for the event."*
+- **Invitee — existing user, declines.** *"The invitation looks off-topic for me. I click Decline. The card disappears from my feed. The inviter doesn't get a notification (keeps social friction low); they'll see it as 'Declined' if they look at the recipe book's pending invitations."*
+- **Invitee — not yet on Soup.net.** *"My friend pings me on Signal: 'I'd like to collaborate on Soup.net — here's your invite.' I click the link, register with the same email, verify via the email that Soup.net sent me. On my first login the invite is at the top of my feed — I still have to accept it explicitly. Then I land on the recipe-book page with a prominent 'Connect your AI agent' onboarding."*
+- **Inviter — managing pending invitations.** *"I open the recipe-book page and see three pending invites: Priya hasn't accepted (sent 2 days ago), Bob's address was wrong — I click Revoke. For Priya, I click Copy link to re-send her the blurb through Signal in case she missed my first message."*
+- **No auto-accept (anti-spam principle).** *"Even after I verify my email during registration, any invitations tied to my address stay pending. I have to click Accept. This prevents someone from forcing me into recipe books by guessing my email and planting an invite before I sign up."*
 - **No emails to non-users (anti-spam principle).** *"Soup.net never sends email to addresses that don't already have an account. If I want to invite a new person, I copy a personalized blurb and send it through my own channel. This prevents Soup.net from becoming a spam vector and keeps our sender reputation clean."*
 
 #### Configurable defaults for the "daily agent link" buttons
 
-The dashboard's "Copy MCP agent briefing" / "Copy web agent briefing" / "Open recipe check page" buttons each mint a 24-hour key on click. Today those keys read from all groups and write to the focus group. That default is right for first-time use but wrong as soon as a user is a member of groups they don't want every ad-hoc session to see into — a work group shouldn't auto-read from a personal group and vice versa, especially when someone else invites them into a new group.
+The dashboard's "Copy MCP agent briefing" / "Copy web agent briefing" / "Open recipe check page" buttons each mint a 24-hour key on click. Today those keys read from all recipe books and write to the focus book. That default is right for first-time use but wrong as soon as a user is a member of recipe books they don't want every ad-hoc session to see into — a work book shouldn't auto-read from a personal one and vice versa, especially when someone else invites them into a new recipe book.
 
-**User story:** *"As a user, I want to configure which of my groups are included as read and write for the default 'daily agent link' buttons — for both MCP and web agents. When I'm added to a new group, it should default to excluded for both read and write until I explicitly include it. The quick-click buttons should behave the way I've set them, so I don't accidentally leak a personal group's recipes into a work session or vice versa."*
+**User story:** *"As a user, I want to configure which of my recipe books are included as read and write for the default 'daily agent link' buttons — for both MCP and web agents. When I'm added to a new recipe book, it should default to excluded for both read and write until I explicitly include it. The quick-click buttons should behave the way I've set them, so I don't accidentally leak a personal book's recipes into a work session or vice versa."*
 
-**Why "new groups default excluded":** The alternative (default included) means every invite accepted via the feed silently widens the scope of every daily link the user generates. The scope creep is invisible until something leaks. Default-excluded is the same safety posture as "privacy-narrow by default" (principle #4) — explicit opt-in beats implicit opt-out for scope expansion.
+**Why "new recipe books default excluded":** The alternative (default included) means every invite accepted via the feed silently widens the scope of every daily link the user generates. The scope creep is invisible until something leaks. Default-excluded is the same safety posture as "privacy-narrow by default" (principle #4) — explicit opt-in beats implicit opt-out for scope expansion.
 
-**What this does not change:** `/keys/scoped` (the API Keys page) stays as the full-control surface for custom expiry, per-group read/write, and labels. This is only about the quick-click defaults on Dashboard and the agent-connect box on the Groups page.
+**What this does not change:** `/keys/scoped` (the API Keys page) stays as the full-control surface for custom expiry, per-recipe-book read/write, and labels. This is only about the quick-click defaults on Dashboard and the agent-connect box on the Recipe Books page.
 
 #### The "inviting in your AI agent" moment
 
-The invitation isn't just adding a human to a group — it's giving their AI agent immediate access to the group's accumulated taste and judgment. This reframing came from a Soup.net recipe check (2026-04-05, soup-net-development group): *"As the founder of Soup.net, I chose to frame collaboration onboarding as 'inviting in' a person's AI agent… they click to get a briefing for their choice of AI tool, and their agent immediately has all the shared context."* This shapes both the copy and the flow.
+The invitation isn't just adding a human to a recipe book — it's giving their AI agent immediate access to the book's accumulated taste and judgment. This reframing came from a Soup.net recipe check (2026-04-05, soup-net-development recipe book): *"As the founder of Soup.net, I chose to frame collaboration onboarding as 'inviting in' a person's AI agent… they click to get a briefing for their choice of AI tool, and their agent immediately has all the shared context."* This shapes both the copy and the flow.
 
-- **Post-accept onboarding story.** *"I just accepted my first group invite. The group page greets me: 'You're in Earth Day Planning with Andy. Your AI agent can share this group's taste on its next session.' Two buttons — Copy MCP briefing / Copy web briefing — each generates a scoped key and a paste-ready prompt for my agent. I paste the MCP briefing into Claude Code, and my next recipe check finds the group's existing recipes on turn one."*
+- **Post-accept onboarding story.** *"I just accepted my first recipe-book invite. The recipe-book page greets me: 'You're in Earth Day Planning with Andy. Your AI agent can share this book's taste on its next session.' Two buttons — Copy MCP briefing / Copy web briefing — each generates a scoped key and a paste-ready prompt for my agent. I paste the MCP briefing into Claude Code, and my next recipe check finds the book's existing recipes on turn one."*
 - **Cross-vendor reach.** *"It doesn't matter whether I use Claude, ChatGPT, or Gemini. The briefing works for whatever agent I already have. The invite pulled in my team's context, not a vendor's."*
 
 ### 3. The Self-Hosted User
@@ -136,11 +136,11 @@ A technically capable user or organization that wants complete data sovereignty.
 ### 4. The First Adopter
 **"I'm going to try this out before convincing anyone else."**
 
-One person discovers Soup.net and starts using it solo. Their corpus is initially personal. As they find value, they create a group and invite colleagues. The transition from solo to collaborative should be effortless — the personal recipes are already there, now group recipes start accumulating alongside them.
+One person discovers Soup.net and starts using it solo. Their corpus is initially personal. As they find value, they create a recipe book and invite colleagues. The transition from solo to collaborative should be effortless — the personal recipes are already there, now shared recipe-book entries start accumulating alongside them.
 
 **The first-adopter experience is the most critical user journey.** The system must be immediately useful for a single user. Value should be evident within the first session: the agent finds something from the same session and applies it correctly to a new context.
 
-**Key needs:** Immediate value for single user. Effortless transition to group sharing. Visible "corpus growing" over time (Recipe Map, dashboard stats).
+**Key needs:** Immediate value for single user. Effortless transition to shared recipe books. Visible "corpus growing" over time (Recipe Map, dashboard stats).
 
 ---
 
@@ -153,12 +153,12 @@ Organized by capability, not by product. Specific AI products are listed as exam
 
 **Examples:** Claude Code, Claude Desktop, Google Antigravity, any MCP-compatible agent.
 
-**Interface:** MCP tools — `check_recipe`, `get_recipe_guide`, `list_my_groups`.
+**Interface:** MCP tools — `check_recipe`, `get_recipe_guide`, `list_my_recipe_books`.
 
 **Capabilities:**
-- Calls tools with structured parameters (recipe text, evidence, group, filter, axes, clusters, max_chars)
+- Calls tools with structured parameters (recipe text, evidence, recipe_book, filter, axes, clusters, max_chars)
 - Gets structured responses (results with evidence, scores, concept positions, drill-down hints, available actions)
-- Can call `list_my_groups` to discover group context and decide where to write
+- Can call `list_my_recipe_books` to discover recipe-book context and decide where to write
 - Can use sub-agents or background tasks for parallel recipe checking
 - Can schedule recurring checks (e.g., `/loop` in Claude Code)
 - Manages its own API key via `.mcp.json` or CLI config
@@ -170,10 +170,10 @@ Organized by capability, not by product. Specific AI products are listed as exam
 - Coverage diversity is maximized when different sessions use different API keys
 
 **User stories:**
-- *"I'm starting a new coding session. I call `get_recipe_guide` then `list_my_groups` to orient myself, then check a broad discovery recipe about the task at hand."*
+- *"I'm starting a new coding session. I call `get_recipe_guide` then `list_my_recipe_books` to orient myself, then check a broad discovery recipe about the task at hand."*
 - *"I'm facing a design decision. I check my proposed approach as a recipe with evidence, and the system returns related recipes — including one that contradicts my approach with evidence from a different project."*
 - *"I've finished meaningful work. I check a recipe that logs what was decided and why, so future agents find it."*
-- *"I need to write to the team's group, not my personal one. I specify `group='project-slug'` on the check."*
+- *"I need to write to the team's recipe book, not my personal one. I specify `recipe_book='project-slug'` on the check."*
 - *"I want to understand how this recipe relates to two concepts. I pass `axes='performance, readability'` and get positions showing the recipe's similarity to each."* (Not yet fulfilled — concept axes on check results are implemented but agents don't yet use them proactively)
 - *"My user's preference is ambiguous from context alone. I form 3 divergent hypotheses and use MCP elicitation to present them as choices. The user picks one, I check that recipe, and the result gives me both the logged preference and related context from the corpus."* (See [Divergent Recipe Checks](#divergent-recipe-checks-discovering-taste-through-hypothesis-branching))
 
@@ -187,14 +187,14 @@ Organized by capability, not by product. Specific AI products are listed as exam
 **Capabilities:**
 - Visits the check page URL (API key embedded in URL)
 - Reads HTML instructions (concise — every tag costs tokens)
-- Fills the form: recipe text, evidence, optional filter/group/axes
+- Fills the form: recipe text, evidence, optional filter/recipe_book/axes
 - Reads HTML results on the same page
 - Can follow links to recipe guide, setup docs
 
 **Key design considerations:**
 - HTML must be minimal — instructions collapsed for returning agents
 - The form IS the interface — no JSON, no Bearer auth, no structured responses
-- Group dropdown shown when key has multiple write groups — same capability as MCP
+- Recipe-book dropdown shown when key has multiple write recipe books — same capability as MCP
 - Format adherence will be lower — the warn/reject system catches bad recipes
 - Page refresh is idempotent — safe for agents that retry
 - Recipe checks are framed as "Check a Recipe" not "Submit" — reinforces read-only feel
@@ -202,7 +202,7 @@ Organized by capability, not by product. Specific AI products are listed as exam
 **User stories:**
 - *"My user asked me to remember their poster design preference. I visit the check page, fill in the recipe and evidence, and submit. The preference is now searchable by any of their agents."*
 - *"I'm starting work and want context. I visit the check page with a broad discovery recipe about the task, and the results show me relevant decisions from previous sessions."*
-- *"My user has both a personal group and a project group. I see a dropdown on the form and select the project group for this team decision."*
+- *"My user has both a personal recipe book and a project recipe book. I see a dropdown on the form and select the project book for this team decision."*
 - *"My user's taste on brand direction is unclear. I generate 4 divergent recipe-check links — each a different plausible framing — and show the full recipe text alongside each. The user clicks the ones that resonate, copies the results back, and I now understand which direction they prefer."* (See [Divergent Recipe Checks](#divergent-recipe-checks-discovering-taste-through-hypothesis-branching))
 - *"My user is not technical. Asking them to paste a JSON blob back to me is scary and error-prone. Soup.net gives me a short 'citation link' — one URL — that they can paste back. I fetch that URL to retrieve the full check result. The user only ever sees a single friendly link, never raw JSON."* (See [Citation links for non-technical copy-back](#citation-links-for-non-technical-copy-back))
 - *"I'm in a long session and have already seen many of the recipes Soup.net returns. I don't need the full body of a recipe I already have in context — just its ID is enough so I can reference it. When I include `known_recipes=[id1, id2, ...]`, Soup.net omits full text for those and returns only a compact tree of IDs for the duplicates, keeping my context window lean."* (Not yet implemented — see backlog "Context-bloat optimization: `known_recipes` / `recipe_book` mechanism")
@@ -215,7 +215,7 @@ Organized by capability, not by product. Specific AI products are listed as exam
 **Interface:** JSON API at `/check?format=json` with API key in URL or headers.
 
 **Capabilities:**
-- Full programmatic access to all parameters (recipe, evidence, filter, axes, group, read_groups, clusters, max_chars)
+- Full programmatic access to all parameters (recipe, evidence, filter, axes, recipe_book, read_recipe_books, clusters, max_chars)
 - Structured JSON responses with evidence, scores, concept positions, drill-down hints, available actions
 - Can paginate, sort, expand clusters
 - Can integrate recipe checks into automated workflows
@@ -246,10 +246,10 @@ Based on [Semantic Projection (Grand et al., 2022)](https://www.nature.com/artic
 
 Temporal decay for recipe relevance is planned but not implemented. See [search-algorithms.md — Stigmergic Decay](architecture/search-algorithms.md#stigmergic-decay--temporal-weighting-of-recipes-research-needed).
 
-**The exception: malformed recipes.** Outdated-but-correct recipes are preserved (with decay) because they reflect a real prior judgment. *Malformed* recipes are different — agent-perspective phrasing ("As an AI agent…"), off-format claims, hallucinated evidence — and should be hard-deleted, not decayed. They never represented a real human judgment, so leaving them in the corpus pollutes vector neighborhoods and biases future searches without any countervailing temporal signal. The trace details page exposes a Delete affordance for the trace owner, the group's owner/admin, and system role; the cascade prunes orphaned evidence/references but preserves the content-hash-keyed `vector_cache`. An audit-log entry captures the deletion. **Don't reach for delete to express disagreement** — log a fresh recipe with current taste; that's what temporal decay is for.
+**The exception: malformed recipes.** Outdated-but-correct recipes are preserved (with decay) because they reflect a real prior judgment. *Malformed* recipes are different — agent-perspective phrasing ("As an AI agent…"), off-format claims, hallucinated evidence — and should be hard-deleted, not decayed. They never represented a real human judgment, so leaving them in the corpus pollutes vector neighborhoods and biases future searches without any countervailing temporal signal. The trace details page exposes a Delete affordance for the trace owner, the recipe book's owner/admin, and system role; the cascade prunes orphaned evidence/references but preserves the content-hash-keyed `vector_cache`. An audit-log entry captures the deletion. **Don't reach for delete to express disagreement** — log a fresh recipe with current taste; that's what temporal decay is for.
 
-### Understanding group dynamics
-**User story:** *"I scope the Recipe Map to my project group and see 30 recipes from three different collaborators. I switch to concept axes with 'logistics' and 'design' — the map shows that most recipes are about logistics (event planning, volunteer coordination) and there's a gap in design decisions. I mention this in our next meeting and we spend time discussing the design direction, which our agents then log."*
+### Understanding recipe-book dynamics
+**User story:** *"I scope the Recipe Map to my project recipe book and see 30 recipes from three different collaborators. I switch to concept axes with 'logistics' and 'design' — the map shows that most recipes are about logistics (event planning, volunteer coordination) and there's a gap in design decisions. I mention this in our next meeting and we spend time discussing the design direction, which our agents then log."*
 
 ---
 
@@ -316,7 +316,7 @@ Web-browsing agents generate clickable links. This is where the pattern was disc
 - Generate 2-4 divergent recipe-check URLs with full recipe text shown alongside each
 - The user reviews, clicks the ones that match their taste, and copies results back
 - The agent matches results to presented options via the recipe text in the JSON response
-- Group slugs should be included in URLs — discoverable from the check page's groups list
+- Recipe-book slugs should be included in URLs — discoverable from the check page's recipe-books list
 
 #### Agent Type C: API-Integrated
 
@@ -329,7 +329,7 @@ See [docs/case-studies/chatgpt-divergent-design-checks.md](case-studies/chatgpt-
 - ChatGPT generated 5 divergent recipe-check links covering brand feel, visual language, content strategy, and audience framing
 - Each link was a fully-formed hypothesis with evidence from the conversation
 - The user wanted to click ALL of them — revealing that the hypotheses were complementary, not competing
-- ChatGPT could not discover the group slug for `soup-net-development` because it's a read-only agent — this directly motivated the groups list on the check page
+- ChatGPT could not discover the recipe-book slug for `soup-net-development` because it's a read-only agent — this directly motivated the recipe-books list on the check page
 - The agent's design brief synthesized the taste signals from the user's selections into a coherent creative direction
 
 ---
@@ -371,7 +371,7 @@ The structural guardrail that makes this safe: web AI agents are expected not to
 
 ### Principle
 
-The SPA dashboard's central area is a **chronological, urgency-ordered feed** of things the user should attend to or be aware of. Not a single widget for "recent recipes" — a multi-source feed where the most urgent item (a pending group invitation, a security alert, a rate-limit warning) rises to the top, and lower-urgency items (agent activity, cluster changes) flow below. Static widgets (key count, group count, recipe count) stay in the sidebar where they serve as ambient information.
+The SPA dashboard's central area is a **chronological, urgency-ordered feed** of things the user should attend to or be aware of. Not a single widget for "recent recipes" — a multi-source feed where the most urgent item (a pending recipe-book invitation, a security alert, a rate-limit warning) rises to the top, and lower-urgency items (agent activity, cluster changes) flow below. Static widgets (key count, recipe-book count, recipe count) stay in the sidebar where they serve as ambient information.
 
 This shape mirrors how humans actually relate to shared systems: we don't open apps looking for one specific widget — we open them to see "what's new, what needs me, what happened." A feed answers all three in one scroll.
 
@@ -379,20 +379,20 @@ This shape mirrors how humans actually relate to shared systems: we don't open a
 
 Items fall roughly into tiers:
 
-1. **Action required** — pending group invitations, email re-verification, expired keys that should be rotated
-2. **Recent activity by me or my agents** — recipes checked today, groups I've joined, keys I've created
-3. **Recent activity in my groups** — recipes others checked in shared groups (social proof)
+1. **Action required** — pending recipe-book invitations, email re-verification, expired keys that should be rotated
+2. **Recent activity by me or my agents** — recipes checked today, recipe books I've joined, keys I've created
+3. **Recent activity in my recipe books** — recipes others checked in shared books (social proof)
 4. **Ambient stats** — recipe count trend, cluster count, map updates
 
 Tier 1 items always surface above tier 2+. Ordering within a tier is reverse-chronological.
 
 ### User story
 
-- *"I open Soup.net. The top of my feed has a yellow-accented card: Priya invited me to Earth Day Planning. Below it are my agent's recipe checks from this morning. Below that, a card showing Andy's recent activity in our shared group. The dashboard tells me what to attend to first, then what's happening around me — in that order."*
+- *"I open Soup.net. The top of my feed has a yellow-accented card: Priya invited me to Earth Day Planning. Below it are my agent's recipe checks from this morning. Below that, a card showing Andy's recent activity in our shared recipe book. The dashboard tells me what to attend to first, then what's happening around me — in that order."*
 
 ### Out of scope for this first pass
 
-- Full tier-based ordering across many event types (we start with just group invitations)
+- Full tier-based ordering across many event types (we start with just recipe-book invitations)
 - Subscription/mute controls per feed source
 - Push notifications
 
@@ -449,7 +449,7 @@ This is why a separate, neutral system has to exist for this to work. No single 
 
 **Status:** Low-priority hypotheses, not commitments. No pricing or ecommerce yet.
 
-**Core stance: the free offering is the product, not a funnel.** The free tier is intended to be a fully functional solution for solo users and small groups. Paid features exist at the edges — either to test willingness-to-pay for power-user extensions, or to gate features that carry per-user cost or abuse surface. The core recipe-check loop, group collaboration, and cross-agent portability stay free.
+**Core stance: the free offering is the product, not a funnel.** The free tier is intended to be a fully functional solution for solo users and small teams. Paid features exist at the edges — either to test willingness-to-pay for power-user extensions, or to gate features that carry per-user cost or abuse surface. The core recipe-check loop, recipe-book collaboration, and cross-agent portability stay free.
 
 **Experimentation plan.** Before any ecommerce, add a manual `paid_user` flag (admin-set) and gate candidate features behind it for Andy and trusted testers. This lets us build and dogfood paid features without committing to prices, Stripe, or billing UX.
 
@@ -458,8 +458,8 @@ This is why a separate, neutral system has to exist for this to work. No single 
 Power-user extensions to test willingness-to-pay:
 
 - Download vector embeddings alongside recipe data (portability / local analysis)
-- **LLM-powered corpus tidy** — surface subtle, easy-to-fix voice issues (group-implied product names, compound roles that collapse `[goal]` into `[role]`, missing explicit "so that" warrants, user-relationship leakage) with one-click rewrites. The cataloged failure modes from the agent-voice work (`docs/briefings/soupnet-agent-voice-plan.md`) plus the per-group subtleties library (`packages/domain/src/recipe-examples.json`) are the seed prompts. The hard part — identification — is what the LLM is doing; the fix itself is usually mechanical (swap a role string). Free tier could surface counts; paid tier batches the suggested edits.
-- **Per-group corpus quality reports** — failure-mode rates and trends over time, which subtle patterns are getting better or worse, which recipes a re-edit would most improve discoverability for. Pairs with corpus tidy: the report identifies, the tidy applies.
+- **LLM-powered corpus tidy** — surface subtle, easy-to-fix voice issues (recipe-book-implied product names, compound roles that collapse `[goal]` into `[role]`, missing explicit "so that" warrants, user-relationship leakage) with one-click rewrites. The cataloged failure modes from the agent-voice work (`docs/briefings/soupnet-agent-voice-plan.md`) plus the per-recipe-book subtleties library (`packages/domain/src/recipe-examples.json`) are the seed prompts. The hard part — identification — is what the LLM is doing; the fix itself is usually mechanical (swap a role string). Free tier could surface counts; paid tier batches the suggested edits.
+- **Per-recipe-book corpus quality reports** — failure-mode rates and trends over time, which subtle patterns are getting better or worse, which recipes a re-edit would most improve discoverability for. Pairs with corpus tidy: the report identifies, the tidy applies.
 
 ### Gated features — paywall for verification or cost recovery
 
@@ -478,7 +478,7 @@ See the public [Recipe Check Scenarios](/docs/recipe-scenarios) page for annotat
 
 ## Privacy & Storage Modes (Future)
 
-Detailed design for Full/Indexed/Air-gapped storage modes has been moved to [docs/planning/privacy-storage-modes.md](planning/privacy-storage-modes.md). These features are planned but not yet implemented. The current system stores all recipe content on the server with group-level access control.
+Detailed design for Full/Indexed/Air-gapped storage modes has been moved to [docs/planning/privacy-storage-modes.md](planning/privacy-storage-modes.md). These features are planned but not yet implemented. The current system stores all recipe content on the server with recipe-book-level access control.
 
 ---
 

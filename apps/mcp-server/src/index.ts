@@ -180,10 +180,10 @@ server.tool(
       "Recipe (trace) — the human user's voice in a transferable role, not yours. " +
       "Format: 'As a [role] working on [goal], I [prefer/chose] so that [reason]'. " +
       "Pick a role that transfers across users and projects (e.g., 'front-end React developer'), " +
-      "not the user's name and not the project name when the group description already implies it. " +
+      "not the user's name and not the project name when the recipe-book description already implies it. " +
       "Common voice mistakes: 'As an AI agent…' (your voice instead of the user's), " +
       "'As Andy…' (collapses role into a specific person), " +
-      "'As a Soup.net developer…' when written to the soup-net-development group (duplicates context the group description already provides). " +
+      "'As a Soup.net developer…' when written to the soup-net-development recipe book (duplicates context the recipe-book description already provides). " +
       "Every recipe needs context — role and goal scope the judgment."
     ),
     supporting_evidence: z.string().describe(

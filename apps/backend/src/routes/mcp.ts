@@ -236,10 +236,10 @@ function createMcpServer(backendUrl: string): McpServer {
         "Recipe (trace) — the human user's voice in a transferable role, not yours. " +
         "Format: 'As a [role] working on [goal], I [prefer/chose] so that [reason]'. " +
         "Pick a role that transfers across users and projects (e.g., 'front-end React developer'), " +
-        "not the user's name and not the project name when the group description already implies it. " +
+        "not the user's name and not the project name when the recipe-book description already implies it. " +
         "Common voice mistakes: 'As an AI agent…' (your voice instead of the user's), " +
         "'As Andy…' (collapses role into a specific person), " +
-        "'As a Soup.net developer…' when written to the soup-net-development group (duplicates context the group description already provides). " +
+        "'As a Soup.net developer…' when written to the soup-net-development recipe book (duplicates context the recipe-book description already provides). " +
         "Every recipe needs context — role and goal scope the judgment."
       ),
       supporting_evidence: z.string().describe(
@@ -260,13 +260,13 @@ function createMcpServer(backendUrl: string): McpServer {
         "Each result gets x/y positions showing its similarity to each concept (0-1). " +
         "Based on Semantic Projection (Grand et al., 2022)."
       ),
-      group: z.string().optional().describe(
-        "Group slug or ID to write this recipe to. Must be in your key's write groups. " +
-        "Defaults to your key's default group (most private). Use list_my_groups to see available groups."
+      recipe_book: z.string().optional().describe(
+        "Recipe book slug or ID to write this recipe to. Must be in your key's write recipe books. " +
+        "Defaults to your key's default recipe book (most private). Use list_my_recipe_books to see what's available."
       ),
-      read_groups: z.string().optional().describe(
-        "Comma-separated group slugs to restrict search scope. " +
-        "Default: all readable groups. Use to focus search on a specific project context."
+      read_recipe_books: z.string().optional().describe(
+        "Comma-separated recipe-book slugs to restrict search scope. " +
+        "Default: all readable recipe books. Use to focus search on a specific project context."
       ),
       file_url: z.string().optional().describe(
         "Optional: public URL to fetch as reference evidence (image, PDF, audio, or video). " +
@@ -305,7 +305,7 @@ function createMcpServer(backendUrl: string): McpServer {
         "Optional region-of-interest metadata for the attached file. Currently supports image_box; video and PDF region types planned."
       ),
     },
-    async ({ recipe, supporting_evidence, clusters, max_chars, axes, group, read_groups, file_url, file_base64, file_name, file_mime_type, region }, extra) => {
+    async ({ recipe, supporting_evidence, clusters, max_chars, axes, recipe_book, read_recipe_books, file_url, file_base64, file_name, file_mime_type, region }, extra) => {
       // Get API key from auth info (passed by the transport middleware)
       const apiKey = (extra.authInfo as Record<string, unknown> | undefined)?.["token"] as string | undefined;
       if (!apiKey) {
@@ -386,8 +386,8 @@ function createMcpServer(backendUrl: string): McpServer {
           clusters: clusters ?? MCP_DEFAULT_CLUSTERS,
           maxChars: max_chars ?? undefined,
           axes: axes ?? undefined,
-          targetGroup: group ?? undefined,
-          readGroups: read_groups ?? undefined,
+          targetGroup: recipe_book ?? undefined,
+          readGroups: read_recipe_books ?? undefined,
           image,
           region: regionMeta,
         });
@@ -490,11 +490,11 @@ ${backendUrl}/docs/recipe-scenarios`;
     },
   );
 
-  // ── list_my_groups tool ────────────────────────────────────────────────────
+  // ── list_my_recipe_books tool ──────────────────────────────────────────────
 
   server.tool(
-    "list_my_groups",
-    "List the groups your API key has access to, with descriptions, member counts, and your access level. Use this to decide which group to write recipes to.",
+    "list_my_recipe_books",
+    "List the recipe books your API key has access to, with descriptions, member counts, and your access level. Use this to decide which recipe book to write recipes to.",
     {},
     async (_params, extra) => {
       const apiKey = (extra.authInfo as Record<string, unknown> | undefined)?.["token"] as string | undefined;
@@ -513,7 +513,7 @@ ${backendUrl}/docs/recipe-scenarios`;
         const allGroupIds = [...new Set([...readGroupIds, ...writeGroupIds])];
 
         if (allGroupIds.length === 0) {
-          return { content: [{ type: "text" as const, text: "No groups associated with this key." }] };
+          return { content: [{ type: "text" as const, text: "No recipe books associated with this key." }] };
         }
 
         // Fetch group details + member counts
@@ -540,7 +540,7 @@ ${backendUrl}/docs/recipe-scenarios`;
         }));
 
         // Format as readable text for the agent
-        let text = `Your API key has access to ${groups.length} group(s):\n\n`;
+        let text = `Your API key has access to ${groups.length} recipe book(s):\n\n`;
         for (const g of groups) {
           const access = [];
           if (g.access.read) access.push("read");
@@ -550,9 +550,9 @@ ${backendUrl}/docs/recipe-scenarios`;
           if (g.description) text += `  ${g.description}\n`;
           text += "\n";
         }
-        text += "Use the group parameter on check_recipe to write to a specific group (slug or ID).\n";
-        text += "Use the read_groups parameter to restrict search to specific groups.\n";
-        text += `Default write group: ${groups.find((g) => g.access.isDefault)?.slug ?? "none"} — recipes go here unless you specify otherwise.`;
+        text += "Use the recipe_book parameter on check_recipe to write to a specific recipe book (slug or ID).\n";
+        text += "Use the read_recipe_books parameter to restrict search to specific recipe books.\n";
+        text += `Default write recipe book: ${groups.find((g) => g.access.isDefault)?.slug ?? "none"} — recipes go here unless you specify otherwise.`;
 
         return { content: [{ type: "text" as const, text }] };
       } catch (err) {
@@ -562,41 +562,41 @@ ${backendUrl}/docs/recipe-scenarios`;
     },
   );
 
-  // ── update_group_description tool ───────────────────────────────────────
+  // ── update_recipe_book_description tool ───────────────────────────────
   //
-  // Group descriptions are critical context — agents reading or writing to
-  // a group see the description and can leave out anything it already
-  // implies. Stale descriptions degrade clustering and recipe voice. This
-  // tool lets agents propose updates, dogfooding-style, guided by the
-  // user's accumulated taste.
+  // Recipe-book descriptions are critical context — agents reading or
+  // writing to a recipe book see the description and can leave out anything
+  // it already implies. Stale descriptions degrade clustering and recipe
+  // voice. This tool lets agents propose updates, dogfooding-style, guided
+  // by the user's accumulated taste.
   //
-  // Authorization: api_key.user_id must be a group owner or admin AND the
-  // group must be in the api_key's writeGroupIds. The owner/admin
-  // requirement matches the JWT PUT /groups/:id route. The write-scope
+  // Authorization: api_key.user_id must be a recipe-book owner or admin AND
+  // the recipe book must be in the api_key's writeGroupIds. The owner/admin
+  // requirement matches the JWT PUT /recipe-books/:id route. The write-scope
   // requirement makes API-key delegation honest — a read-only key can't
-  // mutate group metadata even if the underlying user is an owner.
+  // mutate recipe-book metadata even if the underlying user is an owner.
 
   server.tool(
-    "update_group_description",
-    "Update the description of a group your API key has write access to. " +
+    "update_recipe_book_description",
+    "Update the description of a recipe book your API key has write access to. " +
     "Agents should recipe-check the proposed description first (e.g., 'As a " +
-    "[role] working on [project], I want [group] to be described as [proposed " +
-    "description] so that agents writing here understand [context]'). The " +
-    "description shapes how every future agent reads and writes to this group, " +
-    "so a small change can have outsized effect — check before committing. " +
-    "Authorization: your api key's user must be an owner or admin of the group, " +
-    "AND the group must be in your key's write groups (a read-only key cannot " +
-    "mutate group metadata).",
+    "[role] working on [project], I want [recipe book] to be described as " +
+    "[proposed description] so that agents writing here understand [context]'). " +
+    "The description shapes how every future agent reads and writes to this " +
+    "recipe book, so a small change can have outsized effect — check before " +
+    "committing. Authorization: your api key's user must be an owner or admin " +
+    "of the recipe book, AND the recipe book must be in your key's write " +
+    "recipe books (a read-only key cannot mutate recipe-book metadata).",
     {
-      group_id_or_slug: z.string().describe(
-        "The group's UUID or slug. Use list_my_groups to find the slug or ID."
+      recipe_book_id_or_slug: z.string().describe(
+        "The recipe book's UUID or slug. Use list_my_recipe_books to find the slug or ID."
       ),
       description: z.string().min(1).max(2000).describe(
         "The new description text. Max 2000 chars. Pass an empty string only " +
         "if you genuinely intend to clear the description."
       ),
     },
-    async ({ group_id_or_slug, description }, extra) => {
+    async ({ recipe_book_id_or_slug, description }, extra) => {
       const apiKey = (extra.authInfo as Record<string, unknown> | undefined)?.["token"] as string | undefined;
       if (!apiKey) {
         return { content: [{ type: "text" as const, text: "Error: No API key in auth context." }] };
@@ -615,12 +615,12 @@ ${backendUrl}/docs/recipe-scenarios`;
         // No write access → no mutation, even if the user is an owner.
         const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
         let groupId: string | null = null;
-        if (uuidRe.test(group_id_or_slug)) {
-          if (writeGroupIds.includes(group_id_or_slug)) groupId = group_id_or_slug;
+        if (uuidRe.test(recipe_book_id_or_slug)) {
+          if (writeGroupIds.includes(recipe_book_id_or_slug)) groupId = recipe_book_id_or_slug;
         } else {
           const slugRows = await db.execute(sql`
             SELECT id FROM claimnet.groups
-            WHERE slug = ${group_id_or_slug}
+            WHERE slug = ${recipe_book_id_or_slug}
               AND id IN (${sql.join(writeGroupIds.map((id) => sql`${id}::uuid`), sql`, `)})
             LIMIT 1
           `);
@@ -629,12 +629,12 @@ ${backendUrl}/docs/recipe-scenarios`;
 
         if (!groupId) {
           return {
-            content: [{ type: "text" as const, text: `Error: Group "${group_id_or_slug}" not found in your key's write groups. Use list_my_groups to see what's reachable.` }],
+            content: [{ type: "text" as const, text: `Error: Recipe book "${recipe_book_id_or_slug}" not found in your key's write recipe books. Use list_my_recipe_books to see what's reachable.` }],
           };
         }
 
-        // Owner/admin gate — same as the JWT PUT /groups/:id route, scoped
-        // to the API key's underlying user.
+        // Owner/admin gate — same as the JWT PUT /recipe-books/:id route,
+        // scoped to the API key's underlying user.
         const roleRows = await db.execute(sql`
           SELECT role FROM claimnet.group_members
           WHERE group_id = ${groupId}::uuid AND user_id = ${userId}::uuid
@@ -642,7 +642,7 @@ ${backendUrl}/docs/recipe-scenarios`;
         const role = (roleRows as unknown as Array<{ role: string }>)[0]?.role;
         if (role !== "owner" && role !== "admin") {
           return {
-            content: [{ type: "text" as const, text: "Error: This API key's user is not an owner or admin of the target group. Description edits require owner/admin role." }],
+            content: [{ type: "text" as const, text: "Error: This API key's user is not an owner or admin of the target recipe book. Description edits require owner/admin role." }],
           };
         }
 
@@ -651,7 +651,7 @@ ${backendUrl}/docs/recipe-scenarios`;
         `);
         const before = (beforeRows as unknown as Array<{ name: string; slug: string; description: string | null }>)[0];
         if (!before) {
-          return { content: [{ type: "text" as const, text: "Error: Group not found." }] };
+          return { content: [{ type: "text" as const, text: "Error: Recipe book not found." }] };
         }
         const previousDescription = before.description ?? "";
         if (previousDescription === description) {
@@ -673,7 +673,7 @@ ${backendUrl}/docs/recipe-scenarios`;
           targetId: groupId,
           metadata: {
             apiKeyId: keyResult.keyId,
-            actor: "mcp:update_group_description",
+            actor: "mcp:update_recipe_book_description",
             previousDescription,
             newDescription: description,
             groupName: before.name,

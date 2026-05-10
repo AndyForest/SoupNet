@@ -40,7 +40,7 @@ describe.skipIf(!BASE)("/traces/map groupIds scoping", () => {
     token = await registerAndVerify(userEmail, userPassword);
 
     // Look up the auto-created personal group + org for this user.
-    const groupsRes = await fetch(`${BASE}/groups`, {
+    const groupsRes = await fetch(`${BASE}/recipe-books`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     const groupsBody = (await groupsRes.json()) as { data: Array<{ id: string; organization_id: string }> };
@@ -50,7 +50,7 @@ describe.skipIf(!BASE)("/traces/map groupIds scoping", () => {
 
     // Create a second group so the user has multiple groups to exercise
     // the groupIds plural param against.
-    const createRes = await fetch(`${BASE}/groups`, {
+    const createRes = await fetch(`${BASE}/recipe-books`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({
@@ -168,7 +168,7 @@ describe.skipIf(!BASE)("/traces/map cross-author visibility in shared groups", (
 
     // Author owns a personal group (auto-created) + creates a shared group
     // they invite the viewer into.
-    const groupsRes = await fetch(`${BASE}/groups`, {
+    const groupsRes = await fetch(`${BASE}/recipe-books`, {
       headers: { Authorization: `Bearer ${authorToken}` },
     });
     const groupsBody = (await groupsRes.json()) as { data: Array<{ id: string; organization_id: string }> };
@@ -176,7 +176,7 @@ describe.skipIf(!BASE)("/traces/map cross-author visibility in shared groups", (
     const orgId = groupsBody.data[0]?.organization_id ?? "";
     if (!authorPersonalGroupId || !orgId) throw new Error("Missing personal group/org for author");
 
-    const createRes = await fetch(`${BASE}/groups`, {
+    const createRes = await fetch(`${BASE}/recipe-books`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${authorToken}` },
       body: JSON.stringify({
@@ -190,7 +190,7 @@ describe.skipIf(!BASE)("/traces/map cross-author visibility in shared groups", (
     if (!sharedGroupId) throw new Error("Failed to create shared group");
 
     // Add viewer to shared group as a plain member via /groups/:id/members.
-    const addRes = await fetch(`${BASE}/groups/${sharedGroupId}/members`, {
+    const addRes = await fetch(`${BASE}/recipe-books/${sharedGroupId}/members`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${authorToken}` },
       body: JSON.stringify({ email: viewerEmail, role: "member" }),
@@ -202,7 +202,7 @@ describe.skipIf(!BASE)("/traces/map cross-author visibility in shared groups", (
     const keyRes = await fetch(`${BASE}/keys/daily`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${authorToken}` },
-      body: JSON.stringify({ writeGroupId: sharedGroupId }),
+      body: JSON.stringify({ writeRecipeBookId: sharedGroupId }),
     });
     const keyBody = (await keyRes.json()) as { ok: boolean; data?: { key?: string }; error?: string };
     const rawKey = keyBody.data?.key ?? "";

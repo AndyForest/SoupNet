@@ -300,7 +300,7 @@ function renderPage(
             expand: undefined,
             compact: undefined,
           } as PageParams, { expand: "true" });
-          clusterHtml = `\n      <a class="cluster-size" href="/check${drillQs}">Explore ${r.clusterSize} similar recipes in this group</a>`;
+          clusterHtml = `\n      <a class="cluster-size" href="/check${drillQs}">Explore ${r.clusterSize} similar recipes in this cluster</a>`;
         }
 
         // Default: single best evidence entry. Full: all evidence.
@@ -490,17 +490,17 @@ function renderPage(
 
     ${keyGroups && keyGroups.length > 0 ? `
     <details${keyGroups.filter((g) => g.canWrite).length > 1 ? " open" : ""}>
-      <summary>Your groups (${keyGroups.length})</summary>
+      <summary>Your recipe books (${keyGroups.length})</summary>
       <ul style="font-size:0.85em;margin:0.3em 0">
         ${keyGroups.map((g) => {
           const desc = g.description?.trim() ? ` &mdash; <em>${esc(g.description.trim())}</em>` : "";
           return `<li><code>${esc(g.slug)}</code> &mdash; ${esc(g.name)} (${g.canWrite ? "read/write" : "read"}${g.isDefault ? ", default" : ""})${desc}</li>`;
         }).join("\n        ")}
       </ul>
-      <p style="font-size:0.75em;color:#888;margin:0.3em 0">Use slug in URLs: <code>&amp;group=SLUG</code> to write, <code>&amp;read_groups=SLUG1,SLUG2</code> to search.</p>
+      <p style="font-size:0.75em;color:#888;margin:0.3em 0">Use slug in URLs: <code>&amp;recipe_book=SLUG</code> to write, <code>&amp;read_recipe_books=SLUG1,SLUG2</code> to search. Legacy <code>&amp;group=</code> / <code>&amp;read_groups=</code> still accepted.</p>
     </details>
     ${keyGroups.filter((g) => g.canWrite).length > 1 ? `
-    <label for="group">Write to group</label>
+    <label for="group">Write to recipe book</label>
     <select id="group" name="group">
       ${keyGroups.filter((g) => g.canWrite).map((g) =>
         `<option value="${esc(g.slug)}"${g.isDefault ? " selected" : ""}${params.group === g.slug ? " selected" : ""}>${esc(g.name)}${g.isDefault ? " (default)" : ""}</option>`
@@ -514,8 +514,8 @@ function renderPage(
       <label for="axes">Concept axes (two terms, comma-separated &mdash; positions results by similarity to each)</label>
       <input type="text" id="axes" name="axes" placeholder="accessibility, performance" value="${esc(params.axes)}">
 
-      <label for="read_groups">Search groups (comma-separated slugs &mdash; default: all)</label>
-      <input type="text" id="read_groups" name="read_groups" placeholder="all groups" value="${esc(params.readGroups)}">
+      <label for="read_groups">Search recipe books (comma-separated slugs &mdash; default: all)</label>
+      <input type="text" id="read_groups" name="read_groups" placeholder="all recipe books" value="${esc(params.readGroups)}">
       <label for="max_chars">Max response size (characters &mdash; auto-clusters to fit)</label>
       <input type="number" id="max_chars" name="max_chars" placeholder="2000" value="${esc(params.maxChars)}">
 
@@ -671,8 +671,10 @@ check.get("/", checkRateLimit, async (c) => {
     expand: c.req.query("expand") || undefined,
     compact: c.req.query("compact") || undefined,
     axes: c.req.query("axes") || undefined,
-    group: c.req.query("group") || undefined,
-    readGroups: c.req.query("read_groups") || undefined,
+    // Accept both `recipe_book` (canonical) and `group` (legacy alias) on the
+    // wire — see Decision A1/B1 rename. Same for read_recipe_books / read_groups.
+    group: c.req.query("recipe_book") || c.req.query("group") || undefined,
+    readGroups: c.req.query("read_recipe_books") || c.req.query("read_groups") || undefined,
     imageFile: undefined,
   };
 
@@ -702,8 +704,8 @@ check.post("/", checkRateLimit, async (c) => {
     expand: (formData["expand"] as string) || undefined,
     compact: (formData["compact"] as string) || undefined,
     axes: (formData["axes"] as string) || undefined,
-    group: (formData["group"] as string) || undefined,
-    readGroups: (formData["read_groups"] as string) || undefined,
+    group: (formData["recipe_book"] as string) || (formData["group"] as string) || undefined,
+    readGroups: (formData["read_recipe_books"] as string) || (formData["read_groups"] as string) || undefined,
     imageFile,
   };
 

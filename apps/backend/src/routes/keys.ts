@@ -8,10 +8,13 @@ import { rateLimit } from "../middleware/rate-limit";
 import { sql } from "drizzle-orm";
 import { BRIEFING_MCP, BRIEFING_WEB } from "@soupnet/domain";
 
+// C1 — recipe-book rename. Wire-format field names use the new "recipe book"
+// vocabulary. Internal TS variables and DB columns keep the schema-level
+// `groupIds` naming per the schema deferral (see ADR backlog item).
 const scopedKeySchema = z.object({
-  readGroupIds: z.array(z.string().uuid()).min(1),
-  writeGroupIds: z.array(z.string().uuid()).min(1),
-  defaultWriteGroupId: z.string().uuid(),
+  readRecipeBookIds: z.array(z.string().uuid()).min(1),
+  writeRecipeBookIds: z.array(z.string().uuid()).min(1),
+  defaultWriteRecipeBookId: z.string().uuid(),
   expiresAt: z.string().datetime(),
   label: z.string().max(100).optional(),
 });
@@ -53,14 +56,15 @@ keys.post("/daily", keyGenRateLimit, async (c) => {
     dailyWrite: boolean;
   }>;
   if (memberships.length === 0) {
-    return c.json({ ok: false, error: "No group memberships found" }, 400);
+    return c.json({ ok: false, error: "No recipe book memberships found" }, 400);
   }
 
   const allGroupIds = memberships.map((m) => m.groupId);
   const configuredReadGroupIds = memberships.filter((m) => m.dailyRead).map((m) => m.groupId);
   const configuredWriteGroupIds = memberships.filter((m) => m.dailyWrite).map((m) => m.groupId);
 
-  // Optional: scope write to a single group (explicit override).
+  // Optional: scope write to a single recipe book (explicit override).
+  // Wire-format field name: writeRecipeBookId.
   let writeGroupIds: string[];
   let defaultWriteGroupId: string | undefined;
   let body: Record<string, unknown> = {};
@@ -68,10 +72,10 @@ keys.post("/daily", keyGenRateLimit, async (c) => {
     body = (await c.req.json()) as Record<string, unknown>;
   } catch { /* no body or invalid JSON — use configured defaults */ }
 
-  if (typeof body["writeGroupId"] === "string") {
-    const wgId = body["writeGroupId"];
+  if (typeof body["writeRecipeBookId"] === "string") {
+    const wgId = body["writeRecipeBookId"];
     if (!allGroupIds.includes(wgId)) {
-      return c.json({ ok: false, error: "writeGroupId must be a group you are a member of" }, 400);
+      return c.json({ ok: false, error: "writeRecipeBookId must be a recipe book you are a member of" }, 400);
     }
     writeGroupIds = [wgId];
     defaultWriteGroupId = wgId;
@@ -79,13 +83,14 @@ keys.post("/daily", keyGenRateLimit, async (c) => {
     writeGroupIds = configuredWriteGroupIds;
     defaultWriteGroupId = configuredWriteGroupIds[0];
   } else {
-    // No write groups configured and no override — the key would be read-only,
-    // which breaks the "open recipe check page" action. Surface a clear error
-    // so the UI can point the user at the Groups page to opt a group in.
+    // No write recipe books configured and no override — the key would be
+    // read-only, which breaks the "open recipe check page" action. Surface a
+    // clear error so the UI can point the user at the Recipe Books page to
+    // opt a book in.
     return c.json({
       ok: false,
-      error: "no_write_groups_configured",
-      message: "No groups are configured for daily-agent writes. Open the Groups page and include at least one group in writes, or pass writeGroupId explicitly.",
+      error: "no_write_recipe_books_configured",
+      message: "No recipe books are configured for daily-agent writes. Open the Recipe Books page and include at least one in writes, or pass writeRecipeBookId explicitly.",
     }, 400);
   }
 
@@ -96,7 +101,7 @@ keys.post("/daily", keyGenRateLimit, async (c) => {
   const readGroupIds = configuredReadGroupIds.length > 0 ? configuredReadGroupIds : allGroupIds;
 
   const result = await generateDailyKey(db, user.id, readGroupIds, writeGroupIds, defaultWriteGroupId);
-  return c.json({ ok: true, data: result });
+  return c.json({ ok: true, data: toWireKey(result) });
 });
 
 // POST /keys/scoped
@@ -108,11 +113,16 @@ keys.post("/scoped", keyGenRateLimit, async (c) => {
     return c.json({ ok: false, error: "Invalid input", details: parsed.error.issues }, 400);
   }
 
-  const { readGroupIds, writeGroupIds, defaultWriteGroupId, expiresAt, label } = parsed.data;
+  // Translate wire-format names to the internal schema-level names. DB
+  // columns and service functions still use the `groupIds` vocabulary (per
+  // schema deferral); only the public JSON shape carries the new names.
+  const readGroupIds = parsed.data.readRecipeBookIds;
+  const writeGroupIds = parsed.data.writeRecipeBookIds;
+  const defaultWriteGroupId = parsed.data.defaultWriteRecipeBookId;
+  const { expiresAt, label } = parsed.data;
 
-  // Validate defaultWriteGroupId is in writeGroupIds
   if (!writeGroupIds.includes(defaultWriteGroupId)) {
-    return c.json({ ok: false, error: "defaultWriteGroupId must be in writeGroupIds" }, 400);
+    return c.json({ ok: false, error: "defaultWriteRecipeBookId must be in writeRecipeBookIds" }, 400);
   }
 
   // Validate expiresAt is in the future and not more than 1 year out
@@ -127,7 +137,7 @@ keys.post("/scoped", keyGenRateLimit, async (c) => {
     return c.json({ ok: false, error: "expiresAt cannot be more than 1 year in the future" }, 400);
   }
 
-  // Verify user is a member of all requested groups (both read and write)
+  // Verify user is a member of all requested recipe books (both read and write)
   const allGroupIds = [...new Set([...readGroupIds, ...writeGroupIds])];
   const db = getDb();
   const memberGroups = await db.execute(sql`
@@ -138,7 +148,7 @@ keys.post("/scoped", keyGenRateLimit, async (c) => {
   const memberGroupIds = new Set((memberGroups as unknown as Array<{ group_id: string }>).map(r => r.group_id));
   const unauthorized = allGroupIds.filter(g => !memberGroupIds.has(g));
   if (unauthorized.length > 0) {
-    return c.json({ ok: false, error: "Not a member of all requested groups" }, 403);
+    return c.json({ ok: false, error: "Not a member of all requested recipe books" }, 403);
   }
 
   const result = await generateScopedKey(db, user.id, {
@@ -148,14 +158,14 @@ keys.post("/scoped", keyGenRateLimit, async (c) => {
     expiresAt: expiresDate,
     ...(label ? { label } : {}),
   });
-  return c.json({ ok: true, data: result });
+  return c.json({ ok: true, data: toWireKey(result) });
 });
 
 // GET /keys
 keys.get("/", async (c) => {
   const user = c.get("user");
   const result = await listKeys(getDb(), user.id);
-  return c.json({ ok: true, data: result });
+  return c.json({ ok: true, data: result.map(toWireKeyListItem) });
 });
 
 // DELETE /keys/:id
@@ -227,5 +237,78 @@ keys.get("/briefing", async (c) => {
 
   return c.json({ ok: true, data: { text, type: briefingType } });
 });
+
+// ── Wire-format mappers (C1 — recipe-book rename) ──────────────────────────
+//
+// The HTTP/JSON shape uses recipe-book vocabulary; service-layer return values
+// keep the schema-level groupIds vocabulary. These helpers translate at the
+// route boundary.
+
+interface WireKey {
+  key: string;
+  searchUrl: string;
+  expiresAt: Date;
+  readRecipeBookIds: string[];
+  writeRecipeBookIds: string[];
+  defaultWriteRecipeBookId: string;
+}
+
+interface ServiceKey {
+  key: string;
+  searchUrl: string;
+  expiresAt: Date;
+  readGroupIds: string[];
+  writeGroupIds: string[];
+  defaultWriteGroupId: string;
+}
+
+function toWireKey(k: ServiceKey): WireKey {
+  return {
+    key: k.key,
+    searchUrl: k.searchUrl,
+    expiresAt: k.expiresAt,
+    readRecipeBookIds: k.readGroupIds,
+    writeRecipeBookIds: k.writeGroupIds,
+    defaultWriteRecipeBookId: k.defaultWriteGroupId,
+  };
+}
+
+interface ServiceKeyListItem {
+  id: string;
+  keyPrefix: string;
+  keyType: string;
+  readGroupIds: string[];
+  writeGroupIds: string[];
+  defaultWriteGroupId: string;
+  label: string | null;
+  expiresAt: Date;
+  createdAt: Date;
+}
+
+interface WireKeyListItem {
+  id: string;
+  keyPrefix: string;
+  keyType: string;
+  readRecipeBookIds: string[];
+  writeRecipeBookIds: string[];
+  defaultWriteRecipeBookId: string;
+  label: string | null;
+  expiresAt: Date;
+  createdAt: Date;
+}
+
+function toWireKeyListItem(k: ServiceKeyListItem): WireKeyListItem {
+  return {
+    id: k.id,
+    keyPrefix: k.keyPrefix,
+    keyType: k.keyType,
+    readRecipeBookIds: k.readGroupIds,
+    writeRecipeBookIds: k.writeGroupIds,
+    defaultWriteRecipeBookId: k.defaultWriteGroupId,
+    label: k.label,
+    expiresAt: k.expiresAt,
+    createdAt: k.createdAt,
+  };
+}
 
 export { keys as keyRoutes };

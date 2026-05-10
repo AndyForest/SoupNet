@@ -5,6 +5,9 @@ import { authFetch } from "../auth.js";
 import { copyToClipboard, useClipboard } from "../hooks/useClipboard.js";
 import { Icon } from "../components/Icon.js";
 
+// Internal type — represents a recipe book row from the backend. Named "Group"
+// because the DB schema deferral keeps the table name `groups`. Per-DB-rename
+// is tracked separately as a future ADR.
 interface Group {
   id: string;
   name: string;
@@ -62,9 +65,9 @@ export function GroupsPage() {
   const groupsQuery = useQuery({
     queryKey: ["groups"],
     queryFn: async () => {
-      const res = await authFetch("/groups");
+      const res = await authFetch("/recipe-books");
       const json = (await res.json()) as { ok: boolean; data: Group[] };
-      if (!json.ok) throw new Error("Failed to load groups");
+      if (!json.ok) throw new Error("Failed to load recipe books");
       return json.data;
     },
   });
@@ -93,9 +96,9 @@ export function GroupsPage() {
       void queryClient.invalidateQueries({ queryKey: ["invitations-pending"] });
       void queryClient.invalidateQueries({ queryKey: ["groups"] });
       if (data.groupSlug) {
-        // Keep the user on Groups, but mark the joined group so the onboarding
-        // banner shows.
-        window.history.replaceState(null, "", `/groups?justJoined=${encodeURIComponent(data.groupSlug)}`);
+        // Keep the user on the Recipe Books page, but mark the joined book so
+        // the onboarding banner shows.
+        window.history.replaceState(null, "", `/app/recipe-books?justJoined=${encodeURIComponent(data.groupSlug)}`);
       }
     },
   });
@@ -130,15 +133,15 @@ export function GroupsPage() {
       // correctly rejects that with 403. The user can only create groups
       // under organizations they own.
       const orgId = groupsQuery.data?.find((g) => g.member_role === "owner")?.organization_id;
-      if (!orgId) throw new Error("No owned organization found — you need to own an org to create a group.");
+      if (!orgId) throw new Error("No owned organization found — you need to own an org to create a recipe book.");
 
       const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-      const res = await authFetch("/groups", {
+      const res = await authFetch("/recipe-books", {
         method: "POST",
         body: JSON.stringify({ name, slug, organizationId: orgId, description: description || undefined }),
       });
       const json = (await res.json()) as { ok: boolean; error?: string };
-      if (!json.ok) throw new Error(json.error ?? "Failed to create group");
+      if (!json.ok) throw new Error(json.error ?? "Failed to create recipe book");
       return json;
     },
     onSuccess: () => {
@@ -153,21 +156,21 @@ export function GroupsPage() {
     <div>
       <header style={{ marginBottom: "var(--space-xl)", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
-          <h1>Groups</h1>
+          <h1>Recipe Books</h1>
           <p style={{ color: "var(--color-on-surface-variant)", marginTop: "var(--space-xs)" }}>
-            Groups let you share recipes and accumulated judgment with collaborators, even
-            across different organizations. Each group builds a shared recipe book that every
-            member's AI agents can search.{" "}
+            Recipe books let you share recipes and accumulated judgment with collaborators,
+            even across different organizations. Each recipe book is a shared corpus that
+            every member's AI agents can search.{" "}
             <Link to="/app/check" style={{ color: "var(--color-primary)" }}>
               Learn about recipe format and how to check recipes →
             </Link>
           </p>
           <p className="text-sm" style={{ color: "var(--color-on-surface-variant)", marginTop: "var(--space-sm)" }}>
-            When an agent writes to a group, its recipes become searchable by all group
-            members. The group description is shared context — every agent reading or writing
-            here sees it, so recipes can leave out anything the description already implies.
-            A well-written description compounds across every recipe in the group: tighter
-            roles, less restated context, more transferable knowledge.
+            When an agent writes to a recipe book, its recipes become searchable by all
+            members. The recipe book description is shared context — every agent reading or
+            writing here sees it, so recipes can leave out anything the description already
+            implies. A well-written description compounds across every recipe in the book:
+            tighter roles, less restated context, more transferable knowledge.
           </p>
         </div>
         <button
@@ -175,13 +178,13 @@ export function GroupsPage() {
           onClick={() => setShowCreateForm(!showCreateForm)}
           style={{ whiteSpace: "nowrap" }}
         >
-          {showCreateForm ? "Cancel" : "+ Create Group"}
+          {showCreateForm ? "Cancel" : "+ Create Recipe Book"}
         </button>
       </header>
 
       {showCreateForm && (
         <div className="card" style={{ marginBottom: "var(--space-lg)" }}>
-          <h3 style={{ marginBottom: "var(--space-sm)" }}>Create a new group</h3>
+          <h3 style={{ marginBottom: "var(--space-sm)" }}>Create a new recipe book</h3>
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -191,7 +194,7 @@ export function GroupsPage() {
           >
             <input
               type="text"
-              placeholder="Group name"
+              placeholder="Recipe book name"
               value={newGroupName}
               onChange={(e) => setNewGroupName(e.target.value)}
               required
@@ -205,12 +208,12 @@ export function GroupsPage() {
               style={{ padding: "var(--space-sm)", borderRadius: "var(--radius-sm)", border: "1px solid var(--color-border)" }}
             />
             <p className="text-xs" style={{ color: "var(--color-on-surface-variant)", margin: 0, marginTop: "calc(-1 * var(--space-xs))" }}>
-              One elevator-pitch sentence about what this group is for — useful to every human
-              and agent collaborator. Example: <em>A volunteer team planning our community
-              spring fundraiser.</em>
+              One elevator-pitch sentence about what this recipe book is for — useful to every
+              human and agent collaborator. Example: <em>A volunteer team planning our
+              community spring fundraiser.</em>
             </p>
             <button className="btn" type="submit" disabled={createGroupMutation.isPending || !newGroupName}>
-              {createGroupMutation.isPending ? "Creating..." : "Create Group"}
+              {createGroupMutation.isPending ? "Creating..." : "Create Recipe Book"}
             </button>
             {createGroupMutation.isError && (
               <p style={{ color: "var(--color-error)", fontSize: "0.85rem" }}>
@@ -224,7 +227,7 @@ export function GroupsPage() {
       {incomingInvitesQuery.data && incomingInvitesQuery.data.length > 0 && (
         <section style={{ marginBottom: "var(--space-xl)" }}>
           <h2 style={{ fontSize: "1.1rem", marginBottom: "var(--space-md)" }}>
-            You've been invited to {incomingInvitesQuery.data.length} group{incomingInvitesQuery.data.length !== 1 ? "s" : ""}
+            You've been invited to {incomingInvitesQuery.data.length} recipe book{incomingInvitesQuery.data.length !== 1 ? "s" : ""}
           </h2>
           <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-sm)" }}>
             {incomingInvitesQuery.data.map((inv) => {
@@ -282,11 +285,11 @@ export function GroupsPage() {
         </section>
       )}
 
-      {groupsQuery.isLoading && <p style={{ color: "var(--color-on-surface-variant)" }}>Loading groups...</p>}
-      {groupsQuery.isError && <p style={{ color: "var(--color-error)" }}>Failed to load groups.</p>}
+      {groupsQuery.isLoading && <p style={{ color: "var(--color-on-surface-variant)" }}>Loading recipe books...</p>}
+      {groupsQuery.isError && <p style={{ color: "var(--color-error)" }}>Failed to load recipe books.</p>}
       {groupsQuery.data && groupsQuery.data.length === 0 && (!incomingInvitesQuery.data || incomingInvitesQuery.data.length === 0) && (
         <p style={{ color: "var(--color-on-surface-variant)" }}>
-          You are not a member of any groups yet.
+          You are not a member of any recipe books yet.
         </p>
       )}
 
@@ -329,7 +332,7 @@ function GroupCard({
   const membersQuery = useQuery({
     queryKey: ["group-members", group.id],
     queryFn: async () => {
-      const res = await authFetch(`/groups/${group.id}/members`);
+      const res = await authFetch(`/recipe-books/${group.id}/members`);
       const json = (await res.json()) as { ok: boolean; data: Member[] };
       if (!json.ok) throw new Error("Failed to load members");
       return json.data;
@@ -340,7 +343,7 @@ function GroupCard({
   const pendingInvitesQuery = useQuery({
     queryKey: ["group-invitations", group.id],
     queryFn: async () => {
-      const res = await authFetch(`/groups/${group.id}/invitations`);
+      const res = await authFetch(`/recipe-books/${group.id}/invitations`);
       const json = (await res.json()) as { ok: boolean; data: PendingInvite[] };
       if (!json.ok) throw new Error("Failed to load invitations");
       return json.data;
@@ -350,12 +353,12 @@ function GroupCard({
 
   const updateGroupMutation = useMutation({
     mutationFn: async ({ name, description }: { name: string; description: string }) => {
-      const res = await authFetch(`/groups/${group.id}`, {
+      const res = await authFetch(`/recipe-books/${group.id}`, {
         method: "PUT",
         body: JSON.stringify({ name, description: description || null }),
       });
       const json = (await res.json()) as { ok: boolean; error?: string };
-      if (!json.ok) throw new Error(json.error ?? "Failed to update group");
+      if (!json.ok) throw new Error(json.error ?? "Failed to update recipe book");
       return json;
     },
     onSuccess: () => {
@@ -365,7 +368,7 @@ function GroupCard({
 
   const removeMemberMutation = useMutation({
     mutationFn: async (userId: string) => {
-      const res = await authFetch(`/groups/${group.id}/members/${userId}`, { method: "DELETE" });
+      const res = await authFetch(`/recipe-books/${group.id}/members/${userId}`, { method: "DELETE" });
       const json = (await res.json()) as { ok: boolean; error?: string };
       if (!json.ok) throw new Error(json.error ?? "Failed to remove member");
       return json;
@@ -377,7 +380,7 @@ function GroupCard({
 
   const revokeInviteMutation = useMutation({
     mutationFn: async (inviteId: string) => {
-      const res = await authFetch(`/groups/${group.id}/invitations/${inviteId}`, { method: "DELETE" });
+      const res = await authFetch(`/recipe-books/${group.id}/invitations/${inviteId}`, { method: "DELETE" });
       const json = (await res.json()) as { ok: boolean; error?: string };
       if (!json.ok) throw new Error(json.error ?? "Failed to revoke invitation");
       return json;
@@ -411,11 +414,11 @@ function GroupCard({
         </div>
         <div style={{ display: "flex", gap: "var(--space-xs)", alignItems: "center" }}>
           <a
-            href={`/groups/${group.id}/traces`}
+            href={`/app/recipe-books/${group.id}/traces`}
             onClick={(e) => e.stopPropagation()}
             className="btn-ghost"
             style={{ fontSize: "0.75rem", padding: "2px var(--space-sm)", textDecoration: "none" }}
-            title="Review traces in this group"
+            title="Review traces in this recipe book"
           >
             Review traces →
           </a>
@@ -472,7 +475,7 @@ function GroupCard({
               value={editDesc}
               onChange={(e) => setEditDesc(e.target.value)}
               rows={3}
-              placeholder="Describe this group — helps agents decide where to write recipes."
+              placeholder="Describe this recipe book — helps agents decide where to write recipes."
               style={{ padding: "var(--space-sm)", borderRadius: "var(--radius-sm)", border: "1px solid var(--color-border)", width: "100%", fontFamily: "inherit", fontSize: "0.9rem", resize: "vertical" }}
             />
           </div>
@@ -580,7 +583,7 @@ function InviteBox({ groupId }: { groupId: string }) {
 
   const inviteMutation = useMutation({
     mutationFn: async (inviteeEmail: string) => {
-      const res = await authFetch(`/groups/${groupId}/invite`, {
+      const res = await authFetch(`/recipe-books/${groupId}/invite`, {
         method: "POST",
         body: JSON.stringify({ email: inviteeEmail }),
       });
@@ -771,13 +774,13 @@ function PendingInviteRow({
 }
 
 /**
- * Per-group "connect your AI agent to this group" box. Surfaces the same
- * MCP/web briefing + recipe-check-page affordances that live on the
- * dashboard sidebar, but scoped to this specific group. When `justJoined`
- * is set (the post-accept onboarding moment — see design-thinking.md
- * §"The 'inviting in your AI agent' moment") it gets a primary-accent
- * border and a welcoming heading. Wording kept in sync with
- * DashboardPage's "For Your Agents" section.
+ * Per-recipe-book "connect your AI agent to this book" box. Surfaces the
+ * same MCP/web briefing + recipe-check-page affordances that live on the
+ * dashboard sidebar, but scoped to this specific recipe book. When
+ * `justJoined` is set (the post-accept onboarding moment — see
+ * design-thinking.md §"The 'inviting in your AI agent' moment") it gets
+ * a primary-accent border and a welcoming heading. Wording kept in sync
+ * with DashboardPage's "For Your Agents" section.
  */
 function AgentConnectBox({ group, justJoined }: { group: Group; justJoined: boolean }) {
   const [dailyOpened, setDailyOpened] = useState(false);
@@ -791,7 +794,7 @@ function AgentConnectBox({ group, justJoined }: { group: Group; justJoined: bool
     const keyRes = await authFetch("/keys/daily", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ writeGroupId: group.id }),
+      body: JSON.stringify({ writeRecipeBookId: group.id }),
     });
     const keyJson = (await keyRes.json()) as { ok: boolean; data?: { key: string } };
     if (!keyJson.ok || !keyJson.data) throw new Error("Failed to generate key");
@@ -817,7 +820,7 @@ function AgentConnectBox({ group, justJoined }: { group: Group; justJoined: bool
       const res = await authFetch("/keys/daily", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ writeGroupId: group.id }),
+        body: JSON.stringify({ writeRecipeBookId: group.id }),
       });
       const json = (await res.json()) as { ok: boolean; data?: { searchUrl: string } };
       if (!json.ok || !json.data) throw new Error("Failed to generate key");
@@ -831,8 +834,8 @@ function AgentConnectBox({ group, justJoined }: { group: Group; justJoined: bool
   });
 
   const heading = justJoined
-    ? `You're in ${group.name}. Now invite your AI agent in.`
-    : `Connect your AI agent to ${group.name}`;
+    ? `You're in the ${group.name} recipe book. Now invite your AI agent in.`
+    : `Connect your AI agent to the ${group.name} recipe book`;
 
   return (
     <div
@@ -847,10 +850,10 @@ function AgentConnectBox({ group, justJoined }: { group: Group; justJoined: bool
       <h4 style={{ marginBottom: "var(--space-xs)", fontSize: "1rem" }}>{heading}</h4>
       <p style={{ margin: 0, color: "var(--color-on-surface-variant)", fontSize: "0.9rem" }}>
         Connect whichever AI agent you already use — Claude, ChatGPT, Gemini — so it can
-        find this group's accumulated taste and judgment on its next session.
+        find this recipe book's accumulated taste and judgment on its next session.
       </p>
       <p className="text-xs" style={{ color: "var(--color-on-surface-variant)", marginTop: "var(--space-sm)", marginBottom: "var(--space-sm)" }}>
-        Generates a 24-hour key: reads all groups, writes to <strong>{group.name}</strong>.
+        Generates a 24-hour key: reads all recipe books, writes to <strong>{group.name}</strong>.
       </p>
       <div style={{ display: "flex", gap: "var(--space-sm)", flexWrap: "wrap" }}>
         <button
@@ -892,7 +895,7 @@ function AgentConnectBox({ group, justJoined }: { group: Group; justJoined: bool
         </Link>
       </div>
       <p className="text-xs" style={{ color: "var(--color-on-surface-variant)", marginTop: "var(--space-sm)", marginBottom: 0 }}>
-        For custom expiry, multiple write groups, or per-agent labels —{" "}
+        For custom expiry, multiple write recipe books, or per-agent labels —{" "}
         <Link to="/app/keys" style={{ color: "var(--color-primary)" }}>manage API keys</Link>.
       </p>
     </div>
@@ -900,10 +903,10 @@ function AgentConnectBox({ group, justJoined }: { group: Group; justJoined: bool
 }
 
 /**
- * Per-group daily-link preference toggles. Controls whether the dashboard's
- * quick-click "Copy MCP/web briefing" and "Open recipe check page" buttons
- * include this group in read and/or write scope when the user hasn't
- * explicitly overridden. New memberships default to excluded; existing
+ * Per-recipe-book daily-link preference toggles. Controls whether the
+ * dashboard's quick-click "Copy MCP/web briefing" and "Open recipe check page"
+ * buttons include this recipe book in read and/or write scope when the user
+ * hasn't explicitly overridden. New memberships default to excluded; existing
  * memberships were grandfathered to included by migration 0016. See
  * design-thinking.md §Configurable defaults for the "daily agent link"
  * buttons.
@@ -912,7 +915,7 @@ function DailyPrefsToggles({ group }: { group: Group }) {
   const queryClient = useQueryClient();
   const mutation = useMutation({
     mutationFn: async (body: { dailyRead?: boolean; dailyWrite?: boolean }) => {
-      const res = await authFetch(`/groups/${group.id}/daily-prefs`, {
+      const res = await authFetch(`/recipe-books/${group.id}/daily-prefs`, {
         method: "PUT",
         body: JSON.stringify(body),
       });

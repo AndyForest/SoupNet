@@ -250,7 +250,7 @@ export function SettingsPage() {
         <h3 style={{ marginBottom: "var(--space-sm)" }}>Your Data</h3>
         <p style={{ color: "var(--color-on-surface-variant)", fontSize: "0.9rem", marginBottom: "var(--space-md)" }}>
           Your recipes, evidence, and references are yours. Export a full copy as JSON whenever you want —
-          including your recipes, the evidence and references you've submitted with them, your group memberships,
+          including your recipes, the evidence and references you've submitted with them, your recipe book memberships,
           and API key metadata. System-generated data (vectors, embeddings, audit logs) is not included since it's
           derived from what you contributed.
         </p>
@@ -343,7 +343,7 @@ export function SettingsPage() {
             <select defaultValue="user_only">
               <option value="agent_only">Agent Only</option>
               <option value="user_only">User Only</option>
-              <option value="group">Group</option>
+              <option value="group">Recipe Book</option>
               <option value="org_only">Organization</option>
             </select>
           </div>

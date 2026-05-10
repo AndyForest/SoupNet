@@ -14,16 +14,16 @@ export interface CustomBriefingHandoff {
   rawKey: string;
   label: string;
   keyPrefix: string; // for the banner when label is empty — "you just created (soup_abc1…)"
-  readGroupIds: string[];
+  readRecipeBookIds: string[];
 }
 
 interface ApiKey {
   id: string;
   keyPrefix: string;
   keyType: string;
-  readGroupIds: string[];
-  writeGroupIds: string[];
-  defaultWriteGroupId: string;
+  readRecipeBookIds: string[];
+  writeRecipeBookIds: string[];
+  defaultWriteRecipeBookId: string;
   label: string | null;
   expiresAt: string;
   createdAt: string;
@@ -73,7 +73,7 @@ export function ApiKeysPage() {
   const groupsQuery = useQuery({
     queryKey: ["groups"],
     queryFn: async () => {
-      const res = await authFetch("/groups");
+      const res = await authFetch("/recipe-books");
       const json = (await res.json()) as { ok: boolean; data: Group[] };
       return json.ok ? json.data : [];
     },
@@ -103,9 +103,9 @@ export function ApiKeysPage() {
       const res = await authFetch("/keys/scoped", {
         method: "POST",
         body: JSON.stringify({
-          readGroupIds: rIds,
-          writeGroupIds: wIds,
-          defaultWriteGroupId: dwId,
+          readRecipeBookIds: rIds,
+          writeRecipeBookIds: wIds,
+          defaultWriteRecipeBookId: dwId,
           expiresAt,
           label: scopedLabel || undefined,
         }),
@@ -272,7 +272,7 @@ export function ApiKeysPage() {
                 const gridCols = "minmax(0, 1fr) 70px 70px 70px";
                 return (
                   <div>
-                    <label style={{ marginBottom: "var(--space-xs)", display: "block" }}>Group permissions</label>
+                    <label style={{ marginBottom: "var(--space-xs)", display: "block" }}>Recipe book permissions</label>
 
                     {/* Column header with select-all toggles */}
                     <div style={{
@@ -396,7 +396,7 @@ export function ApiKeysPage() {
                       })}
                     </div>
                     <p className="text-xs" style={{ color: "var(--color-on-surface-variant)", marginTop: "var(--space-xs)" }}>
-                      Default write group is where recipes go unless the agent specifies otherwise.
+                      Default write recipe book is where recipes go unless the agent specifies otherwise.
                     </p>
                   </div>
                 );
@@ -528,7 +528,7 @@ export function ApiKeysPage() {
                                 rawKey,
                                 label: key.label ?? "",
                                 keyPrefix: key.keyPrefix,
-                                readGroupIds: key.readGroupIds,
+                                readRecipeBookIds: key.readRecipeBookIds,
                               };
                               try {
                                 sessionStorage.setItem(CUSTOM_BRIEFING_STORAGE_KEY, JSON.stringify(handoff));
@@ -536,7 +536,7 @@ export function ApiKeysPage() {
                               void navigate({ to: "/app/map" });
                             }}
                             style={{ flex: 1, minWidth: 150, justifyContent: "center", fontSize: "0.78rem", whiteSpace: "nowrap" }}
-                            title="Open the Recipe Map with this key's read groups preselected. Slice the recipe book until you like the clusters, then copy a briefing tied to this key."
+                            title="Open the Recipe Map with this key's read recipe books preselected. Slice the corpus until you like the clusters, then copy a briefing tied to this key."
                           >
                             Custom Briefing →
                           </button>
@@ -547,27 +547,27 @@ export function ApiKeysPage() {
                     {/* Scope details — always visible when expanded */}
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-md)", fontSize: "0.85rem" }}>
                       <div>
-                        <p className="text-label" style={{ marginBottom: "var(--space-xs)" }}>Read groups</p>
-                        {key.readGroupIds.length === 0 ? (
+                        <p className="text-label" style={{ marginBottom: "var(--space-xs)" }}>Read recipe books</p>
+                        {key.readRecipeBookIds.length === 0 ? (
                           <p className="text-xs" style={{ color: "var(--color-on-surface-variant)" }}>None</p>
                         ) : (
                           <ul style={{ margin: 0, paddingLeft: "var(--space-md)", listStyle: "disc" }}>
-                            {key.readGroupIds.map((id) => (
+                            {key.readRecipeBookIds.map((id) => (
                               <li key={id} className="text-xs">{groupNameMap.get(id) ?? id.slice(0, 8)}</li>
                             ))}
                           </ul>
                         )}
                       </div>
                       <div>
-                        <p className="text-label" style={{ marginBottom: "var(--space-xs)" }}>Write groups</p>
-                        {key.writeGroupIds.length === 0 ? (
+                        <p className="text-label" style={{ marginBottom: "var(--space-xs)" }}>Write recipe books</p>
+                        {key.writeRecipeBookIds.length === 0 ? (
                           <p className="text-xs" style={{ color: "var(--color-on-surface-variant)" }}>None</p>
                         ) : (
                           <ul style={{ margin: 0, paddingLeft: "var(--space-md)", listStyle: "disc" }}>
-                            {key.writeGroupIds.map((id) => (
+                            {key.writeRecipeBookIds.map((id) => (
                               <li key={id} className="text-xs">
                                 {groupNameMap.get(id) ?? id.slice(0, 8)}
-                                {id === key.defaultWriteGroupId && <span style={{ color: "var(--color-primary)" }}> (default)</span>}
+                                {id === key.defaultWriteRecipeBookId && <span style={{ color: "var(--color-primary)" }}> (default)</span>}
                               </li>
                             ))}
                           </ul>
@@ -577,10 +577,10 @@ export function ApiKeysPage() {
 
                     <div style={{ display: "flex", gap: "var(--space-md)", marginTop: "var(--space-sm)" }}>
                       <a
-                        href={`/map?groupId=${encodeURIComponent(key.defaultWriteGroupId)}`}
+                        href={`/map?groupId=${encodeURIComponent(key.defaultWriteRecipeBookId)}`}
                         style={{ color: "var(--color-primary)", fontSize: "0.8rem", textDecoration: "none" }}
                       >
-                        Map default group →
+                        Map default recipe book →
                       </a>
                       <span className="text-xs" style={{ color: "var(--color-on-surface-variant)" }}>
                         Created {new Date(key.createdAt).toLocaleDateString()}

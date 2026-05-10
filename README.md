@@ -102,7 +102,7 @@ Or in `.mcp.json`:
 }
 ```
 
-**3. Restart the client** (or run `/mcp` in Claude Code) to pick up the new server. Available tools: `check_recipe`, `get_recipe_guide`, `list_my_groups`.
+**3. Restart the client** (or run `/mcp` in Claude Code) to pick up the new server. Available tools: `check_recipe`, `get_recipe_guide`, `list_my_recipe_books`, `update_recipe_book_description`.
 
 Clients that can't speak HTTP MCP natively (Claude Desktop, older tooling) can bridge via `mcp-remote` or run the stdio server in `apps/mcp-server/` — both covered in the live guide at `/docs/mcp-setup` (serves with your key pre-filled when reached from the dashboard).
 
@@ -148,7 +148,7 @@ npm run test:ci                   # clean reproduction of CI (fresh DB on :5534,
 
 Integration tests hit the running Docker backend, so keep `docker compose up -d` alive.
 
-**Integration tests create test data** in the live database (users with `@test.local` emails, in their own groups). Test traces are group-scoped and don't appear in your personal search results. To clean up accumulated test data:
+**Integration tests create test data** in the live database (users with `@test.local` emails, in their own recipe books). Test traces are recipe-book-scoped and don't appear in your personal search results. To clean up accumulated test data:
 
 ```bash
 npx tsx scripts/cleanup-test-data.ts           # clean up

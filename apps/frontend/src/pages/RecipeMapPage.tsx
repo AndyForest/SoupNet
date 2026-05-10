@@ -69,7 +69,7 @@ export function RecipeMapPage() {
   const groupsQuery = useQuery({
     queryKey: ["groups"],
     queryFn: async () => {
-      const res = await authFetch("/groups");
+      const res = await authFetch("/recipe-books");
       const json = (await res.json()) as { ok: boolean; data: Array<{ id: string; name: string; slug: string }> };
       return json.ok ? json.data : [];
     },
@@ -163,7 +163,7 @@ export function RecipeMapPage() {
     if (customBriefing) {
       briefingKey = customBriefing.rawKey;
     } else {
-      const body = selectedGroupId ? { writeGroupId: selectedGroupId } : undefined;
+      const body = selectedGroupId ? { writeRecipeBookId: selectedGroupId } : undefined;
       const keyRes = await authFetch("/keys/daily", {
         method: "POST",
         ...(body ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}),
@@ -203,8 +203,8 @@ export function RecipeMapPage() {
 
     // 4. Format exemplars with evidence + references
     const groupName = selectedGroupId
-      ? (groupsQuery.data ?? []).find(g => g.id === selectedGroupId)?.name ?? "selected group"
-      : "all groups";
+      ? (groupsQuery.data ?? []).find(g => g.id === selectedGroupId)?.name ?? "selected recipe book"
+      : "all recipe books";
 
     const paramLines = [
       `- Clusters: ${k}`,
@@ -289,7 +289,7 @@ ${exemplarLines.join("\n\n")}`;
     // picked a specific focus group, fetch the union of the key's read groups
     // so the map reflects the key's actual reach (Andy 2026-04-17 — empty
     // groups in the key were silently hiding the populated ones).
-    groupIds: !selectedGroupId && customBriefing ? customBriefing.readGroupIds : undefined,
+    groupIds: !selectedGroupId && customBriefing ? customBriefing.readRecipeBookIds : undefined,
     traceIds: currentTraceIds,
     strategy: strategy || undefined,
   });
@@ -542,7 +542,7 @@ ${exemplarLines.join("\n\n")}`;
           <button
             onClick={() => void handleCopyBriefing("web")}
             disabled={briefingPending !== null || clusters.length === 0}
-            title={!selectedGroupId ? "Focus a group first for best results" : undefined}
+            title={!selectedGroupId ? "Focus a recipe book first for best results" : undefined}
             style={{ fontSize: "0.78rem", whiteSpace: "nowrap" }}
           >
             {copied === "web"
@@ -554,7 +554,7 @@ ${exemplarLines.join("\n\n")}`;
           <button
             onClick={() => void handleCopyBriefing("mcp")}
             disabled={briefingPending !== null || clusters.length === 0}
-            title={!selectedGroupId ? "Focus a group first for best results" : undefined}
+            title={!selectedGroupId ? "Focus a recipe book first for best results" : undefined}
             style={{ fontSize: "0.78rem", whiteSpace: "nowrap" }}
           >
             {copied === "mcp"
@@ -604,12 +604,12 @@ ${exemplarLines.join("\n\n")}`;
               </span></>
             )}
             {(() => {
-              const groupNames = customBriefing.readGroupIds
+              const groupNames = customBriefing.readRecipeBookIds
                 .map((id) => (groupsQuery.data ?? []).find((g) => g.id === id)?.name)
                 .filter((n): n is string => !!n);
               if (groupNames.length === 0) return null;
               if (groupNames.length === 1) return <> — read scope: <em>{groupNames[0]}</em>.</>;
-              return <> — read scope: {groupNames.length} groups ({groupNames.join(", ")}). Map shows the union by default; the dropdown below narrows to one.</>;
+              return <> — read scope: {groupNames.length} recipe books ({groupNames.join(", ")}). Map shows the union by default; the dropdown below narrows to one.</>;
             })()}
           </span>
           <button
@@ -623,7 +623,7 @@ ${exemplarLines.join("\n\n")}`;
         </div>
       ) : (
         <p className="text-xs" style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-sm)" }}>
-          Copy-briefing buttons will mint a fresh 24-hour key scoped to the focused group. Start from the <Link to="/app/keys" style={{ color: "var(--color-primary)" }}>API Keys page</Link> and click <em>Custom Briefing</em> to brief with a specific key instead.
+          Copy-briefing buttons will mint a fresh 24-hour key scoped to the focused recipe book. Start from the <Link to="/app/keys" style={{ color: "var(--color-primary)" }}>API Keys page</Link> and click <em>Custom Briefing</em> to brief with a specific key instead.
         </p>
       )}
 
@@ -653,17 +653,17 @@ ${exemplarLines.join("\n\n")}`;
             {customBriefing ? (
               <>
                 <option value="">
-                  All key groups ({customBriefing.readGroupIds.length})
+                  All key recipe books ({customBriefing.readRecipeBookIds.length})
                 </option>
                 {(groupsQuery.data ?? [])
-                  .filter((g) => customBriefing.readGroupIds.includes(g.id))
+                  .filter((g) => customBriefing.readRecipeBookIds.includes(g.id))
                   .map((g) => (
                     <option key={g.id} value={g.id}>{g.name}</option>
                   ))}
               </>
             ) : (
               <>
-                <option value="">All groups</option>
+                <option value="">All recipe books</option>
                 {(groupsQuery.data ?? []).map((g) => (
                   <option key={g.id} value={g.id}>{g.name}</option>
                 ))}

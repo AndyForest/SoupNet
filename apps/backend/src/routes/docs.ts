@@ -194,7 +194,7 @@ docs.get("/mcp-setup", (c) => {
 
   <h2>Getting an API key</h2>
   <p>Log in to the <a href="${escUrl}">Soup.net dashboard</a> and generate a daily or scoped key.
-  Daily keys rotate automatically. Scoped keys let you restrict access to specific groups with a custom expiry.</p>
+  Daily keys rotate automatically. Scoped keys let you restrict access to specific recipe books with a custom expiry.</p>
   ${apiKey !== "YOUR_API_KEY" ? `<p>Your current key (<code>${escKey.substring(0, 8)}...</code>) is pre-filled in the configs below.</p>` : ""}
 
   <h2>Option 1: Claude Desktop</h2>

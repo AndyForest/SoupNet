@@ -23,10 +23,10 @@ export const FOR_AI_AGENTS = {
   title: "For AI agents — read this first",
   text: `You are capturing the HUMAN USER's taste and judgment, not your own. Recipes are written from the user's perspective in a transferable role: "As a [role] working on [goal], I [prefer/chose] so that [reason]."
 
-Three voice mistakes break this. The role should be the user's, not yours; transferable, not personal; and not duplicating context the group description already provides:
+Three voice mistakes break this. The role should be the user's, not yours; transferable, not personal; and not duplicating context the recipe-book description already provides:
 - Agent voice — "As an AI agent, I recommend...". You're narrating your own reasoning instead of the user's preference. Replace with the user's role.
 - User-name voice — "As Andy reviewing two AI design briefings...". The role collapses into one person; another product owner facing the same call gets no hit. Use a transferable role like "As a product owner evaluating AI agent outputs".
-- Group-implied product voice — "As a Soup.net developer cleaning up iPhone Safari mobile issues...", written to the soup-net-development group. The group description already says this is Soup.net development; restating it bloats the role and degrades clustering. Use the underlying technical role like "As a front-end React developer cleaning up iPhone Safari mobile issues" — it transfers to anyone working on the same kind of problem in any project.
+- Recipe-book-implied product voice — "As a Soup.net developer cleaning up iPhone Safari mobile issues...", written to the soup-net-development recipe book. The recipe book's description already says this is Soup.net development; restating it bloats the role and degrades clustering. Use the underlying technical role like "As a front-end React developer cleaning up iPhone Safari mobile issues" — it transfers to anyone working on the same kind of problem in any project.
 
 Every recipe needs context. The [role] and [goal] together scope the judgment — without them, taste drifts into context-free assertions that persist where they're not useful. "I prefer Hono" is ambiguous. "As a backend developer building an edge-deployed API, I chose Hono over Express so that deployment stays portable" is actionable.
 
@@ -134,12 +134,12 @@ export const RECIPE_EXAMPLES: RecipeExample[] = [
     explanation: "A broad, exploratory recipe. Its warrant is that the user asked for this kind of collaboration — truthful, grounded, and productively vague. The results will sharpen what comes next.",
   },
   {
-    label: "Group collaboration (non-technical)",
+    label: "Recipe-book collaboration (non-technical)",
     recipe: "As a volunteer coordinator for the Spring Fundraiser, I chose Google Docs for our shared planning so that everyone can edit from any device, including mobile.",
-    evidenceFor: "Group consensus reached via Slack discussion. All four members agreed.",
+    evidenceFor: "Team consensus reached via Slack discussion. All four members agreed.",
     quote: "fine for the plan, but I'll share design drafts as Figma links",
     source: "Priya on Slack, 2026-03-28",
-    explanation: "A group decision logged to a shared group. Other members' agents find this without anyone sharing notes — stigmergy across a team.",
+    explanation: "A team decision logged to a shared recipe book. Other members' agents find this without anyone sharing notes — stigmergy across a team.",
   },
   {
     label: "Thin prompt, divergent branch (seed + selection, slot-annotated)",
@@ -167,30 +167,30 @@ Each exemplar shows how many similar recipes it represents (clusterSize).`,
 };
 
 export const GROUPS_GUIDE = {
-  title: "Groups — choosing where recipes go",
-  text: `Groups are how recipes reach the right audience. Before each check, ask: "Who benefits from knowing this?" Your answer determines the group.
+  title: "Recipe books — choosing where recipes go",
+  text: `Recipe books are how recipes reach the right audience. Before each check, ask: "Who benefits from knowing this?" Your answer determines the recipe book.
 
-Call list_my_groups to see your groups with descriptions and access levels. Use the group parameter (slug or ID) to write to a specific group. Default: your key's most private group.
+Call list_my_recipe_books to see your recipe books with descriptions and access levels. Use the recipe_book parameter (slug or ID) to write to a specific book. Default: your key's most private recipe book.
 
 How to decide:
-- Personal taste (coding style, tool preferences, workflow habits) → personal group. Only your agents benefit.
-- Project-specific decisions (architecture choices, library selection, security policy for this codebase) → the project's shared group. Collaborators' agents find these when working on the same project.
-- Cross-cutting judgment (general engineering principles, design philosophy) → consider which group's context it enriches most.
+- Personal taste (coding style, tool preferences, workflow habits) → personal recipe book. Only your agents benefit.
+- Project-specific decisions (architecture choices, library selection, security policy for this codebase) → the project's shared recipe book. Collaborators' agents find these when working on the same project.
+- Cross-cutting judgment (general engineering principles, design philosophy) → consider which recipe book's context it enriches most.
 
-The default is deliberately private — you won't accidentally share something. But defaulting to personal for everything undermines collaboration. Project decisions checked to a personal group are invisible to collaborators, even when those collaborators (and their agents) would benefit most.
+The default is deliberately private — you won't accidentally share something. But defaulting to personal for everything undermines collaboration. Project decisions checked to a personal recipe book are invisible to collaborators, even when those collaborators (and their agents) would benefit most.
 
-When in doubt, read the group descriptions via list_my_groups. If a group's description matches the context of your recipe, that's probably where it belongs.
+When in doubt, read the recipe-book descriptions via list_my_recipe_books. If a recipe book's description matches the context of your recipe, that's probably where it belongs.
 
-Search scope: use read_groups (comma-separated slugs) to restrict which groups you search. Default: all readable groups — cross-group context is generally valuable.`,
+Search scope: use read_recipe_books (comma-separated slugs) to restrict which recipe books you search. Default: all readable recipe books — cross-book context is generally valuable.`,
 };
 
 export const CONNECTION_TIERS = {
   title: "How to connect",
   text: `There are three ways to connect, depending on your agent's capabilities:
 
-1. MCP tools (Claude Code, Claude Desktop, Antigravity): Full automation via check_recipe, get_recipe_guide, and list_my_groups tools. One-command setup.
+1. MCP tools (Claude Code, Claude Desktop, Antigravity): Full automation via check_recipe, get_recipe_guide, and list_my_recipe_books tools. One-command setup.
 
-2. Web browsing with URL construction: If your agent can construct and fetch URLs, build recipe check URLs directly: /check?key=YOUR_KEY&recipe=URL_ENCODED_RECIPE&evidence=URL_ENCODED_EVIDENCE&group=GROUP_SLUG. The page accepts human-readable parameter names (recipe, evidence, group) via GET. Results appear on the same page. Group slugs are shown on the check page when you visit with your key.
+2. Web browsing with URL construction: If your agent can construct and fetch URLs, build recipe check URLs directly: /check?key=YOUR_KEY&recipe=URL_ENCODED_RECIPE&evidence=URL_ENCODED_EVIDENCE&recipe_book=RECIPE_BOOK_SLUG. The page accepts human-readable parameter names (recipe, evidence, recipe_book) via GET; the legacy parameter \`group\` is still accepted for backwards compatibility. Results appear on the same page. Recipe-book slugs are shown on the check page when you visit with your key.
 
 3. User-assisted checking: Many web-based AI assistants (such as ChatGPT and Google Gemini web chat) have read-only web access by design — a responsible AI guardrail that we respect and support. These agents can read the recipe guide and check page, but cannot submit forms on external sites. For these systems:
 
@@ -198,9 +198,9 @@ Generate clickable recipe-check links for the user. When confidence is low or mu
 
 Link formatting varies by agent UI: some chat UIs render complex URLs as clickable Markdown links (ChatGPT, Claude), while others intercept them into search redirects (Google Gemini). Agents don't know their UI's capabilities but do know their system identity — use your identity as a hint. If your UI reliably handles complex URLs, use Markdown links. If it intercepts them (or if you're uncertain), output the raw URL in a plain code block so the user can copy it. See the web-agent briefing for details.
 
-To discover group slugs without MCP: visit the check page with the API key (/check?key=YOUR_KEY) — the page lists available groups with their slugs, names, and access levels. Include group=SLUG in your links to target the right group.
+To discover recipe-book slugs without MCP: visit the check page with the API key (/check?key=YOUR_KEY) — the page lists available recipe books with their slugs, names, and access levels. Include recipe_book=SLUG in your links to target the right book.
 
-For all tiers: use human-readable parameter names in URLs (recipe, evidence, group) or the combined format (recipe text, blank line, then evidence). The system accepts both.`,
+For all tiers: use human-readable parameter names in URLs (recipe, evidence, recipe_book) or the combined format (recipe text, blank line, then evidence). The system accepts both.`,
 };
 
 // ── Bootstrap blurb for human users to give AI agents ──────────────────────
@@ -252,7 +252,7 @@ export const WORKFLOW_WHEN = `You already have these moments in your work. Recip
  */
 export const WORKFLOW_ANNOTATION = `When your output is a creative plan, direction, or recommendation, you can tag specific taste calls within it with recipe-check links — so you can discover relevant recipes from the corpus and contribute to it, while the creative work the user asked for stays intact. The plan is the primary output; recipes annotate the real decisions within it. Often a better fit than replacing the plan with a list of divergent options.`;
 
-/** Shared groups guidance. */
+/** Shared recipe-books guidance. */
 export function workflowGroups(groups: Array<{ slug: string; name: string; description?: string | null; canWrite: boolean; isDefault: boolean }>): string {
   const defaultGroup = groups.filter(g => g.canWrite).find(g => g.isDefault) ?? groups.filter(g => g.canWrite)[0];
   const groupLines = groups.map(g => {
@@ -264,8 +264,8 @@ export function workflowGroups(groups: Array<{ slug: string; name: string; descr
 
   return `${groupLines}
 
-Default write group: ${defaultGroup ? `${defaultGroup.slug} (${defaultGroup.name})` : "personal"}.
-A useful question before each check: "Who benefits from knowing this?" Personal taste → personal group. Project decisions → the project's shared group. Defaulting everything to personal undermines collaboration.`;
+Default write recipe book: ${defaultGroup ? `${defaultGroup.slug} (${defaultGroup.name})` : "personal"}.
+A useful question before each check: "Who benefits from knowing this?" Personal taste → personal recipe book. Project decisions → the project's shared book. Defaulting everything to personal undermines collaboration.`;
 }
 
 // ── Agent briefing templates ────────────────────────────────────────────────
@@ -295,7 +295,7 @@ export const BRIEFING_MCP = {
 You are an MCP-capable AI assistant. You already need to understand your user's taste and judgment — and you lose that understanding every time the session ends. Soup.net makes it persistent via MCP tools: recipe checks are how you record and retrieve what you've learned, in a format that also helps the user's other agents and collaborators. Every check is a read-only search with an append-only side effect — your recipe is compared against the corpus, and the trace you leave makes future checks smarter for every agent this user works with. There are no destructive operations. Check freely and often.
 
 ## Setup — skip if \`soupnet\` MCP is already connected
-If \`check_recipe\`, \`get_recipe_guide\`, and \`list_my_groups\` are already available as tools, skip this section. Otherwise, pick the block matching the user's MCP client. Each schema is distinct — the keys and field names differ by client, so don't mix them.
+If \`check_recipe\`, \`get_recipe_guide\`, and \`list_my_recipe_books\` are already available as tools, skip this section. Otherwise, pick the block matching the user's MCP client. Each schema is distinct — the keys and field names differ by client, so don't mix them.
 
 **Claude Code** — per-project \`.mcp.json\` at the repo root (or \`~/.claude/.mcp.json\` for global). One-liner equivalent: \`claude mcp add --transport http soupnet ${backendUrl}/mcp --header "Authorization: Bearer ${apiKey}"\`.
 
@@ -341,7 +341,7 @@ If \`check_recipe\`, \`get_recipe_guide\`, and \`list_my_groups\` are already av
 
 Full setup instructions with alternatives (Claude Desktop via mcp-remote, stdio transport, .mcpb extension, etc.): ${backendUrl}/docs/mcp-setup?key=${apiKey}
 
-Once \`soupnet\` is connected: \`get_recipe_guide\` returns the full recipe format with annotated examples — call it first. \`list_my_groups\` returns your groups with descriptions and access levels.
+Once \`soupnet\` is connected: \`get_recipe_guide\` returns the full recipe format with annotated examples — call it first. \`list_my_recipe_books\` returns your recipe books with descriptions and access levels.
 
 ## Principles
 ${PRINCIPLES}
@@ -349,11 +349,11 @@ ${PRINCIPLES}
 ## When to check
 ${WORKFLOW_WHEN}
 
-## Your groups
+## Your recipe books
 ${workflowGroups(groups)}
 
 ## How to check
-\`check_recipe\` accepts: recipe (the claim), supporting_evidence (warrant + data), and group (slug). Optional: axes (concept projection), clusters/max_chars (response size), and reference file attachments (images, PDF, audio, video) — see your tool schema for the exact file-input params (stdio MCP uses a local path or URL; HTTP MCP uses \`file_url\` or \`file_base64\`). HTTP MCP also accepts an optional \`region.image_box\` with normalized \`{x0, y0, x1, y1}\` coordinates (0-1) to mark a specific area of an attached image — the embedding pipeline crops to that region, blurs the padding, and weights the marked area heavily. Useful when a judgment call is about a specific part of a larger image.
+\`check_recipe\` accepts: recipe (the claim), supporting_evidence (warrant + data), and recipe_book (slug). Optional: axes (concept projection), clusters/max_chars (response size), and reference file attachments (images, PDF, audio, video) — see your tool schema for the exact file-input params (stdio MCP uses a local path or URL; HTTP MCP uses \`file_url\` or \`file_base64\`). HTTP MCP also accepts an optional \`region.image_box\` with normalized \`{x0, y0, x1, y1}\` coordinates (0-1) to mark a specific area of an attached image — the embedding pipeline crops to that region, blurs the padding, and weights the marked area heavily. Useful when a judgment call is about a specific part of a larger image.
 
 For local files that have no public URL (screenshots, generated artifacts, anything on your disk), \`file_base64\` will blow your context window on anything bigger than a thumbnail. Instead, POST the file to the \`/uploads\` REST endpoint first using your same Bearer token, then pass the returned URL as \`file_url\`. The MCP server detects own-hostname URLs and resolves them internally — no second HTTP fetch, no public exposure. Example:
 
@@ -421,17 +421,17 @@ ${WORKFLOW_WHEN}
 
 ## Your check page
 ${checkUrl}
-The URL shows the recipe check form, full instructions, and your groups.
+The URL shows the recipe check form, full instructions, and your recipe books.
 Recipe guide with annotated examples: ${guideUrl}
 
-## Your groups
+## Your recipe books
 ${workflowGroups(groups)}
-URLs with \`&group=SLUG\` write to a specific group.
+URLs with \`&recipe_book=SLUG\` write to a specific recipe book. The legacy \`&group=SLUG\` parameter is still accepted for backwards compatibility.
 
 ## How to check
 Recipe check URLs follow this shape:
-${checkUrl}&recipe=URL_ENCODED_RECIPE&evidence=URL_ENCODED_EVIDENCE&group=SLUG
-The check page also has a form. Human-readable parameter names are accepted: recipe, evidence, group.
+${checkUrl}&recipe=URL_ENCODED_RECIPE&evidence=URL_ENCODED_EVIDENCE&recipe_book=SLUG
+The check page also has a form. Human-readable parameter names are accepted: recipe, evidence, recipe_book.
 
 Evidence entries follow this shape: your interpretation, then > "direct quote", then -- source citation, separated by blank lines.
 

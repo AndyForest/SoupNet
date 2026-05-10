@@ -72,7 +72,7 @@ groupsRouter.post("/", async (c) => {
   }).returning({ id: groups.id });
 
   const group = groupRows[0];
-  if (!group) return c.json({ ok: false, error: "Failed to create group" }, 500);
+  if (!group) return c.json({ ok: false, error: "Failed to create recipe book" }, 500);
 
   // Add creator as owner, auto-opted-in for daily-link read + write. The
   // "new groups default to excluded" rule applies to memberships gained
@@ -111,7 +111,7 @@ groupsRouter.put("/:id", async (c) => {
   `);
   const role = (roleRows as unknown as Array<{ role: string }>)[0]?.role;
   if (role !== "owner") {
-    return c.json({ ok: false, error: "Only group owners can edit group details" }, 403);
+    return c.json({ ok: false, error: "Only recipe-book owners can edit recipe-book details" }, 403);
   }
 
   // Capture before-state so the audit log can record what changed and the
@@ -120,7 +120,7 @@ groupsRouter.put("/:id", async (c) => {
     SELECT name, slug, description FROM claimnet.groups WHERE id = ${groupId}::uuid
   `);
   const before = (beforeRows as unknown as Array<{ name: string; slug: string; description: string | null }>)[0];
-  if (!before) return c.json({ ok: false, error: "Group not found" }, 404);
+  if (!before) return c.json({ ok: false, error: "Recipe book not found" }, 404);
 
   // Build dynamic UPDATE — only touch fields the caller provided.
   const { name, description } = parsed.data;
@@ -144,7 +144,7 @@ groupsRouter.put("/:id", async (c) => {
     SELECT id, name, slug, description FROM claimnet.groups WHERE id = ${groupId}::uuid
   `);
   const row = (updated as unknown as Array<{ id: string; name: string; slug: string; description: string | null }>)[0];
-  if (!row) return c.json({ ok: false, error: "Group not found" }, 404);
+  if (!row) return c.json({ ok: false, error: "Recipe book not found" }, 404);
 
   // Audit-log only fields that actually changed. Description gets its own
   // action so the mcp:update_group_description path and this JWT path
@@ -202,7 +202,7 @@ groupsRouter.get("/:id/members", async (c) => {
     WHERE group_id = ${groupId}::uuid AND user_id = ${user.id}::uuid
   `);
   if ((membership as unknown[]).length === 0) {
-    return c.json({ ok: false, error: "Not a member of this group" }, 403);
+    return c.json({ ok: false, error: "Not a member of this recipe book" }, 403);
   }
 
   const members = await db.execute(sql`
@@ -235,7 +235,7 @@ groupsRouter.post("/:id/members", async (c) => {
   `);
   const role = (requesterRole as unknown as Array<{ role: string }>)[0]?.role;
   if (role !== "owner" && role !== "admin") {
-    return c.json({ ok: false, error: "Only group owners and admins can add members" }, 403);
+    return c.json({ ok: false, error: "Only recipe-book owners and admins can add members" }, 403);
   }
 
   // Look up target user by email
@@ -298,7 +298,7 @@ groupsRouter.post("/:id/invite", async (c) => {
   `);
   const role = (requesterRole as unknown as Array<{ role: string }>)[0]?.role;
   if (role !== "owner" && role !== "admin") {
-    return c.json({ ok: false, error: "Only group owners and admins can send invitations" }, 403);
+    return c.json({ ok: false, error: "Only recipe-book owners and admins can send invitations" }, 403);
   }
 
   // Look up group name + inviter email for the blurb. We do NOT look up
@@ -363,8 +363,8 @@ groupsRouter.post("/:id/invite", async (c) => {
 /**
  * Build a copy-pasteable blurb the inviter sends to the invitee through their
  * own channel (email, Signal, DM). Framing emphasizes the agent-onboarding
- * value ("your AI agent gets this team's context"), not just "join a group."
- * See docs/design-thinking.md §"The 'inviting in your AI agent' moment".
+ * value ("your AI agent gets this team's context"), not just "join a recipe
+ * book." See docs/design-thinking.md §"The 'inviting in your AI agent' moment".
  */
 function buildInviteBlurb(opts: {
   inviterEmail: string;
@@ -374,14 +374,14 @@ function buildInviteBlurb(opts: {
 }): string {
   const { inviterEmail, groupName, groupDescription, inviteUrl } = opts;
   const lines = [
-    `Hey — I'd like to collaborate with you on Soup.net, in the group "${groupName}".`,
+    `Hey — I'd like to collaborate with you on Soup.net, in the recipe book "${groupName}".`,
   ];
   if (groupDescription) {
     lines.push("", `It's for: ${groupDescription}`);
   }
   lines.push(
     "",
-    "Soup.net is shared memory for AI agents. When you accept, your AI agent (Claude, ChatGPT, Gemini — whichever you use) gets immediate access to this group's accumulated taste and judgment, so it can help you contribute without catching up.",
+    "Soup.net is shared memory for AI agents. When you accept, your AI agent (Claude, ChatGPT, Gemini — whichever you use) gets immediate access to this recipe book's accumulated taste and judgment, so it can help you contribute without catching up.",
     "",
     "Accept here (link good for 7 days):",
     inviteUrl,
@@ -403,7 +403,7 @@ groupsRouter.get("/:id/invitations", async (c) => {
   `);
   const role = (requesterRole as unknown as Array<{ role: string }>)[0]?.role;
   if (role !== "owner" && role !== "admin") {
-    return c.json({ ok: false, error: "Only group owners and admins can view invitations" }, 403);
+    return c.json({ ok: false, error: "Only recipe-book owners and admins can view invitations" }, 403);
   }
 
   const rows = await db.execute(sql`
@@ -462,7 +462,7 @@ groupsRouter.delete("/:id/invitations/:inviteId", async (c) => {
   `);
   const role = (requesterRole as unknown as Array<{ role: string }>)[0]?.role;
   if (role !== "owner" && role !== "admin") {
-    return c.json({ ok: false, error: "Only group owners and admins can revoke invitations" }, 403);
+    return c.json({ ok: false, error: "Only recipe-book owners and admins can revoke invitations" }, 403);
   }
 
   // Revoke = expire. Preserves the row for audit.
@@ -497,7 +497,7 @@ groupsRouter.delete("/:id/members/:userId", async (c) => {
   `);
   const role = (requesterRole as unknown as Array<{ role: string }>)[0]?.role;
   if (role !== "owner") {
-    return c.json({ ok: false, error: "Only group owners can remove members" }, 403);
+    return c.json({ ok: false, error: "Only recipe-book owners can remove members" }, 403);
   }
 
   // Prevent removing self if last owner
@@ -508,7 +508,7 @@ groupsRouter.delete("/:id/members/:userId", async (c) => {
     `);
     const count = ((ownerCount as unknown as Array<{ total: number }>)[0]?.total) ?? 0;
     if (count <= 1) {
-      return c.json({ ok: false, error: "Cannot remove the last owner of a group" }, 400);
+      return c.json({ ok: false, error: "Cannot remove the last owner of a recipe book" }, 400);
     }
   }
 
@@ -554,7 +554,7 @@ groupsRouter.put("/:id/daily-prefs", async (c) => {
   `);
   const row = (result as unknown as Array<{ dailyRead: boolean; dailyWrite: boolean }>)[0];
   if (!row) {
-    return c.json({ ok: false, error: "Not a member of this group" }, 403);
+    return c.json({ ok: false, error: "Not a member of this recipe book" }, 403);
   }
   return c.json({ ok: true, data: row });
 });

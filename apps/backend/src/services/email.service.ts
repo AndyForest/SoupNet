@@ -103,12 +103,12 @@ export async function sendInvitationEmail(
   await getTransporter().sendMail({
     from: FROM_ADDRESS,
     to: email,
-    subject: `You've been invited to a group on Soup.net`,
-    text: `${inviterEmail} invited you to join the group "${groupName}" on Soup.net.\n\nSign up here:\n${inviteUrl}\n\nThis invitation expires in 7 days.`,
+    subject: `You've been invited to a recipe book on Soup.net`,
+    text: `${inviterEmail} invited you to join the recipe book "${groupName}" on Soup.net.\n\nSign up here:\n${inviteUrl}\n\nThis invitation expires in 7 days.`,
     html: `
       <div style="font-family: Georgia, serif; max-width: 480px; margin: 0 auto; padding: 2rem;">
         <h1 style="color: #051a0f; font-size: 1.5rem;">You're invited to Soup.net</h1>
-        <p><strong>${escHtml(inviterEmail)}</strong> invited you to join the group <strong>&ldquo;${escHtml(groupName)}&rdquo;</strong>.</p>
+        <p><strong>${escHtml(inviterEmail)}</strong> invited you to join the recipe book <strong>&ldquo;${escHtml(groupName)}&rdquo;</strong>.</p>
         <a href="${inviteUrl}" style="display: inline-block; background: #051a0f; color: #fff; padding: 0.75rem 1.5rem; border-radius: 0.5rem; text-decoration: none; font-family: sans-serif; font-size: 0.9rem;">Accept Invitation</a>
         <p style="color: #737973; font-size: 0.85rem; margin-top: 1.5rem;">This invitation expires in 7 days.</p>
       </div>

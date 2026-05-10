@@ -200,9 +200,9 @@ describe.skipIf(!BASE)("F15 — email verification hard gate", () => {
         Authorization: `Bearer ${gateToken}`,
       },
       body: JSON.stringify({
-        readGroupIds: ["00000000-0000-0000-0000-000000000000"],
-        writeGroupIds: ["00000000-0000-0000-0000-000000000000"],
-        defaultWriteGroupId: "00000000-0000-0000-0000-000000000000",
+        readRecipeBookIds: ["00000000-0000-0000-0000-000000000000"],
+        writeRecipeBookIds: ["00000000-0000-0000-0000-000000000000"],
+        defaultWriteRecipeBookId: "00000000-0000-0000-0000-000000000000",
         expiresAt: new Date(Date.now() + 86400000).toISOString(),
       }),
     });
@@ -470,7 +470,7 @@ describe.skipIf(!BASE)("data export", () => {
 
   it("GET /auth/me/export never includes raw API key values", async () => {
     // Generate a scoped key so apiKeys array has something to inspect.
-    const groupsRes = await fetch(`${BASE}/groups`, {
+    const groupsRes = await fetch(`${BASE}/recipe-books`, {
       headers: { Authorization: `Bearer ${exportToken}` },
     });
     const groupsBody = (await groupsRes.json()) as { data: Array<{ id: string }> };
@@ -481,9 +481,9 @@ describe.skipIf(!BASE)("data export", () => {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${exportToken}` },
       body: JSON.stringify({
-        readGroupIds: [gid],
-        writeGroupIds: [gid],
-        defaultWriteGroupId: gid,
+        readRecipeBookIds: [gid],
+        writeRecipeBookIds: [gid],
+        defaultWriteRecipeBookId: gid,
         expiresAt: new Date(Date.now() + 86400000).toISOString(),
         label: "export-test-key",
       }),

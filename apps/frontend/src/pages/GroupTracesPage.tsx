@@ -6,26 +6,31 @@ import { Icon } from "../components/Icon.js";
 import { DeleteTraceConfirmModal } from "../components/DeleteTraceConfirmModal.js";
 
 /**
- * Per-group moderation list. Any group member can view; per-row delete
- * affordance is gated on canDelete (server-computed: trace owner, group
- * owner/admin, or system role).
+ * Per-recipe-book moderation list. Any member can view; per-row delete
+ * affordance is gated on canDelete (server-computed: trace owner,
+ * recipe-book owner/admin, or system role).
  *
- * Use case: a group owner suspects malformed traces in the corpus and wants
- * to scan + prune. Outdated-but-correct recipes should NOT be deleted —
+ * Use case: a recipe-book owner suspects malformed traces in the corpus and
+ * wants to scan + prune. Outdated-but-correct recipes should NOT be deleted —
  * see design-thinking.md §"Correcting the record".
  */
 export function GroupTracesPage() {
-  const { groupId } = useParams({ strict: false }) as { groupId: string };
-  const { data, isLoading, isError } = useGroupTraces(groupId);
+  // Route params: legacy /app/groups/$groupId/traces uses `groupId`; new
+  // /app/recipe-books/$bookId/traces uses `bookId`. Read both so the same
+  // page component handles either route while the redirect from the legacy
+  // path settles.
+  const params = useParams({ strict: false }) as { groupId?: string; bookId?: string };
+  const recipeBookId = params.bookId ?? params.groupId ?? "";
+  const { data, isLoading, isError } = useGroupTraces(recipeBookId);
   const deleteTrace = useDeleteTrace();
   const [confirmTrace, setConfirmTrace] = useState<GroupTrace | null>(null);
 
   if (isLoading) {
-    return <p style={{ color: "var(--color-on-surface-variant)" }}>Loading group traces…</p>;
+    return <p style={{ color: "var(--color-on-surface-variant)" }}>Loading recipe book traces…</p>;
   }
 
   if (isError) {
-    return <p style={{ color: "var(--color-error)" }}>Failed to load group traces.</p>;
+    return <p style={{ color: "var(--color-error)" }}>Failed to load recipe book traces.</p>;
   }
 
   if (!Array.isArray(data)) {
@@ -41,7 +46,7 @@ export function GroupTracesPage() {
   }
 
   const traces = data;
-  const groupName = traces[0]?.groupName ?? "this group";
+  const groupName = traces[0]?.groupName ?? "this recipe book";
 
   return (
     <div>
@@ -52,14 +57,14 @@ export function GroupTracesPage() {
           Traces in {groupName}
         </h1>
         <p className="text-xs" style={{ color: "var(--color-on-surface-variant)" }}>
-          All traces in this group, regardless of author. Group owners and admins can delete malformed
+          All traces in this recipe book, regardless of author. Owners and admins can delete malformed
           entries — every member can scan. Outdated-but-correct recipes should not be deleted; log a
           fresh recipe and let temporal weighting de-emphasize the old one.
         </p>
       </header>
 
       {traces.length === 0 ? (
-        <p style={{ color: "var(--color-on-surface-variant)" }}>No traces in this group yet.</p>
+        <p style={{ color: "var(--color-on-surface-variant)" }}>No traces in this recipe book yet.</p>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-sm)" }}>
           {traces.map((trace) => (

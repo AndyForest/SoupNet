@@ -175,15 +175,36 @@ const keysRoute = createRoute({
   component: ApiKeysPage,
 });
 
-const groupsRoute = createRoute({
+const recipeBooksRoute = createRoute({
   getParentRoute: () => appRoute,
-  path: "groups",
+  path: "recipe-books",
   component: GroupsPage,
 });
 
-const groupTracesRoute = createRoute({
+const recipeBookTracesRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "recipe-books/$bookId/traces",
+  component: GroupTracesPage,
+});
+
+// B1: legacy /app/groups paths redirect to /app/recipe-books. Old bookmarks,
+// briefing-link copies, and in-flight invitation accept-redirects keep working.
+const legacyGroupsRedirectRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "groups",
+  beforeLoad: () => {
+    throw redirect({ to: "/app/recipe-books" });
+  },
+  component: GroupsPage,
+});
+
+const legacyGroupTracesRedirectRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "groups/$groupId/traces",
+  beforeLoad: ({ params }) => {
+    const p = params as { groupId: string };
+    throw redirect({ to: "/app/recipe-books/$bookId/traces", params: { bookId: p.groupId } });
+  },
   component: GroupTracesPage,
 });
 
@@ -256,8 +277,10 @@ export const routeTree = rootRoute.addChildren([
     checkRoute,
     traceDetailRoute,
     keysRoute,
-    groupsRoute,
-    groupTracesRoute,
+    recipeBooksRoute,
+    recipeBookTracesRoute,
+    legacyGroupsRedirectRoute,
+    legacyGroupTracesRedirectRoute,
     settingsRoute,
     mapRoute,
     checksRoute,

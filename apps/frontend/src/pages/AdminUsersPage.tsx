@@ -202,7 +202,7 @@ export function AdminUsersPage() {
     },
     {
       key: "groupCount",
-      header: "Groups",
+      header: "Recipe books",
       align: "right",
       render: (u) => (
         <span style={{ fontFamily: "'Space Grotesk', sans-serif" }}>{u.groupCount}</span>

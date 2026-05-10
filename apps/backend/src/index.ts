@@ -79,7 +79,17 @@ app.get("/health/ready", async (c) => {
 app.route("/auth", authRoutes);
 app.route("/keys", keyRoutes);
 app.route("/check", checkRoutes);
-app.route("/groups", groupRoutes);
+// B1: primary path is /recipe-books. /groups is mounted with a 301 redirect
+// alias so existing clients (briefing-link copies, in-flight invitation links,
+// any cached frontend bundle still referencing /groups) keep working through
+// the rename.
+app.route("/recipe-books", groupRoutes);
+app.use("/groups/*", async (c) => {
+  const target = c.req.path.replace(/^\/groups/, "/recipe-books");
+  const search = c.req.url.includes("?") ? c.req.url.slice(c.req.url.indexOf("?")) : "";
+  return c.redirect(`${target}${search}`, 308);
+});
+app.use("/groups", async (c) => c.redirect(`/recipe-books${c.req.url.includes("?") ? c.req.url.slice(c.req.url.indexOf("?")) : ""}`, 308));
 app.route("/invitations", invitationRoutes);
 app.route("/admin", adminRoutes);
 app.route("/docs", docsRoutes);

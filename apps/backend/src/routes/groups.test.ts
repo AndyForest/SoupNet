@@ -47,7 +47,7 @@ describe.skipIf(!BASE)("group member management", () => {
     tokenA = await registerAndVerify(userAEmail, userAPassword);
 
     // Get User A's org via their default Personal group
-    const groupsA = await fetch(`${BASE}/groups`, {
+    const groupsA = await fetch(`${BASE}/recipe-books`, {
       headers: { Authorization: `Bearer ${tokenA}` },
     });
     const groupsABody = (await groupsA.json()) as { data: Array<{ organization_id: string }> };
@@ -59,7 +59,7 @@ describe.skipIf(!BASE)("group member management", () => {
   });
 
   it("User A creates a shared group", async () => {
-    const res = await fetch(`${BASE}/groups`, {
+    const res = await fetch(`${BASE}/recipe-books`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -81,7 +81,7 @@ describe.skipIf(!BASE)("group member management", () => {
   });
 
   it("User A adds User B by email", async () => {
-    const res = await fetch(`${BASE}/groups/${sharedGroupId}/members`, {
+    const res = await fetch(`${BASE}/recipe-books/${sharedGroupId}/members`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -98,7 +98,7 @@ describe.skipIf(!BASE)("group member management", () => {
   });
 
   it("User A can list members (sees both users)", async () => {
-    const res = await fetch(`${BASE}/groups/${sharedGroupId}/members`, {
+    const res = await fetch(`${BASE}/recipe-books/${sharedGroupId}/members`, {
       headers: { Authorization: `Bearer ${tokenA}` },
     });
 
@@ -113,7 +113,7 @@ describe.skipIf(!BASE)("group member management", () => {
   });
 
   it("User B can list members too (is a member)", async () => {
-    const res = await fetch(`${BASE}/groups/${sharedGroupId}/members`, {
+    const res = await fetch(`${BASE}/recipe-books/${sharedGroupId}/members`, {
       headers: { Authorization: `Bearer ${tokenB}` },
     });
 
@@ -124,7 +124,7 @@ describe.skipIf(!BASE)("group member management", () => {
   });
 
   it("User B sees the shared group in their groups list", async () => {
-    const res = await fetch(`${BASE}/groups`, {
+    const res = await fetch(`${BASE}/recipe-books`, {
       headers: { Authorization: `Bearer ${tokenB}` },
     });
 
@@ -138,7 +138,7 @@ describe.skipIf(!BASE)("group member management", () => {
   });
 
   it("Non-owner cannot add members", async () => {
-    const res = await fetch(`${BASE}/groups/${sharedGroupId}/members`, {
+    const res = await fetch(`${BASE}/recipe-books/${sharedGroupId}/members`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -151,7 +151,7 @@ describe.skipIf(!BASE)("group member management", () => {
   });
 
   it("Adding non-existent user returns helpful 404", async () => {
-    const res = await fetch(`${BASE}/groups/${sharedGroupId}/members`, {
+    const res = await fetch(`${BASE}/recipe-books/${sharedGroupId}/members`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -166,7 +166,7 @@ describe.skipIf(!BASE)("group member management", () => {
   });
 
   it("Owner can update group name and description", async () => {
-    const res = await fetch(`${BASE}/groups/${sharedGroupId}`, {
+    const res = await fetch(`${BASE}/recipe-books/${sharedGroupId}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokenA}` },
       body: JSON.stringify({
@@ -184,7 +184,7 @@ describe.skipIf(!BASE)("group member management", () => {
   });
 
   it("Partial update (description only) leaves name unchanged", async () => {
-    const res = await fetch(`${BASE}/groups/${sharedGroupId}`, {
+    const res = await fetch(`${BASE}/recipe-books/${sharedGroupId}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokenA}` },
       body: JSON.stringify({ description: "Description-only update" }),
@@ -196,7 +196,7 @@ describe.skipIf(!BASE)("group member management", () => {
   });
 
   it("Non-owner cannot update the group", async () => {
-    const res = await fetch(`${BASE}/groups/${sharedGroupId}`, {
+    const res = await fetch(`${BASE}/recipe-books/${sharedGroupId}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokenB}` },
       body: JSON.stringify({ name: "hostile rename" }),
@@ -205,7 +205,7 @@ describe.skipIf(!BASE)("group member management", () => {
   });
 
   it("Empty PUT body returns 400", async () => {
-    const res = await fetch(`${BASE}/groups/${sharedGroupId}`, {
+    const res = await fetch(`${BASE}/recipe-books/${sharedGroupId}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokenA}` },
       body: JSON.stringify({}),
@@ -221,9 +221,9 @@ describe.skipIf(!BASE)("group member management", () => {
         Authorization: `Bearer ${tokenB}`,
       },
       body: JSON.stringify({
-        readGroupIds: [sharedGroupId],
-        writeGroupIds: [sharedGroupId],
-        defaultWriteGroupId: sharedGroupId,
+        readRecipeBookIds: [sharedGroupId],
+        writeRecipeBookIds: [sharedGroupId],
+        defaultWriteRecipeBookId: sharedGroupId,
         expiresAt: new Date(Date.now() + 86400000).toISOString(),
       }),
     });
@@ -284,13 +284,13 @@ describe.skipIf(!BASE)("group invitations (spam-safe)", () => {
     // test just does its one action, keeping side-effects in beforeAll.
     declinerToken = await registerAndVerify(declinerEmail, declinerPassword);
 
-    const groupsRes = await fetch(`${BASE}/groups`, {
+    const groupsRes = await fetch(`${BASE}/recipe-books`, {
       headers: { Authorization: `Bearer ${ownerToken}` },
     });
     const groupsBody = (await groupsRes.json()) as { data: Array<{ organization_id: string }> };
     ownerOrgId = groupsBody.data?.[0]?.organization_id ?? "";
 
-    const create = await fetch(`${BASE}/groups`, {
+    const create = await fetch(`${BASE}/recipe-books`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${ownerToken}` },
       body: JSON.stringify({
@@ -305,7 +305,7 @@ describe.skipIf(!BASE)("group invitations (spam-safe)", () => {
   });
 
   it("POST /groups/:id/invite returns the same shape for registered and unregistered emails (no fishing)", async () => {
-    const inviteRegistered = await fetch(`${BASE}/groups/${invGroupId}/invite`, {
+    const inviteRegistered = await fetch(`${BASE}/recipe-books/${invGroupId}/invite`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${ownerToken}` },
       body: JSON.stringify({ email: registeredInviteeEmail }),
@@ -317,7 +317,7 @@ describe.skipIf(!BASE)("group invitations (spam-safe)", () => {
       ["blurb", "email", "expiresAt", "id", "inviteUrl"].sort(),
     );
 
-    const inviteUnregistered = await fetch(`${BASE}/groups/${invGroupId}/invite`, {
+    const inviteUnregistered = await fetch(`${BASE}/recipe-books/${invGroupId}/invite`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${ownerToken}` },
       body: JSON.stringify({ email: unregisteredEmail }),
@@ -351,7 +351,7 @@ describe.skipIf(!BASE)("group invitations (spam-safe)", () => {
     // registeredInviteeToken was already verified in beforeAll. The owner
     // sent an invite to that email in the previous test. The invitee should
     // NOT already be a member — they must click Accept.
-    const membersRes = await fetch(`${BASE}/groups/${invGroupId}/members`, {
+    const membersRes = await fetch(`${BASE}/recipe-books/${invGroupId}/members`, {
       headers: { Authorization: `Bearer ${ownerToken}` },
     });
     const membersBody = (await membersRes.json()) as { data: Array<{ email: string }> };
@@ -383,7 +383,7 @@ describe.skipIf(!BASE)("group invitations (spam-safe)", () => {
     expect(accBody.data?.groupSlug).toBe(`inv-test-${inviteUid}`);
 
     // Membership confirmed
-    const membersRes = await fetch(`${BASE}/groups/${invGroupId}/members`, {
+    const membersRes = await fetch(`${BASE}/recipe-books/${invGroupId}/members`, {
       headers: { Authorization: `Bearer ${ownerToken}` },
     });
     const membersBody = (await membersRes.json()) as { data: Array<{ email: string }> };
@@ -393,7 +393,7 @@ describe.skipIf(!BASE)("group invitations (spam-safe)", () => {
   it("POST /invitations/:id/decline marks the invite declined and removes from feed", async () => {
     // declinerEmail / declinerToken are registered in beforeAll so this test
     // focuses on the decline action itself.
-    const inv = await fetch(`${BASE}/groups/${invGroupId}/invite`, {
+    const inv = await fetch(`${BASE}/recipe-books/${invGroupId}/invite`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${ownerToken}` },
       body: JSON.stringify({ email: declinerEmail }),
@@ -418,7 +418,7 @@ describe.skipIf(!BASE)("group invitations (spam-safe)", () => {
   it("Owner can list + revoke pending invitations", async () => {
     // Create a fresh invite to a never-touched email
     const willRevokeEmail = `test-inv-revoke-${inviteUid}@test.local`;
-    const inv = await fetch(`${BASE}/groups/${invGroupId}/invite`, {
+    const inv = await fetch(`${BASE}/recipe-books/${invGroupId}/invite`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${ownerToken}` },
       body: JSON.stringify({ email: willRevokeEmail }),
@@ -426,20 +426,20 @@ describe.skipIf(!BASE)("group invitations (spam-safe)", () => {
     const invBody = (await inv.json()) as { data?: { id: string } };
     const inviteId = invBody.data?.id ?? "";
 
-    const list = await fetch(`${BASE}/groups/${invGroupId}/invitations`, {
+    const list = await fetch(`${BASE}/recipe-books/${invGroupId}/invitations`, {
       headers: { Authorization: `Bearer ${ownerToken}` },
     });
     expect(list.status).toBe(200);
     const listBody = (await list.json()) as { data: Array<{ id: string; email: string }> };
     expect(listBody.data.find((i) => i.email === willRevokeEmail)).toBeDefined();
 
-    const rev = await fetch(`${BASE}/groups/${invGroupId}/invitations/${inviteId}`, {
+    const rev = await fetch(`${BASE}/recipe-books/${invGroupId}/invitations/${inviteId}`, {
       method: "DELETE",
       headers: { Authorization: `Bearer ${ownerToken}` },
     });
     expect(rev.status).toBe(200);
 
-    const listAfter = await fetch(`${BASE}/groups/${invGroupId}/invitations`, {
+    const listAfter = await fetch(`${BASE}/recipe-books/${invGroupId}/invitations`, {
       headers: { Authorization: `Bearer ${ownerToken}` },
     });
     const listAfterBody = (await listAfter.json()) as { data: Array<{ id: string }> };
@@ -447,7 +447,7 @@ describe.skipIf(!BASE)("group invitations (spam-safe)", () => {
   });
 
   it("Non-owner cannot list or revoke invitations", async () => {
-    const list = await fetch(`${BASE}/groups/${invGroupId}/invitations`, {
+    const list = await fetch(`${BASE}/recipe-books/${invGroupId}/invitations`, {
       headers: { Authorization: `Bearer ${registeredInviteeToken}` },
     });
     expect(list.status).toBe(403);
@@ -477,7 +477,7 @@ describe.skipIf(!BASE)("daily-link group preferences", () => {
   // otherwise always be dailyRead/dailyWrite=true and interfere).
   async function setAllPrefs(read: boolean, write: boolean) {
     for (const gid of [personalGroupId, groupAId, groupBId]) {
-      await fetch(`${BASE}/groups/${gid}/daily-prefs`, {
+      await fetch(`${BASE}/recipe-books/${gid}/daily-prefs`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${prefsOwnerToken}` },
         body: JSON.stringify({ dailyRead: read, dailyWrite: write }),
@@ -507,7 +507,7 @@ describe.skipIf(!BASE)("daily-link group preferences", () => {
     prefsOwnerToken = await registerAndVerify(prefsOwnerEmail, prefsOwnerPw);
     outsiderToken = await registerAndVerify(outsiderEmail, outsiderPw);
 
-    const groupsRes = await fetch(`${BASE}/groups`, {
+    const groupsRes = await fetch(`${BASE}/recipe-books`, {
       headers: { Authorization: `Bearer ${prefsOwnerToken}` },
     });
     const groupsBody = (await groupsRes.json()) as { data: Array<{ organization_id: string; id: string; slug: string }> };
@@ -515,7 +515,7 @@ describe.skipIf(!BASE)("daily-link group preferences", () => {
     personalGroupId = groupsBody.data.find((g) => g.slug === "personal")?.id ?? "";
 
     const mkGroup = async (slug: string, name: string): Promise<string> => {
-      const res = await fetch(`${BASE}/groups`, {
+      const res = await fetch(`${BASE}/recipe-books`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${prefsOwnerToken}` },
         body: JSON.stringify({ name, slug, organizationId: prefsOrgId, description: "prefs test" }),
@@ -528,7 +528,7 @@ describe.skipIf(!BASE)("daily-link group preferences", () => {
   });
 
   it("GET /groups returns the caller's daily_read and daily_write flags (grandfathered to true)", async () => {
-    const res = await fetch(`${BASE}/groups`, {
+    const res = await fetch(`${BASE}/recipe-books`, {
       headers: { Authorization: `Bearer ${prefsOwnerToken}` },
     });
     const body = (await res.json()) as { data: Array<{ id: string; daily_read: boolean; daily_write: boolean }> };
@@ -546,7 +546,7 @@ describe.skipIf(!BASE)("daily-link group preferences", () => {
   });
 
   it("PUT /groups/:id/daily-prefs updates flags for the calling user only", async () => {
-    const res = await fetch(`${BASE}/groups/${groupAId}/daily-prefs`, {
+    const res = await fetch(`${BASE}/recipe-books/${groupAId}/daily-prefs`, {
       method: "PUT",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${prefsOwnerToken}` },
       body: JSON.stringify({ dailyRead: true, dailyWrite: true }),
@@ -560,7 +560,7 @@ describe.skipIf(!BASE)("daily-link group preferences", () => {
 
   it("PUT /groups/:id/daily-prefs with partial body only updates the specified field", async () => {
     // Start with both true from previous test, now flip only dailyWrite to false
-    const res = await fetch(`${BASE}/groups/${groupAId}/daily-prefs`, {
+    const res = await fetch(`${BASE}/recipe-books/${groupAId}/daily-prefs`, {
       method: "PUT",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${prefsOwnerToken}` },
       body: JSON.stringify({ dailyWrite: false }),
@@ -572,7 +572,7 @@ describe.skipIf(!BASE)("daily-link group preferences", () => {
   });
 
   it("PUT /groups/:id/daily-prefs rejects non-members with 403", async () => {
-    const res = await fetch(`${BASE}/groups/${groupAId}/daily-prefs`, {
+    const res = await fetch(`${BASE}/recipe-books/${groupAId}/daily-prefs`, {
       method: "PUT",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${outsiderToken}` },
       body: JSON.stringify({ dailyRead: true }),
@@ -581,7 +581,7 @@ describe.skipIf(!BASE)("daily-link group preferences", () => {
   });
 
   it("PUT /groups/:id/daily-prefs rejects empty body with 400", async () => {
-    const res = await fetch(`${BASE}/groups/${groupAId}/daily-prefs`, {
+    const res = await fetch(`${BASE}/recipe-books/${groupAId}/daily-prefs`, {
       method: "PUT",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${prefsOwnerToken}` },
       body: JSON.stringify({}),
@@ -589,16 +589,16 @@ describe.skipIf(!BASE)("daily-link group preferences", () => {
     expect(res.status).toBe(400);
   });
 
-  it("POST /keys/daily without writeGroupId uses configured daily_write groups; read uses daily_read", async () => {
+  it("POST /keys/daily without writeRecipeBookId uses configured daily_write groups; read uses daily_read", async () => {
     // Hermetic: turn everything off first.
     await setAllPrefs(false, false);
     // Opt group A in as write-only, group B in as read-only.
-    await fetch(`${BASE}/groups/${groupAId}/daily-prefs`, {
+    await fetch(`${BASE}/recipe-books/${groupAId}/daily-prefs`, {
       method: "PUT",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${prefsOwnerToken}` },
       body: JSON.stringify({ dailyRead: false, dailyWrite: true }),
     });
-    await fetch(`${BASE}/groups/${groupBId}/daily-prefs`, {
+    await fetch(`${BASE}/recipe-books/${groupBId}/daily-prefs`, {
       method: "PUT",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${prefsOwnerToken}` },
       body: JSON.stringify({ dailyRead: true, dailyWrite: false }),
@@ -609,31 +609,31 @@ describe.skipIf(!BASE)("daily-link group preferences", () => {
       headers: { Authorization: `Bearer ${prefsOwnerToken}` },
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { ok: boolean; data?: { readGroupIds: string[]; writeGroupIds: string[]; defaultWriteGroupId: string } };
+    const body = (await res.json()) as { ok: boolean; data?: { readRecipeBookIds: string[]; writeRecipeBookIds: string[]; defaultWriteRecipeBookId: string } };
     expect(body.ok).toBe(true);
-    // Default write group is the single dailyWrite=true group
-    expect(body.data?.defaultWriteGroupId).toBe(groupAId);
-    expect(body.data?.writeGroupIds).toEqual([groupAId]);
-    // Read groups reflect dailyRead=true — only groupB (and NOT the personal
-    // group unless it was toggled on, which it wasn't)
-    expect(body.data?.readGroupIds).toContain(groupBId);
-    expect(body.data?.readGroupIds).not.toContain(groupAId);
+    // Default write recipe book is the single dailyWrite=true book
+    expect(body.data?.defaultWriteRecipeBookId).toBe(groupAId);
+    expect(body.data?.writeRecipeBookIds).toEqual([groupAId]);
+    // Read recipe books reflect dailyRead=true — only groupB (and NOT the
+    // personal book unless it was toggled on, which it wasn't)
+    expect(body.data?.readRecipeBookIds).toContain(groupBId);
+    expect(body.data?.readRecipeBookIds).not.toContain(groupAId);
   });
 
-  it("POST /keys/daily with writeGroupId still overrides the configured write set", async () => {
+  it("POST /keys/daily with writeRecipeBookId still overrides the configured write set", async () => {
     const res = await fetch(`${BASE}/keys/daily`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${prefsOwnerToken}` },
-      body: JSON.stringify({ writeGroupId: groupBId }),
+      body: JSON.stringify({ writeRecipeBookId: groupBId }),
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { data?: { writeGroupIds: string[]; defaultWriteGroupId: string } };
+    const body = (await res.json()) as { data?: { writeRecipeBookIds: string[]; defaultWriteRecipeBookId: string } };
     // Explicit override wins
-    expect(body.data?.writeGroupIds).toEqual([groupBId]);
-    expect(body.data?.defaultWriteGroupId).toBe(groupBId);
+    expect(body.data?.writeRecipeBookIds).toEqual([groupBId]);
+    expect(body.data?.defaultWriteRecipeBookId).toBe(groupBId);
   });
 
-  it("POST /keys/daily returns 400 when no write groups are configured and no override is given", async () => {
+  it("POST /keys/daily returns 400 when no write recipe books are configured and no override is given", async () => {
     await setAllPrefs(false, false);
 
     const res = await fetch(`${BASE}/keys/daily`, {
@@ -642,6 +642,6 @@ describe.skipIf(!BASE)("daily-link group preferences", () => {
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error?: string };
-    expect(body.error).toBe("no_write_groups_configured");
+    expect(body.error).toBe("no_write_recipe_books_configured");
   });
 });

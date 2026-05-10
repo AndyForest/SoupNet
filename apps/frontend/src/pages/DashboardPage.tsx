@@ -76,7 +76,7 @@ export function DashboardPage() {
       void queryClient.invalidateQueries({ queryKey: ["invitations-pending"] });
       void queryClient.invalidateQueries({ queryKey: ["groups"] });
       if (data.groupSlug) {
-        void navigate({ to: "/app/groups", search: { justJoined: data.groupSlug } as never });
+        void navigate({ to: "/app/recipe-books", search: { justJoined: data.groupSlug } as never });
       }
     },
   });
@@ -105,7 +105,7 @@ export function DashboardPage() {
   const groupsQuery = useQuery({
     queryKey: ["groups"],
     queryFn: async () => {
-      const res = await authFetch("/groups");
+      const res = await authFetch("/recipe-books");
       const json = (await res.json()) as { ok: boolean; data: Group[] };
       return json.ok ? json.data : [];
     },
@@ -121,7 +121,7 @@ export function DashboardPage() {
   // user-gesture context alive across both awaits — a plain onSuccess copy
   // would silently no-op on iPhone.
   async function fetchBriefingText(type: "mcp" | "web"): Promise<string> {
-    const body = effectiveGroupId ? { writeGroupId: effectiveGroupId } : undefined;
+    const body = effectiveGroupId ? { writeRecipeBookId: effectiveGroupId } : undefined;
     const keyRes = await authFetch("/keys/daily", {
       method: "POST",
       ...(body ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}),
@@ -148,7 +148,7 @@ export function DashboardPage() {
 
   const dailyGoMutation = useMutation({
     mutationFn: async () => {
-      const body = effectiveGroupId ? { writeGroupId: effectiveGroupId } : undefined;
+      const body = effectiveGroupId ? { writeRecipeBookId: effectiveGroupId } : undefined;
       const res = await authFetch("/keys/daily", {
         method: "POST",
         ...(body ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}),
@@ -175,7 +175,7 @@ export function DashboardPage() {
       {pendingInvitesQuery.data && pendingInvitesQuery.data.length > 0 && (
         <section style={{ marginBottom: "var(--space-2xl)" }}>
           <h2 style={{ fontSize: "1.1rem", marginBottom: "var(--space-md)" }}>
-            Group invitations ({pendingInvitesQuery.data.length})
+            Recipe book invitations ({pendingInvitesQuery.data.length})
           </h2>
           <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-sm)" }}>
             {pendingInvitesQuery.data.map((inv) => {
@@ -204,7 +204,7 @@ export function DashboardPage() {
                       </p>
                     )}
                     <p className="text-xs" style={{ color: "var(--color-on-surface-variant)", marginTop: "var(--space-xs)" }}>
-                      Expires in {expiresIn}d. Accepting lets your AI agent share this group's accumulated taste.
+                      Expires in {expiresIn}d. Accepting lets your AI agent share this recipe book's accumulated taste.
                     </p>
                   </div>
                   <div style={{ display: "flex", gap: "var(--space-sm)" }}>
@@ -248,9 +248,9 @@ export function DashboardPage() {
             </p>
           </div>
         </Link>
-        <Link to="/app/groups" style={{ textDecoration: "none" }}>
+        <Link to="/app/recipe-books" style={{ textDecoration: "none" }}>
           <div className="card" style={{ textAlign: "center", padding: "var(--space-lg)", cursor: "pointer" }}>
-            <p className="text-label">Groups</p>
+            <p className="text-label">Recipe Books</p>
             <p style={{ fontFamily: "var(--font-headline)", fontSize: "2rem", fontWeight: 700, color: "var(--color-primary)", lineHeight: 1.2, marginTop: "var(--space-xs)" }}>
               {groups.length || "—"}
             </p>
@@ -320,7 +320,7 @@ export function DashboardPage() {
           {groups.length > 0 && (
             <div>
               <label htmlFor="dashboard-group" className="text-label" style={{ display: "block", marginBottom: "var(--space-xs)" }}>
-                Focus group ▾
+                Focus recipe book ▾
               </label>
               <select
                 ref={groupSelectRef}
@@ -356,7 +356,7 @@ export function DashboardPage() {
           <section>
             <h2 style={{ fontSize: "1.05rem", marginBottom: "var(--space-md)" }}>For Your Agents</h2>
             <p className="text-xs" style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-md)" }}>
-              Generates a 24-hour key: reads all groups, writes to <strong>{selectedGroup?.name ?? "your group"}</strong>.
+              Generates a 24-hour key: reads all recipe books, writes to <strong>{selectedGroup?.name ?? "your recipe book"}</strong>.
             </p>
             <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-sm)" }}>
               <button
@@ -395,7 +395,7 @@ export function DashboardPage() {
           <section>
             <h2 style={{ fontSize: "1.05rem", marginBottom: "var(--space-xs)" }}>Collaboration</h2>
             <p className="text-xs" style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-md)", lineHeight: 1.4 }}>
-              Invite people to your groups so your agents share context. Open a group to send an invite.
+              Invite people to your recipe books so your agents share context. Open a book to send an invite.
             </p>
             <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-sm)" }}>
               <Link to="/app/map" search={selectedGroup ? { groupId: effectiveGroupId } : {}} style={{ textDecoration: "none" }}>
@@ -404,10 +404,10 @@ export function DashboardPage() {
                   Recipe Map{selectedGroup ? `: ${selectedGroup.name}` : ""}
                 </button>
               </Link>
-              <Link to="/app/groups" style={{ textDecoration: "none" }}>
+              <Link to="/app/recipe-books" style={{ textDecoration: "none" }}>
                 <button className="btn-secondary" style={{ width: "100%", justifyContent: "center", fontSize: "0.85rem" }}>
                   <Icon name="users" size={14} />
-                  Manage Groups
+                  Manage Recipe Books
                 </button>
               </Link>
             </div>

@@ -11,7 +11,7 @@ Soup.net is a stigmergic search engine for taste and judgment. AI agents check r
 npm workspaces monorepo. Node 24 LTS, npm ≥10.
 
 - **apps/backend** — Hono HTTP server (port 3101). JWT + API-key auth, REST API, `/check` recipe page for AI agents, remote MCP endpoint at `POST /mcp`. Runs the pg-boss embedding consumers in-process (`src/embedding-worker/`); see ADR-0020.
-- **apps/frontend** — Vite React SPA (port 5273). TanStack Router + Query. User dashboard for managing groups, API keys, recipe map.
+- **apps/frontend** — Vite React SPA (port 5273). TanStack Router + Query. User dashboard for managing recipe books, API keys, recipe map.
 - **apps/mcp-server** — Stdio MCP server (packaged as `.mcpb` for Claude Desktop). Thin proxy that forwards `check_recipe` / `get_recipe_guide` calls to backend `/check`. The remote HTTP MCP lives in backend per ADR-0007 + ADR-0021.
 - **packages/db** — Drizzle ORM schema + migrations for `claimnet` Postgres schema. Single source of truth for all tables.
 - **packages/domain** — Business logic, ranking rules, and shared agent-facing copy (recipe guide, briefings, principles). No I/O.
@@ -72,7 +72,7 @@ If it fails, fix before committing. Do not skip. Do not invent per-workspace var
 
 After tests pass, check `docs/testing-plan.md` Layer 4 for manual browser verification — tell the human what URLs to check and what to look for. **If backend code changed, run `docker compose up --build -d` before handing off to the human** — `test:ci` uses its own isolated stack (`docker-compose.ci.yml` on port 5534) and does NOT rebuild the dev containers the human tests against. Commit only after gates pass and human confirms.
 
-**MCP testing:** When modifying MCP routes, tools, session handling, or auth, test via the `soupnet-local` MCP server in `.mcp.json` (points to `http://localhost:3101/mcp`). Call `list_my_groups` or `check_recipe` through the local MCP to verify. For session changes, test recovery by running `docker compose restart backend` then calling any tool — it should work without `/mcp` reconnect. See `docs/testing-plan.md` Layer 4b for details.
+**MCP testing:** When modifying MCP routes, tools, session handling, or auth, test via the `soupnet-local` MCP server in `.mcp.json` (points to `http://localhost:3101/mcp`). Call `list_my_recipe_books` or `check_recipe` through the local MCP to verify. For session changes, test recovery by running `docker compose restart backend` then calling any tool — it should work without `/mcp` reconnect. See `docs/testing-plan.md` Layer 4b for details.
 
 ## Keeping CLAUDE.md in sync
 
@@ -95,7 +95,7 @@ Quick reference:
 Single Postgres database on port **5633** (non-standard, intentional), single `claimnet` schema managed entirely by Drizzle.
 
 **Core tables:**
-- `users`, `organizations`, `groups`, `group_members`, `invitations` — identity, access, onboarding
+- `users`, `organizations`, `groups`, `group_members`, `invitations` — identity, access, onboarding (the `groups` and `group_members` table names are the schema-level vocabulary; the user-facing concept is "recipe books" — schema-rename deferred)
 - `traces` — taste/judgment claims (user story format, tsvector for search)
 - `evidence`, `references` — Toulmin-structured supporting data
 - `trace_evidence`, `trace_references`, `evidence_references` — N:N linking tables with `api_key_id` for coverage tracking
@@ -117,8 +117,8 @@ Hono HTTP server. JWT for humans, API keys (Bearer) for agents — strictly sepa
 - `/auth` — register, login, me, email verification, password reset, data export
 - `/keys` — daily + scoped API key CRUD (JWT-auth)
 - `/check` — recipe check page for agents. HTML by default, JSON with `format=json` or `Accept: application/json`. API-key auth. The primary agent surface.
-- `/groups` — group CRUD, members, invites (JWT-auth; some agent-writable fields via API key)
-- `/invitations` — accept/decline flow for group invites
+- `/recipe-books` — recipe-book CRUD, members, invites (JWT-auth; some agent-writable fields via API key). The legacy `/groups/*` paths 308-redirect to `/recipe-books/*` for backwards compatibility.
+- `/invitations` — accept/decline flow for recipe-book invites
 - `/admin` — system-role-only: organizations, settings (signup cap, embeddings toggle), invite (cap bypass), users list/detail, stats, audit-log, queues, workers/embeddings
 - `/docs` — agent-facing HTML guides: `recipe-check-guide`, `recipe-scenarios`, `mcp-setup`, `bootstrap`. Read-only; some pre-fill with `?key=` for copy-paste configs.
 - `/traces` — list, map (k-means clustering + UMAP), traces-by-id
@@ -126,7 +126,7 @@ Hono HTTP server. JWT for humans, API keys (Bearer) for agents — strictly sepa
 - `/mcp` — remote MCP endpoint. Streamable HTTP transport, stateless mode per ADR-0021, Bearer-token auth with API key.
 - `/health`, `/health/ready` — liveness + DB readiness. Point a load balancer / health-check probe at `/health/ready` if the deployment uses a rotating database password (the `SELECT 1` lets the probe detect auth drift after rotation and trigger task replacement).
 
-Auto-setup: if `DEV_USERNAME` + `DEV_PASSWORD` are set and no users exist, a system user is created at startup with personal org + default group. Blocked unless `ALLOW_AUTO_SETUP=true` when `NODE_ENV=production`.
+Auto-setup: if `DEV_USERNAME` + `DEV_PASSWORD` are set and no users exist, a system user is created at startup with personal org + default recipe book. Blocked unless `ALLOW_AUTO_SETUP=true` when `NODE_ENV=production`.
 
 ## Recipe Checks (Soup.net)
 

@@ -1,8 +1,8 @@
 import { Link } from "@tanstack/react-router";
 
 /**
- * Shared recipe instructions for the /check and /groups pages.
- * Keeps content DRY — groups page links here, check page embeds it.
+ * Shared recipe instructions for the /check and /recipe-books pages.
+ * Keeps content DRY — recipe books page links here, check page embeds it.
  */
 export function RecipeInstructions() {
   return (
@@ -79,7 +79,7 @@ Supporting evidence:
             />
             <PersonaCard
               title="Teams and collaborators"
-              description={<>Share judgment within a project <Link to="/app/groups" style={{ color: "var(--color-primary)" }}>group</Link> that spans organizations. When one member checks a recipe, every member's agents can find it. Shared knowledge grows organically.</>}
+              description={<>Share judgment within a project <Link to="/app/recipe-books" style={{ color: "var(--color-primary)" }}>recipe book</Link> that spans organizations. When one member checks a recipe, every member's agents can find it. Shared knowledge grows organically.</>}
             />
           </div>
         </section>

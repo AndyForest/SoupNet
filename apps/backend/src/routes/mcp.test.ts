@@ -79,7 +79,7 @@ describe.skipIf(!BASE)("/mcp stateless behavior", () => {
     expect(res.headers.get("mcp-session-id")).toBeFalsy();
   });
 
-  it("update_group_description tool updates a group the key has write access to", async () => {
+  it("update_recipe_book_description tool updates a recipe book the key has write access to", async () => {
     // Set up a fresh group + write-scoped key for this user.
     const uid = Date.now();
     const reg = await fetch(`${BASE}/auth/register`, {
@@ -100,13 +100,13 @@ describe.skipIf(!BASE)("/mcp stateless behavior", () => {
       body: JSON.stringify({ token: vtok }),
     });
 
-    const groupsRes = await fetch(`${BASE}/groups`, {
+    const groupsRes = await fetch(`${BASE}/recipe-books`, {
       headers: { Authorization: `Bearer ${jwt}` },
     });
     const groupsBody = (await groupsRes.json()) as { data: Array<{ organization_id: string }> };
     const orgId = groupsBody.data[0]?.organization_id;
 
-    const newGroup = await fetch(`${BASE}/groups`, {
+    const newGroup = await fetch(`${BASE}/recipe-books`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
       body: JSON.stringify({
@@ -122,13 +122,13 @@ describe.skipIf(!BASE)("/mcp stateless behavior", () => {
     const keyRes = await fetch(`${BASE}/keys/daily`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
-      body: JSON.stringify({ writeGroupId: targetGroupId }),
+      body: JSON.stringify({ writeRecipeBookId: targetGroupId }),
     });
     const keyBody = (await keyRes.json()) as { data?: { key?: string } };
     const writeKey = keyBody.data?.key ?? "";
 
     // tools/call via JSON-RPC over the streamable HTTP transport.
-    const newDesc = `Edited via update_group_description tool at ${new Date(uid).toISOString()}`;
+    const newDesc = `Edited via update_recipe_book_description tool at ${new Date(uid).toISOString()}`;
     const callRes = await fetch(`${BASE}/mcp`, {
       method: "POST",
       headers: {
@@ -140,8 +140,8 @@ describe.skipIf(!BASE)("/mcp stateless behavior", () => {
         jsonrpc: "2.0",
         method: "tools/call",
         params: {
-          name: "update_group_description",
-          arguments: { group_id_or_slug: targetGroupId, description: newDesc },
+          name: "update_recipe_book_description",
+          arguments: { recipe_book_id_or_slug: targetGroupId, description: newDesc },
         },
         id: 1,
       }),
@@ -154,7 +154,7 @@ describe.skipIf(!BASE)("/mcp stateless behavior", () => {
     expect(callText).toContain(newDesc);
 
     // Verify the row actually changed via the JWT GET path.
-    const verifyRes = await fetch(`${BASE}/groups`, {
+    const verifyRes = await fetch(`${BASE}/recipe-books`, {
       headers: { Authorization: `Bearer ${jwt}` },
     });
     const verifyBody = (await verifyRes.json()) as { data: Array<{ id: string; description: string | null }> };
@@ -162,7 +162,7 @@ describe.skipIf(!BASE)("/mcp stateless behavior", () => {
     expect(updated?.description).toBe(newDesc);
   });
 
-  it("update_group_description rejects keys without write access to the group", async () => {
+  it("update_recipe_book_description rejects keys without write access to the recipe book", async () => {
     // Reuse the test user's daily key from beforeAll — it's scoped to the
     // user's personal group (auto-created), so any OTHER user's group is
     // out of write scope. Try updating a non-existent UUID — same reach
@@ -179,15 +179,15 @@ describe.skipIf(!BASE)("/mcp stateless behavior", () => {
         jsonrpc: "2.0",
         method: "tools/call",
         params: {
-          name: "update_group_description",
-          arguments: { group_id_or_slug: stranger, description: "should not land" },
+          name: "update_recipe_book_description",
+          arguments: { recipe_book_id_or_slug: stranger, description: "should not land" },
         },
         id: 2,
       }),
     });
     expect(callRes.status).toBe(200);
     const callText = await callRes.text();
-    expect(callText.toLowerCase()).toContain("not found in your key's write groups");
+    expect(callText.toLowerCase()).toContain("not found in your key's write recipe books");
   });
 
   it("accepts a stale session-id header without erroring (header is ignored in stateless mode)", async () => {

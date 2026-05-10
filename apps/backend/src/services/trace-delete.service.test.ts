@@ -99,14 +99,14 @@ describe.skipIf(!canConnect() || !BASE)("DELETE /traces/:id integration", () => 
     // Owner already has a personal group (auto-created) — fetch its org so we
     // can co-locate the test group there. We'll create a SHARED group so all
     // three users are members with different roles.
-    const groupsRes = await fetch(`${BASE}/groups`, {
+    const groupsRes = await fetch(`${BASE}/recipe-books`, {
       headers: { Authorization: `Bearer ${ownerToken}` },
     });
     const groupsBody = (await groupsRes.json()) as { data: Array<{ organization_id: string }> };
     orgId = groupsBody.data[0]?.organization_id ?? "";
     if (!orgId) throw new Error("Missing personal org for owner");
 
-    const createRes = await fetch(`${BASE}/groups`, {
+    const createRes = await fetch(`${BASE}/recipe-books`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${ownerToken}` },
       body: JSON.stringify({

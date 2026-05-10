@@ -82,7 +82,7 @@ export function VerifyPendingPage() {
             We sent a verification link to{" "}
             {meQuery.data ? <strong>{meQuery.data.email}</strong> : "your inbox"}.
             Click the link to activate your account — once you do, you&apos;ll be
-            able to create API keys, check recipes, and join groups.
+            able to create API keys, check recipes, and join recipe books.
           </p>
         </div>
 
