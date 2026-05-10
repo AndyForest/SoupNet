@@ -1,5 +1,7 @@
 # Privacy Policy — Soup.net
 
+> **Superseded by `privacy-policy.md` (2026-05-09).** This file is retained for provenance. The live policy at `/info/privacy` renders from `privacy-policy.md`.
+
 **Status:** First draft (2026-04-09). Not legal advice. Sections marked **[REVIEW]** need a lawyer or template-service review before public-tier launch. The trusted-invite tier may be served with this draft plus the trusted-tier disclaimer.
 
 **Effective date:** [TO BE SET]

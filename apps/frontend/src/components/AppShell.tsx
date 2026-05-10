@@ -1,6 +1,7 @@
 import { Outlet, Link, useMatchRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { authFetch, clearToken, isLoggedIn } from "../auth.js";
+import { CookieNotice } from "./CookieNotice.js";
 import { Icon } from "./Icon.js";
 import soupnetLogo from "../assets/soupnet-logo.png";
 import styles from "./AppShell.module.css";
@@ -47,9 +48,16 @@ export function AppShell() {
     void navigate({ to: "/auth/login" });
   }
 
-  // Login page: no shell, just the page
+  // Login page: no shell, just the page (plus the one-time cookie notice).
+  // CookieNotice mounts before the !loggedIn early-return so unauthenticated
+  // marketing pages (LandingPage, HowItWorksPage, legal pages) get it too.
   if (!loggedIn) {
-    return <Outlet />;
+    return (
+      <>
+        <Outlet />
+        <CookieNotice />
+      </>
+    );
   }
 
   return (
@@ -98,6 +106,8 @@ export function AppShell() {
           <Outlet />
         </div>
       </main>
+
+      <CookieNotice />
 
       {/* Bottom bar (mobile) */}
       <div className={styles.bottomBar}>

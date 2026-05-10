@@ -183,7 +183,10 @@ export function LandingPage() {
         color: "var(--color-on-surface-variant)",
         fontSize: "0.8rem",
       }}>
-        Soup.net <Link to="/info/how-it-works" style={{ color: "var(--color-on-surface-variant)", marginLeft: "var(--space-md)" }}>How it works</Link>
+        Soup.net
+        <Link to="/info/how-it-works" style={{ color: "var(--color-on-surface-variant)", marginLeft: "var(--space-md)" }}>How it works</Link>
+        <Link to="/info/privacy" style={{ color: "var(--color-on-surface-variant)", marginLeft: "var(--space-md)" }}>Privacy</Link>
+        <Link to="/info/terms" style={{ color: "var(--color-on-surface-variant)", marginLeft: "var(--space-md)" }}>Terms</Link>
       </footer>
     </div>
   );

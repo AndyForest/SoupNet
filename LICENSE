@@ -19,3 +19,45 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+================================================================================
+
+Soup.net Trademark Notice
+=========================
+
+The MIT License above covers the application code only. The following are NOT
+licensed under the MIT License and remain reserved to Andy Forest (collectively,
+the "Marks"):
+
+  - The name "Soup.net" and any substantially similar name (including
+    "soupnet", "soup-net", "Soup.network", and similar variants).
+  - The Soup.net logo, in all variations (file: apps/frontend/src/assets/
+    soupnet-logo.png and any derivative artwork).
+  - The Soup.net visual design, including the marketing site at soup.net,
+    the in-product visual style, and the illustrations in
+    apps/frontend/src/assets/.
+  - Soup.net's tagline copy ("Your taste and judgment, in every AI agent
+    you use." and equivalents) when used in a way that suggests endorsement
+    by or affiliation with Soup.net.
+
+Forks and derivative works using this code:
+
+  1. MUST NOT use any of the Marks in a way that would suggest endorsement by,
+     affiliation with, or operation by the original Soup.net project or
+     Andy Forest.
+  2. MUST replace the Soup.net logo and any logo-derivative artwork in
+     apps/frontend/src/assets/ with their own branding before deploying a
+     hosted instance under any user-facing name.
+  3. MUST NOT operate a hosted service under the name "Soup.net" or any
+     substantially similar name.
+  4. MAY identify the project as derived from Soup.net using factual
+     statements (e.g., "based on Soup.net", "fork of soup.net",
+     "originally developed by Andy Forest"), provided the statement does
+     not imply ownership, endorsement, or affiliation.
+  5. MAY retain references to Soup.net in source-code comments, commit
+     history, internal documentation, and similar non-user-facing locations
+     for attribution and historical accuracy.
+
+The Marks remain the exclusive property of Andy Forest. This notice does not
+grant any license to the Marks. For licensing inquiries about the Marks,
+contact hello@soup.net.

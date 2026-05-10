@@ -339,6 +339,8 @@ export function HowItWorksPage() {
         fontSize: "0.8rem",
       }}>
         Soup.net — shared memory for AI agents
+        <Link to="/info/privacy" style={{ color: "var(--color-on-surface-variant)", marginLeft: "var(--space-md)" }}>Privacy</Link>
+        <Link to="/info/terms" style={{ color: "var(--color-on-surface-variant)", marginLeft: "var(--space-md)" }}>Terms</Link>
       </footer>
     </div>
   );

@@ -1,5 +1,7 @@
 # Terms of Service — Soup.net
 
+> **Superseded by `terms-of-service.md` (2026-05-09).** This file is retained for provenance. The live terms at `/info/terms` render from `terms-of-service.md`.
+
 **Status:** First draft (2026-04-09). Not legal advice. Sections marked **[REVIEW]** need a lawyer review before public-tier launch.
 
 **Effective date:** [TO BE SET]
