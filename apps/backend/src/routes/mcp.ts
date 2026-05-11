@@ -35,7 +35,7 @@ import {
   EXT_TO_MIME,
   MAX_UPLOAD_BYTES,
 } from "@soupnet/domain";
-import { rateLimit } from "../middleware/rate-limit";
+import { rateLimit, perKeyRateLimit, extractMcpBearerKey } from "../middleware/rate-limit";
 import type { SubmitAndSearchResult, ImageAttachment } from "../services/trace.service";
 import { submitAndSearch } from "../services/trace.service";
 import type { RegionMeta } from "../lib/image-roi";
@@ -53,8 +53,11 @@ import { sql } from "drizzle-orm";
 import type { AppEnv } from "../types";
 import { writeAudit } from "../services/audit-log.service";
 
-// Rate limit MCP: 1000 per hour per IP
+// Rate limit MCP:
+//   - per-IP: 1000 per hour (defense-in-depth)
+//   - per-key: 200/hour, 1000/day (queried from audit_log; F29).
 const mcpRateLimit = rateLimit({ max: 1000, windowMs: 60 * 60 * 1000 });
+const mcpPerKeyRateLimit = perKeyRateLimit({ keyExtractor: extractMcpBearerKey });
 
 const mcpRouter = new Hono<AppEnv>();
 
@@ -889,7 +892,7 @@ function formatCheckResponse(response: Record<string, unknown>): string {
 
 // ── Route handler ───────────────────────────────────────────────────────────
 
-mcpRouter.all("/", mcpRateLimit, async (c) => {
+mcpRouter.all("/", mcpRateLimit, mcpPerKeyRateLimit, async (c) => {
   // Extract and validate API key from Bearer token
   const authHeader = c.req.header("Authorization");
   if (!authHeader?.startsWith("Bearer ")) {

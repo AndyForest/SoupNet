@@ -52,20 +52,50 @@ function hashResetToken(token: string): string {
 const auth = new Hono<AppEnv>();
 
 // POST /auth/register
+//
+// F30 (security-audit-2026-04-09): the response is intentionally byte-
+// -identical regardless of whether the email was new, already registered,
+// or rejected by the signup cap. Returning distinguishable bodies (the old
+// 409 / 403 / 200 split) was an account-enumeration oracle. The flow now is:
+//   1. Caller POSTs email + password (+ optional invite token).
+//   2. We always reply 200 with a generic "if eligible, check your email".
+//   3. For the genuinely-new branch, we asynchronously send a verification
+//      email and (in dev only, gated by ALLOW_AUTO_SETUP) surface the token
+//      in the response so integration tests can complete /auth/verify
+//      without scraping Mailpit.
+//   4. The user is NOT auto-logged-in. They must verify, then call /login.
+//
+// Frontend impact: the previous flow handed the JWT back from /register and
+// landed the user authed. New flow redirects to a verify-pending screen and
+// requires explicit /login after the verification link is clicked — match
+// what every other modern auth flow does.
 auth.post("/register", authRateLimit, async (c) => {
+  // Generic body returned on every branch — success, duplicate email, cap
+  // reached, invalid invite token. Building it once avoids drift.
+  const generic = (extra?: Record<string, unknown>) =>
+    c.json({
+      ok: true,
+      data: {
+        message:
+          "If the email is eligible for registration, you'll receive a verification email shortly.",
+        ...(extra ?? {}),
+      },
+    });
+
   const body = await c.req.json();
   const parsed = registerSchema.safeParse(body);
   if (!parsed.success) {
+    // 400 still leaks malformed input — which is fine, that's caller's fault,
+    // not data exposure. Zod errors stay specific.
     return c.json({ ok: false, error: "Invalid input", details: parsed.error.issues }, 400);
   }
   const { email, password, inviteToken } = parsed.data;
-  // tosAccepted is enforced by the Zod schema (z.literal(true)). We record
-  // the acceptance timestamp on the user row immediately after registration.
   const db = getDb();
 
-  // Check for invitation token. We only validate it here — the actual group
-  // join is deferred to /auth/verify so that mailbox control is proven before
-  // group membership is granted (F31 fix, security-audit-2026-04-09).
+  // Resolve the invitation (if any) — but do not branch the response on
+  // success vs. failure. An invalid invite token still returns the generic
+  // success body, because revealing "invite token bad" gives an attacker
+  // confirmation that the email was either right or wrong.
   let invitation: { id: string; groupId: string; bypassCap: boolean } | null = null;
   if (inviteToken) {
     const inviteRows = await db.execute(sql`
@@ -79,27 +109,22 @@ auth.post("/register", authRateLimit, async (c) => {
     `);
     invitation = (inviteRows as unknown as Array<{ id: string; groupId: string; bypassCap: boolean }>)[0] ?? null;
     if (!invitation) {
-      return c.json({ ok: false, error: "Invalid or expired invitation" }, 400);
+      // Bad invite token — silently return generic success.
+      return generic();
     }
   }
 
-  // Check signup cap (bypass if invitation has bypass_cap)
+  // Cap check — silently return generic success when over cap.
   if (!invitation?.bypassCap) {
     const allowed = await tryConsumeSignupSlot(db);
     if (!allowed) {
-      return c.json({
-        ok: false,
-        error: "waitlist",
-        message: "Soup.net is currently at capacity. Join the waitlist to be notified when spots open up.",
-      }, 403);
+      return generic();
     }
   }
 
   try {
     const result = await registerUser(db, email, password);
 
-    // Generate email verification token (24h expiry) and record ToS
-    // acceptance timestamp in the same UPDATE.
     const verificationToken = crypto.randomBytes(32).toString("hex");
     await db.execute(sql`
       UPDATE claimnet.users
@@ -109,33 +134,25 @@ auth.post("/register", authRateLimit, async (c) => {
       WHERE id = ${result.user.id}::uuid
     `);
 
-    // Send verification email
-    try {
-      await sendVerificationEmail(email, verificationToken);
-    } catch (err) {
+    // Fire-and-forget the email send so the response timing on the
+    // genuinely-new branch is dominated by DB ops (which both branches do)
+    // rather than SMTP latency (which only the new branch does).
+    void sendVerificationEmail(email, verificationToken).catch((err) => {
       console.error("[auth/register] Failed to send verification email:", err);
-      // Don't fail registration if email fails — user can request resend
-    }
+    });
 
-    // F31: invitation acceptance is deferred to /auth/verify. We deliberately
-    // do NOT add the user to the invited group here, even though the
-    // invitation is valid and bound to this email. Group membership requires
-    // proof of mailbox control via the email verification link, so an
-    // attacker who only knows the invite token + email cannot join.
+    // F31: group join is deferred to POST /invitations/:id/accept after
+    // verification. Don't auto-join here even though the invite + email
+    // match — proof of mailbox control via /auth/verify is required first.
 
-    // Test-mode convenience: when ALLOW_AUTO_SETUP=true, surface the
-    // verification token in the response so integration tests can call
-    // /auth/verify without scraping Mailpit. Never returned in production.
-    const responseData: Record<string, unknown> = { ...result };
+    // Test-mode convenience: surface the verification token in the response
+    // when ALLOW_AUTO_SETUP=true so integration tests can call /auth/verify
+    // without scraping Mailpit. Never enabled in production.
     if (process.env["ALLOW_AUTO_SETUP"] === "true") {
-      responseData["verificationToken"] = verificationToken;
+      return generic({ verificationToken });
     }
-
-    return c.json({ ok: true, data: responseData });
+    return generic();
   } catch (err: unknown) {
-    // Drizzle 0.45+ wraps DB errors in DrizzleQueryError. The original
-    // postgres error (with code) is in err.cause. Earlier versions put it
-    // directly on err. Check both to remain robust.
     const cause = err instanceof Error && err.cause instanceof Error ? err.cause : null;
     const msg = err instanceof Error ? err.message : String(err);
     const causeMsg = cause?.message ?? "";
@@ -146,7 +163,10 @@ auth.post("/register", authRateLimit, async (c) => {
       msg.includes("unique") || msg.includes("duplicate") ||
       causeMsg.includes("unique") || causeMsg.includes("duplicate")
     ) {
-      return c.json({ ok: false, error: "Email already registered" }, 409);
+      // Duplicate email — silently return generic success. No verification
+      // email is sent (and that's fine — the existing user already verified
+      // or is in the verify-pending state from their original signup).
+      return generic();
     }
     console.error("[auth/register] Registration error:", err);
     return c.json({ ok: false, error: "Registration failed" }, 500);

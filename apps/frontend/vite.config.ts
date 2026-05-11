@@ -28,7 +28,11 @@ export default defineConfig(({ mode }) => {
     },
     build: {
       outDir: "dist",
-      sourcemap: true,
+      // F8 (security-audit-2026-04-09): sourcemaps off in production. They
+      // give attackers a clean view of internal logic and call paths in the
+      // OSS-published frontend. Local dev still gets `dev` mode source maps
+      // automatically (Vite default) — this only affects `vite build`.
+      sourcemap: mode !== "production" ? true : false,
     },
   };
 });

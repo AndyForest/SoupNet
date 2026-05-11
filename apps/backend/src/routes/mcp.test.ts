@@ -19,24 +19,30 @@ describe.skipIf(!BASE)("/mcp stateless behavior", () => {
 
   beforeAll(async () => {
     const uid = Date.now();
+    const email = `mcp-test-${uid}@test.local`;
+    const password = "mcp-test-password-123";
     const reg = await fetch(`${BASE}/auth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        email: `mcp-test-${uid}@test.local`,
-        password: "mcp-test-password-123",
-        tosAccepted: true,
-      }),
+      body: JSON.stringify({ email, password, tosAccepted: true }),
     });
-    const regBody = (await reg.json()) as { data?: { token?: string; verificationToken?: string } };
-    const t = regBody.data?.token;
+    const regBody = (await reg.json()) as { data?: { verificationToken?: string } };
     const vtok = regBody.data?.verificationToken;
-    if (!t || !vtok) throw new Error("Setup failed");
+    if (!vtok) throw new Error("Setup failed");
     await fetch(`${BASE}/auth/verify`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token: vtok }),
     });
+    // F30: /auth/register no longer auto-logs-in.
+    const login = await fetch(`${BASE}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    const loginBody = (await login.json()) as { data?: { token?: string } };
+    const t = loginBody.data?.token;
+    if (!t) throw new Error("Login after register failed");
     const keyRes = await fetch(`${BASE}/keys/daily`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` },
@@ -79,26 +85,31 @@ describe.skipIf(!BASE)("/mcp stateless behavior", () => {
     expect(res.headers.get("mcp-session-id")).toBeFalsy();
   });
 
-  it("update_recipe_book_description tool updates a recipe book the key has write access to", async () => {
+  it("update_recipe_book_description tool updates a recipe book the key has write access to", { timeout: 20_000 }, async () => {
     // Set up a fresh group + write-scoped key for this user.
     const uid = Date.now();
+    const email = `mcp-update-desc-${uid}@test.local`;
+    const password = "mcp-test-password-123";
     const reg = await fetch(`${BASE}/auth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        email: `mcp-update-desc-${uid}@test.local`,
-        password: "mcp-test-password-123",
-        tosAccepted: true,
-      }),
+      body: JSON.stringify({ email, password, tosAccepted: true }),
     });
-    const regBody = (await reg.json()) as { data?: { token?: string; verificationToken?: string } };
-    const jwt = regBody.data?.token ?? "";
+    const regBody = (await reg.json()) as { data?: { verificationToken?: string } };
     const vtok = regBody.data?.verificationToken ?? "";
     await fetch(`${BASE}/auth/verify`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token: vtok }),
     });
+    // F30: log in for the JWT (register no longer returns it).
+    const login = await fetch(`${BASE}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    const loginBody = (await login.json()) as { data?: { token?: string } };
+    const jwt = loginBody.data?.token ?? "";
 
     const groupsRes = await fetch(`${BASE}/recipe-books`, {
       headers: { Authorization: `Bearer ${jwt}` },

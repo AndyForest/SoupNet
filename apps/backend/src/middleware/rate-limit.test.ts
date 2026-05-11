@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Hono } from "hono";
-import { rateLimit } from "./rate-limit";
+import { rateLimit, perKeyRateLimit } from "./rate-limit";
 
 // These tests exercise the rate limiter directly — no running server needed.
 // Integration tests run with DISABLE_RATE_LIMIT=true; these verify the actual limiting logic.
@@ -122,6 +122,35 @@ describe("rate-limit middleware", () => {
     expect(r3.status).toBe(200);
   });
 
+  // F32: cleanup interval is derived from windowMs, so timestamps inside a
+  // 1-hour window are NOT purged after 16 minutes of inactivity.
+  it("F32: 1h-window timestamps survive a 16-minute gap (cleanup respects windowMs)", async () => {
+    vi.useFakeTimers();
+    const app = createApp(2, 60 * 60 * 1000); // 2 per 1 hour
+
+    // First request — counted.
+    const r1 = await req(app);
+    expect(r1.status).toBe(200);
+
+    // Advance 16 minutes (well past the old hardcoded 15-min cleanup, but
+    // still inside the 1h window). The cleanup tick runs at min(5m, ¼ window).
+    vi.advanceTimersByTime(16 * 60 * 1000);
+
+    // Second request — must still see the first one's timestamp, so the
+    // count is 2 and the limiter accepts.
+    const r2 = await req(app);
+    expect(r2.status).toBe(200);
+
+    // Third request — must trip 429 because the first two timestamps are
+    // both still in-window. With the F32 fix this is correct; before the
+    // fix, the first timestamp was silently purged at ~15 minutes and the
+    // count reset to 1, allowing the third to slip through.
+    const r3 = await req(app);
+    expect(r3.status).toBe(429);
+
+    vi.useRealTimers();
+  });
+
   it("supports custom key function", async () => {
     const app = new Hono();
     app.use("/*", rateLimit({
@@ -138,5 +167,147 @@ describe("rate-limit middleware", () => {
     expect(r1.status).toBe(200);
     expect(r2.status).toBe(200); // different key
     expect(r3.status).toBe(429); // same key, over limit
+  });
+});
+
+// F29: per-key rate limiter that queries audit_log directly instead of
+// keeping its own counter. Tests inject a stub deps interface so we can
+// drive the count without spinning up postgres.
+describe("perKeyRateLimit middleware (F29)", () => {
+  const originalEnv = process.env["DISABLE_RATE_LIMIT"];
+
+  beforeEach(() => {
+    delete process.env["DISABLE_RATE_LIMIT"];
+  });
+
+  afterEach(() => {
+    if (originalEnv !== undefined) {
+      process.env["DISABLE_RATE_LIMIT"] = originalEnv;
+    } else {
+      delete process.env["DISABLE_RATE_LIMIT"];
+    }
+  });
+
+  function createApp(opts: {
+    hourlyMax?: number;
+    dailyMax?: number;
+    rawKey?: string | null;
+    apiKeyId?: string | null;
+    hourly?: number;
+    daily?: number;
+    /** Bumps each call so we can assert calls weren't made. */
+    spies?: { resolveCalls: number; countCalls: number };
+  }) {
+    const app = new Hono();
+    const counts = { resolveCalls: 0, countCalls: 0 };
+    app.use("/*", perKeyRateLimit({
+      keyExtractor: () => opts.rawKey ?? null,
+      ...(opts.hourlyMax !== undefined ? { hourlyMax: opts.hourlyMax } : {}),
+      ...(opts.dailyMax !== undefined ? { dailyMax: opts.dailyMax } : {}),
+      deps: {
+        resolveApiKeyId: async () => {
+          counts.resolveCalls++;
+          return opts.apiKeyId ?? null;
+        },
+        countRecipeChecksSince: async (_id, intervalSql) => {
+          counts.countCalls++;
+          if (intervalSql === "1 hour") return opts.hourly ?? 0;
+          return opts.daily ?? 0;
+        },
+      },
+    }));
+    app.get("/test", (c) => c.json({ ok: true }));
+    if (opts.spies) Object.assign(opts.spies, counts);
+    return { app, counts };
+  }
+
+  it("passes when both counts are under their caps", async () => {
+    const { app } = createApp({
+      rawKey: "cn_d_test",
+      apiKeyId: "00000000-0000-0000-0000-000000000001",
+      hourly: 199,
+      daily: 999,
+    });
+    const res = await app.request("/test");
+    expect(res.status).toBe(200);
+  });
+
+  it("blocks with 429 when hourly count is at the cap", async () => {
+    const { app } = createApp({
+      rawKey: "cn_d_test",
+      apiKeyId: "00000000-0000-0000-0000-000000000001",
+      hourly: 200,
+      daily: 500,
+    });
+    const res = await app.request("/test");
+    expect(res.status).toBe(429);
+    const body = await res.json() as { error: string };
+    expect(body.error).toContain("hourly");
+    expect(res.headers.get("Retry-After")).toBe("3600");
+  });
+
+  it("blocks with 429 when daily count is at the cap (hourly under)", async () => {
+    const { app } = createApp({
+      rawKey: "cn_d_test",
+      apiKeyId: "00000000-0000-0000-0000-000000000001",
+      hourly: 50,
+      daily: 1000,
+    });
+    const res = await app.request("/test");
+    expect(res.status).toBe(429);
+    const body = await res.json() as { error: string };
+    expect(body.error).toContain("daily");
+    expect(res.headers.get("Retry-After")).toBe("86400");
+  });
+
+  it("falls through (no 429) when no key is on the request", async () => {
+    const { app, counts } = createApp({
+      rawKey: null,
+      apiKeyId: "should-not-resolve",
+      hourly: 99999,
+    });
+    const res = await app.request("/test");
+    expect(res.status).toBe(200);
+    expect(counts.resolveCalls).toBe(0);
+    expect(counts.countCalls).toBe(0);
+  });
+
+  it("falls through (no 429) when the key cannot be resolved", async () => {
+    const { app, counts } = createApp({
+      rawKey: "cn_d_unknown",
+      apiKeyId: null,
+      hourly: 99999,
+    });
+    const res = await app.request("/test");
+    expect(res.status).toBe(200);
+    expect(counts.resolveCalls).toBe(1);
+    expect(counts.countCalls).toBe(0);
+  });
+
+  it("respects custom hourlyMax / dailyMax", async () => {
+    const { app } = createApp({
+      hourlyMax: 5,
+      dailyMax: 10,
+      rawKey: "cn_d_test",
+      apiKeyId: "00000000-0000-0000-0000-000000000001",
+      hourly: 5,
+      daily: 0,
+    });
+    const res = await app.request("/test");
+    expect(res.status).toBe(429);
+  });
+
+  it("is bypassed when DISABLE_RATE_LIMIT=true", async () => {
+    process.env["DISABLE_RATE_LIMIT"] = "true";
+    const { app, counts } = createApp({
+      rawKey: "cn_d_test",
+      apiKeyId: "00000000-0000-0000-0000-000000000001",
+      hourly: 99999,
+      daily: 99999,
+    });
+    const res = await app.request("/test");
+    expect(res.status).toBe(200);
+    expect(counts.resolveCalls).toBe(0);
+    expect(counts.countCalls).toBe(0);
   });
 });

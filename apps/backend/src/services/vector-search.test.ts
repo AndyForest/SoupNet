@@ -83,18 +83,14 @@ describe.skipIf(!BASE)("vector search integration (seeded vectors)", () => {
     sql = drizzleMod.sql;
 
     // Register a test user
+    const email = `test-vecsearch-${uid}@test.local`;
+    const password = "vecsearch-test-password";
     const regRes = await fetch(`${BASE}/auth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        email: `test-vecsearch-${uid}@test.local`,
-        password: "vecsearch-test-password",
-        tosAccepted: true,
-      }),
+      body: JSON.stringify({ email, password, tosAccepted: true }),
     });
-    const regBody = (await regRes.json()) as { data?: { token?: string; verificationToken?: string } };
-    token = regBody.data?.token ?? "";
-    if (!token) throw new Error("Failed to register test user for vector search tests");
+    const regBody = (await regRes.json()) as { data?: { verificationToken?: string } };
 
     // F15: verify the user before key creation. Dev backend exposes the
     // verification token in the register response when ALLOW_AUTO_SETUP=true.
@@ -106,6 +102,16 @@ describe.skipIf(!BASE)("vector search integration (seeded vectors)", () => {
       body: JSON.stringify({ token: verificationToken }),
     });
     if (!verifyRes.ok) throw new Error("Failed to verify test user for vector search tests");
+
+    // F30: log in for the JWT (register no longer returns it).
+    const loginRes = await fetch(`${BASE}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    const loginBody = (await loginRes.json()) as { data?: { token?: string } };
+    token = loginBody.data?.token ?? "";
+    if (!token) throw new Error("Failed to log in test user for vector search tests");
 
     // Generate API key
     const keyRes = await fetch(`${BASE}/keys/daily`, {

@@ -31,20 +31,17 @@ interface UploadResponse {
 }
 
 async function registerVerifiedUserAndKey(suffix: string): Promise<string> {
+  const email = `uploads-${uid}-${suffix}@test.local`;
+  const password = "uploads-test-password-123";
   const regRes = await fetch(`${BASE}/auth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      email: `uploads-${uid}-${suffix}@test.local`,
-      password: "uploads-test-password-123",
-      tosAccepted: true,
-    }),
+    body: JSON.stringify({ email, password, tosAccepted: true }),
   });
   const regBody = (await regRes.json()) as RegisterResponse;
-  const token = regBody.data?.token;
   const verificationToken = regBody.data?.verificationToken;
-  if (!token || !verificationToken) {
-    throw new Error("Failed to register/verify test user — ALLOW_AUTO_SETUP must be true in dev");
+  if (!verificationToken) {
+    throw new Error("Failed to register test user — ALLOW_AUTO_SETUP must be true in dev");
   }
   const verifyRes = await fetch(`${BASE}/auth/verify`, {
     method: "POST",
@@ -52,6 +49,16 @@ async function registerVerifiedUserAndKey(suffix: string): Promise<string> {
     body: JSON.stringify({ token: verificationToken }),
   });
   if (!verifyRes.ok) throw new Error("Failed to verify test user");
+
+  // F30: log in for the JWT (register no longer returns it).
+  const loginRes = await fetch(`${BASE}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  const loginBody = (await loginRes.json()) as { data?: { token?: string } };
+  const token = loginBody.data?.token;
+  if (!token) throw new Error("Failed to log in test user");
 
   const keyRes = await fetch(`${BASE}/keys/daily`, {
     method: "POST",

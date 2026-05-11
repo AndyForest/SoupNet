@@ -19,14 +19,18 @@ import {
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { claimnetSchema } from "./traces";
+import { users } from "./users";
+import { groups } from "./groups";
 
 export const invitations = claimnetSchema.table(
   "invitations",
   {
     id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
 
-    inviterId: uuid("inviter_id").notNull(), // FK -> users.id
-    groupId: uuid("group_id").notNull(), // FK -> groups.id
+    // F18 (security-audit-2026-04-09): both FKs cascade on delete so
+    // orphaned invitations cannot survive a user/group teardown.
+    inviterId: uuid("inviter_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    groupId: uuid("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
     email: text("email").notNull(),
     token: text("token").notNull(), // URL-safe random token
 

@@ -24,6 +24,11 @@ export const auditLog = claimnetSchema.table(
     actorUserId: uuid("actor_user_id"),   // ref -> public.users.id. Null = system action.
     actorNodeId: uuid("actor_node_id"),   // ref -> public.client_nodes.id. Null = user action.
 
+    // Set on agent-initiated actions (recipe.checked, upload.received, etc.).
+    // F29 (security-audit-2026-04-09) reads this column to enforce per-key
+    // rate limits without maintaining a parallel counter.
+    apiKeyId: uuid("api_key_id"),
+
     action: text("action").notNull(),
     // e.g. trace.created | evidence.linked | moderation.flagged
 
@@ -38,6 +43,9 @@ export const auditLog = claimnetSchema.table(
     index("audit_log_actor_user_id_idx").on(t.actorUserId),
     index("audit_log_target_id_idx").on(t.targetId),
     index("audit_log_occurred_at_idx").on(t.occurredAt),
+    // Composite index drives F29's per-key rate-limit COUNT queries
+    // (WHERE api_key_id = $1 AND occurred_at > NOW() - INTERVAL ...).
+    index("audit_log_api_key_id_occurred_at_idx").on(t.apiKeyId, t.occurredAt.desc()),
   ]
 );
 

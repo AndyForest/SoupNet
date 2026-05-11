@@ -28,10 +28,8 @@ describe.skipIf(!BASE)("group member management", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password, tosAccepted: true }),
     });
-    const regBody = (await reg.json()) as { data?: { token?: string; verificationToken?: string } };
-    const token = regBody.data?.token ?? "";
+    const regBody = (await reg.json()) as { data?: { verificationToken?: string } };
     const verificationToken = regBody.data?.verificationToken;
-    if (!token) throw new Error(`Failed to register ${email}`);
     if (!verificationToken) throw new Error("Backend did not return verificationToken — ALLOW_AUTO_SETUP must be true");
     const verify = await fetch(`${BASE}/auth/verify`, {
       method: "POST",
@@ -39,6 +37,15 @@ describe.skipIf(!BASE)("group member management", () => {
       body: JSON.stringify({ token: verificationToken }),
     });
     if (!verify.ok) throw new Error(`Failed to verify ${email}`);
+    // F30: register no longer returns a JWT — log in to get one.
+    const login = await fetch(`${BASE}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    const loginBody = (await login.json()) as { data?: { token?: string } };
+    const token = loginBody.data?.token ?? "";
+    if (!token) throw new Error(`Failed to log in ${email}`);
     return token;
   }
 
@@ -261,12 +268,11 @@ describe.skipIf(!BASE)("group invitations (spam-safe)", () => {
       body: JSON.stringify({ email, password, tosAccepted: true }),
     });
     const regBody = (await reg.json()) as {
-      data?: { token?: string; verificationToken?: string };
+      data?: { verificationToken?: string };
       error?: string;
     };
-    const token = regBody.data?.token ?? "";
     const vtok = regBody.data?.verificationToken;
-    if (!token || !vtok) {
+    if (!vtok) {
       throw new Error(`Failed to register ${email} (status ${reg.status}): ${JSON.stringify(regBody)}`);
     }
     await fetch(`${BASE}/auth/verify`, {
@@ -274,6 +280,17 @@ describe.skipIf(!BASE)("group invitations (spam-safe)", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token: vtok }),
     });
+    // F30: /auth/register no longer returns a JWT — log in to get one.
+    const login = await fetch(`${BASE}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    const loginBody = (await login.json()) as { data?: { token?: string } };
+    const token = loginBody.data?.token ?? "";
+    if (!token) {
+      throw new Error(`Failed to log in ${email} after register/verify`);
+    }
     return token;
   }
 
@@ -452,6 +469,120 @@ describe.skipIf(!BASE)("group invitations (spam-safe)", () => {
     });
     expect(list.status).toBe(403);
   });
+
+  // F18 (security-audit-2026-04-09): inviter_id and group_id on invitations
+  // are declared with ON DELETE CASCADE so orphaned invitations cannot
+  // outlive their inviter or group. We verify two things at the DB level:
+  //   (a) both FKs exist with CONFDELTYPE='c' (cascade) in pg_constraint
+  //   (b) cascade actually fires when the parent group row is forcibly
+  //       removed — we manually clear the group's other FK dependencies
+  //       (group_members) so the test isolates the invitation cascade.
+  it("F18: invitations has CASCADE FKs on inviter_id and group_id", async () => {
+    const postgres = (await import("postgres")).default;
+
+    // Owner creates a throwaway group + sends an invite to a fresh email.
+    const throwawaySlug = `f18-cascade-${inviteUid}`;
+    const create = await fetch(`${BASE}/recipe-books`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${ownerToken}` },
+      body: JSON.stringify({
+        name: `F18 Cascade ${inviteUid}`,
+        slug: throwawaySlug,
+        organizationId: ownerOrgId,
+        description: "F18 cascade test",
+      }),
+    });
+    const created = (await create.json()) as { data?: { id: string } };
+    const throwawayGroupId = created.data?.id ?? "";
+    expect(throwawayGroupId).toBeTruthy();
+
+    const cascadeEmail = `test-inv-cascade-${inviteUid}@test.local`;
+    const inv = await fetch(`${BASE}/recipe-books/${throwawayGroupId}/invite`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${ownerToken}` },
+      body: JSON.stringify({ email: cascadeEmail }),
+    });
+    expect(inv.status).toBe(201);
+    const invBody = (await inv.json()) as { data?: { id: string } };
+    const inviteId = invBody.data?.id ?? "";
+    expect(inviteId).toBeTruthy();
+
+    const sql = postgres({
+      host: process.env["PGHOST"] ?? "localhost",
+      port: Number(process.env["PGPORT"] ?? 5633),
+      user: process.env["PGUSER"] ?? "claimnet",
+      password: process.env["PGPASSWORD"] ?? "claimnet",
+      database: process.env["PGDATABASE"] ?? "claimnet",
+    });
+    try {
+      // (a) Inspect pg_constraint for the two FKs and verify confdeltype='c'.
+      const constraints: Array<{ conname: string; confdeltype: string }> = await sql`
+        SELECT c.conname, c.confdeltype
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        WHERE n.nspname = 'claimnet'
+          AND t.relname = 'invitations'
+          AND c.contype = 'f'
+        ORDER BY c.conname
+      `;
+      const byName = new Map(constraints.map((c) => [c.conname, c.confdeltype]));
+      expect(byName.get("invitations_inviter_id_users_id_fk")).toBe("c");
+      expect(byName.get("invitations_group_id_groups_id_fk")).toBe("c");
+
+      // (b) Exercise the cascade end-to-end. group_members and any pre-
+      // existing invitations need clearing first so the DELETE on the
+      // throwaway group hits no other FK before reaching invitations.
+      await sql`DELETE FROM claimnet.group_members WHERE group_id = ${throwawayGroupId}::uuid`;
+      const beforeOther: Array<{ id: string }> = await sql`
+        SELECT id FROM claimnet.invitations WHERE group_id = ${throwawayGroupId}::uuid
+      `;
+      expect(beforeOther.length).toBeGreaterThanOrEqual(1);
+
+      await sql`DELETE FROM claimnet.groups WHERE id = ${throwawayGroupId}::uuid`;
+
+      const afterOther: Array<{ id: string }> = await sql`
+        SELECT id FROM claimnet.invitations WHERE id = ${inviteId}::uuid
+      `;
+      expect(afterOther.length).toBe(0);
+    } finally {
+      await sql.end();
+    }
+  });
+
+  // F31 gate (security-audit-2026-04-09): an attacker who has an invite token
+  // and a verified account on a *different* email cannot accept the invite.
+  // POST /invitations/:id/accept binds membership to the authed user's email,
+  // so possession of the token alone is not sufficient — mailbox control is
+  // proven by the verification step, then the explicit accept must come from
+  // the matching authed session.
+  it("F31: another verified user cannot accept an invite addressed to a different email", async () => {
+    const targetEmail = `test-inv-f31target-${inviteUid}@test.local`;
+    const inv = await fetch(`${BASE}/recipe-books/${invGroupId}/invite`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${ownerToken}` },
+      body: JSON.stringify({ email: targetEmail }),
+    });
+    expect(inv.status).toBe(201);
+    const invBody = (await inv.json()) as { data?: { id: string } };
+    const inviteId = invBody.data?.id ?? "";
+    expect(inviteId).toBeTruthy();
+
+    // Attacker = the decliner from earlier (a verified user with a different
+    // email). Even with a valid JWT and the invite id, accept must 404 —
+    // accept is gated on the invitation's email matching the authed session.
+    const accAttacker = await fetch(`${BASE}/invitations/${inviteId}/accept`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${declinerToken}` },
+    });
+    expect(accAttacker.status).toBe(404);
+
+    // Unauthed callers are rejected by requireAuth before the email check.
+    const accAnon = await fetch(`${BASE}/invitations/${inviteId}/accept`, {
+      method: "POST",
+    });
+    expect(accAnon.status).toBe(401);
+  });
 });
 
 /**
@@ -491,15 +622,23 @@ describe.skipIf(!BASE)("daily-link group preferences", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password, tosAccepted: true }),
     });
-    const regBody = (await reg.json()) as { data?: { token?: string; verificationToken?: string } };
-    const token = regBody.data?.token ?? "";
+    const regBody = (await reg.json()) as { data?: { verificationToken?: string } };
     const vtok = regBody.data?.verificationToken;
-    if (!token || !vtok) throw new Error(`Failed to register ${email}`);
+    if (!vtok) throw new Error(`Failed to register ${email}`);
     await fetch(`${BASE}/auth/verify`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token: vtok }),
     });
+    // F30: /auth/register no longer returns a JWT — log in for the token.
+    const login = await fetch(`${BASE}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    const loginBody = (await login.json()) as { data?: { token?: string } };
+    const token = loginBody.data?.token ?? "";
+    if (!token) throw new Error(`Failed to log in ${email}`);
     return token;
   }
 

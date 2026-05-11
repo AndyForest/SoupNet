@@ -84,7 +84,7 @@ Because `RETRIEVAL_DOCUMENT` is used for all indexed content regardless of artif
 
 For air-gapped mode claims: the client computes vectors for payload files locally using the user's own Gemini API key. Server-side embedding is skipped for those files; the claim metadata (summary, reasoning) is still embedded server-side.
 
-Image artifacts: direct image embedding is available in `gemini-embedding-2-preview` and is now supported via inline base64 (up to 4MB). Larger media (video, long audio) will require the Gemini File API in a future phase — see [Gemini File API vs Inline Data Briefing](../working/gemini-file-api-briefing.md) for the analysis.
+Image artifacts: direct image embedding is available in `gemini-embedding-2-preview` and is now supported via inline base64 (up to 4MB). Larger media (video, long audio) will require the Gemini File API in a future phase.
 
 ---
 

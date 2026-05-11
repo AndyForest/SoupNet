@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
+import crypto from "node:crypto";
 import { getDb } from "../db";
 import { requireAuth, requireVerifiedEmail } from "../auth";
 import type { AppEnv } from "../types";
@@ -189,12 +190,18 @@ keys.get("/briefing", async (c) => {
 
   const db = getDb();
 
-  // Look up key's group access
+  // F33 (security-audit-2026-04-09): look up by hashed key, not by 8-char
+  // prefix. cn_d_/cn_s_ are fixed prefixes leaving only ~3 random base62
+  // chars in the prefix-key, so multiple keys for the same user can collide
+  // on prefix and the LIMIT 1 returned whichever the planner chose. The
+  // ownership check still held, but the briefing could echo the wrong
+  // group set. Mirrors validateKey() at services/api-key.service.ts:204.
+  const hashedKey = crypto.createHash("sha256").update(rawKey).digest("hex");
   const keyRows = await db.execute(sql`
     SELECT read_group_ids, write_group_ids, default_write_group_id
     FROM claimnet.api_keys
     WHERE user_id = ${user.id}::uuid
-      AND key_prefix = ${rawKey.slice(0, 8)}
+      AND key = ${hashedKey}
       AND expires_at > NOW()
     LIMIT 1
   `);
@@ -235,7 +242,10 @@ keys.get("/briefing", async (c) => {
     ? BRIEFING_WEB.build(checkUrl, rawKey, groups)
     : BRIEFING_MCP.build(rawKey, backendUrl, frontendUrl, groups);
 
-  return c.json({ ok: true, data: { text, type: briefingType } });
+  // Echo the resolved groups so callers (and the F33 regression test)
+  // can confirm the lookup hit the right key without parsing the
+  // rendered briefing text.
+  return c.json({ ok: true, data: { text, type: briefingType, groups } });
 });
 
 // ── Wire-format mappers (C1 — recipe-book rename) ──────────────────────────

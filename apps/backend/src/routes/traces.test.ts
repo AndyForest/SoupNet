@@ -24,15 +24,23 @@ describe.skipIf(!BASE)("/traces/map groupIds scoping", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password, tosAccepted: true }),
     });
-    const regBody = (await reg.json()) as { data?: { token?: string; verificationToken?: string } };
-    const t = regBody.data?.token ?? "";
+    const regBody = (await reg.json()) as { data?: { verificationToken?: string } };
     const vtok = regBody.data?.verificationToken;
-    if (!t || !vtok) throw new Error(`Setup failed for ${email}`);
+    if (!vtok) throw new Error(`Setup failed for ${email}`);
     await fetch(`${BASE}/auth/verify`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token: vtok }),
     });
+    // F30: log in for the JWT (register no longer returns it).
+    const login = await fetch(`${BASE}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    const loginBody = (await login.json()) as { data?: { token?: string } };
+    const t = loginBody.data?.token ?? "";
+    if (!t) throw new Error(`Login failed for ${email}`);
     return t;
   }
 
@@ -144,18 +152,24 @@ describe.skipIf(!BASE)("/traces/map cross-author visibility in shared groups", (
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password, tosAccepted: true }),
     });
-    const regBody = (await reg.json()) as {
-      data?: { token?: string; verificationToken?: string; user?: { id: string } };
-    };
-    const t = regBody.data?.token ?? "";
-    const userId = regBody.data?.user?.id ?? "";
+    const regBody = (await reg.json()) as { data?: { verificationToken?: string } };
     const vtok = regBody.data?.verificationToken;
-    if (!t || !vtok || !userId) throw new Error(`Setup failed for ${email}`);
+    if (!vtok) throw new Error(`Setup failed for ${email}`);
     await fetch(`${BASE}/auth/verify`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token: vtok }),
     });
+    // F30: register no longer returns token + user — log in, then read /auth/me for the userId.
+    const login = await fetch(`${BASE}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    const loginBody = (await login.json()) as { data?: { token?: string; user?: { id: string } } };
+    const t = loginBody.data?.token ?? "";
+    const userId = loginBody.data?.user?.id ?? "";
+    if (!t || !userId) throw new Error(`Login failed for ${email}`);
     return { token: t, userId };
   }
 

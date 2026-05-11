@@ -120,6 +120,20 @@
       "when": 1776636266676,
       "tag": "0016_handy_swordsman",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1778433179329,
+      "tag": "0017_medical_talon",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1778433792709,
+      "tag": "0018_brief_king_cobra",
+      "breakpoints": true
     }
   ]
 }

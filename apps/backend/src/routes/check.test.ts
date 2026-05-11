@@ -22,19 +22,16 @@ let apiKey = "";
 
 describe.skipIf(!BASE)("/check routes integration", () => {
   beforeAll(async () => {
-    // Register a test user
+    const checkEmail = `test-check-${uid}@test.local`;
+    const checkPassword = "check-test-password-123";
+
+    // Register a test user. F30: /auth/register no longer auto-logs-in.
     const regRes = await fetch(`${BASE}/auth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        email: `test-check-${uid}@test.local`,
-        password: "check-test-password-123",
-        tosAccepted: true,
-      }),
+      body: JSON.stringify({ email: checkEmail, password: checkPassword, tosAccepted: true }),
     });
-    const regBody = (await regRes.json()) as { data?: { token?: string; verificationToken?: string } };
-    const token = regBody.data?.token;
-    if (!token) throw new Error("Failed to register test user");
+    const regBody = (await regRes.json()) as { data?: { verificationToken?: string } };
 
     // F15: verify the user before creating keys. The dev backend exposes the
     // verification token in the register response when ALLOW_AUTO_SETUP=true.
@@ -46,6 +43,16 @@ describe.skipIf(!BASE)("/check routes integration", () => {
       body: JSON.stringify({ token: verificationToken }),
     });
     if (!verifyRes.ok) throw new Error("Failed to verify test user");
+
+    // Log in to obtain the JWT (F30: not returned from /register anymore).
+    const loginRes = await fetch(`${BASE}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: checkEmail, password: checkPassword }),
+    });
+    const loginBody = (await loginRes.json()) as { data?: { token?: string } };
+    const token = loginBody.data?.token;
+    if (!token) throw new Error("Failed to log in test user");
 
     // Generate a daily API key
     const keyRes = await fetch(`${BASE}/keys/daily`, {
@@ -69,7 +76,7 @@ describe.skipIf(!BASE)("/check routes integration", () => {
     expect(html).toContain("Soup.net");
   });
 
-  it("GET /check with key + trace + ef returns HTML with results header", async () => {
+  it("GET /check with key + trace + ef returns HTML with results header", { timeout: 15_000 }, async () => {
     // The confirmation header is rendered in a Next Steps block that appears
     // whenever a check completes successfully — even when the corpus has no
     // matching recipes (the previous "seed first then search" workaround is
@@ -153,6 +160,99 @@ describe.skipIf(!BASE)("/check routes integration", () => {
     expect(body.error).toBeDefined();
   });
 
+  // F29: the per-key rate limiter reads from audit_log.api_key_id, so every
+  // recipe.checked event must populate that column directly (not just
+  // metadata.apiKeyId). This test makes a real /check call and asserts the
+  // column is non-null for the row written.
+  it("F29: recipe.checked audit row carries api_key_id in its dedicated column", async () => {
+    const postgres = (await import("postgres")).default;
+    const trace = `As a backend engineer working on plan-04 fix queue ${uid}, I prefer audit-log columns over jsonb extraction so that rate-limit COUNT queries hit a btree index.`;
+    const ef = `Indexed columns are faster than jsonb path extraction.\n> "Use the right tool"\n— PG docs`;
+    const params = new URLSearchParams({ key: apiKey, trace, ef, format: "json" });
+
+    const res = await fetch(`${BASE}/check?${params.toString()}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as CheckResponse;
+    const recipeId = body.data?.recipeId;
+    if (!recipeId) throw new Error("recipeId missing from /check JSON response");
+
+    const sql = postgres({
+      host: process.env["PGHOST"] ?? "localhost",
+      port: Number(process.env["PGPORT"] ?? 5633),
+      user: process.env["PGUSER"] ?? "claimnet",
+      password: process.env["PGPASSWORD"] ?? "claimnet",
+      database: process.env["PGDATABASE"] ?? "claimnet",
+    });
+    try {
+      const rows: Array<{ api_key_id: string | null; metadata: { apiKeyId?: string } }> = await sql`
+        SELECT api_key_id, metadata
+        FROM claimnet.audit_log
+        WHERE action = 'recipe.checked' AND target_id = ${recipeId}::uuid
+        LIMIT 1
+      `;
+      expect(rows.length).toBe(1);
+      const row = rows[0]!;
+      expect(row.api_key_id).toBeTruthy();
+      // Back-compat: metadata.apiKeyId still present so old queries keep working.
+      expect(row.metadata.apiKeyId).toBe(row.api_key_id);
+    } finally {
+      await sql.end();
+    }
+  });
+
+  // F11 follow-up: when a /check call carries a file upload, the
+  // recipe.checked audit row records hasFile/fileHash/fileMimeType/fileBytes
+  // in metadata so future incident response can trace which key uploaded
+  // what bytes against which trace. (The ACCEPTED-with-conditions risk
+  // posture in security-audit-2026-04-09 hinges on this trail.)
+  it("F11: recipe.checked audit row records upload metadata when a file is attached", async () => {
+    const postgres = (await import("postgres")).default;
+    // 1x1 transparent PNG — same fixture used by uploads.test.ts.
+    const TINY_PNG = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    const trace = `As a forensic analyst working on F11 audit recovery for ${uid}, I prefer hash and mime metadata recorded inline so that a single audit_log row identifies a leaked-content incident's key and bytes.`;
+    const ef = `Upload metadata pinned to the recipe-checked row keeps forensic queries to one table.\n> "Single source of truth"\n— Soup.net audit policy`;
+
+    const form = new FormData();
+    form.set("key", apiKey);
+    form.set("trace", trace);
+    form.set("ef", ef);
+    form.set("format", "json");
+    form.set("image", new Blob([TINY_PNG], { type: "image/png" }), "tiny.png");
+
+    const res = await fetch(`${BASE}/check`, { method: "POST", body: form });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as CheckResponse;
+    const recipeId = body.data?.recipeId;
+    if (!recipeId) throw new Error("recipeId missing from /check JSON response");
+
+    const sql = postgres({
+      host: process.env["PGHOST"] ?? "localhost",
+      port: Number(process.env["PGPORT"] ?? 5633),
+      user: process.env["PGUSER"] ?? "claimnet",
+      password: process.env["PGPASSWORD"] ?? "claimnet",
+      database: process.env["PGDATABASE"] ?? "claimnet",
+    });
+    try {
+      const rows: Array<{ metadata: Record<string, unknown> }> = await sql`
+        SELECT metadata FROM claimnet.audit_log
+        WHERE action = 'recipe.checked' AND target_id = ${recipeId}::uuid
+        LIMIT 1
+      `;
+      expect(rows.length).toBe(1);
+      const meta = rows[0]!.metadata;
+      expect(meta["hasFile"]).toBe(true);
+      expect(meta["fileMimeType"]).toBe("image/png");
+      expect(typeof meta["fileHash"]).toBe("string");
+      expect((meta["fileHash"] as string).length).toBe(64); // sha256 hex
+      expect(meta["fileBytes"]).toBe(TINY_PNG.length);
+    } finally {
+      await sql.end();
+    }
+  }, 15_000);
+
   it("idempotent — same recipe twice returns same ID via JSON", async () => {
     const trace = `As a test engineer, I prefer that repeated identical requests return the same result so that the system is deterministic — idempotent test ${uid}`;
     const ef = `Idempotency is a core design principle.\n> "Same input, same output"\n— REST design principles`;
@@ -173,4 +273,27 @@ describe.skipIf(!BASE)("/check routes integration", () => {
     expect(body2.ok).toBe(true);
     expect(body1.data?.recipeId).toBe(body2.data?.recipeId);
   });
+
+  // F28: framework-level body size cap. A 22 MiB POST should be rejected
+  // before Hono parses the body, so the route handler never runs. This
+  // test is intentionally last in the describe block — bodyLimit middleware
+  // emits the 413 response before fully draining the request, which can
+  // leave the keep-alive socket in a state that breaks the very next
+  // request reusing it. Running this last keeps the broken-socket
+  // aftermath out of every other test's path.
+  it("F28: POST /check rejects bodies over 21 MiB at the framework layer", async () => {
+    // Multipart with a single oversized field. We don't need a real file —
+    // a chunk of bytes inside the form is enough to push the body past the
+    // limit. URL-encoded would also work but multipart is the realistic
+    // upload path the audit calls out.
+    const oversize = "x".repeat(22 * 1024 * 1024);
+    const form = new FormData();
+    form.append("key", apiKey);
+    form.append("trace", oversize);
+
+    const res = await fetch(`${BASE}/check`, { method: "POST", body: form });
+    expect(res.status).toBe(413);
+    const body = await res.json() as { ok: boolean; error: string };
+    expect(body.ok).toBe(false);
+  }, 15_000);
 });

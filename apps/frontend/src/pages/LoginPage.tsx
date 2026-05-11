@@ -6,7 +6,15 @@ import soupnetLogo from "../assets/soupnet-logo.png";
 
 interface AuthResponse {
   ok: boolean;
-  data?: { user: { id: string; email: string; role: string }; token: string; emailVerified?: boolean };
+  data?: {
+    // /auth/login carries token + user. /auth/register (post-F30) carries
+    // only a generic message so the response is byte-identical for new and
+    // existing emails.
+    user?: { id: string; email: string; role: string };
+    token?: string;
+    emailVerified?: boolean;
+    message?: string;
+  };
   error?: string;
   message?: string;
 }
@@ -80,6 +88,21 @@ export function LoginPage() {
         : loginRequest(body),
     onSuccess: (data) => {
       if (data.ok && data.data) {
+        if (isRegister) {
+          // F30 (security-audit-2026-04-09): /auth/register responds with a
+          // generic message and no JWT, regardless of whether the email was
+          // new or already registered. Show the "check your email" page in
+          // both cases — the user clicks the verification link and then
+          // signs in normally. The signupStatusQuery / proactive waitlist
+          // path above handles cap-reached without ever submitting register.
+          setShowVerification(true);
+          return;
+        }
+        // Login path — token + user always present on success.
+        if (!data.data.token) {
+          setError("Login response missing token");
+          return;
+        }
         // Clear React Query cache BEFORE setting the new token. With
         // `staleTime: 60s` (see main.tsx), a prior user's cached per-user
         // data (e.g. `["invitations-pending"]`) would otherwise be served
@@ -89,14 +112,8 @@ export function LoginPage() {
         // clean — whether via logout-then-login or direct account switch.
         queryClient.clear();
         setToken(data.data.token);
-        // Cache the verified state so the routing guard can redirect sync.
-        // Registration always yields an unverified user; login responses
-        // include the actual flag.
-        setEmailVerified(isRegister ? false : (data.data.emailVerified ?? false));
-        if (isRegister) {
-          // Show verification message after registration
-          setShowVerification(true);
-        } else if (data.data.emailVerified === false) {
+        setEmailVerified(data.data.emailVerified ?? false);
+        if (data.data.emailVerified === false) {
           // Login succeeded but email isn't verified yet — bounce to the
           // verify-pending page where the only available actions are
           // resend-email and sign-out.
@@ -104,8 +121,6 @@ export function LoginPage() {
         } else {
           void navigate({ to: "/app/dashboard" });
         }
-      } else if (data.error === "waitlist") {
-        setShowWaitlist(true);
       } else {
         setError(data.error ?? "Authentication failed");
       }

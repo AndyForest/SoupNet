@@ -22,7 +22,12 @@ interface ApiResponse {
 let authToken = "";
 
 describe.skipIf(!BASE)("/auth routes integration", () => {
-  it("POST /auth/register creates a user", async () => {
+  // F30 (security-audit-2026-04-09): /auth/register no longer hands back the
+  // JWT or a user object — that was an enumeration oracle when paired with
+  // the 409-on-duplicate branch. The response is a generic message either
+  // way; callers must verify and then explicitly /auth/login to obtain a
+  // token.
+  it("POST /auth/register returns generic message for new email (no auto-login)", { timeout: 15_000 }, async () => {
     const res = await fetch(`${BASE}/auth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -30,25 +35,52 @@ describe.skipIf(!BASE)("/auth routes integration", () => {
     });
 
     expect(res.status).toBe(200);
-    const body = (await res.json()) as ApiResponse;
+    const body = (await res.json()) as { ok: boolean; data?: { message?: string; verificationToken?: string; token?: string; user?: unknown } };
     expect(body.ok).toBe(true);
-    expect(body.data?.token).toBeDefined();
-    expect(body.data?.user?.email).toBe(testEmail);
+    expect(body.data?.message).toContain("verification email");
+    // No token, no user object — those would be the enumeration oracle.
+    expect(body.data?.token).toBeUndefined();
+    expect(body.data?.user).toBeUndefined();
+    // verificationToken is exposed only in dev (ALLOW_AUTO_SETUP=true) so
+    // integration tests can drive /auth/verify without scraping Mailpit.
+    expect(body.data?.verificationToken).toBeTruthy();
 
-    authToken = body.data?.token ?? "";
+    // Verify + login to obtain a token for downstream tests.
+    await fetch(`${BASE}/auth/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: body.data!.verificationToken }),
+    });
+    const loginRes = await fetch(`${BASE}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: testEmail, password: testPassword }),
+    });
+    const loginBody = (await loginRes.json()) as ApiResponse;
+    authToken = loginBody.data?.token ?? "";
+    expect(authToken).toBeTruthy();
   });
 
-  it("POST /auth/register rejects duplicate email", async () => {
+  // F30 regression: re-registering with the same email must return a body
+  // that is byte-identical to the new-email response (modulo the
+  // verificationToken, which is dev-only and absent here because no new user
+  // was created). No 409, no "already registered" text.
+  it("F30: re-registering an existing email returns the same generic message (no enumeration)", async () => {
     const res = await fetch(`${BASE}/auth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: testEmail, password: testPassword, tosAccepted: true }),
     });
 
-    expect(res.status).toBe(409);
-    const body = (await res.json()) as ApiResponse;
-    expect(body.ok).toBe(false);
-    expect(body.error).toContain("already");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; data?: { message?: string; verificationToken?: string; token?: string } };
+    expect(body.ok).toBe(true);
+    expect(body.data?.message).toContain("verification email");
+    expect(body.data?.token).toBeUndefined();
+    // No verificationToken on the duplicate branch — there is no new user
+    // to verify. The dev-only field's presence/absence is the only signal,
+    // and it's gated to dev so production responses are byte-identical.
+    expect(body.data?.verificationToken).toBeUndefined();
   });
 
   it("POST /auth/register validates input", async () => {
@@ -153,7 +185,7 @@ describe.skipIf(!BASE)("F15 — email verification hard gate", () => {
   let gateToken = "";
   let gateVerificationToken = "";
 
-  it("POST /auth/register returns a token + verificationToken in dev mode", async () => {
+  it("POST /auth/register returns a verificationToken in dev mode (no JWT — F30)", async () => {
     const res = await fetch(`${BASE}/auth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -162,9 +194,9 @@ describe.skipIf(!BASE)("F15 — email verification hard gate", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { ok: boolean; data?: { token?: string; verificationToken?: string } };
     expect(body.ok).toBe(true);
-    gateToken = body.data?.token ?? "";
+    // F30: no JWT auto-login on register.
+    expect(body.data?.token).toBeUndefined();
     gateVerificationToken = body.data?.verificationToken ?? "";
-    expect(gateToken).toBeTruthy();
     expect(gateVerificationToken).toBeTruthy();
   });
 
@@ -175,9 +207,12 @@ describe.skipIf(!BASE)("F15 — email verification hard gate", () => {
       body: JSON.stringify({ email: gateEmail, password: gatePassword }),
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { ok: boolean; data?: { emailVerified?: boolean } };
+    const body = (await res.json()) as { ok: boolean; data?: { token?: string; emailVerified?: boolean } };
     expect(body.ok).toBe(true);
     expect(body.data?.emailVerified).toBe(false);
+    // Login is now where the unverified user picks up their JWT.
+    gateToken = body.data?.token ?? "";
+    expect(gateToken).toBeTruthy();
   });
 
   it("POST /keys/daily is blocked for unverified user with email_not_verified", async () => {
@@ -425,8 +460,7 @@ describe.skipIf(!BASE)("data export", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: exportEmail, password: exportPassword, tosAccepted: true }),
     });
-    const regBody = (await reg.json()) as { data?: { token?: string; verificationToken?: string } };
-    exportToken = regBody.data?.token ?? "";
+    const regBody = (await reg.json()) as { data?: { verificationToken?: string } };
     const vtok = regBody.data?.verificationToken;
     if (!vtok) throw new Error("Missing verificationToken");
     await fetch(`${BASE}/auth/verify`, {
@@ -434,6 +468,15 @@ describe.skipIf(!BASE)("data export", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token: vtok }),
     });
+    // F30: register no longer returns a JWT — log in to obtain one.
+    const login = await fetch(`${BASE}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: exportEmail, password: exportPassword }),
+    });
+    const loginBody = (await login.json()) as { data?: { token?: string } };
+    exportToken = loginBody.data?.token ?? "";
+    if (!exportToken) throw new Error("Missing login token");
   });
 
   it("GET /auth/me/export without auth returns 401", async () => {

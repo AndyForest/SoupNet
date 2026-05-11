@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import type { SubmitAndSearchResult } from "../services/trace.service";
 import { submitAndSearch } from "../services/trace.service";
 import { enrichResults, clusterEvidenceInResults } from "../services/result-enricher";
@@ -8,10 +9,23 @@ import { getDb } from "../db";
 import { sql } from "drizzle-orm";
 import { validateKey } from "../services/api-key.service";
 import { HTML_ACCEPT_TYPES } from "@soupnet/domain";
-import { rateLimit } from "../middleware/rate-limit";
+import { rateLimit, perKeyRateLimit, extractCheckRequestKey } from "../middleware/rate-limit";
 
-// Rate limit check/search: 1000 per hour per IP
+// Rate limit check/search:
+//   - per-IP: 1000 per hour (defense-in-depth, catches NAT'd attackers)
+//   - per-key: 200/hour and 1000/day (queried from audit_log; F29).
 const checkRateLimit = rateLimit({ max: 1000, windowMs: 60 * 60 * 1000 });
+const checkPerKeyRateLimit = perKeyRateLimit({ keyExtractor: extractCheckRequestKey });
+
+// F28: cap multipart bodies at 21 MiB — slight slack over the 20 MiB
+// MAX_UPLOAD_BYTES enforced inside storeFile() — so attacker-controlled
+// memory pressure is rejected at the framework layer before the body is
+// buffered into the Node process. Mounted only on POST (GET has no body).
+const CHECK_BODY_LIMIT_BYTES = 21 * 1024 * 1024;
+const checkBodyLimit = bodyLimit({
+  maxSize: CHECK_BODY_LIMIT_BYTES,
+  onError: (c) => c.json({ ok: false, error: "Request body too large" }, 413),
+});
 
 const check = new Hono();
 
@@ -656,7 +670,7 @@ async function handleCheck(
 // ── Route handlers ───────────────────────────────────────────────────────────
 
 // GET /check — display form or process check via query params
-check.get("/", checkRateLimit, async (c) => {
+check.get("/", checkRateLimit, checkPerKeyRateLimit, async (c) => {
   const params: PageParams = {
     key: c.req.query("key") ?? null,
     // Accept both short names (trace/ef/f) and human-readable aliases (recipe/evidence/filter)
@@ -682,7 +696,7 @@ check.get("/", checkRateLimit, async (c) => {
 });
 
 // POST /check — form body (url-encoded or multipart for image uploads)
-check.post("/", checkRateLimit, async (c) => {
+check.post("/", checkBodyLimit, checkRateLimit, checkPerKeyRateLimit, async (c) => {
   const formData = await c.req.parseBody();
 
   // Extract image file if present (multipart/form-data)

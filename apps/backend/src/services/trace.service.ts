@@ -460,22 +460,40 @@ export async function submitAndSearch(
     includeVectors: !!params.axes, // need vectors for concept-axis computation
   });
 
-  // 7. Audit log — record what the agent saw for later analysis and "Map from here"
+  // 7. Audit log — record what the agent saw for later analysis and "Map from here".
+  //
+  // F29: api_key_id is also written to its own column (in addition to the
+  // legacy metadata.apiKeyId field) so the per-key rate-limit COUNT queries
+  // can hit the indexed column instead of jsonb extraction.
+  //
+  // F11 follow-up: when the recipe carried a file upload, file metadata is
+  // included on this same event rather than a separate upload.received event
+  // — uploads only co-occur with /check, so a single row keys the forensic
+  // trail to (key, trace, file) atomically. See ADR-0019.
   try {
+    const metadata: Record<string, unknown> = {
+      apiKeyId: keyId,
+      k: params.clusters ?? null,
+      maxChars: params.maxChars ?? null,
+      searchMode: pipelineResult.searchMode,
+      resultCount: pipelineResult.totalResults,
+      clustered: pipelineResult.clustered,
+      resultTraceIds: pipelineResult.results.map((r) => r.id),
+    };
+    if (params.image) {
+      const imageHash = crypto.createHash("sha256").update(params.image.buffer).digest("hex");
+      metadata["hasFile"] = true;
+      metadata["fileHash"] = imageHash;
+      metadata["fileMimeType"] = params.image.mimeType;
+      metadata["fileBytes"] = params.image.buffer.length;
+    }
     await db.insert(auditLog).values({
       actorUserId: userId,
+      apiKeyId: keyId,
       action: "recipe.checked",
       targetType: "trace",
       targetId: traceId,
-      metadata: {
-        apiKeyId: keyId,
-        k: params.clusters ?? null,
-        maxChars: params.maxChars ?? null,
-        searchMode: pipelineResult.searchMode,
-        resultCount: pipelineResult.totalResults,
-        clustered: pipelineResult.clustered,
-        resultTraceIds: pipelineResult.results.map((r) => r.id),
-      },
+      metadata,
     });
   } catch (err) {
     // Non-blocking — don't fail the recipe check if audit logging fails
