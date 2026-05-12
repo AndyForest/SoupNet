@@ -48,13 +48,26 @@ jobs:
       DISABLE_RATE_LIMIT: "true"  # tests make many rapid requests
 
     steps:
-      - uses: actions/checkout@v4
+      # Actions pinned to commit SHAs (not tags) so the actions' own GitHub
+      # repos can't silently redirect tag refs to a new commit. The version
+      # comment after each SHA is for human readers; update both together.
+      # Bump procedure:
+      #   gh api repos/<owner>/<action>/commits/<tag> --jq '.sha'
+      # Then replace the SHA here and update the trailing `# vN` comment.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
+
+      # Guarantee min-release-age is enforced (added in npm 11.10). Node 24's
+      # bundled npm is older, so we pin the exact version to install before
+      # any project npm command runs. The global install bypasses .npmrc's
+      # engine-strict (it doesn't apply to global installs of npm itself).
+      - name: Upgrade npm to the engines-required version
+        run: npm install -g npm@11.10.0
 
       - name: Install dependencies
         run: npm ci
@@ -129,17 +142,25 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Upgrade npm to the engines-required version
+        run: npm install -g npm@11.10.0
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a  # v4
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to ECR
         id: ecr
-        uses: aws-actions/amazon-ecr-login@v2
+        uses: aws-actions/amazon-ecr-login@fa648b43de3d4d023bcb3f89ed6940096949c419  # v2
 
       - name: Build + push backend image
         env:
