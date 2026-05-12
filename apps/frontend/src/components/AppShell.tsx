@@ -2,6 +2,7 @@ import { Outlet, Link, useMatchRoute, useNavigate } from "@tanstack/react-router
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { authFetch, clearToken, isLoggedIn } from "../auth.js";
 import { CookieNotice } from "./CookieNotice.js";
+import { SiteFooter } from "./SiteFooter.js";
 import { Icon } from "./Icon.js";
 import soupnetLogo from "../assets/soupnet-logo.png";
 import styles from "./AppShell.module.css";
@@ -48,13 +49,15 @@ export function AppShell() {
     void navigate({ to: "/auth/login" });
   }
 
-  // Login page: no shell, just the page (plus the one-time cookie notice).
-  // CookieNotice mounts before the !loggedIn early-return so unauthenticated
-  // marketing pages (LandingPage, HowItWorksPage, legal pages) get it too.
+  // Login page: no shell, just the page (plus the universal site footer and
+  // one-time cookie notice). The footer mounts before the !loggedIn early
+  // return so unauthenticated marketing pages (LandingPage, HowItWorksPage,
+  // legal pages) get a consistent set of footer links.
   if (!loggedIn) {
     return (
       <>
         <Outlet />
+        <SiteFooter />
         <CookieNotice />
       </>
     );
@@ -104,6 +107,7 @@ export function AppShell() {
       <main className={styles.main}>
         <div className={styles.content}>
           <Outlet />
+          <SiteFooter />
         </div>
       </main>
 

@@ -14,11 +14,20 @@ User/agent-facing rename landed in commit `bd59f23`: frontend UI, REST routes (`
 
 ## Legal and compliance
 
-### 2026-05-09 — Privacy policy + terms of service live pages
+### 2026-05-12 — Public-ready trim pass on legal pages
 
-Replaced the placeholder `/info/privacy` and `/info/terms` pages with refined content rendered from `docs/legal/privacy-policy.md` and `docs/legal/terms-of-service.md` (single source of truth). Trusted-tier banner present on both pages flagging which sections still need lawyer review for public launch. Cookie/localStorage notice added (one-time dismissable bottom banner). Marketing footer links to legal pages added on `LandingPage` and `HowItWorksPage`. LICENSE addendum added covering Soup.net name, logo, and visual design as reserved trademarks excluded from the MIT grant.
+Big-picture review of the 2026-05-09 publish. Removed self-imposed framing that doesn't serve a public-facing policy:
 
-Deferred from this work (now tracked in `backlog.md`):
-- Self-serve `DELETE /auth/me` endpoint (privacy policy currently routes to `privacy@soup.net`).
-- Verify three Privacy Policy claims (S3 lifecycle, CSP, RDS backup retention).
-- Public-launch lawyer review checklist.
+- Removed the "trusted-tier" banner and "Pending counsel review" sections from both `privacy-policy.md` and `terms-of-service.md`. Counsel-review checklist moved to `backlog.md` only — not surfaced in public-facing text.
+- Dropped "sole proprietor" disclosure. Operator field is now just "Andy Forest, based in Canada" — leaves Dimentians Ltd or Steamlabs as later options without amending public text.
+- Consolidated all public-facing emails to `admin@soup.net` (subject-line routing for abuse / deletion / privacy requests). Kept `security@soup.net` per security.txt convention.
+- Softened specific numeric commitments ("30 days deletion response", "72-hour breach notification to users", "5-day security ack", "14-day terms-change notice", "CAD $100 liability floor", "30-day backup retention", etc.) to qualitative language ("without undue delay", "as required by applicable law", "by reasonable means").
+- Replaced "in-app banner for 14 days" change-notification promise with "by reasonable means" — see `backlog.md` for the actual mechanism build-out.
+- Age minimum unified to 18+ across the board (was 13+/16-EU). Removes COPPA exposure and parental-consent complexity.
+- Dropped jurisdiction-specific disclaimers (CCPA scope statement, GDPR Article 27 representative discussion, Quebec Law 25 mention). Rights are extended universally without commenting on which laws apply.
+- Replaced "group / group memberships" with "recipe book / recipe book memberships" — vocabulary alignment with the Group → Recipe Book rename.
+- LICENSE trademark notice updated: `hello@` → `admin@`.
+
+### 2026-05-09 — Privacy policy + terms of service live pages (initial publish)
+
+Replaced the placeholder `/info/privacy` and `/info/terms` pages with content rendered from `docs/legal/privacy-policy.md` and `docs/legal/terms-of-service.md` (single source of truth via `react-markdown` + Vite `?raw` imports). Cookie/localStorage notice added (one-time dismissable bottom banner). Marketing footer links to legal pages added on `LandingPage` and `HowItWorksPage`. LICENSE addendum added covering Soup.net name, logo, and visual design as reserved trademarks excluded from the MIT grant. Initial publish used a trusted-tier framing that was rolled back in the 2026-05-12 trim pass above.

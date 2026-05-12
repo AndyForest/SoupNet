@@ -176,18 +176,8 @@ export function LandingPage() {
         </Link>
       </div>
 
-      {/* Footer */}
-      <footer style={{
-        textAlign: "center",
-        padding: "var(--space-lg) var(--space-xl)",
-        color: "var(--color-on-surface-variant)",
-        fontSize: "0.8rem",
-      }}>
-        Soup.net
-        <Link to="/info/how-it-works" style={{ color: "var(--color-on-surface-variant)", marginLeft: "var(--space-md)" }}>How it works</Link>
-        <Link to="/info/privacy" style={{ color: "var(--color-on-surface-variant)", marginLeft: "var(--space-md)" }}>Privacy</Link>
-        <Link to="/info/terms" style={{ color: "var(--color-on-surface-variant)", marginLeft: "var(--space-md)" }}>Terms</Link>
-      </footer>
+      {/* Universal footer (Soup.net, How it works, Privacy, Terms) is mounted
+          by AppShell, not inline here. */}
     </div>
   );
 }

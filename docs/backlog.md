@@ -15,40 +15,45 @@ When you complete an item, move it to `backlog-completed.md` with a date stamp. 
 
 ### `[IMPL]` Self-serve account deletion endpoint
 
-Build `DELETE /auth/me` so the privacy policy can drop the "email privacy@soup.net" workaround.
+Build `DELETE /auth/me` so the privacy policy can drop the "email admin@soup.net" workaround.
 
 - Cascade-delete: `traces`, `evidence`, `references`, `trace_evidence`, `trace_references`, `evidence_references` rows owned by the user; `group_members` rows; `api_keys`; `embedding_vectors` keyed to the user's traces; `users` row.
 - Preserve: `vector_cache` (content-hash keyed, no identifier link). `audit_log` entries (append-only; user-attributable rows can be redacted to `<deleted-user>` while preserving the security trail).
 - Confirmation flow on the Settings page (modal: type "DELETE my account" to confirm).
-- Once shipped: update `docs/legal/privacy-policy.md` Section 7 and `docs/legal/terms-of-service.md` Section 9 to reflect self-serve deletion (drop the "email privacy@soup.net" path or keep as alternative).
+- Once shipped: update `docs/legal/privacy-policy.md` Section 7 and `docs/legal/terms-of-service.md` Section 9 to drop the manual email path.
 - Layer 3 integration test: register → check recipe → delete account → verify all owned rows gone, vector_cache rows present, audit_log redacted.
 
-Currently the privacy policy and terms route deletion to `privacy@soup.net` as a manual operator response within 30 days. This is acceptable for trusted-tier but blocks the public-launch promise.
+### `[IMPL]` Change-notification mechanism
 
-### `[DECISION NEEDED]` Public-launch lawyer review
+The privacy policy and ToS both promise "we will notify you by reasonable means before the change takes effect" for material changes. No actual notification feature is built yet. Pick a mechanism (in-app banner on next sign-in, dashboard message, email blast via SES, or some combination) and implement it before relying on the promise.
 
-The trusted-tier banners on `/info/privacy` and `/info/terms` flag specific items as pending counsel review:
+Implementation sketch (in-app banner option):
+- New table `system_announcements` (id, body, starts_at, ends_at, dismiss_token).
+- Settings record per user tracking dismissed announcement IDs.
+- AppShell mounts an `<AnnouncementBanner />` if there are active announcements not dismissed by the current user.
+- Admin route to publish a new announcement.
 
-- PIPEDA compliance review by Canadian counsel.
-- GDPR Article 27 representative requirement (current position assumes not required at our scale; counsel to confirm).
-- CCPA / CPRA scope confirmation (current position assumes out of scope at trusted-tier volume).
-- Bespoke AWS and Google Cloud Data Processing Addenda (currently relying on standard customer agreements).
+### `[DECISION NEEDED]` Counsel review pre-public-scaling
+
+Items to put in front of a Canadian lawyer before signups grow materially. None of these are surfaced in the live policy text any more — the policy reads as confident public content — but they remain on the operator's checklist:
+
+- PIPEDA compliance pass.
+- GDPR / UK GDPR exposure assessment given worldwide user reach (including Article 27 representative question).
+- CCPA / CPRA applicability assessment.
+- Bespoke AWS and Google Cloud DPAs (currently relying on each provider's standard customer agreements).
 - ToS Section 10 (limitation of liability) under Ontario law.
-- ToS Section 11 (indemnification) for enforceability and scope.
-- ToS Section 13 (governing law) and consumer-protection carve-outs (especially Quebec, EU consumer rights).
-- Postal mail contact address (whether jurisdictionally required).
+- ToS Section 11 (indemnification) enforceability and scope.
+- ToS Section 13 (governing law) and consumer-protection carve-outs (Quebec, EU consumer rights).
+- Whether listing a postal mail address is jurisdictionally required.
+- Whether to operate Soup.net under Andy personally vs Dimentians Ltd vs Steamlabs (income/liability tradeoffs). The current policy says "operated by Andy Forest, based in Canada" — deliberately silent on legal form so this choice stays open.
 
-Trigger: before opening signups beyond the trusted-tier cap.
+### `[IMPL]` Verify privacy policy claims match implementation
 
-### `[IMPL]` Verify Privacy Policy claims match implementation
+The privacy policy describes a few behaviors qualitatively that should still match reality. Confirm or update implementation:
 
-The refined `privacy-policy.md` describes specific implementation behaviors that need verification:
-
-- Section 2.3: "S3 lifecycle rule" for upload deletion is described as the long-term mechanism. Confirm whether it is configured today vs. enforced by cleanup jobs; soften wording or implement.
-- Section 9: "Content Security Policy on all pages" — verify the CSP middleware is in place and covers all routes.
-- Section 8: "Backups: 30 days" — confirm RDS automated backup retention period matches.
-
-Surfaced during the 2026-05-09 legal pages refresh.
+- Section 2.3: uploaded files cached for a "limited period" then deleted. Confirm the cleanup mechanism (S3 lifecycle rule vs. cleanup job) actually runs.
+- Section 9: "industry-standard security practices" including content security policy, rate limiting, encryption at rest, private-subnet database. Verify each on the production stack.
+- Section 6: AWS regions in the United States. Verify the live deployment matches.
 
 ---
 
@@ -56,7 +61,7 @@ Surfaced during the 2026-05-09 legal pages refresh.
 
 ### `[DESIGN]` Onboarding polish for first session
 
-Carried over from the controlled-invite-first sequencing decision (2026-04-09). Polish the first 30 seconds of a new tester's experience: invitation email body, post-verify dashboard state, recipe-check first-success.
+Carried over from the controlled-invite-first sequencing decision (2026-04-09). Polish the first 30 seconds of a new user's experience: invitation email body, post-verify dashboard state, recipe-check first-success.
 
 ---
 

@@ -5,10 +5,5 @@ import { LegalPage } from "../components/LegalPage.js";
 import termsContent from "../../../../docs/legal/terms-of-service.md?raw";
 
 export function TermsPage() {
-  return (
-    <LegalPage
-      content={termsContent}
-      pairLink={{ to: "/info/privacy", label: "Privacy Policy" }}
-    />
-  );
+  return <LegalPage content={termsContent} />;
 }
