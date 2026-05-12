@@ -1,6 +1,7 @@
+import { useEffect } from "react";
 import { Outlet, Link, useMatchRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { authFetch, clearToken, isLoggedIn } from "../auth.js";
+import { authFetch, clearToken, isLoggedIn, AUTH_INVALIDATED_EVENT } from "../auth.js";
 import { CookieNotice } from "./CookieNotice.js";
 import { SiteFooter } from "./SiteFooter.js";
 import { Icon } from "./Icon.js";
@@ -33,7 +34,26 @@ export function AppShell() {
       return json.data.user;
     },
     enabled: loggedIn,
+    // Don't retry on 401 — authFetch already cleared the token and
+    // dispatched the invalidation event, so a retry would just 401 again
+    // and waste a round trip.
+    retry: false,
   });
+
+  // Listen for the global session-invalidated signal raised by authFetch on
+  // any 401. Clear the query cache (so the next user doesn't inherit the
+  // stale user's data) and bounce to the login page. Mounted at AppShell
+  // level so it's active across the whole authed area of the app, not just
+  // one page. See auth.ts AUTH_INVALIDATED_EVENT for why this is decoupled
+  // via an event rather than called inline.
+  useEffect(() => {
+    function onAuthInvalidated() {
+      queryClient.clear();
+      void navigate({ to: "/auth/login" });
+    }
+    window.addEventListener(AUTH_INVALIDATED_EVENT, onAuthInvalidated);
+    return () => window.removeEventListener(AUTH_INVALIDATED_EVENT, onAuthInvalidated);
+  }, [navigate, queryClient]);
 
   const navItems = meQuery.data?.role === "system"
     ? [...baseNavItems, adminNavItem]

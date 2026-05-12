@@ -72,6 +72,23 @@ function tokenFingerprint(token: string | null): string {
   return `${token.slice(0, 8)}...${token.slice(-4)}`;
 }
 
+/**
+ * Event dispatched on the window when authFetch sees a 401 against a request
+ * that DID send a token — i.e., the backend rejected our session as
+ * invalid / expired. AppShell listens for this and bounces to /auth/login.
+ *
+ * Why an event instead of calling navigate() directly: authFetch is module
+ * code, not a React component; it has no router context. Decoupling via an
+ * event keeps the auth helper testable and lets multiple components react
+ * if needed.
+ *
+ * Why ONLY 401 and ONLY when a token was sent: 403 is "you're authed but
+ * not allowed here" (e.g. trying to read a recipe book you're not a member
+ * of) — that's a legitimate browse, not a stale session. 401 with no token
+ * sent is "we're just not logged in" — nothing to clear.
+ */
+export const AUTH_INVALIDATED_EVENT = "soupnet:auth-invalidated";
+
 // Authenticated fetch helper
 export async function authFetch(
   url: string,
@@ -87,6 +104,18 @@ export async function authFetch(
   }
   const method = (options.method ?? "GET").toUpperCase();
   const res = await fetch(`${API_BASE}${url}`, { ...options, headers });
+
+  // Stale-session detection. Only fire when we actually sent a token and the
+  // server rejected it — that's the definitive "your session is no longer
+  // valid" signal. The guard `token && getToken()` makes this idempotent
+  // when many in-flight requests hit 401 in quick succession: the first one
+  // clears the token, the rest see getToken() === null and skip the event.
+  if (res.status === 401 && token && getToken() === token) {
+    clearToken();
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent(AUTH_INVALIDATED_EVENT));
+    }
+  }
 
   // Clone so the caller can still read the body. `res.clone()` is cheap and
   // the whole thing is dev-only.
