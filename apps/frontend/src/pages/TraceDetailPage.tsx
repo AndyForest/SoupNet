@@ -56,9 +56,13 @@ export function TraceDetailPage() {
             </span>
           )}
           {trace.groupName && (
-            <span className="text-xs" style={{ color: "var(--color-on-surface-variant)" }}>
-              Recipe book: {trace.groupName}
-            </span>
+            <a
+              href={`/app/recipe-books/${trace.groupId}/traces`}
+              className="text-xs"
+              style={{ color: "var(--color-primary)", textDecoration: "none" }}
+            >
+              Recipe book: {trace.groupName} →
+            </a>
           )}
           <a
             href={`/map?query=${encodeURIComponent(trace.claimText)}`}
