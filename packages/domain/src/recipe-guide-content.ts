@@ -20,16 +20,19 @@ This is stigmergy — indirect coordination through environmental traces, like a
 };
 
 /**
- * The three voice failures pulled out as a standalone constant so the briefing
- * can include them without the FOR_AI_AGENTS preamble. Voice is the #1 briefing
- * mistake and worth a dedicated callout near the format examples.
+ * Role-and-goal patterns — the principles that make a recipe findable across
+ * users and projects. Stated abstractly first, then illustrated. Pulled out as
+ * a standalone constant so the briefing can include it without the
+ * FOR_AI_AGENTS preamble, and so the FOR_AI_AGENTS text can reference the same
+ * canonical content (no drift). Voice/role is the #1 briefing failure mode and
+ * worth a dedicated callout near the format examples.
  */
-export const VOICE_FAILURES = `Three voice mistakes break this. The role should be the user's, not yours; transferable, not personal; and not duplicating context the recipe-book description already provides:
-- **Agent voice** — "As an AI agent, I recommend...". You're narrating your own reasoning instead of the user's preference. Replace with the user's role.
-- **User-name voice** — "As Andy reviewing two AI design briefings...". The role collapses into one person; another product owner facing the same call gets no hit. Use a transferable role like "As a product owner evaluating AI agent outputs".
-- **Recipe-book-implied voice** — "As a Soup.net developer cleaning up iPhone Safari mobile issues...", written to the soup-net-development recipe book. The recipe book's description already says this is Soup.net development; restating it bloats the role and degrades clustering. Use the underlying technical role like "As a front-end React developer cleaning up iPhone Safari mobile issues" — it transfers to anyone working on the same kind of problem in any project.
+export const ROLE_PATTERNS = `**Role and goal are different things.** The role is who the user is — professionally or contextually (data engineer, product owner, parent volunteer) — abstracted from name and project. The goal is what they're working on right now (authoring options docs, evaluating AI agent outputs, organizing a fundraiser). Both are needed; conflating them into verb-form roles ("As an author authoring docs...") reads weakly and clusters worse than role + separate goal.
 
-A practical test: read the recipe with the user's actual name swapped in for "I". If the sentence becomes false, the voice is wrong.`;
+**Make the role findable across users and projects.** Three patterns keep it transferable:
+- **Use the user's role, not yours.** Rather than "As an AI agent, I recommend...", write the user's perspective: "As a [their role], I prefer...". The recipe logs the human's preference, not your reasoning. Practical test: read the recipe with the user's actual name swapped in for "I" — if it becomes false, the voice is wrong.
+- **Use a transferable functional role, not a personal name.** Rather than "As Andy reviewing two AI design briefings...", use "As a product owner evaluating AI agent outputs..." — so the recipe is findable when any other user faces the same kind of call. Personal names collapse the role onto one person.
+- **Use the underlying functional role, not redundant proper-noun context.** Proper nouns (company names, codenames, product names, project names) carry weak meaning in vector embeddings compared to descriptive functional roles, and the recipe-book description already provides project context — restating it bloats the role and reduces semantic separation across recipes. Rather than "As a Soup.net developer cleaning up iPhone Safari issues..." written to the soup-net-development book, or "As an Acme consultant mapping client GL codes..." written to an Acme-specific book, use the underlying functional role: "As a front-end React developer cleaning up iPhone Safari mobile issues" or "As a data engineer mapping client GL codes to a canonical taxonomy".`;
 
 /**
  * Collaboration / cross-pollination framing. Shared recipe books mean an
@@ -42,20 +45,15 @@ export const FOR_AI_AGENTS = {
   title: "For AI agents — read this first",
   text: `You are capturing the HUMAN USER's taste and judgment, not your own. Recipes are written from the user's perspective in a transferable role: "As a [role] working on [goal], I [prefer/chose] so that [reason]."
 
-Three voice mistakes break this. The role should be the user's, not yours; transferable, not personal; and not duplicating context the recipe-book description already provides:
-- Agent voice — "As an AI agent, I recommend...". You're narrating your own reasoning instead of the user's preference. Replace with the user's role.
-- User-name voice — "As Andy reviewing two AI design briefings...". The role collapses into one person; another product owner facing the same call gets no hit. Use a transferable role like "As a product owner evaluating AI agent outputs".
-- Recipe-book-implied product voice — "As a Soup.net developer cleaning up iPhone Safari mobile issues...", written to the soup-net-development recipe book. The recipe book's description already says this is Soup.net development; restating it bloats the role and degrades clustering. Use the underlying technical role like "As a front-end React developer cleaning up iPhone Safari mobile issues" — it transfers to anyone working on the same kind of problem in any project.
+${ROLE_PATTERNS}
 
-Every recipe needs context. The [role] and [goal] together scope the judgment — without them, taste drifts into context-free assertions that persist where they're not useful. "I prefer Hono" is ambiguous. "As a backend developer building an edge-deployed API, I chose Hono over Express so that deployment stays portable" is actionable.
+Context scopes the judgment — without role + goal, taste drifts into context-free assertions that persist where they're not useful. "I prefer Hono" is ambiguous. "As a backend developer building an edge-deployed API, I chose Hono over Express so that deployment stays portable" is actionable.
 
 Two modes of checking, both valid:
 - Surfacing assumptions: You observe indirect evidence (config files, patterns, past choices) and form a hypothesis about the user's preference. Check it — the system returns evidence that may confirm, refine, or contradict. Agents constantly cross gaps in knowledge; checking assumptions makes those gaps visible and improvable.
 - Logging stated preferences: The user tells you something directly about their taste or judgment. Check it to record and find related context. The accuracy bar is higher here — you have their actual words, so use them.
 
 If you don't know the user's role or goal, ask — or use a general framing like "As a developer working on [project]". If you genuinely have no grounded hypothesis at all about the user's taste here — not even a thin one — that's a signal to ask the user, not to fabricate a recipe to log. Recipes work because they're genuinely believed.
-
-A practical test: read the recipe with the user's actual name swapped in for "I". If the sentence becomes false, the voice is wrong.
 
 For deeper context with annotated conversation examples, see the Recipe Check Scenarios.`,
 };
@@ -199,6 +197,8 @@ How to decide:
 The default is deliberately private — you won't accidentally share something. But defaulting to personal for everything undermines collaboration. Project decisions checked to a personal recipe book are invisible to collaborators, even when those collaborators (and their agents) would benefit most.
 
 When in doubt, read the recipe-book descriptions via list_my_recipe_books. If a recipe book's description matches the context of your recipe, that's probably where it belongs.
+
+What belongs in a description: the project, team, and scope of work — what the recipes in this book are about. Role and recipe-format guidance lives in this briefing, not in descriptions; the briefing is canonical and updates apply everywhere, so descriptions don't need to re-encode it.
 
 Search scope: use read_recipe_books (comma-separated slugs) to restrict which recipe books you search. Default: all readable recipe books — cross-book context is generally valuable.`,
 };
@@ -411,7 +411,7 @@ ${FORMAT_EXAMPLE_SURFACING_ASSUMPTION}
 
 ${FORMAT_EXAMPLE_STATED_PREFERENCE}
 
-${VOICE_FAILURES}
+${ROLE_PATTERNS}
 
 ${corpusContext}
 

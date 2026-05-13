@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"Soup.net is connected — your taste/judgment work has a persistent corpus to draw on and contribute to. Recipes are role-based, written from the human user perspective: As a [their role] working on [their goal], I [prefer/chose] so that [reason]. Pick a role that transfers across users and projects (e.g., front-end React developer), not the user name and not the project name when the group description already implies it. Tools available: check_recipe, list_my_recipe_books, get_briefing. See soupnet-guide skill for when to check.\"}}'",
+            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"Soup.net is connected — a persistent corpus for the user taste/judgment work. Tools: check_recipe, list_my_recipe_books, get_briefing. Call get_briefing once per session for the canonical recipe format, role/voice patterns, when-to-check guidance, and corpus context.\"}}'",
             "timeout": 5
           }
         ]
