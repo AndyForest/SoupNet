@@ -78,11 +78,11 @@ The dialog-tree-in-URL idea has real precedent in your previous work and slots c
 
 ### Claude expansion
 
-Your instinct here is exactly right and I think it's higher leverage than the web-AI tree work because **every agent connection starts with `get_recipe_guide`**. If we can shape that one moment well, we shape every downstream check across every user.
+Your instinct here is exactly right and I think it's higher leverage than the web-AI tree work because **every agent connection starts with `get_briefing`**. If we can shape that one moment well, we shape every downstream check across every user.
 
 The pattern you described — "minimal bootstrap + linked followups + last-modified timestamps so the agent knows when to refetch" — is essentially HTTP caching applied to agent instructions. It maps cleanly:
 
-- **Bootstrap guide**: short, agent-agnostic, always-current. Returned by `get_recipe_guide` with minimal token cost.
+- **Bootstrap guide**: short, agent-agnostic, always-current. Returned by `get_briefing` with minimal token cost.
 - **Followup guides**: each is a separate URL or tool result, with `last_modified` metadata. Agents check the timestamp; if they have it cached, they skip the fetch.
 - **Agent detection**: where possible (user-agent header, MCP client info field, agent-supplied metadata), the bootstrap can suggest followups specific to that agent's capabilities.
 

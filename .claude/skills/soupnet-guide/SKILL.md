@@ -1,12 +1,12 @@
 ---
 name: soupnet-guide
-description: "Soup.net recipe-check guide. Covers what's most likely to bite — voice failure modes, when to check (and not), divergent options, group selection. Defers to get_recipe_guide for the full format reference with examples."
+description: "Soup.net recipe-check guide. Covers what's most likely to bite — voice failure modes, when to check (and not), divergent options, group selection. Defers to get_briefing for the full format reference plus the user's recipe books and corpus sample."
 user-invocable: false
 ---
 
 # Soup.net recipe-check guide
 
-The SessionStart hook already named Soup.net and the recipe format. This skill covers the patterns most likely to bite once you start using it. For the full format with annotated examples and the evidence shape, call `get_recipe_guide`.
+The SessionStart hook already named Soup.net and the recipe format. This skill covers the patterns most likely to bite once you start using it. For the full format with annotated examples, the evidence shape, your recipe books, and a sample of recipes from this user's corpus, call `get_briefing`.
 
 ## Voice — three failure modes
 

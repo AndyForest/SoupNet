@@ -1,29 +1,22 @@
 /**
- * Soup.net MCP Server
+ * Soup.net MCP Server (stdio transport)
  *
- * Provides two tools for AI agents:
- *   - check_recipe: Check a recipe against Soup.net (returns structured results)
- *   - get_recipe_guide: Learn the recipe format before your first check
+ * Thin proxy. Forwards tool calls to the Soup.net backend HTTP API using the
+ * user's API key. The backend is the source of truth for tool behavior, so
+ * this file stays a transport-only shell — when the HTTP MCP route adds a
+ * tool, mirror it here with a fetch call.
  *
- * Auth: SOUPNET_API_KEY required — a daily or scoped key from the Soup.net dashboard.
+ * Tools:
+ *   - check_recipe   → POST /check (or GET ?key=...&format=json)
+ *   - get_briefing   → GET /briefing
+ *
+ * Auth: SOUPNET_API_KEY env var. The same daily or scoped key shown on the
+ * dashboard.
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import {
-  HOW_THIS_WORKS,
-  FOR_AI_AGENTS,
-  WHEN_TO_CHECK,
-  TASTE_VS_JUDGMENT,
-  RECIPE_FORMAT,
-  EVIDENCE_FORMAT,
-  RECIPE_EXAMPLES,
-  RELATED_EVIDENCE_IS_NEUTRAL,
-  RESPONSE_SIZE_CONTROL,
-  TIPS,
-  BOOTSTRAP_BLURB,
-  EXT_TO_MIME,
-} from "@soupnet/domain";
+import { EXT_TO_MIME } from "@soupnet/domain";
 
 const backendUrl = process.env["SOUPNET_BACKEND_URL"] ?? "http://localhost:3101";
 const apiKey = process.env["SOUPNET_API_KEY"] ?? "";
@@ -156,10 +149,10 @@ function formatResults(response: CheckResponse): string {
 
 const server = new McpServer({
   name: "soupnet",
-  version: "0.3.0",
+  version: "0.4.0",
   description:
     "Soup.net: check recipes — taste and judgment traces with evidence. " +
-    "Call get_recipe_guide before your first check to learn the format.",
+    "Call get_briefing before your first check to learn the format and get a sample of the user's corpus.",
 });
 
 // ── check_recipe tool ──────────────────────────────────────────────────────────
@@ -174,7 +167,7 @@ server.tool(
   "Only check genuine hypotheses with evidence — not questions or fabricated queries. " +
   "Results are clustered to 3 exemplars by default. Use clusters=5+ for discovery checks, " +
   "or max_chars to auto-cluster to a character budget (e.g., 2000 for tight context). " +
-  "Call get_recipe_guide first if unsure about the format.",
+  "Call get_briefing first if unsure about the format.",
   {
     recipe: z.string().describe(
       "Recipe (trace) — the human user's voice in a transferable role, not yours. " +
@@ -290,70 +283,38 @@ server.tool(
 // as natural-language conversation — present 2-4 framings to the user, then
 // call check_recipe with the chosen one. See briefings.
 
-// ── get_recipe_guide tool ───────────────────────────────────────────────────────
+// ── get_briefing tool ──────────────────────────────────────────────────────────
+//
+// Fetches the unified briefing from the backend (/briefing endpoint, Bearer-token
+// auth). The backend composer reads the user's preferences, looks up their
+// recipe books, and includes a clustered sample of exemplar recipes. Same
+// artifact as the dashboard's Copy briefing button.
 
 server.tool(
-  "get_recipe_guide",
-  "Get the full guide for how to check recipes on Soup.net. Call this before your first recipe check to understand the expected format.",
+  "get_briefing",
+  "Get the Soup.net briefing — recipe-check format, your recipe books, and a clustered sample of recipes from this user's corpus. " +
+  "Call this before your first check to learn the format and prime your context with the shape of the user's taste.",
   {},
   async () => {
-    const examples = RECIPE_EXAMPLES.map((r, i) =>
-      `${i + 1}. ${r.label}:\n   Recipe: ${r.recipe}\n   Supporting evidence: ${r.evidenceFor}${r.quote ? `\n   > "${r.quote}"` : ""}${r.source ? `\n   -- ${r.source}` : ""}${r.explanation ? `\n   (${r.explanation})` : ""}`
-    ).join("\n\n");
+    if (!apiKey) {
+      return {
+        content: [{ type: "text" as const, text: "Error: SOUPNET_API_KEY not configured. Get a key from your Soup.net dashboard." }],
+      };
+    }
 
-    const triggers = WHEN_TO_CHECK.triggers.map((t, i) =>
-      `${i + 1}. ${t.label.toUpperCase()} — ${t.detail}`
-    ).join("\n");
-
-    const tips = TIPS.map((t) => `- ${t}`).join("\n");
-
-    const guide = `Soup.net Recipe Check Guide
-
-${HOW_THIS_WORKS.title.toUpperCase()}
-${HOW_THIS_WORKS.text}
-
-${FOR_AI_AGENTS.title.toUpperCase()}
-${FOR_AI_AGENTS.text}
-
-${WHEN_TO_CHECK.title.toUpperCase()}
-Three common triggers:
-${triggers}
-
-${WHEN_TO_CHECK.framing}
-
-${TASTE_VS_JUDGMENT.title.toUpperCase()}
-${TASTE_VS_JUDGMENT.taste}
-${TASTE_VS_JUDGMENT.judgment}
-${TASTE_VS_JUDGMENT.summary}
-
-${RECIPE_FORMAT.title.toUpperCase()}
-Format: "${RECIPE_FORMAT.preferred}"
-${RECIPE_FORMAT.key}
-
-${EVIDENCE_FORMAT.title.toUpperCase()}
-${EVIDENCE_FORMAT.template}
-
-EXAMPLES
-${examples}
-
-${RELATED_EVIDENCE_IS_NEUTRAL.title.toUpperCase()}
-${RELATED_EVIDENCE_IS_NEUTRAL.text}
-
-${RESPONSE_SIZE_CONTROL.title.toUpperCase()}
-${RESPONSE_SIZE_CONTROL.text}
-
-TIPS
-${tips}
-
-${BOOTSTRAP_BLURB.title.toUpperCase()}
-${BOOTSTRAP_BLURB.text}
-
-For annotated scenarios showing common mistakes and detailed analysis, visit:
-${backendUrl}/docs/recipe-scenarios`;
-
-    return {
-      content: [{ type: "text" as const, text: guide }],
-    };
+    try {
+      const res = await fetch(`${backendUrl}/briefing`, {
+        headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+      });
+      const json = (await res.json()) as { ok: boolean; error?: string; data?: { text: string } };
+      if (!json.ok || !json.data) {
+        return { content: [{ type: "text" as const, text: `Error: ${json.error ?? "briefing fetch failed"}` }] };
+      }
+      return { content: [{ type: "text" as const, text: json.data.text }] };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { content: [{ type: "text" as const, text: `Error fetching briefing: ${message}` }] };
+    }
   },
 );
 

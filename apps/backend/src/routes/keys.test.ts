@@ -125,7 +125,7 @@ describe.skipIf(!BASE)("/keys briefing — F33 lookup-by-hashed-key", () => {
   // *that* key — not a sibling key.
   it("F33: each scoped key's briefing returns its own group set (no prefix collision)", async () => {
     const briefA = await fetch(
-      `${BASE}/keys/briefing?type=mcp&key=${encodeURIComponent(keyA)}`,
+      `${BASE}/keys/briefing?key=${encodeURIComponent(keyA)}`,
       { headers: { Authorization: `Bearer ${userToken}` } },
     );
     expect(briefA.status).toBe(200);
@@ -136,7 +136,7 @@ describe.skipIf(!BASE)("/keys briefing — F33 lookup-by-hashed-key", () => {
     expect(slugsA).not.toContain(groupBSlug);
 
     const briefB = await fetch(
-      `${BASE}/keys/briefing?type=mcp&key=${encodeURIComponent(keyB)}`,
+      `${BASE}/keys/briefing?key=${encodeURIComponent(keyB)}`,
       { headers: { Authorization: `Bearer ${userToken}` } },
     );
     expect(briefB.status).toBe(200);
@@ -179,7 +179,7 @@ describe.skipIf(!BASE)("/keys briefing — F33 lookup-by-hashed-key", () => {
     expect(otherUsersKey).toBeTruthy();
 
     const cross = await fetch(
-      `${BASE}/keys/briefing?type=mcp&key=${encodeURIComponent(otherUsersKey)}`,
+      `${BASE}/keys/briefing?key=${encodeURIComponent(otherUsersKey)}`,
       { headers: { Authorization: `Bearer ${userToken}` } },
     );
     expect(cross.status).toBe(404);

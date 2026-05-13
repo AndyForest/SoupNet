@@ -19,9 +19,11 @@ describe("parseEvidenceMarkdown", () => {
 
     const result = parseEvidenceMarkdown(input);
     expect(result).toHaveLength(1);
+    // The surrounding `"..."` from `> "..."` is markdown not content, so the
+    // parser stores the inner text. Downstream renderers wrap consistently.
     expect(result[0]).toEqual({
       interpretation: "This supports the claim about testing.",
-      quote: '"Tests improve confidence in code changes."',
+      quote: "Tests improve confidence in code changes.",
       source: "Martin Fowler, Refactoring",
     });
   });
@@ -63,8 +65,32 @@ describe("parseEvidenceMarkdown", () => {
 
     const result = parseEvidenceMarkdown(input);
     expect(result).toHaveLength(1);
-    expect(result[0]!.quote).toBe('"A direct quote without attribution."');
+    expect(result[0]!.quote).toBe("A direct quote without attribution.");
     expect(result[0]!.source).toBe("");
+  });
+
+  it("leaves unquoted quote lines unchanged (some LLMs omit the marks)", () => {
+    const input = [
+      "Interpretation.",
+      "> Bare quote without surrounding marks",
+      "-- Source",
+    ].join("\n");
+
+    const result = parseEvidenceMarkdown(input);
+    expect(result[0]!.quote).toBe("Bare quote without surrounding marks");
+  });
+
+  it("does not strip a single dangling quote mark (no matching pair)", () => {
+    // Asymmetric input — only strip when both ends match. A lone `"` likely
+    // means the LLM mid-quoted something inside the content.
+    const input = [
+      "Interpretation.",
+      '> "Unbalanced opener with no closer',
+      "-- Source",
+    ].join("\n");
+
+    const result = parseEvidenceMarkdown(input);
+    expect(result[0]!.quote).toBe('"Unbalanced opener with no closer');
   });
 
   it("parses entry with source but no quote", () => {

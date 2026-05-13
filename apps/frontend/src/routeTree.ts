@@ -12,7 +12,9 @@ import { TraceDetailPage } from "./pages/TraceDetailPage.js";
 import { ApiKeysPage } from "./pages/ApiKeysPage.js";
 import { GroupsPage } from "./pages/GroupsPage.js";
 import { GroupTracesPage } from "./pages/GroupTracesPage.js";
-import { SettingsPage } from "./pages/SettingsPage.js";
+import { SettingsLayout } from "./pages/SettingsLayout.js";
+import { SettingsAccountPage } from "./pages/SettingsAccountPage.js";
+import { SettingsBriefingsPage } from "./pages/SettingsBriefingsPage.js";
 import { RecipeMapPage } from "./pages/RecipeMapPage.js";
 import { CheckLogPage } from "./pages/CheckLogPage.js";
 import { VerifyPage } from "./pages/VerifyPage.js";
@@ -211,7 +213,29 @@ const legacyGroupTracesRedirectRoute = createRoute({
 const settingsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "settings",
-  component: SettingsPage,
+  component: SettingsLayout,
+});
+
+// Bare /app/settings redirects to /app/settings/account so the layout always
+// has an active child route.
+const settingsIndexRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "/",
+  beforeLoad: () => {
+    throw redirect({ to: "/app/settings/account" });
+  },
+});
+
+const settingsAccountRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "account",
+  component: SettingsAccountPage,
+});
+
+const settingsBriefingsRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "briefings",
+  component: SettingsBriefingsPage,
 });
 
 const mapRoute = createRoute({
@@ -281,7 +305,11 @@ export const routeTree = rootRoute.addChildren([
     recipeBookTracesRoute,
     legacyGroupsRedirectRoute,
     legacyGroupTracesRedirectRoute,
-    settingsRoute,
+    settingsRoute.addChildren([
+      settingsIndexRoute,
+      settingsAccountRoute,
+      settingsBriefingsRoute,
+    ]),
     mapRoute,
     checksRoute,
   ]),

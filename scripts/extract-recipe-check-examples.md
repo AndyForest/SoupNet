@@ -7,7 +7,7 @@ Copy-paste this into a previous Claude Code session that used Soup.net recipe ch
 ## Prompt to paste:
 
 ```
-I need you to review our conversation history and extract examples of Soup.net recipe check behavior — both good and bad. This is for building a QA rubric that tests whether fresh AI agents understand the Soup.net recipe check system correctly. Make sure you understand the purpose and functionality of soupnet thoroughly to inform your tasks by such methods as re-reading the current up to date soupnet mcp description now with the get_recipe_guide call, confirming assumptions with recipe checks, asking questions, etc.
+I need you to review our conversation history and extract examples of Soup.net recipe check behavior — both good and bad. This is for building a QA rubric that tests whether fresh AI agents understand the Soup.net recipe check system correctly. Make sure you understand the purpose and functionality of soupnet thoroughly to inform your tasks by such methods as re-reading the current up to date soupnet mcp description now with the get_briefing call, confirming assumptions with recipe checks, asking questions, etc.
 
 For each recipe check you made (or should have made but didn't), extract:
 

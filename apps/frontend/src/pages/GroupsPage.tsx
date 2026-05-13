@@ -785,12 +785,12 @@ function PendingInviteRow({
 function AgentConnectBox({ group, justJoined }: { group: Group; justJoined: boolean }) {
   const [dailyOpened, setDailyOpened] = useState(false);
   const { copyAsync, copied } = useClipboard(2500);
-  const [briefingPending, setBriefingPending] = useState<"mcp" | "web" | null>(null);
+  const [briefingPending, setBriefingPending] = useState<boolean>(false);
 
-  // Mint a 24h key scoped to this group, then fetch the briefing. Invoked
-  // inside copyAsync so the ClipboardItem Promise keeps iOS Safari's gesture
-  // context alive across both awaits.
-  async function fetchBriefingText(type: "mcp" | "web"): Promise<string> {
+  // Mint a 24h key scoped to this group, then fetch the unified briefing.
+  // Invoked inside copyAsync so the ClipboardItem Promise keeps iOS Safari's
+  // gesture context alive across both awaits.
+  async function fetchBriefingText(): Promise<string> {
     const keyRes = await authFetch("/keys/daily", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -799,19 +799,19 @@ function AgentConnectBox({ group, justJoined }: { group: Group; justJoined: bool
     const keyJson = (await keyRes.json()) as { ok: boolean; data?: { key: string } };
     if (!keyJson.ok || !keyJson.data) throw new Error("Failed to generate key");
     const briefRes = await authFetch(
-      `/keys/briefing?type=${type}&key=${encodeURIComponent(keyJson.data.key)}`,
+      `/keys/briefing?key=${encodeURIComponent(keyJson.data.key)}`,
     );
     const briefJson = (await briefRes.json()) as { ok: boolean; data?: { text: string } };
     if (!briefJson.ok || !briefJson.data) throw new Error("Failed to get briefing");
     return briefJson.data.text;
   }
 
-  async function handleCopyBriefing(type: "mcp" | "web") {
-    setBriefingPending(type);
+  async function handleCopyBriefing() {
+    setBriefingPending(true);
     try {
-      await copyAsync(() => fetchBriefingText(type), type);
+      await copyAsync(() => fetchBriefingText(), "briefing");
     } finally {
-      setBriefingPending(null);
+      setBriefingPending(false);
     }
   }
 
@@ -858,21 +858,12 @@ function AgentConnectBox({ group, justJoined }: { group: Group; justJoined: bool
       <div style={{ display: "flex", gap: "var(--space-sm)", flexWrap: "wrap" }}>
         <button
           className="btn"
-          onClick={() => void handleCopyBriefing("mcp")}
-          disabled={briefingPending !== null}
+          onClick={() => void handleCopyBriefing()}
+          disabled={briefingPending}
           style={{ fontSize: "0.85rem" }}
         >
           <Icon name="copy" size={14} />
-          {copied === "mcp" ? "Copied!" : briefingPending === "mcp" ? "Generating..." : "Copy MCP agent briefing"}
-        </button>
-        <button
-          className="btn-secondary"
-          onClick={() => void handleCopyBriefing("web")}
-          disabled={briefingPending !== null}
-          style={{ fontSize: "0.85rem" }}
-        >
-          <Icon name="copy" size={14} />
-          {copied === "web" ? "Copied!" : briefingPending === "web" ? "Generating..." : "Copy web agent briefing"}
+          {copied === "briefing" ? "Copied!" : briefingPending ? "Generating..." : "Copy agent briefing"}
         </button>
         <button
           className="btn-secondary"
@@ -904,7 +895,7 @@ function AgentConnectBox({ group, justJoined }: { group: Group; justJoined: bool
 
 /**
  * Per-recipe-book daily-link preference toggles. Controls whether the
- * dashboard's quick-click "Copy MCP/web briefing" and "Open recipe check page"
+ * dashboard's quick-click "Copy briefing" and "Open recipe check page"
  * buttons include this recipe book in read and/or write scope when the user
  * hasn't explicitly overridden. New memberships default to excluded; existing
  * memberships were grandfathered to included by migration 0016. See

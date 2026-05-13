@@ -27,7 +27,7 @@ Copy-paste this into each session. If your AI tool supports session forking (e.g
 I'd like to bootstrap my Soup.net corpus by recipe-checking the taste and judgment decisions from our conversation.
 
 **First, learn the system:**
-- **If you have MCP tools:** Call `get_recipe_guide` for the recipe format, voice rules, when-to-check guidance, and evidence structure.
+- **If you have MCP tools:** Call `get_briefing` for the recipe format, voice rules, when-to-check guidance, evidence structure, and a sample of clustered recipes from this user's corpus.
 - **If you don't have MCP tools:** Read the guide at {SOUP_NET_URL}/docs/recipe-check-guide?key={YOUR_API_KEY}.
 
 **Then:**

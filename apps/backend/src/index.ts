@@ -9,6 +9,8 @@ import { autoSetup } from "./auth";
 import { getDb } from "./db";
 import { authRoutes } from "./routes/auth";
 import { keyRoutes } from "./routes/keys";
+import { meRoutes } from "./routes/me";
+import { briefingRoutes } from "./routes/briefing";
 import { checkRoutes } from "./routes/check";
 import { groupRoutes } from "./routes/groups";
 import { invitationRoutes } from "./routes/invitations";
@@ -78,6 +80,8 @@ app.get("/health/ready", async (c) => {
 // Routes
 app.route("/auth", authRoutes);
 app.route("/keys", keyRoutes);
+app.route("/me", meRoutes);
+app.route("/briefing", briefingRoutes);
 app.route("/check", checkRoutes);
 // B1: primary path is /recipe-books. /groups is mounted with a 301 redirect
 // alias so existing clients (briefing-link copies, in-flight invitation links,

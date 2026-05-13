@@ -147,14 +147,15 @@ export function RecipeMapPage() {
   // Copy briefing
   const queryClient = useQueryClient();
   const { copyAsync, copied } = useClipboard(2500);
-  const [briefingPending, setBriefingPending] = useState<"web" | "mcp" | null>(null);
+  const [briefingPending, setBriefingPending] = useState<boolean>(false);
 
-  // Build the full briefing text — mints a key (or reuses the handed-off
-  // custom-briefing key), fetches briefing + exemplar trace details, and
-  // injects the exemplars before ## Principles. Called inside copyAsync so
-  // the ClipboardItem Promise preserves iOS Safari's gesture context across
-  // all awaits (a plain onSuccess copy silently no-ops on iPhone).
-  async function fetchBriefingText(type: "web" | "mcp"): Promise<string> {
+  // Mint or reuse a key, then fetch the unified briefing with the map's
+  // current refinement params (axes, k, filter, strategy) passed through.
+  // The backend composes the cluster-exemplars section using those params,
+  // so this stays a one-shot fetch. Called inside copyAsync so the
+  // ClipboardItem Promise keeps iOS Safari's gesture context alive across
+  // both awaits.
+  async function fetchBriefingText(): Promise<string> {
     // 1. Pick which key to brief with.
     //    - Custom Briefing flow: use the handed-off raw key (this key's
     //      specific read-group scope + label is the whole point of the flow).
@@ -173,99 +174,34 @@ export function RecipeMapPage() {
       briefingKey = keyJson.data.key;
     }
 
-    // 2. Fetch briefing (web or mcp)
-    const briefRes = await authFetch(`/keys/briefing?type=${type}&key=${encodeURIComponent(briefingKey)}`);
+    // 2. Fetch unified briefing with map refinement params. The backend
+    //    re-runs clustering with these inputs and composes the
+    //    `## Context from <books>` section. No client-side post-processing.
+    const params = new URLSearchParams();
+    params.set("key", briefingKey);
+    params.set("k", String(k));
+    if (committed.mode === "concept" && committed.axes) params.set("axes", committed.axes);
+    if (committed.filter) params.set("filter", committed.filter);
+    if (strategy) params.set("strategy", strategy);
+    if (selectedGroupId) {
+      const targetSlug = (groupsQuery.data ?? []).find(g => g.id === selectedGroupId)?.slug;
+      if (targetSlug) params.set("recipe_book", targetSlug);
+    }
+
+    const briefRes = await authFetch(`/keys/briefing?${params.toString()}`);
     const briefJson = (await briefRes.json()) as { ok: boolean; data?: { text: string } };
     if (!briefJson.ok || !briefJson.data) throw new Error("Failed to get briefing");
 
     void queryClient.invalidateQueries({ queryKey: ["keys"] });
-
-    if (clusters.length === 0) return briefJson.data.text;
-
-    // 3. Fetch full trace details for each exemplar (parallel)
-    type TraceDetail = {
-      claimText: string;
-      createdAt: string;
-      evidence: Array<{ id: string; content: string }>;
-      references: Array<{ id: string; quote: string; source: string }>;
-      evidenceReferences: Array<{ evidenceId: string; referenceId: string }>;
-    };
-    const exemplarClusters = clusters.slice(0, 10);
-    const traceDetails = await Promise.all(
-      exemplarClusters.map(async (c): Promise<TraceDetail | null> => {
-        try {
-          const res = await authFetch(`/traces/${c.exemplarTraceId}`);
-          const json = (await res.json()) as { ok: boolean; data?: TraceDetail };
-          return json.ok && json.data ? json.data : null;
-        } catch { return null; }
-      })
-    );
-
-    // 4. Format exemplars with evidence + references
-    const groupName = selectedGroupId
-      ? (groupsQuery.data ?? []).find(g => g.id === selectedGroupId)?.name ?? "selected recipe book"
-      : "all recipe books";
-
-    const paramLines = [
-      `- Clusters: ${k}`,
-      `- Map mode: ${committed.mode === "concept" ? "Concept Axes" : "Discovery (UMAP over all embeddings)"}`,
-      ...(committed.mode === "concept" && committed.axes ? [`- Concept axes: ${committed.axes}`] : []),
-      `- Filter keywords: ${committed.filter ?? "(none)"}`,
-      `- Embedding strategy: ${strategy || "(default — best score across all strategies wins)"}`,
-    ].join("\n");
-
-    const exemplarLines = exemplarClusters.map((cluster, i) => {
-      const trace = traceDetails[i];
-      const dateStr = trace?.createdAt ? trace.createdAt.slice(0, 10) : null;
-      const header = dateStr
-        ? `(${cluster.memberCount} similar · logged ${dateStr})`
-        : `(${cluster.memberCount} similar)`;
-      if (!trace) return `${header}\n${cluster.exemplarText}`;
-
-      let text = `${header}\n${trace.claimText}`;
-
-      for (const ev of trace.evidence ?? []) {
-        text += `\n\n${ev.content}`;
-        const linkedRefIds = (trace.evidenceReferences ?? [])
-          .filter(er => er.evidenceId === ev.id)
-          .map(er => er.referenceId);
-        const linkedRefs = (trace.references ?? [])
-          .filter(r => linkedRefIds.includes(r.id));
-        for (const ref of linkedRefs) {
-          if (ref.quote) text += `\n> "${ref.quote}"`;
-          if (ref.source) text += `\n-- ${ref.source}`;
-        }
-      }
-
-      return text;
-    });
-
-    const exemplarSection = `## Context from ${groupName}
-
-Exemplar recipes from this user's corpus in this domain. Selected by k-means clustering over multimodal vector embeddings — each one represents a cluster but isn't necessarily representative of it, and may or may not be contextually relevant to your current task. They're context about the shape of this user's taste, not templates to copy or evidence to reuse. New recipes work best with fresh evidence from the current conversation.
-
-Map parameters when these exemplars were selected:
-${paramLines}
-
-Exemplars:
-
-${exemplarLines.join("\n\n")}`;
-
-    // 5. Inject exemplars inside the briefing fence, before ## Principles
-    const briefingText = briefJson.data.text;
-    const insertPoint = briefingText.indexOf("\n## Principles");
-    if (insertPoint !== -1) {
-      return briefingText.slice(0, insertPoint) + "\n\n" + exemplarSection + briefingText.slice(insertPoint);
-    }
-    return briefingText + "\n\n" + exemplarSection;
+    return briefJson.data.text;
   }
 
-  async function handleCopyBriefing(type: "web" | "mcp") {
-    setBriefingPending(type);
+  async function handleCopyBriefing() {
+    setBriefingPending(true);
     try {
-      await copyAsync(() => fetchBriefingText(type), type);
+      await copyAsync(() => fetchBriefingText(), "briefing");
     } finally {
-      setBriefingPending(null);
+      setBriefingPending(false);
     }
   }
 
@@ -540,28 +476,16 @@ ${exemplarLines.join("\n\n")}`;
         </div>
         <div style={{ display: "flex", gap: "var(--space-sm)", alignItems: "center", flexWrap: "wrap" }}>
           <button
-            onClick={() => void handleCopyBriefing("web")}
-            disabled={briefingPending !== null || clusters.length === 0}
+            onClick={() => void handleCopyBriefing()}
+            disabled={briefingPending || clusters.length === 0}
             title={!selectedGroupId ? "Focus a recipe book first for best results" : undefined}
             style={{ fontSize: "0.78rem", whiteSpace: "nowrap" }}
           >
-            {copied === "web"
+            {copied === "briefing"
               ? "Copied!"
-              : briefingPending === "web"
+              : briefingPending
                 ? "Generating..."
-                : `Copy web briefing (${clusters.length})`}
-          </button>
-          <button
-            onClick={() => void handleCopyBriefing("mcp")}
-            disabled={briefingPending !== null || clusters.length === 0}
-            title={!selectedGroupId ? "Focus a recipe book first for best results" : undefined}
-            style={{ fontSize: "0.78rem", whiteSpace: "nowrap" }}
-          >
-            {copied === "mcp"
-              ? "Copied!"
-              : briefingPending === "mcp"
-                ? "Generating..."
-                : `Copy MCP briefing (${clusters.length})`}
+                : `Copy agent briefing (${clusters.length})`}
           </button>
           {drillStack.length > 0 && (
             <button className="btn-secondary" onClick={handleDrillOut} style={{ fontSize: "0.85rem" }}>

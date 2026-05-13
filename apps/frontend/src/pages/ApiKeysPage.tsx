@@ -154,22 +154,23 @@ export function ApiKeysPage() {
   }
 
   const { copy: copyText, copyAsync, copied } = useClipboard();
-  const [briefingPending, setBriefingPending] = useState<{ keyId: string; type: "mcp" | "web" } | null>(null);
+  const [briefingPending, setBriefingPending] = useState<string | null>(null);
 
-  // Fetch the briefing text for a given raw key. Invoked inside copyAsync so
-  // the ClipboardItem Promise preserves iOS Safari's gesture context across
-  // the fetch await (plain onSuccess copies silently no-op on iPhone).
-  async function fetchBriefingText(rawKey: string, type: "mcp" | "web"): Promise<string> {
-    const res = await authFetch(`/keys/briefing?type=${type}&key=${encodeURIComponent(rawKey)}`);
+  // Fetch the unified briefing text for a given raw key. Invoked inside
+  // copyAsync so the ClipboardItem Promise preserves iOS Safari's gesture
+  // context across the fetch await (plain onSuccess copies silently no-op
+  // on iPhone).
+  async function fetchBriefingText(rawKey: string): Promise<string> {
+    const res = await authFetch(`/keys/briefing?key=${encodeURIComponent(rawKey)}`);
     const json = (await res.json()) as { ok: boolean; data?: { text: string } };
     if (!json.ok || !json.data) throw new Error("Failed to get briefing");
     return json.data.text;
   }
 
-  async function handleCopyBriefing(keyId: string, rawKey: string, type: "mcp" | "web") {
-    setBriefingPending({ keyId, type });
+  async function handleCopyBriefing(keyId: string, rawKey: string) {
+    setBriefingPending(keyId);
     try {
-      await copyAsync(() => fetchBriefingText(rawKey, type), `briefing-${type}`);
+      await copyAsync(() => fetchBriefingText(rawKey), `briefing-${keyId}`);
     } finally {
       setBriefingPending(null);
     }
@@ -500,26 +501,15 @@ export function ApiKeysPage() {
 
                         <div style={{ display: "flex", gap: "var(--space-sm)", marginTop: "var(--space-sm)", flexWrap: "wrap" }}>
                           <button
-                            onClick={() => void handleCopyBriefing(key.id, rawKey, "mcp")}
+                            onClick={() => void handleCopyBriefing(key.id, rawKey)}
                             disabled={briefingPending !== null}
                             style={{ flex: 1, minWidth: 150, justifyContent: "center", fontSize: "0.78rem", whiteSpace: "nowrap" }}
                           >
-                            {copied === "briefing-mcp"
+                            {copied === `briefing-${key.id}`
                               ? "Copied!"
-                              : briefingPending?.keyId === key.id && briefingPending.type === "mcp"
+                              : briefingPending === key.id
                                 ? "Generating..."
-                                : "Copy MCP briefing"}
-                          </button>
-                          <button
-                            onClick={() => void handleCopyBriefing(key.id, rawKey, "web")}
-                            disabled={briefingPending !== null}
-                            style={{ flex: 1, minWidth: 150, justifyContent: "center", fontSize: "0.78rem", whiteSpace: "nowrap" }}
-                          >
-                            {copied === "briefing-web"
-                              ? "Copied!"
-                              : briefingPending?.keyId === key.id && briefingPending.type === "web"
-                                ? "Generating..."
-                                : "Copy web briefing"}
+                                : "Copy agent briefing"}
                           </button>
                           <button
                             className="btn-secondary"

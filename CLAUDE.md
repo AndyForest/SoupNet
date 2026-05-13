@@ -12,7 +12,7 @@ npm workspaces monorepo. Node 24 LTS, npm ≥10.
 
 - **apps/backend** — Hono HTTP server (port 3101). JWT + API-key auth, REST API, `/check` recipe page for AI agents, remote MCP endpoint at `POST /mcp`. Runs the pg-boss embedding consumers in-process (`src/embedding-worker/`); see ADR-0020.
 - **apps/frontend** — Vite React SPA (port 5273). TanStack Router + Query. User dashboard for managing recipe books, API keys, recipe map.
-- **apps/mcp-server** — Stdio MCP server (packaged as `.mcpb` for Claude Desktop). Thin proxy that forwards `check_recipe` / `get_recipe_guide` calls to backend `/check`. The remote HTTP MCP lives in backend per ADR-0007 + ADR-0021.
+- **apps/mcp-server** — Stdio MCP server (packaged as `.mcpb` for Claude Desktop). Thin proxy that forwards `check_recipe` / `get_briefing` calls to backend `/check` and `/briefing`. The remote HTTP MCP lives in backend per ADR-0007 + ADR-0021.
 - **packages/db** — Drizzle ORM schema + migrations for `claimnet` Postgres schema. Single source of truth for all tables.
 - **packages/domain** — Business logic, ranking rules, and shared agent-facing copy (recipe guide, briefings, principles). No I/O.
 - **packages/contracts** — Zod schemas for the public API (source of truth for OpenAPI). Mostly legacy shapes from the pre-pivot claims/validations model; new routes (`/check`, `/traces`, `/uploads`, etc.) currently validate inline. Consolidation tracked in backlog.
@@ -142,7 +142,7 @@ Recipes capture the human user's taste and judgment, not yours. Format: "As a [r
 
 The only anti-pattern is checking a recipe you don't genuinely believe — that degrades future checks for everyone. If you're just looking for something, use the web endpoint's `filter` (alias `f`) query param for keyword narrowing rather than fabricating a recipe; the MCP tool has no equivalent — just don't check one.
 
-**Interface:** Use the `check_recipe` MCP tool, or the `/check` web endpoint with `format=json`. Call `get_recipe_guide` before your first check for the full format guide with annotated examples.
+**Interface:** Use the `check_recipe` MCP tool, or the `/check` web endpoint with `format=json`. Call `get_briefing` before your first check — it returns the recipe format, your recipe books, and a clustered sample of recipes from the user's corpus.
 
 ## Key Engineering Principles
 

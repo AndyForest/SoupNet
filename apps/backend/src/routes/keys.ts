@@ -1,13 +1,12 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import crypto from "node:crypto";
 import { getDb } from "../db";
 import { requireAuth, requireVerifiedEmail } from "../auth";
 import type { AppEnv } from "../types";
 import { generateDailyKey, generateScopedKey, listKeys, revokeKey } from "../services/api-key.service";
 import { rateLimit } from "../middleware/rate-limit";
 import { sql } from "drizzle-orm";
-import { BRIEFING_MCP, BRIEFING_WEB } from "@soupnet/domain";
+import { composeBriefing } from "../services/briefing";
 
 // C1 — recipe-book rename. Wire-format field names use the new "recipe book"
 // vocabulary. Internal TS variables and DB columns keep the schema-level
@@ -177,75 +176,63 @@ keys.delete("/:id", async (c) => {
   return c.json({ ok: true, data: { deleted } });
 });
 
-// GET /keys/briefing?type=mcp|web&key=<raw-key>
-// Returns the agent briefing text with real group data filled in
+// GET /keys/briefing?key=<raw-key>&[recipe_book=]&[axes=]&[filter=]&[k=]&[strategy=]
+//
+// Unified briefing — returns a single markdown artifact that covers both
+// MCP-capable and web-only agents (the prior `type=mcp|web` split was
+// removed in the briefing-unification pass). Always includes a cluster
+// sample of exemplar recipes from the key's read scope so any handoff
+// (Dashboard, Recipe Map, ApiKeys page, MCP get_briefing) primes the
+// receiving agent with the same shape-of-the-corpus context.
+//
+// Optional query params let the recipe-map page pass through user-tuned
+// clustering knobs; others get sensible defaults from the user's preferences.
 keys.get("/briefing", async (c) => {
   const user = c.get("user");
-  const briefingType = c.req.query("type") ?? "mcp";
   const rawKey = c.req.query("key");
 
   if (!rawKey) {
     return c.json({ ok: false, error: "key parameter is required" }, 400);
   }
 
-  const db = getDb();
-
-  // F33 (security-audit-2026-04-09): look up by hashed key, not by 8-char
-  // prefix. cn_d_/cn_s_ are fixed prefixes leaving only ~3 random base62
-  // chars in the prefix-key, so multiple keys for the same user can collide
-  // on prefix and the LIMIT 1 returned whichever the planner chose. The
-  // ownership check still held, but the briefing could echo the wrong
-  // group set. Mirrors validateKey() at services/api-key.service.ts:204.
-  const hashedKey = crypto.createHash("sha256").update(rawKey).digest("hex");
-  const keyRows = await db.execute(sql`
-    SELECT read_group_ids, write_group_ids, default_write_group_id
-    FROM claimnet.api_keys
-    WHERE user_id = ${user.id}::uuid
-      AND key = ${hashedKey}
-      AND expires_at > NOW()
-    LIMIT 1
-  `);
-
-  const keyRow = (keyRows as unknown as Array<{
-    read_group_ids: string[];
-    write_group_ids: string[];
-    default_write_group_id: string;
-  }>)[0];
-
-  if (!keyRow) {
-    return c.json({ ok: false, error: "Key not found or expired" }, 404);
-  }
-
-  // Get group details
-  const allIds = [...new Set([...keyRow.read_group_ids, ...keyRow.write_group_ids])];
-  const groupRows = allIds.length > 0
-    ? await db.execute(sql`
-        SELECT id, slug, name, description FROM claimnet.groups
-        WHERE id IN (${sql.join(allIds.map((id) => sql`${id}::uuid`), sql`, `)})
-        ORDER BY name
-      `)
-    : [];
-
-  const groups = (groupRows as unknown as Array<{ id: string; slug: string; name: string; description: string | null }>).map((g) => ({
-    slug: g.slug,
-    name: g.name,
-    description: g.description,
-    canWrite: keyRow.write_group_ids.includes(g.id),
-    isDefault: g.id === keyRow.default_write_group_id,
-  }));
+  const kParam = c.req.query("k");
+  const k = kParam ? parseInt(kParam, 10) : undefined;
 
   const backendUrl = process.env["BACKEND_URL"] ?? "http://localhost:3101";
   const frontendUrl = process.env["FRONTEND_URL"] ?? "http://localhost:5273";
-  const checkUrl = `${backendUrl}/check?key=${encodeURIComponent(rawKey)}`;
 
-  const text = briefingType === "web"
-    ? BRIEFING_WEB.build(checkUrl, rawKey, groups)
-    : BRIEFING_MCP.build(rawKey, backendUrl, frontendUrl, groups);
+  const result = await composeBriefing({
+    db: getDb(),
+    rawKey,
+    userId: user.id,
+    backendUrl,
+    frontendUrl,
+    options: {
+      k: k && !Number.isNaN(k) ? k : undefined,
+      axes: c.req.query("axes"),
+      filter: c.req.query("filter"),
+      vectorStrategy: c.req.query("strategy"),
+      recipeBookIdOrSlug: c.req.query("recipe_book"),
+    },
+  });
 
-  // Echo the resolved groups so callers (and the F33 regression test)
-  // can confirm the lookup hit the right key without parsing the
-  // rendered briefing text.
-  return c.json({ ok: true, data: { text, type: briefingType, groups } });
+  if (!result.ok) {
+    if (result.code === "key_not_found") {
+      return c.json({ ok: false, error: "Key not found or expired" }, 404);
+    }
+    return c.json({ ok: false, error: "Briefing unavailable" }, 400);
+  }
+
+  // Echo the resolved groups so callers (and the F33 regression test) can
+  // confirm the lookup hit the right key without parsing the briefing text.
+  return c.json({
+    ok: true,
+    data: {
+      text: result.text,
+      groups: result.groups,
+      exemplarCount: result.exemplarCount,
+    },
+  });
 });
 
 // ── Wire-format mappers (C1 — recipe-book rename) ──────────────────────────

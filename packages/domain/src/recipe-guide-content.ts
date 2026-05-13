@@ -1,6 +1,6 @@
 /**
  * Shared recipe guide content — single source of truth for both
- * the MCP get_recipe_guide tool and the web /docs/recipe-check-guide page.
+ * the MCP get_briefing tool and the web /docs/recipe-check-guide page.
  *
  * Plain text format (MCP) and HTML format (web) are separate renderings
  * of the same underlying content defined here.
@@ -18,6 +18,25 @@ export const HOW_THIS_WORKS = {
 
 This is stigmergy — indirect coordination through environmental traces, like ants following and reinforcing pheromone trails. The more you check, the more useful the system becomes for everyone. The only anti-pattern is checking a recipe you don't genuinely believe, since that degrades future checks.`,
 };
+
+/**
+ * The three voice failures pulled out as a standalone constant so the briefing
+ * can include them without the FOR_AI_AGENTS preamble. Voice is the #1 briefing
+ * mistake and worth a dedicated callout near the format examples.
+ */
+export const VOICE_FAILURES = `Three voice mistakes break this. The role should be the user's, not yours; transferable, not personal; and not duplicating context the recipe-book description already provides:
+- **Agent voice** — "As an AI agent, I recommend...". You're narrating your own reasoning instead of the user's preference. Replace with the user's role.
+- **User-name voice** — "As Andy reviewing two AI design briefings...". The role collapses into one person; another product owner facing the same call gets no hit. Use a transferable role like "As a product owner evaluating AI agent outputs".
+- **Recipe-book-implied voice** — "As a Soup.net developer cleaning up iPhone Safari mobile issues...", written to the soup-net-development recipe book. The recipe book's description already says this is Soup.net development; restating it bloats the role and degrades clustering. Use the underlying technical role like "As a front-end React developer cleaning up iPhone Safari mobile issues" — it transfers to anyone working on the same kind of problem in any project.
+
+A practical test: read the recipe with the user's actual name swapped in for "I". If the sentence becomes false, the voice is wrong.`;
+
+/**
+ * Collaboration / cross-pollination framing. Shared recipe books mean an
+ * agent will encounter recipes logged by other members — those are signals
+ * about the user's collaborators' taste, not the user's own.
+ */
+export const CROSS_POLLINATION = `Recipes from other members of shared recipe books surface in your search results the same way the user's own recipes do — that's the point of shared books. Treat them as context about a collaborator's taste, not the user's, and weigh them accordingly when a judgment call differs between members. When the corpus surfaces a recipe by someone other than the current user, name the author in your synthesis so the human can place the perspective.`;
 
 export const FOR_AI_AGENTS = {
   title: "For AI agents — read this first",
@@ -188,7 +207,7 @@ export const CONNECTION_TIERS = {
   title: "How to connect",
   text: `There are three ways to connect, depending on your agent's capabilities:
 
-1. MCP tools (Claude Code, Claude Desktop, Antigravity): Full automation via check_recipe, get_recipe_guide, and list_my_recipe_books tools. One-command setup.
+1. MCP tools (Claude Code, Claude Desktop, Antigravity): Full automation via check_recipe, get_briefing, and list_my_recipe_books tools. One-command setup.
 
 2. Web browsing with URL construction: If your agent can construct and fetch URLs, build recipe check URLs directly: /check?key=YOUR_KEY&recipe=URL_ENCODED_RECIPE&evidence=URL_ENCODED_EVIDENCE&recipe_book=RECIPE_BOOK_SLUG. The page accepts human-readable parameter names (recipe, evidence, recipe_book) via GET; the legacy parameter \`group\` is still accepted for backwards compatibility. Results appear on the same page. Recipe-book slugs are shown on the check page when you visit with your key.
 
@@ -211,7 +230,7 @@ export const BOOTSTRAP_BLURB = {
 
 Recipes are from MY perspective (the human), not yours: "As a [my role] working on [my goal], I [prefer/chose] so that [reason]." Context scopes the judgment. Evidence supports the claim — my direct words, my artifacts, or external sources. Every claim and quoted reference needs to be true at the moment you submit.
 
-For the full format with examples: call get_recipe_guide (MCP) or visit /docs/recipe-check-guide (web).`,
+For the full format with examples: call get_briefing (MCP) or visit /docs/recipe-check-guide (web).`,
 };
 
 // ── Shared workflow content ──────────────────────────────────────────────────
@@ -252,14 +271,49 @@ export const WORKFLOW_WHEN = `You already have these moments in your work. Recip
  */
 export const WORKFLOW_ANNOTATION = `When your output is a creative plan, direction, or recommendation, you can tag specific taste calls within it with recipe-check links — so you can discover relevant recipes from the corpus and contribute to it, while the creative work the user asked for stays intact. The plan is the primary output; recipes annotate the real decisions within it. Often a better fit than replacing the plan with a list of divergent options.`;
 
-/** Shared recipe-books guidance. */
-export function workflowGroups(groups: Array<{ slug: string; name: string; description?: string | null; canWrite: boolean; isDefault: boolean }>): string {
+// ── Identity and recipe book helpers ───────────────────────────────────────
+
+export interface BriefingUser {
+  displayName?: string | null;
+  email: string;
+}
+
+export interface BriefingMember {
+  displayName?: string | null;
+  email: string;
+}
+
+export interface BriefingGroup {
+  slug: string;
+  name: string;
+  description?: string | null;
+  canWrite: boolean;
+  isDefault: boolean;
+  /** Other members of this recipe book; omitted for solo books. */
+  members?: BriefingMember[];
+}
+
+/** Render "Display Name <email>" if a display name is present, else just the email. */
+function identityLabel(p: { displayName?: string | null; email: string }): string {
+  const name = p.displayName?.trim();
+  return name ? `${name} <${p.email}>` : p.email;
+}
+
+/** Render the recipe-books list with optional member rosters and the
+ *  "who benefits" framing question. Used by both the full briefing and the
+ *  list_my_recipe_books MCP tool. */
+export function renderRecipeBooks(groups: BriefingGroup[]): string {
   const defaultGroup = groups.filter(g => g.canWrite).find(g => g.isDefault) ?? groups.filter(g => g.canWrite)[0];
   const groupLines = groups.map(g => {
     const access = g.canWrite ? "read/write" : "read";
     const flag = g.isDefault ? ", default" : "";
     const desc = g.description?.trim() ? ` — ${g.description.trim()}` : "";
-    return `  - ${g.slug}: ${g.name} (${access}${flag})${desc}`;
+    const head = `  - ${g.slug} (${access}${flag}): ${g.name}${desc}`;
+    // Members line: omit when there's no roster, or when the user is the
+    // only member (solo book — no collaborator context to surface).
+    if (!g.members || g.members.length <= 1) return head;
+    const labels = g.members.map(identityLabel).join(", ");
+    return `${head}\n    Members (${g.members.length}): ${labels}`;
   }).join("\n");
 
   return `${groupLines}
@@ -268,80 +322,81 @@ Default write recipe book: ${defaultGroup ? `${defaultGroup.slug} (${defaultGrou
 A useful question before each check: "Who benefits from knowing this?" Personal taste → personal recipe book. Project decisions → the project's shared book. Defaulting everything to personal undermines collaboration.`;
 }
 
-// ── Agent briefing templates ────────────────────────────────────────────────
-// Single source of truth for agent briefings. The backend fills in group data
-// and key at generation time. Used on the dashboard "Copy briefing" buttons,
-// served in the MCP guide, and shown on the /check page.
+// ── Recipe-format examples ──────────────────────────────────────────────────
 //
-// These are copy-pasted by the human into agent sessions, so they carry the
-// weight of direct user instructions. They must be complete enough that the
-// agent can use Soup.net effectively without any other context.
+// Two small annotated examples for the briefing's "Recipe format" section.
+// The full set of 6 lives in RECIPE_EXAMPLES (rendered in /docs/recipe-check-
+// guide); these two cover the two valid voice modes — surfacing an assumption
+// vs logging a stated preference — without overlapping the briefing's
+// divergent-recipe-checks section, which carries the seed+selection case
+// separately.
+
+const FORMAT_EXAMPLE_SURFACING_ASSUMPTION = `**Example — surfacing an assumption.** You notice the user's tsconfig has strict mode enabled; you haven't asked, but the evidence is concrete:
+
+    Recipe: As a developer working on the Acme API, I prefer strict TypeScript configuration so that type errors are caught at compile time rather than runtime.
+    Evidence: User's tsconfig.json has strict mode enabled with noUncheckedIndexedAccess, suggesting a preference for maximum type safety.
+    > "strict": true, "noUncheckedIndexedAccess": true
+    -- User's tsconfig.json`;
+
+const FORMAT_EXAMPLE_STATED_PREFERENCE = `**Example — logging a stated preference.** The user told you something directly:
+
+    Recipe: As a parent organizing the Spring Fundraiser, I prefer bold, high-contrast poster layouts so that they're readable on the school bulletin board from a distance.
+    Evidence: User chose Option B (bold layout) over two subtler alternatives after comparing all three.
+    > "The bold one — parents walk past the board quickly, it needs to grab attention"
+    -- User conversation, 2026-03-28`;
+
+// ── Unified agent briefing ──────────────────────────────────────────────────
+// Single artifact, served to MCP-capable and web-only agents alike. The
+// briefing acknowledges both capability profiles inline and lets the receiving
+// LLM pick what applies. The previous split into BRIEFING_MCP / BRIEFING_WEB
+// was removed in the briefing-unification pass.
+//
+// The corpus-context block (## Your user + ## Your recipe books +
+// ## Context from your corpus) is also returned standalone by the
+// `list_my_recipe_books` MCP tool — same content, no boilerplate — so the
+// agent can refresh corpus context mid-session without re-pasting the
+// briefing. See buildCorpusContextSection below.
 
 /**
- * MCP briefing: designed to be pasted into a fresh chat with an MCP-capable
- * agent (Claude Code, Claude Desktop, Antigravity, etc.). The agent needs
- * enough context to (a) configure the MCP connection if not already set up,
- * (b) discover the Soup.net tools, and (c) use them correctly. Wrapped in a
- * markdown fence with a fake filename so the agent reads it as briefing
- * rather than as part of the user's message.
- *
- * Config snippets use indented code blocks (4-space indent) rather than
- * triple-backtick fences, to avoid conflict with the outer markdown fence.
+ * Optional context describing the map parameters used when exemplars were
+ * selected. Surfaced in the exemplars section so consumers know whether the
+ * sample reflects a broad corpus view or a narrowed slice.
  */
-export const BRIEFING_MCP = {
-  title: "Briefing for MCP-capable agents",
-  build: (apiKey: string, backendUrl: string, frontendUrl: string, groups: Array<{ slug: string; name: string; description?: string | null; canWrite: boolean; isDefault: boolean }>) => {
-    const body = `# Soup.net MCP Agent Briefing
-You are an MCP-capable AI assistant. You already need to understand your user's taste and judgment — and you lose that understanding every time the session ends. Soup.net makes it persistent via MCP tools: recipe checks are how you record and retrieve what you've learned, in a format that also helps the user's other agents and collaborators. Every check is a read-only search with an append-only side effect — your recipe is compared against the corpus, and the trace you leave makes future checks smarter for every agent this user works with. There are no destructive operations. Check freely and often.
+export interface BriefingMapContext {
+  scopeLabel: string;
+  k: number;
+  mode: "umap" | "concept";
+  axes?: string;
+  filter?: string;
+  strategy?: string;
+}
 
-## Setup — skip if \`soupnet\` MCP is already connected
-If \`check_recipe\`, \`get_recipe_guide\`, and \`list_my_recipe_books\` are already available as tools, skip this section. Otherwise, pick the block matching the user's MCP client. Each schema is distinct — the keys and field names differ by client, so don't mix them.
+export interface BriefingBuildInput {
+  user: BriefingUser;
+  apiKey: string;
+  backendUrl: string;
+  frontendUrl: string;
+  checkUrl: string;
+  groups: BriefingGroup[];
+  /** Pre-rendered exemplars section (e.g. `## Context from foo\n…`). Omit to skip the section. */
+  exemplarsSection?: string;
+}
 
-**Claude Code** — per-project \`.mcp.json\` at the repo root (or \`~/.claude/.mcp.json\` for global). One-liner equivalent: \`claude mcp add --transport http soupnet ${backendUrl}/mcp --header "Authorization: Bearer ${apiKey}"\`.
+export const BRIEFING = {
+  title: "Soup.net agent briefing",
+  build: ({ user, apiKey, backendUrl, frontendUrl, checkUrl, groups, exemplarsSection }: BriefingBuildInput) => {
+    // Build the guide URL from the check URL so callers don't have to thread
+    // a second value through. Handles both /check? and /check/? patterns.
+    const guideUrl = checkUrl.replace(/\/check\/?(\?)/, "/docs/recipe-check-guide$1");
 
-    {
-      "mcpServers": {
-        "soupnet": {
-          "type": "http",
-          "url": "${backendUrl}/mcp",
-          "headers": {
-            "Authorization": "Bearer ${apiKey}"
-          }
-        }
-      }
-    }
+    const corpusContext = buildCorpusContextSection({
+      user,
+      groups,
+      ...(exemplarsSection ? { exemplarsSection } : {}),
+    });
 
-**VS Code** — per-project \`.vscode/mcp.json\`. Note the top-level key is \`servers\` (not \`mcpServers\`) and \`inputs\` is required.
-
-    {
-      "servers": {
-        "soupnet": {
-          "url": "${backendUrl}/mcp",
-          "type": "http",
-          "headers": {
-            "Authorization": "Bearer ${apiKey}"
-          }
-        }
-      },
-      "inputs": []
-    }
-
-**Google Antigravity** — user-global config at \`~/.gemini/antigravity/mcp_config.json\` (Windows: \`C:\\Users\\<you>\\.gemini\\antigravity\\mcp_config.json\`). Applies to all projects. Antigravity uses \`serverUrl\` (not \`url\`). Restart Antigravity after saving.
-
-    {
-      "mcpServers": {
-        "soupnet": {
-          "serverUrl": "${backendUrl}/mcp",
-          "headers": {
-            "Authorization": "Bearer ${apiKey}"
-          }
-        }
-      }
-    }
-
-Full setup instructions with alternatives (Claude Desktop via mcp-remote, stdio transport, .mcpb extension, etc.): ${backendUrl}/docs/mcp-setup?key=${apiKey}
-
-Once \`soupnet\` is connected: \`get_recipe_guide\` returns the full recipe format with annotated examples — call it first. \`list_my_recipe_books\` returns your recipe books with descriptions and access levels.
+    const body = `# Soup.net Agent Briefing
+You already work to understand your user's taste and judgment — and you lose that understanding every time the session ends. Soup.net makes it persistent: recipe checks are read-only semantic searches with an append-only side effect — your recipe is compared against the corpus, and the trace you leave makes future checks smarter for every agent this user works with. There are no destructive operations. Check freely and often.
 
 ## Principles
 ${PRINCIPLES}
@@ -349,11 +404,55 @@ ${PRINCIPLES}
 ## When to check
 ${WORKFLOW_WHEN}
 
-## Your recipe books
-${workflowGroups(groups)}
+## Recipe format
+The structure: "As a [role] working on [goal], I [prefer/chose] so that [reason]." Evidence supports the claim — your interpretation of why a source backs the recipe, then a verbatim quote and citation. Inspired by Toulmin (claim, warrant, data) and Design Thinking user stories.
+
+${FORMAT_EXAMPLE_SURFACING_ASSUMPTION}
+
+${FORMAT_EXAMPLE_STATED_PREFERENCE}
+
+${VOICE_FAILURES}
+
+${corpusContext}
+
+## Your API key
+${apiKey}
+
+The key is also embedded in every URL below as \`?key=...\` or \`&key=...\`. Some agents miss it inside URLs, so it is stated plainly here too.
+
+## Setup — MCP-capable agents
+If \`check_recipe\`, \`get_briefing\`, and \`list_my_recipe_books\` are already available as tools, skip this section. Otherwise drop the matching config into your client's MCP file.
+
+**Claude Code** — \`.mcp.json\` at the repo root (or \`~/.claude/.mcp.json\` for global). One-liner: \`claude mcp add --transport http soupnet ${backendUrl}/mcp --header "Authorization: Bearer ${apiKey}"\`.
+
+    {
+      "mcpServers": {
+        "soupnet": {
+          "type": "http",
+          "url": "${backendUrl}/mcp",
+          "headers": { "Authorization": "Bearer ${apiKey}" }
+        }
+      }
+    }
+
+Same shape, different details for other clients (you can reason from the Claude Code config above):
+- **VS Code** (\`.vscode/mcp.json\`): top-level key is \`servers\` (not \`mcpServers\`); add \`"inputs": []\` at the top level.
+- **Google Antigravity** (\`~/.gemini/antigravity/mcp_config.json\`; Windows: \`%USERPROFILE%\\.gemini\\antigravity\\mcp_config.json\`): use \`serverUrl\` instead of \`url\`. Restart Antigravity after saving.
+- **Claude Desktop** and other stdio-only clients: bridge via \`mcp-remote\` or install the \`.mcpb\` extension — see ${backendUrl}/docs/mcp-setup?key=${apiKey} for the full configs.
+
+## Setup — web-only agents
+You can use Soup.net without MCP by constructing URLs against the check page:
+${checkUrl}
+
+The check page shows the recipe-check form, your recipe books, and full instructions. Recipe guide with annotated examples: ${guideUrl}
+
+Recipe-check URLs follow this shape:
+${checkUrl}&recipe=URL_ENCODED_RECIPE&evidence=URL_ENCODED_EVIDENCE&recipe_book=SLUG
+
+Human-readable parameter names (\`recipe\`, \`evidence\`, \`recipe_book\`) and the combined "recipe text, blank line, evidence" format are both accepted. The legacy \`&group=SLUG\` parameter is still accepted for backwards compatibility.
 
 ## How to check
-\`check_recipe\` accepts: recipe (the claim), supporting_evidence (warrant + data), and recipe_book (slug). Optional: axes (concept projection), clusters/max_chars (response size), and reference file attachments (images, PDF, audio, video) — see your tool schema for the exact file-input params (stdio MCP uses a local path or URL; HTTP MCP uses \`file_url\` or \`file_base64\`). HTTP MCP also accepts an optional \`region.image_box\` with normalized \`{x0, y0, x1, y1}\` coordinates (0-1) to mark a specific area of an attached image — the embedding pipeline crops to that region, blurs the padding, and weights the marked area heavily. Useful when a judgment call is about a specific part of a larger image.
+\`check_recipe\` accepts: \`recipe\` (the claim), \`supporting_evidence\` (warrant + data), and \`recipe_book\` (slug). Optional: \`axes\` (concept projection), \`clusters\`/\`max_chars\` (response size), and reference file attachments (images, PDF, audio, video) — see your tool schema for the exact file-input params. HTTP MCP also accepts an optional \`region.image_box\` with normalized \`{x0, y0, x1, y1}\` coordinates (0-1) to mark a specific area of an attached image — the embedding pipeline crops to that region, blurs the padding, and weights the marked area heavily.
 
 For local files that have no public URL (screenshots, generated artifacts, anything on your disk), \`file_base64\` will blow your context window on anything bigger than a thumbnail. Instead, POST the file to the \`/uploads\` REST endpoint first using your same Bearer token, then pass the returned URL as \`file_url\`. The MCP server detects own-hostname URLs and resolves them internally — no second HTTP fetch, no public exposure. Example:
 
@@ -373,97 +472,136 @@ ${WORKFLOW_ANNOTATION}
 
     [taste call shorthand](${frontendUrl}/traces/<recipeId>)
 
-For example, if \`check_recipe\` returned \`recipeId: 7ed3d2d5-31e3-4415-ad48-b2549e550a23\` for a recipe about visual style, your plan might say \`We'll go with hand-drawn assets ([sketchbook feel](${frontendUrl}/traces/7ed3d2d5-31e3-4415-ad48-b2549e550a23))\`. The link text describes the decision; the URL takes the user to the recipe's full record. The trace detail page requires the user to be logged in — that's fine, they're the same person who gave you the briefing.
+The trace detail page requires the user to be logged in — that's fine, they're the same person who gave you this briefing.
 
 ## Divergent recipe checks
-When multiple framings are plausible, present 2-4 options to the user in your reply — each with its own evidence for what makes THAT framing a candidate, not just what makes the set plausible. Show the full recipe alongside each option so the user can evaluate before choosing. After they pick, call \`check_recipe\` with the chosen recipe text only.
+When multiple framings are plausible, present 2-4 options to the user — each with its own evidence for what makes THAT framing a candidate, not just what makes the set plausible. Show the full recipe alongside each option so the user can evaluate before choosing.
 
-The user's selection is itself evidence. Once they've chosen, append a line like "the user was presented with N framings and chose this one" to the warrant of the chosen recipe — that captures the selection signal. Checking candidates before the user picks writes that sentence while it's still false; wait until they choose, then check only the chosen one.
+MCP-capable agents: present the options as text in your reply and wait for the user to pick before calling \`check_recipe\` on the chosen one.
 
-If none of your framings fit, ask the user to clarify and form new hypotheses rather than picking the closest miss.`;
+Web-only agents: present the options as 2-4 divergent clickable recipe-check links (see the link-formatting guidance below for Gemini-vs-Claude format). The user clicks the framing that fits.
 
-    return "```markdown soup-net-mcp-briefing.md\n" + body + "\n```";
-  },
-};
+The user's selection is itself evidence. Once they've chosen, append a line like "the user was presented with N framings and chose this one" to the warrant of the chosen recipe — that captures the selection signal. Checking candidates before the user picks writes that sentence while it's still false; wait for the choice, then check only the chosen one.
 
-/**
- * Web-agent preamble. Replaces WORKFLOW_INTRO for BRIEFING_WEB only: gives the
- * agent an identity opener ("You are a web based AI assistant…") so it reads
- * the rest as direct instructions rather than background prose, and adds the
- * "multimodal embeddings" framing that's useful context for web chat agents.
- * The MCP briefing keeps the plain WORKFLOW_INTRO because MCP clients receive
- * this via a tool call, not a copy-pasted chat message.
- */
-const WEB_BRIEFING_PREAMBLE = `# Soup.net Web Agent Briefing
-You are a web based AI assistant. You already work to understand your user's taste and judgment — Soup.net makes that understanding persistent and shared. Recipe checks are read-only semantic searches with an append-only side effect — your recipe is compared against the corpus, and the trace you leave makes future checks smarter for every agent this user works with. There are no destructive operations. Check freely and often.`;
+If none of your framings fit, ask the user to clarify and form new hypotheses rather than picking the closest miss.
 
-export const BRIEFING_WEB = {
-  title: "Briefing for web-browsing agents",
-  build: (checkUrl: string, apiKey: string, groups: Array<{ slug: string; name: string; canWrite: boolean; isDefault: boolean }>) => {
-    // Build guide URL — handle both /check? and /check/? patterns
-    const guideUrl = checkUrl.replace(/\/check\/?(\?)/, "/docs/recipe-check-guide$1");
-
-    // Wrapped in a fenced code block with a fake filename. This reliably
-    // separates the briefing from whatever the human types into the same chat
-    // message — without the fence, some web UIs blend briefing + user prompt
-    // and the agent treats pasted instructions as the user's own voice.
-    const body = `${WEB_BRIEFING_PREAMBLE}
-
-## Your API key
-Your API key is: ${apiKey}
-The key is also embedded in every link below as \`?key=...\` or \`&key=...\`. Some agents miss it inside URLs, so it is stated plainly here too.
-
-## Principles
-${PRINCIPLES}
-
-## When to check
-${WORKFLOW_WHEN}
-
-## Your check page
-${checkUrl}
-The URL shows the recipe check form, full instructions, and your recipe books.
-Recipe guide with annotated examples: ${guideUrl}
-
-## Your recipe books
-${workflowGroups(groups)}
-URLs with \`&recipe_book=SLUG\` write to a specific recipe book. The legacy \`&group=SLUG\` parameter is still accepted for backwards compatibility.
-
-## How to check
-Recipe check URLs follow this shape:
-${checkUrl}&recipe=URL_ENCODED_RECIPE&evidence=URL_ENCODED_EVIDENCE&recipe_book=SLUG
-The check page also has a form. Human-readable parameter names are accepted: recipe, evidence, recipe_book.
-
-Evidence entries follow this shape: your interpretation, then > "direct quote", then -- source citation, separated by blank lines.
-
-## Formatting recipe-check links — use your own identity as a hint
+## Formatting recipe-check links — for web agents that hand URLs back to the user
 You may not know your UI's capabilities, but you do know your system identity. Use what you know about yourself to pick the link format that will survive the round-trip to the user:
 
-- **Gemini and other Google LLMs:** your chat UI wraps complex URLs in search redirects (\`google.com/search?q=...\`). Markdown links look clean but break at click time. Output each recipe-check URL as a **fenced code block with the \`plaintext\` language tag** — three backticks, then \`plaintext\` on the same line, then newline, then the raw URL on its own line, then three backticks to close. Do NOT wrap URLs in inline code (single backticks around a URL). Do NOT wrap URLs in markdown link syntax like \`[text](url)\`. Do NOT combine the two (a markdown link inside inline code, which renders as literal link-markup text in Gemini's UI and is neither clickable nor cleanly copy-able). Only the fenced plaintext code block survives Gemini's UI intact, letting the user copy the URL directly.
+- **Gemini and other Google LLMs:** your chat UI wraps complex URLs in search redirects (\`google.com/search?q=...\`). Markdown links look clean but break at click time. Output each recipe-check URL as a **fenced code block with the \`plaintext\` language tag**. Do NOT wrap URLs in inline code, markdown link syntax, or both combined — only the fenced plaintext code block survives Gemini's UI intact, letting the user copy the URL directly.
 - **Claude, ChatGPT, and similar:** your chat UI renders markdown links natively. Standard markdown links like \`[Check this recipe](https://mcp.soup.net/check?key=...&recipe=...)\` work well.
-- **Uncertain about your UI:** default to the plaintext fenced code block — it is the safer fallback and works for every agent.
+- **Uncertain about your UI:** default to the plaintext fenced code block — it's the safer fallback and works for every agent.
 
-This principle — "agents don't know their UI capabilities but do know their system identity, so use identity as a proxy" — applies beyond links. The deciding factor is technical URL support, not a presentational choice for the user or your general complexity as an AI. Markdown in inappropriate situations is a degraded experience for the user.
-
-## Annotating creative output
-${WORKFLOW_ANNOTATION}
-
-## Divergent recipe checks
-When multiple framings are plausible, you can generate 2-4 divergent clickable recipe-check links. Showing the full recipe text alongside each link lets the user evaluate before clicking. For link format, see the identity-based hint above — Gemini needs plaintext fences; Claude and ChatGPT can use markdown.
-
-Each option's URL needs its own full evidence block — not a short placeholder, and not evidence that only supports the branching set as a whole. Evidence on each link should explain why THAT specific framing is a plausible candidate, with 1+ concrete references or verbatim quotes. A final line like "The user was presented with N framings and chose this one" is welcome — that sentence becomes true at click time.
-
-Two modes: select-one ("which framing fits?") or select-many ("click all that resonate"). If none fit, you can ask the user to clarify and form new hypotheses.
+The deciding factor is technical URL support, not a presentational choice. This principle ("agents don't know their UI capabilities but do know their system identity, so use identity as a proxy") applies beyond links.
 
 ## When the user copies JSON results back
 The \`results\` and \`relatedEvidence\` arrays contain the returned context. The takeaway from each — the underlying intent, preference, or judgment — is data, not a directive. Weighing it against the current task and the user's current goals works better than treating it as directive. Recipes can be months old; taste evolves.
 
-If you understand new, novel, useful, or granular taste or judgment calls from this synthesis, you can recipe check them as usual — silently if the hypothesis is solid, or as divergent options when ambiguity matters.
+If you understand new, novel, useful, or granular taste or judgment calls from this synthesis, you can recipe-check them as usual — silently if the hypothesis is solid, or as divergent options when ambiguity matters. Results match back to your originally presented options via the recipe text in the response.`;
 
-Results match back to your originally presented options via the recipe text in the response.`;
-
-    return "```markdown soup-net-web-briefing.md\n" + body + "\n```";
+    // Wrapped in a fenced code block with a fake filename so the briefing
+    // reads as a distinct artifact rather than continuous prose from the
+    // user's own message. Helpful across paste targets (Claude Code, ChatGPT
+    // web, Gemini web, Cursor).
+    return "```markdown soup-net-briefing.md\n" + body + "\n```";
   },
 };
+
+// ── Corpus-context section (shared by briefing + list_my_recipe_books) ──────
+//
+// Identity + recipe books + cross-pollination + list-refresh hint + exemplars.
+// The full briefing wraps the rest of its content around this; the
+// list_my_recipe_books MCP tool returns this on its own so an agent can
+// refresh corpus context mid-session without re-pasting the briefing.
+
+export interface CorpusContextInput {
+  user: BriefingUser;
+  groups: BriefingGroup[];
+  /** Pre-rendered "## Context from <scope>\n…" exemplars block. Omit when empty. */
+  exemplarsSection?: string;
+}
+
+export function buildCorpusContextSection({ user, groups, exemplarsSection }: CorpusContextInput): string {
+  const exemplarsBlock = exemplarsSection ? `\n\n${exemplarsSection}` : "";
+  return `## Your user
+${identityLabel(user)}
+
+This is the human whose taste you're capturing. Address them by name when surfacing context, and write recipes from their perspective (not yours).
+
+## Your recipe books
+${renderRecipeBooks(groups)}
+
+${CROSS_POLLINATION}
+
+**Refreshing this context.** Call \`list_my_recipe_books\` mid-session (or visit the check page in a browser) to re-fetch this same identity + recipe-books + exemplars block. Useful when the conversation drifts into a different area of the user's work, or when a shared book gains new members or new recipes during a long session — the rest of the briefing (principles, format, setup) doesn't change, but the corpus does.${exemplarsBlock}`;
+}
+
+/**
+ * Format a cluster-exemplars section ready for injection into the briefing.
+ * Pure function — formats text only; callers pass in pre-fetched exemplar
+ * data (claim + evidence + references) and the map context describing how
+ * the exemplars were selected.
+ */
+export interface BriefingExemplar {
+  /** UUID of the trace. */
+  recipeId: string;
+  /** Slug of the recipe book the trace lives in. */
+  recipeBookSlug: string;
+  /** Author identity. Omitted if the row couldn't be resolved. */
+  author?: BriefingMember;
+  /** Date string from the trace's createdAt (e.g. "2026-04-12"); empty for none. */
+  loggedDate?: string;
+  /** k-means cluster member count (>=1). */
+  memberCount: number;
+  /** Full claim text. */
+  claimText: string;
+  /** Evidence blocks already concatenated with their references in the recipe-quote shape. */
+  evidenceBlocks?: string[];
+}
+
+export function buildExemplarsSection(
+  scopeLabel: string,
+  context: Omit<BriefingMapContext, "scopeLabel">,
+  exemplars: BriefingExemplar[],
+): string {
+  if (exemplars.length === 0) return "";
+
+  const paramLines = [
+    `- Clusters: ${context.k}`,
+    `- Map mode: ${context.mode === "concept" ? "Concept Axes" : "Discovery (UMAP over all embeddings)"}`,
+    ...(context.mode === "concept" && context.axes ? [`- Concept axes: ${context.axes}`] : []),
+    `- Filter keywords: ${context.filter ?? "(none)"}`,
+    `- Embedding strategy: ${context.strategy || "(default — best score across all strategies wins)"}`,
+  ].join("\n");
+
+  const total = exemplars.length;
+  const exemplarLines = exemplars.map((ex, i) => {
+    const metaLines = [
+      `### Exemplar ${i + 1} of ${total}`,
+      `Recipe ID: ${ex.recipeId}`,
+      `Recipe book: ${ex.recipeBookSlug}`,
+      ...(ex.author ? [`Author: ${identityLabel(ex.author)}`] : []),
+      ...(ex.loggedDate ? [`Logged: ${ex.loggedDate}`] : []),
+      `Cluster size: ${ex.memberCount}`,
+    ].join("\n");
+
+    let text = `${metaLines}\n\n${ex.claimText}`;
+    const blocks = (ex.evidenceBlocks ?? []).filter((b) => b.trim().length > 0);
+    if (blocks.length > 0) {
+      text += `\n\nEvidence:\n${blocks.join("\n\n")}`;
+    }
+    return text;
+  });
+
+  return `## Context from ${scopeLabel}
+
+Exemplar recipes from this user's corpus in the scope above. Selected by k-means clustering over multimodal vector embeddings — each one represents a cluster but isn't necessarily representative of it, and may or may not be relevant to your current task. They're context about the shape of accumulated taste in this scope, not templates to copy or evidence to reuse. Recipes can be months old and taste evolves; fresh evidence from the current conversation works best for new recipes.
+
+Selection parameters:
+${paramLines}
+
+${exemplarLines.join("\n\n")}`;
+}
 
 export const CONCEPT_AXES = {
   title: "Concept-axis projection",

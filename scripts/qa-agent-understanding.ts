@@ -191,7 +191,7 @@ console.log("\n--- STEP 1: Give this to a fresh LLM session (no other context) -
 console.log("SYSTEM/USER PROMPT:");
 console.log("-".repeat(40));
 console.log(BOOTSTRAP_BLURB.text);
-console.log("\n--- The agent calls get_recipe_guide and receives: ---\n");
+console.log("\n--- The agent calls get_briefing and receives: ---\n");
 console.log(guideText);
 
 console.log("\n\n--- STEP 2: Ask these questions and evaluate responses ---\n");

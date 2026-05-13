@@ -47,7 +47,7 @@ export function DashboardPage() {
   const [selectedGroupId, setSelectedGroupId] = useState<string>("");
   const { copyAsync, copied } = useClipboard(2500);
   const [dailyOpened, setDailyOpened] = useState(false);
-  const [briefingPending, setBriefingPending] = useState<"mcp" | "web" | null>(null);
+  const [briefingPending, setBriefingPending] = useState<boolean>(false);
   const groupSelectRef = useRef<HTMLSelectElement>(null);
 
   // Pending group invitations — top of the dashboard feed (tier 1: action
@@ -116,11 +116,11 @@ export function DashboardPage() {
   const effectiveGroupId = selectedGroupId || (groups.length > 0 ? groups[0]!.id : "");
   const selectedGroup = groups.find(g => g.id === effectiveGroupId);
 
-  // Mint a daily key scoped to the focus group, then fetch the briefing.
+  // Mint a daily key scoped to the focus group, then fetch the unified briefing.
   // Called inside copyAsync so the ClipboardItem Promise keeps iOS Safari's
   // user-gesture context alive across both awaits — a plain onSuccess copy
   // would silently no-op on iPhone.
-  async function fetchBriefingText(type: "mcp" | "web"): Promise<string> {
+  async function fetchBriefingText(): Promise<string> {
     const body = effectiveGroupId ? { writeRecipeBookId: effectiveGroupId } : undefined;
     const keyRes = await authFetch("/keys/daily", {
       method: "POST",
@@ -129,7 +129,7 @@ export function DashboardPage() {
     const keyJson = (await keyRes.json()) as { ok: boolean; data?: { key: string; searchUrl: string } };
     if (!keyJson.ok || !keyJson.data) throw new Error("Failed to generate key");
 
-    const briefRes = await authFetch(`/keys/briefing?type=${type}&key=${encodeURIComponent(keyJson.data.key)}`);
+    const briefRes = await authFetch(`/keys/briefing?key=${encodeURIComponent(keyJson.data.key)}`);
     const briefJson = (await briefRes.json()) as { ok: boolean; data?: { text: string } };
     if (!briefJson.ok || !briefJson.data) throw new Error("Failed to get briefing");
 
@@ -137,12 +137,12 @@ export function DashboardPage() {
     return briefJson.data.text;
   }
 
-  async function handleCopyBriefing(type: "mcp" | "web") {
-    setBriefingPending(type);
+  async function handleCopyBriefing() {
+    setBriefingPending(true);
     try {
-      await copyAsync(() => fetchBriefingText(type), type);
+      await copyAsync(() => fetchBriefingText(), "briefing");
     } finally {
-      setBriefingPending(null);
+      setBriefingPending(false);
     }
   }
 
@@ -360,21 +360,12 @@ export function DashboardPage() {
             </p>
             <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-sm)" }}>
               <button
-                onClick={() => void handleCopyBriefing("mcp")}
-                disabled={briefingPending !== null}
+                onClick={() => void handleCopyBriefing()}
+                disabled={briefingPending}
                 style={{ width: "100%", justifyContent: "center", fontSize: "0.85rem" }}
               >
                 <Icon name="copy" size={14} />
-                {copied === "mcp" ? "Copied!" : briefingPending === "mcp" ? "Generating..." : "Copy MCP agent briefing"}
-              </button>
-              <button
-                className="btn-secondary"
-                onClick={() => void handleCopyBriefing("web")}
-                disabled={briefingPending !== null}
-                style={{ width: "100%", justifyContent: "center", fontSize: "0.85rem" }}
-              >
-                <Icon name="copy" size={14} />
-                {copied === "web" ? "Copied!" : briefingPending === "web" ? "Generating..." : "Copy web agent briefing"}
+                {copied === "briefing" ? "Copied!" : briefingPending ? "Generating..." : "Copy agent briefing"}
               </button>
               <button
                 className="btn-secondary"

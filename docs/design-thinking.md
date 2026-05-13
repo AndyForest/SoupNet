@@ -70,7 +70,7 @@ With Soup.net: their API key lives in `.env` or `.mcp.json`. As they work, their
 **Onboarding journey:**
 1. Sign up at soup.net → create an API key
 2. Copy the setup blurb into their agent's config (one command for Claude Code)
-3. Agent calls `get_recipe_guide` → understands the format
+3. Agent calls `get_briefing` → understands the format and sees a sample of the user's corpus
 4. Agent checks a recipe during normal work → sees it in the dashboard
 5. Next session: agent checks a similar recipe → finds the first one as context
 6. User opens the Recipe Map → sees how their recipes cluster → understands the shape of their accumulated judgment
@@ -153,7 +153,7 @@ Organized by capability, not by product. Specific AI products are listed as exam
 
 **Examples:** Claude Code, Claude Desktop, Google Antigravity, any MCP-compatible agent.
 
-**Interface:** MCP tools — `check_recipe`, `get_recipe_guide`, `list_my_recipe_books`.
+**Interface:** MCP tools — `check_recipe`, `get_briefing`, `list_my_recipe_books`.
 
 **Capabilities:**
 - Calls tools with structured parameters (recipe text, evidence, recipe_book, filter, axes, clusters, max_chars)
@@ -170,7 +170,7 @@ Organized by capability, not by product. Specific AI products are listed as exam
 - Coverage diversity is maximized when different sessions use different API keys
 
 **User stories:**
-- *"I'm starting a new coding session. I call `get_recipe_guide` then `list_my_recipe_books` to orient myself, then check a broad discovery recipe about the task at hand."*
+- *"I'm starting a new coding session. I call `get_briefing` (which already lists my recipe books and a sample of recent recipes) to orient myself, then check a broad discovery recipe about the task at hand."*
 - *"I'm facing a design decision. I check my proposed approach as a recipe with evidence, and the system returns related recipes — including one that contradicts my approach with evidence from a different project."*
 - *"I've finished meaningful work. I check a recipe that logs what was decided and why, so future agents find it."*
 - *"I need to write to the team's recipe book, not my personal one. I specify `recipe_book='project-slug'` on the check."*
@@ -331,6 +331,37 @@ See [docs/case-studies/chatgpt-divergent-design-checks.md](case-studies/chatgpt-
 - The user wanted to click ALL of them — revealing that the hypotheses were complementary, not competing
 - ChatGPT could not discover the recipe-book slug for `soup-net-development` because it's a read-only agent — this directly motivated the recipe-books list on the check page
 - The agent's design brief synthesized the taste signals from the user's selections into a coherent creative direction
+
+---
+
+## Priming an External LLM via Copy-Paste Briefing
+
+### The pattern
+
+A user starts a new creative task with an external LLM they don't (or can't) connect via MCP — most commonly ChatGPT web, Gemini chat, or a model in a third-party product like Photoshop. The user wants the model primed with their accumulated taste before it does anything, and they don't want to re-explain Soup.net every session.
+
+> As a creative technologist working with an external LLM on a specific deliverable (image, doc, code), I create a fresh API key on Soup.net, optionally narrow the recipe map's cluster axes to my topic, copy the unified briefing, paste it as my first message, and let the LLM acknowledge it before I send the real task — so that the LLM is primed with my taste/judgment corpus context without me having to repeat it every session.
+
+The validating signal is the model's first reply: a good one is terse, names Soup.net, and waits for the real task; a bad one ignores the corpus and starts working on something it inferred from the briefing's structure.
+
+### Why this works
+
+- **The briefing is small enough to fit in a chat, large enough to convey the system + the user's corpus shape.** Principles + when-to-check + recipe-book list + a clustered sample of exemplar recipes. ~3–5 kB of markdown. Models acknowledge it without dropping context.
+- **The acknowledgement is a checkpoint.** If the model jumps into work, the briefing didn't land — the user catches the misunderstanding before committing to the real task. If the model waits, the user has confirmation that the corpus context is available to it.
+- **The cluster sample lets the model make grounded suggestions instead of generic ones.** A model briefed only on Soup.net's mechanics will produce competent-but-flavorless work. One briefed on the user's clustered recipes can echo their actual taste from the first reply.
+- **The Recipe Map is the refinement surface.** When the topic is narrow (e.g. "Factorio mod pixel art" vs the user's whole corpus), the user tweaks cluster axes or filter keywords on the map page and re-copies the briefing — the exemplar section narrows to that slice. Other surfaces (Dashboard, API Keys page, recipe-book page) hand back a sensible default cluster.
+
+### Flow
+
+1. **Create the key.** From the API Keys page, the user makes a fresh daily or scoped key. Scope decisions (which recipe books read/write) determine what the briefing's exemplars draw from.
+2. **(Optional) Open the recipe map.** If the deliverable is narrow, the user tweaks axes / filter / k until the map shows a useful set of clusters at the right level of detail. The map is the only place that lets the human shape the exemplars before they go into the briefing.
+3. **Copy the briefing.** One button — no MCP-vs-web split. The single unified artifact covers both connection styles inline.
+4. **Paste into the external LLM, press enter.** No additional instructions. The LLM treats the pasted artifact as the briefing and acknowledges.
+5. **Send the real task.** Now the LLM has both the user's taste shape and a stated way to recipe-check (via clickable URLs, since web LLMs can't run MCP) any judgment calls it surfaces.
+
+### Why "one briefing, one button"
+
+An earlier iteration had two buttons per surface — "Copy MCP briefing" and "Copy web briefing" — producing two distinct artifacts. The split made sense as a design hypothesis: MCP agents need config snippets that web agents don't, web agents need URL-construction guidance that MCP agents don't. In practice the dual-button UI confused users, who routinely picked the wrong one, and the resulting briefings were strictly less useful when they ended up in the wrong context. The unified briefing labels both connection styles inline and trusts the receiving LLM to sort out its own capability. The cost is ~30% more tokens; the benefit is a single artifact that works wherever the user pastes it. See also [recipe-scenarios Scenario F](/docs/recipe-scenarios) for the annotated walkthrough.
 
 ---
 

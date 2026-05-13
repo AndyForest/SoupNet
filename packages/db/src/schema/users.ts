@@ -13,6 +13,7 @@ import {
   timestamp,
   index,
   unique,
+  jsonb,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { claimnetSchema } from "./traces";
@@ -59,6 +60,14 @@ export const users = claimnetSchema.table(
     // Admin suspension — when set, user cannot log in and existing API keys return 403.
     suspendedAt: timestamp("suspended_at", { withTimezone: true }),
     suspendedReason: text("suspended_reason"),
+
+    // User-level preferences (briefing cluster count, etc). Sparse JSONB —
+    // stored object may contain only the keys the user has overridden; the
+    // domain layer merges with defaults before use. Shape is validated by
+    // the Zod schema in @soupnet/domain/user-preferences. Single JSONB column
+    // (vs separate table) keeps it transactional with the user row; split
+    // later if a per-key or per-recipe-book preference shows up.
+    preferences: jsonb("preferences").notNull().default(sql`'{}'::jsonb`),
 
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),

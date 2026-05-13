@@ -146,7 +146,7 @@ Next evidence entry (interpretation of the next reference).
     <li>Search: hybrid &mdash; full-text (tsvector) + <a href="https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-embedding-2/">gemini-embedding-2-preview</a> semantic vectors (SEMANTIC_SIMILARITY)</li>
     <li>Include file links in references &mdash; no upload needed, our system can fetch them</li>
     <li>Markdown encouraged in all text fields</li>
-    <li><strong>MCP tools available:</strong> <a href="/docs/mcp-setup${kq}">Set up check_recipe and get_recipe_guide</a> for Claude Code, Claude Desktop, and other MCP-compatible agents</li>
+    <li><strong>MCP tools available:</strong> <a href="/docs/mcp-setup${kq}">Set up check_recipe and get_briefing</a> for Claude Code, Claude Desktop, and other MCP-compatible agents</li>
     <li><strong>Cold start?</strong> <a href="/docs/bootstrap${kq}">Bootstrap your corpus</a> from existing AI agent sessions</li>
   </ul>
 
@@ -186,7 +186,7 @@ docs.get("/mcp-setup", (c) => {
   <h2>What is MCP?</h2>
   <p>The <a href="https://modelcontextprotocol.io/">Model Context Protocol</a> gives AI agents
   direct tool access to Soup.net. Instead of browsing the web form, the agent calls
-  <code>check_recipe</code> and <code>get_recipe_guide</code> as native tools.</p>
+  <code>check_recipe</code> and <code>get_briefing</code> as native tools.</p>
   <p>MCP works with <strong>Claude Code</strong>, <strong>Claude Desktop</strong>,
   and other MCP-compatible agents.
   See also: <a href="https://support.claude.com/en/articles/12922929-building-desktop-extensions-with-mcpb">Anthropic&rsquo;s extension guide</a>,
@@ -253,7 +253,7 @@ docs.get("/mcp-setup", (c) => {
   </details>
 
   <p>After restarting, look for the MCP server indicator in the bottom-right of the chat input.
-  Click it to verify <code>check_recipe</code> and <code>get_recipe_guide</code> are listed.</p>
+  Click it to verify <code>check_recipe</code> and <code>get_briefing</code> are listed.</p>
 
   <details>
     <summary>Alternative: install via desktop extension (.mcpb)</summary>
@@ -312,8 +312,8 @@ docs.get("/mcp-setup", (c) => {
       Supports <code>clusters</code> and <code>max_chars</code> params for concise responses.</td>
     </tr>
     <tr>
-      <td><code>get_recipe_guide</code></td>
-      <td>Returns the full recipe format guide. Call this before your first check.</td>
+      <td><code>get_briefing</code></td>
+      <td>Returns the Soup.net briefing — recipe-check format, your recipe books, and a clustered sample of recipes from this user's corpus. Call this before your first check.</td>
     </tr>
   </table>
 

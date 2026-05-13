@@ -266,3 +266,79 @@ Two recipes now exist with semantically related claims — one positive, one nam
 9. **Stigmergy surfaces what individuals forget.** The accessibility note came from a different project, a different group, a different time. No one in the Slack discussion thought to mention it. The system's value is in these indirect connections — traces from past work influencing present decisions without anyone orchestrating it.
 
 10. **Reinforce traces with new evidence, don't create duplicates.** When you encounter new evidence for a recipe you already know about, re-check the *exact same recipe text* with the new evidence (for or against). The system sees independent traces converging on the same claim — that's the strongest signal. Coverage grows from diverse evidence across sessions, not from restating the same claim in different words.
+
+---
+
+## Scenario F: Priming ChatGPT for Factorio mod art
+
+This scenario illustrates the **copy-paste briefing handoff** to an external LLM that has no MCP connection — ChatGPT web, Gemini chat, or a model embedded inside another product. The pattern is documented at the design level in [design-thinking.md → Priming an External LLM via Copy-Paste Briefing](https://github.com/soupnet/soupnet/blob/main/docs/design-thinking.md). This scenario is the walkthrough.
+
+**Setup.** A user makes Factorio mods as a hobby. Their Soup.net corpus has accumulated taste recipes about pixel art, industrial aesthetics, color palettes for game UI, and their typical workflow for generating mod thumbnails. They want to ask ChatGPT to generate a new mod thumbnail, and they want ChatGPT to be primed with their accumulated taste before doing anything.
+
+### Phase 1: Make a fresh API key
+
+The user opens the Soup.net dashboard, goes to the API Keys page, and creates a daily key. They scope it to read all their recipe books (so the briefing sees the whole corpus shape) and write to a personal book where any new taste recipes will land.
+
+This is a 24-hour key — long enough for the session, short enough that they don't worry about it leaking.
+
+### Phase 2: Open the recipe map and tune the focus
+
+The user clicks "Recipe Map" and lands on the visualizer. By default the map shows their whole corpus clustered into ~5–8 groups. Useful, but not focused on pixel art specifically.
+
+They switch the map mode to **Concept Axes**, type two concepts that frame the work they're about to do:
+
+- X axis: `retro pixel`
+- Y axis: `industrial machinery`
+
+They click Apply. The clusters re-position by similarity to those concepts. The clusters in the upper-right (high on both axes) are what they care about — past recipes about pixel art for machinery, factories, conveyor belts. The clusters in the lower-left are unrelated taste like documentation preferences or coding style.
+
+They drag the k slider to 5 so they get a small, focused exemplar set rather than the full corpus shape.
+
+### Phase 3: Copy the briefing
+
+The user clicks **Copy agent briefing**. The Soup.net frontend:
+
+1. Mints the daily API key (or reuses the one in custom-briefing mode).
+2. Calls `GET /keys/briefing?key=...&k=5&axes=retro%20pixel,industrial%20machinery&filter=...&strategy=...` with the map's current refinement params.
+3. The backend re-runs clustering with those params and composes the unified briefing — connection setup, principles, recipe books, and **a `## Context from <books>` section with 5 exemplar recipes** drawn from the corpus slice the user just framed on the map.
+4. The full markdown lands in the user's clipboard.
+
+### Phase 4: Paste into ChatGPT
+
+The user opens a fresh ChatGPT chat, pastes the briefing, presses enter, and *doesn't add any other instructions*. They wait.
+
+**Good acknowledgement (what to expect):**
+
+> Got it — I see you've connected me to Soup.net with a daily key scoped to your `factorio-mods` and `personal` recipe books. The exemplar recipes you've shared show a clear preference for pixel-art with high contrast, industrial machinery framing, and warm-cool color contrast between organic and mechanical subjects. I'm ready when you are — what would you like to work on?
+
+**Bad acknowledgement (a signal to stop and re-check):**
+
+> Here are some ideas for your Factorio mod art: 1. Start by sketching... 2. Use Aseprite for pixel art...
+
+If the model jumps into work, it didn't read the briefing as a briefing — it read it as the task. The user's recourse is to clear the chat, re-paste, and add "Please acknowledge this briefing and wait for my task." The second attempt almost always lands.
+
+### Phase 5: Send the real task
+
+> I want to make a mod thumbnail for a "Lightweight Conveyors" mod — small belts that move faster but carry less. Show me three divergent visual directions.
+
+ChatGPT now has both the briefing context and the task. Because the briefing's "Divergent recipe checks" section primed it to present 2–4 options with clickable recipe-check URLs (one per framing) when judgment calls are ambiguous, the response looks like:
+
+> Three divergent directions, each with a recipe-check URL so the choice you make logs back to your Soup.net corpus:
+>
+> **1. Industrial-blueprint.** A schematic-style top-down view with measurement lines and component callouts...
+> [Check this recipe](https://mcp.soup.net/check?key=...&recipe=As%20a%20Factorio%20mod%20author%2C%20I%20chose%20a%20schematic%20blueprint%20style%20so%20that...&evidence=...)
+>
+> **2. Speed-emphasis.** A motion-blurred 45° view of belts in operation, items streaking...
+> [Check this recipe](https://mcp.soup.net/check?key=...&recipe=...)
+>
+> **3. Component-comparison.** Side-by-side: heavy belt vs. lightweight belt, scaled to show the trade-off...
+> [Check this recipe](https://mcp.soup.net/check?key=...&recipe=...)
+
+The user clicks the framing that fits. That click is the `check_recipe` call — logging the chosen recipe + evidence to Soup.net.
+
+### Principles illustrated
+
+11. **The briefing is the handoff artifact.** One copy-paste, no other setup, no MCP required. Every external LLM is reachable through this pattern.
+12. **The acknowledgement is the checkpoint.** Don't send the real task until the model has signaled it understood the briefing. A bad acknowledgement is information — it means the briefing failed to land, not that you should plow ahead.
+13. **The recipe map is where the human shapes the corpus slice.** Other surfaces (Dashboard, API Keys, Recipe Book pages) hand back a sensible default cluster. The map is the only surface that lets the human tune cluster axes / k / filter before the briefing is composed — useful when the deliverable is narrow.
+14. **Stigmergy still works through external LLMs.** The agent can't run `check_recipe` directly, but it can generate clickable recipe-check URLs. The user's click is the write. Every divergent check the agent surfaces becomes a candidate trace; the chosen one becomes a logged trace. Cross-pollination across sessions still happens — the next session's briefing will include the choice the user just made.

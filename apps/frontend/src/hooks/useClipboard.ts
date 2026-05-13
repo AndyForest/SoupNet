@@ -38,17 +38,28 @@ function fallbackCopyText(text: string): void {
  * Matches the pattern in apps/backend/src/routes/check.ts copy-json-btn.
  */
 async function copyToClipboardAsync(getText: () => Promise<string>): Promise<void> {
+  // Memoize so getText runs at most once per copy. Without this, when the
+  // ClipboardItem write rejects (most commonly because the inner getText()
+  // itself rejected — e.g. a 500), the fallback path below calls getText()
+  // a second time and re-runs any side effects (minting a fresh daily key,
+  // POSTing analytics, etc). The cached rejection re-throws to the caller
+  // so the error surfaces cleanly instead of being swallowed by a retry.
+  let cached: Promise<string> | undefined;
+  const once = (): Promise<string> => (cached ??= getText());
+
   if (typeof ClipboardItem !== "undefined" && navigator.clipboard?.write) {
     try {
-      const blobPromise = getText().then((t) => new Blob([t], { type: "text/plain" }));
+      const blobPromise = once().then((t) => new Blob([t], { type: "text/plain" }));
       const item = new ClipboardItem({ "text/plain": blobPromise });
       await navigator.clipboard.write([item]);
       return;
     } catch {
-      // Fall through to textarea fallback.
+      // Fall through to textarea fallback. If getText rejected, the cached
+      // promise re-rejects below; if ClipboardItem itself is unsupported,
+      // we still have a single getText() call's worth of text to paste.
     }
   }
-  const text = await getText();
+  const text = await once();
   fallbackCopyText(text);
 }
 

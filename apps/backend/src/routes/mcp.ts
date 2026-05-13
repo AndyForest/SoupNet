@@ -1,7 +1,7 @@
 /**
  * Remote MCP endpoint — Streamable HTTP transport for AI agents.
  *
- * Exposes the same check_recipe and get_recipe_guide tools as the
+ * Exposes the same check_recipe and get_briefing tools as the
  * local stdio MCP server, but over HTTP with Bearer token (API key) auth.
  *
  * Used by Google Antigravity and other remote MCP clients.
@@ -17,24 +17,11 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { z } from "zod";
 import {
-  HOW_THIS_WORKS,
-  FOR_AI_AGENTS,
-  WHEN_TO_CHECK,
-  TASTE_VS_JUDGMENT,
-  RECIPE_FORMAT,
-  EVIDENCE_FORMAT,
-  RECIPE_EXAMPLES,
-  RELATED_EVIDENCE_IS_NEUTRAL,
-  RESPONSE_SIZE_CONTROL,
-  CONCEPT_AXES,
-  GROUPS_GUIDE,
-  CONNECTION_TIERS,
-  TIPS,
-  BOOTSTRAP_BLURB,
   ALLOWED_MIME_TYPES,
   EXT_TO_MIME,
   MAX_UPLOAD_BYTES,
 } from "@soupnet/domain";
+import { composeBriefing, composeCorpusContext } from "../services/briefing";
 import { rateLimit, perKeyRateLimit, extractMcpBearerKey } from "../middleware/rate-limit";
 import type { SubmitAndSearchResult, ImageAttachment } from "../services/trace.service";
 import { submitAndSearch } from "../services/trace.service";
@@ -216,7 +203,7 @@ function createMcpServer(backendUrl: string): McpServer {
     version: "0.4.0",
     description:
       "Soup.net: check recipes — taste and judgment traces with evidence. " +
-      "Call get_recipe_guide before your first check to learn the format.",
+      "Call get_briefing before your first check to learn the format and get a sample of the user's corpus.",
   });
 
   // ── check_recipe tool ───────────────────────────────────────────────────
@@ -233,7 +220,7 @@ function createMcpServer(backendUrl: string): McpServer {
     "or max_chars to auto-cluster to a character budget (e.g., 2000 for tight context). " +
     "Attach a reference file (image, PDF, audio, video) via file_url (server fetches the URL) " +
     "or file_base64 (inline bytes) for multimodal evidence. " +
-    "Call get_recipe_guide first if unsure about the format.",
+    "Call get_briefing first if unsure about the format.",
     {
       recipe: z.string().describe(
         "Recipe (trace) — the human user's voice in a transferable role, not yours. " +
@@ -419,85 +406,17 @@ function createMcpServer(backendUrl: string): McpServer {
     },
   );
 
-  // ── get_recipe_guide tool ─────────────────────────────────────────────────
+  // ── get_briefing tool ─────────────────────────────────────────────────────
+  //
+  // Returns the same unified briefing produced by GET /keys/briefing — the
+  // recipe-check format, the user's recipe books, and a clustered sample
+  // of recipes from their corpus. Replaces the old get_recipe_guide tool;
+  // the static guide content lives inside the briefing.
 
   server.tool(
-    "get_recipe_guide",
-    "Get the full guide for how to check recipes on Soup.net. Call this before your first recipe check to understand the expected format.",
-    {},
-    async () => {
-      const examples = RECIPE_EXAMPLES.map((r, i) =>
-        `${i + 1}. ${r.label}:\n   Recipe: ${r.recipe}\n   Supporting evidence: ${r.evidenceFor}${r.quote ? `\n   > "${r.quote}"` : ""}${r.source ? `\n   -- ${r.source}` : ""}${r.explanation ? `\n   (${r.explanation})` : ""}`
-      ).join("\n\n");
-
-      const triggers = WHEN_TO_CHECK.triggers.map((t, i) =>
-        `${i + 1}. ${t.label.toUpperCase()} — ${t.detail}`
-      ).join("\n");
-
-      const tips = TIPS.map((t) => `- ${t}`).join("\n");
-
-      const guide = `Soup.net Recipe Check Guide
-
-${HOW_THIS_WORKS.title.toUpperCase()}
-${HOW_THIS_WORKS.text}
-
-${FOR_AI_AGENTS.title.toUpperCase()}
-${FOR_AI_AGENTS.text}
-
-${WHEN_TO_CHECK.title.toUpperCase()}
-Three common triggers:
-${triggers}
-
-${WHEN_TO_CHECK.framing}
-
-${TASTE_VS_JUDGMENT.title.toUpperCase()}
-${TASTE_VS_JUDGMENT.taste}
-${TASTE_VS_JUDGMENT.judgment}
-${TASTE_VS_JUDGMENT.summary}
-
-${RECIPE_FORMAT.title.toUpperCase()}
-Format: "${RECIPE_FORMAT.preferred}"
-${RECIPE_FORMAT.key}
-
-${EVIDENCE_FORMAT.title.toUpperCase()}
-${EVIDENCE_FORMAT.template}
-
-EXAMPLES
-${examples}
-
-${RELATED_EVIDENCE_IS_NEUTRAL.title.toUpperCase()}
-${RELATED_EVIDENCE_IS_NEUTRAL.text}
-
-${RESPONSE_SIZE_CONTROL.title.toUpperCase()}
-${RESPONSE_SIZE_CONTROL.text}
-
-${CONCEPT_AXES.title.toUpperCase()}
-${CONCEPT_AXES.text}
-
-${GROUPS_GUIDE.title.toUpperCase()}
-${GROUPS_GUIDE.text}
-
-${CONNECTION_TIERS.title.toUpperCase()}
-${CONNECTION_TIERS.text}
-
-TIPS
-${tips}
-
-${BOOTSTRAP_BLURB.title.toUpperCase()}
-${BOOTSTRAP_BLURB.text}
-
-For annotated scenarios showing common mistakes and detailed analysis, visit:
-${backendUrl}/docs/recipe-scenarios`;
-
-      return { content: [{ type: "text" as const, text: guide }] };
-    },
-  );
-
-  // ── list_my_recipe_books tool ──────────────────────────────────────────────
-
-  server.tool(
-    "list_my_recipe_books",
-    "List the recipe books your API key has access to, with descriptions, member counts, and your access level. Use this to decide which recipe book to write recipes to.",
+    "get_briefing",
+    "Get the Soup.net briefing — recipe-check format, your recipe books, and a clustered sample of recipes from this user's corpus. " +
+    "Call this before your first check to learn the format and prime your context with the shape of the user's taste.",
     {},
     async (_params, extra) => {
       const apiKey = (extra.authInfo as Record<string, unknown> | undefined)?.["token"] as string | undefined;
@@ -506,60 +425,72 @@ ${backendUrl}/docs/recipe-scenarios`;
       }
 
       try {
-        const db = getDb();
-        const keyResult = await validateKey(db, apiKey);
-        if (!keyResult) {
-          return { content: [{ type: "text" as const, text: "Error: Invalid or expired API key." }] };
+        const frontendUrl = process.env["FRONTEND_URL"] ?? "http://localhost:5273";
+        const result = await composeBriefing({
+          db: getDb(),
+          rawKey: apiKey,
+          backendUrl,
+          frontendUrl,
+        });
+
+        if (!result.ok) {
+          if (result.code === "key_not_found") {
+            return { content: [{ type: "text" as const, text: "Error: Invalid or expired API key." }] };
+          }
+          return { content: [{ type: "text" as const, text: "Error: Briefing unavailable." }] };
         }
 
-        const { readGroupIds, writeGroupIds, defaultWriteGroupId } = keyResult;
-        const allGroupIds = [...new Set([...readGroupIds, ...writeGroupIds])];
-
-        if (allGroupIds.length === 0) {
-          return { content: [{ type: "text" as const, text: "No recipe books associated with this key." }] };
-        }
-
-        // Fetch group details + member counts
-        const rows = await db.execute(sql`
-          SELECT g.id, g.slug, g.name, g.description,
-            (SELECT COUNT(*)::int FROM claimnet.group_members gm WHERE gm.group_id = g.id) AS "memberCount"
-          FROM claimnet.groups g
-          WHERE g.id IN (${sql.join(allGroupIds.map((id) => sql`${id}::uuid`), sql`, `)})
-          ORDER BY g.name
-        `);
-
-        interface GroupRow { id: string; slug: string; name: string; description: string | null; memberCount: number }
-        const groups = (rows as unknown as GroupRow[]).map((g) => ({
-          id: g.id,
-          slug: g.slug,
-          name: g.name,
-          description: g.description ?? "",
-          memberCount: g.memberCount,
-          access: {
-            read: readGroupIds.includes(g.id),
-            write: writeGroupIds.includes(g.id),
-            isDefault: g.id === defaultWriteGroupId,
-          },
-        }));
-
-        // Format as readable text for the agent
-        let text = `Your API key has access to ${groups.length} recipe book(s):\n\n`;
-        for (const g of groups) {
-          const access = [];
-          if (g.access.read) access.push("read");
-          if (g.access.write) access.push("write");
-          if (g.access.isDefault) access.push("default write target");
-          text += `[${g.slug}] ${g.name} (${g.memberCount} member${g.memberCount !== 1 ? "s" : ""}) — ${access.join(", ")}\n`;
-          if (g.description) text += `  ${g.description}\n`;
-          text += "\n";
-        }
-        text += "Use the recipe_book parameter on check_recipe to write to a specific recipe book (slug or ID).\n";
-        text += "Use the read_recipe_books parameter to restrict search to specific recipe books.\n";
-        text += `Default write recipe book: ${groups.find((g) => g.access.isDefault)?.slug ?? "none"} — recipes go here unless you specify otherwise.`;
-
-        return { content: [{ type: "text" as const, text }] };
+        return { content: [{ type: "text" as const, text: result.text }] };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        console.error(`[mcp] get_briefing error: ${message}`);
+        return { content: [{ type: "text" as const, text: `Error: ${message}` }] };
+      }
+    },
+  );
+
+  // ── list_my_recipe_books tool ──────────────────────────────────────────────
+  //
+  // Returns the corpus-context subset of the unified briefing — identity,
+  // recipe books with members, cross-pollination framing, and clustered
+  // exemplar recipes from the corpus. No boilerplate (no principles, no
+  // setup, no how-to-check). Lets an agent refresh corpus context
+  // mid-session without re-pasting the full briefing — useful when the
+  // conversation drifts into a new area of the user's work, or when a
+  // shared book gains new members or new recipes during a long session.
+  //
+  // Same composer as composeBriefing — single source of truth, no drift.
+
+  server.tool(
+    "list_my_recipe_books",
+    "Refresh your Soup.net corpus context — returns the user's identity, recipe books (with descriptions, access levels, and other members of shared books), and a clustered sample of recipes from the corpus. Call this when the conversation moves into a new area of the user's work, or periodically during long sessions on shared recipe books to pick up new recipes from collaborators. Same shape as the recipe-books section of the get_briefing output, without the boilerplate.",
+    {},
+    async (_params, extra) => {
+      const apiKey = (extra.authInfo as Record<string, unknown> | undefined)?.["token"] as string | undefined;
+      if (!apiKey) {
+        return { content: [{ type: "text" as const, text: "Error: No API key in auth context." }] };
+      }
+
+      try {
+        const frontendUrl = process.env["FRONTEND_URL"] ?? "http://localhost:5273";
+        const result = await composeCorpusContext({
+          db: getDb(),
+          rawKey: apiKey,
+          backendUrl,
+          frontendUrl,
+        });
+
+        if (!result.ok) {
+          if (result.code === "key_not_found") {
+            return { content: [{ type: "text" as const, text: "Error: Invalid or expired API key." }] };
+          }
+          return { content: [{ type: "text" as const, text: "Error: Corpus context unavailable." }] };
+        }
+
+        return { content: [{ type: "text" as const, text: result.text }] };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[mcp] list_my_recipe_books error: ${message}`);
         return { content: [{ type: "text" as const, text: `Error: ${message}` }] };
       }
     },

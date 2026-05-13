@@ -5,3 +5,4 @@ export * from "./supported-media";
 export * from "./embedding-strategies";
 export * from "./stub-embeddings";
 export * from "./queue-descriptions";
+export * from "./user-preferences";

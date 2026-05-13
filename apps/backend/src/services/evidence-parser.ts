@@ -54,8 +54,25 @@ export function parseEvidenceMarkdown(text: string): EvidenceEntry[] {
 
     return {
       interpretation: interpretationLines.join(" "),
-      quote: quoteLines.join(" "),
+      quote: stripOuterQuotes(quoteLines.join(" ")),
       source,
     };
   });
+}
+
+/**
+ * Strip a single pair of outer matching double-quote marks from a quote
+ * string. The canonical evidence format is `> "Direct quote"`, where the
+ * surrounding `"` characters are markdown, not content. Storing them in the
+ * data means every renderer that wraps with `"..."` produces a doubled
+ * `""quote""`. Normalize here so downstream renderers can wrap consistently.
+ *
+ * Only strips when both ends match — quotes that already lack surrounding
+ * marks (some LLMs write `> Direct quote`) are returned unchanged.
+ */
+function stripOuterQuotes(s: string): string {
+  if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) {
+    return s.slice(1, -1);
+  }
+  return s;
 }

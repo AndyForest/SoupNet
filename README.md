@@ -102,7 +102,7 @@ Or in `.mcp.json`:
 }
 ```
 
-**3. Restart the client** (or run `/mcp` in Claude Code) to pick up the new server. Available tools: `check_recipe`, `get_recipe_guide`, `list_my_recipe_books`, `update_recipe_book_description`.
+**3. Restart the client** (or run `/mcp` in Claude Code) to pick up the new server. Available tools: `check_recipe`, `get_briefing`, `list_my_recipe_books`, `update_recipe_book_description`.
 
 Clients that can't speak HTTP MCP natively (Claude Desktop, older tooling) can bridge via `mcp-remote` or run the stdio server in `apps/mcp-server/` — both covered in the live guide at `/docs/mcp-setup` (serves with your key pre-filled when reached from the dashboard).
 
