@@ -4,6 +4,25 @@ Items moved here from `backlog.md` when finished. Date-stamped so we can see wha
 
 ---
 
+## Connector + OAuth
+
+### 2026-05-14 — claude.ai custom-connector foundation: OAuth 2.1 + MCP polish + self-serve deletion
+
+Eight commits in one session that take the connector flow from "Bearer-only, no claude.ai web support" to "ready for directory submission once non-code prep lands". Bullets in commit order:
+
+- `2954463` Briefing edits. Added an explicit fifth principle ("Authoring for retrieval") that names the embed + ANN-search + clustering mechanism agents are writing into — once an agent sees the mechanism, the rest of the authoring guidance is derivable. Reworded the proper-noun rule from "strip" to "replace" (substitution preserves cluster-useful signal: "Soup.net maintainer" → "MCP server maintainer", not just "maintainer"). Setup section gained a claude.ai web row pointing at the web-only fallback for now.
+- `7c90158` Public `/info/claude-connector` docs page rendering `docs/connectors/claude.md`. Same `?raw`-import pattern as PrivacyPage/TermsPage. Three example prompts mapped to the canonical `checking_modes` from `recipe-examples.json` (broad_discovery, judgment_with_reasoning, logging_stated_preference). Privacy policy §7 dropped the "self-serve deletion is on the build-out checklist" promise so the live text matched reality at the time.
+- `7a3e57c` Root `npm run db:generate` script delegating to the workspace's existing chained script (drizzle-kit + data-model docs regen). Eliminates the cwd-trap that broke a previous gate run (cd into `packages/db` for migration, then `npm run test:ci` from there → "Missing script: test:ci"). Incidentally caught `docs/architecture/data-model-generated.md` was last regenerated against migration 0007 — bumped to 0019 (13 migrations of drift).
+- `a46636c` OAuth 2.1 DB schema. New tables `oauth_clients` and `oauth_authorization_codes`; three new columns on `api_keys` (refresh_token_hash, refresh_token_expires_at, oauth_client_id). Access tokens reuse the existing `api_keys` row with `key_type='oauth'` — OAuth is an issuance flow, not a parallel auth population. Refresh tokens live on the same row so rotation is a single INSERT + UPDATE.
+- `d9c15e1` Metadata endpoints (`/.well-known/oauth-authorization-server` per RFC 8414, `/.well-known/oauth-protected-resource` per RFC 9728) + Dynamic Client Registration at `POST /oauth/register` per RFC 7591. Redirect URI validation: https only with http://localhost permitted for dev. Test infra: `test-ci-local.mjs` now sets `BACKEND_URL` on the spawned backend so absolute-URL renders (briefing, metadata, etc.) match the test BASE.
+- `c5dc4d2` The middle of the flow: `POST /oauth/authorize/grant` (JWT-authed, mints the code given client+redirect+PKCE+chosen-scope) and `POST /oauth/token` (client-authed via client_secret_post or client_secret_basic, handles both authorization_code with PKCE verify and refresh_token with rotation). Server-rendered consent screen via the SPA at `/oauth/authorize` — fetches client info + recipe books, renders a read/write/default-write picker, POSTs to grant, navigates to the returned redirect_url. Authorization endpoint moved to `FRONTEND_URL` in the AS metadata since the consent UX is a SPA page. 14 new end-to-end flow tests including happy path with refresh rotation invalidating both old access AND refresh tokens, every rejection path that matters (wrong code_verifier, code reuse, redirect_uri mismatch at /token, wrong client_secret, unregistered redirect_uri at grant, unsupported response_type, unsupported code_challenge_method, scope default-write outside write set, unauthenticated grant, unsupported grant_type), and `client_secret_basic` auth.
+- `f9a35d5` Tool annotations on all six MCP tool registrations (4 in remote MCP, 2 in stdio MCP) — `readOnlyHint`/`destructiveHint`/`idempotentHint`/`openWorldHint`/`title`. Required for directory submission (missing annotations is the #1 rejection reason per Anthropic's checklist). Origin-header validation middleware on `/mcp/*` per the MCP transport spec — allowlists claude.ai, claude.com, FRONTEND_URL, BACKEND_URL, and localhost variants; absent Origin (server-to-server calls) passes through. Self-hosters can extend with `MCP_ALLOWED_ORIGINS`.
+- `9c231ca` Self-serve account deletion (`DELETE /auth/me`). Password confirmation required. Transactional cascade in dependency order. Owned-shared-orgs guard: if the user owns a non-personal org with other members, 409s asking for ownership transfer first. Privacy policy §7 flipped from manual-only to self-serve, with the email channel retained as fallback. Settings → Account gains the matching UI.
+
+Net: 239 → 277 tests (+38 across OAuth flow, Origin validation, deletion paths). All eight commits passed the canonical `npm run test:ci` gate. Open follow-ups (rate limits on remaining OAuth endpoints, consent-screen styling, ownership-transfer UI, directory submission's non-code prep) live in the new top-level sections of `backlog.md`.
+
+---
+
 ## Agent surfaces
 
 ### 2026-05-12 — Unified agent briefing (one source, one button, includes cluster samples)
