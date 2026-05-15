@@ -37,6 +37,12 @@ export function SiteFooter() {
         How it works
       </Link>
       <Link
+        to="/info/claude-connector"
+        style={{ color: "var(--color-on-surface-variant)", marginLeft: "var(--space-md)" }}
+      >
+        Connect Claude
+      </Link>
+      <Link
         to="/info/privacy"
         style={{ color: "var(--color-on-surface-variant)", marginLeft: "var(--space-md)" }}
       >

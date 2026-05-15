@@ -103,7 +103,7 @@ Wherever you are, you can:
 
 - **Access** all the data we have about you — use `Settings → Export my data` (or call `GET /auth/me/export`).
 - **Correct** your email address by contacting admin@soup.net.
-- **Delete** your account and all your content by emailing **admin@soup.net** with the subject "Delete my account" from the email address you registered with. Self-serve deletion via the Settings page is on the build-out checklist; until then, deletion is processed manually.
+- **Delete** your account and all your content by emailing **admin@soup.net** with the subject "Delete my account" from the email address you registered with. Deletion is processed manually within a reasonable time of your request.
 - **Export** your data in machine-readable JSON format.
 - **Withdraw consent** to data processing — by requesting account deletion as above.
 

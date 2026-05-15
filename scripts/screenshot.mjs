@@ -96,6 +96,7 @@ const SPA_ROUTES = [
   { path: "/info/terms", name: "terms", auth: false },
   { path: "/info/privacy", name: "privacy", auth: false },
   { path: "/info/how-it-works", name: "how-it-works", auth: false },
+  { path: "/info/claude-connector", name: "claude-connector", auth: false },
   // Authenticated — captured after login. The DEV user is system role, so
   // /admin/* is reachable.
   { path: "/app/dashboard", name: "dashboard", auth: true },

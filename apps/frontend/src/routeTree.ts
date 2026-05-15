@@ -23,6 +23,7 @@ import { ForgotPasswordPage } from "./pages/ForgotPasswordPage.js";
 import { ResetPasswordPage } from "./pages/ResetPasswordPage.js";
 import { TermsPage } from "./pages/TermsPage.js";
 import { PrivacyPage } from "./pages/PrivacyPage.js";
+import { ClaudeConnectorPage } from "./pages/ClaudeConnectorPage.js";
 import { LandingPage } from "./pages/LandingPage.js";
 import { HowItWorksPage } from "./pages/HowItWorksPage.js";
 import { AdminLandingPage } from "./pages/AdminLandingPage.js";
@@ -99,6 +100,12 @@ const termsRoute = createRoute({
   getParentRoute: () => infoRoute,
   path: "terms",
   component: TermsPage,
+});
+
+const claudeConnectorRoute = createRoute({
+  getParentRoute: () => infoRoute,
+  path: "claude-connector",
+  component: ClaudeConnectorPage,
 });
 
 // ── Public auth flows: /auth/* ─────────────────────────────────────────────
@@ -287,6 +294,7 @@ export const routeTree = rootRoute.addChildren([
     howItWorksRoute,
     privacyRoute,
     termsRoute,
+    claudeConnectorRoute,
   ]),
   authRoute.addChildren([
     loginRoute,
