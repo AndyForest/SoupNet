@@ -19,6 +19,7 @@ import { docsRoutes } from "./routes/docs";
 import { traceRoutes } from "./routes/traces";
 import { mcpRoutes } from "./routes/mcp";
 import { uploadsRoutes } from "./routes/uploads";
+import { oauthRoutes, oauthWellKnownRoutes } from "./routes/oauth";
 import { startEmbeddingWorker } from "./embedding-worker";
 import type { AppEnv } from "./types";
 
@@ -100,6 +101,8 @@ app.route("/docs", docsRoutes);
 app.route("/traces", traceRoutes);
 app.route("/mcp", mcpRoutes);
 app.route("/uploads", uploadsRoutes);
+app.route("/oauth", oauthRoutes);
+app.route("/.well-known", oauthWellKnownRoutes);
 
 // Startup
 const port = parseInt(process.env["PORT"] ?? "3101", 10);

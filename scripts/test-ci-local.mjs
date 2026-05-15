@@ -145,6 +145,10 @@ async function main() {
         ALLOW_AUTO_SETUP: "true",
         DISABLE_RATE_LIMIT: "true",
         PORT: String(CI_PORT),
+        // Align the backend's self-knowledge with the port it listens on, so
+        // surfaces that render absolute URLs (briefing, OAuth metadata, etc.)
+        // match what tests fetch via BASE = CI_BACKEND.
+        BACKEND_URL: CI_BACKEND,
       },
       stdio: "inherit",
     });
