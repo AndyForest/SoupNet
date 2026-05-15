@@ -14,6 +14,7 @@ const baseNavItems = [
   { to: "/app/keys", label: "API Keys", icon: "key" as const },
   { to: "/app/map", label: "Recipe Map", icon: "map" as const },
   { to: "/app/recipe-books", label: "Recipe Books", icon: "users" as const },
+  { to: "/info/connect", label: "Connect to AI", icon: "external-link" as const },
   { to: "/app/settings", label: "Settings", icon: "settings" as const },
 ] as const;
 

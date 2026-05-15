@@ -23,7 +23,7 @@ import { ForgotPasswordPage } from "./pages/ForgotPasswordPage.js";
 import { ResetPasswordPage } from "./pages/ResetPasswordPage.js";
 import { TermsPage } from "./pages/TermsPage.js";
 import { PrivacyPage } from "./pages/PrivacyPage.js";
-import { ClaudeConnectorPage } from "./pages/ClaudeConnectorPage.js";
+import { ConnectPage } from "./pages/ConnectPage.js";
 import { OAuthAuthorizePage } from "./pages/OAuthAuthorizePage.js";
 import { LandingPage } from "./pages/LandingPage.js";
 import { HowItWorksPage } from "./pages/HowItWorksPage.js";
@@ -103,10 +103,20 @@ const termsRoute = createRoute({
   component: TermsPage,
 });
 
-const claudeConnectorRoute = createRoute({
+const connectRoute = createRoute({
+  getParentRoute: () => infoRoute,
+  path: "connect",
+  component: ConnectPage,
+});
+
+// 308 redirect from the old slug so anything that linked to /info/claude-connector
+// (early shares, the directory submission's draft assets) keeps working.
+const claudeConnectorLegacyRoute = createRoute({
   getParentRoute: () => infoRoute,
   path: "claude-connector",
-  component: ClaudeConnectorPage,
+  beforeLoad: () => {
+    throw redirect({ to: "/info/connect" });
+  },
 });
 
 // ── OAuth consent (public — handles its own login redirect): /oauth/authorize ──
@@ -303,7 +313,8 @@ export const routeTree = rootRoute.addChildren([
     howItWorksRoute,
     privacyRoute,
     termsRoute,
-    claudeConnectorRoute,
+    connectRoute,
+    claudeConnectorLegacyRoute,
   ]),
   oauthAuthorizeRoute,
   authRoute.addChildren([

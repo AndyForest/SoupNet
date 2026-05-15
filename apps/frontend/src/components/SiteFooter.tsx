@@ -37,10 +37,10 @@ export function SiteFooter() {
         How it works
       </Link>
       <Link
-        to="/info/claude-connector"
+        to="/info/connect"
         style={{ color: "var(--color-on-surface-variant)", marginLeft: "var(--space-md)" }}
       >
-        Connect Claude
+        Connect to AI
       </Link>
       <Link
         to="/info/privacy"
