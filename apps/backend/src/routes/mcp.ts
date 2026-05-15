@@ -229,7 +229,7 @@ function createMcpServer(backendUrl: string): McpServer {
         "not the user's name and not the project name when the recipe-book description already implies it. " +
         "Common voice mistakes: 'As an AI agent…' (your voice instead of the user's), " +
         "'As Andy…' (collapses role into a specific person), " +
-        "'As a Soup.net developer…' when written to the soup-net-development recipe book (duplicates context the recipe-book description already provides). " +
+        "'As a Soup.net developer…' when written to the soup-net-development recipe book (duplicates context the recipe-book description already provides; replace with the functional equivalent like 'front-end React developer', not nothing). " +
         "Every recipe needs context — role and goal scope the judgment."
       ),
       supporting_evidence: z.string().describe(
