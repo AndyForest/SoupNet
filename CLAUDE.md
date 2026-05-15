@@ -72,7 +72,9 @@ This is how multiple AI agents coordinate across sessions without explicit commu
 
 ## Pre-Commit Workflow
 
-`.github/workflows/ci.yml` is the source of truth for what "passing" means. `npm run test:ci` (wrapping `scripts/test-ci-local.mjs`) reproduces that environment locally — fresh isolated postgres on port 5534, same env vars, same build + typecheck + lint + test sequence — and is the single canonical gate you run before committing. Typecheck runs after a workspace-wide clear of `*.tsbuildinfo` so incremental cache can't false-pass the way CI's clean checkout would catch:
+`.github/workflows/ci.yml` is the source of truth for what "passing" means. `npm run test:ci` (wrapping `scripts/test-ci-local.mjs`) reproduces that environment locally — fresh isolated postgres on port 5534, same env vars, same build + typecheck + lint + test sequence — and is the single canonical gate you run before committing. Typecheck runs after a workspace-wide clear of `*.tsbuildinfo` so incremental cache can't false-pass the way CI's clean checkout would catch.
+
+**The two files must stay in sync.** They're maintained separately, so when a gate needs a new env var (e.g. a test asserts on an absolute URL rendered by the backend), add it to `.github/workflows/ci.yml` FIRST, then mirror it into `scripts/test-ci-local.mjs`. Doing it the other way around — updating the local script first — makes the local gate green while the real CI fails on push, exactly the failure mode the local gate is supposed to prevent (lost on 2026-05-14 when `FRONTEND_URL` landed in the local mirror only and the deploy failed on GitHub).
 
 ```bash
 npm run test:ci

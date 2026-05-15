@@ -41,6 +41,12 @@ jobs:
       PGDATABASE: claimnet
       JWT_SECRET: ci-test-secret-64-char-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
       BACKEND_URL: http://localhost:3001
+      # Frontend URL used by surfaces that render absolute frontend links
+      # (OAuth authorization_endpoint metadata, password reset emails, etc.).
+      # The frontend dev server isn't running during CI, but anything that
+      # interpolates FRONTEND_URL still needs a deterministic value to assert
+      # against. Mirrors CI_FRONTEND in scripts/test-ci-local.mjs.
+      FRONTEND_URL: http://localhost:5273
       DEV_USERNAME: ci@test.local
       DEV_PASSWORD: ci-test-password
       GEMINI_API_KEY: ""
