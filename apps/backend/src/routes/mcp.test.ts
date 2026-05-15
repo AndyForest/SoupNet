@@ -201,6 +201,69 @@ describe.skipIf(!BASE)("/mcp stateless behavior", () => {
     expect(callText.toLowerCase()).toContain("not found in your key's write recipe books");
   });
 
+  // Origin-header validation (MCP transport spec §Security): when an Origin
+  // is present, the server checks an allowlist. Absent Origin (typical for
+  // server-to-server calls from claude.ai's cloud) passes through.
+  it("accepts a request from an allowlisted Origin (claude.ai)", async () => {
+    const res = await fetch(`${BASE}/mcp`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: ACCEPT_BOTH,
+        Authorization: `Bearer ${apiKey}`,
+        Origin: "https://claude.ai",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "initialize",
+        params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "origin-allowed-test", version: "0.0.1" } },
+        id: 1,
+      }),
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it("rejects a request from a non-allowlisted Origin", async () => {
+    const res = await fetch(`${BASE}/mcp`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: ACCEPT_BOTH,
+        Authorization: `Bearer ${apiKey}`,
+        Origin: "https://attacker.example",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "initialize",
+        params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "origin-rejected-test", version: "0.0.1" } },
+        id: 1,
+      }),
+    });
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error?: string };
+    expect(body.error).toBe("forbidden_origin");
+  });
+
+  it("accepts a request with no Origin header (server-to-server)", async () => {
+    // The Bearer-token check is the security boundary for these calls; Origin
+    // validation only kicks in when an Origin header is actually present.
+    const res = await fetch(`${BASE}/mcp`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: ACCEPT_BOTH,
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "initialize",
+        params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "no-origin-test", version: "0.0.1" } },
+        id: 1,
+      }),
+    });
+    expect(res.status).toBe(200);
+  });
+
   it("accepts a stale session-id header without erroring (header is ignored in stateless mode)", async () => {
     // Critical regression guard: clients that cached an old session ID from a
     // pre-stateless server must not get 404s. The SDK's validateSession is a

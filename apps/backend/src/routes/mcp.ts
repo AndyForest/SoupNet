@@ -67,6 +67,66 @@ mcpRouter.use(
   }),
 );
 
+// ── Origin validation ───────────────────────────────────────────────────────
+//
+// The MCP transport spec (Streamable HTTP, 2025-03-26) says: "Servers SHOULD
+// validate the Origin header on all incoming connections to prevent DNS
+// rebinding attacks." Distinct from CORS, which is a browser concern — Origin
+// validation is the server enforcing a whitelist regardless of who's calling.
+//
+// Browser-side MCP clients send an Origin header tied to their page origin.
+// Server-to-server callers (claude.ai's cloud → mcp.soup.net) typically don't
+// send Origin at all, so the absence-passes rule below preserves that path.
+//
+// Allowlist:
+//   - Anthropic's web origins (claude.ai, claude.com) for the connector flow
+//   - The frontend origin for any browser-based MCP testing from the SPA
+//   - localhost variants for development
+//
+// Override with MCP_ALLOWED_ORIGINS (comma-separated) for self-hosted
+// deployments that need to whitelist additional origins.
+
+function getAllowedOrigins(): Set<string> {
+  const fixed = [
+    "https://claude.ai",
+    "https://claude.com",
+    process.env["FRONTEND_URL"] ?? "http://localhost:5273",
+    process.env["BACKEND_URL"] ?? "http://localhost:3101",
+  ];
+  const extra = (process.env["MCP_ALLOWED_ORIGINS"] ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return new Set([...fixed, ...extra]);
+}
+
+function isAllowedOrigin(origin: string, allowlist: Set<string>): boolean {
+  if (allowlist.has(origin)) return true;
+  // localhost on any port is acceptable for development — match scheme +
+  // host without port-locking. Production deployments rely on the fixed list.
+  try {
+    const u = new URL(origin);
+    if (u.protocol === "http:" && (u.hostname === "localhost" || u.hostname === "127.0.0.1" || u.hostname === "[::1]")) {
+      return true;
+    }
+  } catch {
+    /* malformed origin — let it fall through to reject */
+  }
+  return false;
+}
+
+mcpRouter.use("/*", async (c, next) => {
+  const origin = c.req.header("origin");
+  // No Origin header → server-to-server call → pass through. The Bearer-token
+  // check downstream is the security boundary in that case.
+  if (!origin) return next();
+  const allowlist = getAllowedOrigins();
+  if (!isAllowedOrigin(origin, allowlist)) {
+    return c.json({ error: "forbidden_origin", origin }, 403);
+  }
+  return next();
+});
+
 // Stateless mode (2026-04-18): no session map, no cleanup sweep.
 // Each request gets a fresh transport+server per the SDK's stateless contract.
 // The MCP TypeScript SDK's StreamableHTTP transport with `sessionIdGenerator:
@@ -295,6 +355,16 @@ function createMcpServer(backendUrl: string): McpServer {
         "Optional region-of-interest metadata for the attached file. Currently supports image_box; video and PDF region types planned."
       ),
     },
+    {
+      title: "Recipe check",
+      // Logs a trace as a side effect — not read-only — but the trace is append-only
+      // and non-destructive (no overwrite, no delete). Corpus is open-world: results
+      // pull from a corpus that other agents may have written to between calls.
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
     async ({ recipe, supporting_evidence, clusters, max_chars, axes, recipe_book, read_recipe_books, file_url, file_base64, file_name, file_mime_type, region }, extra) => {
       // Get API key from auth info (passed by the transport middleware)
       const apiKey = (extra.authInfo as Record<string, unknown> | undefined)?.["token"] as string | undefined;
@@ -418,6 +488,12 @@ function createMcpServer(backendUrl: string): McpServer {
     "Get the Soup.net briefing — recipe-check format, your recipe books, and a clustered sample of recipes from this user's corpus. " +
     "Call this before your first check to learn the format and prime your context with the shape of the user's taste.",
     {},
+    {
+      title: "Get briefing",
+      readOnlyHint: true,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
     async (_params, extra) => {
       const apiKey = (extra.authInfo as Record<string, unknown> | undefined)?.["token"] as string | undefined;
       if (!apiKey) {
@@ -465,6 +541,13 @@ function createMcpServer(backendUrl: string): McpServer {
     "list_my_recipe_books",
     "Refresh your Soup.net corpus context — returns the user's identity, recipe books (with descriptions, access levels, and other members of shared books), and a clustered sample of recipes from the corpus. Call this when the conversation moves into a new area of the user's work, or periodically during long sessions on shared recipe books to pick up new recipes from collaborators. Same shape as the recipe-books section of the get_briefing output, without the boilerplate.",
     {},
+    {
+      title: "List my recipe books",
+      readOnlyHint: true,
+      idempotentHint: true,
+      // openWorldHint: true because shared books may gain new recipes between calls.
+      openWorldHint: true,
+    },
     async (_params, extra) => {
       const apiKey = (extra.authInfo as Record<string, unknown> | undefined)?.["token"] as string | undefined;
       if (!apiKey) {
@@ -529,6 +612,15 @@ function createMcpServer(backendUrl: string): McpServer {
         "The new description text. Max 2000 chars. Pass an empty string only " +
         "if you genuinely intend to clear the description."
       ),
+    },
+    {
+      title: "Update recipe book description",
+      // Mutates a single field; idempotent under the same input. Not
+      // destructive — the description is metadata, not user content.
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
     },
     async ({ recipe_book_id_or_slug, description }, extra) => {
       const apiKey = (extra.authInfo as Record<string, unknown> | undefined)?.["token"] as string | undefined;

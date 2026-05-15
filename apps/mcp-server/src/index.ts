@@ -198,6 +198,14 @@ server.tool(
       "Supports: images (PNG/JPEG/WebP), video (MP4/MOV ≤120s), audio (MP3/WAV/FLAC/OGG), PDF (≤6 pages)."
     ),
   },
+  {
+    title: "Recipe check",
+    // Append-only trace as a side effect — not read-only, but not destructive either.
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: true,
+  },
   async ({ recipe, supporting_evidence, clusters, max_chars, file }) => {
     if (!apiKey) {
       return {
@@ -295,6 +303,12 @@ server.tool(
   "Get the Soup.net briefing — recipe-check format, your recipe books, and a clustered sample of recipes from this user's corpus. " +
   "Call this before your first check to learn the format and prime your context with the shape of the user's taste.",
   {},
+  {
+    title: "Get briefing",
+    readOnlyHint: true,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
   async () => {
     if (!apiKey) {
       return {
