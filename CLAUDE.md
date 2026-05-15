@@ -32,9 +32,19 @@ npm run build:packages                  # Build internal packages
 source .env && npm run dev:backend      # Hono server with tsx watch on :3101
 npm run dev:frontend                    # Vite dev server on :5273
 
-# Database migrations (Drizzle only — single schema)
-cd packages/db && npx drizzle-kit generate   # Generate migration from schema changes
-# Migrations are applied automatically at backend startup (apps/backend/src/db.ts)
+# Database migrations (Drizzle only — single schema). To add a new table:
+#   1. Write packages/db/src/schema/<name>.ts (use api-keys.ts as a template).
+#   2. Add `export * from "./<name>";` to packages/db/src/schema/index.ts.
+#   3. From the project root: npm run db:generate
+#      This regenerates the SQL migration AND docs/architecture/data-model-generated.md.
+#      Drizzle assigns the migration filename automatically. To pass a descriptive
+#      --name, run the underlying tool directly (and cd back to root afterwards —
+#      the @soupnet/db workspace has no test:ci script, so running gates from there
+#      will fail):
+#        cd packages/db && npx drizzle-kit generate --name <descriptive_name> && cd -
+#        npm run generate:data-model      # regenerate the data-model doc
+#   4. Review the generated SQL in packages/db/migrations/ before committing.
+# Migrations apply automatically at backend startup (apps/backend/src/db.ts).
 
 # Quality gates — canonical pre-commit gate is test:ci (see Pre-Commit Workflow)
 npm run test:ci                  # fresh isolated DB, mirrors CI exactly

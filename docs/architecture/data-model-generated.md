@@ -1,10 +1,10 @@
 # ClaimNet Data Model — Generated Reference
 
-> **Auto-generated** from Drizzle migration snapshot `0007_snapshot.json`.
+> **Auto-generated** from Drizzle migration snapshot `0019_snapshot.json`.
 > Do not edit by hand. Regenerate with: `npx tsx scripts/generate-data-model-docs.ts`
 >
-> Generated: 2026-04-04
-> Tables: 20 | Schema: `claimnet`
+> Generated: 2026-05-15
+> Tables: 21 | Schema: `claimnet`
 
 For design rationale, conventions, and context, see [data-model.md](data-model.md).
 
@@ -45,6 +45,7 @@ erDiagram
         uuid id PK
         uuid actor_user_id
         uuid actor_node_id
+        uuid api_key_id
         text action
         text target_type
         uuid target_id
@@ -91,6 +92,7 @@ erDiagram
         text vector_source
         text status
         text error
+        integer retry_count
         halfvec vector
         timestamptz created_at
         timestamptz updated_at
@@ -115,6 +117,8 @@ erDiagram
         uuid group_id FK
         uuid user_id FK
         text role
+        boolean daily_read
+        boolean daily_write
         timestamptz joined_at
     }
 
@@ -130,13 +134,14 @@ erDiagram
 
     invitations {
         uuid id PK
-        uuid inviter_id
-        uuid group_id
+        uuid inviter_id FK
+        uuid group_id FK
         text email
         text token
         boolean bypass_cap
         timestamptz expires_at
         timestamptz accepted_at
+        timestamptz declined_at
         timestamptz created_at
     }
 
@@ -169,6 +174,8 @@ erDiagram
         text file_url
         text file_mime_type
         varchar file_hash
+        text original_filename
+        jsonb region_meta
         timestamptz created_at
     }
 
@@ -208,6 +215,16 @@ erDiagram
         timestamptz updated_at
     }
 
+    uploads {
+        uuid id PK
+        uuid api_key_id
+        text content_hash
+        text mime_type
+        integer size_bytes
+        text original_filename
+        timestamptz created_at
+    }
+
     users {
         uuid id PK
         text email
@@ -219,6 +236,13 @@ erDiagram
         timestamptz email_verified_at
         text email_verification_token
         timestamptz email_verification_token_created_at
+        text password_reset_token_hash
+        timestamptz password_reset_token_created_at
+        timestamptz tos_accepted_at
+        timestamptz last_login_at
+        timestamptz suspended_at
+        text suspended_reason
+        jsonb preferences
         timestamptz created_at
         timestamptz updated_at
     }
@@ -241,6 +265,8 @@ erDiagram
     group_members }o--|| groups : "group_id"
     group_members }o--|| users : "user_id"
     groups }o--|| organizations : "organization_id"
+    invitations }o--|| users : "inviter_id"
+    invitations }o--|| groups : "group_id"
     organizations }o--|| users : "owner_id"
     reference_source_cache }o--|| references : "reference_id"
     trace_evidence }o--|| traces : "trace_id"
@@ -284,6 +310,13 @@ These are created by raw SQL in migration files and are not captured in the snap
 | `email_verified_at` | `timestamptz` | YES |  |  |
 | `email_verification_token` | `text` | YES |  |  |
 | `email_verification_token_created_at` | `timestamptz` | YES |  |  |
+| `password_reset_token_hash` | `text` | YES |  |  |
+| `password_reset_token_created_at` | `timestamptz` | YES |  |  |
+| `tos_accepted_at` | `timestamptz` | YES |  |  |
+| `last_login_at` | `timestamptz` | YES |  |  |
+| `suspended_at` | `timestamptz` | YES |  |  |
+| `suspended_reason` | `text` | YES |  |  |
+| `preferences` | `jsonb` | NO | `'{}'::jsonb` |  |
 | `created_at` | `timestamptz` | NO | `now()` |  |
 | `updated_at` | `timestamptz` | NO | `now()` |  |
 
@@ -349,6 +382,8 @@ These are created by raw SQL in migration files and are not captured in the snap
 | `group_id` | `uuid` | NO |  |  |
 | `user_id` | `uuid` | NO |  |  |
 | `role` | `text` | NO | `'member'` |  |
+| `daily_read` | `boolean` | NO |  |  |
+| `daily_write` | `boolean` | NO |  |  |
 | `joined_at` | `timestamptz` | NO | `now()` |  |
 
 **Foreign keys:**
@@ -413,6 +448,8 @@ These are created by raw SQL in migration files and are not captured in the snap
 | `file_url` | `text` | YES |  |  |
 | `file_mime_type` | `text` | YES |  |  |
 | `file_hash` | `varchar(64)` | YES |  |  |
+| `original_filename` | `text` | YES |  |  |
+| `region_meta` | `jsonb` | YES |  |  |
 | `created_at` | `timestamptz` | NO | `now()` |  |
 
 ---
@@ -521,7 +558,12 @@ These are created by raw SQL in migration files and are not captured in the snap
 | `bypass_cap` | `boolean` | NO |  |  |
 | `expires_at` | `timestamptz` | NO |  |  |
 | `accepted_at` | `timestamptz` | YES |  |  |
+| `declined_at` | `timestamptz` | YES |  |  |
 | `created_at` | `timestamptz` | NO | `now()` |  |
+
+**Foreign keys:**
+- `inviter_id` → `users.id`
+- `group_id` → `groups.id`
 
 **Unique constraints:**
 - `invitations_token_unique`: `(token)`
@@ -553,6 +595,7 @@ These are created by raw SQL in migration files and are not captured in the snap
 | `id` | `uuid` | NO | `gen_random_uuid()` | PK |
 | `actor_user_id` | `uuid` | YES |  |  |
 | `actor_node_id` | `uuid` | YES |  |  |
+| `api_key_id` | `uuid` | YES |  |  |
 | `action` | `text` | NO |  |  |
 | `target_type` | `text` | YES |  |  |
 | `target_id` | `uuid` | YES |  |  |
@@ -563,6 +606,7 @@ These are created by raw SQL in migration files and are not captured in the snap
 - `audit_log_actor_user_id_idx`: `(actor_user_id)`
 - `audit_log_target_id_idx`: `(target_id)`
 - `audit_log_occurred_at_idx`: `(occurred_at)`
+- `audit_log_api_key_id_occurred_at_idx`: `(api_key_id, occurred_at)`
 
 ---
 
@@ -646,6 +690,7 @@ These are created by raw SQL in migration files and are not captured in the snap
 | `vector_source` | `text` | NO | `'server'` |  |
 | `status` | `text` | NO | `'pending'` |  |
 | `error` | `text` | YES |  |  |
+| `retry_count` | `integer` | NO |  |  |
 | `vector` | `halfvec(3072)` | YES |  |  |
 | `created_at` | `timestamptz` | NO | `now()` |  |
 | `updated_at` | `timestamptz` | NO | `now()` |  |
