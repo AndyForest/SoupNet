@@ -128,3 +128,339 @@ export class RegisterClientError extends Error {
     this.name = "RegisterClientError";
   }
 }
+
+// ── Client lookup ────────────────────────────────────────────────────────────
+
+interface OAuthClientRow {
+  client_id: string;
+  client_secret_hash: string;
+  client_name: string | null;
+  redirect_uris: string[];
+}
+
+export interface OAuthClientPublic {
+  clientId: string;
+  clientName: string | null;
+  redirectUris: string[];
+}
+
+export async function getClientPublic(
+  db: PostgresJsDatabase,
+  clientId: string,
+): Promise<OAuthClientPublic | null> {
+  const rows = await db.execute(sql`
+    SELECT client_id, client_secret_hash, client_name, redirect_uris
+    FROM claimnet.oauth_clients
+    WHERE client_id = ${clientId}
+    LIMIT 1
+  `);
+  const row = (rows as unknown as OAuthClientRow[])[0];
+  if (!row) return null;
+  return {
+    clientId: row.client_id,
+    clientName: row.client_name,
+    redirectUris: row.redirect_uris,
+  };
+}
+
+/** Constant-time verify of client_secret. Returns true if the client exists
+ *  and the secret matches. */
+export async function verifyClientCredentials(
+  db: PostgresJsDatabase,
+  clientId: string,
+  clientSecret: string,
+): Promise<boolean> {
+  const rows = await db.execute(sql`
+    SELECT client_secret_hash FROM claimnet.oauth_clients
+    WHERE client_id = ${clientId}
+    LIMIT 1
+  `);
+  const row = (rows as unknown as Array<{ client_secret_hash: string }>)[0];
+  if (!row) return false;
+  const provided = hashOpaque(clientSecret);
+  return crypto.timingSafeEqual(
+    Buffer.from(provided, "hex"),
+    Buffer.from(row.client_secret_hash, "hex"),
+  );
+}
+
+// ── Authorization code mint/redeem ───────────────────────────────────────────
+
+export const AUTH_CODE_TTL_SECONDS = 5 * 60;
+
+export interface MintAuthCodeInput {
+  clientId: string;
+  userId: string;
+  redirectUri: string;
+  codeChallenge: string;
+  codeChallengeMethod: string;
+  scopeReadGroupIds: string[];
+  scopeWriteGroupIds: string[];
+  scopeDefaultWriteGroupId: string;
+}
+
+export async function mintAuthCode(
+  db: PostgresJsDatabase,
+  input: MintAuthCodeInput,
+): Promise<{ code: string; expiresAt: Date }> {
+  const code = randomBase62(32);
+  const codeHash = hashOpaque(code);
+  const expiresAt = new Date(Date.now() + AUTH_CODE_TTL_SECONDS * 1000);
+
+  await db.execute(sql`
+    INSERT INTO claimnet.oauth_authorization_codes (
+      id, code_hash, client_id, user_id, redirect_uri,
+      code_challenge, code_challenge_method,
+      scope_read_group_ids, scope_write_group_ids, scope_default_write_group_id,
+      expires_at, created_at
+    ) VALUES (
+      gen_random_uuid(),
+      ${codeHash},
+      ${input.clientId},
+      ${input.userId}::uuid,
+      ${input.redirectUri},
+      ${input.codeChallenge},
+      ${input.codeChallengeMethod},
+      ${sql`ARRAY[${sql.join(input.scopeReadGroupIds.map((g) => sql`${g}::uuid`), sql`,`)}]`},
+      ${sql`ARRAY[${sql.join(input.scopeWriteGroupIds.map((g) => sql`${g}::uuid`), sql`,`)}]`},
+      ${input.scopeDefaultWriteGroupId}::uuid,
+      ${expiresAt.toISOString()}::timestamptz,
+      NOW()
+    )
+  `);
+
+  return { code, expiresAt };
+}
+
+export class RedeemCodeError extends Error {
+  constructor(public oauthError: string, message: string) {
+    super(message);
+    this.name = "RedeemCodeError";
+  }
+}
+
+interface AuthCodeRow {
+  client_id: string;
+  user_id: string;
+  redirect_uri: string;
+  code_challenge: string;
+  code_challenge_method: string;
+  scope_read_group_ids: string[];
+  scope_write_group_ids: string[];
+  scope_default_write_group_id: string;
+  consumed_at: Date | null;
+  expires_at: Date;
+}
+
+export interface RedeemedAuthCode {
+  clientId: string;
+  userId: string;
+  redirectUri: string;
+  scopeReadGroupIds: string[];
+  scopeWriteGroupIds: string[];
+  scopeDefaultWriteGroupId: string;
+}
+
+/**
+ * Look up an authorization code, verify PKCE, mark it consumed atomically.
+ * Throws RedeemCodeError on any failure path so the route handler can map
+ * each to the appropriate OAuth error response.
+ */
+export async function redeemAuthCode(
+  db: PostgresJsDatabase,
+  params: { code: string; codeVerifier: string; clientId: string; redirectUri: string },
+): Promise<RedeemedAuthCode> {
+  const codeHash = hashOpaque(params.code);
+
+  // Single UPDATE...RETURNING that atomically marks the code consumed if and
+  // only if it's still valid and unconsumed. Avoids the TOCTOU race a separate
+  // SELECT + UPDATE would have.
+  const rows = await db.execute(sql`
+    UPDATE claimnet.oauth_authorization_codes
+    SET consumed_at = NOW()
+    WHERE code_hash = ${codeHash}
+      AND consumed_at IS NULL
+      AND expires_at > NOW()
+    RETURNING client_id, user_id, redirect_uri, code_challenge, code_challenge_method,
+              scope_read_group_ids, scope_write_group_ids, scope_default_write_group_id,
+              consumed_at, expires_at
+  `);
+  const row = (rows as unknown as AuthCodeRow[])[0];
+  if (!row) throw new RedeemCodeError("invalid_grant", "authorization code is invalid, expired, or already used");
+
+  // Client + redirect_uri must match what was issued. We've already consumed
+  // the code at this point — that's fine, replaying it would still fail.
+  if (row.client_id !== params.clientId) {
+    throw new RedeemCodeError("invalid_grant", "client_id does not match the authorization code");
+  }
+  if (row.redirect_uri !== params.redirectUri) {
+    throw new RedeemCodeError("invalid_grant", "redirect_uri does not match the authorization code");
+  }
+
+  // PKCE verification. We accept only S256 at issuance time, so this branch
+  // is the only one expected. Defensive against future spec additions.
+  if (row.code_challenge_method !== "S256") {
+    throw new RedeemCodeError("invalid_grant", "unsupported code_challenge_method");
+  }
+  const computed = crypto
+    .createHash("sha256")
+    .update(params.codeVerifier)
+    .digest("base64url");
+  if (computed !== row.code_challenge) {
+    throw new RedeemCodeError("invalid_grant", "code_verifier does not match code_challenge");
+  }
+
+  return {
+    clientId: row.client_id,
+    userId: row.user_id,
+    redirectUri: row.redirect_uri,
+    scopeReadGroupIds: row.scope_read_group_ids,
+    scopeWriteGroupIds: row.scope_write_group_ids,
+    scopeDefaultWriteGroupId: row.scope_default_write_group_id,
+  };
+}
+
+// ── Access + refresh token bundle ────────────────────────────────────────────
+//
+// An OAuth access token IS a Soup.net scoped API key (cn_s_... prefix) — same
+// Bearer validation path, same recipe-book scope fields. The refresh_token is
+// a separate opaque value stored as refresh_token_hash on the same api_keys
+// row. Refresh rotation issues a new row and revokes the old one (expires_at
+// set to NOW); the old refresh token is single-use by construction.
+
+export const ACCESS_TOKEN_TTL_SECONDS = 60 * 60; // 1 hour
+export const REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
+
+export interface OAuthTokenBundle {
+  accessToken: string;
+  refreshToken: string;
+  expiresInSeconds: number;
+  scope: string;
+}
+
+interface MintTokenBundleInput {
+  userId: string;
+  clientId: string;
+  scopeReadGroupIds: string[];
+  scopeWriteGroupIds: string[];
+  scopeDefaultWriteGroupId: string;
+}
+
+export async function mintOAuthTokenBundle(
+  db: PostgresJsDatabase,
+  input: MintTokenBundleInput,
+): Promise<OAuthTokenBundle> {
+  const accessToken = `cn_s_${randomBase62(32)}`;
+  const refreshToken = randomBase62(32);
+  const accessTokenHash = hashOpaque(accessToken);
+  const refreshTokenHash = hashOpaque(refreshToken);
+  const keyPrefix = accessToken.slice(0, 8);
+  const accessExpiresAt = new Date(Date.now() + ACCESS_TOKEN_TTL_SECONDS * 1000);
+  const refreshExpiresAt = new Date(Date.now() + REFRESH_TOKEN_TTL_SECONDS * 1000);
+
+  await db.execute(sql`
+    INSERT INTO claimnet.api_keys (
+      id, key, key_prefix, user_id, read_group_ids, write_group_ids,
+      default_write_group_id, label, key_type, refresh_token_hash,
+      refresh_token_expires_at, oauth_client_id, expires_at, created_at
+    ) VALUES (
+      gen_random_uuid(),
+      ${accessTokenHash},
+      ${keyPrefix},
+      ${input.userId}::uuid,
+      ${sql`ARRAY[${sql.join(input.scopeReadGroupIds.map((g) => sql`${g}::uuid`), sql`,`)}]`},
+      ${sql`ARRAY[${sql.join(input.scopeWriteGroupIds.map((g) => sql`${g}::uuid`), sql`,`)}]`},
+      ${input.scopeDefaultWriteGroupId}::uuid,
+      ${`oauth: ${input.clientId}`},
+      'oauth',
+      ${refreshTokenHash},
+      ${refreshExpiresAt.toISOString()}::timestamptz,
+      ${input.clientId},
+      ${accessExpiresAt.toISOString()}::timestamptz,
+      NOW()
+    )
+  `);
+
+  return {
+    accessToken,
+    refreshToken,
+    expiresInSeconds: ACCESS_TOKEN_TTL_SECONDS,
+    scope: scopeString(input.scopeWriteGroupIds, input.scopeReadGroupIds),
+  };
+}
+
+interface RefreshableKeyRow {
+  user_id: string;
+  oauth_client_id: string;
+  read_group_ids: string[];
+  write_group_ids: string[];
+  default_write_group_id: string;
+  refresh_token_expires_at: Date;
+}
+
+export class RefreshTokenError extends Error {
+  constructor(public oauthError: string, message: string) {
+    super(message);
+    this.name = "RefreshTokenError";
+  }
+}
+
+/**
+ * Rotate a refresh token. Atomically locates the api_keys row by its
+ * refresh_token_hash, verifies it belongs to the requesting client and hasn't
+ * expired, mints a NEW api_keys row with new access + refresh tokens, and
+ * revokes the old row (expires_at = NOW). Old access token stops validating
+ * immediately, old refresh token is gone with the old row.
+ */
+export async function refreshOAuthTokenBundle(
+  db: PostgresJsDatabase,
+  params: { refreshToken: string; clientId: string },
+): Promise<OAuthTokenBundle> {
+  const refreshTokenHash = hashOpaque(params.refreshToken);
+  const rows = await db.execute(sql`
+    SELECT id, user_id, oauth_client_id, read_group_ids, write_group_ids,
+           default_write_group_id, refresh_token_expires_at
+    FROM claimnet.api_keys
+    WHERE refresh_token_hash = ${refreshTokenHash}
+      AND key_type = 'oauth'
+      AND expires_at > NOW()
+    LIMIT 1
+  `);
+  const row = (rows as unknown as Array<RefreshableKeyRow & { id: string }>)[0];
+  if (!row) throw new RefreshTokenError("invalid_grant", "refresh token is invalid or revoked");
+  if (row.oauth_client_id !== params.clientId) {
+    throw new RefreshTokenError("invalid_grant", "client_id does not match the refresh token");
+  }
+  if (new Date(row.refresh_token_expires_at).getTime() <= Date.now()) {
+    throw new RefreshTokenError("invalid_grant", "refresh token has expired");
+  }
+
+  // Mint the new bundle first so the old row stays valid until we know the
+  // new row landed cleanly.
+  const newBundle = await mintOAuthTokenBundle(db, {
+    userId: row.user_id,
+    clientId: row.oauth_client_id,
+    scopeReadGroupIds: row.read_group_ids,
+    scopeWriteGroupIds: row.write_group_ids,
+    scopeDefaultWriteGroupId: row.default_write_group_id,
+  });
+
+  // Revoke the old row. expires_at=NOW kills both the access token (validation
+  // checks expires_at > NOW) and the refresh path (same check above).
+  await db.execute(sql`
+    UPDATE claimnet.api_keys SET expires_at = NOW() WHERE id = ${row.id}::uuid
+  `);
+
+  return newBundle;
+}
+
+function scopeString(writeIds: string[], readIds: string[]): string {
+  // Coarse-scope vocabulary: "read" if any read access, "write" if any write
+  // access. Per-recipe-book detail is captured in the row's read_group_ids /
+  // write_group_ids arrays and surfaced on the consent screen — claude.ai's
+  // OAuth UI just shows the coarse strings.
+  const parts: string[] = [];
+  if (readIds.length > 0) parts.push("read");
+  if (writeIds.length > 0) parts.push("write");
+  return parts.join(" ");
+}

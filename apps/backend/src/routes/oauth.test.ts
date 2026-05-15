@@ -6,6 +6,7 @@ import { describe, it, expect } from "vitest";
  */
 
 const BASE = process.env["BACKEND_URL"] ?? "";
+const FRONTEND = process.env["FRONTEND_URL"] ?? "";
 
 interface DcrResponse {
   client_id?: string;
@@ -27,7 +28,8 @@ describe.skipIf(!BASE)("/.well-known/oauth-authorization-server", () => {
 
     const body = (await res.json()) as Record<string, unknown>;
     expect(body["issuer"]).toBe(BASE);
-    expect(body["authorization_endpoint"]).toBe(`${BASE}/oauth/authorize`);
+    // authorization_endpoint is on the frontend (SPA-rendered consent screen).
+    expect(body["authorization_endpoint"]).toBe(`${FRONTEND}/oauth/authorize`);
     expect(body["token_endpoint"]).toBe(`${BASE}/oauth/token`);
     expect(body["registration_endpoint"]).toBe(`${BASE}/oauth/register`);
     expect(body["response_types_supported"]).toEqual(["code"]);

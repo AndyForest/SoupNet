@@ -39,6 +39,11 @@ const CI_PG = {
   PGDATABASE: "claimnet",
 };
 const CI_BACKEND = `http://localhost:${CI_PORT}`;
+// Frontend URL used by surfaces that render absolute frontend links (OAuth
+// authorization_endpoint metadata, password reset emails, etc.). The frontend
+// dev server isn't running during test:ci, but anything that interpolates
+// FRONTEND_URL still needs a deterministic value to assert against.
+const CI_FRONTEND = "http://localhost:5273";
 
 function run(cmd, opts = {}) {
   console.log(`\n> ${cmd}`);
@@ -149,6 +154,7 @@ async function main() {
         // surfaces that render absolute URLs (briefing, OAuth metadata, etc.)
         // match what tests fetch via BASE = CI_BACKEND.
         BACKEND_URL: CI_BACKEND,
+        FRONTEND_URL: CI_FRONTEND,
       },
       stdio: "inherit",
     });
@@ -186,6 +192,7 @@ async function main() {
         ...process.env,
         ...CI_PG,
         BACKEND_URL: CI_BACKEND,
+        FRONTEND_URL: CI_FRONTEND,
         GEMINI_API_KEY: "",
         EMBEDDINGS_PROVIDER: "stub",
         DISABLE_RATE_LIMIT: "true",

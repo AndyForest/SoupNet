@@ -24,6 +24,7 @@ import { ResetPasswordPage } from "./pages/ResetPasswordPage.js";
 import { TermsPage } from "./pages/TermsPage.js";
 import { PrivacyPage } from "./pages/PrivacyPage.js";
 import { ClaudeConnectorPage } from "./pages/ClaudeConnectorPage.js";
+import { OAuthAuthorizePage } from "./pages/OAuthAuthorizePage.js";
 import { LandingPage } from "./pages/LandingPage.js";
 import { HowItWorksPage } from "./pages/HowItWorksPage.js";
 import { AdminLandingPage } from "./pages/AdminLandingPage.js";
@@ -106,6 +107,14 @@ const claudeConnectorRoute = createRoute({
   getParentRoute: () => infoRoute,
   path: "claude-connector",
   component: ClaudeConnectorPage,
+});
+
+// ── OAuth consent (public — handles its own login redirect): /oauth/authorize ──
+
+const oauthAuthorizeRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/oauth/authorize",
+  component: OAuthAuthorizePage,
 });
 
 // ── Public auth flows: /auth/* ─────────────────────────────────────────────
@@ -296,6 +305,7 @@ export const routeTree = rootRoute.addChildren([
     termsRoute,
     claudeConnectorRoute,
   ]),
+  oauthAuthorizeRoute,
   authRoute.addChildren([
     loginRoute,
     registerRoute,
