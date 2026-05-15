@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { authFetch, clearToken } from "../auth.js";
 import { useNavigate } from "@tanstack/react-router";
@@ -98,6 +99,101 @@ export function SettingsAccountPage() {
           )}
         </div>
       </section>
+
+      <DeleteAccountSection
+        onDeleted={() => {
+          clearToken();
+          void navigate({ to: "/auth/login" });
+        }}
+      />
     </div>
+  );
+}
+
+function DeleteAccountSection({ onDeleted }: { onDeleted: () => void }) {
+  const [confirming, setConfirming] = useState(false);
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const deleteMutation = useMutation({
+    mutationFn: async () => {
+      setError(null);
+      const res = await authFetch("/auth/me", {
+        method: "DELETE",
+        body: JSON.stringify({ password }),
+      });
+      const body = (await res.json()) as { ok: boolean; error?: string };
+      if (!res.ok || !body.ok) {
+        throw new Error(body.error ?? "Deletion failed");
+      }
+    },
+    onSuccess: onDeleted,
+    onError: (err: Error) => setError(err.message),
+  });
+
+  return (
+    <section className="card" style={{ marginTop: "var(--space-lg)", borderColor: "var(--color-error-container, #f5d4d4)" }}>
+      <h3 style={{ marginBottom: "var(--space-sm)" }}>Delete account</h3>
+      <p style={{ color: "var(--color-on-surface-variant)", fontSize: "0.9rem", marginBottom: "var(--space-md)" }}>
+        Permanently deletes your account and the content you authored: recipes, evidence
+        links, API keys, OAuth authorizations, recipe-book memberships, and uploads. This is irreversible. Export
+        your data first if you want a copy.
+      </p>
+      {!confirming ? (
+        <button
+          type="button"
+          onClick={() => setConfirming(true)}
+          style={{ fontSize: "0.85rem", color: "var(--color-error, #c0392b)" }}
+        >
+          Delete my account…
+        </button>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-sm)", maxWidth: 360 }}>
+          <label htmlFor="delete-confirm-password" style={{ fontSize: "0.85rem" }}>
+            Confirm with your password:
+          </label>
+          <input
+            id="delete-confirm-password"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="current-password"
+            style={{ padding: "var(--space-sm)" }}
+          />
+          {error ? (
+            <p style={{ color: "var(--color-error, #c0392b)", fontSize: "0.85rem" }}>{error}</p>
+          ) : null}
+          <div style={{ display: "flex", gap: "var(--space-sm)" }}>
+            <button
+              type="button"
+              onClick={() => deleteMutation.mutate()}
+              disabled={!password || deleteMutation.isPending}
+              style={{
+                background: "var(--color-error, #c0392b)",
+                color: "white",
+                border: "none",
+                padding: "var(--space-sm) var(--space-md)",
+                borderRadius: "var(--radius-sm)",
+                cursor: "pointer",
+                fontSize: "0.85rem",
+              }}
+            >
+              {deleteMutation.isPending ? "Deleting…" : "Permanently delete"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setConfirming(false);
+                setPassword("");
+                setError(null);
+              }}
+              style={{ fontSize: "0.85rem" }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </section>
   );
 }

@@ -3,7 +3,8 @@ import { z } from "zod";
 import crypto from "crypto";
 import { sql } from "drizzle-orm";
 import { getDb } from "../db";
-import { registerUser, loginUser, requireAuth, requireVerifiedEmail, hashPassword } from "../auth";
+import { registerUser, loginUser, requireAuth, requireVerifiedEmail, hashPassword, verifyPassword } from "../auth";
+import { writeAudit } from "../services/audit-log.service";
 import { isSignupCapReached, tryConsumeSignupSlot } from "../services/system-settings.service";
 import { sendVerificationEmail, sendPasswordResetEmail } from "../services/email.service";
 import { rateLimit } from "../middleware/rate-limit";
@@ -365,6 +366,184 @@ auth.get("/me/export", requireAuth, requireVerifiedEmail, async (c) => {
   c.header("Content-Type", "application/json; charset=utf-8");
   c.header("Content-Disposition", `attachment; filename="${filename}"`);
   return c.body(JSON.stringify(payload, null, 2));
+});
+
+// DELETE /auth/me — self-serve account deletion. Password confirmation is
+// required (defends against stolen-session takeover deleting the account).
+// Hard-deletes the user's content: recipes, evidence-link rows, api_keys,
+// oauth_authorization_codes, uploads owned by those api_keys, and group
+// memberships. Evidence and reference rows are left in place — they may be
+// linked from other users' traces via the link tables, which have already
+// lost the deleted user's rows.
+//
+// Limitations (documented):
+//   - Organizations owned by the deleted user stay in place; the orphan
+//     owner_id is an inconsistency for admin cleanup, not a leak.
+//   - audit_log entries with actor_user_id=this user are left in place so the
+//     audit trail survives the deletion (per §5 retention).
+//   - vector_cache and embedding_sources are content-hashed and unlinked from
+//     identity (per privacy policy §2.4); they're left in place.
+//
+// Self-serve deletion auto-rate-limited (5 per 15min per IP) — even if a
+// token leaks, an attacker can't burn an account list quickly.
+auth.delete("/me", authRateLimit, requireAuth, async (c) => {
+  const user = c.get("user");
+  let body: Record<string, unknown>;
+  try {
+    body = (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return c.json({ ok: false, error: "password is required to confirm deletion" }, 400);
+  }
+  const password = typeof body["password"] === "string" ? body["password"] : "";
+  if (!password) {
+    return c.json({ ok: false, error: "password is required to confirm deletion" }, 400);
+  }
+
+  const db = getDb();
+
+  // Re-fetch the password hash and verify the supplied password. Don't trust
+  // any cached state — the user could have changed their password since the
+  // JWT was issued, and we want the canonical hash for this check.
+  const userRows = await db.execute(sql`
+    SELECT password_hash FROM claimnet.users WHERE id = ${user.id}::uuid LIMIT 1
+  `);
+  const userRow = (userRows as unknown as Array<{ password_hash: string }>)[0];
+  if (!userRow) {
+    return c.json({ ok: false, error: "account not found" }, 404);
+  }
+  const passwordOk = await verifyPassword(password, userRow.password_hash);
+  if (!passwordOk) {
+    return c.json({ ok: false, error: "incorrect password" }, 401);
+  }
+
+  // Guard: shared (non-personal) organizations the user owns and that have
+  // other members can't be auto-cleaned by self-serve — destroying them
+  // would take other users' content with it. The user has to transfer
+  // ownership (admin work for now) before we can proceed. Personal orgs
+  // and shared orgs that are now sole-member are fine to cascade-delete.
+  const blockingOrgs = await db.execute(sql`
+    SELECT o.id, o.name FROM claimnet.organizations o
+    WHERE o.owner_id = ${user.id}::uuid
+      AND o.is_personal = false
+      AND EXISTS (
+        SELECT 1 FROM claimnet.group_members gm
+        JOIN claimnet.groups g ON g.id = gm.group_id
+        WHERE g.organization_id = o.id AND gm.user_id <> ${user.id}::uuid
+      )
+  `);
+  const blockingOrgList = blockingOrgs as unknown as Array<{ id: string; name: string }>;
+  if (blockingOrgList.length > 0) {
+    return c.json({
+      ok: false,
+      error: "owned_shared_orgs_exist",
+      message:
+        "You own organizations with other members. Transfer ownership or remove the other members before deleting your account.",
+      organizations: blockingOrgList,
+    }, 409);
+  }
+
+  // Cascade order: dependents first, then the user row. All in one
+  // transaction — partial deletion would leave the account in an
+  // inconsistent state. The declared FKs that block users-row delete:
+  //   - organizations.owner_id (must drop owned orgs first)
+  //   - group_members.user_id  (must drop memberships first)
+  //   - groups.organization_id (must drop groups before their org)
+  await db.transaction(async (tx) => {
+    // Capture an audit entry BEFORE deleting the user, so actor_user_id is
+    // still valid. The entry itself survives the deletion per §5 retention.
+    await writeAudit(tx as unknown as Parameters<typeof writeAudit>[0], {
+      actorUserId: user.id,
+      action: "user.self_delete",
+      targetType: "user",
+      targetId: user.id,
+      metadata: { source: "DELETE /auth/me" },
+    });
+
+    // Trace links → traces. trace_evidence + trace_references have FKs to
+    // traces.id without ON DELETE CASCADE in the schema, so delete the link
+    // rows first.
+    await tx.execute(sql`
+      DELETE FROM claimnet.trace_evidence
+      WHERE trace_id IN (SELECT id FROM claimnet.traces WHERE user_id = ${user.id}::uuid)
+    `);
+    await tx.execute(sql`
+      DELETE FROM claimnet.trace_references
+      WHERE trace_id IN (SELECT id FROM claimnet.traces WHERE user_id = ${user.id}::uuid)
+    `);
+    await tx.execute(sql`DELETE FROM claimnet.traces WHERE user_id = ${user.id}::uuid`);
+
+    // Uploads belong to api_keys, not directly to users. Drop them first.
+    await tx.execute(sql`
+      DELETE FROM claimnet.uploads
+      WHERE api_key_id IN (SELECT id FROM claimnet.api_keys WHERE user_id = ${user.id}::uuid)
+    `);
+    await tx.execute(sql`DELETE FROM claimnet.api_keys WHERE user_id = ${user.id}::uuid`);
+
+    // OAuth in-flight authorization codes for this user.
+    await tx.execute(sql`DELETE FROM claimnet.oauth_authorization_codes WHERE user_id = ${user.id}::uuid`);
+
+    // Tear down owned organizations bottom-up: any remaining traces in
+    // those orgs' groups (which would be traces by *other* users — only
+    // possible if the org was previously shared and is now sole-member),
+    // group_members for those groups (catches the deleted user's own
+    // memberships in those orgs too), then the groups, then the orgs.
+    await tx.execute(sql`
+      DELETE FROM claimnet.trace_evidence
+      WHERE trace_id IN (
+        SELECT t.id FROM claimnet.traces t
+        JOIN claimnet.groups g ON g.id = t.group_id
+        WHERE g.organization_id IN (
+          SELECT id FROM claimnet.organizations WHERE owner_id = ${user.id}::uuid
+        )
+      )
+    `);
+    await tx.execute(sql`
+      DELETE FROM claimnet.trace_references
+      WHERE trace_id IN (
+        SELECT t.id FROM claimnet.traces t
+        JOIN claimnet.groups g ON g.id = t.group_id
+        WHERE g.organization_id IN (
+          SELECT id FROM claimnet.organizations WHERE owner_id = ${user.id}::uuid
+        )
+      )
+    `);
+    await tx.execute(sql`
+      DELETE FROM claimnet.traces
+      WHERE group_id IN (
+        SELECT g.id FROM claimnet.groups g
+        WHERE g.organization_id IN (
+          SELECT id FROM claimnet.organizations WHERE owner_id = ${user.id}::uuid
+        )
+      )
+    `);
+    await tx.execute(sql`
+      DELETE FROM claimnet.group_members
+      WHERE group_id IN (
+        SELECT g.id FROM claimnet.groups g
+        WHERE g.organization_id IN (
+          SELECT id FROM claimnet.organizations WHERE owner_id = ${user.id}::uuid
+        )
+      )
+    `);
+    await tx.execute(sql`
+      DELETE FROM claimnet.groups
+      WHERE organization_id IN (
+        SELECT id FROM claimnet.organizations WHERE owner_id = ${user.id}::uuid
+      )
+    `);
+    await tx.execute(sql`DELETE FROM claimnet.organizations WHERE owner_id = ${user.id}::uuid`);
+
+    // Any remaining group_members for the user (memberships in orgs they
+    // don't own) — must go before users delete because of the FK.
+    await tx.execute(sql`DELETE FROM claimnet.group_members WHERE user_id = ${user.id}::uuid`);
+
+    // invitations.inviter_id is FK with onDelete: cascade — handled automatically.
+    // audit_log.actor_user_id is nullable, no FK — historical entries are kept.
+
+    await tx.execute(sql`DELETE FROM claimnet.users WHERE id = ${user.id}::uuid`);
+  });
+
+  return c.json({ ok: true });
 });
 
 // POST /auth/verify — verify email with token.
