@@ -1,10 +1,10 @@
 # ClaimNet Data Model — Generated Reference
 
-> **Auto-generated** from Drizzle migration snapshot `0019_snapshot.json`.
+> **Auto-generated** from Drizzle migration snapshot `0020_snapshot.json`.
 > Do not edit by hand. Regenerate with: `npx tsx scripts/generate-data-model-docs.ts`
 >
 > Generated: 2026-05-15
-> Tables: 21 | Schema: `claimnet`
+> Tables: 23 | Schema: `claimnet`
 
 For design rationale, conventions, and context, see [data-model.md](data-model.md).
 
@@ -36,6 +36,9 @@ erDiagram
         uuid default_write_group_id
         text label
         text key_type
+        text refresh_token_hash
+        timestamptz refresh_token_expires_at
+        text oauth_client_id
         timestamptz expires_at
         timestamptz last_used_at
         timestamptz created_at
@@ -143,6 +146,32 @@ erDiagram
         timestamptz accepted_at
         timestamptz declined_at
         timestamptz created_at
+    }
+
+    oauth_authorization_codes {
+        uuid id PK
+        text code_hash
+        text client_id
+        uuid user_id
+        text redirect_uri
+        text code_challenge
+        text code_challenge_method
+        uuid[] scope_read_group_ids
+        uuid[] scope_write_group_ids
+        uuid scope_default_write_group_id
+        timestamptz consumed_at
+        timestamptz expires_at
+        timestamptz created_at
+    }
+
+    oauth_clients {
+        uuid id PK
+        text client_id
+        text client_secret_hash
+        text client_name
+        text[] redirect_uris
+        timestamptz created_at
+        timestamptz last_used_at
     }
 
     organizations {
@@ -533,6 +562,9 @@ These are created by raw SQL in migration files and are not captured in the snap
 | `default_write_group_id` | `uuid` | NO |  |  |
 | `label` | `text` | YES |  |  |
 | `key_type` | `text` | NO |  |  |
+| `refresh_token_hash` | `text` | YES |  |  |
+| `refresh_token_expires_at` | `timestamptz` | YES |  |  |
+| `oauth_client_id` | `text` | YES |  |  |
 | `expires_at` | `timestamptz` | NO |  |  |
 | `last_used_at` | `timestamptz` | YES |  |  |
 | `created_at` | `timestamptz` | NO | `now()` |  |
@@ -543,6 +575,7 @@ These are created by raw SQL in migration files and are not captured in the snap
 **Indexes:**
 - `api_keys_user_id_idx`: `(user_id)`
 - `api_keys_expires_at_idx`: `(expires_at)`
+- `api_keys_refresh_token_hash_idx`: `(refresh_token_hash)`
 
 ---
 

@@ -35,3 +35,5 @@ export * from "./vector-cache";
 export * from "./system-settings";
 export * from "./invitations";
 export * from "./uploads";
+export * from "./oauth-clients";
+export * from "./oauth-authorization-codes";
