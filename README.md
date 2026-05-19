@@ -58,6 +58,16 @@ The primary path is **remote MCP over Streamable HTTP** (stateless, ADR-0021). P
 
 **2. Paste the config block that matches your client.** Each client's schema differs; don't mix them.
 
+**Codex** — Codex uses `config.toml`, not `.mcp.json`. Use project-scoped `.codex/config.toml` in a trusted project when this repo should use its own Soup.net key; use `~/.codex/config.toml` only when the same key should apply globally. Prefer an environment variable:
+
+```toml
+[mcp_servers.soupnet]
+url = "http://localhost:3101/mcp"
+bearer_token_env_var = "SOUPNET_API_KEY"
+```
+
+Make `SOUPNET_API_KEY` available where Codex starts, then restart Codex or start a new session. Verify with `/mcp` in the TUI or `codex mcp list`. Inline `http_headers = { Authorization = "Bearer YOUR_KEY" }` also works, but do not commit a config file containing a token. Checked against Codex docs on 2026-05-16; if it fails, consult the OpenAI Developers docs MCP for current Codex MCP configuration.
+
 **Claude Code** — per-project `.mcp.json` at the repo root (or `~/.claude/.mcp.json` for global). One-liner:
 ```
 claude mcp add --transport http soupnet http://localhost:3101/mcp --header "Authorization: Bearer YOUR_KEY"

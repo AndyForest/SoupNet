@@ -48,6 +48,9 @@ describe.skipIf(!BASE)("/docs routes", () => {
     const html = await res.text();
     expect(html).toContain("MCP");
     expect(html).toContain("check_recipe");
+    expect(html).toContain("Option 1: Codex");
+    expect(html).toContain("bearer_token_env_var");
+    expect(html).toContain(".codex/config.toml");
   });
 
   it("GET /docs/mcp-setup embeds API key from query param", async () => {

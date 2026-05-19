@@ -146,7 +146,7 @@ Next evidence entry (interpretation of the next reference).
     <li>Search: hybrid &mdash; full-text (tsvector) + <a href="https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-embedding-2/">gemini-embedding-2-preview</a> semantic vectors (SEMANTIC_SIMILARITY)</li>
     <li>Include file links in references &mdash; no upload needed, our system can fetch them</li>
     <li>Markdown encouraged in all text fields</li>
-    <li><strong>MCP tools available:</strong> <a href="/docs/mcp-setup${kq}">Set up check_recipe and get_briefing</a> for Claude Code, Claude Desktop, and other MCP-compatible agents</li>
+    <li><strong>MCP tools available:</strong> <a href="/docs/mcp-setup${kq}">Set up check_recipe and get_briefing</a> for Codex, Claude Code, Claude Desktop, and other MCP-compatible agents</li>
     <li><strong>Cold start?</strong> <a href="/docs/bootstrap${kq}">Bootstrap your corpus</a> from existing AI agent sessions</li>
   </ul>
 
@@ -187,7 +187,7 @@ docs.get("/mcp-setup", (c) => {
   <p>The <a href="https://modelcontextprotocol.io/">Model Context Protocol</a> gives AI agents
   direct tool access to Soup.net. Instead of browsing the web form, the agent calls
   <code>check_recipe</code> and <code>get_briefing</code> as native tools.</p>
-  <p>MCP works with <strong>Claude Code</strong>, <strong>Claude Desktop</strong>,
+  <p>MCP works with <strong>Codex</strong>, <strong>Claude Code</strong>, <strong>Claude Desktop</strong>,
   and other MCP-compatible agents.
   See also: <a href="https://support.claude.com/en/articles/12922929-building-desktop-extensions-with-mcpb">Anthropic&rsquo;s extension guide</a>,
   <a href="https://modelcontextprotocol.io/quickstart/user">MCP quickstart</a>.</p>
@@ -197,7 +197,27 @@ docs.get("/mcp-setup", (c) => {
   Daily keys rotate automatically. Scoped keys let you restrict access to specific recipe books with a custom expiry.</p>
   ${apiKey !== "YOUR_API_KEY" ? `<p>Your current key (<code>${escKey.substring(0, 8)}...</code>) is pre-filled in the configs below.</p>` : ""}
 
-  <h2>Option 1: Claude Desktop</h2>
+  <h2>Option 1: Codex</h2>
+  <p>Codex uses <code>config.toml</code>, not <code>.mcp.json</code>. Use
+  <code>.codex/config.toml</code> in a trusted project when the Soup.net key should stay scoped
+  to that repo. Use <code>~/.codex/config.toml</code> only when the same Soup.net identity
+  should apply globally.</p>
+
+  <p><strong>Recommended:</strong> keep the token in an environment variable available where Codex starts:</p>
+  <pre>[mcp_servers.soupnet]
+url = "${escUrl}/mcp"
+bearer_token_env_var = "SOUPNET_API_KEY"</pre>
+  <p>Set <code>SOUPNET_API_KEY</code> in Codex&rsquo;s environment, then restart Codex or start a new session.
+  Verify with <code>/mcp</code> in the TUI or <code>codex mcp list</code>.</p>
+  <p><small>This guidance was checked against Codex docs on 2026-05-16. If it fails, consult the OpenAI Developers docs MCP for current Codex MCP configuration.</small></p>
+
+  <p>If you prefer a self-contained project config and understand the secret-handling risk:</p>
+  <pre>[mcp_servers.soupnet]
+url = "${escUrl}/mcp"
+http_headers = { Authorization = "Bearer ${escKey}" }</pre>
+  <p><small>Do not commit a <code>.codex/config.toml</code> file that contains a token.</small></p>
+
+  <h2>Option 2: Claude Desktop</h2>
   <ol>
     <li>Open Claude Desktop</li>
     <li>Click the <strong>Claude</strong> menu (top menu bar) &rarr; <strong>Settings&hellip;</strong></li>
@@ -267,7 +287,7 @@ docs.get("/mcp-setup", (c) => {
     <p><small>This bundles the same MCP server as the manual config above. The extension stores your API key in the OS keychain.</small></p>
   </details>
 
-  <h2>Option 2: Claude Code (CLI)</h2>
+  <h2>Option 3: Claude Code (CLI)</h2>
   <p>Add this to <code>.mcp.json</code> in your project root (per-project) or <code>~/.claude/.mcp.json</code> (global).
   Claude Code runs from the project directory, so relative paths work here:</p>
 
@@ -386,9 +406,19 @@ docs.get("/mcp-setup", (c) => {
   <h2>Remote HTTP (deployed Soup.net)</h2>
   <p>If your Soup.net server is deployed (e.g., at <code>mcp.soup.net</code>), agents can connect over HTTP
   without running a local server. This is the recommended setup for production use.</p>
-  <p>Each MCP client has a distinct config schema. The three blocks below are confirmed working —
+  <p>Each MCP client has a distinct config schema. The blocks below are confirmed working —
   copy the one that matches your client. <strong>Don't mix schemas</strong>: the top-level key,
   URL field name, and required extras differ by client.</p>
+
+  <h3>Codex (.codex/config.toml or ~/.codex/config.toml)</h3>
+  <p>Use project-scoped <code>.codex/config.toml</code> for repo-specific Soup.net keys in trusted projects,
+  or <code>~/.codex/config.toml</code> only when the same key should apply everywhere.</p>
+  <pre>[mcp_servers.soupnet]
+url = "${escUrl}/mcp"
+bearer_token_env_var = "SOUPNET_API_KEY"</pre>
+  <p><small>Make <code>SOUPNET_API_KEY</code> available where Codex starts, then restart Codex or start a new session.
+  Verify with <code>/mcp</code> or <code>codex mcp list</code>. Inline <code>http_headers</code> also works,
+  but requires secret hygiene. Checked against Codex docs on 2026-05-16; if it fails, consult the OpenAI Developers docs MCP.</small></p>
 
   <h3>Claude Code (.mcp.json)</h3>
   <p>Per-project <code>.mcp.json</code> at the repo root, or <code>~/.claude/.mcp.json</code> for global.</p>

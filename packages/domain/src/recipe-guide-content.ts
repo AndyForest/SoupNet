@@ -207,7 +207,7 @@ export const CONNECTION_TIERS = {
   title: "How to connect",
   text: `There are three ways to connect, depending on your agent's capabilities:
 
-1. MCP tools (Claude Code, Claude Desktop, Antigravity): Full automation via check_recipe, get_briefing, and list_my_recipe_books tools. One-command setup.
+1. MCP tools (Codex, Claude Code, Claude Desktop, Antigravity): Full automation via check_recipe, get_briefing, and list_my_recipe_books tools. One-command setup.
 
 2. Web browsing with URL construction: If your agent can construct and fetch URLs, build recipe check URLs directly: /check?key=YOUR_KEY&recipe=URL_ENCODED_RECIPE&evidence=URL_ENCODED_EVIDENCE&recipe_book=RECIPE_BOOK_SLUG. The page accepts human-readable parameter names (recipe, evidence, recipe_book) via GET; the legacy parameter \`group\` is still accepted for backwards compatibility. Results appear on the same page. Recipe-book slugs are shown on the check page when you visit with your key.
 
@@ -424,6 +424,14 @@ The key is also embedded in every URL below as \`?key=...\` or \`&key=...\`. Som
 
 ## Setup — MCP-capable agents
 If \`check_recipe\`, \`get_briefing\`, and \`list_my_recipe_books\` are already available as tools, skip this section. Otherwise drop the matching config into your client's MCP file.
+
+**Codex** — Codex uses \`config.toml\`, not \`.mcp.json\`. Use \`.codex/config.toml\` in a trusted project when this Soup.net key is project-scoped; use \`~/.codex/config.toml\` only when the same Soup.net identity should apply globally. Prefer an environment variable for the token:
+
+    [mcp_servers.soupnet]
+    url = "${backendUrl}/mcp"
+    bearer_token_env_var = "SOUPNET_API_KEY"
+
+Make \`SOUPNET_API_KEY=${apiKey}\` available in the environment where Codex starts, then restart Codex or start a new session. Verify with \`/mcp\` in the TUI or \`codex mcp list\`. If you intentionally inline the token instead, use \`http_headers = { Authorization = "Bearer ${apiKey}" }\` and do not commit that file. This understanding was checked against Codex docs on 2026-05-16; if it fails, consult the OpenAI Developers docs MCP for current Codex MCP configuration.
 
 **Claude Code** — \`.mcp.json\` at the repo root (or \`~/.claude/.mcp.json\` for global). One-liner: \`claude mcp add --transport http soupnet ${backendUrl}/mcp --header "Authorization: Bearer ${apiKey}"\`.
 
