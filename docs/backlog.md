@@ -109,3 +109,25 @@ This file is the way concurrent AI sessions coordinate without explicit messagin
 ---
 
 ## Unsorted
+
+### `[IMPL]` Delete or revive `packages/client-sdk`
+
+Discovered 2026-05-27 while drafting the workspace package map in `docs/architecture/overview.md`. `packages/client-sdk` is listed as a dependency by `apps/frontend` and `apps/mcp-server` but no source file outside its own internals imports `@soupnet/client-sdk`. The surface area still references pre-pivot endpoints (`/api/claims`, `/api/requests`, `/api/validations`) that the current Hono backend doesn't serve.
+
+Two options:
+- Delete the package and remove the two dead dependency declarations. Cleanest; matches "ruthless edits to docs that have drifted from reality" applied to code.
+- Rewrite the SDK against the current `/check` / `/traces` / `/uploads` surface and actually consume it from one of the apps. Only worth it if there's a planned third consumer (e.g. a future CLI tool) that benefits from a typed REST wrapper distinct from the React Query hooks.
+
+Recommendation: delete, on the principle that infrastructure without a consumer is a maintenance tax with no return.
+
+### `[IMPL]` Wire `packages/api-client` into the frontend (or note it's deferred)
+
+Discovered 2026-05-27 alongside the `client-sdk` finding. The Orval pipeline produces typed React Query hooks from the committed `openapi.json`, but no file in `apps/frontend/src/` imports `@soupnet/api-client`. The SPA fetches via hand-written hooks (`src/hooks/useTraces.ts` etc.) wrapping `authFetch`, with response types declared inline per hook.
+
+The blocker is the contracts-consolidation work — until `/check`, `/traces`, `/uploads`, `/auth` are in `packages/contracts`, the generated client only describes the pre-pivot legacy surface, which isn't what the SPA calls. So sequencing is:
+
+1. Consolidate new routes into `packages/contracts` (already noted in `docs/backlog.md` and in `type-safety.md` §"Where the chain is intentionally loose" #3).
+2. Regenerate `openapi.json` + the Orval hooks.
+3. Migrate `apps/frontend/src/hooks/*.ts` to import the generated hooks, deleting hand-written shapes (`interface Trace`, etc.).
+
+Until step 3 ships, the headline claim in `docs/architecture/type-safety.md` ("type errors at one end of the stack surface at the other") is only true up to the package boundary on the frontend side. The doc is now honest about this; closing the gap is the work.

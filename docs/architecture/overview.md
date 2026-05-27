@@ -59,6 +59,239 @@ Self-hosting requires Postgres 17 with `pgvector`, an SMTP server (or local Mail
 
 All three go through the same `submitAndSearch` service — parity is load-bearing (`feedback_dual_surface` memory). A change to one must land in the other two. See `data-flow.md` §2 for the MCP request lifecycle and §3 for the recipe check pipeline.
 
+## Backend components
+
+What's inside the Hono process. Routes are grouped by audience (agent surfaces vs. SPA surfaces), not alphabetically — the routing surface is the agent contract first and a dashboard backend second. The embedding worker runs in the same process as the HTTP server (ADR-0020), gated by `EMBEDDING_WORKER_ENABLED`; the same image runs HTTP-only or worker-only by flipping the flag.
+
+```mermaid
+flowchart TB
+    subgraph Edge["HTTP edge"]
+        EdgeMW["Hono · CORS · CSP nonce · security headers<br/>requireAuth (JWT) · requireApiKey (Bearer api-key) · rate-limit"]
+    end
+
+    subgraph Routes["Routes — apps/backend/src/routes/"]
+        AgentSurf["Agent surfaces<br/>/check · /mcp · /briefing · /uploads · /docs"]
+        HumanSurf["SPA + dashboard surfaces<br/>/auth · /me · /keys · /recipe-books · /invitations · /traces · /admin · /oauth · /.well-known"]
+        Health["/health · /health/ready"]
+    end
+
+    subgraph Svc["Services + Lib — apps/backend/src/{services,lib}/"]
+        Pipeline["search-pipeline<br/>format-adherence · vector-search · clustering · result-enricher · evidence-parser"]
+        DomainSvc["trace · trace-delete · upload · briefing · api-key · oauth · audit-log · email · system-settings"]
+        Lib["lib: gemini-client · embeddings/{provider,enqueue} · file-store · image-roi"]
+    end
+
+    subgraph Worker["Embedding worker — in-process pg-boss consumer (ADR-0020)"]
+        WJobs["strategy-sweep (cron 1m) → strategy-check → vector-check → vector-api-call"]
+    end
+
+    subgraph Pkgs["Workspace packages"]
+        PkgDomain["@soupnet/domain<br/>ranking · embedding-strategies · recipe-guide-content · supported-media"]
+        PkgDB["@soupnet/db<br/>Drizzle ORM + migrations"]
+    end
+
+    subgraph Ext["External"]
+        PG[("Postgres 17 + pgvector<br/>claimnet + pgboss schemas")]
+        Obj[("Object store<br/>multimodal uploads")]
+        SMTP["SMTP<br/>Mailpit | SES | Postmark"]
+        Gem["Gemini embeddings API<br/>gemini-embedding-2-preview"]
+    end
+
+    Edge --> Routes
+    Routes --> Svc
+    Svc --> Pkgs
+    Worker --> Svc
+    Worker --> Pkgs
+    Pkgs --> PG
+    Lib --> Obj
+    DomainSvc --> SMTP
+    Lib --> Gem
+    Worker -.->|enqueue + consume| PG
+```
+
+Worth knowing for navigation:
+
+- **No LLM on the server** (design rule §6). Gemini is the only third-party AI call, and it's only for embeddings.
+- **No business logic in routes** (design rule §1) — routes parse, authenticate, delegate to `services/`, and return. The dense node in this diagram is `search-pipeline`, which is also the most-tested file in the backend.
+- **`@soupnet/contracts` is reached transitively** through `@soupnet/domain`, not imported directly by backend code. Newer routes (`/check`, `/traces`, `/uploads`, `/auth`) validate inline rather than via the contracts package — pre-pivot legacy is being consolidated; see `backlog.md`.
+
+## Frontend components
+
+The SPA is a TanStack Router app with hand-written hooks that talk to the backend through one `authFetch` wrapper. There is no generated API client wired in today, despite the existence of `packages/api-client`; see the workspace package map below.
+
+```mermaid
+flowchart TB
+    Entry["main.tsx<br/>React 19 StrictMode · QueryClient · RouterProvider"]
+
+    subgraph Routing["Routing — src/routeTree.ts"]
+        Tree["TanStack Router routeTree<br/>requireAuth · requireUnverified guards"]
+    end
+
+    subgraph Pages["Pages — src/pages/"]
+        PublicP["Public: Landing · HowItWorks · Privacy · Terms · Connect"]
+        AuthP["Auth: Login · Verify · VerifyPending · ForgotPassword · ResetPassword · OAuthAuthorize"]
+        AppP["/app/*: Dashboard · CheckRecipe · TraceDetail · ApiKeys · Groups · GroupTraces · Settings · RecipeMap · CheckLog"]
+        AdminP["/admin/*: Landing · Users · Queues · Embeddings"]
+    end
+
+    subgraph Comps["Shared components — src/components/"]
+        Shell["AppShell · RootLayout · SiteFooter"]
+        Admin["admin/AdminLayout · AdminTable · AdminPageHeader · ..."]
+        Misc["StoryCarousel · Icon · ApiKeyBadge · UserBadge · CookieNotice"]
+    end
+
+    subgraph Hooks["Hand-written hooks — src/hooks/"]
+        H1["useTraces · useTraceMap · useClipboard"]
+    end
+
+    AF["src/auth.ts<br/>authFetch · JWT from localStorage<br/>401 → soupnet:auth-invalidated event"]
+
+    Worker["src/workers/umap.worker.ts<br/>web worker — UMAP projection"]
+
+    Contracts["@soupnet/contracts<br/>imported by CheckRecipePage only"]
+
+    Unused["@soupnet/api-client<br/>generated; not imported"]:::orphan
+    UnusedSdk["@soupnet/client-sdk<br/>pre-pivot; not imported"]:::orphan
+
+    Backend["Backend HTTP API<br/>mcp.soup.net (or :3101 local)"]
+
+    Entry --> Routing
+    Routing --> Pages
+    Pages --> Comps
+    Pages --> Hooks
+    Pages --> AF
+    Hooks --> AF
+    AF --> Backend
+    AppP -.RecipeMap.-> Worker
+    Pages -.one page.-> Contracts
+
+    classDef orphan stroke-dasharray:5 5,fill:#fafafa,color:#888,stroke:#999;
+```
+
+Worth knowing for navigation:
+
+- **Auth is global state via `localStorage`**, not React context. `authFetch` reads the token directly; `requireAuth` route guards read a cached `email_verified` flag so guards stay sync (no fetch on every navigation). A 401 fires a window event that `AppShell` listens for to bounce to `/auth/login`.
+- **The UMAP web worker** isolates the recipe-map projection off the main thread — embedding clustering can chew CPU for several seconds on first render. `useTraceMap` posts to the worker; the worker doesn't talk to the network.
+- **One page imports `@soupnet/contracts`** (CheckRecipePage). Everywhere else, `Trace` and friends are declared locally in the hook file — pragmatic, but creates drift potential if a route response shape changes.
+
+## Subsystem: recipe-check pipeline
+
+Drill-down for the `/check` and `/mcp` hot path. The write side is synchronous and writes one full-document vector immediately (so the trace is searchable on the next request). Experimental embedding strategies are enqueued and processed by the worker below. The read side is pure semantic search + optional clustering.
+
+```mermaid
+flowchart TB
+    Req["Agent request to /check or /mcp<br/>recipe + supporting_evidence + optional file"]
+
+    subgraph Write["Synchronous write"]
+        FA["format-adherence<br/>score the recipe shape 0-1"]
+        TS["trace.service<br/>insert trace + evidence + references<br/>(+ upload.service for multimodal files)"]
+        SyncV["embeddings/provider<br/>compute full_document vector now"]
+    end
+
+    subgraph Read["Synchronous read"]
+        VS["vector-search<br/>hybridSearch + evidenceSearch"]
+        Cl["clustering<br/>k-means · k from maxChars budget"]
+        RE["result-enricher<br/>compose response payload"]
+    end
+
+    Async["embeddings/enqueue<br/>register experimental strategies"]
+    Boss[("pg-boss queue")]
+    VC[("vector_cache<br/>content-hash keyed, float32")]
+    Gem["Gemini API"]
+
+    Req --> FA --> TS --> SyncV
+    SyncV -->|cache hit| VC
+    SyncV -.->|cache miss| Gem
+    TS --> VS --> Cl --> RE --> Resp["Response<br/>HTML | JSON | SSE"]
+    TS -.->|fire-and-forget| Async --> Boss
+```
+
+Worth knowing:
+
+- **Multimodal uploads are sync-only** (ADR-0019) — the async job shape doesn't carry file bytes, and diverging the two paths would corrupt the content-hashed vector cache.
+- **The full-precision `vector_cache`** lives alongside the halfvec-quantized `embedding_vectors` so re-embedding the same content (same hash) skips the Gemini call entirely. The cache survives HNSW quantization; halfvec is for search, float32 is for cache portability.
+- See `data-flow.md` §3 for the request-sequence view of the same pipeline.
+
+## Subsystem: embedding worker
+
+The 4-tier pg-boss pipeline (ADR-0002). Each tier reduces fan-out: a single sweep job spawns ~one job per strategy, which spawns batches of ≤64 chunks, which spawns one Gemini API call per batch of cache misses.
+
+```mermaid
+flowchart TB
+    Cron["pg-boss cron<br/>*/1 * * * *"]
+
+    subgraph T1["Tier 1 — strategy-sweep"]
+        Sweep["Discover unfinished work<br/>fan out one job per strategy"]
+    end
+
+    subgraph T2["Tier 2 — strategy-check"]
+        SC["For each strategy:<br/>ensure embedding_chunks + vector stubs<br/>(chunking lib)"]
+    end
+
+    subgraph T3["Tier 3 — vector-check"]
+        VCheck["For each batch (≤64):<br/>look up vector_cache by content_hash"]
+    end
+
+    subgraph T4["Tier 4 — vector-api-call"]
+        APIC["For each batch of cache misses:<br/>POST to Gemini<br/>write embedding_vectors + vector_cache"]
+    end
+
+    Cron --> Sweep --> SC --> VCheck
+    VCheck -->|cache hit| WriteV["copy cached vector<br/>into embedding_vectors"]
+    VCheck -->|cache miss| APIC
+    APIC --> WriteV
+    APIC --> WriteCache["write float32 → vector_cache"]
+    WriteV --> Tbl1[("embedding_vectors<br/>halfvec + HNSW")]
+    WriteCache --> Tbl2[("vector_cache<br/>float32, content-hash key")]
+```
+
+Worth knowing:
+
+- **Idempotency is per-tier**, not end-to-end. A re-run of `strategy-check` will not re-chunk; a re-run of `vector-api-call` will skip rows already marked complete. That's how the worker survives restarts and how the same job can be safely retried.
+- **`embedding.*` queues are the current names**; `embeddings.*` (no namespace) are legacy and still drained for in-flight pre-refactor jobs (`apps/backend/src/embedding-worker/queues.ts:22`). Removing the legacy handlers requires confirming an empty `embeddings.*` backlog.
+- The same `EMBEDDING_WORKER_ENABLED=false` flag that disables the worker for HTTP-only nodes leaves the HTTP path's sync embedding write (Tier 0-equivalent) intact — primary writes never depend on the worker being up.
+
+## Workspace package map
+
+Who depends on whom across the npm workspaces. Two packages are currently orphaned by the source code despite still being listed as dependencies — flagged here so a self-hoster reading the architecture doesn't wire diagrams to ghosts.
+
+```mermaid
+flowchart LR
+    AB["apps/backend"]
+    AF["apps/frontend"]
+    AM["apps/mcp-server"]
+
+    Db["@soupnet/db"]
+    Dom["@soupnet/domain"]
+    Cont["@soupnet/contracts"]
+    Cli["@soupnet/client-sdk<br/>no current importer"]:::orphan
+    Api["@soupnet/api-client<br/>generated, not imported"]:::orphan
+    Cfg["@soupnet/config<br/>tsconfig + eslint<br/>consumed by all"]:::shared
+
+    AB --> Db
+    AB --> Dom
+    AF --> Cont
+    AM --> Cont
+    AM --> Dom
+
+    Dom --> Cont
+    Dom --> Db
+
+    Cli --> Cont
+
+    classDef orphan stroke-dasharray:5 5,fill:#fafafa,color:#888,stroke:#999;
+    classDef shared fill:#f5f5f5,stroke:#888;
+```
+
+Role of each package:
+
+- **`@soupnet/db`** — Drizzle ORM schema + migrations for the `claimnet` Postgres schema. Single source of truth for tables; `$inferSelect` / `$inferInsert` produce TS row types. Consumed by `apps/backend` and `@soupnet/domain`.
+- **`@soupnet/domain`** — business logic and shared agent-facing copy. `ranking.ts`, `embedding-strategies.ts`, `supported-media.ts`, `user-preferences.ts`, plus `recipe-guide-content.ts` (the briefing text agents see when they call `get_briefing`). No I/O; pure functions and constants. Consumed by `apps/backend` and `apps/mcp-server`.
+- **`@soupnet/contracts`** — Zod schemas for the public API + the `zod-to-openapi` registry. Mostly legacy pre-pivot shapes (claims, validations, graph, nodes). The generator that emits `packages/api-client/openapi.json` reads this. Consumed directly by `apps/mcp-server` and (one page) by `apps/frontend`; consumed transitively by `apps/backend` through `@soupnet/domain`.
+- **`@soupnet/config`** — shared `tsconfig.base.json` and ESLint config. Pulled in via `extends` by every workspace's local config; no runtime presence.
+- **`@soupnet/api-client`** *(currently orphaned)* — Orval-generated React Query hooks + TS types from the committed `openapi.json` snapshot. Pipeline exists end-to-end; no source file in `apps/frontend` actually imports it. See `docs/architecture/type-safety.md` for the type-derivation chain and the gap.
+- **`@soupnet/client-sdk`** *(currently orphaned)* — pre-pivot REST client. References endpoints (`/api/claims`, `/api/requests`, `/api/validations`) that the post-pivot Hono backend doesn't serve. Listed as a dependency by `apps/frontend` and `apps/mcp-server` but imported by neither. Candidate for deletion — tracked in `backlog.md`.
+
 ## Core data model
 
 The three-entity model is inspired by two sources:
