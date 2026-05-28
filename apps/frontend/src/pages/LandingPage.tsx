@@ -5,6 +5,7 @@ import illustrationNewTeam from "../assets/illustration-new-team.png";
 import illustrationBriefingHandoff from "../assets/illustration-briefing-handoff.png";
 import illustrationChecksInMotion from "../assets/illustration-checks-in-motion.png";
 import illustrationContextReturning from "../assets/illustration-context-returning.png";
+import illustrationSharedBook from "../assets/illustration-shared-book.png";
 import soupnetLogo from "../assets/soupnet-logo.png";
 
 export function LandingPage() {
@@ -73,6 +74,7 @@ export function LandingPage() {
         body="Phone chatbot at lunch, coding agent at your desk, design tool in the evening — they all draw from the same recipe book you control. Whether it's Claude Code, ChatGPT, Gemini, or a custom one your team wrote in-house, the Soup.net briefing teaches each one how to participate. Vendor memory stays inside one ecosystem. Your taste and judgment travel with you. Equip every agent with what makes you you, once. Less time correcting and re-briefing them, more time on the long-running work that's the point of having agents in the first place — and every recipe check makes the next one smarter."
         image={illustrationBlankSlate}
         imageAlt="Watercolor: a person at a desk surrounded by their AI tools — phone, laptop, sketchpad — each one starting from a blank slate every session."
+        imageCaption="Every new agent, every new session — starting from scratch."
         imageSide="right"
       />
 
@@ -82,6 +84,7 @@ export function LandingPage() {
         body="Invite a collaborator to a recipe book and their agent picks up the shared taste and judgment immediately — whatever tool they use, whatever AI experience they have. Personal recipes stay personal; shared decisions stay visible to that book's members. Sharing across vendors requires a neutral system across them, which no single AI vendor can offer. And for collaborators who'd never sign up themselves — friends, family, anyone whose AI is the free tier of ChatGPT or Gemini web — the same recipe book reaches them through clickable links. They click; their agent gets the context."
         image={illustrationNewTeam}
         imageAlt="Watercolor: two collaborators at different points in their AI experience, beginning a shared project — their AI agents present, ready to participate."
+        imageCaption="Each collaborator's context, locked in their own session."
         imageSide="left"
         background="var(--color-surface-container-low)"
       />
@@ -94,7 +97,7 @@ export function LandingPage() {
           <h2 style={sectionHeading}>How a recipe check works</h2>
           <div style={{ display: "grid", gap: "var(--space-md)" }}>
             <Step
-              n={1}
+              marker={1}
               title="Give your agent the briefing."
               body="One short document teaches any agent how to recipe-check, and shows it a representative sample of the taste and judgment you've already captured. MCP-capable agents configure themselves from it. Web chatbots take it as a first message and continue normally."
               illustration={illustrationBriefingHandoff}
@@ -123,7 +126,7 @@ export function LandingPage() {
               ]}
             />
             <Step
-              n={2}
+              marker={2}
               title="As your agent works, it does recipe checks."
               body="A recipe check is a hypothesis your agent is already forming — about your taste and judgment, a past decision, or what would fit. The check is concurrent, fast, and never destructive. Past recipes that come back become context for the work your agent is about to do."
               illustration={illustrationChecksInMotion}
@@ -148,7 +151,7 @@ export function LandingPage() {
               ]}
             />
             <Step
-              n={3}
+              marker={3}
               title="Your past taste and judgment calls come back as context, not directives."
               body="Your agent reads what comes back from your recipe books and decides whether it changes the approach. Most of the time past calls confirm and your agent continues; sometimes one contradicts the current move and the agent flags it for you."
               illustration={illustrationContextReturning}
@@ -170,6 +173,16 @@ export function LandingPage() {
                   q: "Can I see what my agents have learned about me?",
                   a: "Yes. The Recipe Map on your dashboard plots every recipe in any book you can read on two concept axes you choose (\"accessibility\" vs. \"performance,\" \"design taste\" vs. \"technical decisions,\" anything you can name). You see the shape of what's accumulated, click into any recipe to read its evidence, and stay in control of what's there. The dashboard also shows a running log of every recipe check your agents make. More detail in How it works below.",
                 },
+              ]}
+            />
+            <Step
+              marker="+"
+              outlined
+              title="And the same for every collaborator's agent."
+              body="The same three steps work on shared recipe books. Your agent's recipe checks find what other members' agents have logged; theirs find yours. Even collaborators who'd never sign up themselves can participate through clickable links — no MCP, no account needed."
+              illustration={illustrationSharedBook}
+              illustrationAlt="Watercolor: two collaborators at their own workspaces in mirrored composition, each with their own agent, a shared constellation of recipes connecting them through the center — the puzzle pieces from Pillar 2 now finding each other."
+              details={[
                 {
                   q: "Who can actually see my recipes?",
                   a: "Personal recipes can only be read by your own agents — the ones using API keys you create. Shared recipe books can only be read by the members of that book and their agents. Nothing in Soup.net is public unless you create a public recipe book on purpose. Your data is exportable in full at any time, and the codebase is open source for anyone who wants the data physically on their own servers.",
@@ -327,8 +340,9 @@ const sectionHeading: React.CSSProperties = {
 
 // ── Step (numbered row with expandable Q&A details) ──────────────────────────
 
-function Step({ n, title, body, details, illustration, illustrationAlt }: {
-  n: number;
+function Step({ marker, outlined, title, body, details, illustration, illustrationAlt }: {
+  marker: number | string;
+  outlined?: boolean;
   title: string;
   body: string;
   details: { q: string; a: React.ReactNode }[];
@@ -347,8 +361,10 @@ function Step({ n, title, body, details, illustration, illustrationAlt }: {
         width: 44,
         height: 44,
         borderRadius: "50%",
-        background: "var(--color-primary)",
-        color: "var(--color-on-primary, #fff)",
+        background: outlined ? "transparent" : "var(--color-primary)",
+        color: outlined ? "var(--color-primary)" : "var(--color-on-primary, #fff)",
+        border: outlined ? "2px solid var(--color-primary)" : "none",
+        boxSizing: "border-box",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -356,7 +372,7 @@ function Step({ n, title, body, details, illustration, illustrationAlt }: {
         fontSize: "1.1rem",
         fontFamily: "var(--font-headline)",
       }}>
-        {n}
+        {marker}
       </div>
       <div style={{ flex: "1 1 320px", minWidth: 0 }}>
         <h3 style={{
@@ -429,12 +445,13 @@ function Step({ n, title, body, details, illustration, illustrationAlt }: {
 
 // ── Pillar section (image + text, alternating sides) ─────────────────────────
 
-function PillarSection({ heading, body, bullets, image, imageAlt, imageSide, background }: {
+function PillarSection({ heading, body, bullets, image, imageAlt, imageCaption, imageSide, background }: {
   heading: string;
   body: string;
   bullets?: string[];
   image: string;
   imageAlt: string;
+  imageCaption?: string;
   imageSide: "left" | "right";
   background?: string;
 }) {
@@ -451,6 +468,19 @@ function PillarSection({ heading, body, bullets, image, imageAlt, imageSide, bac
           border: "1px solid var(--color-outline-variant, #e0e0e0)",
         }}
       />
+      {imageCaption ? (
+        <p style={{
+          marginTop: "var(--space-xs)",
+          marginBottom: 0,
+          fontSize: "0.85rem",
+          fontStyle: "italic",
+          color: "var(--color-on-surface-variant)",
+          textAlign: "center",
+          lineHeight: 1.4,
+        }}>
+          {imageCaption}
+        </p>
+      ) : null}
     </div>
   );
   const textBlock = (
