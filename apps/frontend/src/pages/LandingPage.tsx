@@ -54,14 +54,14 @@ export function LandingPage() {
           The recipe book builds itself.
         </p>
         <div style={{ display: "flex", gap: "var(--space-md)", justifyContent: "center", flexWrap: "wrap" }}>
-          <Link to="/auth/login" style={{ textDecoration: "none" }}>
+          <Link to="/auth/register" style={{ textDecoration: "none" }}>
             <button style={{ padding: "var(--space-sm) var(--space-xl)", fontSize: "1rem" }}>
-              Sign in
+              Create Free Account
             </button>
           </Link>
-          <Link to="/auth/register" style={{ textDecoration: "none" }}>
+          <Link to="/auth/login" style={{ textDecoration: "none" }}>
             <button className="btn-secondary" style={{ padding: "var(--space-sm) var(--space-xl)", fontSize: "1rem" }}>
-              Create account
+              Sign In
             </button>
           </Link>
         </div>
@@ -78,7 +78,7 @@ export function LandingPage() {
 
       {/* Pillar 2 — collaboration that travels across people and AI-maturity levels */}
       <PillarSection
-        heading="Invite a collaborator. Their agent does the work."
+        heading="Invite a collaborator — their agent does the work"
         body="Invite a collaborator to a recipe book and their agent picks up the shared taste and judgment immediately — whatever tool they use, whatever AI experience they have. Personal recipes stay personal; shared decisions stay visible to that book's members. Sharing across vendors requires a neutral system across them, which no single AI vendor can offer. And for collaborators who'd never sign up themselves — friends, family, anyone whose AI is the free tier of ChatGPT or Gemini web — the same recipe book reaches them through clickable links. They click; their agent gets the context."
         image={illustrationNewTeam}
         imageAlt="Watercolor: two collaborators at different points in their AI experience, beginning a shared project — their AI agents present, ready to participate."
@@ -86,19 +86,12 @@ export function LandingPage() {
         background="var(--color-surface-container-low)"
       />
 
-      {/* How a single recipe check works — sequential walkthrough */}
+      {/* How a recipe check works — sequential walkthrough; heading does the
+          anchoring to the pillars and names the mechanism, so no intro paragraph
+          is needed between heading and steps. */}
       <section style={{ padding: "var(--space-2xl) var(--space-xl)" }}>
         <div style={{ maxWidth: 880, margin: "0 auto" }}>
-          <h2 style={sectionHeading}>How Soup.net recipe checks solve this</h2>
-          <p style={{
-            textAlign: "center",
-            color: "var(--color-on-surface-variant)",
-            lineHeight: 1.6,
-            maxWidth: 680,
-            margin: "0 auto var(--space-xl)",
-          }}>
-            The two promises above — your taste and judgment in every agent you use, and collaborators picked up by their agents — hold up because of one simple mechanism. End-to-end in three steps.
-          </p>
+          <h2 style={sectionHeading}>How a recipe check works</h2>
           <div style={{ display: "grid", gap: "var(--space-md)" }}>
             <Step
               n={1}
@@ -272,17 +265,17 @@ export function LandingPage() {
           color: "var(--color-on-surface-variant)",
           marginBottom: "var(--space-lg)",
         }}>
-          Start your first recipe book — free during early access.
+          Start your first recipe book — free.
         </p>
         <div style={{ display: "flex", gap: "var(--space-md)", justifyContent: "center", flexWrap: "wrap" }}>
           <Link to="/auth/register" style={{ textDecoration: "none" }}>
             <button style={{ padding: "var(--space-sm) var(--space-xl)", fontSize: "1rem" }}>
-              Create account
+              Create Free Account
             </button>
           </Link>
           <Link to="/auth/login" style={{ textDecoration: "none" }}>
             <button className="btn-secondary" style={{ padding: "var(--space-sm) var(--space-xl)", fontSize: "1rem" }}>
-              Sign in
+              Sign In
             </button>
           </Link>
         </div>
@@ -304,17 +297,14 @@ export function LandingPage() {
         zIndex: 100,
         boxShadow: "0 -2px 12px rgba(0,0,0,0.06)",
       }}>
-        <span style={{ color: "var(--color-on-surface-variant)", fontSize: "0.85rem" }}>
-          Free during early access
-        </span>
         <Link to="/auth/register" style={{ textDecoration: "none" }}>
           <button style={{ padding: "var(--space-xs) var(--space-lg)", fontSize: "0.85rem" }}>
-            Get started
+            Create Free Account
           </button>
         </Link>
         <Link to="/auth/login" style={{ textDecoration: "none" }}>
-          <button className="btn-ghost" style={{ padding: "var(--space-xs) var(--space-md)", fontSize: "0.85rem" }}>
-            Sign in
+          <button className="btn-secondary" style={{ padding: "var(--space-xs) var(--space-md)", fontSize: "0.85rem" }}>
+            Sign In
           </button>
         </Link>
       </div>

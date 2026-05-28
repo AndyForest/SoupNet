@@ -76,6 +76,18 @@ The privacy policy describes a few behaviors qualitatively that should still mat
 
 Carried over from the controlled-invite-first sequencing decision (2026-04-09). Polish the first 30 seconds of a new user's experience: invitation email body, post-verify dashboard state, recipe-check first-success.
 
+### `[DESIGN]` Clean up the HowItWorks page after landing-page expansion
+
+The landing page now carries a substantial "How a recipe check works" walkthrough section (three steps, expandable Q&A, three solution illustrations) that overlaps with several sections of `/info/how-it-works`. Likely-stale or duplicated areas on the HowItWorks page:
+
+- "How agents connect" (three-row MCP / Web chatbots / Custom split) — partially echoed by the walkthrough's Step 1 expanders.
+- "A self-organizing knowledge graph" + recipe-format depth — adjacent to the walkthrough's "What's actually in the briefing?" and "How does the agent phrase a recipe check?" answers.
+- The page's intro framing — written before the landing page absorbed any walkthrough content; the landing page's new section may have stolen the deep-version's narrative lead.
+
+Goals for the cleanup pass: cut what's duplicated, sharpen what HowItWorks uniquely covers (Recipe Map / concept-axis projection / "How we keep it free at scale" / "Built to trust" / algorithms-and-research-lineage), and make the page feel like the *deeper* version of what the landing page now teaches — not a competing teach. Also verify nothing on HowItWorks contradicts the landing-page framing (cross-vendor moat, Archetype 5, vendor-memory distinction, "taste and judgment" always paired, no "team"-as-framing where the broader collaborator unit is meant).
+
+---
+
 ## Directory submission (Anthropic connectors directory)
 
 Foundation shipped 2026-05-14 (`a46636c`–`9c231ca`): OAuth 2.1 schema + metadata + DCR + authorize/grant + token/refresh + consent screen + MCP tool annotations + Origin-header validation + self-serve deletion. The non-code prep below is what remains before submitting.
