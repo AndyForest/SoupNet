@@ -43,26 +43,87 @@ function esc(value: string | undefined | null): string {
 
 // ── Parameter extraction ─────────────────────────────────────────────────────
 
-interface PageParams {
-  key: string | null;
-  trace: string | null;
-  ef: string | null;
-  ea?: string | undefined; // deprecated — kept for backward compat of existing traces
-  sort: string | undefined;
-  page: string | undefined;
-  format: string | undefined;
-  clusters: string | undefined;
-  maxChars: string | undefined;
-  expand: string | undefined;
-  compact: string | undefined;
-  /** Two concept terms for semantic axis projection (comma-separated). */
-  axes: string | undefined;
-  /** Group slug or ID to write to (resolved within key's write groups). */
-  group: string | undefined;
-  /** Comma-separated group slugs to restrict search scope. */
-  readGroups: string | undefined;
-  /** Uploaded image file (from multipart form) */
-  imageFile: File | undefined;
+// ── Param spec: source of truth for /check query-string handling ─────────────
+//
+// Single table drives:
+//   - readParams()              (GET query / POST formData → PageParams)
+//   - buildQs()                 (PageParams → query string for outbound links)
+//   - renderHiddenCarryFields() (PageParams → hidden inputs for re-check forms)
+//   - the PageParams type itself (derived below)
+//
+// Adding a new param = adding one row here. Every other site is derived,
+// including the type — so drift is structurally impossible. This closes the
+// class of bug that hit on 2026-05-27: `group` was added to PageParams and the
+// readers but never to buildQs's carry-forward list, so the Copy-button URL
+// silently dropped `recipe_book` and the second submission landed in the
+// api_key's default book (different group_id → unique constraint correctly
+// didn't collapse the duplicate).
+
+type RoundTrip = "carry" | "carry-unless-expand" | "override-only";
+
+interface ParamSpec {
+  /** Becomes the PageParams field name via the derivation below. */
+  field: string;
+  /** Canonical wire name in URL query strings */
+  wire: string;
+  /** Wire-name aliases accepted on read (e.g. ["recipe"] for "trace") */
+  aliases: readonly string[];
+  /** Whether the value carries forward in buildQs */
+  roundTrip: RoundTrip;
+  /** When true, the derived PageParams field is `string | null` (else `string | undefined`). */
+  nullable?: true;
+}
+
+export const CHECK_PARAMS = [
+  { field: "key",        wire: "key",                aliases: [],              roundTrip: "carry",                 nullable: true },
+  { field: "trace",      wire: "trace",              aliases: ["recipe"],      roundTrip: "carry",                 nullable: true },
+  { field: "ef",         wire: "ef",                 aliases: ["evidence"],    roundTrip: "carry",                 nullable: true },
+  { field: "ea",         wire: "ea",                 aliases: [],              roundTrip: "carry" },
+  { field: "group",      wire: "recipe_book",        aliases: ["group"],       roundTrip: "carry" },
+  { field: "readGroups", wire: "read_recipe_books",  aliases: ["read_groups"], roundTrip: "carry" },
+  { field: "axes",       wire: "axes",               aliases: [],              roundTrip: "carry" },
+  { field: "sort",       wire: "sort",               aliases: [],              roundTrip: "carry" },
+  { field: "clusters",   wire: "clusters",           aliases: [],              roundTrip: "carry-unless-expand" },
+  { field: "maxChars",   wire: "max_chars",          aliases: [],              roundTrip: "carry-unless-expand" },
+  { field: "page",       wire: "page",               aliases: [],              roundTrip: "override-only" },
+  { field: "format",     wire: "format",             aliases: [],              roundTrip: "override-only" },
+  { field: "expand",     wire: "expand",             aliases: [],              roundTrip: "override-only" },
+  { field: "compact",    wire: "compact",            aliases: [],              roundTrip: "override-only" },
+] as const satisfies readonly ParamSpec[];
+
+// PageParams is derived from CHECK_PARAMS. Adding a row grants the field;
+// removing a row removes it. `imageFile` is added by intersection — it is a
+// File from multipart parsing, not a URL query param, so it lives outside the
+// wire-format table.
+type FieldFor<S> = S extends { nullable: true } ? string | null : string | undefined;
+
+export type PageParams =
+  & { [S in (typeof CHECK_PARAMS)[number] as S["field"]]: FieldFor<S> }
+  & { imageFile: File | undefined };
+
+/**
+ * Parse a query-source map (Hono query string or POST formData) into
+ * PageParams. Wire-name wins over aliases; missing nullable fields default
+ * to null, missing non-nullable fields default to undefined. Mirrors the
+ * `?? null` / `|| undefined` semantics the inline readers used.
+ *
+ * `imageFile` is not handled here — multipart files are set by the caller
+ * after this returns.
+ */
+export function readParams(get: (name: string) => string | undefined): PageParams {
+  const out: Record<string, unknown> = { imageFile: undefined };
+  for (const spec of CHECK_PARAMS) {
+    let value = get(spec.wire);
+    if (value === undefined) {
+      for (const alias of spec.aliases) {
+        const v = get(alias);
+        if (v !== undefined) { value = v; break; }
+      }
+    }
+    const nullable = "nullable" in spec && spec.nullable === true;
+    out[spec.field] = nullable ? (value ?? null) : (value || undefined);
+  }
+  return out as unknown as PageParams;
 }
 
 // Default max_chars for HTML responses when no clustering params are specified.
@@ -163,22 +224,41 @@ function buildJsonResponse(
 
 // ── Query string builder ─────────────────────────────────────────────────────
 
-function buildQs(params: PageParams, overrides: Record<string, string> = {}): string {
-  const parts: string[] = [];
-  // Always carry forward the core search params
-  if (params.key) parts.push(`key=${encodeURIComponent(params.key)}`);
-  if (params.trace) parts.push(`trace=${encodeURIComponent(params.trace)}`);
-  if (params.ef) parts.push(`ef=${encodeURIComponent(params.ef)}`);
-  if (params.ea) parts.push(`ea=${encodeURIComponent(params.ea)}`);
-  // Carry forward display params unless overridden
+export function buildQs(params: PageParams, overrides: Record<string, string> = {}): string {
   const overrideKeys = new Set(Object.keys(overrides));
-  if (params.sort && !overrideKeys.has("sort")) parts.push(`sort=${encodeURIComponent(params.sort)}`);
-  if (params.clusters && !overrideKeys.has("clusters") && !overrideKeys.has("expand")) parts.push(`clusters=${encodeURIComponent(params.clusters)}`);
-  if (params.maxChars && !overrideKeys.has("max_chars") && !overrideKeys.has("expand")) parts.push(`max_chars=${encodeURIComponent(params.maxChars)}`);
+  const parts: string[] = [];
+
+  for (const spec of CHECK_PARAMS) {
+    if (spec.roundTrip === "override-only") continue;
+    if (overrideKeys.has(spec.wire)) continue;                                       // override wins
+    if (spec.roundTrip === "carry-unless-expand" && overrideKeys.has("expand")) continue;  // expand cancels clustering
+
+    const value = params[spec.field];
+    if (value) parts.push(`${spec.wire}=${encodeURIComponent(value)}`);
+  }
+
   for (const [k, v] of Object.entries(overrides)) {
     parts.push(`${k}=${encodeURIComponent(v)}`);
   }
+
   return parts.length > 0 ? `?${parts.join("&")}` : "";
+}
+
+/**
+ * Render hidden form inputs that round-trip URL state (recipe_book, axes,
+ * read_recipe_books, etc.) through the "Re-check with file" form. Same
+ * carry-forward set as buildQs, same source of truth (CHECK_PARAMS).
+ */
+function renderHiddenCarryFields(params: PageParams): string {
+  const fields: string[] = [];
+  for (const spec of CHECK_PARAMS) {
+    if (spec.roundTrip === "override-only") continue;
+    const value = params[spec.field];
+    if (value) {
+      fields.push(`<input type="hidden" name="${spec.wire}" value="${esc(String(value))}">`);
+    }
+  }
+  return fields.join("\n        ");
 }
 
 // ── Evidence HTML renderer ──────────────────────────────────────────────────
@@ -267,7 +347,7 @@ function renderPage(
   let nextStepsHtml = "";
   if (result && !result.error && hasSearch) {
     const jsonQs = buildQs(params, { format: "json" });
-    const groupHiddenField = params.group ? `<input type="hidden" name="group" value="${esc(params.group)}">` : "";
+    const hiddenCarryFields = renderHiddenCarryFields(params);
     nextStepsHtml = `
   <section id="next-steps" style="background:#f0efe3;padding:0.75rem 1rem;border-radius:4px;margin:0.5rem 0">
     <p style="margin:0.25rem 0"><strong>Your recipe was checked as #${esc(result.traceId)}</strong>
@@ -278,10 +358,7 @@ function renderPage(
     <details style="margin-top:0.5rem">
       <summary style="cursor:pointer;font-size:0.9em">Add a file attachment &mdash; image, video, audio, or PDF as reference evidence</summary>
       <form method="post" action="/check" enctype="multipart/form-data" style="margin-top:0.5rem">
-        <input type="hidden" name="key" value="${esc(params.key)}">
-        <input type="hidden" name="trace" value="${esc(params.trace ?? "")}">
-        <input type="hidden" name="ef" value="${esc(params.ef ?? "")}">
-        ${groupHiddenField}
+        ${hiddenCarryFields}
         <input type="file" name="image" accept="${HTML_ACCEPT_TYPES}" required>
         <button type="submit" style="font-size:0.85em;padding:3px 10px;cursor:pointer">Re-check with file</button>
         <p style="font-size:0.75em;color:#888;margin:0.3em 0">Re-submits the same recipe and evidence with the attached file. The original recipe stays unchanged.</p>
@@ -671,27 +748,7 @@ async function handleCheck(
 
 // GET /check — display form or process check via query params
 check.get("/", checkRateLimit, checkPerKeyRateLimit, async (c) => {
-  const params: PageParams = {
-    key: c.req.query("key") ?? null,
-    // Accept both short names (trace/ef/f) and human-readable aliases (recipe/evidence/filter)
-    trace: c.req.query("trace") ?? c.req.query("recipe") ?? null,
-    ef: c.req.query("ef") ?? c.req.query("evidence") ?? null,
-    ea: c.req.query("ea") || undefined,
-    sort: c.req.query("sort") || undefined,
-    page: c.req.query("page") || undefined,
-    format: c.req.query("format") || undefined,
-    clusters: c.req.query("clusters") || undefined,
-    maxChars: c.req.query("max_chars") || undefined,
-    expand: c.req.query("expand") || undefined,
-    compact: c.req.query("compact") || undefined,
-    axes: c.req.query("axes") || undefined,
-    // Accept both `recipe_book` (canonical) and `group` (legacy alias) on the
-    // wire — see Decision A1/B1 rename. Same for read_recipe_books / read_groups.
-    group: c.req.query("recipe_book") || c.req.query("group") || undefined,
-    readGroups: c.req.query("read_recipe_books") || c.req.query("read_groups") || undefined,
-    imageFile: undefined,
-  };
-
+  const params = readParams((name) => c.req.query(name));
   return handleCheck(c, params);
 });
 
@@ -703,25 +760,11 @@ check.post("/", checkBodyLimit, checkRateLimit, checkPerKeyRateLimit, async (c) 
   const rawImage = formData["image"];
   const imageFile = rawImage instanceof File && rawImage.size > 0 ? rawImage : undefined;
 
-  const params: PageParams = {
-    key: (formData["key"] as string) ?? null,
-    trace: (formData["trace"] as string) ?? (formData["recipe"] as string) ?? null,
-    ef: (formData["ef"] as string) ?? (formData["evidence"] as string) ?? null,
-    // Note: when "recipe" is provided without "ef"/"evidence", the combined-field
-    // parser in handleCheck() splits on blank line (recipe = first paragraph, rest = evidence)
-    ea: (formData["ea"] as string) || undefined,
-    sort: (formData["sort"] as string) || undefined,
-    page: (formData["page"] as string) || undefined,
-    format: (formData["format"] as string) || undefined,
-    clusters: (formData["clusters"] as string) || undefined,
-    maxChars: (formData["max_chars"] as string) || undefined,
-    expand: (formData["expand"] as string) || undefined,
-    compact: (formData["compact"] as string) || undefined,
-    axes: (formData["axes"] as string) || undefined,
-    group: (formData["recipe_book"] as string) || (formData["group"] as string) || undefined,
-    readGroups: (formData["read_recipe_books"] as string) || (formData["read_groups"] as string) || undefined,
-    imageFile,
-  };
+  const params = readParams((name) => {
+    const v = formData[name];
+    return typeof v === "string" ? v : undefined;
+  });
+  params.imageFile = imageFile;
 
   return handleCheck(c, params);
 });
