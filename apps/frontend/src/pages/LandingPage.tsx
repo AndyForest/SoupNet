@@ -354,7 +354,6 @@ function Step({ marker, outlined, title, body, details, illustration, illustrati
       display: "flex",
       gap: "var(--space-lg)",
       alignItems: "flex-start",
-      flexWrap: "wrap",
     }}>
       <div style={{
         flex: "0 0 auto",
@@ -374,71 +373,71 @@ function Step({ marker, outlined, title, body, details, illustration, illustrati
       }}>
         {marker}
       </div>
-      <div style={{ flex: "1 1 320px", minWidth: 0 }}>
-        <h3 style={{
-          fontSize: "1.1rem",
-          fontWeight: 700,
-          color: "var(--color-on-surface)",
-          margin: 0,
-          marginBottom: "var(--space-xs)",
-          fontFamily: "var(--font-headline)",
-        }}>
-          {title}
-        </h3>
-        <p style={{
-          color: "var(--color-on-surface-variant)",
-          lineHeight: 1.6,
-          marginTop: 0,
-          marginBottom: details.length > 0 ? "var(--space-sm)" : 0,
-        }}>
-          {body}
-        </p>
-        {details.map((d, i) => (
-          <details key={i} style={{ marginBottom: "var(--space-xs)" }}>
-            <summary style={{
-              cursor: "pointer",
-              color: "var(--color-primary)",
-              fontSize: "0.9rem",
-              fontWeight: 500,
-              padding: "var(--space-xs) 0",
-              listStyle: "revert",
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="step-content-row">
+          <div style={{ flex: "1 1 320px", minWidth: 0 }}>
+            <h3 style={{
+              fontSize: "1.1rem",
+              fontWeight: 700,
+              color: "var(--color-on-surface)",
+              margin: 0,
+              marginBottom: "var(--space-xs)",
+              fontFamily: "var(--font-headline)",
             }}>
-              {d.q}
-            </summary>
+              {title}
+            </h3>
             <p style={{
               color: "var(--color-on-surface-variant)",
-              lineHeight: 1.55,
-              fontSize: "0.9rem",
-              paddingLeft: "var(--space-md)",
-              borderLeft: "2px solid var(--color-outline-variant, #e0e0e0)",
-              margin: 0,
-              marginTop: "var(--space-xs)",
-              marginBottom: "var(--space-sm)",
+              lineHeight: 1.6,
+              marginTop: 0,
+              marginBottom: details.length > 0 ? "var(--space-sm)" : 0,
             }}>
-              {d.a}
+              {body}
             </p>
-          </details>
-        ))}
-      </div>
-      {illustration ? (
-        <div style={{
-          flex: "1 1 220px",
-          minWidth: 0,
-          maxWidth: 280,
-        }}>
-          <img
-            src={illustration}
-            alt={illustrationAlt ?? ""}
-            style={{
-              width: "100%",
-              height: "auto",
-              display: "block",
-              borderRadius: "var(--radius-lg)",
-              border: "1px solid var(--color-outline-variant, #e0e0e0)",
-            }}
-          />
+            {details.map((d, i) => (
+              <details key={i} style={{ marginBottom: "var(--space-xs)" }}>
+                <summary style={{
+                  cursor: "pointer",
+                  color: "var(--color-primary)",
+                  fontSize: "0.9rem",
+                  fontWeight: 500,
+                  padding: "var(--space-xs) 0",
+                  listStyle: "revert",
+                }}>
+                  {d.q}
+                </summary>
+                <p style={{
+                  color: "var(--color-on-surface-variant)",
+                  lineHeight: 1.55,
+                  fontSize: "0.9rem",
+                  paddingLeft: "var(--space-md)",
+                  borderLeft: "2px solid var(--color-outline-variant, #e0e0e0)",
+                  margin: 0,
+                  marginTop: "var(--space-xs)",
+                  marginBottom: "var(--space-sm)",
+                }}>
+                  {d.a}
+                </p>
+              </details>
+            ))}
+          </div>
+          {illustration ? (
+            <div className="step-illustration">
+              <img
+                src={illustration}
+                alt={illustrationAlt ?? ""}
+                style={{
+                  width: "100%",
+                  height: "auto",
+                  display: "block",
+                  borderRadius: "var(--radius-lg)",
+                  border: "1px solid var(--color-outline-variant, #e0e0e0)",
+                }}
+              />
+            </div>
+          ) : null}
         </div>
-      ) : null}
+      </div>
     </div>
   );
 }

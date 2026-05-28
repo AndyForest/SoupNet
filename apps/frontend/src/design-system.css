@@ -266,6 +266,32 @@ label {
   }
 }
 
+/* ── Landing-page walkthrough step ─────────────────────────────── */
+/* Inner layout for the numbered Step component: text + illustration
+   share a column under the marker. On wide screens the illustration
+   sits beside the text; on narrow screens it wraps below and stretches
+   to the text column width (centered), matching the pillar pattern
+   where wrapped images fill the column. */
+.step-content-row {
+  display: flex;
+  gap: var(--space-lg);
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.step-illustration {
+  flex: 0 1 220px;
+  min-width: 0;
+  max-width: 280px;
+}
+@media (max-width: 720px) {
+  .step-illustration {
+    flex: 1 1 100%;
+    max-width: none;
+    margin-left: auto;
+    margin-right: auto;
+  }
+}
+
 /* ── Scrollbar ──────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
