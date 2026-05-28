@@ -5,7 +5,7 @@
  */
 
 interface IconProps {
-  name: "home" | "search" | "key" | "users" | "settings" | "chevron-right" | "copy" | "plus" | "x" | "clock" | "arrow-left" | "clipboard-check" | "external-link" | "upload" | "download" | "map";
+  name: "home" | "search" | "key" | "users" | "settings" | "chevron-right" | "copy" | "plus" | "x" | "clock" | "arrow-left" | "clipboard-check" | "external-link" | "upload" | "download" | "map" | "book-open";
   size?: number;
   className?: string;
 }
@@ -32,6 +32,10 @@ const paths: Record<IconProps["name"], string | string[]> = {
   upload: "M10 14V3m0 0L6 7m4-4l4 4M3 14v2a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2",
   download: "M10 3v11m0 0l4-4m-4 4L6 10M3 14v2a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2",
   map: "M3 5l5-2 4 2 5-2v12l-5 2-4-2-5 2V5zm5-2v12m4-10v12",
+  "book-open": [
+    "M3 4h5c1.1 0 2 .9 2 2v10c0-1.1-.9-2-2-2H3V4z",
+    "M17 4h-5c-1.1 0-2 .9-2 2v10c0-1.1.9-2 2-2h5V4z",
+  ],
 };
 
 export function Icon({ name, size = 20, className }: IconProps) {

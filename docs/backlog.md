@@ -11,6 +11,29 @@ When you complete an item, move it to `backlog-completed.md` with a date stamp. 
 
 ---
 
+## Recipe-check response format
+
+### `[DESIGN]` Markdown response option for web `/check` page, encapsulated in backticks
+
+Today the `/check` web page renders the recipe-check result as JSON for the human to copy back to their AI agent. Two observations from the 2026-05-27 InData demo to four AI-first developers (and earlier from a non-technical user via Andy):
+
+1. JSON is alienating *even for technical users*. They felt friction at the "copy this JSON blob" step. Surprising — we'd assumed JSON was friendly for developers, scary only for the non-technical case the citation-link concept was meant to solve.
+2. The briefing page already encourages copy-paste of fenced content into chat UIs, because the chat then visually treats the pasted block as an "attachment" rather than inline text — looks cleaner, the agent treats it more like a structured payload.
+
+Proposed: in addition to (or instead of) raw JSON, render the recipe-check result as **markdown wrapped in triple backticks**. Same information, but:
+- The human can read it themselves on the way back to the agent — transparency, less alienation
+- Pasted into chat, the fenced block renders as a clean attachment-like card
+- Encourages agents to treat it the same way they treat the pasted briefing
+
+This is adjacent to but distinct from the **citation-link** proposal in `docs/design-thinking.md` §"Citation Links for Non-Technical Copy-Back" — citation link is the eventual ideal (paste one short URL, agent fetches it); markdown response is the smaller-step improvement that helps both technical and non-technical users immediately.
+
+Design questions:
+- Does the existing `format=json` path stay as-is, with markdown as a new `format=markdown` (or just the default for the HTML view)?
+- Should the MCP `check_recipe` tool also gain a markdown response shape, or stay structured? (Probably stay structured — MCP agents parse it directly.)
+- What's the markdown shape? Likely: a header per result with the recipe text, evidence interpretation as paragraph, references as block quotes with citations. Mirror the briefing's exemplar formatting.
+
+---
+
 ## Legal and compliance
 
 ### `[IMPL]` Change-notification mechanism
@@ -52,8 +75,6 @@ The privacy policy describes a few behaviors qualitatively that should still mat
 ### `[DESIGN]` Onboarding polish for first session
 
 Carried over from the controlled-invite-first sequencing decision (2026-04-09). Polish the first 30 seconds of a new user's experience: invitation email body, post-verify dashboard state, recipe-check first-success.
-
----
 
 ## Directory submission (Anthropic connectors directory)
 

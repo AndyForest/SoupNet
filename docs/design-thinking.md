@@ -19,7 +19,7 @@ Read alongside the ADRs for technical decisions.
 
 **Soup.net is shared memory for AI agents — your taste and judgment, everywhere you work.**
 
-AI agents are already tuned to learn your taste and judgment — Soup.net gives that learning a persistent, portable, shared home. Every new AI session starts from scratch. Every new collaborator needs the same explanations. Soup.net is a shared repository of the taste and judgment calls you make while working — so new agents, new sessions, and new teammates can jump right in like they've been working with you for years.
+AI agents are already tuned to learn your taste and judgment — Soup.net gives that learning a persistent, portable, shared home. Every new AI session starts from scratch. Every new collaborator needs the same explanations. Soup.net is a shared repository of the taste and judgment calls you make while working — so new agents, new sessions, and new collaborators can jump right in like they've been working with you for years.
 
 **What we store:** Recipes — structured records of taste and judgment with context and evidence. "As a backend developer building an edge-deployed API, I chose Hono over Express so that deployment stays portable across runtimes" with supporting evidence (benchmarks, quotes from the decision discussion). Not facts. Not documents. Judgment — always with the context that scopes it.
 
@@ -80,7 +80,7 @@ With Soup.net: their API key lives in `.env` or `.mcp.json`. As they work, their
 ### 2. The Recipe-Book Collaborator
 **"I'm working on a project with other people. Our AI agents should share context."**
 
-A team working on a project — parents coordinating a school event, developers on a shared codebase, designers iterating on a brand. They need a shared judgment space where everyone's agents contribute and benefit.
+A group working on a shared concern — parents coordinating a school event, developers on a shared codebase, designers iterating on a brand, a family planning a renovation. They need a shared judgment space where everyone's agents contribute and benefit.
 
 **Key needs:** Easy, spam-safe invitation flow. Agents know which recipe book to write to. Cross-book search (personal + project). Privacy-narrow defaults.
 
@@ -141,6 +141,25 @@ One person discovers Soup.net and starts using it solo. Their corpus is initiall
 **The first-adopter experience is the most critical user journey.** The system must be immediately useful for a single user. Value should be evident within the first session: the agent finds something from the same session and applies it correctly to a new context.
 
 **Key needs:** Immediate value for single user. Effortless transition to shared recipe books. Visible "corpus growing" over time (Recipe Map, dashboard stats).
+
+### 5. The AI-reluctant collaborator
+**"I'm not going to sign up for another AI thing. I just want to keep using what I already use."**
+
+A collaborator a power-user invites into a shared decision — a non-technical family member, a less-AI-experienced colleague, a friend helping with a one-off project. They use whatever AI tool they have at hand, typically free-tier ChatGPT, Gemini web, or Claude web. No MCP, no API keys, no third-party signups. They will not create a Soup.net account. The "create another account" step is the friction that ends the collaboration before it starts.
+
+**The power user's leverage.** The web `/check` page accepts URL-embedded scoped keys. A power-user collaborator generates a link from their own session and sends it through whatever channel they already use (Signal, SMS, email, a chat thread). The AI-reluctant collaborator clicks the link. Their chatbot reads the result page, extracts the context, and continues working — with shared judgment in scope. The recipient never sees the dashboard, never makes an account, never has to learn what Soup.net is.
+
+**Key needs (framed from the power user's perspective, since the AI-reluctant collaborator has no Soup.net surface of their own):**
+- Zero-signup path for the recipient. The link works without an account on the recipient's side.
+- The recipient never has to learn what Soup.net is. The link looks like any other shared URL.
+- The scope of what the click exposes is set by the power user at link-creation time, not by the recipient.
+- The result page is comprehensible to the recipient who pastes it back to their chatbot — the JSON-as-default failure mode (surfaced in the 2026-05-27 InData demo and earlier in the citation-link work) hurts this archetype most.
+
+**This isn't a contradiction of Archetype 2 (The Recipe-Book Collaborator).** Archetype 2 is the collaborator who *does* accept the invite, signs up, and gains their own scoped key. Archetype 5 is the collaborator who never reaches that threshold — and a structural moat exists *only* because Soup.net serves them anyway.
+
+**Why this matters strategically.** Vendors can't reach this archetype. The AI-reluctant collaborator is not the vendor's customer and won't become one. A neutral, ad-hoc-link-shaped path is the only way shared judgment reaches them. See [Two-layer UVP — lasting vs replicable](#two-layer-uvp--lasting-vs-replicable) for the strategic positioning.
+
+**Real-world example.** Andy with his son brainstorming a game mod on ChatGPT mobile. His son is a free-tier ChatGPT user with no Soup.net account. The StoryCarousel on the landing page demonstrates this archetype in action, though it isn't named there.
 
 ---
 
@@ -433,7 +452,7 @@ Tier 1 items always surface above tier 2+. Ordering within a tier is reverse-chr
 
 ### The collaboration gap
 
-The big AI vendors are building strong memory inside their products — Claude Projects, ChatGPT Memory, Anthropic auto-memory, Gemini context. Within an ecosystem, they're getting good at this and will continue to. The gap they aren't structurally incentivized to close is the one *across* products: across the agents one person uses, across the vendors a team uses, and across humans at different points in their AI maturity journey. Vendors want users in their ecosystem; closing cross-platform gaps works against that incentive.
+The big AI vendors are building strong memory inside their products — Claude Projects, ChatGPT Memory, Anthropic auto-memory, Gemini context. Within an ecosystem, they're getting good at this and will continue to. The gap they aren't structurally incentivized to close is the one *across* products: across the agents one person uses, across the vendors a group uses, and across humans at different points in their AI maturity journey. Vendors want users in their ecosystem; closing cross-platform gaps works against that incentive.
 
 Soup.net's position is the inverse. Its only job is the across — across agents, across vendors, across humans. That's the structural moat.
 
@@ -456,17 +475,22 @@ This is why a separate, neutral system has to exist for this to work. No single 
 
 ### Two-layer UVP — lasting vs replicable
 
+The differentiators below are split along two independent dimensions: **scope** (one person vs. between people) and **across vs. within vendor ecosystems**. The lasting / structural items are all *across* vendors. The replicable items are all *within* a single vendor's ecosystem — where the vendor themselves could plausibly build the feature.
+
 **Lasting / structural — defensible even when vendors copy every feature:**
-- **Cross-vendor portability** — works across Claude, ChatGPT, Gemini, and any custom agent. Vendors are structurally incentivized to keep memory inside their ecosystem; we're structurally outside it.
-- **Cross-vendor team sharing** — no single vendor can offer recipe-sharing between users on different ecosystems. That requires a neutral third party.
-- **Web-agent access via the stigmergic-link pattern** — disconnected web chatbots (ChatGPT web, Gemini web) can participate in the corpus through user-pasted links. Vendors restrict tool access for cost and safety reasons; these constraints are industry-wide, not temporary. Soup.net's clickable-link UX works within them.
-- **Data exportability + open source** — your data is always exportable, and the codebase is open-source for self-hosters. The hosted version stores data on Soup.net's servers; we're an independent third party, not a self-host. Honest framing: "your data, always portable" is true universally; "your data physically yours" is a self-host promise. Don't conflate them.
+
+- **Cross-vendor portability for one person.** Your taste travels across Claude, ChatGPT, Gemini, and any custom agent you use. Each vendor is structurally incentivized to keep memory inside their ecosystem; we're structurally outside it.
+- **Cross-vendor collaboration between people.** Sharing a recipe book between people on different agent ecosystems requires a third party that isn't competing for ecosystem capture. No single vendor can provide this.
+- **Reach to collaborators who won't onboard their own tooling.** Free-tier ChatGPT, Gemini web, Claude web, and similar disconnected chatbots can participate in a shared recipe book through links a power-user collaborator generates and sends them — no signup required on the recipient's side. Vendors restrict tool access for cost and safety reasons, and the recipient is by definition not the vendor's customer. The agent-generates-link / human-clicks / agent-fetches pattern works within these constraints. See [§5 The AI-reluctant collaborator](#5-the-ai-reluctant-collaborator) for the user archetype this serves.
+- **Data exportability + open source.** Your data is always exportable, and the codebase is open-source for self-hosters. The hosted version stores data on Soup.net's servers; we're an independent third party, not a self-host. Honest framing: "your data, always portable" is true universally; "your data physically yours" is a self-host promise. Don't conflate them.
 
 **Useful now / replicable — vendors may eventually cover these within their ecosystems:**
-- Structured recipes with evidence (Toulmin model)
-- Coverage diversity from independent sources
-- Non-judgmental reporting (search-time surfaces present related evidence neutrally; the LLM consumer interprets stance against current context, since cosine over gemini-embedding-2-preview encodes topic, not stance — ADR-0015)
-- Cross-tool / cross-team collaboration features within a single vendor's ecosystem
+
+- Structured recipes with evidence (Toulmin model).
+- Coverage diversity from independent sources.
+- Non-judgmental reporting (search-time surfaces present related evidence neutrally; the LLM consumer interprets stance against current context, since cosine over gemini-embedding-2-preview encodes topic, not stance — ADR-0015).
+- **Within-ecosystem cross-tool features.** A single vendor unifying memory across all of their own surfaces (Claude Desktop ↔ Claude Code ↔ Claude.ai web) is plausible and useful. It doesn't reach across vendors.
+- **Within-ecosystem cross-person features.** Shared workspaces between users of the same vendor (Claude Projects shared with another Claude user) is also plausible. Same reach limitation.
 
 ### Implications for product decisions
 
@@ -513,4 +537,4 @@ Detailed design for Full/Indexed/Air-gapped storage modes has been moved to [doc
 
 ---
 
-*Last updated: 2026-04-03. This document should be updated BEFORE implementing features, not after.*
+*Last updated: 2026-05-27 — Two-layer UVP split into across-vendor vs within-vendor dimensions; Archetype 5 (AI-reluctant collaborator) added. Prior: 2026-04-03.*

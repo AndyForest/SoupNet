@@ -4,6 +4,24 @@ Items moved here from `backlog.md` when finished. Date-stamped so we can see wha
 
 ---
 
+## Landing page
+
+### 2026-05-27 — Solution illustrations for the recipe-check walkthrough (three steps)
+
+The landing page's "How Soup.net recipe checks solve this" section had a structural gap: the two pillar illustrations above depicted the situation Soup.net addresses, the carousel below showed concrete demonstration, but the walkthrough explaining the mechanism had no visual presence. Three small watercolor illustrations now sit beside the three steps, completing a consistent solve→demonstrate visual arc.
+
+- `illustration-briefing-handoff.png` — person handing the briefing to an agent figure
+- `illustration-checks-in-motion.png` — agent working alongside the person, recipe checks rising as small marks toward a glowing vessel
+- `illustration-context-returning.png` — marks settling back around the agent, one or two glowing brighter
+
+Layout follows pillar pattern: `flex: "1 1 220px"` with `maxWidth: 280`, `--color-outline-variant` hairline border, and `--radius-lg` rounding — same visual family as the existing two pillar illustrations, smaller scale. Connected as a vertical sequence beside the step text via tight `--space-md` gap between Steps. Responsive: shrinks below basis and wraps below step content on narrow viewports.
+
+Pillar 1 and 2 alt texts updated in the same pass — previously solution-leaning ("aware of their working preferences," "handing accumulated context"), now describe the situations the artwork actually depicts so the new walkthrough illustrations can carry the solution imagery cleanly.
+
+The `Step` component (`apps/frontend/src/pages/LandingPage.tsx`) gained optional `illustration` and `illustrationAlt` props during the structural work earlier the same day; wiring was a three-call drop-in. Detailed image-gen briefings used to produce the artwork are recoverable from git history (commits leading up to this move).
+
+---
+
 ## Connector + OAuth
 
 ### 2026-05-14 — claude.ai custom-connector foundation: OAuth 2.1 + MCP polish + self-serve deletion
