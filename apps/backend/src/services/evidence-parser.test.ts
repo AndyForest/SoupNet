@@ -152,6 +152,143 @@ describe("parseEvidenceMarkdown", () => {
     );
   });
 
+  it("folds an orphaned quote/source block into the preceding interpretation", () => {
+    // Natural Markdown: an interpretation paragraph, a blank line, then its
+    // `> quote` / `-- source` block. The blank line must NOT fragment this
+    // into an interpretation-only entry plus an orphaned citation entry.
+    const input = [
+      "The interpretation paragraph that stands on its own line.",
+      "",
+      '> "The supporting quote."',
+      "-- Andy, session",
+    ].join("\n");
+
+    const result = parseEvidenceMarkdown(input);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual({
+      interpretation: "The interpretation paragraph that stands on its own line.",
+      quote: "The supporting quote.",
+      source: "Andy, session",
+    });
+  });
+
+  it("folds an orphaned source-only block into the preceding interpretation", () => {
+    const input = [
+      "Interpretation with only a citation, no quote.",
+      "",
+      "-- https://example.com/article",
+    ].join("\n");
+
+    const result = parseEvidenceMarkdown(input);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual({
+      interpretation: "Interpretation with only a citation, no quote.",
+      quote: "",
+      source: "https://example.com/article",
+    });
+  });
+
+  it("folds across multiple interpretation/citation pairs", () => {
+    const input = [
+      "First interpretation.",
+      "",
+      '> "First quote."',
+      "-- Source A",
+      "",
+      "Second interpretation.",
+      "",
+      '> "Second quote."',
+      "-- Source B",
+    ].join("\n");
+
+    const result = parseEvidenceMarkdown(input);
+    expect(result).toHaveLength(2);
+    expect(result[0]).toEqual({
+      interpretation: "First interpretation.",
+      quote: "First quote.",
+      source: "Source A",
+    });
+    expect(result[1]).toEqual({
+      interpretation: "Second interpretation.",
+      quote: "Second quote.",
+      source: "Source B",
+    });
+  });
+
+  it("leaves an orphaned citation with no preceding entry as its own entry", () => {
+    // Quote-only at the start of input — nothing to fold into. Faithful to an
+    // author who supplied a source but no interpretation.
+    const input = [
+      '> "A quote with no preceding interpretation."',
+      "-- Source",
+    ].join("\n");
+
+    const result = parseEvidenceMarkdown(input);
+    expect(result).toHaveLength(1);
+    expect(result[0]!.interpretation).toBe("");
+    expect(result[0]!.quote).toBe("A quote with no preceding interpretation.");
+    expect(result[0]!.source).toBe("Source");
+  });
+
+  it("does not fold a second orphaned citation when the predecessor already has one", () => {
+    // Conservative: once an entry has its citation, a further orphaned quote
+    // stays separate rather than clobbering/concatenating — preserves the
+    // second reference instead of losing it.
+    const input = [
+      "Interpretation.",
+      "",
+      '> "First quote."',
+      "-- Source A",
+      "",
+      '> "Second orphaned quote."',
+      "-- Source B",
+    ].join("\n");
+
+    const result = parseEvidenceMarkdown(input);
+    expect(result).toHaveLength(2);
+    expect(result[0]).toEqual({
+      interpretation: "Interpretation.",
+      quote: "First quote.",
+      source: "Source A",
+    });
+    expect(result[1]!.interpretation).toBe("");
+    expect(result[1]!.quote).toBe("Second orphaned quote.");
+    expect(result[1]!.source).toBe("Source B");
+  });
+
+  it("reproduces and fixes the trace a2c8fb64 fragmentation", () => {
+    // Regression guard for the real prod payload that fragmented into 5 rows
+    // (2 orphaned interpretations + 3 "(no interpretation)" citations). With
+    // folding it collapses to 3: each interpretation reclaims its first quote,
+    // and the one genuinely-ambiguous extra quote (two quotes sat between the
+    // two interpretations) stays a standalone citation rather than being lost.
+    const input = [
+      "The user explicitly framed the briefing as high-stakes.",
+      "",
+      '> "We\'re making some tweaks to the soup.net briefing."',
+      "-- Andy, 2026-05-31 session",
+      "",
+      '> "before I tell you what changes we\'ll be making to the briefing, do a thorough examination."',
+      "-- Andy, 2026-05-31 session",
+      "",
+      "The user also flagged that a regression-test system is a longer-term goal.",
+      "",
+      '> "Long term I want to make a regression testing system for tweaks."',
+      "-- Andy, 2026-05-31 session",
+    ].join("\n");
+
+    const result = parseEvidenceMarkdown(input);
+    // First interp folds its quote; the second orphaned quote (predecessor
+    // already cited) stays separate; second interp folds its quote.
+    expect(result).toHaveLength(3);
+    expect(result[0]!.interpretation).toBe("The user explicitly framed the briefing as high-stakes.");
+    expect(result[0]!.quote).toBe("We're making some tweaks to the soup.net briefing.");
+    expect(result[1]!.interpretation).toBe("");
+    expect(result[1]!.quote).toBe("before I tell you what changes we'll be making to the briefing, do a thorough examination.");
+    expect(result[2]!.interpretation).toBe("The user also flagged that a regression-test system is a longer-term goal.");
+    expect(result[2]!.quote).toBe("Long term I want to make a regression testing system for tweaks.");
+  });
+
   it("handles leading and trailing whitespace on lines", () => {
     const input = [
       "  Interpretation with leading spaces.  ",

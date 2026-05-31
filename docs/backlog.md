@@ -34,6 +34,18 @@ Design questions:
 
 ---
 
+## Evidence ingestion
+
+### `[DESIGN]` Support multiple references per one interpretation in `parseEvidenceMarkdown`
+
+`parseEvidenceMarkdown` (`apps/backend/src/services/evidence-parser.ts`) and its `EvidenceEntry` shape carry a single `quote`/`source` per entry, and `insertEvidenceEntries` creates exactly one reference per entry — even though the DB model (`evidence_references` N:N) already supports many references per evidence. The 2026-05-31 folding fix (orphaned citation block folds back into the preceding interpretation) handles the dominant case — one interpretation, one quote — but when an author writes one interpretation followed by *two* `> quote` / `-- source` blocks, only the first folds in; the second stays a standalone "(no interpretation)" entry rather than attaching as a second reference to the same interpretation. To fully support it, `EvidenceEntry` would need a `references[]` array and the insert path would create N reference rows + N `evidence_references` links per entry. Deferred as a smaller graceful-degradation case; the conservative fold preserves the reference (no data loss) rather than dropping or clobbering it.
+
+### `[IMPL]` Repair historical fragmented-evidence traces
+
+Traces checked before the 2026-05-31 folding fix that hit the blank-line-fragmentation bug are stored as separate interpretation-only and `(no interpretation)` citation rows (e.g. trace `a2c8fb64-d0bd-4d65-9248-4a4a8c727650`). The parser fix is forward-only — it doesn't touch already-stored rows. A one-off data migration could re-fold these: find evidence rows with content `(no interpretation)` that are linked to a reference and adjacent (same trace, same `created_at`) to an interpretation-only evidence row with no reference, then merge. Low priority — cosmetic on the trace-detail page, no functional impact. Scope first: query how many traces are actually affected before writing the migration.
+
+---
+
 ## Agent briefing
 
 ### `[DESIGN]` Regression-test system for briefing tweaks
