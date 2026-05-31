@@ -16,7 +16,12 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { EXT_TO_MIME } from "@soupnet/domain";
+import {
+  EXT_TO_MIME,
+  MCP_PARAM_DESCRIPTIONS,
+  MCP_TOOL_DESCRIPTIONS,
+  buildCheckRecipeToolDescription,
+} from "@soupnet/domain";
 
 const backendUrl = process.env["SOUPNET_BACKEND_URL"] ?? "http://localhost:3101";
 const apiKey = process.env["SOUPNET_API_KEY"] ?? "";
@@ -159,39 +164,12 @@ const server = new McpServer({
 
 server.tool(
   "check_recipe",
-  "Check a recipe against Soup.net — returns similar recipes with evidence. " +
-  "As a side effect, your recipe is logged so future checks get smarter (stigmergy). " +
-  "Check freely and often: before starting tasks (broad discovery), when facing judgment " +
-  "calls, and after completing meaningful work. " +
-  "Write from the HUMAN USER's perspective: 'As a [role] working on [goal], I [prefer/chose] so that [reason]'. " +
-  "Only check genuine hypotheses with evidence — not questions or fabricated queries. " +
-  "Results are clustered to 3 exemplars by default. Use clusters=5+ for discovery checks, " +
-  "or max_chars to auto-cluster to a character budget (e.g., 2000 for tight context). " +
-  "Call get_briefing first if unsure about the format.",
+  buildCheckRecipeToolDescription({ includeFileAttachment: false }),
   {
-    recipe: z.string().describe(
-      "Recipe (trace) — the human user's voice in a transferable role, not yours. " +
-      "Format: 'As a [role] working on [goal], I [prefer/chose] so that [reason]'. " +
-      "Pick a role that transfers across users and projects (e.g., 'front-end React developer'), " +
-      "not the user's name and not the project name when the recipe-book description already implies it. " +
-      "Common voice mistakes: 'As an AI agent…' (your voice instead of the user's), " +
-      "'As Andy…' (collapses role into a specific person), " +
-      "'As a Soup.net developer…' when written to the soup-net-development recipe book (duplicates context the recipe-book description already provides; replace with the functional equivalent like 'front-end React developer', not nothing). " +
-      "Every recipe needs context — role and goal scope the judgment."
-    ),
-    supporting_evidence: z.string().describe(
-      "Supporting evidence for your recipe. Each entry: interpretation text, then '> direct quote', " +
-      "then '-- source citation'. Separate entries with blank lines."
-    ),
-    clusters: z.number().optional().describe(
-      "Number of result clusters (reduces results to k representative exemplars). " +
-      "Defaults to 3. Use 5+ for discovery checks to surface more diverse viewpoints. " +
-      "Each exemplar includes cluster size. Overridden by max_chars if specified."
-    ),
-    max_chars: z.number().optional().describe(
-      "Target response size in characters -- auto-clusters to fit. " +
-      "Recommended: 2000 for tight context, 5000 for detailed responses."
-    ),
+    recipe: z.string().describe(MCP_PARAM_DESCRIPTIONS.recipe),
+    supporting_evidence: z.string().describe(MCP_PARAM_DESCRIPTIONS.supportingEvidence),
+    clusters: z.number().optional().describe(MCP_PARAM_DESCRIPTIONS.clusters),
+    max_chars: z.number().optional().describe(MCP_PARAM_DESCRIPTIONS.maxChars),
     file: z.string().optional().describe(
       "Optional file to attach as reference evidence (multimodal embedding). " +
       "Local file path (e.g., 'docs/screenshot.png') or URL. " +
@@ -300,8 +278,7 @@ server.tool(
 
 server.tool(
   "get_briefing",
-  "Get the Soup.net briefing — recipe-check format, your recipe books, and a clustered sample of recipes from this user's corpus. " +
-  "Call this before your first check to learn the format and prime your context with the shape of the user's taste.",
+  MCP_TOOL_DESCRIPTIONS.getBriefing,
   {},
   {
     title: "Get briefing",

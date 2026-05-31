@@ -497,7 +497,7 @@ The user's selection is itself evidence. Once they've chosen, append a line like
 If none of your framings fit, ask the user to clarify and form new hypotheses rather than picking the closest miss.
 
 ## Formatting recipe-check links — for web agents that hand URLs back to the user
-You may not know your UI's capabilities, but you do know your system identity. Use what you know about yourself to pick the link format that will survive the round-trip to the user:
+You may not know your UI's capabilities, but you do know your system identity. Use what you know about yourself to pick the link format that will survive the round-trip to the user — the user opening that link is what runs the check, so formatting it for them is the whole job (nothing to fetch via code interpreter or browsing yourself):
 
 - **Gemini and other Google LLMs:** your chat UI wraps complex URLs in search redirects (\`google.com/search?q=...\`). Markdown links look clean but break at click time. Output each recipe-check URL as a **fenced code block with the \`plaintext\` language tag**. Do NOT wrap URLs in inline code, markdown link syntax, or both combined — only the fenced plaintext code block survives Gemini's UI intact, letting the user copy the URL directly.
 - **Claude, ChatGPT, and similar:** your chat UI renders markdown links natively. Standard markdown links like \`[Check this recipe](https://mcp.soup.net/check?key=...&recipe=...)\` work well.
@@ -631,3 +631,86 @@ export const TIPS = [
   "Use the axes parameter for concept-axis projection — positions each result by similarity to two concepts you choose (see concept-axis section above).",
   "Use max_chars when juggling multiple tools to control context usage.",
 ];
+
+// ── MCP tool & parameter descriptions ───────────────────────────────────────
+//
+// Shared by the HTTP MCP route (apps/backend/src/routes/mcp.ts) and the stdio
+// MCP server (apps/mcp-server/src/index.ts). Both used to hand-roll their own
+// byte-identical copies of these strings; the role/voice text in particular
+// mirrors ROLE_PATTERNS, so drift between the two MCP surfaces directly
+// undermined the briefing's voice guidance. Single source here removes the
+// drift surface.
+//
+// The check_recipe tool description is split into three pieces so the two
+// surfaces can compose what they support: HTTP includes the file-attachment
+// sentence (file_url / file_base64); stdio omits it (uses a single `file`
+// param with a different shape). Param descriptions for the shared params
+// (recipe, supporting_evidence, clusters, max_chars) are also identical
+// across both surfaces and live here. Surface-specific params (axes,
+// recipe_book, file_url, region, etc.) stay inline in the MCP files.
+
+export const MCP_TOOL_DESCRIPTIONS = {
+  /** Shared lead — identical across HTTP and stdio MCP. */
+  checkRecipeLead:
+    "Check a recipe against Soup.net — returns similar recipes with evidence. " +
+    "As a side effect, your recipe is logged so future checks get smarter (stigmergy). " +
+    "Check freely and often: before starting tasks (broad discovery), when facing judgment " +
+    "calls, and after completing meaningful work. " +
+    "Write from the HUMAN USER's perspective: 'As a [role] working on [goal], I [prefer/chose] so that [reason]'. " +
+    "Only check genuine hypotheses with evidence — not questions or fabricated queries. " +
+    "Results are clustered to 3 exemplars by default. Use clusters=5+ for discovery checks, " +
+    "or max_chars to auto-cluster to a character budget (e.g., 2000 for tight context).",
+
+  /** HTTP-only — file attachment via file_url or file_base64. */
+  checkRecipeFileAttachment:
+    "Attach a reference file (image, PDF, audio, video) via file_url (server fetches the URL) " +
+    "or file_base64 (inline bytes) for multimodal evidence.",
+
+  /** Shared trailer — identical across HTTP and stdio MCP. */
+  checkRecipeTrailer: "Call get_briefing first if unsure about the format.",
+
+  /** Identical across both MCP surfaces. */
+  getBriefing:
+    "Get the Soup.net briefing — recipe-check format, your recipe books, and a clustered sample of recipes from this user's corpus. " +
+    "Call this before your first check to learn the format and prime your context with the shape of the user's taste.",
+
+  /** HTTP-only today; stdio may grow this tool later. */
+  listMyRecipeBooks:
+    "Refresh your Soup.net corpus context — returns the user's identity, recipe books (with descriptions, access levels, and other members of shared books), and a clustered sample of recipes from the corpus. " +
+    "Call this when the conversation moves into a new area of the user's work, or periodically during long sessions on shared recipe books to pick up new recipes from collaborators. " +
+    "Same shape as the recipe-books section of the get_briefing output, without the boilerplate.",
+} as const;
+
+export const MCP_PARAM_DESCRIPTIONS = {
+  /** Recipe param — the role/voice guidance that mirrors ROLE_PATTERNS. */
+  recipe:
+    "Recipe (trace) — the human user's voice in a transferable role, not yours. " +
+    "Format: 'As a [role] working on [goal], I [prefer/chose] so that [reason]'. " +
+    "Pick a role that transfers across users and projects (e.g., 'front-end React developer'), " +
+    "not the user's name and not the project name when the recipe-book description already implies it. " +
+    "Common voice mistakes: 'As an AI agent…' (your voice instead of the user's), " +
+    "'As Andy…' (collapses role into a specific person), " +
+    "'As a Soup.net developer…' when written to the soup-net-development recipe book (duplicates context the recipe-book description already provides; replace with the functional equivalent like 'front-end React developer', not nothing). " +
+    "Every recipe needs context — role and goal scope the judgment.",
+
+  supportingEvidence:
+    "Supporting evidence for your recipe. Each entry: interpretation text, then '> direct quote', " +
+    "then '-- source citation'. Separate entries with blank lines.",
+
+  clusters:
+    "Number of result clusters (reduces results to k representative exemplars). " +
+    "Defaults to 3. Use 5+ for discovery checks to surface more diverse viewpoints. " +
+    "Each exemplar includes cluster size. Overridden by max_chars if specified.",
+
+  maxChars:
+    "Target response size in characters -- auto-clusters to fit. " +
+    "Recommended: 2000 for tight context, 5000 for detailed responses.",
+} as const;
+
+/** Compose the full check_recipe tool description, optionally with the file-attachment sentence. */
+export function buildCheckRecipeToolDescription(opts: { includeFileAttachment: boolean }): string {
+  const parts = [MCP_TOOL_DESCRIPTIONS.checkRecipeLead];
+  if (opts.includeFileAttachment) parts.push(MCP_TOOL_DESCRIPTIONS.checkRecipeFileAttachment);
+  parts.push(MCP_TOOL_DESCRIPTIONS.checkRecipeTrailer);
+  return parts.join(" ");
+}

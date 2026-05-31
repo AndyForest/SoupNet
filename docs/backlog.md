@@ -34,6 +34,23 @@ Design questions:
 
 ---
 
+## Agent briefing
+
+### `[DESIGN]` Regression-test system for briefing tweaks
+
+The agent briefing is shipped to every agent session and is highly sensitive to wording changes — but there's no automated coverage. Today the canonical pre-commit gate (`npm run test:ci`) asserts route shape and auth on `/briefing` and `/keys/briefing` but nothing about the rendered text. The fallback is manual testing on every supported agent (Claude Code, Claude Desktop, Codex, Antigravity, claude.ai web, Gemini, ChatGPT) which is slow and easy to skip.
+
+Design questions:
+- What does "regression" mean for a briefing? Snapshot diff catches every wording change including intended ones — too noisy. Probably want something like a behavior eval: pre-canned test prompts run through each agent, structured score on whether the agent (a) calls `get_briefing` early, (b) picks the right recipe-book on a check, (c) writes recipe voice correctly, (d) chooses clickable vs plaintext-fenced URL format for its identity, (e) doesn't try to fetch URLs in web-only mode.
+- Where do test prompts live? `scripts/qa-agent-understanding.ts` already exists — extend or rewrite?
+- How do we run agents headlessly? Anthropic API + Codex CLI in batch mode are tractable; Gemini and ChatGPT web are harder.
+
+### `[IMPL]` Flag drift between briefing voice rules and `bootstrap-your-corpus.md`
+
+`apps/backend/public/docs/bootstrap-your-corpus.md` restates voice/format guidance in compressed form ("recipes are written in MY voice with a transferable role, not yours and not my name, and not duplicating context the group description already provides"). When the canonical `ROLE_PATTERNS` in `packages/domain/src/recipe-guide-content.ts` changes, this restatement can drift silently. Either (a) refactor bootstrap to import the canonical guidance, (b) shorten it to a one-line pointer at the canonical text, or (c) add a comment on `ROLE_PATTERNS` reminding maintainers to grep bootstrap-your-corpus.md after edits.
+
+---
+
 ## Legal and compliance
 
 ### `[IMPL]` Change-notification mechanism
