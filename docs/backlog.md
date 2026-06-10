@@ -48,14 +48,17 @@ Traces checked before the 2026-05-31 folding fix that hit the blank-line-fragmen
 
 ## Agent briefing
 
-### `[DESIGN]` Regression-test system for briefing tweaks
+### `[IMPL]` Briefing regression testing — behavioral specs (design done; build phases 1–2)
 
-The agent briefing is shipped to every agent session and is highly sensitive to wording changes — but there's no automated coverage. Today the canonical pre-commit gate (`npm run test:ci`) asserts route shape and auth on `/briefing` and `/keys/briefing` but nothing about the rendered text. The fallback is manual testing on every supported agent (Claude Code, Claude Desktop, Codex, Antigravity, claude.ai web, Gemini, ChatGPT) which is slow and easy to skip.
+Design doc (rough-notes fidelity until promoted): [docs/rough-notes/2026-06-10/briefing-regression-testing.md](rough-notes/2026-06-10/briefing-regression-testing.md) (2026-06-10; expanded same day per operator feedback). Gherkin-style behavioral specs (Given persona / When trigger / Then observable assertions), LLM-judge scoring, and a declared-intent regression rule: briefing-touching PRs state which scenarios they mean to move and show all others holding — the guard against the over-correction pattern. Builds on `recipe-examples.json` failure modes, `scripts/qa-agent-understanding.ts`, and the agent archetypes as personas. The 2026-06-10 expansion added: **scenario-corpus expansion** (coverage matrix over human/agent archetypes × domains × both-sides-of-success; mining the operator's real recipe books PII-scrubbed with an operator interview loop — operator approved); **Track 2 wired to the existing multi-strategy embedding pipeline** (`packages/domain/src/embedding-strategies.ts` — per-strategy matched-pair scoring of both authoring hypotheses and the `exp_*` preamble variants, with graduation into the search path as a deliverable); **Track 3 whole-transcript analysis** (fixed best-practice rubric spine + LLM-generated per-transcript extension; client-side only for privacy); and a paste-ready [transcript-mining briefing](rough-notes/2026-06-10/transcript-mining-briefing.md) for live Claude Code sessions. Phases 1 (encode `.feature` files) and 2 (scenario corpus) are pure writing and immediately useful.
 
-Design questions:
-- What does "regression" mean for a briefing? Snapshot diff catches every wording change including intended ones — too noisy. Probably want something like a behavior eval: pre-canned test prompts run through each agent, structured score on whether the agent (a) calls `get_briefing` early, (b) picks the right recipe-book on a check, (c) writes recipe voice correctly, (d) chooses clickable vs plaintext-fenced URL format for its identity, (e) doesn't try to fetch URLs in web-only mode.
-- Where do test prompts live? `scripts/qa-agent-understanding.ts` already exists — extend or rewrite?
-- How do we run agents headlessly? Anthropic API + Codex CLI in batch mode are tractable; Gemini and ChatGPT web are harder.
+### `[DESIGN]` Agent-first knowledge base + agent-suggested improvements (idea stage)
+
+Operator direction (2026-06-10), captured in [docs/rough-notes/2026-06-10/agent-first-knowledge-base.md](rough-notes/2026-06-10/agent-first-knowledge-base.md): Track-2 retrieval findings distill into a knowledge base of authoring nuances; KB entries are agent-first (Gherkin + recipe format); the briefing injects the few entries semantically nearest the user's recipe books (existing similarity subsystems — zero server LLM); and end users' AI agents suggest KB entries / system improvements via **synthetic demonstrations** so human developers never look at end-user data. Security note from the rough pass: published KB entries are instructions inside other users' briefings — community suggestions are a prompt-injection vector by construction and need a human review gate plus the security workflow before any design lands.
+
+### `[IMPL]` Reasoning-window emphasis pass on briefing + tool descriptions — AFTER regression phase 1
+
+design-thinking.md §The Reasoning-Trace Gap (2026-06-10): reasoning models discard hidden deliberation after each turn, so the judgment-call moment is the only checking moment inside the reasoning window — checks deferred to session end lose the warrant. Audit briefing copy + `check_recipe` tool descriptions for anything that makes mid-work checking feel heavyweight, and weight the "facing a judgment call" moment accordingly. Deliberately sequenced after the regression harness exists, so this edit is the first one made under the declared-intent rule rather than another over-correction.
 
 ### `[IMPL]` Flag drift between briefing voice rules and `bootstrap-your-corpus.md`
 

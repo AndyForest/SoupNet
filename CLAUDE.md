@@ -94,7 +94,7 @@ Use the recipe check workflow (or ask the human) when the change is a genuine di
 
 ## Testing
 
-See [docs/testing-plan.md](docs/testing-plan.md) for the full layered testing strategy (layers 1-5 + future).
+See [docs/testing-plan.md](docs/testing-plan.md) for the full layered testing strategy (layers 1-6 + future; layer 6 is agent-run evals outside CI).
 
 Quick reference:
 - All tests: `npx vitest run` (`.env` loaded automatically; integration tests need running backend)

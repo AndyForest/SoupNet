@@ -69,35 +69,19 @@ docker compose -f docker-compose.ci.yml down -v          # teardown (deletes dat
 
 ## Test Layers
 
+> **This doc documents the layers, not the tests.** The codebase is the source of truth for which tests exist — discover them with a glob for `**/*.test.ts` (backend tests sit next to the code they test; domain tests in `packages/domain/src/`). Per-file inventories used to live here and drifted immediately; don't re-add them. What belongs here: each layer's contract (what it covers, the quality bar, when an agent must add to it) and the subjective instructions for agents running tests.
+
 ### Layer 1: Unit Tests (no I/O)
 
-100% branch coverage expected. These are small, deterministic, and fast.
-
-| File | What it tests |
-|------|--------------|
-| `evidence-parser.test.ts` | Markdown evidence parsing (14 cases, delimiter variants) |
-| `full-document.test.ts` | SHA-256 chunking, determinism |
-| `ranking.test.ts` | Score blending formula (40% lexical + 60% semantic), clamping |
-| `format-adherence.test.ts` | User story format validation (8 cases + edge cases) |
+Pure functions — parsing, chunking, ranking math, format validation. 100% branch coverage expected; small, deterministic, fast. A new pure function gets its Layer 1 test in the same commit.
 
 ### Layer 2: Integration Tests (requires running DB)
 
-Happy path + key error paths + idempotency. Not exhaustive edge cases.
-
-| File | What it tests |
-|------|--------------|
-| `auth.test.ts` | Registration, duplicate rejection, login, JWT validation |
-| `check.test.ts` | Recipe check via GET/POST, JSON format, idempotency, error handling |
-| `trace.service.test.ts` | Submit + search, idempotency, different-key diversity, tsvector matching |
-| `clustering.service.test.ts` | Cosine distance, k-means clustering, medoid logic |
+Service-level behavior against real Postgres: happy path + key error paths + idempotency. Not exhaustive edge cases. These live next to the services and security-sensitive middleware they test.
 
 ### Layer 3: Route/HTTP Tests (status codes + response shapes)
 
-Lightweight — assert status, content-type, and key content markers. No auth needed for public pages.
-
-| File | What it tests |
-|------|--------------|
-| `docs.test.ts` | Public doc pages: recipe-check-guide, recipe-scenarios (file reading + markdown rendering), mcp-setup (query param embedding) |
+Lightweight — assert status, content-type, and one key content marker per semantic concern (no snapshot-style content assertions). Every new route gets one; auth-touching routes also assert their 401/403 paths.
 
 ### Layer 4: Manual Browser Verification
 
@@ -172,13 +156,9 @@ Update the key in `.mcp.json` under `soupnet-local.headers.Authorization`, then 
 
 ### Layer 5: Search Quality (monitored, not pass/fail)
 
-Metrics may intentionally change when algorithms change.
+Metrics may intentionally change when algorithms change — these runs inform judgment, they don't gate. Tooling lives in `tests/search-quality/` (comparison runner + fixtures; metrics like precision@5, MRR, score spread). Standing caveat: gemini-embedding-2-preview currently ignores `task_type` (see ADR-0005), so task-type comparisons are moot until Google fixes that.
 
-| Planned | Metrics |
-|---------|---------|
-| `tests/search-quality/run-comparison.ts` | precision@5, MRR, score spread |
-
-Compares vector types: SEMANTIC_SIMILARITY vs RETRIEVAL_DOCUMENT.
+Deeper retrieval-quality measurement (per-embedding-strategy matched-pair scoring) is Layer 6 Track 2 — see below.
 
 ### Layer 5b: Agent Comprehension QA (manual, requires fresh LLM session)
 
@@ -191,6 +171,18 @@ Tests whether the bootstrap blurb + recipe guide produce correct understanding i
 **How to run:** Execute the script, give the output prompt to a fresh LLM session (no CLAUDE.md, no memory, no MCP), ask the five questions, and score against the rubric. The most diagnostic question is "read-vs-write" — if the agent describes checks as primarily writes that require caution, the framing hasn't landed.
 
 **When to run:** After any change to CLAUDE.md's Recipe Checks section, the bootstrap blurb in `packages/domain/src/recipe-guide-content.ts`, or the MCP tool descriptions.
+
+This layer is the manual precursor of Layer 6 — its quiz questions and rubric become Layer 6 behavioral scenarios as that suite gets built.
+
+### Layer 6: Behavioral & Retrieval Evals (agent-run, not CI)
+
+**Status:** design done at rough-note fidelity — [docs/rough-notes/2026-06-10/briefing-regression-testing.md](rough-notes/2026-06-10/briefing-regression-testing.md). Three tracks: behavioral specs (Gherkin `.feature` files asserting what agents primed with the briefing actually do), retrieval-quality measurement (matched-pair sets scored per embedding strategy), and whole-transcript analysis (two-layer rubric, client-side only for privacy).
+
+These are tests — they belong in this plan — but they differ from layers 1–3 in every operational property:
+
+- **Not in the CI path.** LLM runs are nondeterministic and cost money; `test:ci` stays deterministic. This layer runs nightly/manually, and (once wired) is mandatory before briefing-touching commits via the declared-intent regression rule.
+- **The runner is an AI coding agent following a runbook** — orchestrating fresh sub-agent contexts as test personas and separate sub-agents as judges. No LLM API calls are added to this codebase.
+- **Execution artifacts and outcome data live in a separate eval repo** (committed baseline matrices as JSON/markdown — not gitignored, not the product DB). The specs themselves (`.feature` files, the scenario corpus) stay in this repo, next to the briefing copy they pin, so a briefing PR updates its declared scenarios in the same diff.
 
 ### Future: Claude Agentic Browser Testing
 
@@ -229,3 +221,5 @@ npx tsx scripts/cleanup-test-data.ts --status  # just show counts
 - **Vitest** over Jest: native ESM, faster, Vite ecosystem alignment
 - **No Langfuse**: no LLM calls to trace, our QA needs are search-specific
 - **No testcontainers**: tests run against the existing Docker postgres for simplicity
+- **Separate eval repo for LLM-based testing** (operator, 2026-06-10): Layer 6 harnesses, runs, and outcome data live outside this codebase; the product repo never gains an LLM dependency — "zero LLM on the server" extended to the repo level
+- **No LiteLLM-class eval framework**: the product does no LLM generations, so frameworks built around generation tracing are the wrong weight; the runner is an agent + runbook, the artifacts are plain files
