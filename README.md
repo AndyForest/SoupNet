@@ -31,7 +31,9 @@ Open `http://localhost:5273` — log in, generate a recipe check link, and start
 
 Mailpit Web UI for local dev: http://localhost:8625 
 
-## Architecture
+## Repo layout
+
+This is the orientation map for the whole repository. Subdirectories with their own README (or a stated purpose in their top doc) carry the detail; this map links to them.
 
 ```
 apps/backend       Hono HTTP server (port 3101) — auth, REST API, /check recipe page,
@@ -46,6 +48,20 @@ packages/contracts Zod schemas + OpenAPI registry (mostly pre-pivot shapes; new 
 packages/client-sdk REST API client wrapper
 packages/api-client Auto-generated React Query hooks (regenerated from contracts)
 packages/config    Shared tsconfig, ESLint config
+
+docs/              Top level: design-thinking.md, engineering-principles.md, testing-plan.md,
+                   backlog.md + backlog-completed.md (the cross-session work queue)
+docs/adr/          Architecture decision records — dated, with status lines
+docs/architecture/ How the code works: overview, search algorithms, data model (generated)
+docs/planning/     Validated proposals ready (or nearly ready) to implement
+docs/rough-notes/  Dated working notes, meant to rot — see its README for the contract
+                   and the fidelity ladder (rough-notes → planning → adopted docs/ADRs)
+docs/workflows/    Repeatable processes (security audit cycle, etc.)
+docs/connectors/   Connector-facing docs (claude.ai directory submission material)
+docs/legal/        Privacy policy + ToS source material
+
+scripts/           Dev/ops one-offs: test-ci-local.mjs (the canonical gate), cleanup,
+                   data-model doc generation, QA harnesses
 ```
 
 ---

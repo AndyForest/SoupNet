@@ -195,6 +195,8 @@ Organized by capability, not by product. Specific AI products are listed as exam
 - *"I need to write to the team's recipe book, not my personal one. I specify `recipe_book='project-slug'` on the check."*
 - *"I want to understand how this recipe relates to two concepts. I pass `axes='performance, readability'` and get positions showing the recipe's similarity to each."* (Not yet fulfilled — concept axes on check results are implemented but agents don't yet use them proactively)
 - *"My user's preference is ambiguous from context alone. I form 3 divergent hypotheses and use MCP elicitation to present them as choices. The user picks one, I check that recipe, and the result gives me both the logged preference and related context from the corpus."* (See [Divergent Recipe Checks](#divergent-recipe-checks-discovering-taste-through-hypothesis-branching))
+- *"I found the commit where the team made a core architecture decision two years ago. I check the reconstructed recipe with `decided_at` set to the commit timestamp, so the judgment carries its original date."* (See [Decision Archaeology](#decision-archaeology-backfilling-judgment-from-existing-artifacts))
+- *"I'm orchestrating sub-agents for a parallel discovery sweep. Each sub-agent's briefing includes recipe-check instructions; their checks land in the user's check log as they work, and their reports tell me which judgment calls they proceeded on versus escalated to me."* (See [Agent Fleets](#agent-fleets-orchestration-observability-and-alignment))
 
 ### Agent Type B: Web-Browsing
 **"I can visit URLs and fill forms, but I don't have structured tool access."**
@@ -242,6 +244,39 @@ Organized by capability, not by product. Specific AI products are listed as exam
 **User stories:**
 - *"A CI pipeline checks a recipe after each deploy: 'As a team, we deployed version X with changes Y.' The recipe logs the deployment decision with evidence, building a searchable history of why each deploy happened."* (Aspirational — not yet implemented)
 - *"A scheduled script checks a daily summary recipe that captures the team's key decisions, so the Monday morning standup agent has context from the previous week."* (Aspirational)
+
+---
+
+## The Reasoning-Trace Gap: Decisions Outlive Their Reasons by One Turn
+
+### How reasoning models actually handle reasoning today
+
+State-of-the-art reasoning models think in tokens that are systematically discarded. Verified 2026-06-10 against vendor docs — **re-verify before relying on this; reasoning exposure changes fast and AI memory is a hot innovation area**:
+
+- **OpenAI (o-series, GPT-5 reasoning):** reasoning tokens are never visible via the API — end users and API consumers get at most a summary. Between turns they're gone: "in turn 2, any reasoning items from turn 1 are ignored and removed — the model does not reuse reasoning items from previous turns." Within a single turn's function-call loop (Responses API), reasoning items adjacent to tool calls *are* carried, optionally as `encrypted_content`. Sources: [Reasoning models guide](https://developers.openai.com/api/docs/guides/reasoning), [Responses API reasoning items cookbook](https://cookbook.openai.com/examples/responses_api/reasoning_items).
+- **Anthropic (extended thinking):** thinking blocks from previous turns are stripped from context entirely (not even counted toward the window). Within the current turn's tool-use loop they must be preserved (interleaved thinking), and Claude 4-era models return summarized thinking rather than the full trace. Source: [Building with extended thinking](https://docs.claude.com/en/docs/build-with-claude/extended-thinking).
+
+The common shape: **reasoning lives exactly one turn.** The moment a new user message arrives, the model that continues the conversation can see the decisions it announced, but not the reasoning that produced them.
+
+### The gap
+
+An LLM weighs three libraries during its hidden reasoning, rejects two for good reasons, and outputs "I'll use pg-boss." The next turn — same conversation, same model — sees only the conclusion. The decision is now taken for granted: un-revisitable, un-explainable, defended by nothing. Multiply by every judgment call in an hours-long agentic session and the visible transcript becomes a list of conclusions whose warrants evaporated one turn after they were formed. This is the [Toulmin](https://en.wikipedia.org/wiki/Stephen_Toulmin) failure mode at machine speed: claims surviving without grounds.
+
+Broad memory systems are circling this gap too — but they're trying to persist *everything* (facts, entities, conversation state). Soup.net's laser-targeting of taste and judgment calls makes it the natural home for exactly the slice of reasoning that matters across turns: the call that was made, the alternatives weighed, and the warrant — captured with evidence at the moment it exists.
+
+### Why concurrent checking is the design answer
+
+The one place reasoning *does* survive is inside the current turn's tool-use loop — both vendors preserve reasoning across tool calls within a single generation. So a recipe check made **concurrently, mid-work, at the moment of the judgment call** runs while the rationale is still in the model's context and can be written into the recipe's evidence. A check deferred to a session-end summary happens after the reasons are already gone — the agent would be reconstructing its own warrants from its conclusions, the same archaeology future agents would have to do, except with the evidence one turn out of reach.
+
+This sharpens existing design commitments rather than adding new ones:
+
+- **Checks must stay fast, concurrent, and never blocking** (sub-agent or parallel tool call), so the agent isn't reluctant to check mid-reasoning — reluctance pushes checks to session end, which is exactly where the reasoning no longer exists.
+- **"When facing a judgment call" is the highest-value checking moment** of the three, because it's the only one inside the reasoning window. Briefing and tool-description copy should keep weighting it accordingly.
+- **The recipe's evidence is the durable home for the warrant.** "I chose X so that Y" plus the alternatives considered, quoted from the live deliberation — that content cannot be recovered later, by anyone, at any price.
+
+### What this means per agent archetype
+
+Type A (MCP) agents can check inside the reasoning window today — interleaved tool calls during generation. Type B (web-browsing) agents reason and then emit links; the human clicks after the turn ends, so the agent should put the warrant *into the recipe text and evidence of the link itself* while composing it — the link's content is authored inside the reasoning window even if the check executes after. Type C (API-integrated) harnesses can systematically prompt for a check at decision points.
 
 ---
 
@@ -350,6 +385,68 @@ See [docs/case-studies/chatgpt-divergent-design-checks.md](case-studies/chatgpt-
 - The user wanted to click ALL of them — revealing that the hypotheses were complementary, not competing
 - ChatGPT could not discover the recipe-book slug for `soup-net-development` because it's a read-only agent — this directly motivated the recipe-books list on the check page
 - The agent's design brief synthesized the taste signals from the user's selections into a coherent creative direction
+
+---
+
+## Decision Archaeology: Backfilling Judgment from Existing Artifacts
+
+### The insight
+
+A corpus normally grows forward from live work — the human makes a call, the agent checks it, the trace accumulates. But most projects already carry years of accumulated taste and judgment before any agent arrives: in git history, ADRs, PR descriptions, issue threads, design docs. When agents onboard into an existing codebase, they can reconstruct those decisions and check them into the corpus, so the project's accumulated judgment becomes searchable from day one instead of re-accumulating from zero.
+
+The driving need (2026-06-10): a single-sprint work trial on an unfamiliar production codebase. The first move is sending discovery agents through the codebase, documentation, and other materials — and having them recipe-check as they go. The advanced form: agents form hypotheses about the project's core decisions, then track them down in git blame and commit history. The commit timestamp is exact, so the backfilled recipe carries the original decision date, not the discovery date.
+
+### The pattern: hypothesis → provenance → check
+
+1. **Hypothesize.** While sweeping the codebase, the agent forms a hypothesis about a core decision: "they chose this queue library over the obvious alternative, probably for operational simplicity."
+2. **Track down provenance.** Git blame, commit history, ADRs, PR threads, inline comments — find the artifact where the decision actually happened, not just where its consequences live.
+3. **Check with provenance.** Recipe-check the confirmed decision with evidence quoting the artifact verbatim (commit message, ADR text) and a citation carrying the commit hash and date — and set `decided_at` to the artifact's timestamp.
+
+Unconfirmed hypotheses are not checked — the same rule as divergent checks: only genuine, evidenced judgments enter the corpus. A hypothesis the agent couldn't trace to a real artifact is a question, not a recipe.
+
+### Temporal honesty: `decided_at` vs `created_at`
+
+Backfilled recipes need two timestamps. `created_at` stays the moment the trace entered the corpus — the record never claims to have been logged earlier than it was. `decided_at` is when the human originally made the call. Agent-facing surfaces (check results, corpus ordering) present `COALESCE(decided_at, created_at)` as the judgment date, so freshness reads correctly: a 2023 decision mined from git history ranks as 2023 judgment, not as fresh context. The dashboard's trace detail shows both, so a backfilled recipe never masquerades as a contemporaneous one. Future timestamps are rejected — backdating can only make a recipe *older*, so there is no freshness gaming.
+
+This is the temporal-decay story (see [search-algorithms.md — Stigmergic Decay](architecture/search-algorithms.md#stigmergic-decay--temporal-weighting-of-recipes-research-needed)) extended backward: when decay lands, it should decay from the judgment date, not the logging date.
+
+### Whose judgment is it? Voice for reconstructed decisions
+
+Decision archaeology surfaces a wrinkle the live-work flow never hits: the judgment being logged usually belongs to someone other than the operator — the original engineer whose commit the agent found. The voice rules adapt rather than break:
+
+- **Role = the original decision-maker's functional role.** "As a backend developer building the content pipeline, I chose…" — transferable, same as always. The recipe is written in the voice of whoever made the call.
+- **Evidence must quote the real artifact.** The commit message, the ADR paragraph, the PR comment — verbatim, with hash/date citation. The agent's interpretation lives in the interpretation line; anything that can't be quoted stays out of the quote.
+- **The "so that" clause stays within evidence reach.** If the artifact states the reasoning, quote it. If the reasoning is inferred from context, the interpretation should say so — a reconstructed warrant is a hypothesis about intent, and overclaiming poisons the corpus exactly like hallucinated evidence.
+- **Reconstructed third-party decisions belong in a project recipe book**, not the operator's personal book. They are project context, not first-person taste; mixing them would blur what the personal corpus means.
+
+### User stories
+
+- *"I'm doing discovery on a codebase I've never seen. My agents sweep the code and docs, recipe-checking what they learn. One forms a hypothesis about why the team rolled their own auth; it finds the commit and linked issue from 2024 that confirm it, and checks the recipe with `decided_at` set to the commit date. When a later agent considers touching auth, the 2024 decision comes back as context — dated 2024."*
+- *"My team adopted Soup.net this quarter, but the project is three years old. An agent session dedicated to archaeology backfills the twenty decisions that explain the architecture, each dated from its commit or ADR. New collaborators' agents now find the project's reasoning, not just its code."*
+
+---
+
+## Agent Fleets: Orchestration, Observability, and Alignment
+
+### The pattern
+
+Capable agents decompose work across sub-agents — parallel discovery sweeps, judge panels, migration fan-outs. Soup.net's role in a fleet is the same as across sessions, applied at smaller scale: the shared corpus is how independent contexts stay aligned without messaging each other, and the check log is how the human observes judgment being exercised on their behalf.
+
+The orchestrator's briefing to each sub-agent should include recipe-check instructions, the same way the human's briefing primed the orchestrator: which recipe book is in scope, when to check (before starting, at judgment calls, after meaningful work), and the voice rules. A sub-agent that works without checking is invisible — its judgment calls evaporate when its context ends.
+
+### Judgment flows up; checks happen at every level
+
+Each level makes the calls within its own certainty × impact bounds and escalates the rest:
+
+- **Sub-agents** check the calls they make autonomously, and in their report distinguish "proceeded on this" from "needs your decision." Both kinds are checked — the proceeded ones as completed judgments, the escalations as the context handed upward.
+- **The orchestrator** decides the escalations, checks those decisions, and surfaces to the human only what crosses its own bounds.
+- **The human** reviews the check log — every check from every agent, in one place — and corrects course by stating updated taste, which agents log as fresh recipes (the standard correction workflow).
+
+The result is an audit trail of distributed judgment that no agent had to assemble: stigmergy is the observability mechanism, not just the memory mechanism.
+
+### Why this scales
+
+Concurrent sub-agents coordinate through the corpus in real time: a check by one sub-agent becomes searchable context for another's check minutes later, within the same fleet — the same mechanism that coordinates sessions across days and collaborators across vendors. Coverage diversity improves too: independent contexts checking independently produce a corpus that one monolithic context would have flattened.
 
 ---
 
@@ -469,9 +566,37 @@ The bottleneck to AI adoption inside teams is no longer model capability — it'
 
 Soup.net moves the friction off the human and onto the agent layer. The AI-mature member's accumulated taste and judgment becomes accessible to the less-AI-mature member's agent without requiring the human to learn a new toolchain. Their agent does the carrying. They use whatever interface they're already comfortable with — including web chatbots that don't even install MCP tools — and Soup.net's shared corpus shows up in their conversations as context, not as a new system to learn.
 
+What makes the gap stubborn (operator elaboration, 2026-06-10): catching up requires two things that are **learn-by-doing, not learn-by-telling** — discovering AI tools for what *you* need to do, and developing workflows (ways of working, documenting, sharing, reviewing) that integrate them. The AI-mature collaborator can't transfer either by explaining; both sides end up frustrated — "they aren't ready to absorb what I have to share that works for me." Company-level directives on tools and workflows help, but that's slow organizational capacity-building.
+
+The unlock Soup.net exploits: **the AI agents themselves are AI-capable and have infinite patience.** They meet each human wherever they are on the journey — the zero-effort nature of chatbots that are instantly productive is the recurring lesson of effective AI systems, and Soup.net rides it rather than adding a tool to learn.
+
+A concrete moment: you're looking at the end product — *why is it green?* Maybe the design doc says. If not, you know who to ask — but is that the best use of the limited time you have together? The AI-mature person sends agents through the docs, email, and Slack to find out. What if you're not? With a shared recipe book, the question doesn't need either path: the maturer collaborator's agent logged the call when it was made, and *your* agent — whatever free-tier chatbot it is — finds it.
+
 The deeper shift: a tool you have to learn is friction; a tool your agent uses for you is leverage. Equipping every agent with the same shared corpus means less time correcting and briefing them, and more time spent on the autonomous, independent, long-running work that's the point of having agents in the first place.
 
 This is why a separate, neutral system has to exist for this to work. No single vendor can offer recipe-sharing between, say, a Claude user and a Gemini user — sharing across ecosystems requires a third party that isn't competing for ecosystem capture.
+
+### Designed for agent capabilities, not human attention
+
+As AI assistance makes writing software cheap, the bottleneck moves elsewhere: code review, PRs, and the discussions about what we want and why. Documentation solves a lot — but it's a **golden-set** method: it records what's true *now*, expensively, and encoding the transactional history of how decisions evolved is even more work. PRs hold a decision's "why" only if the author thought to write it, and earlier decisions that shaped this one live somewhere upstream with no pointer. ADRs are great — until they need a maintenance system to prevent drift. Jira, Notion, and their kin do hold transactional history, but they are designed for **humans**: human attention spans, human cognitive limits, human UIs, humans remembering where to look.
+
+The agents doing the work have different capabilities and different limitations. Soup.net designs the decision log for them: cheap to write at the moment of decision (one tool call, mid-reasoning), retrieved by meaning rather than by knowing where to look, carrying evidence so staleness is assessable by the reader rather than fought with a maintenance process. Decision archaeology (§above) is the same point applied backward — the transactional history was always in git; it just wasn't queryable by judgment.
+
+This is also a deliberate cost architecture: agents do the heavy lifting (reasoning, synthesis, authoring), the server does computationally cheap math (embeddings, ANN search, clustering — principle #2). Maximum utility at minimum cost is what keeps the core free at scale. Future expansion can add server-side LLM roles — a librarian or research assistant *for agents* — as paid edges (see Monetization Hypotheses), without moving the core off the cheap path.
+
+### The three deciders
+
+The lasting UVP, rewritten as questions a person can answer about themselves (the form a landing page or a hallway pitch actually needs — operator phrasing, 2026-06-10):
+
+1. **Might you ever try a different AI agent?** Start using Soup.net now — it collects your taste and judgment calls as you work, with no effort from you, and they travel with you when you switch.
+2. **Might you work with other people who also use AI?** Start now, so your recipe books are ready to share the moment inviting someone seems useful.
+3. **Do you find yourself explaining your taste and judgment calls to other people?** That's the signal that your AI agent should be telling their AI agent directly, through Soup.net.
+
+The third is a *detector* rather than a hypothetical — "if this keeps happening to you, this is for you." Related framing for the anxiety the autonomy trend raises: the difference between being empowered by AI and being replaced by it is **who makes the taste and judgment calls**. And the claim is compounding, not zero-sum (operator correction, 2026-06-10): not "keep your agency despite automation" but *use* it — with Soup.net, exercising your taste and judgment is precisely what makes your agents more productive, so agency and productivity rise together.
+
+**The honesty rule for all of this copy (operator, 2026-06-10): judgment *lives* in the human; Soup.net is only where it gets *recorded*.** Captions and resolution lines must never imply judgment moves out of the person — "your judgment lives in you; nothing is writing it down" is the problem statement, and writing it down is the entire product claim. This keeps problem imagery truthful and forecloses any "outsource your judgment" misreading.
+
+**The unifying frame behind all three (operator, 2026-06-10): the scarce resource is you.** The power user conducting concurrent agents, the newcomer whose every session is a blank-slate agent, and the collaborator whose agents join the mix all face the same shape — each agent needs your judgment separately, from scratch. One resolution covers them all: give your agents one place to share notes on your most important taste and judgment calls. This frame also survives wall-clock compression (benchmarks measure human-equivalent task length; agents compress the real time, which *increases* concurrency — the frame strengthens as the trend advances).
 
 ### Two-layer UVP — lasting vs replicable
 
@@ -537,4 +662,4 @@ Detailed design for Full/Indexed/Air-gapped storage modes has been moved to [doc
 
 ---
 
-*Last updated: 2026-05-27 — Two-layer UVP split into across-vendor vs within-vendor dimensions; Archetype 5 (AI-reluctant collaborator) added. Prior: 2026-04-03.*
+*Last updated: 2026-06-10 — Decision Archaeology, Agent Fleets, and Reasoning-Trace Gap sections added; AI-maturity gap expanded (learn-by-doing, infinite patience, the "why is it green?" moment); Strategic Differentiation gained "Designed for agent capabilities, not human attention" and "The three deciders." Prior: 2026-05-27 (Two-layer UVP split; Archetype 5).*

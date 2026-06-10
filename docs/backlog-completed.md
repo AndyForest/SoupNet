@@ -4,6 +4,29 @@ Items moved here from `backlog.md` when finished. Date-stamped so we can see wha
 
 ---
 
+## Recipe checks
+
+### 2026-06-10 — `decided_at`: backfill historical decisions with their original judgment date
+
+New optional parameter on recipe checks for decision archaeology (design-thinking.md §Decision Archaeology — driven by the discovery-agents-on-an-unfamiliar-codebase use case): when an agent finds a past decision in git history, ADRs, or other dated artifacts, it checks the recipe with `decided_at` set to the artifact's timestamp so the judgment carries its original date instead of the logging date.
+
+- Schema: nullable `traces.decided_at timestamptz` (migration `0021_add_traces_decided_at`). `created_at` stays the insertion time — temporal honesty: the record never claims to have been logged earlier than it was.
+- Validation in `submitAndSearch` (service layer): ISO 8601 date or datetime; future dates rejected, so backdating can only make a recipe *older* — no freshness gaming.
+- Agent-facing judgment date: search results coalesce `COALESCE(decided_at, created_at)` (hybrid search + corpus fetch), so `sort=recent`, result dates in JSON/HTML/MCP responses, and clustering exemplar dates all read as the judgment date. The check log (audit_log `occurred_at`) is untouched — it logs when checks happened.
+- Param plumbed through all three surfaces: `CHECK_PARAMS` row (`decided_at`, alias `decided`, round-trips through Copy/re-check links), remote MCP `check_recipe`, stdio MCP proxy. Shared description in `MCP_PARAM_DESCRIPTIONS.decidedAt`; web-tier mention in `CONNECTION_TIERS`.
+- Dashboard: trace detail shows "Decided ⟨date⟩ · logged ⟨date⟩" when backdated.
+- Tests: stores/coalesces, null default, rejects unparseable, rejects future (trace.service.test.ts); param round-trip + alias (check-params.test.ts auto-covers via the CHECK_PARAMS table).
+
+Follow-ups tracked in backlog.md §Decision archaeology follow-ups (more surfaces for the date; temporal decay should use the judgment date).
+
+## Landing page
+
+### 2026-06-10 — "The challenge" section: METR time-horizon framing + check-log visual
+
+New section between the hero and Pillar 1 mirroring the in-person pitch (benchmark → log → explain the system): agents finish longer and longer unattended stretches (METR time-horizon measurements, linked in a Q&A expander), unattended hours are full of judgment calls, and the gap is keeping that work aligned with the user's taste and judgment. Visual is a static check-log excerpt (`CheckLogMock`) styled like the real CheckLogPage cards — one coherent afternoon of one agent's checks. Second Q&A expander differentiates from fact-storage memory (vendor memory, fact-extraction frameworks, knowledge-graph memory, markdown memory files): facts ossify; recipes carry role/goal/reasoning/quote/citation/date so future agents re-evaluate instead of obeying. Final CTA heading reworded ("The work is only getting longer…") to avoid duplicating the new section's heading; the Q&A `details` rendering was extracted from `Step` into a shared `QnaDetails` component.
+
+---
+
 ## Landing page
 
 ### 2026-05-27 — Solution illustrations for the recipe-check walkthrough (three steps)

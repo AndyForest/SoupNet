@@ -154,6 +154,10 @@ Recipes capture the human user's taste and judgment, not yours. Format: "As a [r
 
 The only anti-pattern is checking a recipe you don't genuinely believe — that degrades future checks for everyone. If you're just looking for something, use the web endpoint's `filter` (alias `f`) query param for keyword narrowing rather than fabricating a recipe; the MCP tool has no equivalent — just don't check one.
 
+**Historical decisions:** when you discover a past decision in git history, ADRs, or other dated artifacts, check it with `decided_at` set to the artifact's timestamp so the recipe carries the original judgment date instead of today's. See design-thinking.md §Decision Archaeology for the voice rules (role = the original decision-maker's functional role; evidence quotes the artifact verbatim with hash/date citation).
+
+**Sub-agents check too:** when you spawn sub-agents for judgment-laden work (discovery sweeps, design exploration, reviews), include recipe-check instructions in their prompts — which recipe book is in scope, the when-to-check moments above, and the voice rules (or tell them to call `get_briefing`). Have them report which checks they made and which judgment calls they proceeded on versus escalated to you; check your decisions on the escalations. The human observes the whole fleet through the check log. See design-thinking.md §Agent Fleets.
+
 **Interface:** Use the `check_recipe` MCP tool, or the `/check` web endpoint with `format=json`. Call `get_briefing` before your first check — it returns the recipe format, your recipe books, and a clustered sample of recipes from the user's corpus.
 
 ## Key Engineering Principles

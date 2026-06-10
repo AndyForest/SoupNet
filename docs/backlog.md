@@ -104,6 +104,28 @@ The privacy policy describes a few behaviors qualitatively that should still mat
 
 ## Launch readiness
 
+### `[DESIGN]` Concierge chatbot + setup wizard for the new-user journey
+
+Operator idea (2026-06-10): the dashboard is crowded for a new user, and Soup.net's whole thesis is zero-effort — so the new-user journey should feel like a chatbot, not a console. A very light in-browser concierge (candidate tech: Chrome 148's Prompt API / built-in Gemini Nano — free, no server LLM cost, consistent with the cheap-math architecture) that does everything essential conversationally. It could open with a **"here's your briefing for all your agents" button before the user says anything** — the "you're already done" moment — then offer optional help: add context about what you're working on, set up recipe books, invite people. A non-LLM setup wizard is the fallback shape if the Prompt API's availability/quality disappoints (it's Chrome-only and new). Relates to "Onboarding polish for first session" below — this may be the form that polish takes.
+
+### `[DESIGN]` Side-nav regrouping (rule of 7) + landing reachability
+
+The signed-in nav has 8 top-level items (9 with Admin). Operator direction (2026-06-10): apply the rule of 7 — group the explainer pages (How it works, Connect to AI — plus the landing page itself and the footer's Privacy/Terms) into a single "About"/"Learn" group so the whole tree is in the nav, including footer-only pages. Admin stays an 8th top-level for the few who see it. Related finding: typing soup.net and landing on the login page is **not a routing bug** — `/` always renders the landing page (routeTree.ts, index route has no guard); it's browser-history autocomplete plus the 401-expired-JWT redirect. But it surfaced a real gap: signed-in users have no obvious nav path to the landing page except the logo. The regrouping fixes that by making the landing page a nav item inside the new group.
+
+### `[IMPL]` Landing composition Option A — decided 2026-06-10; ship as art arrives
+
+Decision (operator, 2026-06-10): **Option A** from [docs/rough-notes/2026-06-10/landing-page-content-options.md](rough-notes/2026-06-10/landing-page-content-options.md), plus: the challenge section's static check-log mock is **rejected** (too technical for humans as the first thing) — an illustration replaces it. Implementation sequence:
+
+1. **When Brief 1 v2 art arrives** ([image-brief-1-v2](rough-notes/2026-06-10/image-brief-1-v2-judgment-hub.md), "the judgment hub" — v1's "unattended hours" art was delivered as `illustration-agent-alone.png` but not used: no human in frame, and the away-while-it-works premise dates as agents compress wall-clock time; kept as palette reference): replace `CheckLogMock` in the challenge section with the new illustration + caption "Three threads of work — and one place your judgment lives: you."
+2. ~~Move Pillar 2's image to `illustration-shared-book.png` (the resolved-puzzle composition); Step "+" goes text-only until Brief 3 art arrives. Fix Pillar 2's alt text either way.~~ Done 2026-06-10 — Pillar 2 now carries shared-book with corrected alt + positive caption; Step "+" is text-only.
+3. **When Brief 2 art arrives** ([image-brief-2](rough-notes/2026-06-10/image-brief-2-one-constellation-every-device.md), "one constellation, every device" — written 2026-06-10, deliberate resolution-pair of the judgment-hub image): swap it into Pillar 1 with caption "One recipe book — every agent you use draws from it, whatever tool it lives in."; retire the robot image (`illustration-blank-slate.png` leaves the page).
+4. **When Brief 3 art arrives** (Step "+", AI-maturity variant — brief not yet written): restore the "+" panel illustration.
+5. ~~Same pass: CTA/copy touch-ups — compounding agency line (recipe `90f87ce6`).~~ Done 2026-06-10 — CTA heading is now "Your judgment is what makes your agents good. Use it — productivity and agency rise together."; challenge copy carries the scarce-resource unifier (`893660af`) and compression-durable METR framing (`ed6f17f3`). "This happened to you?" hooks remain optional/unused.
+
+Sub-item 1 also done 2026-06-10: `illustration-judgement-hub.png` shipped into the challenge section with the planned caption; the `CheckLogMock` component was removed.
+
+Visual grammar rules now in the corpus for all future art: bowl = solution-only motif (`d9f8142e`), warm recognition not fear (`a08dfaa8`), glowing figure is the canonical agent rendering (`2e7ee32c`).
+
 ### `[DESIGN]` Onboarding polish for first session
 
 Carried over from the controlled-invite-first sequencing decision (2026-04-09). Polish the first 30 seconds of a new user's experience: invitation email body, post-verify dashboard state, recipe-check first-success.
@@ -170,6 +192,18 @@ Common rejection reasons to double-check before submitting: missing tool annotat
 3. New work discovered: add to the relevant section here with the right tag. If you don't know the section, add it under "Unsorted" at the bottom.
 
 This file is the way concurrent AI sessions coordinate without explicit messaging.
+
+---
+
+## Decision archaeology follow-ups
+
+### `[IMPL]` Surface `decided_at` beyond the trace detail page
+
+`decided_at` shipped 2026-06-10 (column, `/check` + MCP param, coalesced judgment date in search results, trace-detail "Decided … · logged …" display). Remaining surfaces that still show only `created_at` and may want the judgment date: the traces list pages (`/app/traces`, recipe-book traces), the Recipe Map tooltips, and briefing exemplars. Low urgency — agents already see the coalesced date in check results, which is the surface that matters for alignment.
+
+### `[DESIGN]` Temporal decay should decay from the judgment date
+
+When stigmergic decay lands (search-algorithms.md §Stigmergic Decay), weight recipes by `COALESCE(decided_at, created_at)`, not raw `created_at`, so backfilled decisions (decision archaeology, design-thinking.md) decay as old judgments rather than fresh ones. Noted here so the decay implementation doesn't have to rediscover it.
 
 ---
 
