@@ -319,6 +319,7 @@ traces.get("/:id", async (c) => {
       t.group_id AS "groupId",
       t.api_key_id AS "apiKeyId",
       t.format_adherence_score AS "formatAdherenceScore",
+      t.decided_at AS "decidedAt",
       t.created_at AS "createdAt",
       t.updated_at AS "updatedAt",
       g.name AS "groupName",

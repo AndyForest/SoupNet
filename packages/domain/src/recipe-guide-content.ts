@@ -209,7 +209,7 @@ export const CONNECTION_TIERS = {
 
 1. MCP tools (Codex, Claude Code, Claude Desktop, Antigravity): Full automation via check_recipe, get_briefing, and list_my_recipe_books tools. One-command setup.
 
-2. Web browsing with URL construction: If your agent can construct and fetch URLs, build recipe check URLs directly: /check?key=YOUR_KEY&recipe=URL_ENCODED_RECIPE&evidence=URL_ENCODED_EVIDENCE&recipe_book=RECIPE_BOOK_SLUG. The page accepts human-readable parameter names (recipe, evidence, recipe_book) via GET; the legacy parameter \`group\` is still accepted for backwards compatibility. Results appear on the same page. Recipe-book slugs are shown on the check page when you visit with your key.
+2. Web browsing with URL construction: If your agent can construct and fetch URLs, build recipe check URLs directly: /check?key=YOUR_KEY&recipe=URL_ENCODED_RECIPE&evidence=URL_ENCODED_EVIDENCE&recipe_book=RECIPE_BOOK_SLUG. The page accepts human-readable parameter names (recipe, evidence, recipe_book) via GET; the legacy parameter \`group\` is still accepted for backwards compatibility. Results appear on the same page. Recipe-book slugs are shown on the check page when you visit with your key. When backfilling a decision discovered in a dated artifact (git history, an ADR), add decided_at=ISO_DATE so the recipe carries the original judgment date instead of today's.
 
 3. User-assisted checking: Many web-based AI assistants (such as ChatGPT and Google Gemini web chat) have read-only web access by design — a responsible AI guardrail that we respect and support. These agents can read the recipe guide and check page, but cannot submit forms on external sites. For these systems:
 
@@ -705,6 +705,13 @@ export const MCP_PARAM_DESCRIPTIONS = {
   maxChars:
     "Target response size in characters -- auto-clusters to fit. " +
     "Recommended: 2000 for tight context, 5000 for detailed responses.",
+
+  decidedAt:
+    "Optional ISO 8601 date or datetime (e.g. '2024-03-15' or '2024-03-15T14:30:00Z') — when the human " +
+    "originally made this taste/judgment call, if it predates this check. Use it to backfill decisions " +
+    "discovered in dated artifacts (git history, ADRs, old docs): set it to the artifact's timestamp so " +
+    "the recipe carries the original judgment date instead of today's. Must not be in the future. " +
+    "Omit for contemporaneous judgments.",
 } as const;
 
 /** Compose the full check_recipe tool description, optionally with the file-attachment sentence. */

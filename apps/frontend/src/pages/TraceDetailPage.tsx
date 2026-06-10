@@ -47,9 +47,15 @@ export function TraceDetailPage() {
           {trace.claimText}
         </h1>
         <div style={{ display: "flex", gap: "var(--space-md)", alignItems: "center", flexWrap: "wrap" }}>
-          <span className="text-xs" style={{ color: "var(--color-on-surface-variant)" }}>
-            {createdAt.toLocaleString()}
-          </span>
+          {trace.decidedAt ? (
+            <span className="text-xs" style={{ color: "var(--color-on-surface-variant)" }}>
+              Decided {new Date(trace.decidedAt).toLocaleString()} · logged {createdAt.toLocaleString()}
+            </span>
+          ) : (
+            <span className="text-xs" style={{ color: "var(--color-on-surface-variant)" }}>
+              {createdAt.toLocaleString()}
+            </span>
+          )}
           {trace.formatAdherenceScore !== null && trace.formatAdherenceScore !== undefined && (
             <span className="text-xs" style={{ color: "var(--color-on-surface-variant)" }}>
               Format score: {Math.round(trace.formatAdherenceScore * 100)}%

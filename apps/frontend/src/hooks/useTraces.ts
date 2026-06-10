@@ -76,6 +76,8 @@ export interface GroupedEvidence {
 
 export interface TraceDetail extends Trace {
   updatedAt: string;
+  /** Original judgment date for backfilled decisions (decision archaeology); null when contemporaneous. */
+  decidedAt?: string | null;
   userId: string;
   userEmail: string | null;
   groupName?: string | null;

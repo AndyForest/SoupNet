@@ -139,8 +139,11 @@ export async function hybridSearch(
       sql`, `,
     );
 
+    // created_at is coalesced with decided_at so the date agents see is the
+    // judgment date — backfilled recipes (decision archaeology) read as old
+    // judgments, not fresh context. Raw created_at stays on the trace row.
     const traceRows = await db.execute(sql`
-      SELECT id, claim_text, created_at
+      SELECT id, claim_text, COALESCE(decided_at, created_at) AS created_at
       FROM claimnet.traces
       WHERE id IN (${traceIdsSql})
     `);

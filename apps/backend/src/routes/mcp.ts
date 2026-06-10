@@ -279,6 +279,7 @@ function createMcpServer(backendUrl: string): McpServer {
       supporting_evidence: z.string().describe(MCP_PARAM_DESCRIPTIONS.supportingEvidence),
       clusters: z.number().optional().describe(MCP_PARAM_DESCRIPTIONS.clusters),
       max_chars: z.number().optional().describe(MCP_PARAM_DESCRIPTIONS.maxChars),
+      decided_at: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.decidedAt),
       axes: z.string().optional().describe(
         "Two concept terms for semantic projection (comma-separated, e.g., 'accessibility, dark mode'). " +
         "Each result gets x/y positions showing its similarity to each concept (0-1). " +
@@ -339,7 +340,7 @@ function createMcpServer(backendUrl: string): McpServer {
       idempotentHint: false,
       openWorldHint: true,
     },
-    async ({ recipe, supporting_evidence, clusters, max_chars, axes, recipe_book, read_recipe_books, file_url, file_base64, file_name, file_mime_type, region }, extra) => {
+    async ({ recipe, supporting_evidence, clusters, max_chars, decided_at, axes, recipe_book, read_recipe_books, file_url, file_base64, file_name, file_mime_type, region }, extra) => {
       // Get API key from auth info (passed by the transport middleware)
       const apiKey = (extra.authInfo as Record<string, unknown> | undefined)?.["token"] as string | undefined;
       if (!apiKey) {
@@ -422,6 +423,7 @@ function createMcpServer(backendUrl: string): McpServer {
           axes: axes ?? undefined,
           targetGroup: recipe_book ?? undefined,
           readGroups: read_recipe_books ?? undefined,
+          decidedAt: decided_at ?? undefined,
           image,
           region: regionMeta,
         });

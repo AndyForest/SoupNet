@@ -1,9 +1,9 @@
 # ClaimNet Data Model — Generated Reference
 
-> **Auto-generated** from Drizzle migration snapshot `0020_snapshot.json`.
+> **Auto-generated** from Drizzle migration snapshot `0021_snapshot.json`.
 > Do not edit by hand. Regenerate with: `npx tsx scripts/generate-data-model-docs.ts`
 >
-> Generated: 2026-05-15
+> Generated: 2026-06-10
 > Tables: 23 | Schema: `claimnet`
 
 For design rationale, conventions, and context, see [data-model.md](data-model.md).
@@ -240,6 +240,7 @@ erDiagram
         text claim_text
         text claim_text_hash
         real format_adherence_score
+        timestamptz decided_at
         timestamptz created_at
         timestamptz updated_at
     }
@@ -442,6 +443,7 @@ These are created by raw SQL in migration files and are not captured in the snap
 | `claim_text` | `text` | NO |  |  |
 | `claim_text_hash` | `text` | YES |  |  |
 | `format_adherence_score` | `real` | YES |  |  |
+| `decided_at` | `timestamptz` | YES |  |  |
 | `created_at` | `timestamptz` | NO | `now()` |  |
 | `updated_at` | `timestamptz` | NO | `now()` |  |
 

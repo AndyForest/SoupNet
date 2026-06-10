@@ -244,4 +244,75 @@ describe.skipIf(!canConnect())("trace.service integration", () => {
     expect(result.error).toContain("Invalid");
     expect(result.traceId).toBeUndefined();
   });
+
+  // ── decided_at (decision archaeology — backfilled judgment dates) ─────────
+
+  it("stores decided_at and keeps created_at as the insertion time", async () => {
+    const decidedAt = "2024-03-15T14:30:00.000Z";
+    const result = await submitAndSearch({
+      key: rawKey,
+      traceText: `As a backend developer, I chose pg-boss for queueing so that jobs live in Postgres — archaeology test ${uid}`,
+      evidenceFor: `Decision found in commit history.\n> "switch to pg-boss, keeps ops in postgres"\n— commit abc1234, 2024-03-15`,
+      decidedAt,
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.traceId).toBeDefined();
+
+    const db = getDb();
+    const rows = await db.execute(sql`
+      SELECT decided_at AS "decidedAt",
+             COALESCE(decided_at, created_at) AS "judgmentAt",
+             created_at AS "createdAt"
+      FROM claimnet.traces WHERE id = ${result.traceId}::uuid
+    `);
+    const row = (rows as unknown as Array<{ decidedAt: Date; judgmentAt: Date; createdAt: Date }>)[0]!;
+    expect(new Date(row.decidedAt).toISOString()).toBe(decidedAt);
+    // Agent-facing surfaces coalesce to the judgment date
+    expect(new Date(row.judgmentAt).toISOString()).toBe(decidedAt);
+    // Temporal honesty: created_at stays the insertion time, never backdated
+    expect(new Date(row.createdAt).getTime()).toBeGreaterThan(Date.parse(decidedAt));
+  });
+
+  it("leaves decided_at null for contemporaneous checks", async () => {
+    const result = await submitAndSearch({
+      key: rawKey,
+      traceText: `As a test engineer, I prefer contemporaneous checks to carry no decided_at so that null means "judged when logged" — test ${uid}`,
+      evidenceFor: `Contemporaneous evidence.\n> "no backdate"\n— Test source`,
+    });
+
+    expect(result.error).toBeUndefined();
+
+    const db = getDb();
+    const rows = await db.execute(sql`
+      SELECT decided_at AS "decidedAt" FROM claimnet.traces WHERE id = ${result.traceId}::uuid
+    `);
+    expect((rows as unknown as Array<{ decidedAt: Date | null }>)[0]!.decidedAt).toBeNull();
+  });
+
+  it("rejects an unparseable decided_at without inserting", async () => {
+    const result = await submitAndSearch({
+      key: rawKey,
+      traceText: `As a test engineer, I prefer strict date validation so that malformed backdates never enter the corpus — test ${uid}`,
+      evidenceFor: `Validation evidence.\n> "strict dates"\n— Test source`,
+      decidedAt: "not-a-date",
+    });
+
+    expect(result.error).toBeDefined();
+    expect(result.error).toContain("decided_at");
+    expect(result.traceId).toBeUndefined();
+  });
+
+  it("rejects a future decided_at without inserting", async () => {
+    const result = await submitAndSearch({
+      key: rawKey,
+      traceText: `As a test engineer, I prefer rejecting future judgment dates so that backdating can only make recipes older — test ${uid}`,
+      evidenceFor: `Validation evidence.\n> "no freshness gaming"\n— Test source`,
+      decidedAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    });
+
+    expect(result.error).toBeDefined();
+    expect(result.error).toContain("future");
+    expect(result.traceId).toBeUndefined();
+  });
 });

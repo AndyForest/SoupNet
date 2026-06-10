@@ -37,6 +37,14 @@ export const traces = claimnetSchema.table(
     claimTextHash: text("claim_text_hash"), // SHA-256 for idempotency check (nullable for pre-existing data)
     formatAdherenceScore: real("format_adherence_score"),
 
+    // When the human originally made this taste/judgment call, if it predates
+    // the check (e.g. a decision mined from git history or an old ADR).
+    // NULL = the judgment is contemporaneous with the check. created_at stays
+    // the insertion time, so the record never claims to have been logged
+    // earlier than it was; agent-facing surfaces show
+    // COALESCE(decided_at, created_at) as the judgment date.
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },

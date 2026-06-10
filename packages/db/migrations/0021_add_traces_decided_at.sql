@@ -1,0 +1,1 @@
+ALTER TABLE "claimnet"."traces" ADD COLUMN "decided_at" timestamp with time zone;

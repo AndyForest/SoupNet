@@ -170,6 +170,7 @@ server.tool(
     supporting_evidence: z.string().describe(MCP_PARAM_DESCRIPTIONS.supportingEvidence),
     clusters: z.number().optional().describe(MCP_PARAM_DESCRIPTIONS.clusters),
     max_chars: z.number().optional().describe(MCP_PARAM_DESCRIPTIONS.maxChars),
+    decided_at: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.decidedAt),
     file: z.string().optional().describe(
       "Optional file to attach as reference evidence (multimodal embedding). " +
       "Local file path (e.g., 'docs/screenshot.png') or URL. " +
@@ -184,7 +185,7 @@ server.tool(
     idempotentHint: false,
     openWorldHint: true,
   },
-  async ({ recipe, supporting_evidence, clusters, max_chars, file }) => {
+  async ({ recipe, supporting_evidence, clusters, max_chars, decided_at, file }) => {
     if (!apiKey) {
       return {
         content: [{ type: "text" as const, text: "Error: SOUPNET_API_KEY not configured. Get a key from your Soup.net dashboard." }],
@@ -226,6 +227,7 @@ server.tool(
         formData.set("ef", supporting_evidence);
         if (clusters) formData.set("clusters", String(clusters));
         if (max_chars) formData.set("max_chars", String(max_chars));
+        if (decided_at) formData.set("decided_at", decided_at);
         formData.set("format", "json");
         formData.set("image", new Blob([fileBuffer], { type: mimeType }), fileName);
 
@@ -241,6 +243,7 @@ server.tool(
         params.set("ef", supporting_evidence);
         if (clusters) params.set("clusters", String(clusters));
         if (max_chars) params.set("max_chars", String(max_chars));
+        if (decided_at) params.set("decided_at", decided_at);
         params.set("format", "json");
 
         response = await fetch(`${backendUrl}/check?${params.toString()}`, {

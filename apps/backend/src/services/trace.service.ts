@@ -66,6 +66,12 @@ export interface SubmitAndSearchParams {
   /** Comma-separated group slugs or IDs to restrict search scope.
    *  Resolved within the key's read groups. Defaults to all readable groups. */
   readGroups?: string | undefined;
+  /** ISO 8601 date/datetime — when the human originally made this judgment
+   *  call, for backfilling decisions discovered in dated artifacts (git
+   *  history, ADRs). Must not be in the future. Stored as traces.decided_at;
+   *  created_at stays the insertion time. See design-thinking.md §Decision
+   *  Archaeology. */
+  decidedAt?: string | undefined;
 }
 
 export interface SearchResultItem {
@@ -319,6 +325,27 @@ export async function submitAndSearch(
   const formatWarning =
     adherence.level === "warn" ? adherence.reason : undefined;
 
+  // 1c. Parse optional decided_at (original judgment date for backfilled
+  // decisions). Rejecting future dates means backdating can only make a
+  // recipe older — no freshness gaming.
+  let decidedAt: Date | undefined;
+  if (params.decidedAt !== undefined && params.decidedAt.trim() !== "") {
+    const parsed = new Date(params.decidedAt.trim());
+    if (Number.isNaN(parsed.getTime())) {
+      return {
+        error: `Invalid decided_at "${params.decidedAt}" — use ISO 8601, e.g. "2024-03-15" or "2024-03-15T14:30:00Z".`,
+        results: [], totalResults: 0, currentPage: page, totalPages: 0,
+      };
+    }
+    if (parsed.getTime() > Date.now()) {
+      return {
+        error: `decided_at "${params.decidedAt}" is in the future — it must be when the judgment was originally made.`,
+        results: [], totalResults: 0, currentPage: page, totalPages: 0,
+      };
+    }
+    decidedAt = parsed;
+  }
+
   // 2. Parse evidence
   const forEntries = parseEvidenceMarkdown(params.evidenceFor);
   // evidence_against removed from ingest — see docs/architecture/embedding-test-results.md
@@ -333,8 +360,8 @@ export async function submitAndSearch(
     // Try to insert — unique constraint on (api_key_id, group_id, claim_text_hash)
     // prevents duplicates from the same agent + group
     const traceRows = await tx.execute(sql`
-      INSERT INTO claimnet.traces (user_id, group_id, api_key_id, claim_text, claim_text_hash, format_adherence_score)
-      VALUES (${userId}::uuid, ${groupId}::uuid, ${keyId}::uuid, ${params.traceText}, ${claimTextHash}, ${adherence.score})
+      INSERT INTO claimnet.traces (user_id, group_id, api_key_id, claim_text, claim_text_hash, format_adherence_score, decided_at)
+      VALUES (${userId}::uuid, ${groupId}::uuid, ${keyId}::uuid, ${params.traceText}, ${claimTextHash}, ${adherence.score}, ${decidedAt ? decidedAt.toISOString() : null}::timestamptz)
       ON CONFLICT (api_key_id, group_id, claim_text_hash) DO NOTHING
       RETURNING id
     `);

@@ -185,11 +185,12 @@ async function fetchCorpusTraces(
     );
   }
 
+  // Judgment date: decided_at (backfilled decisions) falls back to created_at.
   const rows = await db.execute(sql`
-    SELECT t.id, t.claim_text AS "claimText", t.created_at AS "createdAt"
+    SELECT t.id, t.claim_text AS "claimText", COALESCE(t.decided_at, t.created_at) AS "createdAt"
     FROM claimnet.traces t
     WHERE ${sql.join(conditions, sql` AND `)}
-    ORDER BY t.created_at DESC
+    ORDER BY COALESCE(t.decided_at, t.created_at) DESC
   `);
 
   return rows as unknown as CorpusTrace[];
