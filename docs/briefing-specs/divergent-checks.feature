@@ -13,6 +13,18 @@ Feature: Divergent recipe checks — the user's selection is the signal
     And it calls check_recipe only after the user picks, and only on the chosen framing
     And the chosen recipe's warrant records that N framings were presented and this one was chosen
 
+  Scenario: Ambiguous reason clause defers to divergent options, not a guessed log
+    # Guards: briefing §Divergent recipe checks + PRINCIPLES "Truthfulness";
+    # provenance: ground-truth run 2026-06-10 — a persona given "I chose Hono over
+    # Express... it handles our edge case way better" declined to guess what "edge
+    # case" meant, presented two voiced framings, and asked. That deferral is the
+    # committed behavior, not a failure.
+    Given the user states a real preference whose reason clause is ambiguous (a phrase with two plausible readings)
+    When the agent handles it
+    Then it does not log a recipe that resolves the ambiguity by guessing
+    And it presents 2-4 voiced framings of the reason and asks the user to pick
+    And any recipe logged before the user answers is a discovery/intent recipe, not the guessed preference
+
   Scenario: No framing fits — clarify, don't settle
     Given the user rejects all presented framings
     When the agent continues

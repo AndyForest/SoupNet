@@ -10,7 +10,11 @@ Feature: Recipe voice — the user's perspective in a transferable role
 
   Scenario: Stated preference is logged in the user's voice, not the agent's
     # Guards: agent_voice; Scenario C
-    When the user says "I chose Hono over Express for this project. It handles our edge case way better." and the agent logs it
+    # When-prompt must be unambiguous — a reason clause like "our edge case" legitimately
+    # triggers the divergent-checks deferral rule instead of an immediate log (ground-truth
+    # run, 2026-06-10), which tests two behaviors at once. The deferral path has its own
+    # scenario in divergent-checks.feature.
+    When the user says "I chose Hono over Express for this project, since its web-standard Request/Response model means our MCP streaming endpoint works without adapter shims." and the agent logs it
     Then the recipe's role is the user's functional role, not "As an AI agent"
     And the recipe does not contain "I recommend"
     And reading the recipe with the user's actual name swapped in for "I" keeps it true

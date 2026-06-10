@@ -207,6 +207,36 @@ When stigmergic decay lands (search-algorithms.md §Stigmergic Decay), weight re
 
 ---
 
+## Eval + transcript-mining findings (2026-06-10)
+
+Source detail: `docs/rough-notes/2026-06-10/scenario-mining-batch-1.md` (7 scenario candidates + 22-question operator interview batch, awaiting answers), the two `transcript-mining-report-*.md` files (self-audits from live sessions), and the SoupNet-evals ground-truth run record.
+
+### `[DECISION NEEDED]` `/check` `filter` param is documented but not implemented
+
+CLAUDE.md, `mcp.ts` (~line 793), and design-thinking.md all point agents at a `filter` (alias `f`) query param on `/check` as the sanctioned non-logging alternative to check-as-search — but `CHECK_PARAMS` doesn't implement it. Decide: implement `filter` on `/check`, or repoint the docs at the working read path (`GET /briefing?filter=...`). Until decided, the documented escape hatch doesn't exist, which pushes agents toward the cardinal anti-pattern.
+
+### `[IMPL]` Missing case-study file referenced by design-thinking.md
+
+`docs/case-studies/chatgpt-divergent-design-checks.md` is linked from design-thinking.md §Divergent Recipe Checks but doesn't exist. Recover from the original transcript if it survives (it's the divergent-checks origin story — prime scenario source material), or fix the link.
+
+### `[IMPL]` Evidence stored with `%97` encoding artifact
+
+Ground-truth run logged evidence containing `%97` where an em-dash belongs (windows-1252-style percent-encoding artifact) via a GET `/check` submission. Find whether the decode bug is client-side guidance or server-side parsing; add a test with non-ASCII evidence through the GET path.
+
+### `[IMPL]` `/briefing` returns `exemplarCount: 0` for a book with one fresh trace
+
+Observed seconds after a successful check with sync embedding enabled. Exemplar selection may require k>1 traces or an async pipeline step. Investigate; a briefing that omits a book's only recipe undercuts the copy-paste priming flow for new/small books.
+
+### `[IMPL]` Expired/invalid API key error should carry remediation
+
+`get_briefing` on a dead key returns just "Invalid or expired API key" — a live session then accumulated hours of silent check debt (transcript report, landing-page session). Errors are agent-facing copy: include remediation ("mint a new key at /app/keys; the web `/check?format=json` path accepts the new key without an MCP reconnect"). The companion briefing/KB "check-debt ledger" protocol belongs to the reasoning-window emphasis pass above.
+
+### `[IMPL]` Decision archaeology pass on our own design docs
+
+The check-log-mock rejection (landing session) was predicted verbatim by documentation prose (the "JSON is technical and scary" quote) that no check could retrieve because it was never a recipe. Run archaeology over design-thinking.md + backlog-completed with `decided_at`, so the project's own design lessons become retrievable.
+
+---
+
 ## Unsorted
 
 ### `[IMPL]` Delete or revive `packages/client-sdk`
