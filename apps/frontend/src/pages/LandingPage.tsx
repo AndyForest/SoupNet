@@ -371,13 +371,13 @@ export function LandingPage() {
           marginBottom: "var(--space-md)",
           color: "var(--color-on-surface)",
         }}>
-          Your judgment is what makes your agents good. Use it, and productivity and agency rise together.
+          Stay in the driver's seat as the work speeds up.
         </h2>
         <p style={{
           color: "var(--color-on-surface-variant)",
           marginBottom: "var(--space-lg)",
         }}>
-          Start your first recipe book — free.
+          Start your first recipe book in 60 seconds:
         </p>
         <div style={{ display: "flex", gap: "var(--space-md)", justifyContent: "center", flexWrap: "wrap" }}>
           <Link to="/auth/register" style={{ textDecoration: "none" }}>
