@@ -108,7 +108,7 @@ Then-clauses must be **observable in the transcript** (a tool call happened / di
 
 ## Where this lives — eval repo and outcome data
 
-Operator constraints (2026-06-10): no LLM API calls in this codebase, now or via test tooling; eval scripts isolated somewhere; outcome data does not belong in the product DB; leaning toward a separate "eval" / "AI Data Science" repo (the pattern that worked at Scratch — experiments and evals isolated from the main codebase); a LiteLLM-class eval framework is too heavy, especially since the product itself does no LLM generations.
+Operator constraints (2026-06-10): no LLM API calls in this codebase, now or via test tooling; eval scripts isolated somewhere; outcome data does not belong in the product DB; leaning toward a separate "eval" / "AI Data Science" repo (a pattern the operator has used successfully before — experiments and evals isolated from the main codebase); a LiteLLM-class eval framework is too heavy, especially since the product itself does no LLM generations.
 
 **Proposed split (recommendation, not yet operator-confirmed): specs with the product, execution and data in the eval repo.**
 
