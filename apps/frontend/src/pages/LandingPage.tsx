@@ -1,11 +1,11 @@
 import { Link } from "@tanstack/react-router";
 import { StoryCarousel } from "../components/StoryCarousel.js";
 import illustrationBlankSlate from "../assets/illustration-blank-slate.png";
-import illustrationNewTeam from "../assets/illustration-new-team.png";
 import illustrationBriefingHandoff from "../assets/illustration-briefing-handoff.png";
 import illustrationChecksInMotion from "../assets/illustration-checks-in-motion.png";
 import illustrationContextReturning from "../assets/illustration-context-returning.png";
 import illustrationSharedBook from "../assets/illustration-shared-book.png";
+import illustrationJudgementHub from "../assets/illustration-judgement-hub.png";
 import soupnetLogo from "../assets/soupnet-logo.png";
 
 export function LandingPage() {
@@ -68,24 +68,125 @@ export function LandingPage() {
         </div>
       </header>
 
+      {/* The challenge — agents work unattended for longer and longer
+          stretches (METR time-horizon framing); every unattended hour is full
+          of judgment calls. The static check-log excerpt is the visual: this
+          is what accumulates while the agent works. Mirrors the in-person
+          pitch: benchmark → log → explain the system from there. */}
+      <section style={{
+        background: "var(--color-surface-container-low)",
+        padding: "var(--space-2xl) var(--space-xl)",
+      }}>
+        <div style={{
+          maxWidth: 1060,
+          margin: "0 auto",
+          display: "flex",
+          flexWrap: "wrap",
+          gap: "var(--space-2xl)",
+          alignItems: "center",
+        }}>
+          <div style={{ flex: "1 1 360px", minWidth: 0 }}>
+            <h2 style={{
+              fontSize: "1.35rem",
+              fontWeight: 700,
+              marginBottom: "var(--space-md)",
+              color: "var(--color-on-surface)",
+            }}>
+              AI agents are doing more and more on their own
+            </h2>
+            <p style={{
+              color: "var(--color-on-surface-variant)",
+              lineHeight: 1.6,
+              marginBottom: "var(--space-md)",
+            }}>
+              AI agents can finish bigger and bigger pieces of work on their own. The research
+              group METR measures exactly this — the length of task, in human working time, that
+              agents complete unattended — and it has been doubling every few months since 2019.
+              Agents don't take the hours a human would, either. Work that would have filled your
+              afternoon comes back before the coffee's cold.
+            </p>
+            <p style={{
+              color: "var(--color-on-surface-variant)",
+              lineHeight: 1.6,
+              marginBottom: "var(--space-md)",
+            }}>
+              And you never run just one. Every new session is a fresh agent, every new tool is
+              another, and your collaborators bring their own. Each of them faces the same
+              judgment calls in its work: which library, what tone, whether last month's
+              decision still holds. Each needs <em>your</em> answer, separately, from scratch.
+              The scarce resource is you. Soup.net gives all your agents one place to share
+              notes on your taste and judgment calls. They check their decisions against your
+              recipe book as they work and log the new ones, so each agent starts from
+              everything the others have learned.
+            </p>
+            <QnaDetails details={[
+              {
+                q: "What's the benchmark?",
+                a: (
+                  <>
+                    METR's time-horizon measurements. They time skilled humans on real software
+                    tasks, then measure the longest task length — in human time — that frontier
+                    agents can complete reliably. That horizon has grown exponentially since 2019,
+                    doubling every handful of months: from tasks of a few minutes to tasks of
+                    several hours. It's the most-cited curve in agent research — see{" "}
+                    <a href="https://metr.org/time-horizons/" target="_blank" rel="noopener noreferrer"
+                      style={{ color: "var(--color-primary)" }}>
+                      metr.org/time-horizons
+                    </a>.
+                  </>
+                ),
+              },
+              {
+                q: "Isn't this what AI memory systems are for?",
+                a: "Most agent memory stores facts. Vendor memory, fact-extraction frameworks, knowledge-graph memory, the markdown memory file in your repo — they distill your work into one-liners like \"prefers tabs\" or \"uses Postgres.\" Facts are cheap to store and expensive to trust: they strip away the context that made them true, then get repeated for years. Soup.net stores the judgment call itself — the role and goal that scoped it, the reasoning, a verbatim quote, a citation, the date it was decided — so a future agent can re-evaluate the call against the current situation instead of obeying a stale fact. And it lives with you, outside any one vendor's ecosystem.",
+              },
+            ]} />
+          </div>
+          <div style={{ flex: "1 1 360px", minWidth: 0 }}>
+            <img
+              src={illustrationJudgementHub}
+              alt="Watercolor: a person at the center of a shared desk turns between three pale AI agent figures, handing the same small golden judgment mark to each in turn; separate plumes of golden sparks rise and fade above each agent's work."
+              style={{
+                width: "100%",
+                height: "auto",
+                display: "block",
+                borderRadius: "var(--radius-lg)",
+                border: "1px solid var(--color-outline-variant, #e0e0e0)",
+              }}
+            />
+            <p style={{
+              marginTop: "var(--space-xs)",
+              marginBottom: 0,
+              fontSize: "0.85rem",
+              fontStyle: "italic",
+              color: "var(--color-on-surface-variant)",
+              textAlign: "center",
+              lineHeight: 1.4,
+            }}>
+              Three threads of work. Your judgment lives in you. Nothing is writing it down.
+            </p>
+          </div>
+        </div>
+      </section>
+
       {/* Pillar 1 — individual cross-vendor portability */}
       <PillarSection
         heading="One recipe book, every agent you use"
         body="Phone chatbot at lunch, coding agent at your desk, design tool in the evening — they all draw from the same recipe book you control. Whether it's Claude Code, ChatGPT, Gemini, or a custom one your team wrote in-house, the Soup.net briefing teaches each one how to participate. Vendor memory stays inside one ecosystem. Your taste and judgment travel with you. Equip every agent with what makes you you, once. Less time correcting and re-briefing them, more time on the long-running work that's the point of having agents in the first place — and every recipe check makes the next one smarter."
         image={illustrationBlankSlate}
         imageAlt="Watercolor: a person at a desk surrounded by their AI tools — phone, laptop, sketchpad — each one starting from a blank slate every session."
-        imageCaption="Every new agent, every new session — starting from scratch."
-        imageSide="right"
+        imageCaption="Without Soup.net, every new agent and every new session starts from scratch."
+        imageSide="left"
       />
 
       {/* Pillar 2 — collaboration that travels across people and AI-maturity levels */}
       <PillarSection
         heading="Invite a collaborator — their agent does the work"
         body="Invite a collaborator to a recipe book and their agent picks up the shared taste and judgment immediately — whatever tool they use, whatever AI experience they have. Personal recipes stay personal; shared decisions stay visible to that book's members. Sharing across vendors requires a neutral system across them, which no single AI vendor can offer. And for collaborators who'd never sign up themselves — friends, family, anyone whose AI is the free tier of ChatGPT or Gemini web — the same recipe book reaches them through clickable links. They click; their agent gets the context."
-        image={illustrationNewTeam}
-        imageAlt="Watercolor: two collaborators at different points in their AI experience, beginning a shared project — their AI agents present, ready to participate."
-        imageCaption="Each collaborator's context, locked in their own session."
-        imageSide="left"
+        image={illustrationSharedBook}
+        imageAlt="Watercolor: two collaborators at their own desks in mirrored composition, each with their own glowing agent and a small personal cluster of recipes — and a large shared constellation of recipe cards connecting them through the center."
+        imageCaption="One shared recipe book — every collaborator's agent reads it, and adds to it."
+        imageSide="right"
         background="var(--color-surface-container-low)"
       />
 
@@ -180,8 +281,6 @@ export function LandingPage() {
               outlined
               title="And the same for every collaborator's agent."
               body="The same three steps work on shared recipe books. Your agent's recipe checks find what other members' agents have logged; theirs find yours. Even collaborators who'd never sign up themselves can participate through clickable links — no MCP, no account needed."
-              illustration={illustrationSharedBook}
-              illustrationAlt="Watercolor: two collaborators at their own workspaces in mirrored composition, each with their own agent, a shared constellation of recipes connecting them through the center — the puzzle pieces from Pillar 2 now finding each other."
               details={[
                 {
                   q: "Who can actually see my recipes?",
@@ -272,7 +371,7 @@ export function LandingPage() {
           marginBottom: "var(--space-md)",
           color: "var(--color-on-surface)",
         }}>
-          AI agents are doing more on their own. Give yours something to align with.
+          Your judgment is what makes your agents good. Use it, and productivity and agency rise together.
         </h2>
         <p style={{
           color: "var(--color-on-surface-variant)",
@@ -394,32 +493,7 @@ function Step({ marker, outlined, title, body, details, illustration, illustrati
             }}>
               {body}
             </p>
-            {details.map((d, i) => (
-              <details key={i} style={{ marginBottom: "var(--space-xs)" }}>
-                <summary style={{
-                  cursor: "pointer",
-                  color: "var(--color-primary)",
-                  fontSize: "0.9rem",
-                  fontWeight: 500,
-                  padding: "var(--space-xs) 0",
-                  listStyle: "revert",
-                }}>
-                  {d.q}
-                </summary>
-                <p style={{
-                  color: "var(--color-on-surface-variant)",
-                  lineHeight: 1.55,
-                  fontSize: "0.9rem",
-                  paddingLeft: "var(--space-md)",
-                  borderLeft: "2px solid var(--color-outline-variant, #e0e0e0)",
-                  margin: 0,
-                  marginTop: "var(--space-xs)",
-                  marginBottom: "var(--space-sm)",
-                }}>
-                  {d.a}
-                </p>
-              </details>
-            ))}
+            <QnaDetails details={details} />
           </div>
           {illustration ? (
             <div className="step-illustration">
@@ -439,6 +513,41 @@ function Step({ marker, outlined, title, body, details, illustration, illustrati
         </div>
       </div>
     </div>
+  );
+}
+
+// ── Expandable Q&A list (shared by Step and the challenge section) ───────────
+
+function QnaDetails({ details }: { details: { q: string; a: React.ReactNode }[] }) {
+  return (
+    <>
+      {details.map((d, i) => (
+        <details key={i} style={{ marginBottom: "var(--space-xs)" }}>
+          <summary style={{
+            cursor: "pointer",
+            color: "var(--color-primary)",
+            fontSize: "0.9rem",
+            fontWeight: 500,
+            padding: "var(--space-xs) 0",
+            listStyle: "revert",
+          }}>
+            {d.q}
+          </summary>
+          <p style={{
+            color: "var(--color-on-surface-variant)",
+            lineHeight: 1.55,
+            fontSize: "0.9rem",
+            paddingLeft: "var(--space-md)",
+            borderLeft: "2px solid var(--color-outline-variant, #e0e0e0)",
+            margin: 0,
+            marginTop: "var(--space-xs)",
+            marginBottom: "var(--space-sm)",
+          }}>
+            {d.a}
+          </p>
+        </details>
+      ))}
+    </>
   );
 }
 
@@ -520,16 +629,20 @@ function PillarSection({ heading, body, bullets, image, imageAlt, imageCaption, 
       background: background ?? "transparent",
       padding: "var(--space-2xl) var(--space-xl)",
     }}>
+      {/* DOM order is always text-then-image; imageSide="left" is achieved with
+          row-reverse so single-column (mobile) stacking reads text → illustration
+          in every section regardless of desktop side. */}
       <div style={{
         maxWidth: 1060,
         margin: "0 auto",
         display: "flex",
+        flexDirection: imageSide === "left" ? "row-reverse" : "row",
         flexWrap: "wrap",
         gap: "var(--space-2xl)",
         alignItems: "center",
       }}>
-        {imageSide === "left" ? imageBlock : textBlock}
-        {imageSide === "left" ? textBlock : imageBlock}
+        {textBlock}
+        {imageBlock}
       </div>
     </section>
   );
