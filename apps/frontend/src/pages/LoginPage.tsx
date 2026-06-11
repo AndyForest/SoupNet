@@ -53,7 +53,6 @@ export function LoginPage() {
   const [tosAccepted, setTosAccepted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showVerification, setShowVerification] = useState(false);
-  const [showWaitlist, setShowWaitlist] = useState(false);
   const [waitlistEmail, setWaitlistEmail] = useState("");
   const [waitlistReason, setWaitlistReason] = useState("");
   const [waitlistSubmitted, setWaitlistSubmitted] = useState(false);
@@ -77,9 +76,62 @@ export function LoginPage() {
     staleTime: 1000 * 60 * 5, // cache 5 min
   });
 
-  // Show waitlist proactively when signups are closed and user tries to register
-  // (unless they have an invite token, which bypasses the cap)
-  const signupsClosed = signupStatusQuery.data === false && !inviteToken;
+  // With an invite token, check whether the invitee can register right now.
+  // An invitation reserves a place at the TOP of the waitlist — it doesn't
+  // bypass it. canRegister=false means the cap is genuinely full and their
+  // reservation is first in line when it rises.
+  const inviteStatusQuery = useQuery({
+    queryKey: ["invite-status", inviteToken],
+    enabled: Boolean(inviteToken),
+    queryFn: async () => {
+      const res = await fetch(
+        `${API_BASE}/auth/invite-status?token=${encodeURIComponent(inviteToken ?? "")}`,
+      );
+      const json = (await res.json()) as {
+        ok: boolean;
+        data?: { valid: boolean; canRegister: boolean };
+      };
+      // Fail open to a register attempt if the endpoint errors — worst case
+      // the backend declines with its generic response.
+      return json.ok && json.data ? json.data : { valid: true, canRegister: true };
+    },
+    staleTime: 1000 * 60, // cache 1 min
+  });
+
+  const inviteInvalid = Boolean(inviteToken) && inviteStatusQuery.data?.valid === false;
+  const inviteWaitlisted =
+    Boolean(inviteToken) &&
+    inviteStatusQuery.data?.valid === true &&
+    inviteStatusQuery.data.canRegister === false;
+
+  // Show waitlist proactively when signups are closed and the user tries to
+  // register without a usable invitation (an invalid/expired invite behaves
+  // like no invite).
+  const signupsClosed =
+    signupStatusQuery.data === false && (!inviteToken || inviteInvalid);
+
+  const waitlistMutation = useMutation({
+    mutationFn: async (body: { email: string; reason?: string }) => {
+      const res = await fetch(`${API_BASE}/auth/waitlist`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const json = (await res.json()) as { ok: boolean; error?: string };
+      if (!res.ok || !json.ok) {
+        throw new Error(json.error ?? "Couldn't join the waitlist — please try again.");
+      }
+      return json;
+    },
+    onSuccess: () => setWaitlistSubmitted(true),
+  });
+
+  function handleWaitlistSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const targetEmail = (waitlistEmail || email).toLowerCase().trim();
+    const reason = waitlistReason.trim();
+    waitlistMutation.mutate(reason ? { email: targetEmail, reason } : { email: targetEmail });
+  }
 
   const mutation = useMutation({
     mutationFn: (body: { email: string; password: string }) =>
@@ -179,103 +231,6 @@ export function LoginPage() {
     );
   }
 
-  // Waitlist screen
-  if (showWaitlist) {
-    return (
-      <div style={{
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
-        minHeight: "100vh",
-        background: "var(--color-surface)",
-      }}>
-        <div style={{
-          width: "100%",
-          maxWidth: 440,
-          background: "var(--color-surface-container-lowest)",
-          borderRadius: "var(--radius-lg)",
-          padding: "var(--space-2xl) var(--space-xl)",
-        }}>
-          <h1 style={{ color: "var(--color-primary)", fontSize: "1.5rem", marginBottom: "var(--space-md)", textAlign: "center" }}>
-            {waitlistSubmitted ? "You're on the list" : "Soup.net is at capacity"}
-          </h1>
-
-          {waitlistSubmitted ? (
-            <div style={{ textAlign: "center" }}>
-              <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)", lineHeight: 1.5 }}>
-                We'll let you know when a spot opens up. In the meantime, if someone already
-                on Soup.net invites you, that bypasses the waitlist.
-              </p>
-              <button
-                className="btn-secondary"
-                onClick={() => {
-                  setShowWaitlist(false);
-                  setIsRegister(false);
-                  setWaitlistSubmitted(false);
-                }}
-                style={{ width: "100%", justifyContent: "center" }}
-              >
-                Back to sign in
-              </button>
-            </div>
-          ) : (
-            <>
-              <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)", lineHeight: 1.5, textAlign: "center" }}>
-                We're limiting signups to ensure quality for early users. Join the
-                waitlist and we'll notify you when a spot opens — or ask someone already
-                on Soup.net to invite you.
-              </p>
-              <form onSubmit={(e) => {
-                e.preventDefault();
-                // TODO: Wire up to POST /waitlist endpoint when backend is ready
-                setWaitlistSubmitted(true);
-              }}>
-                <div style={{ marginBottom: "var(--space-md)" }}>
-                  <label htmlFor="waitlist-email">Email</label>
-                  <input
-                    id="waitlist-email"
-                    type="email"
-                    required
-                    value={waitlistEmail || email}
-                    onChange={(e) => setWaitlistEmail(e.target.value)}
-                    placeholder="you@example.com"
-                  />
-                </div>
-                <div style={{ marginBottom: "var(--space-md)" }}>
-                  <label htmlFor="waitlist-reason">What would you use Soup.net for? (optional)</label>
-                  <textarea
-                    id="waitlist-reason"
-                    rows={3}
-                    value={waitlistReason}
-                    onChange={(e) => setWaitlistReason(e.target.value)}
-                    placeholder="Tell us about your use case — developers, designers, teams, personal projects..."
-                    style={{ resize: "vertical", fontSize: "0.875rem" }}
-                  />
-                </div>
-                <button
-                  type="submit"
-                  style={{ width: "100%", justifyContent: "center", marginBottom: "var(--space-md)" }}
-                >
-                  Join Waitlist
-                </button>
-              </form>
-              <button
-                className="btn-secondary"
-                onClick={() => {
-                  setShowWaitlist(false);
-                  setIsRegister(false);
-                }}
-                style={{ width: "100%", justifyContent: "center" }}
-              >
-                Back to sign in
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div style={{
       display: "flex",
@@ -310,7 +265,7 @@ export function LoginPage() {
           }}>
             Taste and judgment for AI agents
           </p>
-          {inviteToken && (
+          {inviteToken && !inviteInvalid && !inviteWaitlisted && (
             <p style={{
               color: "var(--color-success)",
               fontSize: "0.85rem",
@@ -319,10 +274,51 @@ export function LoginPage() {
               You've been invited! Create an account to join.
             </p>
           )}
+          {inviteInvalid && (
+            <p style={{
+              color: "var(--color-error)",
+              fontSize: "0.85rem",
+              marginTop: "var(--space-sm)",
+            }}>
+              This invitation link is invalid or has expired. Ask your inviter
+              for a fresh one.
+            </p>
+          )}
         </div>
 
+        {/* Invited while the cap is full: their reservation is at the top of
+            the waitlist — no form needed, the invitation IS their place. */}
+        {isRegister && inviteWaitlisted ? (
+          <>
+            <p style={{ color: "var(--color-success)", fontWeight: 600, marginBottom: "var(--space-md)", textAlign: "center" }}>
+              You're invited — and at the top of the waitlist.
+            </p>
+            <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)", lineHeight: 1.5, fontSize: "0.9rem", textAlign: "center" }}>
+              Soup.net is at capacity right now. Your invitation holds your
+              place at the front of the line — try this same link again soon.
+            </p>
+            <p style={{
+              textAlign: "center",
+              fontSize: "0.875rem",
+              color: "var(--color-on-surface-variant)",
+            }}>
+              Already have an account?{" "}
+              <a
+                href="#"
+                onClick={(e) => {
+                  e.preventDefault();
+                  setIsRegister(false);
+                  setError(null);
+                }}
+              >
+                Sign in
+              </a>
+            </p>
+          </>
+        ) : null}
+
         {/* Show waitlist proactively when signups are closed and user is trying to register */}
-        {isRegister && signupsClosed ? (
+        {isRegister && inviteWaitlisted ? null : isRegister && signupsClosed ? (
           <>
             {waitlistSubmitted ? (
               <div style={{ textAlign: "center" }}>
@@ -331,7 +327,7 @@ export function LoginPage() {
                 </p>
                 <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)", lineHeight: 1.5, fontSize: "0.9rem" }}>
                   We'll let you know when a spot opens up. If someone already on Soup.net
-                  invites you, that bypasses the waitlist.
+                  invites you, their invitation puts you at the top of the waitlist.
                 </p>
               </div>
             ) : (
@@ -339,13 +335,9 @@ export function LoginPage() {
                 <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)", lineHeight: 1.5, fontSize: "0.9rem", textAlign: "center" }}>
                   We're limiting signups to ensure quality for early users. Join the
                   waitlist and we'll notify you — or ask someone already on Soup.net
-                  to invite you.
+                  to invite you. An invitation puts you at the top of the waitlist.
                 </p>
-                <form onSubmit={(e) => {
-                  e.preventDefault();
-                  // TODO: Wire up to POST /waitlist endpoint when backend is ready
-                  setWaitlistSubmitted(true);
-                }}>
+                <form onSubmit={handleWaitlistSubmit}>
                   <div style={{ marginBottom: "var(--space-md)" }}>
                     <label htmlFor="waitlist-email">Email</label>
                     <input
@@ -368,11 +360,23 @@ export function LoginPage() {
                       style={{ resize: "vertical", fontSize: "0.875rem" }}
                     />
                   </div>
+                  {waitlistMutation.isError && (
+                    <p style={{
+                      color: "var(--color-error)",
+                      fontSize: "0.875rem",
+                      marginBottom: "var(--space-md)",
+                    }}>
+                      {waitlistMutation.error instanceof Error
+                        ? waitlistMutation.error.message
+                        : "Couldn't join the waitlist — please try again."}
+                    </p>
+                  )}
                   <button
                     type="submit"
+                    disabled={waitlistMutation.isPending}
                     style={{ width: "100%", justifyContent: "center", marginBottom: "var(--space-md)" }}
                   >
-                    Join Waitlist
+                    {waitlistMutation.isPending ? "Please wait..." : "Join Waitlist"}
                   </button>
                 </form>
               </>

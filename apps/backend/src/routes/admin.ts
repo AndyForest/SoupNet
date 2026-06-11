@@ -11,7 +11,7 @@ import {
   getPendingInvitationCount,
 } from "../services/system-settings.service";
 import { QUEUE_DESCRIPTIONS, getQueueDescription } from "@soupnet/domain";
-import { sendInvitationEmail } from "../services/email.service";
+import { sendWaitlistSpotOpenEmail } from "../services/email.service";
 import { rateLimit } from "../middleware/rate-limit";
 import type { AppEnv } from "../types";
 
@@ -82,10 +82,18 @@ admin.put("/settings", async (c) => {
   return c.json({ ok: true, data: settings });
 });
 
-// POST /admin/invite — system admin creates an invitation (bypasses cap)
+// POST /admin/invite — system admin creates a full cap-bypass invitation by
+// email. groupId is optional (old idea — recipe-book membership can be
+// granted separately); groupless invitations exist purely to let the email
+// register past the cap and are stamped accepted at registration.
+//
+// Deliberately does NOT send email. The admin gets the invite URL back and
+// shares it through their own channel — consistent with the spam-safe
+// invitation design (ADR-0016 "no emails to non-users"; the previous
+// auto-send here predated the operator deciding it wasn't needed).
 const inviteSchema = z.object({
   email: z.string().email(),
-  groupId: z.string().uuid(),
+  groupId: z.string().uuid().optional(),
 });
 
 admin.post("/invite", inviteRateLimit, async (c) => {
@@ -95,7 +103,8 @@ admin.post("/invite", inviteRateLimit, async (c) => {
     return c.json({ ok: false, error: "Invalid input", details: parsed.error.issues }, 400);
   }
 
-  const { email, groupId } = parsed.data;
+  const email = parsed.data.email.toLowerCase().trim();
+  const { groupId } = parsed.data;
   const user = c.get("user");
   const db = getDb();
 
@@ -107,13 +116,13 @@ admin.post("/invite", inviteRateLimit, async (c) => {
     return c.json({ ok: false, error: "User already exists" }, 409);
   }
 
-  // Check if group exists
-  const groupRows = await db.execute(sql`
-    SELECT name FROM claimnet.groups WHERE id = ${groupId}::uuid LIMIT 1
-  `);
-  const group = (groupRows as unknown as Array<{ name: string }>)[0];
-  if (!group) {
-    return c.json({ ok: false, error: "Group not found" }, 404);
+  if (groupId) {
+    const groupRows = await db.execute(sql`
+      SELECT name FROM claimnet.groups WHERE id = ${groupId}::uuid LIMIT 1
+    `);
+    if (!(groupRows as unknown[]).length) {
+      return c.json({ ok: false, error: "Group not found" }, 404);
+    }
   }
 
   // Create invitation with cap bypass
@@ -122,17 +131,21 @@ admin.post("/invite", inviteRateLimit, async (c) => {
 
   await db.execute(sql`
     INSERT INTO claimnet.invitations (inviter_id, group_id, email, token, bypass_cap, expires_at)
-    VALUES (${user.id}::uuid, ${groupId}::uuid, ${email}, ${token}, true, ${expiresAt.toISOString()}::timestamptz)
+    VALUES (${user.id}::uuid, ${groupId ?? null}::uuid, ${email}, ${token}, true, ${expiresAt.toISOString()}::timestamptz)
   `);
 
-  // Send invitation email
-  try {
-    await sendInvitationEmail(email, user.email, group.name, token);
-  } catch (err) {
-    console.error("[admin/invite] Failed to send invitation email:", err);
-  }
+  // If this email is on the waitlist, mark it invited so the admin waitlist
+  // view reflects the promotion. No-op for emails that aren't on it.
+  await db.execute(sql`
+    UPDATE claimnet.waitlist SET invited_at = now() WHERE email = ${email}
+  `);
 
-  return c.json({ ok: true, data: { email, groupId, expiresAt: expiresAt.toISOString() } });
+  const inviteUrl = `${process.env["FRONTEND_URL"] ?? "https://soup.net"}/auth/register?invite=${token}`;
+
+  return c.json({
+    ok: true,
+    data: { email, groupId: groupId ?? null, inviteUrl, expiresAt: expiresAt.toISOString() },
+  });
 });
 
 // GET /admin/users — list users (paginated, filtered, sortable).
@@ -613,6 +626,116 @@ admin.post("/workers/embeddings/retry-all/:strategyId", async (c) => {
   return c.json({ ok: true, data: { strategyId, retriedCount: count } });
 });
 
+// GET /admin/waitlist — the merged signup queue, in line order.
+//
+// One row per email wanting in, from two sources:
+//   - waitlist self-signups (type 'waitlist'; carry reason + notified_at)
+//   - pending invitations for emails NOT on the waitlist (type
+//     'admin_invite' for bypass_cap, 'member_invite' otherwise)
+// Waitlist rows that have since been invited keep type 'waitlist' with
+// invited_at set — the indicator distinguishes them.
+//
+// Ordering reflects "an invite puts you at the top of the waitlist":
+// rows holding a live invitation first, then by created_at (oldest first).
+admin.get("/waitlist", async (c) => {
+  const rows = await getDb().execute(sql`
+    WITH merged AS (
+      SELECT
+        w.id,
+        w.email,
+        'waitlist' AS "type",
+        w.reason,
+        NULL::text AS "inviterEmail",
+        w.invited_at AS "invitedAt",
+        w.notified_at AS "notifiedAt",
+        w.created_at AS "createdAt"
+      FROM claimnet.waitlist w
+
+      UNION ALL
+
+      SELECT
+        i.id,
+        i.email,
+        CASE WHEN i.bypass_cap THEN 'admin_invite' ELSE 'member_invite' END AS "type",
+        NULL::text AS "reason",
+        inviter.email AS "inviterEmail",
+        i.created_at AS "invitedAt",
+        NULL::timestamptz AS "notifiedAt",
+        i.created_at AS "createdAt"
+      FROM claimnet.invitations i
+      JOIN claimnet.users inviter ON inviter.id = i.inviter_id
+      WHERE i.accepted_at IS NULL
+        AND i.declined_at IS NULL
+        AND i.expires_at > now()
+        AND NOT EXISTS (SELECT 1 FROM claimnet.waitlist w2 WHERE w2.email = i.email)
+    )
+    SELECT * FROM (
+      SELECT
+        m.*,
+        (u.id IS NOT NULL) AS "registered",
+        EXISTS (
+          SELECT 1 FROM claimnet.invitations i2
+          WHERE i2.email = m.email
+            AND i2.accepted_at IS NULL
+            AND i2.declined_at IS NULL
+            AND i2.expires_at > now()
+        ) AS "invitePending"
+      FROM merged m
+      LEFT JOIN claimnet.users u
+        ON u.email = m.email AND u.email_verified_at IS NOT NULL
+    ) q
+    ORDER BY (q."invitePending" OR q."invitedAt" IS NOT NULL) DESC, q."createdAt" ASC
+  `);
+  return c.json({ ok: true, data: rows });
+});
+
+// POST /admin/waitlist/:id/notify — send the "a spot opened" email to a
+// waitlist entry. Explicit per-entry action (never automatic); waitlist
+// signups consented to exactly this notification. Logged in email_log like
+// every outgoing email.
+admin.post("/waitlist/:id/notify", async (c) => {
+  const id = c.req.param("id");
+  const db = getDb();
+
+  const rows = await db.execute(sql`
+    SELECT email FROM claimnet.waitlist WHERE id = ${id}::uuid LIMIT 1
+  `);
+  const entry = (rows as unknown as Array<{ email: string }>)[0];
+  if (!entry) {
+    return c.json({ ok: false, error: "Waitlist entry not found" }, 404);
+  }
+
+  try {
+    await sendWaitlistSpotOpenEmail(entry.email);
+  } catch (err) {
+    console.error("[admin/waitlist/notify] Failed to send:", err);
+    return c.json({ ok: false, error: "Failed to send notification email" }, 502);
+  }
+
+  await db.execute(sql`
+    UPDATE claimnet.waitlist SET notified_at = now() WHERE id = ${id}::uuid
+  `);
+  return c.json({ ok: true, data: { email: entry.email, notifiedAt: new Date().toISOString() } });
+});
+
+// GET /admin/emails — recent outgoing email log (light CRM + abuse/security
+// review surface). Metadata only — bodies are never stored. 60-day retention
+// enforced by the logged sender.
+admin.get("/emails", async (c) => {
+  const q = c.req.query("q")?.trim() ?? "";
+  const limit = Math.min(parseInt(c.req.query("limit") ?? "100", 10) || 100, 500);
+  const where = q ? sql`WHERE to_email ILIKE ${"%" + q + "%"}` : sql``;
+  const rows = await getDb().execute(sql`
+    SELECT id, to_email AS "toEmail", kind, subject, status, error,
+           created_at AS "createdAt"
+    FROM claimnet.email_log
+    ${where}
+    ORDER BY created_at DESC
+    LIMIT ${limit}
+  `);
+  return c.json({ ok: true, data: rows });
+});
+
 // GET /admin/invitations — list pending invitations
 admin.get("/invitations", async (c) => {
   const rows = await getDb().execute(sql`
@@ -622,7 +745,7 @@ admin.get("/invitations", async (c) => {
       g.name AS "groupName",
       u.email AS "inviterEmail"
     FROM claimnet.invitations i
-    JOIN claimnet.groups g ON g.id = i.group_id
+    LEFT JOIN claimnet.groups g ON g.id = i.group_id
     JOIN claimnet.users u ON u.id = i.inviter_id
     ORDER BY i.created_at DESC
     LIMIT 100

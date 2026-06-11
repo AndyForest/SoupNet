@@ -65,12 +65,37 @@ export async function getVerifiedUserCount(db: PostgresJsDatabase): Promise<numb
   return ((rows[0] as Record<string, unknown>)?.["total"] as number) ?? 0;
 }
 
-export async function getPendingInvitationCount(db: PostgresJsDatabase): Promise<number> {
+export interface CapCheckOptions {
+  /**
+   * Exclude this invitation from the pending count. Used when the holder of
+   * a reservation is the one registering — their own reserved slot must not
+   * be counted against them.
+   */
+  excludeInvitationId?: string;
+}
+
+/**
+ * Pending non-bypass invitations = reservations against the cap.
+ *
+ * A reservation stops counting once its email belongs to a registered user
+ * — otherwise an invitee who registered but hasn't yet clicked Accept on the
+ * recipe-book invite would hold a phantom slot (counted once as a user AND
+ * once as a pending invitation) for up to 7 days.
+ */
+export async function getPendingInvitationCount(
+  db: PostgresJsDatabase,
+  opts?: CapCheckOptions,
+): Promise<number> {
+  const excludeId = opts?.excludeInvitationId ?? null;
   const rows = await db.execute(sql`
-    SELECT count(*)::int AS total FROM claimnet.invitations
-    WHERE accepted_at IS NULL
-      AND expires_at > now()
-      AND bypass_cap = false
+    SELECT count(*)::int AS total FROM claimnet.invitations i
+    WHERE i.accepted_at IS NULL
+      AND i.expires_at > now()
+      AND i.bypass_cap = false
+      AND (${excludeId}::uuid IS NULL OR i.id != ${excludeId}::uuid)
+      AND NOT EXISTS (
+        SELECT 1 FROM claimnet.users u WHERE u.email = i.email
+      )
   `);
   return ((rows[0] as Record<string, unknown>)?.["total"] as number) ?? 0;
 }
@@ -79,12 +104,15 @@ export async function getPendingInvitationCount(db: PostgresJsDatabase): Promise
  * Check if a new signup would exceed the cap.
  * Counts verified users + pending non-bypass invitations against the cap.
  */
-export async function isSignupCapReached(db: PostgresJsDatabase): Promise<boolean> {
+export async function isSignupCapReached(
+  db: PostgresJsDatabase,
+  opts?: CapCheckOptions,
+): Promise<boolean> {
   const cap = await getSetting(db, "signupCap");
   if (cap === 0) return true; // Cap of 0 means no self-signups
 
   const verifiedCount = await getVerifiedUserCount(db);
-  const pendingCount = await getPendingInvitationCount(db);
+  const pendingCount = await getPendingInvitationCount(db, opts);
 
   return (verifiedCount + pendingCount) >= cap;
 }
@@ -101,7 +129,35 @@ export async function isSignupCapReached(db: PostgresJsDatabase): Promise<boolea
  * preserves the no-overshoot guarantee while serializing concurrent attempts
  * for microseconds rather than failing them.
  */
-export async function tryConsumeSignupSlot(db: PostgresJsDatabase): Promise<boolean> {
+export async function tryConsumeSignupSlot(
+  db: PostgresJsDatabase,
+  opts?: CapCheckOptions,
+): Promise<boolean> {
   await db.execute(sql`SELECT pg_advisory_xact_lock(hashtext('signup_cap'))`);
-  return !(await isSignupCapReached(db));
+  return !(await isSignupCapReached(db, opts));
+}
+
+/**
+ * Decide whether a registration may proceed under the signup cap.
+ *
+ * Invite semantics (operator decision, 2026-06-11): a member invitation puts
+ * the invitee at the TOP of the waitlist, it does not bypass it. The
+ * invitation reserves a slot (counted in getPendingInvitationCount), and the
+ * invitee can register only while that reservation fits within the cap —
+ * their own pending invitation is excluded from the count so the reservation
+ * doesn't block its own holder. When the cap is genuinely full, they wait
+ * like everyone else, first in line when the cap rises.
+ *
+ * Admin invitations (bypassCap) skip the cap entirely — the admin-only
+ * full-bypass tool.
+ */
+export async function mayRegister(
+  db: PostgresJsDatabase,
+  invitation: { id: string; bypassCap: boolean } | null,
+): Promise<boolean> {
+  if (invitation?.bypassCap) return true;
+  if (invitation) {
+    return tryConsumeSignupSlot(db, { excludeInvitationId: invitation.id });
+  }
+  return tryConsumeSignupSlot(db);
 }

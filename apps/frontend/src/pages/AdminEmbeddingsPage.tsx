@@ -120,6 +120,33 @@ export function AdminEmbeddingsPage() {
     },
   });
 
+  // The embeddings kill-switch lives here, with the pipeline it governs —
+  // there is deliberately no generic admin "Settings" page.
+  const settingsQuery = useQuery({
+    queryKey: ["admin", "settings"],
+    queryFn: async () => {
+      const res = await authFetch("/admin/settings");
+      const json = (await res.json()) as { ok: boolean; data?: { embeddingsEnabled: boolean } };
+      if (!json.ok || !json.data) throw new Error("Failed to load settings");
+      return json.data;
+    },
+    enabled: meQuery.data?.role === "system",
+  });
+
+  const toggleEmbeddingsMutation = useMutation({
+    mutationFn: async (embeddingsEnabled: boolean) => {
+      const res = await authFetch("/admin/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ embeddingsEnabled }),
+      });
+      return await res.json();
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["admin", "settings"] });
+    },
+  });
+
   const retryAllMutation = useMutation({
     mutationFn: async (strategyId: string) => {
       const res = await authFetch(`/admin/workers/embeddings/retry-all/${strategyId}`, {
@@ -185,6 +212,20 @@ export function AdminEmbeddingsPage() {
 
       {embeddingsQuery.isLoading && <p>Loading embedding stats...</p>}
       {embeddingsQuery.error && <p style={{ color: "var(--color-error)" }}>Error loading embedding stats</p>}
+
+      {/* ── Kill switch ──────────────────────────────────── */}
+      <section style={{ marginTop: "var(--space-lg)" }}>
+        <label style={{ display: "flex", gap: "var(--space-sm)", alignItems: "center", fontSize: "0.875rem", fontWeight: 400 }}>
+          <input
+            type="checkbox"
+            checked={settingsQuery.data?.embeddingsEnabled ?? true}
+            disabled={!settingsQuery.data || toggleEmbeddingsMutation.isPending}
+            onChange={(e) => toggleEmbeddingsMutation.mutate(e.target.checked)}
+            style={{ width: "auto", minWidth: 0 }}
+          />
+          Embeddings enabled — uncheck to pause Gemini API calls (and spend) without stopping the app
+        </label>
+      </section>
 
       {/* ── Strategy coverage ────────────────────────────── */}
       <section style={{ marginTop: "var(--space-xl)" }}>

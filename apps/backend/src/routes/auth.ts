@@ -5,7 +5,7 @@ import { sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { registerUser, loginUser, requireAuth, requireVerifiedEmail, hashPassword, verifyPassword } from "../auth";
 import { writeAudit } from "../services/audit-log.service";
-import { isSignupCapReached, tryConsumeSignupSlot } from "../services/system-settings.service";
+import { isSignupCapReached, mayRegister } from "../services/system-settings.service";
 import { sendVerificationEmail, sendPasswordResetEmail } from "../services/email.service";
 import { rateLimit } from "../middleware/rate-limit";
 import type { AppEnv } from "../types";
@@ -97,7 +97,7 @@ auth.post("/register", authRateLimit, async (c) => {
   // success vs. failure. An invalid invite token still returns the generic
   // success body, because revealing "invite token bad" gives an attacker
   // confirmation that the email was either right or wrong.
-  let invitation: { id: string; groupId: string; bypassCap: boolean } | null = null;
+  let invitation: { id: string; groupId: string | null; bypassCap: boolean } | null = null;
   if (inviteToken) {
     const inviteRows = await db.execute(sql`
       SELECT id, group_id AS "groupId", bypass_cap AS "bypassCap"
@@ -108,19 +108,23 @@ auth.post("/register", authRateLimit, async (c) => {
         AND email = ${email}
       LIMIT 1
     `);
-    invitation = (inviteRows as unknown as Array<{ id: string; groupId: string; bypassCap: boolean }>)[0] ?? null;
+    invitation = (inviteRows as unknown as Array<{ id: string; groupId: string | null; bypassCap: boolean }>)[0] ?? null;
     if (!invitation) {
       // Bad invite token — silently return generic success.
       return generic();
     }
   }
 
-  // Cap check — silently return generic success when over cap.
-  if (!invitation?.bypassCap) {
-    const allowed = await tryConsumeSignupSlot(db);
-    if (!allowed) {
-      return generic();
-    }
+  // Cap check — silently return generic success when over cap. A member
+  // invitation is a reservation at the top of the waitlist, not a bypass:
+  // the invitee registers only while their reservation fits within the cap
+  // (own invitation excluded from the count — see mayRegister). Admin
+  // invitations (bypass_cap) skip the cap entirely. The frontend pre-checks
+  // GET /auth/invite-status so invited users at a full cap see the
+  // top-of-waitlist message instead of hitting this silent branch.
+  const allowed = await mayRegister(db, invitation);
+  if (!allowed) {
+    return generic();
   }
 
   try {
@@ -145,6 +149,16 @@ auth.post("/register", authRateLimit, async (c) => {
     // F31: group join is deferred to POST /invitations/:id/accept after
     // verification. Don't auto-join here even though the invite + email
     // match — proof of mailbox control via /auth/verify is required first.
+    //
+    // Groupless invitations (admin invite-by-email) have nothing to accept —
+    // cap bypass was their only job — so stamp them consumed now. Otherwise
+    // they'd linger pending (the accept flow never sees them: its queries
+    // JOIN groups) and reappear usable if the user were ever deleted.
+    if (invitation && !invitation.groupId) {
+      await db.execute(sql`
+        UPDATE claimnet.invitations SET accepted_at = now() WHERE id = ${invitation.id}::uuid
+      `);
+    }
 
     // Test-mode convenience: surface the verification token in the response
     // when ALLOW_AUTO_SETUP=true so integration tests can call /auth/verify
@@ -179,6 +193,76 @@ auth.get("/signup-status", async (c) => {
   const db = getDb();
   const capReached = await isSignupCapReached(db);
   return c.json({ ok: true, data: { signupsOpen: !capReached } });
+});
+
+// GET /auth/invite-status?token=... — public. Lets the register page decide
+// what to show for an invite link: the register form (reservation fits within
+// the cap, or admin bypass) or the "you're at the top of the waitlist"
+// message (cap currently full). Token validity is safe to reveal — tokens
+// are unguessable 32-byte secrets, so possession already proves the caller
+// was handed the link; no email or group data is returned.
+auth.get("/invite-status", verifyRateLimit, async (c) => {
+  const token = c.req.query("token");
+  if (!token) {
+    return c.json({ ok: false, error: "token required" }, 400);
+  }
+  const db = getDb();
+  const rows = await db.execute(sql`
+    SELECT id, bypass_cap AS "bypassCap"
+    FROM claimnet.invitations
+    WHERE token = ${token}
+      AND accepted_at IS NULL
+      AND declined_at IS NULL
+      AND expires_at > now()
+    LIMIT 1
+  `);
+  const invite = (rows as unknown as Array<{ id: string; bypassCap: boolean }>)[0];
+  if (!invite) {
+    return c.json({ ok: true, data: { valid: false, canRegister: false } });
+  }
+  const canRegister =
+    invite.bypassCap ||
+    !(await isSignupCapReached(db, { excludeInvitationId: invite.id }));
+  return c.json({ ok: true, data: { valid: true, canRegister } });
+});
+
+// POST /auth/waitlist — public, no auth required. Collects emails when the
+// signup cap is full (the login page shows the waitlist form whenever
+// /auth/signup-status reports signups closed).
+//
+// Anti-enumeration: the response is identical whether the email is new,
+// already on the waitlist, or already a registered user — so the endpoint
+// can't be used to probe either list. Duplicate submissions update the
+// reason (if one was provided) rather than erroring.
+const waitlistSchema = z.object({
+  email: z.string().email(),
+  reason: z.string().max(2000).optional(),
+});
+const waitlistRateLimit = rateLimit({ max: 5, windowMs: 15 * 60 * 1000 }); // 5 per 15 min per IP
+
+auth.post("/waitlist", waitlistRateLimit, async (c) => {
+  const body = await c.req.json();
+  const parsed = waitlistSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ ok: false, error: "Invalid input", details: parsed.error.issues }, 400);
+  }
+  const email = parsed.data.email.toLowerCase().trim();
+  const reason = parsed.data.reason?.trim() || null;
+
+  const db = getDb();
+  await db.execute(sql`
+    INSERT INTO claimnet.waitlist (email, reason)
+    VALUES (${email}, ${reason})
+    ON CONFLICT (email) DO UPDATE
+    SET reason = COALESCE(EXCLUDED.reason, waitlist.reason)
+  `);
+
+  return c.json({
+    ok: true,
+    data: {
+      message: "You're on the waitlist. We'll email you when a spot opens up.",
+    },
+  });
 });
 
 // POST /auth/login

@@ -10,9 +10,13 @@ interface NavItem {
   icon: NavIcon;
 }
 
+// User management pair (Users, Signups) sits together; no generic "Settings"
+// page — each control lives with the surface it governs (the embeddings
+// kill-switch is on the Embeddings page, the signup cap on Signups).
 const NAV: NavItem[] = [
   { label: "Overview", href: "/admin", icon: "home" },
   { label: "Users", href: "/admin/users", icon: "users" },
+  { label: "Signups", href: "/admin/signups", icon: "users" },
   { label: "Queues", href: "/admin/queues", icon: "clock" },
   { label: "Embeddings", href: "/admin/workers/embeddings", icon: "settings" },
 ];

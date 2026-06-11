@@ -155,6 +155,20 @@
       "when": 1781113353060,
       "tag": "0021_add_traces_decided_at",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1781198058205,
+      "tag": "0022_waitlist",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1781201358679,
+      "tag": "0023_waitlist_crm_invite_semantics",
+      "breakpoints": true
     }
   ]
 }

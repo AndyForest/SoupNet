@@ -1,10 +1,10 @@
 # ClaimNet Data Model — Generated Reference
 
-> **Auto-generated** from Drizzle migration snapshot `0021_snapshot.json`.
+> **Auto-generated** from Drizzle migration snapshot `0023_snapshot.json`.
 > Do not edit by hand. Regenerate with: `npx tsx scripts/generate-data-model-docs.ts`
 >
-> Generated: 2026-06-10
-> Tables: 23 | Schema: `claimnet`
+> Generated: 2026-06-11
+> Tables: 25 | Schema: `claimnet`
 
 For design rationale, conventions, and context, see [data-model.md](data-model.md).
 
@@ -54,6 +54,16 @@ erDiagram
         uuid target_id
         jsonb metadata
         timestamptz occurred_at
+    }
+
+    email_log {
+        uuid id PK
+        text to_email
+        text kind
+        text subject
+        text status
+        text error
+        timestamptz created_at
     }
 
     embedding_chunk_strategies {
@@ -283,6 +293,15 @@ erDiagram
         text model_id
         text task_type
         vector vector
+        timestamptz created_at
+    }
+
+    waitlist {
+        uuid id PK
+        text email
+        text reason
+        timestamptz invited_at
+        timestamptz notified_at
         timestamptz created_at
     }
 
@@ -587,7 +606,7 @@ These are created by raw SQL in migration files and are not captured in the snap
 |---|---|---|---|---|
 | `id` | `uuid` | NO | `gen_random_uuid()` | PK |
 | `inviter_id` | `uuid` | NO |  |  |
-| `group_id` | `uuid` | NO |  |  |
+| `group_id` | `uuid` | YES |  |  |
 | `email` | `text` | NO |  |  |
 | `token` | `text` | NO |  |  |
 | `bypass_cap` | `boolean` | NO |  |  |
