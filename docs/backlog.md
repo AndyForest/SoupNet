@@ -94,11 +94,12 @@ Items to put in front of a Canadian lawyer before signups grow materially. None 
 
 ### `[IMPL]` Verify privacy policy claims match implementation
 
-The privacy policy describes a few behaviors qualitatively that should still match reality. Confirm or update implementation:
+The privacy policy describes a few behaviors qualitatively that should still match reality. Confirm or update implementation. Partial findings from the 2026-06-11 production-readiness pass (post-SES-approval):
 
-- Section 2.3: uploaded files cached for a "limited period" then deleted. Confirm the cleanup mechanism (S3 lifecycle rule vs. cleanup job) actually runs.
-- Section 9: "industry-standard security practices" including content security policy, rate limiting, encryption at rest, private-subnet database. Verify each on the production stack.
-- Section 6: AWS regions in the United States. Verify the live deployment matches.
+- Section 2.3 / 8: uploaded files cached for a "limited period" then deleted. **MISMATCH confirmed** — `packages/db/src/schema/uploads.ts` documents "Retention: no TTL column today"; bytes are content-addressed on disk via `file-store.ts` with no sweep. Files are deleted on account deletion only. Either build the retention sweep the schema comment sketches (expired api_key_id + content_hash unreferenced by any references row), or soften the policy wording.
+- Section 2.5 / 8: audit-log entries (incl. IP + user agent) "retained for a limited period, then deleted." **MISMATCH confirmed** — no `DELETE FROM claimnet.audit_log` exists anywhere; the table is append-only with no retention job. Same choice: build the sweep or fix the wording. Note F29 per-key rate limiting counts on audit_log, so a sweep must keep ≥24h.
+- Section 9: content security policy + rate limiting **verified in-repo** (headers in `apps/backend/src/index.ts`, `middleware/rate-limit.ts`). Encryption at rest + private-subnet database: infra-side, verify on the production stack (operator).
+- Section 6: AWS regions in the United States. Verify the live deployment matches (operator).
 
 ---
 
@@ -238,6 +239,26 @@ The check-log-mock rejection (landing session) was predicted verbatim by documen
 ---
 
 ## Unsorted
+
+### `[IMPL]` Fresh security audit (last general audit 2026-04-09; surface has grown)
+
+~~Security audit documents missing from the repo~~ — resolved 2026-06-11: the audits live in the **private deployment repo's** `docs/security/` (confirmed by the observability survey). CLAUDE.md and `docs/workflows/security.md` now say so. Remaining work: the last general audit was 2026-04-09 and the route surface has grown substantially since (OAuth 2.1, /uploads, remote MCP, waitlist, email log, invite-status) — now that production is live behind real SES, run a fresh audit-agent scan. The operator runs this after the 2026-06-11 batch is committed, before push.
+
+### `[IMPL]` SES configuration-set header support
+
+When the private infra repo creates the SES configuration set for bounce/complaint event capture (its ops-hardening Task 7), add `X-SES-CONFIGURATION-SET` header support to the nodemailer transport in `email.service.ts`, driven by an env var (e.g. `SES_CONFIGURATION_SET`, unset locally). Two-line change; blocked on infra side choosing the set name. See docs/rough-notes/2026-06-11/observability-briefing-private-infra.md.
+
+### `[IMPL]` Admin side-nav missing on most admin pages
+
+Found 2026-06-11 while investigating "the settings page isn't in the admin nav": `AdminLayout` (the side nav with Overview / Users / Signups / Queues / Embeddings) is only rendered by AdminUsersPage and AdminSignupsPage. The Overview, Queues, and Embeddings pages use their own ad-hoc layouts with no side nav — so most of the admin console is only reachable from the Overview landing page's links. Wrap the remaining three pages in `AdminLayout` (Queues has its own inspector pane — AdminLayout already supports an `inspector` prop). Related: `GET /admin/invitations` no longer has a frontend consumer (the merged `/admin/waitlist` signup queue supersedes it); keep or fold into the queue view when touching this area.
+
+### `[IMPL]` Audit-log event coverage beyond recipe.checked (F9 follow-up)
+
+`claimnet.audit_log` only records `recipe.checked`. The F9 finding (2026-04-09 audit) calls for auth events (login success/fail, register, verify), API-key lifecycle (create/revoke), and admin actions (settings changes, invites, waitlist notify). Now that the email log covers the outbound-email surface (2026-06-11), audit_log is the remaining gap for security sweeps. Design note: keep writes through `writeAudit`, one event type per action, and mind that F29 per-key rate limiting queries this table — schema changes must keep that path fast.
+
+### `[IMPL]` Waitlist: notify when a spot opens
+
+The waitlist form promises "we'll email you when a spot opens up." Today that promise is fulfilled manually: the admin Settings page's per-row Invite button sends a cap-bypass invitation email via SES. Fine at cap≈5–50; if the waitlist grows past what manual triage handles, add batch-invite (top N oldest) and/or an automatic "spot opened" notification when the cap rises.
 
 ### `[IMPL]` Delete or revive `packages/client-sdk`
 

@@ -283,3 +283,22 @@ AI agents are THE primary client of ClaimNet. The web search page is designed fo
 - Designing from the human UI perspective and treating agent access as an afterthought
 - Requiring complex authentication flows for basic search (API key in URL is sufficient)
 - Token-heavy pages with decorative markup that agents must parse
+
+---
+
+## 14. All Outgoing Email Is Logged — Metadata Only, 60-Day Retention
+
+Every email the system sends goes through the logged sender (`sendLoggedMail` in `apps/backend/src/services/email.service.ts`), which writes one row per send — success or failure — to `claimnet.email_log`.
+
+**Why:** The email log is three things at once: the light CRM (who did we contact, when, about what — surfaced on `/admin/signups`), the deliverability record (failed sends are visible instead of vanishing into a rejected promise), and the security/abuse review surface (a compromised account or runaway code path that sends email leaves a trail an auditor can sweep in one query).
+
+**In practice:**
+- **New email kinds go through `sendLoggedMail`.** Never call `transporter.sendMail` directly. Add the kind to the `EmailKind` union so the log stays queryable by type.
+- **Metadata only — never bodies.** Bodies carry secrets (verification links, reset tokens, invite tokens). A leaked email log must not be a token archive. Log recipient, kind, subject, status, error.
+- **60-day retention** (`EMAIL_LOG_RETENTION_DAYS`), purged opportunistically by the sender itself before each send — no scheduler to maintain, and the table stays bounded as long as email flows at all. Disclosed in the privacy policy §8.
+- **Send failures still log** (status `failed` + error text), and the failure still propagates to the caller — logging never swallows errors, and a logging failure never blocks the send.
+
+**What this rules out:**
+- Fire-and-forget sends with no record (the pre-2026-06-11 state)
+- Storing rendered email bodies "for debugging"
+- Unbounded retention — the log is operational, not an archive

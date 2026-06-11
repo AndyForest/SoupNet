@@ -177,8 +177,8 @@ The only anti-pattern is checking a recipe you don't genuinely believe — that 
 
 Follow the security workflow in `docs/workflows/security.md`. Key rules:
 
-- **Before starting any new high-level task:** Check `docs/security/` for audit files that may have been created or updated by another concurrent AI agent. Read the latest one before proceeding.
-- **Before changing auth, routes, API keys, or crypto code:** Read the latest security audit in `docs/security/` to understand current findings and what's already been fixed. Do not re-introduce resolved issues.
+- **Audit documents live in the private deployment repo's `docs/security/`, not here.** The F-numbered findings referenced in code comments (F15, F29, F30, …) come from those audits. If you don't have that repo locally, ask the operator before changing security-relevant code; the code comments themselves preserve each finding's rationale.
+- **Before changing auth, routes, API keys, or crypto code:** Read the latest security audit (private deployment repo) to understand current findings and what's already been fixed. Do not re-introduce resolved issues.
 - **Audit and implementation are separate roles.** The agent scanning for vulnerabilities must not be the same agent applying fixes. See the workflow doc for the full audit cycle.
 - **Every security fix needs a test.** Unit test for crypto/auth functions, integration test for authorization checks.
 - **Check recipes on Soup.net** before making security-related decisions (validation approach, headers, auth structure). Security decisions are judgment calls — check them as described in the "Recipe Checks" section above.

@@ -162,7 +162,7 @@ For things that can't be easily automated:
 
 | Artifact | Location |
 |----------|----------|
-| Security audits | `docs/security/security-audit-YYYY-MM-DD.md` |
+| Security audits | private deployment repo: `docs/security/security-audit-YYYY-MM-DD.md` (not in this repo — they cover the hosted deployment; ask the operator for access) |
 | Security workflow | `docs/workflows/security.md` (this file) |
 | Security regression tests | `tests/security/` (to be created) |
 | Unit tests | `apps/*/src/**/*.test.ts` |
@@ -173,7 +173,7 @@ For things that can't be easily automated:
 
 ## Audit History
 
-Audits live in `docs/security/`. Summary as of the last scan:
+Audits live in the private deployment repo's `docs/security/`. Summary as of the last scan:
 
 | Date | Focus | File |
 |------|-------|------|

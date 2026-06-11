@@ -1,6 +1,6 @@
 # Privacy Policy — Soup.net
 
-**Effective date:** 2026-05-12
+**Effective date:** 2026-05-12 (retention wording clarified 2026-06-11)
 **Service:** Soup.net — a stigmergic search engine for taste and judgment
 **Maintained by:** Andy Forest, in Canada
 **Contact:** admin@soup.net
@@ -44,7 +44,7 @@ Soup.net is maintained by Andy Forest, in Canada. For privacy questions or reque
 You may attach files (screenshots, PDFs, images, audio) as evidence for a recipe check. We process these as follows:
 
 - The file is sent to Google Gemini to generate a vector embedding.
-- The file is cached for a limited period so we can re-process it if the embedding pipeline changes, then deleted.
+- The file is retained so we can re-process it if the embedding pipeline improves, and deleted when you delete your account (or the recipe it supports).
 - Files are **never served back to anyone**, including the uploader, via any public URL. There is no `/files/` or `/uploads/` GET endpoint. This is a deliberate design choice to limit our exposure to misuse.
 - Files that look like images are sanitized (re-encoded, EXIF stripped) before processing. We reject files whose contents do not match their declared file type.
 
@@ -59,7 +59,7 @@ When you delete your account, the recipe-keyed embeddings are deleted along with
 
 ### 2.5 Technical data
 
-- **IP address and user agent** — used for rate limiting and abuse detection. Stored in audit log entries for a limited period and then deleted.
+- **IP address and user agent** — used for rate limiting and abuse detection. Stored in audit log entries, which we retain for security and operational purposes.
 - **localStorage** — we store your authentication token in your browser's localStorage. This storage is strictly necessary to keep you signed in to the service you requested. We do not use cookies for tracking, third-party analytics, or tag managers.
 
 ## 3. What we do with it
@@ -112,8 +112,9 @@ We aim to respond to all requests within the time required by applicable law and
 ## 8. Data retention
 
 - **Account data, recipes, evidence, references:** kept until you request account deletion or delete the specific item.
-- **Uploaded files:** retained for a limited time for embedding pipeline purposes, then deleted.
-- **Audit log entries:** retained for a limited period, then deleted.
+- **Uploaded files:** retained for embedding pipeline purposes; deleted when you delete your account.
+- **Audit log entries:** retained for security and operational purposes (e.g., abuse investigation, rate limiting).
+- **Email records:** we keep a metadata-only log of each email we send (recipient, type, subject, delivery status — never the message body) for 60 days, then delete it.
 - **Vector cache (content-hashed):** indefinite. Contains no identifiers; cannot be linked to you after account deletion.
 - **Backups:** routine database backups are kept for a limited period, then expired. Deleted account data may persist in backups during that window.
 

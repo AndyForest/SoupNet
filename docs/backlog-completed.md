@@ -4,6 +4,22 @@ Items moved here from `backlog.md` when finished. Date-stamped so we can see wha
 
 ---
 
+## Launch readiness
+
+### 2026-06-11 — Waitlist, signup-queue semantics, email log, admin Signups page
+
+Triggered by AWS production SES approval (site effectively live, prod cap at 5). Landed in two same-day passes — the first shipped invite-bypasses-cap, which the operator then corrected to top-of-waitlist semantics; what's described here is the final state:
+
+- **Waitlist was fake.** The login page's waitlist form showed "You're on the list!" while persisting nothing (`TODO: Wire up to POST /waitlist`). New `claimnet.waitlist` table, public rate-limited `POST /auth/waitlist` (anti-enumeration: identical response for new/duplicate/registered emails, mirrors F30 register design), form wired. A second, unreachable copy of the waitlist screen in LoginPage (dead `showWaitlist` state) was removed.
+- **Invite semantics (operator decision):** a member invitation puts the invitee at the **top of the waitlist**, it does not bypass it. The invitation reserves a slot against the cap; the invitee registers only while their reservation fits within the cap (`mayRegister` excludes their own pending invitation from the count — the previous code counted it, silently rejecting invitees at the boundary; reservations also stop counting once the email belongs to a registered user). Admin invitations (`bypass_cap`) skip the cap entirely. New public `GET /auth/invite-status` lets the register page show "you're at the top of the waitlist" instead of a silently-failing form when the cap is full.
+- **Admin invite is email-only:** `POST /admin/invite` no longer requires a recipe book (`invitations.group_id` now nullable; groupless invites stamped accepted at registration) and no longer auto-emails — it returns the invite URL for manual sharing, consistent with the ADR-0016 spam-safe design the auto-send had quietly crossed.
+- **Email log (light CRM):** every outgoing email goes through `sendLoggedMail` → `claimnet.email_log` (metadata only, never bodies — they carry tokens; 60-day opportunistic purge). engineering-principles.md §14. Privacy policy §8 discloses it; §2.3/2.5/8 retention wording softened to match reality (uploads kept until account deletion; audit log retained for security/operational purposes).
+- **Admin `/admin/signups` page** (no generic "Settings" page — each control lives with its surface; embeddings kill-switch moved to the Embeddings page): cap editor, merged signup queue (waitlist + pending member/admin invitations, type badges, invited-first ordering), per-row "spot opened" Notify action (consent-based — waitlist signups asked for it), admin invite-by-email with copyable link, recent-emails log view.
+
+Migrations `0022_waitlist`, `0023_waitlist_crm_invite_semantics`. Tests: `waitlist.test.ts` (Layer 3 — full waitlist→notify→invite→register arc), `system-settings.service.test.ts` (Layer 1 — which branches consult the cap).
+
+---
+
 ## Recipe checks
 
 ### 2026-06-10 — `decided_at`: backfill historical decisions with their original judgment date
