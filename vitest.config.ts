@@ -40,5 +40,14 @@ export default defineConfig({
       "packages/*/src/**/*.test.ts",
     ],
     env: loadDotEnv(),
+    // Integration beforeAll hooks chain register → verify → login, and each
+    // register costs a bcrypt hash (12 rounds) on the backend; with ~12 test
+    // files running in parallel plus the waitlist DB-fixture suite doing its
+    // own bcrypt work, the 10s default hook timeout is marginal on a loaded
+    // machine (observed tipping over 2026-06-11 when the dev Docker stack ran
+    // alongside the gate). These are ceilings, not targets — passing runs
+    // are unaffected.
+    hookTimeout: 30_000,
+    testTimeout: 15_000,
   },
 });

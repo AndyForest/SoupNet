@@ -186,6 +186,17 @@ describe.skipIf(!BASE || !DEV_EMAIL || !DEV_PASSWORD)("signup queue + admin invi
     expect(regBody.data?.waitlisted).toBe(false);
     expect(regBody.data?.verificationToken).toBeTruthy();
 
+    // The verify response carries the waitlist flag (false here — active
+    // account) so VerifyPage can pick its copy.
+    const verify = await fetch(`${BASE}/auth/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: regBody.data!.verificationToken }),
+    });
+    const verifyBody = (await verify.json()) as { ok: boolean; data?: { waitlisted?: boolean } };
+    expect(verifyBody.ok).toBe(true);
+    expect(verifyBody.data?.waitlisted).toBe(false);
+
     // Groupless invitations are stamped accepted at registration (cap bypass
     // was their only job) — the token is no longer valid and the queue row
     // is gone (the email now belongs to a user record).

@@ -47,10 +47,16 @@ const TYPE_LABELS: Record<QueueRowType, { label: string; color: string }> = {
   admin_invite: { label: "Admin invite", color: "#8b5cf6" },
 };
 
+// Status describes only the email-verification state. It deliberately does
+// NOT imply who can be approved: the Approve button works for any waitlisted
+// row; verification only gates AUTO-promotion on cap raises. (The original
+// "Verified — promotable" label read as "unverified rows aren't approvable"
+// right next to their Approve buttons — operator-reported confusion,
+// 2026-06-11.)
 function rowStatus(row: QueueRow): { label: string; color: string } {
   if (row.type !== "waitlist") return { label: "Invite pending", color: "#3b82f6" };
-  if (row.verified) return { label: "Verified — promotable", color: "var(--color-success)" };
-  return { label: "Unverified", color: "var(--color-on-surface-variant)" };
+  if (row.verified) return { label: "Email verified", color: "var(--color-success)" };
+  return { label: "Email unverified", color: "var(--color-on-surface-variant)" };
 }
 
 export function AdminSignupsPage() {
@@ -375,8 +381,10 @@ export function AdminSignupsPage() {
         <p style={{ color: "var(--color-on-surface-variant)", fontSize: "0.875rem", marginBottom: "var(--space-md)", maxWidth: 640 }}>
           Everyone in line: waitlisted accounts (real accounts — password and ToS captured,
           blocked from signing in until promoted) plus pending invitations for people who
-          haven't registered yet. Invitation-holders sort to the top. Approve lets one
-          person in regardless of the cap and emails them.
+          haven't registered yet. Invitation-holders sort to the top. Two ways in:
+          raising the cap auto-promotes verified accounts in line order, and{" "}
+          <strong>Approve</strong> lets any one account in immediately — verified or not,
+          cap or no cap. Promoted accounts leave this queue (find them under Users).
         </p>
         <AdminTable
           rows={queue}

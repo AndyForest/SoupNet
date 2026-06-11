@@ -276,12 +276,57 @@ auth.post("/login", authRateLimit, async (c) => {
   // Waitlisted accounts: correct password, but no JWT until approved.
   // Telling them their status here is fine — only the password holder gets
   // this far. last_login_at stays null so "never signed in" stays true.
+  //
+  // The message branches on verification, and the unverified branch is
+  // self-healing: verification links expire in 24h and waitlisted users may
+  // come back days later, so a stale (>1h old) or missing token is silently
+  // regenerated and re-sent right here — no resend button needed, and the
+  // password check just done makes this spam-safe (only the account holder
+  // can trigger it; the auth rate limit bounds volume).
   if (result.waitlistedAt) {
+    const db = getDb();
+    const rows = await db.execute(sql`
+      SELECT email_verified_at AS "verifiedAt",
+             email_verification_token_created_at AS "tokenCreatedAt"
+      FROM claimnet.users WHERE id = ${result.user.id}::uuid
+    `);
+    const row = (rows as unknown as Array<{ verifiedAt: string | null; tokenCreatedAt: string | null }>)[0];
+
+    if (row?.verifiedAt) {
+      return c.json({
+        ok: false,
+        error: "waitlisted",
+        verified: true,
+        message:
+          "You're on the waitlist and your email is verified — your place is held. We'll email you the moment a spot opens.",
+      }, 403);
+    }
+
+    const tokenAgeMs = row?.tokenCreatedAt
+      ? Date.now() - new Date(row.tokenCreatedAt).getTime()
+      : Infinity;
+    let resent = false;
+    if (tokenAgeMs > 60 * 60 * 1000) {
+      const freshToken = crypto.randomBytes(32).toString("hex");
+      await db.execute(sql`
+        UPDATE claimnet.users
+        SET email_verification_token = ${freshToken},
+            email_verification_token_created_at = now()
+        WHERE id = ${result.user.id}::uuid
+      `);
+      void sendVerificationEmail(result.user.email, freshToken, { waitlisted: true }).catch((err) => {
+        console.error("[auth/login] Failed to resend waitlist verification email:", err);
+      });
+      resent = true;
+    }
+
     return c.json({
       ok: false,
       error: "waitlisted",
-      message:
-        "You're on the waitlist. We'll email you when a spot opens — confirm your email (if you haven't) to hold your place.",
+      verified: false,
+      message: resent
+        ? "You're on the waitlist, but your email isn't verified yet — we just sent you a fresh verification link. Confirm it to hold your place."
+        : "You're on the waitlist, but your email isn't verified yet. Check your inbox (and spam) for the verification link we sent — confirming it holds your place.",
     }, 403);
   }
 
@@ -660,10 +705,10 @@ auth.post("/verify", verifyRateLimit, async (c) => {
     SET email_verified_at = COALESCE(email_verified_at, now())
     WHERE email_verification_token = ${token}
       AND email_verification_token_created_at > now() - interval '24 hours'
-    RETURNING id, email
+    RETURNING id, email, (waitlisted_at IS NOT NULL) AS "waitlisted"
   `);
 
-  const updated = (result as unknown as Array<{ id: string; email: string }>)[0];
+  const updated = (result as unknown as Array<{ id: string; email: string; waitlisted: boolean }>)[0];
   if (!updated) {
     return c.json({ ok: false, error: "Invalid or expired verification token" }, 400);
   }
@@ -687,7 +732,14 @@ auth.post("/verify", verifyRateLimit, async (c) => {
 
   return c.json({
     ok: true,
-    data: { verified: true, email: updated.email, pendingInvitations: pendingCount },
+    data: {
+      verified: true,
+      email: updated.email,
+      pendingInvitations: pendingCount,
+      // Waitlisted accounts get "your place is held" copy instead of
+      // "sign in and start" — signing in won't work until promotion.
+      waitlisted: updated.waitlisted,
+    },
   });
 });
 

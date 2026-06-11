@@ -12,6 +12,7 @@ import {
 } from "../services/system-settings.service";
 import { QUEUE_DESCRIPTIONS, getQueueDescription } from "@soupnet/domain";
 import { approveWaitlistedUser, promoteTopWaitlisted } from "../services/waitlist.service";
+import { sendWaitlistApprovedEmail } from "../services/email.service";
 import { rateLimit } from "../middleware/rate-limit";
 import type { AppEnv } from "../types";
 
@@ -77,9 +78,10 @@ admin.put("/settings", async (c) => {
 
     // Raising the cap promotes the top of the waitlist automatically:
     // verified accounts only, invitation-holders first, then oldest-first.
-    // Each promotion sends the "you're in" email. Under the signup_cap
-    // advisory lock (inside a transaction) so concurrent registrations
-    // can't double-spend the new headroom.
+    // The flag-clearing runs under the signup_cap advisory lock (inside a
+    // transaction) so concurrent registrations can't double-spend the new
+    // headroom; the "you're in" emails go out AFTER commit so a slow mail
+    // server can't stall registrations behind the lock.
     promoted = await db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('signup_cap'))`);
       const verified = await getVerifiedUserCount(tx as unknown as Parameters<typeof getVerifiedUserCount>[0]);
@@ -87,6 +89,14 @@ admin.put("/settings", async (c) => {
       const headroom = parsed.data.signupCap! - verified - pending;
       return promoteTopWaitlisted(tx as unknown as Parameters<typeof promoteTopWaitlisted>[0], headroom);
     });
+
+    for (const email of promoted) {
+      try {
+        await sendWaitlistApprovedEmail(email);
+      } catch (err) {
+        console.error(`[admin/settings] Promotion email to ${email} failed:`, err);
+      }
+    }
   }
   if (parsed.data.embeddingsEnabled !== undefined) {
     await setSetting(db, "embeddingsEnabled", parsed.data.embeddingsEnabled);
@@ -122,12 +132,21 @@ admin.post("/invite", inviteRateLimit, async (c) => {
   const user = c.get("user");
   const db = getDb();
 
-  // Check if user already exists
+  // Check if user already exists — and point at the right tool when the
+  // existing account is waitlisted (the natural admin action there is
+  // Approve, not a second invitation).
   const existingUser = await db.execute(sql`
-    SELECT id FROM claimnet.users WHERE email = ${email} LIMIT 1
+    SELECT id, (waitlisted_at IS NOT NULL) AS "waitlisted"
+    FROM claimnet.users WHERE email = ${email} LIMIT 1
   `);
-  if ((existingUser as unknown[]).length > 0) {
-    return c.json({ ok: false, error: "User already exists" }, 409);
+  const existing = (existingUser as unknown as Array<{ id: string; waitlisted: boolean }>)[0];
+  if (existing) {
+    return c.json({
+      ok: false,
+      error: existing.waitlisted
+        ? "This email is already on the waitlist — use Approve in the signup queue below instead."
+        : "User already exists",
+    }, 409);
   }
 
   if (groupId) {

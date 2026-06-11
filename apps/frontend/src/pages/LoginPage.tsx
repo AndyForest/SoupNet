@@ -56,6 +56,9 @@ export function LoginPage() {
   const [tosAccepted, setTosAccepted] = useState(false);
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // Informational status (e.g. "you're on the waitlist") — correct-password
+  // outcomes that aren't failures, styled as info rather than error-red.
+  const [notice, setNotice] = useState<string | null>(null);
   // Post-register screen: "verify" (active account, check your email) or
   // "waitlisted" (account created on the waitlist).
   const [postSubmit, setPostSubmit] = useState<"verify" | "waitlisted" | null>(null);
@@ -156,9 +159,10 @@ export function LoginPage() {
           void navigate({ to: "/app/dashboard" });
         }
       } else if (data.error === "waitlisted") {
-        // Correct password, account still on the waitlist — show the
-        // friendly status message instead of a generic failure.
-        setError(data.message ?? "You're on the waitlist — we'll email you when a spot opens.");
+        // Correct password, account still on the waitlist — informational,
+        // not a failure. The backend message branches on verification and
+        // auto-resends a stale verification link, so it's the whole story.
+        setNotice(data.message ?? "You're on the waitlist — we'll email you when a spot opens.");
       } else {
         setError(data.error ?? "Authentication failed");
       }
@@ -171,6 +175,7 @@ export function LoginPage() {
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    setNotice(null);
     if (isRegister && !tosAccepted) {
       setError("You must accept the Terms of Service and Privacy Policy.");
       return;
@@ -408,6 +413,20 @@ export function LoginPage() {
               marginBottom: "var(--space-md)",
             }}>
               {error}
+            </p>
+          )}
+
+          {notice && (
+            <p style={{
+              color: "var(--color-on-surface)",
+              fontSize: "0.875rem",
+              lineHeight: 1.5,
+              marginBottom: "var(--space-md)",
+              padding: "var(--space-md)",
+              background: "var(--color-surface-container-low)",
+              borderRadius: "var(--radius-sm)",
+            }}>
+              {notice}
             </p>
           )}
 

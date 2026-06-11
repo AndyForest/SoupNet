@@ -25,6 +25,8 @@ interface AdminUser {
   emailVerifiedAt: string | null;
   suspendedAt: string | null;
   suspendedReason: string | null;
+  waitlistedAt: string | null;
+  signupReason: string | null;
   lastLoginAt: string | null;
   createdAt: string;
   activeKeyCount: number;
@@ -63,6 +65,7 @@ function fmtDate(iso: string | null): string {
 
 function userStatus(u: AdminUser): { status: AdminStatus; label: string } {
   if (u.suspendedAt) return { status: "error", label: "Suspended" };
+  if (u.waitlistedAt) return { status: "warning", label: "Waitlisted" };
   if (!u.emailVerifiedAt) return { status: "warning", label: "Unverified" };
   return { status: "healthy", label: "Active" };
 }

@@ -25,12 +25,10 @@ import { writeAudit } from "./audit-log.service";
 export const WAITLIST_UNVERIFIED_PURGE_DAYS = 30;
 
 /**
- * Clear the waitlist flag on one user and send the "you're in" email.
- * Returns the user's email, or null if the user wasn't waitlisted.
- * The email send is best-effort — a failed send (visible in email_log)
- * never rolls back the approval.
+ * Clear the waitlist flag on one user (DB-only — no email). Returns the
+ * user's email, or null if the user wasn't waitlisted.
  */
-export async function approveWaitlistedUser(
+async function clearWaitlistFlag(
   db: PostgresJsDatabase,
   userId: string,
   actorUserId: string | null,
@@ -51,6 +49,22 @@ export async function approveWaitlistedUser(
     targetId: userId,
     metadata: actorUserId ? { source: "admin_approve" } : { source: "cap_increase_auto_promote" },
   });
+  return email;
+}
+
+/**
+ * Admin approval: clear the flag and send the "you're in" email. Returns
+ * the user's email, or null if the user wasn't waitlisted. The email send
+ * is best-effort — a failed send (visible in email_log) never rolls back
+ * the approval.
+ */
+export async function approveWaitlistedUser(
+  db: PostgresJsDatabase,
+  userId: string,
+  actorUserId: string | null,
+): Promise<string | null> {
+  const email = await clearWaitlistFlag(db, userId, actorUserId);
+  if (!email) return null;
 
   try {
     await sendWaitlistApprovedEmail(email);
@@ -66,9 +80,11 @@ export async function approveWaitlistedUser(
  * first ("an invite puts you at the top of the waitlist"), then oldest
  * first. Returns the promoted emails in order.
  *
- * Called from PUT /admin/settings when the signup cap increases, with
- * maxCount = the new headroom, under the signup_cap advisory lock so
- * concurrent registrations can't double-spend the new slots.
+ * DB-ONLY — deliberately sends no email. The caller (PUT /admin/settings)
+ * runs this inside a transaction holding the signup_cap advisory lock so
+ * concurrent registrations can't double-spend the new headroom; SMTP calls
+ * inside that lock would stall every registration behind a slow mail
+ * server. The caller sends the "you're in" emails after commit.
  */
 export async function promoteTopWaitlisted(
   db: PostgresJsDatabase,
@@ -95,7 +111,7 @@ export async function promoteTopWaitlisted(
 
   const promoted: string[] = [];
   for (const row of rows as unknown as Array<{ id: string }>) {
-    const email = await approveWaitlistedUser(db, row.id, null);
+    const email = await clearWaitlistFlag(db, row.id, null);
     if (email) promoted.push(email);
   }
   return promoted;
