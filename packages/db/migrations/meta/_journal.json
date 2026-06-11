@@ -169,6 +169,13 @@
       "when": 1781201358679,
       "tag": "0023_waitlist_crm_invite_semantics",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1781218784928,
+      "tag": "0024_waitlist_v2_user_records",
+      "breakpoints": true
     }
   ]
 }

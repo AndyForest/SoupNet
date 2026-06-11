@@ -30,7 +30,7 @@ export const emailLog = claimnetSchema.table(
     id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
 
     toEmail: text("to_email").notNull(),
-    // 'verification' | 'password_reset' | 'invitation' | 'waitlist_spot_open' | ...
+    // 'verification' | 'password_reset' | 'invitation' | 'waitlist_approved' | ...
     kind: text("kind").notNull(),
     subject: text("subject").notNull(),
 

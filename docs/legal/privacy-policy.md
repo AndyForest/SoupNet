@@ -115,6 +115,7 @@ We aim to respond to all requests within the time required by applicable law and
 - **Uploaded files:** retained for embedding pipeline purposes; deleted when you delete your account.
 - **Audit log entries:** retained for security and operational purposes (e.g., abuse investigation, rate limiting).
 - **Email records:** we keep a metadata-only log of each email we send (recipient, type, subject, delivery status — never the message body) for 60 days, then delete it.
+- **Waitlist accounts:** an account created while we're at capacity waits on the waitlist. If it never verifies its email address, we delete the account after 30 days. Verified waitlist accounts are kept until they're let in (or you ask us to delete them).
 - **Vector cache (content-hashed):** indefinite. Contains no identifiers; cannot be linked to you after account deletion.
 - **Backups:** routine database backups are kept for a limited period, then expired. Deleted account data may persist in backups during that window.
 

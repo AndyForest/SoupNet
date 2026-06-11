@@ -6,7 +6,18 @@ Items moved here from `backlog.md` when finished. Date-stamped so we can see wha
 
 ## Launch readiness
 
-### 2026-06-11 — Waitlist, signup-queue semantics, email log, admin Signups page
+### 2026-06-11 — Waitlist v2: the waitlist is a user-record state
+
+Same-day redesign of the v1 waitlist below, after the operator walked the v1 flow and found it stranded people (no password, no ToS, no path from "notified" to "account"). The `waitlist` table lasted hours; v2 (migration `0024_waitlist_v2_user_records`) drops it:
+
+- **Registering at a full cap creates a real account** with `users.waitlisted_at` set (mirrors the `suspended_at` pattern — flag, not role): password + ToS captured up front, email verifiable while waiting, sign-in blocked with a "you're on the waitlist" message and no JWT (which blocks every other surface for free). F30 restated: the register response branches only on attacker-knowable state (public cap status, caller-supplied token validity), never on email existence.
+- **Promotion**: raising the signup cap auto-promotes the top of the queue (verified accounts only, invitation-holders first, then oldest) under the signup-cap advisory lock, emailing each "you're in" (`waitlist_approved` kind); plus a per-row admin **Approve** that works regardless of cap or verification. No promote-on-login race — accounts wait until promoted.
+- **Invitations unchanged**: token rows only, no user record until the invitee registers (so no premature ToS/password); their priority is queue position. Verification email gets waitlist-variant copy.
+- **`users.signup_reason`**: the "what would you use Soup.net for?" question moved onto the regular register form for every signup, surfaced in admin Users + Signups views.
+- **Hygiene**: unverified waitlisted accounts purge after 30 days (opportunistic, on the cap-full register branch; disclosed in privacy policy §8).
+- Tests: HTTP suite for cap-open paths; DB-fixture suite (`waitlist.service.test.ts`) for the cap-state-dependent state machine — closing the global cap in HTTP tests would flake every parallel suite.
+
+### 2026-06-11 — (v1, superseded same day) Waitlist, signup-queue semantics, email log, admin Signups page
 
 Triggered by AWS production SES approval (site effectively live, prod cap at 5). Landed in two same-day passes — the first shipped invite-bypasses-cap, which the operator then corrected to top-of-waitlist semantics; what's described here is the final state:
 

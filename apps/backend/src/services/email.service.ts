@@ -56,7 +56,7 @@ export type EmailKind =
   | "verification"
   | "password_reset"
   | "invitation"
-  | "waitlist_spot_open";
+  | "waitlist_approved";
 
 async function sendLoggedMail(
   kind: EmailKind,
@@ -100,17 +100,29 @@ async function sendLoggedMail(
 export async function sendVerificationEmail(
   email: string,
   token: string,
+  opts?: { waitlisted?: boolean },
 ): Promise<void> {
   const verifyUrl = `${APP_URL}/auth/verify?token=${encodeURIComponent(token)}`;
 
+  // Waitlisted registrations get copy that says what this is — the next
+  // thing that happens to this user may be days away, so "welcome, get
+  // started" would over-promise.
+  const waitlisted = opts?.waitlisted === true;
+  const heading = waitlisted ? "Hold your place on the Soup.net waitlist" : "Welcome to Soup.net";
+  const lead = waitlisted
+    ? "Soup.net is at capacity, so you're on the waitlist. Confirm your email to hold your place — we'll email you when a spot opens. First come, first served."
+    : "Please verify your email address to get started.";
+
   await sendLoggedMail("verification", {
     to: email,
-    subject: "Verify your Soup.net account",
-    text: `Welcome to Soup.net!\n\nPlease verify your email by visiting:\n${verifyUrl}\n\nThis link expires in 24 hours.\n\nIf you didn't create an account, you can ignore this email.`,
+    subject: waitlisted
+      ? "Confirm your email to hold your place on the Soup.net waitlist"
+      : "Verify your Soup.net account",
+    text: `${heading}\n\n${lead}\n\nVerify your email by visiting:\n${verifyUrl}\n\nThis link expires in 24 hours.\n\nIf you didn't create an account, you can ignore this email.`,
     html: `
       <div style="font-family: Georgia, serif; max-width: 480px; margin: 0 auto; padding: 2rem;">
-        <h1 style="color: #051a0f; font-size: 1.5rem;">Welcome to Soup.net</h1>
-        <p>Please verify your email address to get started.</p>
+        <h1 style="color: #051a0f; font-size: 1.5rem;">${heading}</h1>
+        <p>${lead}</p>
         <a href="${verifyUrl}" style="display: inline-block; background: #051a0f; color: #fff; padding: 0.75rem 1.5rem; border-radius: 0.5rem; text-decoration: none; font-family: sans-serif; font-size: 0.9rem;">Verify Email</a>
         <p style="color: #737973; font-size: 0.85rem; margin-top: 1.5rem;">This link expires in 24 hours. If you didn't create an account, you can ignore this email.</p>
       </div>
@@ -140,25 +152,25 @@ export async function sendPasswordResetEmail(
 }
 
 /**
- * Notify a waitlist signup that a spot opened. Sent only from the admin
- * Signups page (explicit per-entry action, never automatic). Spam-safety:
- * waitlist signups handed us their email asking for exactly this
+ * Tell a waitlisted account it's been approved — sent by admin Approve or
+ * by top-of-queue auto-promotion when the signup cap rises. Spam-safety:
+ * the recipient registered themselves and was promised exactly this
  * notification, so this does not cross the no-emails-to-non-users policy
  * (ADR-0016) the way unsolicited invitation email would.
  */
-export async function sendWaitlistSpotOpenEmail(email: string): Promise<void> {
-  const registerUrl = `${APP_URL}/auth/register`;
+export async function sendWaitlistApprovedEmail(email: string): Promise<void> {
+  const loginUrl = `${APP_URL}/auth/login`;
 
-  await sendLoggedMail("waitlist_spot_open", {
+  await sendLoggedMail("waitlist_approved", {
     to: email,
-    subject: "A spot opened up on Soup.net",
-    text: `You asked us to let you know — a spot just opened on Soup.net.\n\nRegister here:\n${registerUrl}\n\nSpots are first come, first served, so don't wait too long.`,
+    subject: "You're in — your Soup.net spot is ready",
+    text: `Good news: a spot opened on Soup.net and it's yours.\n\nSign in to get started:\n${loginUrl}\n\nYour account is the one you created when you joined the waitlist — same email, same password.`,
     html: `
       <div style="font-family: Georgia, serif; max-width: 480px; margin: 0 auto; padding: 2rem;">
-        <h1 style="color: #051a0f; font-size: 1.5rem;">A spot opened up</h1>
-        <p>You asked us to let you know — a spot just opened on Soup.net.</p>
-        <a href="${registerUrl}" style="display: inline-block; background: #051a0f; color: #fff; padding: 0.75rem 1.5rem; border-radius: 0.5rem; text-decoration: none; font-family: sans-serif; font-size: 0.9rem;">Register</a>
-        <p style="color: #737973; font-size: 0.85rem; margin-top: 1.5rem;">Spots are first come, first served, so don't wait too long.</p>
+        <h1 style="color: #051a0f; font-size: 1.5rem;">You're in</h1>
+        <p>Good news: a spot opened on Soup.net and it's yours.</p>
+        <a href="${loginUrl}" style="display: inline-block; background: #051a0f; color: #fff; padding: 0.75rem 1.5rem; border-radius: 0.5rem; text-decoration: none; font-family: sans-serif; font-size: 0.9rem;">Sign In</a>
+        <p style="color: #737973; font-size: 0.85rem; margin-top: 1.5rem;">Your account is the one you created when you joined the waitlist — same email, same password.</p>
       </div>
     `,
   });

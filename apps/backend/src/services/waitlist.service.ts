@@ -1,0 +1,146 @@
+/**
+ * Waitlist v2 — the waitlist is a state on the user record, not a table.
+ *
+ * Registration at a full cap creates a normal user row with waitlisted_at
+ * set (password + ToS captured, email verifiable while waiting). Sign-in is
+ * blocked with a "you're on the waitlist" message until the flag clears.
+ * Mirrors the suspended_at pattern.
+ *
+ * Promotion paths:
+ *   - Admin "Approve" on the Signups page → approveWaitlistedUser
+ *   - Signup-cap increase → promoteTopWaitlisted(headroom): verified
+ *     accounts only, invitation-holders first, then oldest-first.
+ * Both send the "you're in" email (logged like all outgoing mail).
+ *
+ * Hygiene: waitlisted accounts that never verify their email are purged
+ * after WAITLIST_UNVERIFIED_PURGE_DAYS (storage-abuse guard; disclosed in
+ * the privacy policy §8). Verified waitlisted accounts are never purged.
+ */
+
+import { sql } from "drizzle-orm";
+import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
+import { sendWaitlistApprovedEmail } from "./email.service";
+import { writeAudit } from "./audit-log.service";
+
+export const WAITLIST_UNVERIFIED_PURGE_DAYS = 30;
+
+/**
+ * Clear the waitlist flag on one user and send the "you're in" email.
+ * Returns the user's email, or null if the user wasn't waitlisted.
+ * The email send is best-effort — a failed send (visible in email_log)
+ * never rolls back the approval.
+ */
+export async function approveWaitlistedUser(
+  db: PostgresJsDatabase,
+  userId: string,
+  actorUserId: string | null,
+): Promise<string | null> {
+  const rows = await db.execute(sql`
+    UPDATE claimnet.users
+    SET waitlisted_at = NULL, updated_at = now()
+    WHERE id = ${userId}::uuid AND waitlisted_at IS NOT NULL
+    RETURNING email
+  `);
+  const email = (rows as unknown as Array<{ email: string }>)[0]?.email;
+  if (!email) return null;
+
+  await writeAudit(db, {
+    actorUserId,
+    action: "user.waitlist_approved",
+    targetType: "user",
+    targetId: userId,
+    metadata: actorUserId ? { source: "admin_approve" } : { source: "cap_increase_auto_promote" },
+  });
+
+  try {
+    await sendWaitlistApprovedEmail(email);
+  } catch (err) {
+    console.error(`[waitlist] Approved ${userId} but the notification email failed:`, err);
+  }
+  return email;
+}
+
+/**
+ * Promote up to maxCount waitlisted accounts: verified email only (we only
+ * admit demonstrated-real addresses automatically), invitation-holders
+ * first ("an invite puts you at the top of the waitlist"), then oldest
+ * first. Returns the promoted emails in order.
+ *
+ * Called from PUT /admin/settings when the signup cap increases, with
+ * maxCount = the new headroom, under the signup_cap advisory lock so
+ * concurrent registrations can't double-spend the new slots.
+ */
+export async function promoteTopWaitlisted(
+  db: PostgresJsDatabase,
+  maxCount: number,
+): Promise<string[]> {
+  if (maxCount <= 0) return [];
+
+  const rows = await db.execute(sql`
+    SELECT u.id
+    FROM claimnet.users u
+    WHERE u.waitlisted_at IS NOT NULL
+      AND u.email_verified_at IS NOT NULL
+    ORDER BY
+      EXISTS (
+        SELECT 1 FROM claimnet.invitations i
+        WHERE i.email = u.email
+          AND i.accepted_at IS NULL
+          AND i.declined_at IS NULL
+          AND i.expires_at > now()
+      ) DESC,
+      u.created_at ASC
+    LIMIT ${maxCount}
+  `);
+
+  const promoted: string[] = [];
+  for (const row of rows as unknown as Array<{ id: string }>) {
+    const email = await approveWaitlistedUser(db, row.id, null);
+    if (email) promoted.push(email);
+  }
+  return promoted;
+}
+
+/**
+ * Delete waitlisted accounts that never verified their email within the
+ * purge window. These accounts have never held a JWT or an API key, so the
+ * only rows to cascade are the personal org scaffolding registerUser
+ * created. Runs opportunistically from the register handler's waitlist
+ * branch — no scheduler.
+ */
+export async function purgeStaleWaitlistedUsers(db: PostgresJsDatabase): Promise<number> {
+  return db.transaction(async (tx) => {
+    const stale = await tx.execute(sql`
+      SELECT id FROM claimnet.users
+      WHERE waitlisted_at IS NOT NULL
+        AND email_verified_at IS NULL
+        AND created_at < now() - make_interval(days => ${WAITLIST_UNVERIFIED_PURGE_DAYS})
+    `);
+    const ids = (stale as unknown as Array<{ id: string }>).map((r) => r.id);
+    if (ids.length === 0) return 0;
+
+    // Never-signed-in accounts own only their personal org + default book
+    // + their own membership. Tear those down bottom-up, then the user.
+    for (const id of ids) {
+      await tx.execute(sql`
+        DELETE FROM claimnet.group_members
+        WHERE group_id IN (
+          SELECT g.id FROM claimnet.groups g
+          WHERE g.organization_id IN (
+            SELECT id FROM claimnet.organizations WHERE owner_id = ${id}::uuid
+          )
+        )
+      `);
+      await tx.execute(sql`
+        DELETE FROM claimnet.groups
+        WHERE organization_id IN (
+          SELECT id FROM claimnet.organizations WHERE owner_id = ${id}::uuid
+        )
+      `);
+      await tx.execute(sql`DELETE FROM claimnet.organizations WHERE owner_id = ${id}::uuid`);
+      await tx.execute(sql`DELETE FROM claimnet.group_members WHERE user_id = ${id}::uuid`);
+      await tx.execute(sql`DELETE FROM claimnet.users WHERE id = ${id}::uuid`);
+    }
+    return ids.length;
+  });
+}

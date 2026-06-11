@@ -6,6 +6,7 @@ import { getDb } from "../db";
 import { registerUser, loginUser, requireAuth, requireVerifiedEmail, hashPassword, verifyPassword } from "../auth";
 import { writeAudit } from "../services/audit-log.service";
 import { isSignupCapReached, mayRegister } from "../services/system-settings.service";
+import { purgeStaleWaitlistedUsers } from "../services/waitlist.service";
 import { sendVerificationEmail, sendPasswordResetEmail } from "../services/email.service";
 import { rateLimit } from "../middleware/rate-limit";
 import type { AppEnv } from "../types";
@@ -19,6 +20,9 @@ const registerSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8),
   inviteToken: z.string().optional(),
+  // Optional "What would you use Soup.net for?" — collected for every
+  // signup (waitlisted or not), surfaced in the admin Signups/Users views.
+  reason: z.string().max(2000).optional(),
   // Required: the user must explicitly accept the Terms of Service and
   // Privacy Policy on the register form. We record the timestamp on the
   // user row. The legal pages are currently placeholder content (see
@@ -54,35 +58,26 @@ const auth = new Hono<AppEnv>();
 
 // POST /auth/register
 //
-// F30 (security-audit-2026-04-09): the response is intentionally byte-
-// -identical regardless of whether the email was new, already registered,
-// or rejected by the signup cap. Returning distinguishable bodies (the old
-// 409 / 403 / 200 split) was an account-enumeration oracle. The flow now is:
-//   1. Caller POSTs email + password (+ optional invite token).
-//   2. We always reply 200 with a generic "if eligible, check your email".
-//   3. For the genuinely-new branch, we asynchronously send a verification
-//      email and (in dev only, gated by ALLOW_AUTO_SETUP) surface the token
-//      in the response so integration tests can complete /auth/verify
-//      without scraping Mailpit.
-//   4. The user is NOT auto-logged-in. They must verify, then call /login.
+// Registration ALWAYS creates an account (waitlist v2, 2026-06-11): when
+// the cap has room (or a valid invitation admits them) the account is
+// active; when the cap is full the account is created with waitlisted_at
+// set — password and ToS captured up front, email verifiable while waiting,
+// sign-in blocked until approval/promotion clears the flag.
 //
-// Frontend impact: the previous flow handed the JWT back from /register and
-// landed the user authed. New flow redirects to a verify-pending screen and
-// requires explicit /login after the verification link is clicked — match
-// what every other modern auth flow does.
+// F30 (security-audit-2026-04-09) still holds, restated for the two-branch
+// flow: the response body may branch ONLY on attacker-knowable state — the
+// public cap status (GET /auth/signup-status) and the validity of a token
+// the caller themselves supplied — never on whether the email already
+// exists. Within a branch, new and duplicate emails get byte-identical
+// bodies (modulo the dev-only verificationToken, absent in production).
+//   1. Caller POSTs email + password (+ optional invite token + reason).
+//   2. We reply 200 with either the "check your email" body (active branch)
+//      or the "you're on the waitlist" body (cap-full branch).
+//   3. For the genuinely-new branch, we asynchronously send a verification
+//      email (waitlist-variant copy on the cap-full branch) and, in dev
+//      only (ALLOW_AUTO_SETUP), surface the token for integration tests.
+//   4. The user is NOT auto-logged-in. They must verify, then call /login.
 auth.post("/register", authRateLimit, async (c) => {
-  // Generic body returned on every branch — success, duplicate email, cap
-  // reached, invalid invite token. Building it once avoids drift.
-  const generic = (extra?: Record<string, unknown>) =>
-    c.json({
-      ok: true,
-      data: {
-        message:
-          "If the email is eligible for registration, you'll receive a verification email shortly.",
-        ...(extra ?? {}),
-      },
-    });
-
   const body = await c.req.json();
   const parsed = registerSchema.safeParse(body);
   if (!parsed.success) {
@@ -91,6 +86,7 @@ auth.post("/register", authRateLimit, async (c) => {
     return c.json({ ok: false, error: "Invalid input", details: parsed.error.issues }, 400);
   }
   const { email, password, inviteToken } = parsed.data;
+  const signupReason = parsed.data.reason?.trim() || null;
   const db = getDb();
 
   // Resolve the invitation (if any) — but do not branch the response on
@@ -109,26 +105,61 @@ auth.post("/register", authRateLimit, async (c) => {
       LIMIT 1
     `);
     invitation = (inviteRows as unknown as Array<{ id: string; groupId: string | null; bypassCap: boolean }>)[0] ?? null;
-    if (!invitation) {
-      // Bad invite token — silently return generic success.
-      return generic();
+  }
+
+  // Response builders — see the F30 note above. `waitlisted: true/false` is
+  // derived from public cap state + caller-supplied token, so exposing it
+  // adds no enumeration signal; the frontend uses it to pick the post-submit
+  // screen.
+  const respondActive = (extra?: Record<string, unknown>) =>
+    c.json({
+      ok: true,
+      data: {
+        waitlisted: false,
+        message:
+          "If the email is eligible for registration, you'll receive a verification email shortly.",
+        ...(extra ?? {}),
+      },
+    });
+  const respondWaitlisted = (extra?: Record<string, unknown>) =>
+    c.json({
+      ok: true,
+      data: {
+        waitlisted: true,
+        message:
+          "You're on the waitlist. Confirm your email via the link we just sent to hold your place — we'll email you when a spot opens. First come, first served.",
+        ...(extra ?? {}),
+      },
+    });
+
+  if (inviteToken && !invitation) {
+    // Bad invite token (or token/email mismatch) — respond exactly as the
+    // no-invite state would, with no side effects. Revealing the mismatch
+    // would confirm which email a stolen token belongs to.
+    return (await isSignupCapReached(db)) ? respondWaitlisted() : respondActive();
+  }
+
+  // Cap decision. A member invitation is a reservation at the top of the
+  // waitlist, not a bypass: the invitee registers actively only while their
+  // reservation fits within the cap (own invitation excluded from the count
+  // — see mayRegister). Admin invitations (bypass_cap) always register
+  // actively. Everyone else lands waitlisted when the cap is full.
+  const allowed = await mayRegister(db, invitation);
+  const waitlisted = !allowed;
+  const respond = waitlisted ? respondWaitlisted : respondActive;
+
+  if (waitlisted) {
+    // Hygiene sweep on the low-traffic branch: drop waitlisted accounts that
+    // never verified within the purge window (storage-abuse guard).
+    try {
+      await purgeStaleWaitlistedUsers(db);
+    } catch (err) {
+      console.error("[auth/register] Stale-waitlist purge failed:", err);
     }
   }
 
-  // Cap check — silently return generic success when over cap. A member
-  // invitation is a reservation at the top of the waitlist, not a bypass:
-  // the invitee registers only while their reservation fits within the cap
-  // (own invitation excluded from the count — see mayRegister). Admin
-  // invitations (bypass_cap) skip the cap entirely. The frontend pre-checks
-  // GET /auth/invite-status so invited users at a full cap see the
-  // top-of-waitlist message instead of hitting this silent branch.
-  const allowed = await mayRegister(db, invitation);
-  if (!allowed) {
-    return generic();
-  }
-
   try {
-    const result = await registerUser(db, email, password);
+    const result = await registerUser(db, email, password, "tenant", { waitlisted, signupReason });
 
     const verificationToken = crypto.randomBytes(32).toString("hex");
     await db.execute(sql`
@@ -142,7 +173,7 @@ auth.post("/register", authRateLimit, async (c) => {
     // Fire-and-forget the email send so the response timing on the
     // genuinely-new branch is dominated by DB ops (which both branches do)
     // rather than SMTP latency (which only the new branch does).
-    void sendVerificationEmail(email, verificationToken).catch((err) => {
+    void sendVerificationEmail(email, verificationToken, { waitlisted }).catch((err) => {
       console.error("[auth/register] Failed to send verification email:", err);
     });
 
@@ -164,9 +195,9 @@ auth.post("/register", authRateLimit, async (c) => {
     // when ALLOW_AUTO_SETUP=true so integration tests can call /auth/verify
     // without scraping Mailpit. Never enabled in production.
     if (process.env["ALLOW_AUTO_SETUP"] === "true") {
-      return generic({ verificationToken });
+      return respond({ verificationToken });
     }
-    return generic();
+    return respond();
   } catch (err: unknown) {
     const cause = err instanceof Error && err.cause instanceof Error ? err.cause : null;
     const msg = err instanceof Error ? err.message : String(err);
@@ -178,10 +209,12 @@ auth.post("/register", authRateLimit, async (c) => {
       msg.includes("unique") || msg.includes("duplicate") ||
       causeMsg.includes("unique") || causeMsg.includes("duplicate")
     ) {
-      // Duplicate email — silently return generic success. No verification
-      // email is sent (and that's fine — the existing user already verified
-      // or is in the verify-pending state from their original signup).
-      return generic();
+      // Duplicate email — return the same body as the branch's success case.
+      // No verification email is sent (the existing user already verified or
+      // is in the verify-pending / waitlisted state from their original
+      // signup). No fields update — re-registering can't change a password
+      // or reason.
+      return respond();
     }
     console.error("[auth/register] Registration error:", err);
     return c.json({ ok: false, error: "Registration failed" }, 500);
@@ -226,45 +259,6 @@ auth.get("/invite-status", verifyRateLimit, async (c) => {
   return c.json({ ok: true, data: { valid: true, canRegister } });
 });
 
-// POST /auth/waitlist — public, no auth required. Collects emails when the
-// signup cap is full (the login page shows the waitlist form whenever
-// /auth/signup-status reports signups closed).
-//
-// Anti-enumeration: the response is identical whether the email is new,
-// already on the waitlist, or already a registered user — so the endpoint
-// can't be used to probe either list. Duplicate submissions update the
-// reason (if one was provided) rather than erroring.
-const waitlistSchema = z.object({
-  email: z.string().email(),
-  reason: z.string().max(2000).optional(),
-});
-const waitlistRateLimit = rateLimit({ max: 5, windowMs: 15 * 60 * 1000 }); // 5 per 15 min per IP
-
-auth.post("/waitlist", waitlistRateLimit, async (c) => {
-  const body = await c.req.json();
-  const parsed = waitlistSchema.safeParse(body);
-  if (!parsed.success) {
-    return c.json({ ok: false, error: "Invalid input", details: parsed.error.issues }, 400);
-  }
-  const email = parsed.data.email.toLowerCase().trim();
-  const reason = parsed.data.reason?.trim() || null;
-
-  const db = getDb();
-  await db.execute(sql`
-    INSERT INTO claimnet.waitlist (email, reason)
-    VALUES (${email}, ${reason})
-    ON CONFLICT (email) DO UPDATE
-    SET reason = COALESCE(EXCLUDED.reason, waitlist.reason)
-  `);
-
-  return c.json({
-    ok: true,
-    data: {
-      message: "You're on the waitlist. We'll email you when a spot opens up.",
-    },
-  });
-});
-
 // POST /auth/login
 auth.post("/login", authRateLimit, async (c) => {
   const body = await c.req.json();
@@ -277,6 +271,18 @@ auth.post("/login", authRateLimit, async (c) => {
   const result = await loginUser(getDb(), email, password);
   if (!result) {
     return c.json({ ok: false, error: "Invalid email or password" }, 401);
+  }
+
+  // Waitlisted accounts: correct password, but no JWT until approved.
+  // Telling them their status here is fine — only the password holder gets
+  // this far. last_login_at stays null so "never signed in" stays true.
+  if (result.waitlistedAt) {
+    return c.json({
+      ok: false,
+      error: "waitlisted",
+      message:
+        "You're on the waitlist. We'll email you when a spot opens — confirm your email (if you haven't) to hold your place.",
+    }, 403);
   }
 
   const db = getDb();
@@ -292,7 +298,10 @@ auth.post("/login", authRateLimit, async (c) => {
   `);
   const isVerified = !!(verifiedRows as unknown as Array<{ email_verified_at: string | null }>)[0]?.email_verified_at;
 
-  return c.json({ ok: true, data: { ...result, emailVerified: isVerified } });
+  return c.json({
+    ok: true,
+    data: { user: result.user, token: result.token, emailVerified: isVerified },
+  });
 });
 
 // GET /auth/me — get current user info.

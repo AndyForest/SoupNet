@@ -39,7 +39,7 @@ interface EmailsResponse {
 const EMAIL_KINDS: Array<{ value: string; label: string; trigger: string }> = [
   { value: "verification", label: "Verification", trigger: "sent when someone registers (or re-requests the link)" },
   { value: "password_reset", label: "Password reset", trigger: "sent from the forgot-password flow" },
-  { value: "waitlist_spot_open", label: "Waitlist spot open", trigger: "sent by the Notify action on the Signups page" },
+  { value: "waitlist_approved", label: "Waitlist approved", trigger: "sent when a waitlisted account is let in (cap-raise auto-promotion or the Approve action on Signups)" },
   { value: "invitation", label: "Invitation", trigger: "currently unused — admin invites return a link to share manually" },
 ];
 

@@ -21,15 +21,15 @@ interface SettingsData {
 type QueueRowType = "waitlist" | "admin_invite" | "member_invite";
 
 interface QueueRow {
+  // For 'waitlist' rows, id is the user id (Approve posts it); for invite
+  // rows it's the invitation id.
   id: string;
   email: string;
   type: QueueRowType;
   reason: string | null;
   inviterEmail: string | null;
-  invitedAt: string | null;
-  notifiedAt: string | null;
+  verified: boolean;
   createdAt: string;
-  registered: boolean;
   invitePending: boolean;
 }
 
@@ -48,12 +48,9 @@ const TYPE_LABELS: Record<QueueRowType, { label: string; color: string }> = {
 };
 
 function rowStatus(row: QueueRow): { label: string; color: string } {
-  if (row.registered) return { label: "Registered", color: "var(--color-success)" };
-  if (row.type === "waitlist" && row.notifiedAt) {
-    return { label: `Notified ${formatDate(row.notifiedAt)}`, color: "#3b82f6" };
-  }
-  if (row.invitePending || row.invitedAt) return { label: "Invite pending", color: "#3b82f6" };
-  return { label: "Waiting", color: "var(--color-on-surface-variant)" };
+  if (row.type !== "waitlist") return { label: "Invite pending", color: "#3b82f6" };
+  if (row.verified) return { label: "Verified — promotable", color: "var(--color-success)" };
+  return { label: "Unverified", color: "var(--color-on-surface-variant)" };
 }
 
 export function AdminSignupsPage() {
@@ -63,6 +60,7 @@ export function AdminSignupsPage() {
   const [inviteResult, setInviteResult] = useState<{ email: string; inviteUrl: string } | null>(null);
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [promotedEmails, setPromotedEmails] = useState<string[] | null>(null);
 
   const { gate, isAdmin } = useAdminGate();
 
@@ -95,13 +93,20 @@ export function AdminSignupsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ signupCap }),
       });
-      const json = (await res.json()) as { ok: boolean; error?: string };
+      const json = (await res.json()) as {
+        ok: boolean;
+        error?: string;
+        data?: { promoted?: string[] };
+      };
       if (!json.ok) throw new Error(json.error ?? "Failed to update the cap");
-      return json;
+      return json.data?.promoted ?? [];
     },
-    onSuccess: () => {
+    onSuccess: (promoted) => {
       setCapInput(null);
+      setPromotedEmails(promoted);
       void queryClient.invalidateQueries({ queryKey: ["admin", "settings"] });
+      void queryClient.invalidateQueries({ queryKey: ["admin", "waitlist"] });
+      void queryClient.invalidateQueries({ queryKey: ["admin", "emails"] });
     },
   });
 
@@ -134,15 +139,16 @@ export function AdminSignupsPage() {
     },
   });
 
-  const notifyMutation = useMutation({
-    mutationFn: async (id: string) => {
-      const res = await authFetch(`/admin/waitlist/${id}/notify`, { method: "POST" });
+  const approveMutation = useMutation({
+    mutationFn: async (userId: string) => {
+      const res = await authFetch(`/admin/waitlist/${userId}/approve`, { method: "POST" });
       const json = (await res.json()) as { ok: boolean; error?: string };
-      if (!json.ok) throw new Error(json.error ?? "Failed to send notification");
+      if (!json.ok) throw new Error(json.error ?? "Failed to approve");
       return json;
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["admin", "waitlist"] });
+      void queryClient.invalidateQueries({ queryKey: ["admin", "settings"] });
       void queryClient.invalidateQueries({ queryKey: ["admin", "emails"] });
     },
   });
@@ -151,7 +157,7 @@ export function AdminSignupsPage() {
 
   const settings = settingsQuery.data;
   const queue = queueQuery.data ?? [];
-  const waitingCount = queue.filter((row) => rowStatus(row).label === "Waiting").length;
+  const waitlistedCount = queue.filter((row) => row.type === "waitlist").length;
   const capUsed = (settings?.currentUsers ?? 0) + (settings?.pendingInvitations ?? 0);
   const capRemaining = settings ? Math.max(0, settings.signupCap - capUsed) : 0;
 
@@ -218,15 +224,15 @@ export function AdminSignupsPage() {
       header: "",
       align: "right",
       render: (row) =>
-        row.type === "waitlist" && !row.registered ? (
+        row.type === "waitlist" ? (
           <button
             className="btn-secondary"
-            disabled={notifyMutation.isPending}
-            title="Email this person that a spot opened (they asked to be notified)"
-            onClick={() => notifyMutation.mutate(row.id)}
+            disabled={approveMutation.isPending}
+            title="Clear the waitlist flag and send the 'you're in' email — works regardless of the cap"
+            onClick={() => approveMutation.mutate(row.id)}
             style={{ fontSize: "0.8rem", padding: "0.25rem 0.6rem" }}
           >
-            {row.notifiedAt ? "Re-notify" : "Notify"}
+            Approve
           </button>
         ) : null,
     },
@@ -253,7 +259,7 @@ export function AdminSignupsPage() {
         <AdminMetricCard
           label="In line"
           value={queueQuery.data ? queue.length : "…"}
-          hint={queueQuery.data ? `${waitingCount} still waiting` : undefined}
+          hint={queueQuery.data ? `${waitlistedCount} waitlisted accounts` : undefined}
         />
       </div>
 
@@ -262,8 +268,9 @@ export function AdminSignupsPage() {
         <p style={{ color: "var(--color-on-surface-variant)", fontSize: "0.875rem", marginBottom: "var(--space-md)", maxWidth: 640 }}>
           Verified users and pending member invitations count against the cap — a member
           invitation reserves a place at the top of the waitlist, it doesn't bypass it.
-          Set to 0 to close self-signups entirely. After raising the cap, notify the
-          longest-waiting entries below.
+          Set to 0 to close self-signups entirely. <strong>Raising the cap auto-promotes
+          the top of the queue</strong> (verified accounts only, invitation-holders first,
+          then oldest first) and emails each promoted person.
         </p>
         <form
           onSubmit={(e) => {
@@ -292,6 +299,13 @@ export function AdminSignupsPage() {
             {updateCapMutation.error instanceof Error
               ? updateCapMutation.error.message
               : "Failed to update the cap"}
+          </p>
+        ) : null}
+        {promotedEmails !== null ? (
+          <p style={{ color: promotedEmails.length ? "var(--color-success)" : "var(--color-on-surface-variant)", fontSize: "0.875rem", marginTop: "var(--space-sm)" }}>
+            {promotedEmails.length
+              ? `Promoted ${promotedEmails.length} from the waitlist: ${promotedEmails.join(", ")}`
+              : "Cap saved. Nobody promoted — no verified waitlisted accounts fit the new headroom."}
           </p>
         ) : null}
       </section>
@@ -359,9 +373,10 @@ export function AdminSignupsPage() {
       <section style={{ padding: "0 var(--space-lg) var(--space-lg)" }}>
         <h2 style={{ fontSize: "1rem", fontWeight: 600, marginBottom: "var(--space-sm)" }}>Signup queue</h2>
         <p style={{ color: "var(--color-on-surface-variant)", fontSize: "0.875rem", marginBottom: "var(--space-md)", maxWidth: 640 }}>
-          Everyone in line: waitlist signups plus pending invitations. People holding an
-          invitation are at the top; the rest are oldest first. Notify sends the
-          "spot opened" email waitlist signups asked for.
+          Everyone in line: waitlisted accounts (real accounts — password and ToS captured,
+          blocked from signing in until promoted) plus pending invitations for people who
+          haven't registered yet. Invitation-holders sort to the top. Approve lets one
+          person in regardless of the cap and emails them.
         </p>
         <AdminTable
           rows={queue}
@@ -370,7 +385,7 @@ export function AdminSignupsPage() {
           empty={
             <AdminEmptyState
               title="Nobody in line"
-              body="When the signup cap is full, the login page collects waitlist emails here; pending invitations show here too."
+              body="When the signup cap is full, new registrations land here as waitlisted accounts; pending invitations show here too."
             />
           }
         />

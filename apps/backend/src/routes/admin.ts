@@ -11,7 +11,7 @@ import {
   getPendingInvitationCount,
 } from "../services/system-settings.service";
 import { QUEUE_DESCRIPTIONS, getQueueDescription } from "@soupnet/domain";
-import { sendWaitlistSpotOpenEmail } from "../services/email.service";
+import { approveWaitlistedUser, promoteTopWaitlisted } from "../services/waitlist.service";
 import { rateLimit } from "../middleware/rate-limit";
 import type { AppEnv } from "../types";
 
@@ -71,15 +71,29 @@ admin.put("/settings", async (c) => {
   }
 
   const db = getDb();
+  let promoted: string[] = [];
   if (parsed.data.signupCap !== undefined) {
     await setSetting(db, "signupCap", parsed.data.signupCap);
+
+    // Raising the cap promotes the top of the waitlist automatically:
+    // verified accounts only, invitation-holders first, then oldest-first.
+    // Each promotion sends the "you're in" email. Under the signup_cap
+    // advisory lock (inside a transaction) so concurrent registrations
+    // can't double-spend the new headroom.
+    promoted = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('signup_cap'))`);
+      const verified = await getVerifiedUserCount(tx as unknown as Parameters<typeof getVerifiedUserCount>[0]);
+      const pending = await getPendingInvitationCount(tx as unknown as Parameters<typeof getPendingInvitationCount>[0]);
+      const headroom = parsed.data.signupCap! - verified - pending;
+      return promoteTopWaitlisted(tx as unknown as Parameters<typeof promoteTopWaitlisted>[0], headroom);
+    });
   }
   if (parsed.data.embeddingsEnabled !== undefined) {
     await setSetting(db, "embeddingsEnabled", parsed.data.embeddingsEnabled);
   }
 
   const settings = await getAllSettings(db);
-  return c.json({ ok: true, data: settings });
+  return c.json({ ok: true, data: { ...settings, promoted } });
 });
 
 // POST /admin/invite — system admin creates a full cap-bypass invitation by
@@ -134,12 +148,6 @@ admin.post("/invite", inviteRateLimit, async (c) => {
     VALUES (${user.id}::uuid, ${groupId ?? null}::uuid, ${email}, ${token}, true, ${expiresAt.toISOString()}::timestamptz)
   `);
 
-  // If this email is on the waitlist, mark it invited so the admin waitlist
-  // view reflects the promotion. No-op for emails that aren't on it.
-  await db.execute(sql`
-    UPDATE claimnet.waitlist SET invited_at = now() WHERE email = ${email}
-  `);
-
   const inviteUrl = `${process.env["FRONTEND_URL"] ?? "https://soup.net"}/auth/register?invite=${token}`;
 
   return c.json({
@@ -186,6 +194,9 @@ admin.get("/users", async (c) => {
   if (role) where.push(sql`u.role = ${role}`);
   if (suspended === "yes") where.push(sql`u.suspended_at IS NOT NULL`);
   if (suspended === "no") where.push(sql`u.suspended_at IS NULL`);
+  const waitlisted = c.req.query("waitlisted");
+  if (waitlisted === "yes") where.push(sql`u.waitlisted_at IS NOT NULL`);
+  if (waitlisted === "no") where.push(sql`u.waitlisted_at IS NULL`);
   if (hasKeys === "yes") {
     where.push(sql`EXISTS (
       SELECT 1 FROM claimnet.api_keys ak
@@ -209,6 +220,8 @@ admin.get("/users", async (c) => {
       u.email_verified_at  AS "emailVerifiedAt",
       u.suspended_at       AS "suspendedAt",
       u.suspended_reason   AS "suspendedReason",
+      u.waitlisted_at      AS "waitlistedAt",
+      u.signup_reason      AS "signupReason",
       u.last_login_at      AS "lastLoginAt",
       u.created_at         AS "createdAt",
       (SELECT COUNT(*)::int FROM claimnet.api_keys ak
@@ -626,30 +639,32 @@ admin.post("/workers/embeddings/retry-all/:strategyId", async (c) => {
   return c.json({ ok: true, data: { strategyId, retriedCount: count } });
 });
 
-// GET /admin/waitlist — the merged signup queue, in line order.
+// GET /admin/waitlist — the signup queue, in line order.
 //
 // One row per email wanting in, from two sources:
-//   - waitlist self-signups (type 'waitlist'; carry reason + notified_at)
-//   - pending invitations for emails NOT on the waitlist (type
-//     'admin_invite' for bypass_cap, 'member_invite' otherwise)
-// Waitlist rows that have since been invited keep type 'waitlist' with
-// invited_at set — the indicator distinguishes them.
+//   - waitlisted accounts (type 'waitlist'; real user rows with
+//     waitlisted_at set — carry signup_reason + verified state)
+//   - pending invitations for emails with NO user record yet (type
+//     'admin_invite' for bypass_cap, 'member_invite' otherwise) — these
+//     people haven't registered, so there's nothing to approve; the row is
+//     visibility into who's been offered a way in.
 //
 // Ordering reflects "an invite puts you at the top of the waitlist":
 // rows holding a live invitation first, then by created_at (oldest first).
+// Approved accounts leave the queue (waitlisted_at cleared → not selected).
 admin.get("/waitlist", async (c) => {
   const rows = await getDb().execute(sql`
     WITH merged AS (
       SELECT
-        w.id,
-        w.email,
+        u.id,
+        u.email,
         'waitlist' AS "type",
-        w.reason,
+        u.signup_reason AS "reason",
         NULL::text AS "inviterEmail",
-        w.invited_at AS "invitedAt",
-        w.notified_at AS "notifiedAt",
-        w.created_at AS "createdAt"
-      FROM claimnet.waitlist w
+        (u.email_verified_at IS NOT NULL) AS "verified",
+        u.created_at AS "createdAt"
+      FROM claimnet.users u
+      WHERE u.waitlisted_at IS NOT NULL
 
       UNION ALL
 
@@ -659,20 +674,18 @@ admin.get("/waitlist", async (c) => {
         CASE WHEN i.bypass_cap THEN 'admin_invite' ELSE 'member_invite' END AS "type",
         NULL::text AS "reason",
         inviter.email AS "inviterEmail",
-        i.created_at AS "invitedAt",
-        NULL::timestamptz AS "notifiedAt",
+        false AS "verified",
         i.created_at AS "createdAt"
       FROM claimnet.invitations i
       JOIN claimnet.users inviter ON inviter.id = i.inviter_id
       WHERE i.accepted_at IS NULL
         AND i.declined_at IS NULL
         AND i.expires_at > now()
-        AND NOT EXISTS (SELECT 1 FROM claimnet.waitlist w2 WHERE w2.email = i.email)
+        AND NOT EXISTS (SELECT 1 FROM claimnet.users u2 WHERE u2.email = i.email)
     )
     SELECT * FROM (
       SELECT
         m.*,
-        (u.id IS NOT NULL) AS "registered",
         EXISTS (
           SELECT 1 FROM claimnet.invitations i2
           WHERE i2.email = m.email
@@ -681,41 +694,26 @@ admin.get("/waitlist", async (c) => {
             AND i2.expires_at > now()
         ) AS "invitePending"
       FROM merged m
-      LEFT JOIN claimnet.users u
-        ON u.email = m.email AND u.email_verified_at IS NOT NULL
     ) q
-    ORDER BY (q."invitePending" OR q."invitedAt" IS NOT NULL) DESC, q."createdAt" ASC
+    ORDER BY q."invitePending" DESC, q."createdAt" ASC
   `);
   return c.json({ ok: true, data: rows });
 });
 
-// POST /admin/waitlist/:id/notify — send the "a spot opened" email to a
-// waitlist entry. Explicit per-entry action (never automatic); waitlist
-// signups consented to exactly this notification. Logged in email_log like
-// every outgoing email.
-admin.post("/waitlist/:id/notify", async (c) => {
-  const id = c.req.param("id");
-  const db = getDb();
+// POST /admin/waitlist/:userId/approve — clear the waitlist flag on one
+// account and send the "you're in" email. Admin power: works regardless of
+// cap state (the manual counterpart of bypass invitations) and regardless
+// of verification (an unverified approvee still lands in the normal
+// verify-pending flow at login).
+admin.post("/waitlist/:userId/approve", async (c) => {
+  const userId = c.req.param("userId");
+  const actor = c.get("user");
 
-  const rows = await db.execute(sql`
-    SELECT email FROM claimnet.waitlist WHERE id = ${id}::uuid LIMIT 1
-  `);
-  const entry = (rows as unknown as Array<{ email: string }>)[0];
-  if (!entry) {
-    return c.json({ ok: false, error: "Waitlist entry not found" }, 404);
+  const email = await approveWaitlistedUser(getDb(), userId, actor.id);
+  if (!email) {
+    return c.json({ ok: false, error: "User not found or not waitlisted" }, 404);
   }
-
-  try {
-    await sendWaitlistSpotOpenEmail(entry.email);
-  } catch (err) {
-    console.error("[admin/waitlist/notify] Failed to send:", err);
-    return c.json({ ok: false, error: "Failed to send notification email" }, 502);
-  }
-
-  await db.execute(sql`
-    UPDATE claimnet.waitlist SET notified_at = now() WHERE id = ${id}::uuid
-  `);
-  return c.json({ ok: true, data: { email: entry.email, notifiedAt: new Date().toISOString() } });
+  return c.json({ ok: true, data: { email, approvedAt: new Date().toISOString() } });
 });
 
 // GET /admin/emails — the outgoing email log (light CRM + abuse/security

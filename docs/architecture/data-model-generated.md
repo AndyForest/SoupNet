@@ -1,10 +1,10 @@
 # ClaimNet Data Model — Generated Reference
 
-> **Auto-generated** from Drizzle migration snapshot `0023_snapshot.json`.
+> **Auto-generated** from Drizzle migration snapshot `0024_snapshot.json`.
 > Do not edit by hand. Regenerate with: `npx tsx scripts/generate-data-model-docs.ts`
 >
 > Generated: 2026-06-11
-> Tables: 25 | Schema: `claimnet`
+> Tables: 24 | Schema: `claimnet`
 
 For design rationale, conventions, and context, see [data-model.md](data-model.md).
 
@@ -282,6 +282,8 @@ erDiagram
         timestamptz last_login_at
         timestamptz suspended_at
         text suspended_reason
+        timestamptz waitlisted_at
+        text signup_reason
         jsonb preferences
         timestamptz created_at
         timestamptz updated_at
@@ -293,15 +295,6 @@ erDiagram
         text model_id
         text task_type
         vector vector
-        timestamptz created_at
-    }
-
-    waitlist {
-        uuid id PK
-        text email
-        text reason
-        timestamptz invited_at
-        timestamptz notified_at
         timestamptz created_at
     }
 
@@ -365,6 +358,8 @@ These are created by raw SQL in migration files and are not captured in the snap
 | `last_login_at` | `timestamptz` | YES |  |  |
 | `suspended_at` | `timestamptz` | YES |  |  |
 | `suspended_reason` | `text` | YES |  |  |
+| `waitlisted_at` | `timestamptz` | YES |  |  |
+| `signup_reason` | `text` | YES |  |  |
 | `preferences` | `jsonb` | NO | `'{}'::jsonb` |  |
 | `created_at` | `timestamptz` | NO | `now()` |  |
 | `updated_at` | `timestamptz` | NO | `now()` |  |

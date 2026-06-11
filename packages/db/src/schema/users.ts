@@ -61,6 +61,18 @@ export const users = claimnetSchema.table(
     suspendedAt: timestamp("suspended_at", { withTimezone: true }),
     suspendedReason: text("suspended_reason"),
 
+    // Waitlist — when set, the account exists (password + ToS captured at
+    // registration, email verifiable) but sign-in is blocked with a
+    // "you're on the waitlist" message and no JWT is issued. Mirrors the
+    // suspended_at pattern. Cleared by admin approval or by top-of-queue
+    // auto-promotion when the signup cap rises. Waitlisted users do NOT
+    // count toward the signup cap.
+    waitlistedAt: timestamp("waitlisted_at", { withTimezone: true }),
+
+    // Optional free-text answer to "What would you use Soup.net for?" on the
+    // register form — collected for every signup, waitlisted or not.
+    signupReason: text("signup_reason"),
+
     // User-level preferences (briefing cluster count, etc). Sparse JSONB —
     // stored object may contain only the keys the user has overridden; the
     // domain layer merges with defaults before use. Shape is validated by

@@ -135,6 +135,12 @@ export async function registerUser(
   email: string,
   password: string,
   role: string = "tenant",
+  opts?: {
+    /** Create the account in waitlisted state (cap was full at registration). */
+    waitlisted?: boolean;
+    /** Optional "what would you use Soup.net for?" answer from the register form. */
+    signupReason?: string | null;
+  },
 ): Promise<{ user: { id: string; email: string; role: string }; token: string }> {
   const passwordHash = await hashPassword(password);
 
@@ -143,6 +149,8 @@ export async function registerUser(
     email,
     passwordHash,
     role,
+    waitlistedAt: opts?.waitlisted ? new Date() : null,
+    signupReason: opts?.signupReason ?? null,
   }).returning({ id: users.id, email: users.email, role: users.role });
 
   const user = userRows[0];
@@ -188,12 +196,23 @@ export async function registerUser(
 
 /**
  * Login user. Returns JWT token if credentials match.
+ *
+ * waitlistedAt is surfaced so the route can block waitlisted accounts with
+ * a "you're on the waitlist" message INSTEAD of issuing a token. Telling
+ * the caller their waitlist status is privileged-but-safe: only someone
+ * holding the correct password gets this far. No token is signed for
+ * waitlisted accounts — without a JWT, every other surface (dashboard,
+ * keys, MCP, OAuth) stays blocked with zero additional checks.
  */
 export async function loginUser(
   db: PostgresJsDatabase,
   email: string,
   password: string,
-): Promise<{ user: { id: string; email: string; role: string }; token: string } | null> {
+): Promise<
+  | { user: { id: string; email: string; role: string }; token: string; waitlistedAt: null }
+  | { user: { id: string; email: string; role: string }; token: null; waitlistedAt: Date }
+  | null
+> {
   const rows = await db.select().from(users).where(sql`${users.email} = ${email}`).limit(1);
   const user = rows[0];
   if (!user) return null;
@@ -201,8 +220,16 @@ export async function loginUser(
   const valid = await verifyPassword(password, user.passwordHash);
   if (!valid) return null;
 
+  if (user.waitlistedAt) {
+    return {
+      user: { id: user.id, email: user.email, role: user.role },
+      token: null,
+      waitlistedAt: user.waitlistedAt,
+    };
+  }
+
   const token = signToken({ sub: user.id, email: user.email, role: user.role });
-  return { user: { id: user.id, email: user.email, role: user.role }, token };
+  return { user: { id: user.id, email: user.email, role: user.role }, token, waitlistedAt: null };
 }
 
 /**

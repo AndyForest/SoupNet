@@ -1,20 +1,22 @@
 import { describe, it, expect, beforeAll } from "vitest";
 
 /**
- * Integration tests for the signup queue: public POST /auth/waitlist,
- * GET /auth/invite-status, the merged admin view, the notify action, the
- * groupless admin invite, and the email log. Requires running backend +
+ * Integration tests for the signup queue (waitlist v2: waitlisted accounts
+ * are user rows, not a side table). Requires running backend +
  * DEV_USERNAME/DEV_PASSWORD (system admin).
  *
- * Walks one email through the whole arc:
- *   waitlist signup → Waiting → notified (spot-open email, logged) →
- *   admin-invited (groupless bypass, no auto-email) → registered via the
- *   invite link → invitation consumed (stamped accepted at registration).
+ * Covered here (cap-open paths — safe under parallel test files):
+ *   - register stores the optional signup reason on the user row
+ *   - GET /auth/invite-status shapes
+ *   - groupless admin invite: no auto-email, invite URL returned, consumed
+ *     (stamped accepted) at registration
+ *   - the admin queue shows pending member invitations
+ *   - approve endpoint auth + not-found shapes
  *
- * Cap-boundary behavior (registration blocked at a full cap, reservation
- * exclusion) is not exercised here — the cap is global state shared with
- * every parallel test file, so closing it mid-run would flake the other
- * suites. The branch logic is unit-tested in system-settings.service.test.ts.
+ * NOT covered here: registration landing on the waitlist, login-blocked,
+ * promotion ordering, and the stale purge — those require a full cap, which
+ * is global state shared with every parallel test file. They're covered by
+ * the DB-fixture suite in services/waitlist.service.test.ts.
  */
 
 const BASE = process.env["BACKEND_URL"] ?? "";
@@ -22,8 +24,9 @@ const DEV_EMAIL = process.env["DEV_USERNAME"] ?? "";
 const DEV_PASSWORD = process.env["DEV_PASSWORD"] ?? "";
 
 const uid = Date.now();
-const waitlistEmail = `waitlist-${uid}@test.local`;
-const memberInviteEmail = `waitlist-member-${uid}@test.local`;
+const reasonEmail = `signup-reason-${uid}@test.local`;
+const adminInviteEmail = `admin-invite-${uid}@test.local`;
+const memberInviteEmail = `member-invite-${uid}@test.local`;
 
 type QueueRowType = "waitlist" | "admin_invite" | "member_invite";
 
@@ -33,16 +36,13 @@ interface QueueRow {
   type: QueueRowType;
   reason: string | null;
   inviterEmail: string | null;
-  invitedAt: string | null;
-  notifiedAt: string | null;
+  verified: boolean;
   createdAt: string;
-  registered: boolean;
   invitePending: boolean;
 }
 
 let adminToken = "";
-let adminInviteToken = ""; // token from the admin invite URL
-let waitlistRowId = "";
+let adminInviteToken = "";
 
 async function fetchQueue(): Promise<QueueRow[]> {
   const res = await fetch(`${BASE}/admin/waitlist`, {
@@ -53,41 +53,6 @@ async function fetchQueue(): Promise<QueueRow[]> {
   expect(body.ok).toBe(true);
   return body.data;
 }
-
-describe.skipIf(!BASE)("POST /auth/waitlist (public)", () => {
-  it("accepts a valid email with reason", async () => {
-    const res = await fetch(`${BASE}/auth/waitlist`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: waitlistEmail, reason: "Testing the waitlist flow" }),
-    });
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { ok: boolean; data?: { message?: string } };
-    expect(body.ok).toBe(true);
-    expect(body.data?.message).toContain("waitlist");
-  });
-
-  it("returns an identical response for a duplicate email (no enumeration)", async () => {
-    const res = await fetch(`${BASE}/auth/waitlist`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: waitlistEmail }),
-    });
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { ok: boolean; data?: { message?: string } };
-    expect(body.ok).toBe(true);
-    expect(body.data?.message).toContain("waitlist");
-  });
-
-  it("rejects an invalid email with 400", async () => {
-    const res = await fetch(`${BASE}/auth/waitlist`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: "not-an-email" }),
-    });
-    expect(res.status).toBe(400);
-  });
-});
 
 describe.skipIf(!BASE)("GET /auth/invite-status (public)", () => {
   it("reports an unknown token as invalid", async () => {
@@ -105,7 +70,7 @@ describe.skipIf(!BASE)("GET /auth/invite-status (public)", () => {
   });
 });
 
-describe.skipIf(!BASE || !DEV_EMAIL || !DEV_PASSWORD)("admin signup queue", () => {
+describe.skipIf(!BASE || !DEV_EMAIL || !DEV_PASSWORD)("signup queue + admin invite arc", () => {
   beforeAll(async () => {
     const res = await fetch(`${BASE}/auth/login`, {
       method: "POST",
@@ -124,51 +89,49 @@ describe.skipIf(!BASE || !DEV_EMAIL || !DEV_PASSWORD)("admin signup queue", () =
     expect(res.status).toBe(401);
   });
 
-  it("shows the waitlist signup as Waiting", async () => {
-    const queue = await fetchQueue();
-    const entry = queue.find((row) => row.email === waitlistEmail);
-    expect(entry).toBeDefined();
-    expect(entry!.type).toBe("waitlist");
-    expect(entry!.reason).toBe("Testing the waitlist flow");
-    expect(entry!.registered).toBe(false);
-    expect(entry!.invitePending).toBe(false);
-    expect(entry!.invitedAt).toBeNull();
-    expect(entry!.notifiedAt).toBeNull();
-    waitlistRowId = entry!.id;
-  });
-
-  it("POST /admin/waitlist/:id/notify sends the spot-open email and stamps notified_at", async () => {
-    const res = await fetch(`${BASE}/admin/waitlist/${waitlistRowId}/notify`, {
+  it("register stores the optional signup reason; active accounts skip the queue", async () => {
+    const reg = await fetch(`${BASE}/auth/register`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${adminToken}` },
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: reasonEmail,
+        password: "reason-test-password-123",
+        reason: "Trying out the signup reason field",
+        tosAccepted: true,
+      }),
     });
-    expect(res.status).toBe(200);
-
-    const entry = (await fetchQueue()).find((row) => row.email === waitlistEmail);
-    expect(entry!.notifiedAt).not.toBeNull();
-  });
-
-  it("GET /admin/emails logged the notification (metadata only)", async () => {
-    const res = await fetch(`${BASE}/admin/emails?q=${encodeURIComponent(waitlistEmail)}`, {
-      headers: { Authorization: `Bearer ${adminToken}` },
-    });
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as {
+    expect(reg.status).toBe(200);
+    const regBody = (await reg.json()) as {
       ok: boolean;
-      data: { emails: Array<{ toEmail: string; kind: string; status: string; subject: string }>; total: number };
+      data?: { waitlisted?: boolean; verificationToken?: string };
     };
-    expect(body.data.total).toBeGreaterThan(0);
-    const row = body.data.emails.find((r) => r.kind === "waitlist_spot_open");
+    expect(regBody.ok).toBe(true);
+    // Cap is open in the test environment, so the account is active.
+    expect(regBody.data?.waitlisted).toBe(false);
+    expect(regBody.data?.verificationToken).toBeTruthy();
+
+    // Reason + waitlist state are visible on the admin users list.
+    const users = await fetch(`${BASE}/admin/users?q=${encodeURIComponent(reasonEmail)}`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    });
+    const usersBody = (await users.json()) as {
+      data: { users: Array<{ email: string; signupReason: string | null; waitlistedAt: string | null }> };
+    };
+    const row = usersBody.data.users.find((u) => u.email === reasonEmail);
     expect(row).toBeDefined();
-    expect(row!.toEmail).toBe(waitlistEmail);
-    expect(row!.status).toBe("sent");
+    expect(row!.signupReason).toBe("Trying out the signup reason field");
+    expect(row!.waitlistedAt).toBeNull();
+
+    // Active accounts are not in the signup queue.
+    const queue = await fetchQueue();
+    expect(queue.find((r) => r.email === reasonEmail)).toBeUndefined();
   });
 
-  it("POST /admin/invite works with just an email (no group, no auto-send) and returns the invite URL", async () => {
+  it("POST /admin/invite works with just an email, returns the URL, sends nothing", async () => {
     const res = await fetch(`${BASE}/admin/invite`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
-      body: JSON.stringify({ email: waitlistEmail }),
+      body: JSON.stringify({ email: adminInviteEmail }),
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -180,16 +143,18 @@ describe.skipIf(!BASE || !DEV_EMAIL || !DEV_PASSWORD)("admin signup queue", () =
     expect(body.data?.inviteUrl).toContain("/auth/register?invite=");
     adminInviteToken = body.data!.inviteUrl.split("invite=")[1]!;
 
-    const entry = (await fetchQueue()).find((row) => row.email === waitlistEmail);
-    expect(entry!.invitedAt).not.toBeNull();
+    // Shows in the queue as a pending admin invite.
+    const entry = (await fetchQueue()).find((row) => row.email === adminInviteEmail);
+    expect(entry).toBeDefined();
+    expect(entry!.type).toBe("admin_invite");
     expect(entry!.invitePending).toBe(true);
 
     // No invitation email was sent — the admin shares the link manually.
-    const emails = await fetch(`${BASE}/admin/emails?q=${encodeURIComponent(waitlistEmail)}`, {
+    const emails = await fetch(`${BASE}/admin/emails?q=${encodeURIComponent(adminInviteEmail)}&kind=invitation`, {
       headers: { Authorization: `Bearer ${adminToken}` },
     });
-    const emailsBody = (await emails.json()) as { data: { emails: Array<{ kind: string }> } };
-    expect(emailsBody.data.emails.some((r) => r.kind === "invitation")).toBe(false);
+    const emailsBody = (await emails.json()) as { data: { total: number } };
+    expect(emailsBody.data.total).toBe(0);
   });
 
   it("GET /auth/invite-status reports the admin invite as registerable (bypass)", async () => {
@@ -206,39 +171,32 @@ describe.skipIf(!BASE || !DEV_EMAIL || !DEV_PASSWORD)("admin signup queue", () =
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        email: waitlistEmail,
-        password: "waitlist-arc-password-123",
+        email: adminInviteEmail,
+        password: "invite-arc-password-123",
         inviteToken: adminInviteToken,
         tosAccepted: true,
       }),
     });
     expect(reg.status).toBe(200);
-    const regBody = (await reg.json()) as { ok: boolean; data?: { verificationToken?: string } };
+    const regBody = (await reg.json()) as {
+      ok: boolean;
+      data?: { waitlisted?: boolean; verificationToken?: string };
+    };
     expect(regBody.ok).toBe(true);
-    // Dev-mode verificationToken proves the genuinely-new branch ran (a
-    // cap-rejected or duplicate registration would omit it).
-    const vtok = regBody.data?.verificationToken;
-    expect(vtok).toBeTruthy();
-
-    await fetch(`${BASE}/auth/verify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: vtok }),
-    });
+    expect(regBody.data?.waitlisted).toBe(false);
+    expect(regBody.data?.verificationToken).toBeTruthy();
 
     // Groupless invitations are stamped accepted at registration (cap bypass
-    // was their only job), so the invite no longer reads as pending and the
-    // queue row shows the conversion.
-    const entry = (await fetchQueue()).find((row) => row.email === waitlistEmail);
-    expect(entry!.registered).toBe(true);
-    expect(entry!.invitePending).toBe(false);
-
-    // The consumed token is no longer valid for registration.
+    // was their only job) — the token is no longer valid and the queue row
+    // is gone (the email now belongs to a user record).
     const status = await fetch(
       `${BASE}/auth/invite-status?token=${encodeURIComponent(adminInviteToken)}`,
     );
     const statusBody = (await status.json()) as { ok: boolean; data?: { valid: boolean } };
     expect(statusBody.data?.valid).toBe(false);
+
+    const queue = await fetchQueue();
+    expect(queue.find((row) => row.email === adminInviteEmail)).toBeUndefined();
   });
 
   it("member invitations appear in the queue as member_invite with the inviter", async () => {
@@ -261,5 +219,20 @@ describe.skipIf(!BASE || !DEV_EMAIL || !DEV_PASSWORD)("admin signup queue", () =
     expect(entry!.type).toBe("member_invite");
     expect(entry!.inviterEmail).toBe(DEV_EMAIL);
     expect(entry!.invitePending).toBe(true);
+  });
+
+  it("POST /admin/waitlist/:userId/approve returns 404 for a non-waitlisted user", async () => {
+    const res = await fetch(`${BASE}/admin/waitlist/00000000-0000-0000-0000-000000000000/approve`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${adminToken}` },
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it("approve requires auth", async () => {
+    const res = await fetch(`${BASE}/admin/waitlist/00000000-0000-0000-0000-000000000000/approve`, {
+      method: "POST",
+    });
+    expect(res.status).toBe(401);
   });
 });

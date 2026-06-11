@@ -58,9 +58,13 @@ export async function getAllSettings(
 }
 
 export async function getVerifiedUserCount(db: PostgresJsDatabase): Promise<number> {
+  // Waitlisted accounts don't occupy a cap slot — they're the queue FOR
+  // slots. They start counting the moment the flag clears (approval or
+  // auto-promotion).
   const rows = await db.execute(sql`
     SELECT count(*)::int AS total FROM claimnet.users
-    WHERE email_verified_at IS NOT NULL OR role = 'system'
+    WHERE (email_verified_at IS NOT NULL OR role = 'system')
+      AND waitlisted_at IS NULL
   `);
   return ((rows[0] as Record<string, unknown>)?.["total"] as number) ?? 0;
 }
