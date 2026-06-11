@@ -155,9 +155,10 @@ describe.skipIf(!BASE || !DEV_EMAIL || !DEV_PASSWORD)("admin signup queue", () =
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       ok: boolean;
-      data: Array<{ toEmail: string; kind: string; status: string; subject: string }>;
+      data: { emails: Array<{ toEmail: string; kind: string; status: string; subject: string }>; total: number };
     };
-    const row = body.data.find((r) => r.kind === "waitlist_spot_open");
+    expect(body.data.total).toBeGreaterThan(0);
+    const row = body.data.emails.find((r) => r.kind === "waitlist_spot_open");
     expect(row).toBeDefined();
     expect(row!.toEmail).toBe(waitlistEmail);
     expect(row!.status).toBe("sent");
@@ -187,8 +188,8 @@ describe.skipIf(!BASE || !DEV_EMAIL || !DEV_PASSWORD)("admin signup queue", () =
     const emails = await fetch(`${BASE}/admin/emails?q=${encodeURIComponent(waitlistEmail)}`, {
       headers: { Authorization: `Bearer ${adminToken}` },
     });
-    const emailsBody = (await emails.json()) as { data: Array<{ kind: string }> };
-    expect(emailsBody.data.some((r) => r.kind === "invitation")).toBe(false);
+    const emailsBody = (await emails.json()) as { data: { emails: Array<{ kind: string }> } };
+    expect(emailsBody.data.emails.some((r) => r.kind === "invitation")).toBe(false);
   });
 
   it("GET /auth/invite-status reports the admin invite as registerable (bypass)", async () => {

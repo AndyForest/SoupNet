@@ -718,22 +718,51 @@ admin.post("/waitlist/:id/notify", async (c) => {
   return c.json({ ok: true, data: { email: entry.email, notifiedAt: new Date().toISOString() } });
 });
 
-// GET /admin/emails — recent outgoing email log (light CRM + abuse/security
+// GET /admin/emails — the outgoing email log (light CRM + abuse/security
 // review surface). Metadata only — bodies are never stored. 60-day retention
 // enforced by the logged sender.
+// Query params:
+//   q?        — case-insensitive recipient search
+//   kind?     — exact kind match (verification, password_reset, …)
+//   status?   — "sent" | "failed"
+//   sortDir?  — asc | desc by created_at (default desc)
+//   limit?    — default 50, max 200
+//   offset?   — default 0
 admin.get("/emails", async (c) => {
+  const db = getDb();
   const q = c.req.query("q")?.trim() ?? "";
-  const limit = Math.min(parseInt(c.req.query("limit") ?? "100", 10) || 100, 500);
-  const where = q ? sql`WHERE to_email ILIKE ${"%" + q + "%"}` : sql``;
-  const rows = await getDb().execute(sql`
+  const kind = c.req.query("kind")?.trim() ?? "";
+  const status = c.req.query("status")?.trim() ?? "";
+  const sortDir = c.req.query("sortDir") === "asc" ? "asc" : "desc";
+  const limit = Math.min(parseInt(c.req.query("limit") ?? "50", 10) || 50, 200);
+  const offset = Math.max(parseInt(c.req.query("offset") ?? "0", 10) || 0, 0);
+
+  const where = [sql`1=1`];
+  if (q) where.push(sql`to_email ILIKE ${"%" + q + "%"}`);
+  if (kind) where.push(sql`kind = ${kind}`);
+  if (status) where.push(sql`status = ${status}`);
+  const whereClause = sql.join(where, sql` AND `);
+  const orderClause = sql.raw(`created_at ${sortDir.toUpperCase()}`);
+
+  const rows = await db.execute(sql`
     SELECT id, to_email AS "toEmail", kind, subject, status, error,
            created_at AS "createdAt"
     FROM claimnet.email_log
-    ${where}
-    ORDER BY created_at DESC
+    WHERE ${whereClause}
+    ORDER BY ${orderClause}
     LIMIT ${limit}
+    OFFSET ${offset}
   `);
-  return c.json({ ok: true, data: rows });
+
+  const countRows = await db.execute(sql`
+    SELECT COUNT(*)::int AS total FROM claimnet.email_log WHERE ${whereClause}
+  `);
+  const total = (countRows as unknown as Array<{ total: number }>)[0]?.total ?? 0;
+
+  return c.json({
+    ok: true,
+    data: { emails: rows, total, limit, offset, sortDir, queriedAt: new Date().toISOString() },
+  });
 });
 
 // GET /admin/invitations — list pending invitations

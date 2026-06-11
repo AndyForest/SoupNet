@@ -12,6 +12,8 @@ import {
   AdminTextInput,
   AdminSelect,
   AdminTable,
+  AdminPagination,
+  useAdminGate,
   type AdminColumn,
   type AdminStatus,
 } from "../components/admin/index.js";
@@ -66,18 +68,7 @@ function userStatus(u: AdminUser): { status: AdminStatus; label: string } {
 }
 
 export function AdminUsersPage() {
-  const meQuery = useQuery({
-    queryKey: ["auth", "me"],
-    queryFn: async () => {
-      const res = await authFetch("/auth/me");
-      const json = (await res.json()) as {
-        ok: boolean;
-        data?: { user: { id: string; email: string; role: string } };
-      };
-      if (!json.ok || !json.data) throw new Error("Failed");
-      return json.data.user;
-    },
-  });
+  const { gate, isAdmin } = useAdminGate();
 
   const [q, setQ] = useState("");
   const [verified, setVerified] = useState("");
@@ -105,7 +96,7 @@ export function AdminUsersPage() {
       if (!json.ok || !json.data) throw new Error(json.error ?? "Failed to load users");
       return json.data;
     },
-    enabled: meQuery.data?.role === "system",
+    enabled: isAdmin,
   });
 
   const statsQuery = useQuery({
@@ -116,23 +107,10 @@ export function AdminUsersPage() {
       if (!json.ok || !json.data) throw new Error(json.error ?? "Failed to load stats");
       return json.data;
     },
-    enabled: meQuery.data?.role === "system",
+    enabled: isAdmin,
   });
 
-  if (meQuery.isLoading) {
-    return <div style={{ padding: "var(--space-lg)" }}>Loading...</div>;
-  }
-
-  if (meQuery.data?.role !== "system") {
-    return (
-      <div style={{ padding: "var(--space-lg)", maxWidth: 600 }}>
-        <h1>Admin</h1>
-        <p style={{ color: "var(--color-on-surface-variant)", marginTop: "var(--space-md)" }}>
-          You don't have access to this page. System admin role required.
-        </p>
-      </div>
-    );
-  }
+  if (gate) return gate;
 
   const columns: AdminColumn<AdminUser>[] = [
     {
@@ -212,8 +190,6 @@ export function AdminUsersPage() {
 
   const total = usersQuery.data?.total ?? 0;
   const rows = usersQuery.data?.users ?? [];
-  const pageStart = total === 0 ? 0 : offset + 1;
-  const pageEnd = Math.min(offset + PAGE_SIZE, total);
 
   function resetOffset(fn: () => void) {
     setOffset(0);
@@ -331,58 +307,15 @@ export function AdminUsersPage() {
                 />
               }
             />
-            <div
-              style={{
-                marginTop: "var(--space-md)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                fontFamily: "'Space Grotesk', sans-serif",
-                fontSize: "0.75rem",
-                color: "var(--color-on-surface-variant)",
-              }}
-            >
-              <div>
-                {pageStart}–{pageEnd} of {total}
-              </div>
-              <div style={{ display: "flex", gap: "var(--space-xs)" }}>
-                <button
-                  type="button"
-                  disabled={offset === 0}
-                  onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
-                  style={paginationButtonStyle(offset === 0)}
-                >
-                  ‹ Prev
-                </button>
-                <button
-                  type="button"
-                  disabled={offset + PAGE_SIZE >= total}
-                  onClick={() => setOffset(offset + PAGE_SIZE)}
-                  style={paginationButtonStyle(offset + PAGE_SIZE >= total)}
-                >
-                  Next ›
-                </button>
-              </div>
-            </div>
+            <AdminPagination
+              total={total}
+              offset={offset}
+              pageSize={PAGE_SIZE}
+              onOffsetChange={setOffset}
+            />
           </>
         )}
       </div>
     </AdminLayout>
   );
-}
-
-function paginationButtonStyle(disabled: boolean): React.CSSProperties {
-  return {
-    background: "var(--color-surface-container-low)",
-    color: disabled ? "var(--color-on-surface-variant)" : "var(--color-on-surface)",
-    border: "none",
-    padding: "0.4rem 0.75rem",
-    fontFamily: "inherit",
-    fontSize: "0.75rem",
-    letterSpacing: "0.04em",
-    textTransform: "uppercase",
-    cursor: disabled ? "not-allowed" : "pointer",
-    borderRadius: 0,
-    opacity: disabled ? 0.5 : 1,
-  };
 }

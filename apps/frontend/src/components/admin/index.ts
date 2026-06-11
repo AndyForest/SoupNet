@@ -10,3 +10,5 @@ export {
   AdminSelect,
 } from "./AdminFilterBar.js";
 export { AdminTable, type AdminColumn } from "./AdminTable.js";
+export { AdminPagination } from "./AdminPagination.js";
+export { useAdminGate } from "./useAdminGate.js";

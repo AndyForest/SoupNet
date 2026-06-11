@@ -5,7 +5,7 @@
  */
 
 interface IconProps {
-  name: "home" | "search" | "key" | "users" | "settings" | "chevron-right" | "copy" | "plus" | "x" | "clock" | "arrow-left" | "clipboard-check" | "external-link" | "upload" | "download" | "map" | "book-open";
+  name: "home" | "search" | "key" | "users" | "settings" | "chevron-right" | "copy" | "plus" | "x" | "clock" | "arrow-left" | "clipboard-check" | "external-link" | "upload" | "download" | "map" | "book-open" | "mail";
   size?: number;
   className?: string;
 }
@@ -35,6 +35,10 @@ const paths: Record<IconProps["name"], string | string[]> = {
   "book-open": [
     "M3 4h5c1.1 0 2 .9 2 2v10c0-1.1-.9-2-2-2H3V4z",
     "M17 4h-5c-1.1 0-2 .9-2 2v10c0-1.1.9-2 2-2h5V4z",
+  ],
+  mail: [
+    "M3 5h14v10H3V5z",
+    "M3 5.5l7 5 7-5",
   ],
 };
 

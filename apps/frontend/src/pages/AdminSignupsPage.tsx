@@ -7,6 +7,7 @@ import {
   AdminMetricCard,
   AdminTable,
   AdminEmptyState,
+  useAdminGate,
   type AdminColumn,
 } from "../components/admin/index.js";
 
@@ -30,16 +31,6 @@ interface QueueRow {
   createdAt: string;
   registered: boolean;
   invitePending: boolean;
-}
-
-interface EmailLogRow {
-  id: string;
-  toEmail: string;
-  kind: string;
-  subject: string;
-  status: string;
-  error: string | null;
-  createdAt: string;
 }
 
 function formatDate(iso: string): string {
@@ -73,17 +64,7 @@ export function AdminSignupsPage() {
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
-  const meQuery = useQuery({
-    queryKey: ["auth", "me"],
-    queryFn: async () => {
-      const res = await authFetch("/auth/me");
-      const json = (await res.json()) as { ok: boolean; data?: { user: { id: string; email: string; role: string } } };
-      if (!json.ok || !json.data) throw new Error("Failed");
-      return json.data.user;
-    },
-  });
-
-  const isAdmin = meQuery.data?.role === "system";
+  const { gate, isAdmin } = useAdminGate();
 
   const settingsQuery = useQuery({
     queryKey: ["admin", "settings"],
@@ -102,17 +83,6 @@ export function AdminSignupsPage() {
       const res = await authFetch("/admin/waitlist");
       const json = (await res.json()) as { ok: boolean; data?: QueueRow[] };
       if (!json.ok || !json.data) throw new Error("Failed to load signup queue");
-      return json.data;
-    },
-    enabled: isAdmin,
-  });
-
-  const emailsQuery = useQuery({
-    queryKey: ["admin", "emails"],
-    queryFn: async () => {
-      const res = await authFetch("/admin/emails?limit=50");
-      const json = (await res.json()) as { ok: boolean; data?: EmailLogRow[] };
-      if (!json.ok || !json.data) throw new Error("Failed to load email log");
       return json.data;
     },
     enabled: isAdmin,
@@ -177,20 +147,7 @@ export function AdminSignupsPage() {
     },
   });
 
-  if (meQuery.isLoading) {
-    return <div style={{ padding: "var(--space-lg)" }}>Loading...</div>;
-  }
-
-  if (!isAdmin) {
-    return (
-      <div style={{ padding: "var(--space-lg)", maxWidth: 600 }}>
-        <h1>Admin</h1>
-        <p style={{ color: "var(--color-on-surface-variant)", marginTop: "var(--space-md)" }}>
-          You don't have access to this page. System admin role required.
-        </p>
-      </div>
-    );
-  }
+  if (gate) return gate;
 
   const settings = settingsQuery.data;
   const queue = queueQuery.data ?? [];
@@ -419,40 +376,6 @@ export function AdminSignupsPage() {
         />
       </section>
 
-      <section style={{ padding: "0 var(--space-lg) var(--space-xl)" }}>
-        <h2 style={{ fontSize: "1rem", fontWeight: 600, marginBottom: "var(--space-sm)" }}>Recent emails</h2>
-        <p style={{ color: "var(--color-on-surface-variant)", fontSize: "0.875rem", marginBottom: "var(--space-md)", maxWidth: 640 }}>
-          Every outgoing email, metadata only (no bodies). Kept 60 days, then purged.
-        </p>
-        <AdminTable
-          rows={emailsQuery.data ?? []}
-          columns={[
-            { key: "createdAt", header: "Sent", render: (row: EmailLogRow) => new Date(row.createdAt).toLocaleString() },
-            { key: "toEmail", header: "To", render: (row: EmailLogRow) => row.toEmail },
-            { key: "kind", header: "Kind", render: (row: EmailLogRow) => row.kind },
-            { key: "subject", header: "Subject", render: (row: EmailLogRow) => row.subject },
-            {
-              key: "status",
-              header: "Status",
-              render: (row: EmailLogRow) => (
-                <span
-                  title={row.error ?? ""}
-                  style={{ color: row.status === "sent" ? "var(--color-success)" : "var(--color-error)", fontWeight: 500 }}
-                >
-                  {row.status}
-                </span>
-              ),
-            },
-          ]}
-          rowKey={(row) => row.id}
-          empty={
-            <AdminEmptyState
-              title="No emails logged yet"
-              body="Verification, password reset, and waitlist notification emails will appear here as they're sent."
-            />
-          }
-        />
-      </section>
     </AdminLayout>
   );
 }

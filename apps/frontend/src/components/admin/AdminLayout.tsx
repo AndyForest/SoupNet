@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { Link, useLocation } from "@tanstack/react-router";
 import { Icon } from "../Icon.js";
 
-type NavIcon = "home" | "users" | "clock" | "settings";
+type NavIcon = "home" | "users" | "clock" | "settings" | "mail";
 
 interface NavItem {
   label: string;
@@ -17,6 +17,7 @@ const NAV: NavItem[] = [
   { label: "Overview", href: "/admin", icon: "home" },
   { label: "Users", href: "/admin/users", icon: "users" },
   { label: "Signups", href: "/admin/signups", icon: "users" },
+  { label: "Emails", href: "/admin/emails", icon: "mail" },
   { label: "Queues", href: "/admin/queues", icon: "clock" },
   { label: "Embeddings", href: "/admin/workers/embeddings", icon: "settings" },
 ];

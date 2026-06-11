@@ -32,6 +32,7 @@ import { AdminQueuesPage } from "./pages/AdminQueuesPage.js";
 import { AdminEmbeddingsPage } from "./pages/AdminEmbeddingsPage.js";
 import { AdminUsersPage } from "./pages/AdminUsersPage.js";
 import { AdminSignupsPage } from "./pages/AdminSignupsPage.js";
+import { AdminEmailsPage } from "./pages/AdminEmailsPage.js";
 import { isLoggedIn, getEmailVerified } from "./auth.js";
 
 const rootRoute = createRootRoute({
@@ -315,6 +316,13 @@ const adminSignupsRoute = createRoute({
   component: AdminSignupsPage,
 });
 
+const adminEmailsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/admin/emails",
+  beforeLoad: requireAuth,
+  component: AdminEmailsPage,
+});
+
 export const routeTree = rootRoute.addChildren([
   indexRoute,
   infoRoute.addChildren([
@@ -355,6 +363,7 @@ export const routeTree = rootRoute.addChildren([
   adminEmbeddingsRoute,
   adminUsersRoute,
   adminSignupsRoute,
+  adminEmailsRoute,
 ]);
 
 export type Router = ReturnType<typeof createRouter<typeof routeTree>>;
