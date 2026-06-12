@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Hono } from "hono";
-import { rateLimit, perKeyRateLimit } from "./rate-limit";
+import { getClientIp, rateLimit, perKeyRateLimit } from "./rate-limit";
 
 // These tests exercise the rate limiter directly — no running server needed.
 // Integration tests run with DISABLE_RATE_LIMIT=true; these verify the actual limiting logic.
@@ -149,6 +149,48 @@ describe("rate-limit middleware", () => {
     expect(r3.status).toBe(429);
 
     vi.useRealTimers();
+  });
+
+  // F36 (security-audit-2026-06-11): the ALB APPENDS the observed client IP
+  // to any inbound X-Forwarded-For, so the trustworthy entry is the LAST one,
+  // not the first. A client who forges a fresh leading XFF entry per request
+  // must NOT get a fresh rate-limit bucket.
+  it("F36: spoofed leading XFF entries do not reset the per-IP bucket", async () => {
+    const app = createApp(1, 60_000);
+
+    // Same real client (ALB-appended last entry), different forged prefixes.
+    const r1 = await app.request("/test", {
+      headers: { "x-forwarded-for": "1.2.3.4, 203.0.113.5" },
+    });
+    const r2 = await app.request("/test", {
+      headers: { "x-forwarded-for": "99.99.99.99, 203.0.113.5" },
+    });
+
+    expect(r1.status).toBe(200);
+    expect(r2.status).toBe(429); // forged prefix changed, bucket did not
+  });
+
+  it("F36: getClientIp takes the rightmost XFF entry (one trusted hop)", () => {
+    const mk = (xff: string) =>
+      ({ req: { header: (n: string) => (n === "x-forwarded-for" ? xff : undefined) } }) as never;
+    expect(getClientIp(mk("203.0.113.5"))).toBe("203.0.113.5");
+    expect(getClientIp(mk("evil, 203.0.113.5"))).toBe("203.0.113.5");
+    expect(getClientIp(mk("a, b, 203.0.113.5"))).toBe("203.0.113.5");
+    expect(getClientIp(mk("203.0.113.5,"))).toBe("203.0.113.5"); // trailing comma junk
+  });
+
+  it("F36: TRUSTED_PROXY_HOPS=2 takes the second-from-right entry", () => {
+    process.env["TRUSTED_PROXY_HOPS"] = "2";
+    try {
+      const mk = (xff: string) =>
+        ({ req: { header: (n: string) => (n === "x-forwarded-for" ? xff : undefined) } }) as never;
+      // client -> CloudFront -> ALB: [forged..., clientIP, cloudfrontIP]
+      expect(getClientIp(mk("evil, 203.0.113.5, 130.176.0.1"))).toBe("203.0.113.5");
+      // Fewer entries than hops: clamp to the first rather than crash.
+      expect(getClientIp(mk("203.0.113.5"))).toBe("203.0.113.5");
+    } finally {
+      delete process.env["TRUSTED_PROXY_HOPS"];
+    }
   });
 
   it("supports custom key function", async () => {

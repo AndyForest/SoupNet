@@ -20,7 +20,7 @@ import { validateKey } from "../services/api-key.service";
 import { createUpload } from "../services/upload.service";
 import { FileStoreError } from "../lib/file-store";
 import { ALLOWED_MIME_TYPES, EXT_TO_MIME, MAX_UPLOAD_BYTES } from "@soupnet/domain";
-import { rateLimit } from "../middleware/rate-limit";
+import { getClientIp, rateLimit } from "../middleware/rate-limit";
 
 const uploadsRouter = new Hono();
 
@@ -32,7 +32,9 @@ const uploadsRouter = new Hono();
 const uploadRateLimit = rateLimit({
   max: 100,
   windowMs: 60 * 60 * 1000,
-  keyFn: (c) => extractBearerToken(c) ?? `ip:${c.req.header("x-forwarded-for") ?? "unknown"}`,
+  // F36: anonymous fallback uses the trusted-hop client IP, not the raw
+  // (spoofable) X-Forwarded-For header.
+  keyFn: (c) => extractBearerToken(c) ?? `ip:${getClientIp(c)}`,
 });
 
 function extractBearerToken(c: Context): string | null {

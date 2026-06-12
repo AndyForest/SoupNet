@@ -49,12 +49,31 @@ function createStore(windowMs: number) {
   return store;
 }
 
-function getClientIp(c: Context): string {
-  return (
-    c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ??
-    c.req.header("x-real-ip") ??
-    "unknown"
-  );
+// F36 (security-audit-2026-06-11): the ALB *appends* the IP it observed to
+// any inbound X-Forwarded-For and does not strip client-supplied entries, so
+// the FIRST entry is attacker-controlled. Trust only the entry at a fixed hop
+// distance from the right: with one trusted proxy (our ALB), that's the last
+// entry. If the topology gains another trusted hop (e.g. CloudFront in front
+// of the ALB), bump TRUSTED_PROXY_HOPS to 2 — never count from the left.
+const TRUSTED_PROXY_HOPS_DEFAULT = 1;
+
+export function getClientIp(c: Context): string {
+  const xff = c.req.header("x-forwarded-for");
+  if (xff) {
+    const entries = xff
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (entries.length > 0) {
+      const hops = Number(process.env["TRUSTED_PROXY_HOPS"] ?? TRUSTED_PROXY_HOPS_DEFAULT);
+      const idx = Math.max(0, entries.length - Math.max(1, hops));
+      return entries[idx]!;
+    }
+  }
+  // No XFF (local dev / direct connection). x-real-ip is never set by the
+  // ALB, so in production the XFF branch above always wins; this fallback
+  // only matters off-ALB where spoofing isn't load-bearing.
+  return c.req.header("x-real-ip") ?? "unknown";
 }
 
 /**
