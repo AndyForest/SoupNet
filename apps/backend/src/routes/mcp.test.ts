@@ -297,20 +297,38 @@ describe.skipIf(!BASE)("/mcp stateless behavior", () => {
   // which can break the next request on the same keep-alive socket (see the
   // F28 test in check.test.ts for the full rationale).
   it("F41: POST /mcp rejects bodies over 28 MiB at the framework layer", async () => {
-    const res = await fetch(`${BASE}/mcp`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: ACCEPT_BOTH,
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        method: "tools/call",
-        params: { name: "check_recipe", arguments: { file_base64: "x".repeat(29 * 1024 * 1024) } },
-        id: 1,
-      }),
+    // Raw node:http rather than fetch: undici stalls trying to finish
+    // writing a ~29 MiB body when the server 413s without reading it (the
+    // server-side behavior is correct — a 29 MiB JSON POST gets 413 in ~3ms
+    // via curl). bodyLimit rejects on the declared Content-Length before
+    // reading the body, so declaring the oversized length and writing a
+    // single byte exercises the framework-layer rejection without shipping
+    // 29 MiB through a socket the server isn't draining.
+    const { request } = await import("node:http");
+    const status = await new Promise<number>((resolve, reject) => {
+      const u = new URL(`${BASE}/mcp`);
+      const req = request(
+        {
+          hostname: u.hostname,
+          port: u.port,
+          path: u.pathname,
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: ACCEPT_BOTH,
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Length": String(29 * 1024 * 1024),
+          },
+        },
+        (res) => {
+          resolve(res.statusCode ?? 0);
+          res.resume();
+          req.destroy();
+        },
+      );
+      req.on("error", reject);
+      req.write("{"); // start the body; the 413 must come from the declared length
     });
-    expect(res.status).toBe(413);
+    expect(status).toBe(413);
   }, 15_000);
 });
