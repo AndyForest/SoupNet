@@ -199,6 +199,48 @@ describe.skipIf(!BASE)("OAuth 2.1 end-to-end flow", () => {
     expect(oldRefreshRes.status).toBe(400);
   });
 
+  // F38 (security-audit-2026-06-11): refresh rotation consumes the old row
+  // via a single atomic UPDATE...RETURNING, so N concurrent refreshes with
+  // the same refresh token must yield exactly ONE new token family — not N.
+  it("F38: concurrent refreshes with the same token issue exactly one family", async () => {
+    const pkce = generatePkcePair();
+    const grantBody = await grant({ codeChallenge: pkce.challenge });
+    const code = extractCode(grantBody.redirect_url!);
+
+    const tokenRes = await postForm("/oauth/token", {
+      grant_type: "authorization_code",
+      code,
+      code_verifier: pkce.verifier,
+      client_id: client.client_id,
+      client_secret: client.client_secret,
+      redirect_uri: REDIRECT_URI,
+    });
+    expect(tokenRes.status).toBe(200);
+    const tokenBody = (await tokenRes.json()) as TokenResponse;
+    expect(tokenBody.refresh_token).toBeTruthy();
+
+    const refresh = () =>
+      postForm("/oauth/token", {
+        grant_type: "refresh_token",
+        refresh_token: tokenBody.refresh_token!,
+        client_id: client.client_id,
+        client_secret: client.client_secret,
+      });
+
+    const results = await Promise.all([refresh(), refresh(), refresh(), refresh(), refresh()]);
+    const statuses = results.map((r) => r.status);
+    expect(statuses.filter((s) => s === 200)).toHaveLength(1);
+    expect(statuses.filter((s) => s === 400)).toHaveLength(4);
+
+    // The single winner's tokens are live.
+    const winner = results[statuses.indexOf(200)]!;
+    const winnerBody = (await winner.json()) as TokenResponse;
+    const liveRes = await fetch(`${BASE}/briefing`, {
+      headers: { Authorization: `Bearer ${winnerBody.access_token}` },
+    });
+    expect(liveRes.status).toBe(200);
+  });
+
   it("rejects wrong code_verifier (PKCE)", async () => {
     const pkce = generatePkcePair();
     const wrongVerifier = generatePkcePair().verifier;

@@ -346,8 +346,12 @@ interface MintTokenBundleInput {
   scopeDefaultWriteGroupId: string;
 }
 
+/** The subset of the db interface mint needs — lets it run inside a
+ *  transaction (F38) as well as on the root connection. */
+type SqlExecutor = Pick<PostgresJsDatabase, "execute">;
+
 export async function mintOAuthTokenBundle(
-  db: PostgresJsDatabase,
+  db: SqlExecutor,
   input: MintTokenBundleInput,
 ): Promise<OAuthTokenBundle> {
   const accessToken = `cn_s_${randomBase62(32)}`;
@@ -406,52 +410,57 @@ export class RefreshTokenError extends Error {
 }
 
 /**
- * Rotate a refresh token. Atomically locates the api_keys row by its
- * refresh_token_hash, verifies it belongs to the requesting client and hasn't
- * expired, mints a NEW api_keys row with new access + refresh tokens, and
- * revokes the old row (expires_at = NOW). Old access token stops validating
- * immediately, old refresh token is gone with the old row.
+ * Rotate a refresh token. Revocation IS the gate (F38, security-audit-
+ * 2026-06-11): a single atomic UPDATE...RETURNING consumes the old row by
+ * its refresh_token_hash, mirroring the auth-code path's TOCTOU defense —
+ * two concurrent refreshes with the same token can no longer both pass a
+ * SELECT check and mint two independent token families. The rotation runs
+ * in a transaction so a mint failure rolls the revocation back and the
+ * caller's refresh token survives (the availability property the old
+ * mint-first ordering bought, without the race).
  */
 export async function refreshOAuthTokenBundle(
   db: PostgresJsDatabase,
   params: { refreshToken: string; clientId: string },
 ): Promise<OAuthTokenBundle> {
   const refreshTokenHash = hashOpaque(params.refreshToken);
-  const rows = await db.execute(sql`
-    SELECT id, user_id, oauth_client_id, read_group_ids, write_group_ids,
-           default_write_group_id, refresh_token_expires_at
-    FROM claimnet.api_keys
-    WHERE refresh_token_hash = ${refreshTokenHash}
-      AND key_type = 'oauth'
-      AND expires_at > NOW()
-    LIMIT 1
-  `);
-  const row = (rows as unknown as Array<RefreshableKeyRow & { id: string }>)[0];
-  if (!row) throw new RefreshTokenError("invalid_grant", "refresh token is invalid or revoked");
-  if (row.oauth_client_id !== params.clientId) {
-    throw new RefreshTokenError("invalid_grant", "client_id does not match the refresh token");
-  }
-  if (new Date(row.refresh_token_expires_at).getTime() <= Date.now()) {
-    throw new RefreshTokenError("invalid_grant", "refresh token has expired");
-  }
 
-  // Mint the new bundle first so the old row stays valid until we know the
-  // new row landed cleanly.
-  const newBundle = await mintOAuthTokenBundle(db, {
-    userId: row.user_id,
-    clientId: row.oauth_client_id,
-    scopeReadGroupIds: row.read_group_ids,
-    scopeWriteGroupIds: row.write_group_ids,
-    scopeDefaultWriteGroupId: row.default_write_group_id,
+  return db.transaction(async (tx) => {
+    // Atomically consume: expires_at=NOW kills both the access token
+    // (validation checks expires_at > NOW) and any concurrent refresh
+    // (this same WHERE clause). Under READ COMMITTED the second concurrent
+    // UPDATE blocks on the row lock, re-evaluates the predicate after the
+    // first commits, matches zero rows, and gets invalid_grant.
+    const rows = await tx.execute(sql`
+      UPDATE claimnet.api_keys
+      SET expires_at = NOW()
+      WHERE refresh_token_hash = ${refreshTokenHash}
+        AND key_type = 'oauth'
+        AND expires_at > NOW()
+      RETURNING id, user_id, oauth_client_id, read_group_ids, write_group_ids,
+                default_write_group_id, refresh_token_expires_at
+    `);
+    const row = (rows as unknown as Array<RefreshableKeyRow & { id: string }>)[0];
+    if (!row) throw new RefreshTokenError("invalid_grant", "refresh token is invalid or revoked");
+
+    // Throwing past this point rolls the consumption back — a mismatched
+    // client_id or an expired refresh window must not burn the legitimate
+    // client's token (same observable behavior as before F38).
+    if (row.oauth_client_id !== params.clientId) {
+      throw new RefreshTokenError("invalid_grant", "client_id does not match the refresh token");
+    }
+    if (new Date(row.refresh_token_expires_at).getTime() <= Date.now()) {
+      throw new RefreshTokenError("invalid_grant", "refresh token has expired");
+    }
+
+    return mintOAuthTokenBundle(tx, {
+      userId: row.user_id,
+      clientId: row.oauth_client_id,
+      scopeReadGroupIds: row.read_group_ids,
+      scopeWriteGroupIds: row.write_group_ids,
+      scopeDefaultWriteGroupId: row.default_write_group_id,
+    });
   });
-
-  // Revoke the old row. expires_at=NOW kills both the access token (validation
-  // checks expires_at > NOW) and the refresh path (same check above).
-  await db.execute(sql`
-    UPDATE claimnet.api_keys SET expires_at = NOW() WHERE id = ${row.id}::uuid
-  `);
-
-  return newBundle;
 }
 
 function scopeString(writeIds: string[], readIds: string[]): string {
