@@ -178,9 +178,80 @@ export async function verifyClientCredentials(
   const row = (rows as unknown as Array<{ client_secret_hash: string }>)[0];
   if (!row) return false;
   const provided = hashOpaque(clientSecret);
-  return crypto.timingSafeEqual(
+  const valid = crypto.timingSafeEqual(
     Buffer.from(provided, "hex"),
     Buffer.from(row.client_secret_hash, "hex"),
+  );
+  if (valid) {
+    // Fire-and-forget last_used_at stamp (mirrors validateKey's pattern in
+    // api-key.service.ts). The F39 sweep uses this to tell DCR spam (never
+    // authenticated) from dormant-but-real clients, which are kept.
+    void db
+      .execute(sql`
+        UPDATE claimnet.oauth_clients SET last_used_at = NOW() WHERE client_id = ${clientId}
+      `)
+      .catch((err) => console.error("[oauth] failed to stamp client last_used_at:", err));
+  }
+  return valid;
+}
+
+// ── Opportunistic cleanup (F39) ───────────────────────────────────────────────
+//
+// Every grant inserts an oauth_authorization_codes row and every token
+// issuance / refresh rotation inserts an api_keys row; anonymous DCR inserts
+// oauth_clients rows. Nothing deleted any of them. Following the email-log
+// precedent (email.service.ts): purge opportunistically from the hot path —
+// no scheduler to maintain, and the tables stay bounded as long as the OAuth
+// surface is being used at all. Throttled to once per interval per container.
+//
+// Retention reasoning:
+// - codes: 5-minute TTL; anything past expiry + 1 day is dead weight (consumed
+//   codes expire on the same clock, so one predicate covers both).
+// - oauth api_keys: expires_at gates BOTH bearer validation and the refresh
+//   path (see refreshOAuthTokenBundle's WHERE), so 30 days past expires_at the
+//   row is unusable for anything. audit_log.api_key_id has no FK — deleting
+//   key rows never deletes audit history (which the F29 limiter reads).
+// - clients: only never-authenticated registrations (last_used_at IS NULL)
+//   with nothing minted are swept. Dormant-but-real clients are kept so a
+//   long-idle connector doesn't silently need re-registration.
+
+export const OAUTH_CODE_SWEEP_DAYS = 1;
+export const OAUTH_KEY_SWEEP_DAYS = 30;
+export const OAUTH_CLIENT_SWEEP_DAYS = 30;
+const OAUTH_CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6h
+let lastOAuthCleanupAt = 0;
+
+export async function cleanupOAuthArtifacts(db: SqlExecutor): Promise<void> {
+  await db.execute(sql`
+    DELETE FROM claimnet.oauth_authorization_codes
+    WHERE expires_at < NOW() - make_interval(days => ${OAUTH_CODE_SWEEP_DAYS})
+  `);
+  await db.execute(sql`
+    DELETE FROM claimnet.api_keys
+    WHERE key_type = 'oauth'
+      AND expires_at < NOW() - make_interval(days => ${OAUTH_KEY_SWEEP_DAYS})
+  `);
+  await db.execute(sql`
+    DELETE FROM claimnet.oauth_clients c
+    WHERE c.created_at < NOW() - make_interval(days => ${OAUTH_CLIENT_SWEEP_DAYS})
+      AND c.last_used_at IS NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM claimnet.api_keys k WHERE k.oauth_client_id = c.client_id
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM claimnet.oauth_authorization_codes ac WHERE ac.client_id = c.client_id
+      )
+  `);
+}
+
+/** Throttled fire-and-forget wrapper, called from the /oauth/token hot path.
+ *  Cleanup failure must never block token issuance. */
+export function maybeCleanupOAuthArtifacts(db: SqlExecutor): void {
+  const now = Date.now();
+  if (now - lastOAuthCleanupAt < OAUTH_CLEANUP_INTERVAL_MS) return;
+  lastOAuthCleanupAt = now;
+  void cleanupOAuthArtifacts(db).catch((err) =>
+    console.error("[oauth] artifact cleanup failed:", err),
   );
 }
 

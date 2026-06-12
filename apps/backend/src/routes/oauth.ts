@@ -24,6 +24,7 @@ import {
   RefreshTokenError,
   getClientPublic,
   verifyClientCredentials,
+  maybeCleanupOAuthArtifacts,
   ACCESS_TOKEN_TTL_SECONDS,
 } from "../services/oauth.service";
 import { rateLimit } from "../middleware/rate-limit";
@@ -83,6 +84,13 @@ oauthRoutes.use("/*", cors({ origin: "*", credentials: false }));
 // DCR rate limit: registrations should be rare per-IP. Tight bound discourages
 // spammy registration of throwaway clients.
 const registerRateLimit = rateLimit({ max: 30, windowMs: 60 * 60 * 1000 });
+
+// F39 (security-audit-2026-06-11): /token and /authorize/grant were the only
+// unauthenticated-or-cheap OAuth surfaces without a per-IP bound. Brute force
+// is infeasible (~190-bit tokens) — these bound row-insertion and DB work per
+// IP. A legit client refreshes about once an hour, so 120/h is generous.
+const tokenRateLimit = rateLimit({ max: 120, windowMs: 60 * 60 * 1000 });
+const grantRateLimit = rateLimit({ max: 60, windowMs: 60 * 60 * 1000 });
 
 // POST /oauth/register — Dynamic Client Registration (RFC 7591).
 // Accepts a minimal subset: redirect_uris (required), client_name (optional).
@@ -152,6 +160,7 @@ oauthRoutes.get("/client-info", async (c) => {
 // the full redirect URL with code + state so the SPA can navigate to it.
 oauthRoutes.post(
   "/authorize/grant",
+  grantRateLimit,
   requireAuth,
   requireVerifiedEmail,
   async (c) => {
@@ -233,7 +242,11 @@ oauthRoutes.post(
 // POST /oauth/token
 // Public, client-authed via client_secret_post (or client_secret_basic).
 // Supports grant_type=authorization_code and grant_type=refresh_token.
-oauthRoutes.post("/token", async (c) => {
+oauthRoutes.post("/token", tokenRateLimit, async (c) => {
+  // F39: opportunistic sweep of expired codes/keys/never-used clients —
+  // throttled inside, fire-and-forget, never blocks token issuance.
+  maybeCleanupOAuthArtifacts(getDb());
+
   // Accept form-encoded (the OAuth norm) or JSON.
   const contentType = c.req.header("content-type") ?? "";
   let body: Record<string, string>;
