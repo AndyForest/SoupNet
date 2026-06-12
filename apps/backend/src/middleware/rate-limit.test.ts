@@ -326,6 +326,30 @@ describe("perKeyRateLimit middleware (F29)", () => {
     expect(counts.countCalls).toBe(0);
   });
 
+  // F43 (security-audit-2026-06-11): unresolvable credentials get their own
+  // throttle. A garbage-Bearer flood previously fell through to the handler
+  // (only the per-IP limiter applied), costing a DB lookup per request.
+  it("F43: throttles a flood of the same unresolvable credential", async () => {
+    const app = new Hono();
+    app.use("/*", perKeyRateLimit({
+      keyExtractor: () => "cn_d_garbage",
+      invalidKeyMax: 3,
+      deps: {
+        resolveApiKeyId: async () => null,
+        countRecipeChecksSince: async () => 0,
+      },
+    }));
+    app.get("/test", (c) => c.json({ ok: true }));
+
+    const statuses: number[] = [];
+    for (let i = 0; i < 5; i++) {
+      statuses.push((await app.request("/test")).status);
+    }
+    // First 3 fall through to the handler (consistent 401-from-handler path
+    // in production; 200 here), the rest are throttled.
+    expect(statuses).toEqual([200, 200, 200, 429, 429]);
+  });
+
   it("respects custom hourlyMax / dailyMax", async () => {
     const { app } = createApp({
       hourlyMax: 5,

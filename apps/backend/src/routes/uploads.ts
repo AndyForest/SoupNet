@@ -21,7 +21,7 @@ import { validateKey } from "../services/api-key.service";
 import { createUpload } from "../services/upload.service";
 import { FileStoreError } from "../lib/file-store";
 import { ALLOWED_MIME_TYPES, EXT_TO_MIME, MAX_UPLOAD_BYTES } from "@soupnet/domain";
-import { getClientIp, rateLimit } from "../middleware/rate-limit";
+import { getClientIp, hashApiKey, rateLimit } from "../middleware/rate-limit";
 
 const uploadsRouter = new Hono();
 
@@ -34,8 +34,13 @@ const uploadRateLimit = rateLimit({
   max: 100,
   windowMs: 60 * 60 * 1000,
   // F36: anonymous fallback uses the trusted-hop client IP, not the raw
-  // (spoofable) X-Forwarded-For header.
-  keyFn: (c) => extractBearerToken(c) ?? `ip:${getClientIp(c)}`,
+  // (spoofable) X-Forwarded-For header. F43: bucket by credential HASH so
+  // raw API keys don't sit in memory as map keys. (Durable audit-log-backed
+  // counting for uploads is a backlog item — see the infra repo.)
+  keyFn: (c) => {
+    const token = extractBearerToken(c);
+    return token ? `key:${hashApiKey(token)}` : `ip:${getClientIp(c)}`;
+  },
 });
 
 function extractBearerToken(c: Context): string | null {

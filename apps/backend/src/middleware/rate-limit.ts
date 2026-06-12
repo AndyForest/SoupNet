@@ -132,7 +132,10 @@ export function rateLimit(opts: RateLimitOptions) {
 export const PER_KEY_HOURLY_DEFAULT = 200;
 export const PER_KEY_DAILY_DEFAULT = 1000;
 
-function hashApiKey(rawKey: string): string {
+/** SHA-256 a credential before using it as a limiter map key — raw keys
+ *  should not sit in memory as map keys. Exported for keyFns that bucket
+ *  by Bearer token (uploads, the /mcp per-bearer backstop). */
+export function hashApiKey(rawKey: string): string {
   return crypto.createHash("sha256").update(rawKey).digest("hex");
 }
 
@@ -183,16 +186,30 @@ interface PerKeyRateLimitOptions {
   hourlyMax?: number;
   /** Daily cap (default 1000, env override PER_KEY_RATE_LIMIT_DAILY). */
   dailyMax?: number;
+  /** Cap for UNRESOLVABLE credentials per window (F43; default 30/15min). */
+  invalidKeyMax?: number;
   /** Test seam — defaults to live-DB queries. */
   deps?: PerKeyDeps;
 }
+
+// F43 (security-audit-2026-06-11): unknown/expired keys used to fall through
+// with no throttle at all — a garbage-Bearer flood hit only the per-IP
+// limiter before the 401, and every flood request cost a DB lookup in
+// resolveApiKeyId. Unresolvable credentials now get their own small
+// sliding-window bucket, keyed by the credential hash. Entries are bounded
+// by the per-IP limiter upstream (post-F36 an attacker can't mint unlimited
+// request budget from one IP) and purged by the store's cleanup tick.
+const INVALID_KEY_WINDOW_MS = 15 * 60 * 1000;
+const INVALID_KEY_MAX_DEFAULT = 30;
 
 export function perKeyRateLimit(opts: PerKeyRateLimitOptions) {
   const hourlyMax = opts.hourlyMax
     ?? Number(process.env["PER_KEY_RATE_LIMIT_HOURLY"] ?? PER_KEY_HOURLY_DEFAULT);
   const dailyMax = opts.dailyMax
     ?? Number(process.env["PER_KEY_RATE_LIMIT_DAILY"] ?? PER_KEY_DAILY_DEFAULT);
+  const invalidKeyMax = opts.invalidKeyMax ?? INVALID_KEY_MAX_DEFAULT;
   const deps = opts.deps ?? defaultPerKeyDeps();
+  const invalidKeyStore = createStore(INVALID_KEY_WINDOW_MS);
 
   return async (c: Context, next: Next) => {
     if (process.env["DISABLE_RATE_LIMIT"] === "true") {
@@ -209,8 +226,23 @@ export function perKeyRateLimit(opts: PerKeyRateLimitOptions) {
 
     const apiKeyId = await deps.resolveApiKeyId(rawKey);
     if (!apiKeyId) {
-      // Unknown / expired key — same reasoning as above. Don't 429 a key
-      // we can't even identify; the handler will 401.
+      // Unknown / expired key (F43): throttle per credential before letting
+      // the handler 401, but stay below the cap so the first attempts still
+      // get the consistent 401 from the handler.
+      const now = Date.now();
+      const hashed = hashApiKey(rawKey);
+      let entry = invalidKeyStore.get(hashed);
+      if (!entry) {
+        entry = { timestamps: [] };
+        invalidKeyStore.set(hashed, entry);
+      }
+      entry.timestamps = entry.timestamps.filter((t) => now - t < INVALID_KEY_WINDOW_MS);
+      if (entry.timestamps.length >= invalidKeyMax) {
+        const retryAfter = Math.ceil((entry.timestamps[0]! + INVALID_KEY_WINDOW_MS - now) / 1000);
+        c.header("Retry-After", String(retryAfter));
+        return c.json({ ok: false, error: "Too many requests" }, 429);
+      }
+      entry.timestamps.push(now);
       return next();
     }
 

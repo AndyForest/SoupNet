@@ -26,7 +26,7 @@ import {
   buildCheckRecipeToolDescription,
 } from "@soupnet/domain";
 import { composeBriefing, composeCorpusContext } from "../services/briefing";
-import { rateLimit, perKeyRateLimit, extractMcpBearerKey } from "../middleware/rate-limit";
+import { rateLimit, perKeyRateLimit, extractMcpBearerKey, getClientIp, hashApiKey } from "../middleware/rate-limit";
 import type { SubmitAndSearchResult, ImageAttachment } from "../services/trace.service";
 import { submitAndSearch } from "../services/trace.service";
 import type { RegionMeta } from "../lib/image-roi";
@@ -62,6 +62,22 @@ function toolErrorText(err: unknown, tool: string): string {
 //   - per-key: 200/hour, 1000/day (queried from audit_log; F29).
 const mcpRateLimit = rateLimit({ max: 1000, windowMs: 60 * 60 * 1000 });
 const mcpPerKeyRateLimit = perKeyRateLimit({ keyExtractor: extractMcpBearerKey });
+
+// F43 (security-audit-2026-06-11): the audit-log-backed limiter above counts
+// only recipe.checked, so get_briefing / list_my_recipe_books / the write
+// tool update_recipe_book_description were bounded per-IP only. This
+// in-memory per-bearer backstop bounds a single key across ALL MCP methods
+// regardless of IP; 600/h sits well above the 200/h durable check cap, so
+// legitimate use never hits it first. Keyed by credential hash (raw keys
+// must not sit in memory as map keys).
+const mcpPerBearerBackstop = rateLimit({
+  max: 600,
+  windowMs: 60 * 60 * 1000,
+  keyFn: (c) => {
+    const token = extractMcpBearerKey(c);
+    return token ? `key:${hashApiKey(token)}` : `ip:${getClientIp(c)}`;
+  },
+});
 
 // F41 (security-audit-2026-06-11): cap the JSON body before it is buffered,
 // same rationale as the F28 fix on /check. The cap is sized for file_base64:
@@ -915,7 +931,7 @@ function formatCheckResponse(response: Record<string, unknown>): string {
 
 // ── Route handler ───────────────────────────────────────────────────────────
 
-mcpRouter.all("/", mcpBodyLimit, mcpRateLimit, mcpPerKeyRateLimit, async (c) => {
+mcpRouter.all("/", mcpBodyLimit, mcpRateLimit, mcpPerBearerBackstop, mcpPerKeyRateLimit, async (c) => {
   // Extract and validate API key from Bearer token
   const authHeader = c.req.header("Authorization");
   if (!authHeader?.startsWith("Bearer ")) {
