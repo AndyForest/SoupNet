@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { authFetch, isLoggedIn, API_BASE } from "../auth.js";
+import { isRegisteredRedirectUri } from "../lib/oauth-redirect.js";
 
 /**
  * OAuth 2.1 consent screen. Lands here when an OAuth client (claude.ai's
@@ -154,6 +155,15 @@ export function OAuthAuthorizePage() {
   });
 
   function handleCancel() {
+    // F44 (security-audit-2026-06-11): only navigate to a redirect_uri that is
+    // exactly registered for this client. The success path is validated
+    // server-side at /oauth/authorize/grant; without this check, Cancel was a
+    // client-side open redirect (real client_id + attacker redirect_uri in the
+    // query string).
+    if (!isRegisteredRedirectUri(params.redirectUri, clientQuery.data?.redirect_uris ?? [])) {
+      window.location.href = "/";
+      return;
+    }
     // Send the user back to the client with access_denied per RFC 6749 §4.1.2.1.
     try {
       const url = new URL(params.redirectUri);
@@ -235,6 +245,25 @@ export function OAuthAuthorizePage() {
   const client = clientQuery.data;
   const books = booksQuery.data ?? [];
 
+  // F44: refuse up front when the query-string redirect_uri is not exactly
+  // registered for this client. The grant would be rejected server-side
+  // anyway — failing here means we never render a consent screen whose
+  // Cancel/Authorize flow involves an attacker-chosen destination.
+  if (client && !isRegisteredRedirectUri(params.redirectUri, client.redirect_uris)) {
+    return (
+      <div style={containerStyle}>
+        <h1 style={h1Style}>Invalid OAuth request</h1>
+        <p>
+          The <code>redirect_uri</code> in this request is not registered for this client. This can
+          indicate a phishing attempt — no authorization was granted.
+        </p>
+        <p style={{ marginTop: "var(--space-lg)" }}>
+          <Link to="/">← Back to soup.net</Link>
+        </p>
+      </div>
+    );
+  }
+
   const canSubmit =
     readIds.length > 0 &&
     writeIds.length > 0 &&
@@ -250,6 +279,18 @@ export function OAuthAuthorizePage() {
         This will let <strong>{client?.client_name ?? client?.client_id}</strong> recipe-check the books you choose below — searching them
         for context and logging new recipes when you make a call.
       </p>
+
+      {/* F44: client_name is self-reported at registration (anonymous DCR) —
+          an attacker can register as any name. Surface the actual destination
+          so the user can judge for themselves. */}
+      <div style={warningBoxStyle}>
+        <strong>Unverified app.</strong> The name above is self-reported by the connector, not
+        verified by Soup.net. After you authorize (or cancel), your browser will be sent to:
+        <div style={{ fontFamily: "monospace", fontSize: "0.85em", marginTop: "var(--space-xs)", wordBreak: "break-all" }}>
+          {params.redirectUri}
+        </div>
+        Only continue if you started this connection yourself from that app.
+      </div>
 
       <h2 style={h2Style}>Choose recipe books</h2>
       <p style={{ color: "var(--color-on-surface-variant)" }}>
@@ -355,6 +396,14 @@ const primaryButtonStyle: React.CSSProperties = {
   borderRadius: "var(--radius-md)",
   cursor: "pointer",
   fontSize: "1rem",
+};
+const warningBoxStyle: React.CSSProperties = {
+  border: "1px solid var(--color-outline, #d4a017)",
+  background: "var(--color-surface-variant, #fff8e6)",
+  borderRadius: "var(--radius-md)",
+  padding: "var(--space-md)",
+  marginTop: "var(--space-md)",
+  fontSize: "0.9em",
 };
 const secondaryButtonStyle: React.CSSProperties = {
   background: "transparent",
