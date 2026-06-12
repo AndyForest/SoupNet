@@ -242,7 +242,11 @@ export async function autoSetup(db: PostgresJsDatabase): Promise<void> {
   // F3 fix: warn in production unless explicitly allowed.
   // Docker dev uses NODE_ENV=production for performance, so we can't just block on that.
   // Real production should not have DEV_USERNAME/DEV_PASSWORD in the environment at all.
-  if (process.env["NODE_ENV"] === "production" && !process.env["ALLOW_AUTO_SETUP"]) {
+  // F49 (security-audit-2026-06-11): the gate is `=== "true"`, not env-var
+  // presence — previously ALLOW_AUTO_SETUP=false *enabled* auto-setup. All
+  // gates on this var (here, signupCap below, routes/auth.ts) use the same
+  // strict comparison.
+  if (process.env["NODE_ENV"] === "production" && process.env["ALLOW_AUTO_SETUP"] !== "true") {
     if (process.env["DEV_USERNAME"] || process.env["TEST_USERNAME"]) {
       console.error(
         "[auto-setup] BLOCKED in production. Set ALLOW_AUTO_SETUP=true to override " +
@@ -273,7 +277,7 @@ export async function autoSetup(db: PostgresJsDatabase): Promise<void> {
 
   // Set signup cap for dev/test — allows integration tests to register users.
   // Production cap is managed via admin settings UI.
-  if (process.env["ALLOW_AUTO_SETUP"]) {
+  if (process.env["ALLOW_AUTO_SETUP"] === "true") {
     const { getSetting, setSetting } = await import("./services/system-settings.service");
     const currentCap = await getSetting(db, "signupCap");
     if (currentCap === 0) {
