@@ -6,6 +6,10 @@ Items moved here from `backlog.md` when finished. Date-stamped so we can see wha
 
 ## Launch readiness
 
+### 2026-06-11 — SES configuration-set header (bounce/complaint pipeline, app side)
+
+The private infra repo's Terraform created the SES configuration set with SNS bounce/complaint event destinations and injects `SES_CONFIGURATION_SET` into the ECS task definition. App side (this repo): `sendLoggedMail` now stamps `X-SES-CONFIGURATION-SET` on every outgoing mail via the exported `sesHeaders()` helper — env read at send time, unset locally (Mailpit and non-SES SMTP ignore the header). Unit test in `email.service.test.ts`. Same pass fixed env drift discovered while in there: `.env.example` and `docker-compose.yml` set `SMTP_FROM`, which nothing reads — renamed to `EMAIL_FROM`, the var `email.service.ts` actually consumes (the production task definition already used the correct name; only the local-dev files had drifted). Post-deploy verification that closes the loop: send to `bounce@simulator.amazonses.com` and confirm the SNS bounce notification arrives (see the private repo's observability briefing).
+
 ### 2026-06-11 — Waitlist v2: the waitlist is a user-record state
 
 Same-day redesign of the v1 waitlist below, after the operator walked the v1 flow and found it stranded people (no password, no ToS, no path from "notified" to "account"). The `waitlist` table lasted hours; v2 (migration `0024_waitlist_v2_user_records`) drops it:

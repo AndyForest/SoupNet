@@ -52,6 +52,22 @@ function escHtml(s: string): string {
 
 export const EMAIL_LOG_RETENTION_DAYS = 60;
 
+/**
+ * SES bounce/complaint pipeline: mail tagged with X-SES-CONFIGURATION-SET
+ * routes BOUNCE/COMPLAINT events to the SNS topics defined in the private
+ * infra repo. SES_CONFIGURATION_SET is injected by the production task
+ * definition; unset locally (Mailpit and non-SES SMTP servers ignore the
+ * header anyway). Read at send time, not module load, so env injected
+ * after import is still honored.
+ */
+export function sesHeaders(
+  configurationSet: string | undefined,
+): Record<string, string> {
+  return configurationSet
+    ? { "X-SES-CONFIGURATION-SET": configurationSet }
+    : {};
+}
+
 export type EmailKind =
   | "verification"
   | "password_reset"
@@ -76,7 +92,11 @@ async function sendLoggedMail(
 
   let sendError: unknown = null;
   try {
-    await getTransporter().sendMail({ from: FROM_ADDRESS, ...mail });
+    await getTransporter().sendMail({
+      from: FROM_ADDRESS,
+      headers: sesHeaders(process.env["SES_CONFIGURATION_SET"]),
+      ...mail,
+    });
   } catch (err) {
     sendError = err;
   }

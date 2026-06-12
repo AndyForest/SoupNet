@@ -53,7 +53,7 @@ services:
       # Email — Mailpit in dev, AWS SES in production
       SMTP_HOST: mailpit
       SMTP_PORT: "1025"
-      SMTP_FROM: noreply@soup.net
+      EMAIL_FROM: noreply@soup.net
     ports:
       - "3101:3001"   # host:container — backend listens on 3001 inside; reachable on 3101 from host
     volumes:
