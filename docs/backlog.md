@@ -248,7 +248,7 @@ The check-log-mock rejection (landing session) was predicted verbatim by documen
 
 ### `[IMPL]` SES configuration-set header support
 
-When the private infra repo creates the SES configuration set for bounce/complaint event capture (its ops-hardening Task 7), add `X-SES-CONFIGURATION-SET` header support to the nodemailer transport in `email.service.ts`, driven by an env var (e.g. `SES_CONFIGURATION_SET`, unset locally). Two-line change; blocked on infra side choosing the set name. See docs/rough-notes/2026-06-11/observability-briefing-private-infra.md.
+When the private infra repo creates the SES configuration set for bounce/complaint event capture (its ops-hardening Task 7), add `X-SES-CONFIGURATION-SET` header support to the nodemailer transport in `email.service.ts`, driven by an env var (e.g. `SES_CONFIGURATION_SET`, unset locally). Two-line change; blocked on infra side choosing the set name. See the private companion repo's `docs/rough-notes/2026-06-11/observability-briefing-private-infra.md` (moved there from this repo 2026-06-11 — it details production infrastructure).
 
 ### `[IMPL]` Admin side-nav missing on most admin pages
 
