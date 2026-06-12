@@ -12,6 +12,7 @@ import { createHash } from "node:crypto";
 import { mkdir, writeFile, access } from "node:fs/promises";
 import { resolve, extname } from "node:path";
 import { ALLOWED_MIME_TYPES, MIME_TO_EXT, MAX_UPLOAD_BYTES } from "@soupnet/domain";
+import { ClientSafeError } from "./client-safe-error";
 
 const UPLOADS_DIR = resolve(process.cwd(), "uploads", "artifacts");
 
@@ -24,7 +25,9 @@ export interface FileStoreResult {
   publicUrl: string;
 }
 
-export class FileStoreError extends Error {
+// Extends ClientSafeError (F47): all three throw sites are validation
+// messages (MIME allowlist, size cap, empty file) written for the caller.
+export class FileStoreError extends ClientSafeError {
   constructor(message: string) {
     super(message);
     this.name = "FileStoreError";

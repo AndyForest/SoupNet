@@ -22,8 +22,11 @@ import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 
 import { ALLOWED_MIME_TYPES, MAX_UPLOAD_BYTES, MIME_TO_EXT } from "@soupnet/domain";
 import { storeFile, FileStoreError } from "../lib/file-store";
+import { ClientSafeError } from "../lib/client-safe-error";
 
-export class UploadResolutionError extends Error {
+// Extends ClientSafeError (F47): every message is deliberately uniform and
+// echoes only the client-supplied file_url — safe to surface verbatim.
+export class UploadResolutionError extends ClientSafeError {
   constructor(message: string) {
     super(message);
     this.name = "UploadResolutionError";

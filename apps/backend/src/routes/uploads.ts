@@ -76,8 +76,10 @@ uploadsRouter.post("/", uploadBodyLimit, uploadRateLimit, async (c) => {
   try {
     formData = await c.req.parseBody();
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return c.json({ ok: false, error: `Could not parse multipart body: ${message}` }, 400);
+    // F47: parse errors bubble up from the framework with internal detail —
+    // log the raw error, return a generic body.
+    console.error("[uploads] Could not parse multipart body:", err);
+    return c.json({ ok: false, error: "Could not parse multipart body." }, 400);
   }
 
   const fileField = formData["file"];

@@ -43,6 +43,19 @@ import {
 import { sql } from "drizzle-orm";
 import type { AppEnv } from "../types";
 import { writeAudit } from "../services/audit-log.service";
+import { ClientSafeError, publicErrorMessage } from "../lib/client-safe-error";
+
+// F47 (security-audit-2026-06-11): tool catch-alls surface only deliberate
+// ClientSafeError messages (validation, size caps, MIME — written for the
+// agent). Anything else is internal by default: generic body, raw error to
+// the server log. Mirrors the auth.ts registration pattern.
+function toolErrorText(err: unknown, tool: string): string {
+  return `Error: ${publicErrorMessage(err, {
+    logPrefix: `[mcp] ${tool} error`,
+    generic:
+      "An internal error occurred. It has been logged server-side — please retry, and contact the operator if it persists.",
+  })}`;
+}
 
 // Rate limit MCP:
 //   - per-IP: 1000 per hour (defense-in-depth)
@@ -197,34 +210,34 @@ async function imageFromUrl(url: string): Promise<ImageAttachment> {
   try {
     parsed = new URL(url);
   } catch {
-    throw new Error(`Invalid URL: ${url}`);
+    throw new ClientSafeError(`Invalid URL: ${url}`);
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error(`Unsupported URL scheme: ${parsed.protocol} (http/https only)`);
+    throw new ClientSafeError(`Unsupported URL scheme: ${parsed.protocol} (http/https only)`);
   }
   const host = parsed.hostname.toLowerCase();
   if (PRIVATE_HOST_PATTERNS.some((p) => p.test(host))) {
-    throw new Error(`Private/internal URLs not permitted: ${host}`);
+    throw new ClientSafeError(`Private/internal URLs not permitted: ${host}`);
   }
 
   const res = await fetch(url, {
     signal: AbortSignal.timeout(URL_FETCH_TIMEOUT_MS),
     redirect: "follow",
   });
-  if (!res.ok) throw new Error(`Failed to fetch ${url}: HTTP ${res.status}`);
+  if (!res.ok) throw new ClientSafeError(`Failed to fetch ${url}: HTTP ${res.status}`);
 
   const rawContentType = (res.headers.get("content-type") ?? "").split(";")[0]?.trim().toLowerCase() ?? "";
   const contentLengthHeader = res.headers.get("content-length");
   if (contentLengthHeader) {
     const declared = parseInt(contentLengthHeader, 10);
     if (Number.isFinite(declared) && declared > MAX_UPLOAD_BYTES) {
-      throw new Error(`File too large per Content-Length: ${declared} bytes (max ${MAX_UPLOAD_BYTES})`);
+      throw new ClientSafeError(`File too large per Content-Length: ${declared} bytes (max ${MAX_UPLOAD_BYTES})`);
     }
   }
 
   const buffer = Buffer.from(await res.arrayBuffer());
   if (buffer.byteLength > MAX_UPLOAD_BYTES) {
-    throw new Error(`File too large: ${buffer.byteLength} bytes (max ${MAX_UPLOAD_BYTES})`);
+    throw new ClientSafeError(`File too large: ${buffer.byteLength} bytes (max ${MAX_UPLOAD_BYTES})`);
   }
 
   // Determine MIME: Content-Type header if allowed, else extension fallback.
@@ -235,7 +248,7 @@ async function imageFromUrl(url: string): Promise<ImageAttachment> {
     if (extMime) mimeType = extMime;
   }
   if (!ALLOWED_MIME_TYPES.has(mimeType)) {
-    throw new Error(`Unsupported or undetectable MIME type (got '${rawContentType || "none"}'). Allowed: ${[...ALLOWED_MIME_TYPES].join(", ")}`);
+    throw new ClientSafeError(`Unsupported or undetectable MIME type (got '${rawContentType || "none"}'). Allowed: ${[...ALLOWED_MIME_TYPES].join(", ")}`);
   }
 
   const filename = parsed.pathname.split("/").pop() || "attachment";
@@ -249,13 +262,13 @@ function imageFromBase64(base64: string, filename: string, mimeTypeHint?: string
   try {
     buffer = Buffer.from(cleaned, "base64");
   } catch {
-    throw new Error("file_base64 is not valid base64");
+    throw new ClientSafeError("file_base64 is not valid base64");
   }
   if (buffer.byteLength === 0) {
-    throw new Error("file_base64 decoded to zero bytes");
+    throw new ClientSafeError("file_base64 decoded to zero bytes");
   }
   if (buffer.byteLength > MAX_UPLOAD_BYTES) {
-    throw new Error(`File too large: ${buffer.byteLength} bytes (max ${MAX_UPLOAD_BYTES})`);
+    throw new ClientSafeError(`File too large: ${buffer.byteLength} bytes (max ${MAX_UPLOAD_BYTES})`);
   }
 
   // Resolve MIME: explicit hint wins, else infer from filename extension.
@@ -265,7 +278,7 @@ function imageFromBase64(base64: string, filename: string, mimeTypeHint?: string
     mimeType = EXT_TO_MIME[ext];
   }
   if (!mimeType || !ALLOWED_MIME_TYPES.has(mimeType)) {
-    throw new Error(
+    throw new ClientSafeError(
       `Unknown or unsupported MIME type. Pass file_mime_type explicitly, or use file_name with a recognized extension. Allowed: ${[...ALLOWED_MIME_TYPES].join(", ")}`,
     );
   }
@@ -408,8 +421,13 @@ function createMcpServer(backendUrl: string): McpServer {
           image = imageFromBase64(file_base64, file_name ?? "attachment", file_mime_type);
         }
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return { content: [{ type: "text" as const, text: `File input error: ${message}` }] };
+        // F47: ClientSafeError messages (validation) pass through; internal
+        // errors (network failures, fs, db) are logged and genericized.
+        if (err instanceof ClientSafeError) {
+          return { content: [{ type: "text" as const, text: `File input error: ${err.message}` }] };
+        }
+        console.error(`[mcp] check_recipe file input error:`, err);
+        return { content: [{ type: "text" as const, text: "File input error: could not retrieve or decode the file. The details have been logged server-side." }] };
       }
 
       // ROI metadata: only meaningful when an image is attached. Ignored
@@ -459,10 +477,7 @@ function createMcpServer(backendUrl: string): McpServer {
         console.warn(`[mcp] check_recipe: success — ${result.results.length} results`);
         return { content: [{ type: "text" as const, text }] };
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        const cause = err instanceof Error && err.cause ? ` (cause: ${String(err.cause)})` : "";
-        console.error(`[mcp] check_recipe error: ${message}${cause}`);
-        return { content: [{ type: "text" as const, text: `Error: ${message}` }] };
+        return { content: [{ type: "text" as const, text: toolErrorText(err, "check_recipe") }] };
       }
     },
   );
@@ -508,9 +523,7 @@ function createMcpServer(backendUrl: string): McpServer {
 
         return { content: [{ type: "text" as const, text: result.text }] };
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`[mcp] get_briefing error: ${message}`);
-        return { content: [{ type: "text" as const, text: `Error: ${message}` }] };
+        return { content: [{ type: "text" as const, text: toolErrorText(err, "get_briefing") }] };
       }
     },
   );
@@ -562,9 +575,7 @@ function createMcpServer(backendUrl: string): McpServer {
 
         return { content: [{ type: "text" as const, text: result.text }] };
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`[mcp] list_my_recipe_books error: ${message}`);
-        return { content: [{ type: "text" as const, text: `Error: ${message}` }] };
+        return { content: [{ type: "text" as const, text: toolErrorText(err, "list_my_recipe_books") }] };
       }
     },
   );
@@ -704,8 +715,7 @@ function createMcpServer(backendUrl: string): McpServer {
           }],
         };
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return { content: [{ type: "text" as const, text: `Error: ${message}` }] };
+        return { content: [{ type: "text" as const, text: toolErrorText(err, "update_recipe_book_description") }] };
       }
     },
   );
