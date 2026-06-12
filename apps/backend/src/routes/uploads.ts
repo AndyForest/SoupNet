@@ -25,6 +25,26 @@ import { getClientIp, hashApiKey, rateLimit } from "../middleware/rate-limit";
 
 const uploadsRouter = new Hono();
 
+// ── User-content response headers ───────────────────────────────────────────
+// GET /uploads/* unconditionally 404s today (F10), so these are inert — they
+// pin the failure mode NOW so that if file serving is ever enabled (even for
+// a narrow use case), responses on this prefix are already sandboxed instead
+// of depending on someone remembering to add protections:
+//  - CSP default-src 'none' + sandbox: an uploaded SVG/HTML rendered from
+//    here cannot execute script or load subresources.
+//  - Content-Disposition attachment: browsers download, never render inline.
+//  - Cross-Origin-Resource-Policy same-origin: other origins can't embed
+//    these responses. (nosniff is already set globally.)
+// The global middleware in index.ts skips its CSP when one is already set.
+uploadsRouter.use("/*", async (c, next) => {
+  await next();
+  if (c.req.method === "GET") {
+    c.header("Content-Security-Policy", "default-src 'none'; sandbox");
+    c.header("Content-Disposition", "attachment");
+    c.header("Cross-Origin-Resource-Policy", "same-origin");
+  }
+});
+
 // ── Per-API-key rate limit ─────────────────────────────────────────────────
 // 100 uploads per hour per key. A compromised key still has a budget but it
 // can't run the disk dry. Keys are extracted from the Authorization header;

@@ -42,7 +42,15 @@ app.use(
   }),
 );
 
-// Security headers — per-request nonce for scripts on the check page
+// Security headers — per-request nonce for scripts on the check page.
+// Hardened alongside the 2026-06-11 audit fixes:
+//  - object-src 'none', base-uri 'self', form-action 'self' close the classic
+//    CSP gaps (same-origin plugin embeds, <base>-tag hijack of nonce'd script
+//    URLs, form exfiltration). frame-ancestors 'none' is the modern
+//    equivalent of X-Frame-Options DENY; both are sent.
+//  - Permissions-Policy: nothing in the product uses these sensors.
+//  - CSP is set only when a route hasn't already set its own — /uploads/*
+//    pins a stricter user-content sandbox policy (see routes/uploads.ts).
 app.use("/*", async (c, next) => {
   // Generate a per-request nonce for CSP script-src
   const nonce = crypto.randomUUID();
@@ -52,10 +60,13 @@ app.use("/*", async (c, next) => {
   c.header("X-Frame-Options", "DENY");
   c.header("X-XSS-Protection", "0"); // Disabled per OWASP — CSP is the modern approach
   c.header("Referrer-Policy", "strict-origin-when-cross-origin");
+  c.header("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
   // HSTS: enforce HTTPS for 1 year (only effective behind TLS termination)
   c.header("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
-  // CSP: allow self + inline styles + Google Fonts; nonce-gated scripts for check page copy button
-  c.header("Content-Security-Policy", `default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; script-src 'nonce-${nonce}'`);
+  if (!c.res.headers.get("Content-Security-Policy")) {
+    // CSP: allow self + inline styles + Google Fonts; nonce-gated scripts for check page copy button
+    c.header("Content-Security-Policy", `default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; script-src 'nonce-${nonce}'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'`);
+  }
 });
 
 // Static files (public assets only — uploads require auth)
