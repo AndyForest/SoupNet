@@ -47,5 +47,12 @@ COPY --from=builder /app/packages packages
 WORKDIR /app/apps/backend
 EXPOSE 3001
 
+# F51 (security-audit-2026-06-11): run as the unprivileged node user instead
+# of root. The uploads artifact store is the only path the app writes —
+# pre-create it with the right ownership (everything else stays root-owned
+# read-only, which is the point).
+RUN mkdir -p /app/apps/backend/uploads && chown -R node:node /app/apps/backend/uploads
+USER node
+
 # Migrations run at startup inside the app (src/index.ts calls runMigrations())
 CMD ["node", "dist/index.js"]
