@@ -816,13 +816,14 @@ auth.post("/forgot-password", forgotPasswordRateLimit, async (c) => {
           password_reset_token_created_at = NOW()
       WHERE id = ${user.id}::uuid
     `);
-    try {
-      await sendPasswordResetEmail(email, rawToken);
-    } catch (err) {
+    // F45 (security-audit-2026-06-11): fire-and-forget, mirroring the F30
+    // register fix. Awaiting the SMTP roundtrip only on the account-exists
+    // branch made response latency a timing oracle for whether an email is
+    // registered, despite the identical response body. Errors are swallowed
+    // for the same reason as before — the user can request again.
+    void sendPasswordResetEmail(email, rawToken).catch((err) => {
       console.error("[auth/forgot-password] Failed to send reset email:", err);
-      // Swallow errors — never let the response differ based on whether email
-      // delivery succeeded. The user can request again.
-    }
+    });
     if (process.env["ALLOW_AUTO_SETUP"] === "true") {
       devOnlyResetToken = rawToken;
     }
