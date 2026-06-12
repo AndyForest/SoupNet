@@ -180,6 +180,9 @@ jobs:
       - name: Build + deploy frontend to S3
         env:
           VITE_API_BASE: https://mcp.soup.net
+          # Absolute base for social preview meta tags (og:url, og:image) baked
+          # into index.html at build time — see apps/frontend/vite.config.ts.
+          FRONTEND_URL: https://soup.net
         run: |
           npm ci
           npm run build:packages

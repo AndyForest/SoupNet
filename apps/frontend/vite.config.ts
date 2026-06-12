@@ -20,8 +20,21 @@ const ROOT = path.resolve(__dirname, "../..");
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, ROOT, "");
+  // Social preview meta tags (og:url, og:image) need an absolute URL baked
+  // into the static index.html — crawlers don't run JS. Sourced from
+  // FRONTEND_URL (process.env wins so CI can set it without a .env file),
+  // defaulting to the canonical deployment.
+  const siteUrl = (process.env.FRONTEND_URL ?? env.FRONTEND_URL ?? "https://soup.net").replace(/\/$/, "");
   return {
-    plugins: [react()],
+    plugins: [
+      react(),
+      {
+        name: "inject-site-url",
+        transformIndexHtml(html: string) {
+          return html.replaceAll("%SITE_URL%", siteUrl);
+        },
+      },
+    ],
     envDir: ROOT,
     server: {
       port: parseInt(env.FRONTEND_PORT ?? "5273", 10),
