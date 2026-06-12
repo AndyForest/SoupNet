@@ -1,0 +1,6 @@
+# Verified false positives (gitleaks fingerprints).
+# Reviewed 2026-06-11 during pre-push secrets scan: a test-fixture password in a
+# reset-password rejection test, and the YOUR_API_KEY placeholder in the recipe
+# guide's curl example. Neither is a real credential.
+86951fe99ef35c8c757cb8b78d4afe2c31f063e3:apps/backend/src/routes/auth.test.ts:generic-api-key:348
+86951fe99ef35c8c757cb8b78d4afe2c31f063e3:packages/domain/src/recipe-guide-content.ts:curl-auth-header:360

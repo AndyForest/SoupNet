@@ -244,6 +244,8 @@ The check-log-mock rejection (landing session) was predicted verbatim by documen
 
 ~~Security audit documents missing from the repo~~ — resolved 2026-06-11: the audits live in the **private deployment repo's** `docs/security/` (confirmed by the observability survey). CLAUDE.md and `docs/workflows/security.md` now say so. Remaining work: the last general audit was 2026-04-09 and the route surface has grown substantially since (OAuth 2.1, /uploads, remote MCP, waitlist, email log, invite-status) — now that production is live behind real SES, run a fresh audit-agent scan. The operator runs this after the 2026-06-11 batch is committed, before push.
 
+~~Audit prep~~ — done 2026-06-11: the private repo's `docs/security/` now has a `README.md` (location policy, two-repo audit scope, audit history — moved out of the public workflow doc) and `audit-prep-2026-06-11.md` (the readiness brief the audit agent starts from: baseline, fix-verification queue, new-surface focus areas, known leads, pre-audit checklist incl. a gitleaks history scan before push). `docs/workflows/security.md` updated for the two-repo scope. Remaining: run the audit itself (read-only audit agent, both repos).
+
 ### `[IMPL]` SES configuration-set header support
 
 When the private infra repo creates the SES configuration set for bounce/complaint event capture (its ops-hardening Task 7), add `X-SES-CONFIGURATION-SET` header support to the nodemailer transport in `email.service.ts`, driven by an env var (e.g. `SES_CONFIGURATION_SET`, unset locally). Two-line change; blocked on infra side choosing the set name. See docs/rough-notes/2026-06-11/observability-briefing-private-infra.md.

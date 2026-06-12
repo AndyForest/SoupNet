@@ -13,8 +13,8 @@ How security auditing, implementation, and testing work together in this project
 **Access:** Read-only. Can read all source files, run `git log`, run tests, check recipes. Cannot edit files or create commits.
 
 **Responsibilities:**
-1. Scan all security-relevant files (routes, auth, services, config, Docker, Terraform)
-2. Produce a dated findings document in `docs/security/security-audit-YYYY-MM-DD.md`
+1. Scan all security-relevant files in **both repos**: this repo (routes, auth, services, crypto, config, Docker Compose, CI workflows, agent-facing docs) and the private companion repo (Terraform/infra, deploy workflows, operations runbooks)
+2. Produce a dated findings document in the private companion repo's `docs/security/security-audit-YYYY-MM-DD.md` — findings never land in this public repo, regardless of which repo they're about
 3. Mark each finding as OPEN, FIXED, or PARTIALLY FIXED with evidence
 4. Assess test coverage gaps relevant to security
 5. Check recipes on Soup.net for security decisions (Zod validation, security headers, agent separation, etc.)
@@ -26,7 +26,7 @@ How security auditing, implementation, and testing work together in this project
 - When new routes, services, or auth changes are added
 - Periodically (monthly minimum)
 
-**Output format:** See the latest audit in `docs/security/` for the canonical template (most recent: `security-audit-2026-04-09.md`, plus the JWT-focused review noted in backlog.md 2026-04-17). Key sections:
+**Output format:** See the latest audit in the private companion repo's `docs/security/` for the canonical template (its `README.md` indexes the audit history). Key sections:
 - Resolved since last audit (with evidence)
 - Open findings (severity, file, line, fix recommendation)
 - Test coverage gaps
@@ -162,7 +162,7 @@ For things that can't be easily automated:
 
 | Artifact | Location |
 |----------|----------|
-| Security audits | private deployment repo: `docs/security/security-audit-YYYY-MM-DD.md` (not in this repo — they cover the hosted deployment; ask the operator for access) |
+| Security audits | private companion repo: `docs/security/` (not in this repo — findings are sensitive even when they concern public code; ask the operator for access) |
 | Security workflow | `docs/workflows/security.md` (this file) |
 | Security regression tests | `tests/security/` (to be created) |
 | Unit tests | `apps/*/src/**/*.test.ts` |
@@ -173,17 +173,9 @@ For things that can't be easily automated:
 
 ## Audit History
 
-Audits live in the private deployment repo's `docs/security/`. Summary as of the last scan:
+The full audit history, including dates, focus areas, and findings documents, lives in the private companion repo's `docs/security/README.md`. It is deliberately not summarized here: audit cadence and finding counts are themselves information about the system's security posture, and this repo is public.
 
-| Date | Focus | File |
-|------|-------|------|
-| 2026-03-25 → 2026-03-29 | Initial pass + batch fixes | `security-audit-2026-03-25.md` … `2026-03-29.md` |
-| 2026-03-31 | Re-audit after batch 2 | `security-audit-2026-03-31.md` |
-| 2026-04-01 | Recipe-check additions | `security-audit-2026-04-01.md` |
-| 2026-04-09 | Latest general audit (F1–F30) | `security-audit-2026-04-09.md` |
-| 2026-04-17 | JWT-focused review (see backlog §JWT auth hardening) | results in backlog.md |
-
-Read the newest before starting security-related work to avoid re-introducing fixed issues.
+Before starting security-related work, read the newest audit there (or ask the operator for its current state) to avoid re-introducing fixed issues. The F-numbered code comments in this repo (F15, F29, F30, …) reference findings from those audits and preserve each fix's rationale in place.
 
 ---
 
