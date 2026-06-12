@@ -187,4 +187,20 @@ describe.skipIf(!BASE)("/uploads route integration", () => {
     expect(b1.content_hash).toBe(b2.content_hash);
     expect(b1.file_url).not.toBe(b2.file_url);
   });
+
+  // F41: framework-level body cap, mirroring the F28 fix on /check. Must be
+  // the LAST test in this describe — bodyLimit emits the 413 before draining
+  // the request, which can break the next request on the same keep-alive
+  // socket (see the F28 test in check.test.ts for the full rationale).
+  it("F41: POST /uploads rejects bodies over 21 MiB at the framework layer", async () => {
+    const oversize = "x".repeat(22 * 1024 * 1024);
+    const fd = new FormData();
+    fd.set("file", new Blob([oversize], { type: "image/png" }), "huge.png");
+    const res = await fetch(`${BASE}/uploads`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}` },
+      body: fd,
+    });
+    expect(res.status).toBe(413);
+  }, 15_000);
 });

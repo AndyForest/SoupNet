@@ -290,4 +290,27 @@ describe.skipIf(!BASE)("/mcp stateless behavior", () => {
     });
     expect(res.status).toBe(200);
   });
+
+  // F41: framework-level body cap on /mcp (28 MiB = 20 MiB MAX_UPLOAD_BYTES
+  // × 4/3 base64 inflation + JSON-RPC envelope slack). Must be the LAST test
+  // in this describe — bodyLimit emits the 413 before draining the request,
+  // which can break the next request on the same keep-alive socket (see the
+  // F28 test in check.test.ts for the full rationale).
+  it("F41: POST /mcp rejects bodies over 28 MiB at the framework layer", async () => {
+    const res = await fetch(`${BASE}/mcp`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: ACCEPT_BOTH,
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "tools/call",
+        params: { name: "check_recipe", arguments: { file_base64: "x".repeat(29 * 1024 * 1024) } },
+        id: 1,
+      }),
+    });
+    expect(res.status).toBe(413);
+  }, 15_000);
 });

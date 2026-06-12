@@ -14,6 +14,7 @@
 
 import { Hono } from "hono";
 import type { Context } from "hono";
+import { bodyLimit } from "hono/body-limit";
 
 import { getDb } from "../db";
 import { validateKey } from "../services/api-key.service";
@@ -44,9 +45,20 @@ function extractBearerToken(c: Context): string | null {
   return match ? (match[1] ?? null) : null;
 }
 
+// F41 (security-audit-2026-06-11): reject oversized bodies at the framework
+// layer BEFORE parseBody() buffers the whole multipart payload into memory —
+// same rationale and size as the F28 fix on /check (21 MiB = MAX_UPLOAD_BYTES
+// + multipart envelope slack). The fileField.size check below stays as the
+// precise per-file limit; this is the memory-pressure guard.
+const UPLOAD_BODY_LIMIT_BYTES = 21 * 1024 * 1024;
+const uploadBodyLimit = bodyLimit({
+  maxSize: UPLOAD_BODY_LIMIT_BYTES,
+  onError: (c) => c.json({ ok: false, error: "Request body too large" }, 413),
+});
+
 // ── POST /uploads ───────────────────────────────────────────────────────────
 
-uploadsRouter.post("/", uploadRateLimit, async (c) => {
+uploadsRouter.post("/", uploadBodyLimit, uploadRateLimit, async (c) => {
   const apiKey = extractBearerToken(c);
   if (!apiKey) {
     return c.json({ ok: false, error: "Missing or malformed Authorization header. Expected 'Bearer <api-key>'." }, 401);

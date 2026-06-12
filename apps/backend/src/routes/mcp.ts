@@ -13,6 +13,7 @@
 
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { bodyLimit } from "hono/body-limit";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { z } from "zod";
@@ -48,6 +49,20 @@ import { writeAudit } from "../services/audit-log.service";
 //   - per-key: 200/hour, 1000/day (queried from audit_log; F29).
 const mcpRateLimit = rateLimit({ max: 1000, windowMs: 60 * 60 * 1000 });
 const mcpPerKeyRateLimit = perKeyRateLimit({ keyExtractor: extractMcpBearerKey });
+
+// F41 (security-audit-2026-06-11): cap the JSON body before it is buffered,
+// same rationale as the F28 fix on /check. The cap is sized for file_base64:
+// MAX_UPLOAD_BYTES (20 MiB) of decoded bytes inflates 4/3 in base64, plus
+// slack for the JSON-RPC envelope → 28 MiB.
+const MCP_BODY_LIMIT_BYTES = 28 * 1024 * 1024;
+const mcpBodyLimit = bodyLimit({
+  maxSize: MCP_BODY_LIMIT_BYTES,
+  onError: (c) =>
+    c.json(
+      { jsonrpc: "2.0", error: { code: -32600, message: "Request body too large" } },
+      413,
+    ),
+});
 
 const mcpRouter = new Hono<AppEnv>();
 
@@ -890,7 +905,7 @@ function formatCheckResponse(response: Record<string, unknown>): string {
 
 // ── Route handler ───────────────────────────────────────────────────────────
 
-mcpRouter.all("/", mcpRateLimit, mcpPerKeyRateLimit, async (c) => {
+mcpRouter.all("/", mcpBodyLimit, mcpRateLimit, mcpPerKeyRateLimit, async (c) => {
   // Extract and validate API key from Bearer token
   const authHeader = c.req.header("Authorization");
   if (!authHeader?.startsWith("Bearer ")) {
