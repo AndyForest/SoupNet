@@ -19,6 +19,7 @@
 import PgBoss from "pg-boss";
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
+import { resolvePgSsl } from "../db";
 import { QUEUES } from "./queues";
 import type { StrategyCheckJob, VectorCheckJob, VectorApiCallJob, EmbeddingsChunkJob, EmbeddingsVectorJob } from "./queues";
 
@@ -48,7 +49,9 @@ function createBoss(): PgBoss {
       database,
       user,
       password,
-      ssl: process.env["PGSSLMODE"] === "require" ? { rejectUnauthorized: false } : false,
+      // F48: shared resolver — verifies the RDS cert when PGSSLROOTCERT is
+      // set; encrypt-only (with a loud warning) when it isn't.
+      ssl: resolvePgSsl(),
     });
   }
 

@@ -3,6 +3,7 @@ import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import path from "node:path";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -33,6 +34,37 @@ export function getDb(): PostgresJsDatabase {
  *
  * If neither is configured we throw loudly — fail fast over mystery connections.
  */
+/**
+ * Resolve the TLS config for Postgres connections (shared by this module and
+ * the embedding worker's pg-boss connection).
+ *
+ * F48 (security-audit-2026-06-11): `PGSSLMODE=require` alone encrypts but
+ * does NOT verify the server certificate (both postgres-js "require" and the
+ * worker's previous `rejectUnauthorized: false` behave this way), leaving the
+ * connection MITM-able inside the VPC. Setting PGSSLROOTCERT to the RDS CA
+ * bundle path (libpq's env-var convention) enables full verification — the
+ * production task definition sets it to the bundle baked into the image.
+ *
+ * Without PGSSLROOTCERT we keep the encrypt-only behavior and warn loudly,
+ * rather than hard-failing a deploy whose task def hasn't been updated yet.
+ */
+export function resolvePgSsl():
+  | false
+  | { rejectUnauthorized: false }
+  | { ca: string; rejectUnauthorized: true } {
+  if (process.env["PGSSLMODE"] !== "require") return false;
+  const caPath = process.env["PGSSLROOTCERT"];
+  if (caPath) {
+    return { ca: readFileSync(caPath, "utf8"), rejectUnauthorized: true };
+  }
+  console.warn(
+    "[db] PGSSLMODE=require without PGSSLROOTCERT — connection is encrypted but the " +
+      "server certificate is NOT verified (F48). Set PGSSLROOTCERT to a CA bundle path " +
+      "(for RDS: certs/aws-rds-global-bundle.pem) to enable verification.",
+  );
+  return { rejectUnauthorized: false };
+}
+
 function createConnection(): ReturnType<typeof postgres> {
   const url = process.env["DATABASE_URL"];
   if (url) return postgres(url);
@@ -48,7 +80,7 @@ function createConnection(): ReturnType<typeof postgres> {
       database,
       username,
       password,
-      ssl: process.env["PGSSLMODE"] === "require" ? "require" : false,
+      ssl: resolvePgSsl(),
     });
   }
 

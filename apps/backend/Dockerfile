@@ -39,6 +39,9 @@ COPY --from=builder /app/node_modules node_modules
 COPY --from=builder /app/apps/backend/dist apps/backend/dist
 COPY --from=builder /app/apps/backend/public apps/backend/public
 COPY --from=builder /app/apps/backend/package.json apps/backend/package.json
+# F48: RDS CA bundle for verified TLS to Postgres. The task definition points
+# PGSSLROOTCERT at this path (/app/apps/backend/certs/aws-rds-global-bundle.pem).
+COPY --from=builder /app/apps/backend/certs apps/backend/certs
 COPY --from=builder /app/packages packages
 
 WORKDIR /app/apps/backend
