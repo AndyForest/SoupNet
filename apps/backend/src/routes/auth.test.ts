@@ -1,9 +1,41 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 /**
  * Integration tests for /auth routes — requires running backend.
  * Skips if BACKEND_URL is not set (sync check, avoids async beforeAll timing issue).
+ *
+ * This file also contains a DB-mocked UNIT suite at the bottom (F45 residual)
+ * that runs without a backend or Postgres. The two vi.mock calls below only
+ * affect that in-process suite — the integration suites talk to a separate
+ * running backend over fetch and are untouched by them.
  */
+
+// Shared mock state for the F45 unit suite. vi.hoisted so the vi.mock factories
+// (which are hoisted above imports) can close over it.
+const dbMock = vi.hoisted(() => ({
+  executed: [] as unknown[],
+  selectResult: [] as Array<{ id: string }>,
+  resetEmails: [] as Array<{ email: string; token: string }>,
+}));
+
+vi.mock("../db", () => ({
+  getDb: () => ({
+    // The forgot-password handler issues a SELECT (drives the branch) then an
+    // UPDATE (return value ignored). Hand back the configured SELECT rows on
+    // the first call of each request, [] afterwards.
+    execute: async (query: unknown) => {
+      dbMock.executed.push(query);
+      return dbMock.executed.length === 1 ? dbMock.selectResult : [];
+    },
+  }),
+}));
+
+vi.mock("../services/email.service", () => ({
+  sendVerificationEmail: async () => {},
+  sendPasswordResetEmail: async (email: string, token: string) => {
+    dbMock.resetEmails.push({ email, token });
+  },
+}));
 
 const BASE = process.env["BACKEND_URL"] ?? "";
 const uid = Date.now();
@@ -376,6 +408,41 @@ describe.skipIf(!BASE)("password reset flow", () => {
     expect(body.data?.resetToken).toBeUndefined();
   });
 
+  // F45 residual (security-audit-2026-06-11): the response BODY (minus the
+  // dev-only resetToken) must be byte-identical for a known vs. an unknown
+  // email, so the externally-observable half of the timing/enumeration fix is
+  // pinned end-to-end against the running backend. (The branch-equal DB-write
+  // half is pinned structurally in the unit suite below, which the running
+  // backend can't observe.)
+  it("F45: known and unknown emails return byte-identical bodies (minus dev resetToken)", async () => {
+    const strip = (b: { ok: boolean; data?: Record<string, unknown> }) => {
+      const data = { ...(b.data ?? {}) };
+      delete data["resetToken"]; // dev-only (ALLOW_AUTO_SETUP), never in prod
+      return JSON.stringify({ ok: b.ok, data });
+    };
+
+    const knownRes = await fetch(`${BASE}/auth/forgot-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: resetEmail }),
+    });
+    const unknownRes = await fetch(`${BASE}/auth/forgot-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: `nope-${resetUid}@test.local` }),
+    });
+
+    expect(knownRes.status).toBe(unknownRes.status);
+    const knownBody = (await knownRes.json()) as { ok: boolean; data?: Record<string, unknown> };
+    const unknownBody = (await unknownRes.json()) as { ok: boolean; data?: Record<string, unknown> };
+    expect(strip(knownBody)).toBe(strip(unknownBody));
+
+    // forgot-password rotates the reset token (single-use), so this known-email
+    // call invalidated the one captured earlier. Re-capture the fresh dev-mode
+    // token so the downstream reset-password tests use a live one.
+    resetToken = (knownBody.data?.["resetToken"] as string | undefined) ?? resetToken;
+  });
+
   it("POST /auth/reset-password rejects an invalid token", async () => {
     const res = await fetch(`${BASE}/auth/reset-password`, {
       method: "POST",
@@ -542,5 +609,118 @@ describe.skipIf(!BASE)("data export", () => {
       expect(key["key"]).toBeUndefined();
       expect(key["keyPrefix"]).toBeTruthy();
     }
+  });
+});
+
+/**
+ * F45 residual (security-audit-2026-06-11) — forgot-password branch-timing
+ * equalization. UNIT suite: no running backend, no Postgres. We mount the auth
+ * router with a mocked db (see vi.mock at the top of this file) and assert the
+ * load-bearing *structural* invariant the fix guarantees — that BOTH the
+ * account-exists and account-not-exists branches issue an equivalent UPDATE
+ * round-trip. Wall-clock timing can't be asserted reliably in CI; the equal-
+ * work invariant is exactly what removes the enumeration oracle, so we pin
+ * that instead. Mirrors the F29 house style (mount a Hono route, drive it
+ * without spinning up Postgres). The DB-write *correctness* (the dummy UPDATE
+ * really matching zero rows) is left to the integration suite above, which
+ * runs against a real schema.
+ */
+describe("F45: forgot-password issues an equivalent UPDATE on BOTH branches (unit)", () => {
+  const ZERO_UUID = "00000000-0000-0000-0000-000000000000";
+  const savedDisableRl = process.env["DISABLE_RATE_LIMIT"];
+  const savedAutoSetup = process.env["ALLOW_AUTO_SETUP"];
+
+  // Recursively collect the static SQL text out of a drizzle `sql` template
+  // object (its StringChunk.value arrays). Bound params (email, token hash,
+  // real user id) are NOT in this text — only literal SQL is — which is
+  // exactly what lets us distinguish a SELECT from an UPDATE and spot the
+  // zero-UUID sentinel without depending on a DB dialect to render the query.
+  function sqlText(node: unknown, out: string[] = []): string {
+    if (node == null) return out.join(" ");
+    if (typeof node === "string") { out.push(node); return out.join(" "); }
+    if (Array.isArray(node)) { for (const n of node) sqlText(n, out); return out.join(" "); }
+    if (typeof node === "object") {
+      const o = node as { value?: unknown; queryChunks?: unknown };
+      if (Array.isArray(o.value)) for (const v of o.value) sqlText(v, out);
+      if (Array.isArray(o.queryChunks)) for (const c of o.queryChunks) sqlText(c, out);
+    }
+    return out.join(" ");
+  }
+
+  beforeEach(() => {
+    dbMock.executed = [];
+    dbMock.resetEmails = [];
+    dbMock.selectResult = [];
+    // Keep the in-process router off the rate limiter and out of dev mode so
+    // bodies are production-shaped (no resetToken leak between branches).
+    process.env["DISABLE_RATE_LIMIT"] = "true";
+    delete process.env["ALLOW_AUTO_SETUP"];
+  });
+
+  afterEach(() => {
+    if (savedDisableRl !== undefined) process.env["DISABLE_RATE_LIMIT"] = savedDisableRl;
+    else delete process.env["DISABLE_RATE_LIMIT"];
+    if (savedAutoSetup !== undefined) process.env["ALLOW_AUTO_SETUP"] = savedAutoSetup;
+    else delete process.env["ALLOW_AUTO_SETUP"];
+  });
+
+  async function forgot(email: string) {
+    const { authRoutes } = await import("./auth");
+    return authRoutes.request("/forgot-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+  }
+
+  it("NON-existent email still issues a zero-row UPDATE (both branches write)", async () => {
+    dbMock.selectResult = []; // user not found
+    const res = await forgot("ghost@test.local");
+
+    expect(res.status).toBe(200);
+    // SELECT + UPDATE — before the fix this branch did the SELECT only.
+    expect(dbMock.executed.length).toBe(2);
+    const update = sqlText(dbMock.executed[1]);
+    expect(update).toMatch(/UPDATE\s+claimnet\.users/i);
+    expect(update).toContain("password_reset_token_hash");
+    // Matches zero rows via the all-zeros sentinel — never touches a real row.
+    expect(update).toContain(ZERO_UUID);
+    // No mailbox to send to on this branch.
+    expect(dbMock.resetEmails.length).toBe(0);
+  });
+
+  it("existing email issues the real UPDATE (not the sentinel) and sends the email", async () => {
+    dbMock.selectResult = [{ id: "11111111-1111-1111-1111-111111111111" }];
+    const res = await forgot("real@test.local");
+
+    expect(res.status).toBe(200);
+    expect(dbMock.executed.length).toBe(2);
+    const update = sqlText(dbMock.executed[1]);
+    expect(update).toMatch(/UPDATE\s+claimnet\.users/i);
+    expect(update).toContain("password_reset_token_hash");
+    // Real branch targets the bound user id (a param), so the sentinel literal
+    // must NOT appear in the statement text.
+    expect(update).not.toContain(ZERO_UUID);
+    // Email is sent fire-and-forget on the exists branch.
+    expect(dbMock.resetEmails.length).toBe(1);
+    expect(dbMock.resetEmails[0]?.email).toBe("real@test.local");
+  });
+
+  it("both branches issue the same number of statements and an identical body", async () => {
+    dbMock.selectResult = [{ id: "22222222-2222-2222-2222-222222222222" }];
+    const knownRes = await forgot("real@test.local");
+    const knownBody = await knownRes.text();
+    const knownCount = dbMock.executed.length;
+
+    dbMock.executed = [];
+    dbMock.resetEmails = [];
+    dbMock.selectResult = [];
+    const unknownRes = await forgot("ghost@test.local");
+    const unknownBody = await unknownRes.text();
+    const unknownCount = dbMock.executed.length;
+
+    // Equal work: same statement count, byte-identical response body.
+    expect(unknownCount).toBe(knownCount);
+    expect(unknownBody).toBe(knownBody);
   });
 });

@@ -806,27 +806,54 @@ auth.post("/forgot-password", forgotPasswordRateLimit, async (c) => {
   `);
   const user = (userRows as unknown as Array<{ id: string }>)[0];
 
+  // F45 residual (security-audit-2026-06-11): equalize the work both branches
+  // do, so response latency can't be used as an account-enumeration oracle.
+  // The earlier F45 pass made the response BODY generic and the email send
+  // fire-and-forget, but the account-exists branch still did extra work the
+  // not-exists branch skipped — crypto.randomBytes + hashResetToken + a DB
+  // UPDATE round-trip to RDS. That round-trip is a measurable latency delta a
+  // targeted attacker can A/B-compare (a known-unregistered email vs. the
+  // target) to learn whether the target is registered; the 3-per-15-min/IP
+  // rate limit defeats a statistical sweep but NOT a single targeted
+  // comparison. Mirror the F30 register fix ("bcrypt on both branches"): do
+  // the SAME work regardless of existence. Token generation + hashing run
+  // unconditionally, and the not-exists branch issues an equivalent UPDATE
+  // that matches zero rows so both paths pay exactly one UPDATE round-trip.
+  // No random delay — that leaks under averaging and penalizes legit users.
+  const rawToken = crypto.randomBytes(32).toString("hex");
+  const tokenHash = hashResetToken(rawToken);
+
   let devOnlyResetToken: string | null = null;
   if (user) {
-    const rawToken = crypto.randomBytes(32).toString("hex");
-    const tokenHash = hashResetToken(rawToken);
     await db.execute(sql`
       UPDATE claimnet.users
       SET password_reset_token_hash = ${tokenHash},
           password_reset_token_created_at = NOW()
       WHERE id = ${user.id}::uuid
     `);
-    // F45 (security-audit-2026-06-11): fire-and-forget, mirroring the F30
-    // register fix. Awaiting the SMTP roundtrip only on the account-exists
-    // branch made response latency a timing oracle for whether an email is
-    // registered, despite the identical response body. Errors are swallowed
-    // for the same reason as before — the user can request again.
+    // Fire-and-forget the SMTP roundtrip (original F45 fix): awaiting it only
+    // on the account-exists branch was itself a timing oracle. Errors are
+    // swallowed for the same reason — the user can request again.
     void sendPasswordResetEmail(email, rawToken).catch((err) => {
       console.error("[auth/forgot-password] Failed to send reset email:", err);
     });
     if (process.env["ALLOW_AUTO_SETUP"] === "true") {
       devOnlyResetToken = rawToken;
     }
+  } else {
+    // Not-exists branch: perform an equivalent UPDATE that matches zero rows,
+    // so the database does the same statement-parse + primary-key probe +
+    // round-trip the real branch pays. The all-zeros UUID is never issued as
+    // a real user id (gen_random_uuid / uuidv4 cannot produce it), so this can
+    // never touch a real row. No email is sent (there's no mailbox), and that
+    // send is off the response's critical path anyway, so it doesn't affect
+    // timing. No reset token is surfaced even under ALLOW_AUTO_SETUP.
+    await db.execute(sql`
+      UPDATE claimnet.users
+      SET password_reset_token_hash = ${tokenHash},
+          password_reset_token_created_at = NOW()
+      WHERE id = '00000000-0000-0000-0000-000000000000'::uuid
+    `);
   }
 
   const responseData: Record<string, unknown> = {
