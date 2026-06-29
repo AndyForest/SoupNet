@@ -636,7 +636,7 @@ describe("F45: forgot-password issues an equivalent UPDATE on BOTH branches (uni
   // exactly what lets us distinguish a SELECT from an UPDATE and spot the
   // zero-UUID sentinel without depending on a DB dialect to render the query.
   function sqlText(node: unknown, out: string[] = []): string {
-    if (node == null) return out.join(" ");
+    if (node === null || node === undefined) return out.join(" ");
     if (typeof node === "string") { out.push(node); return out.join(" "); }
     if (Array.isArray(node)) { for (const n of node) sqlText(n, out); return out.join(" "); }
     if (typeof node === "object") {
