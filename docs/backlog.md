@@ -192,6 +192,14 @@ Common rejection reasons to double-check before submitting: missing tool annotat
 
 Agent-surface OAuth docs landed 2026-06-23 (briefing pointer in `recipe-guide-content.ts` + "Two ways to connect" section in `/docs/mcp-setup`, both pointing at `/info/connect` as the single source of truth). Remaining: the briefing is still built around a pasteable, long-lived key embedded in every URL as `?key=` (the "Your API key" + "Setup — web-only agents" sections). An OAuth-connected agent has a 1h access token and calls the MCP tools directly, so those URL/`?key=` sections don't serve it (and the rendered token expires within the hour). Low impact — OAuth agents use the tools, not the URLs — but worth an OAuth-aware branch if OAuth becomes the dominant connection path.
 
+### `[IMPL]` OAuth refresh blocked after access token expires (1h) — column overload
+
+`refreshOAuthTokenBundle` (`apps/backend/src/services/oauth.service.ts`) gates rotation on `expires_at > NOW()`, but `expires_at` is the **access token's** 1h expiry. So a client refreshing after the access token's natural 1-hour life gets `invalid_grant`, even though `refresh_token_expires_at` (30d) is still valid — which defeats the purpose of refresh tokens. Currently masked because clients tend to refresh proactively and no test exercises refresh-after-expiry. Root cause is the same column overload behind the F38 race (the consumption marker and the access-token expiry share one column). Proper fix: a dedicated consumption/revocation column (`consumed_at` or `revoked`), changing the WHERE to "not consumed AND `refresh_token_expires_at > NOW()`". This closes the 1h bug *and* lets the F38 marker stop borrowing `expires_at`. Needs a Drizzle migration + a refresh-after-expiry test. Security change — route through the audit/impl separation in `docs/workflows/security.md`. Discovered 2026-06-29 while fixing the F38 concurrent-refresh race.
+
+### `[DESIGN]` Separate OAuth refresh consumption marker from `expires_at` (F38 follow-up)
+
+The F38 concurrent-refresh race was fixed (2026-06-29) by stamping consumed rows with `to_timestamp(0)` instead of `NOW()` — robust because the re-checked predicate no longer compares two transactions' start timestamps. That's a minimal, behavior-preserving patch; it still overloads `expires_at` as both access-token-expiry and consumed-marker. The clean design (a dedicated `consumed_at`/`revoked` column) is shared with the 1h-refresh bug above — do them together. Until then, leave a regression guard: the existing `oauth-flow.test.ts` F38 test is the canary, but it passed locally even while racy, so consider a higher-concurrency / repeated-iteration variant.
+
 ---
 
 ## How to use this file

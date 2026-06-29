@@ -497,14 +497,24 @@ export async function refreshOAuthTokenBundle(
   const refreshTokenHash = hashOpaque(params.refreshToken);
 
   return db.transaction(async (tx) => {
-    // Atomically consume: expires_at=NOW kills both the access token
-    // (validation checks expires_at > NOW) and any concurrent refresh
-    // (this same WHERE clause). Under READ COMMITTED the second concurrent
-    // UPDATE blocks on the row lock, re-evaluates the predicate after the
-    // first commits, matches zero rows, and gets invalid_grant.
+    // Atomically consume by stamping the row with an immutable past sentinel
+    // (epoch). expires_at < NOW() then kills the old access token (validation
+    // checks expires_at > NOW) AND excludes the row from every concurrent
+    // refresh via this same WHERE clause — so N simultaneous refreshes mint
+    // exactly one new family (F38).
+    //
+    // We must NOT mark consumption with NOW(): NOW() is the transaction-START
+    // timestamp, and lock-acquisition order is independent of timestamp order.
+    // A txn that started earlier (smaller NOW()) but acquired the row lock
+    // later would, after the winner commits expires_at=winner.NOW(), re-check
+    // expires_at > self.NOW() as winner.NOW() > self.NOW() == true, match the
+    // row, and mint a SECOND family. A fixed past constant removes the cross-
+    // transaction NOW() comparison entirely. Under READ COMMITTED the blocked
+    // UPDATE re-evaluates the predicate after the winner commits, matches zero
+    // rows, and the caller gets invalid_grant.
     const rows = await tx.execute(sql`
       UPDATE claimnet.api_keys
-      SET expires_at = NOW()
+      SET expires_at = to_timestamp(0)
       WHERE refresh_token_hash = ${refreshTokenHash}
         AND key_type = 'oauth'
         AND expires_at > NOW()
