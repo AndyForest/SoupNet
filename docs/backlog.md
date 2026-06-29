@@ -184,6 +184,14 @@ Common rejection reasons to double-check before submitting: missing tool annotat
 
 `DELETE /auth/me` 409s if the user owns a non-personal organization with other members (`owned_shared_orgs_exist`). There's currently no in-app way to transfer ownership — the user has to email admin for help. Add a transfer-ownership UI on the recipe-book page so owners can hand off to another admin/member before deleting. Until this ships, the deletion guard's error message points to admin-assisted transfer.
 
+### `[DESIGN]` Write ADR-0022 for the OAuth 2.1 connector flow
+
+`apps/backend/src/routes/oauth.ts:9` references "ADR-pending" — the implementation is complete (DCR → consent → auth code → token/refresh) but the design rationale isn't recorded. Capture: the access token *is* an `api_keys` row (`key_type='oauth'`, 1h TTL, 30d refresh) rather than a separate token store; the coarse `read`/`write` scope string vs. the structured per-book `read_group_ids`/`write_group_ids`/`default_write_group_id` columns (per-book granularity deliberately kept out of the OAuth `scope` param); PKCE-S256 mandatory; exact redirect-URI match (F44); refresh rotation with TOCTOU defense (F38).
+
+### `[IMPL]` Reconcile the briefing's API-key-in-URL assumptions for OAuth-connected agents
+
+Agent-surface OAuth docs landed 2026-06-23 (briefing pointer in `recipe-guide-content.ts` + "Two ways to connect" section in `/docs/mcp-setup`, both pointing at `/info/connect` as the single source of truth). Remaining: the briefing is still built around a pasteable, long-lived key embedded in every URL as `?key=` (the "Your API key" + "Setup — web-only agents" sections). An OAuth-connected agent has a 1h access token and calls the MCP tools directly, so those URL/`?key=` sections don't serve it (and the rendered token expires within the hour). Low impact — OAuth agents use the tools, not the URLs — but worth an OAuth-aware branch if OAuth becomes the dominant connection path.
+
 ---
 
 ## How to use this file

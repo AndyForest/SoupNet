@@ -449,7 +449,7 @@ Same shape, different details for other clients (you can reason from the Claude 
 - **VS Code** (\`.vscode/mcp.json\`): top-level key is \`servers\` (not \`mcpServers\`); add \`"inputs": []\` at the top level.
 - **Google Antigravity** (\`~/.gemini/antigravity/mcp_config.json\`; Windows: \`%USERPROFILE%\\.gemini\\antigravity\\mcp_config.json\`): use \`serverUrl\` instead of \`url\`. Restart Antigravity after saving.
 - **Claude Desktop** and other stdio-only clients: bridge via \`mcp-remote\` or install the \`.mcpb\` extension — see ${backendUrl}/docs/mcp-setup?key=${apiKey} for the full configs.
-- **claude.ai web chat:** not yet supported as an MCP client. claude.ai's "Add custom connector" UI currently accepts only OAuth (no Bearer-token field), and Soup.net's OAuth support is in flight. Until that ships, use the web-only path in the next section — it works in claude.ai today.
+- **claude.ai, ChatGPT, Mistral, Perplexity, and other chat-style AIs:** connect via OAuth, not a pasteable key. Add \`${backendUrl}/mcp\` as a custom connector; you sign in to Soup.net and choose which recipe books to share (and read vs. write for each) in the consent screen. Full per-client steps: ${frontendUrl}/info/connect
 
 ## Setup — web-only agents
 You can use Soup.net without MCP by constructing URLs against the check page:

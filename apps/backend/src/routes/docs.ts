@@ -163,11 +163,13 @@ Next evidence entry (interpretation of the next reference).
 docs.get("/mcp-setup", (c) => {
   const apiKey = c.req.query("key") || "YOUR_API_KEY";
   const backendUrl = process.env["BACKEND_URL"] || "http://localhost:3101";
+  const frontendUrl = process.env["FRONTEND_URL"] || "http://localhost:5273";
   const kq = keyQs(c.req.query("key"));
 
   // Escape for safe embedding in HTML
   const escKey = apiKey.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const escUrl = backendUrl.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const escFrontendUrl = frontendUrl.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -196,6 +198,17 @@ docs.get("/mcp-setup", (c) => {
   <p>Log in to the <a href="${escUrl}">Soup.net dashboard</a> and generate a daily or scoped key.
   Daily keys rotate automatically. Scoped keys let you restrict access to specific recipe books with a custom expiry.</p>
   ${apiKey !== "YOUR_API_KEY" ? `<p>Your current key (<code>${escKey.substring(0, 8)}...</code>) is pre-filled in the configs below.</p>` : ""}
+
+  <h2>Two ways to connect</h2>
+  <p><strong>Chat-style AIs</strong> (claude.ai, ChatGPT, Mistral Le Chat, Perplexity) connect via
+  <strong>OAuth</strong> &mdash; no API key to copy. Add <code>${escUrl}/mcp</code> as a custom connector,
+  sign in to Soup.net, and choose which recipe books to share (and read vs. write for each) right in the
+  consent screen. Per-client steps for each chat AI are at
+  <a href="${escFrontendUrl}/info/connect">${escFrontendUrl}/info/connect</a>.</p>
+  <p><strong>Developer tools</strong> (Codex, Claude Code, Claude Desktop, VS Code, Google Antigravity,
+  Cursor, Windsurf, Zed) use a <strong>Bearer API key</strong> &mdash; the options below. Most of these
+  also accept the OAuth flow above if you&rsquo;d rather sign in than paste a key; point them at
+  <code>${escUrl}/mcp</code> and let their built-in OAuth client handle the rest.</p>
 
   <h2>Option 1: Codex</h2>
   <p>Codex uses <code>config.toml</code>, not <code>.mcp.json</code>. Use
