@@ -233,7 +233,7 @@ Each environment should have exactly one source of truth for configuration. Code
 - Deploy-job workflows should source environment-specific names from infrastructure outputs (or platform variables wired from those outputs), so adding a new environment is a config change rather than a workflow fork.
 - The PG\* / `DATABASE_URL` connection helpers in `apps/backend/src/db.ts` have zero defaults — every required var throws if missing. That's fine as a posture (fail loudly > mystery localhost), but it means `.env.example` files are the de facto schema documentation and have to be hand-synced.
 
-**Why this matters:** every additional config tier is another place that drifts. A future `prod` environment that requires editing the ECS module, the dev tfvars, the CI workflow, and a manual Secrets Manager step is one where someone forgets a tier and ships a broken deploy. Consolidating tiers is cheap when you have one environment and expensive once you have several.
+**Why this matters:** every additional config tier is another place that drifts. A future `prod` environment that requires editing an infrastructure module, a per-environment variables file, the CI workflow, and a manual secrets-store step is one where someone forgets a tier and ships a broken deploy. Consolidating tiers is cheap when you have one environment and expensive once you have several.
 
 **Not a blocker for current work** — note as drift, fix in a focused refactor, don't bundle into unrelated changes.
 

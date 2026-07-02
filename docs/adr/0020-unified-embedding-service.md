@@ -72,7 +72,7 @@ Concretely:
 - **Shared process failure mode.** A pg-boss handler crash now takes down the HTTP process. Mitigation: handlers already catch their own errors (see `vector-api-call.ts` binary-split retry). A hard process-level crash in a handler would be a pre-existing bug.
 - **Memory/CPU contention.** Backend + consumers now compete on the same 512MB task. In practice embeddings are I/O-bound (Gemini calls) so event-loop contention is low, and `WORKER_CONCURRENCY=5` caps it. Bump the task size if prod metrics show saturation.
 - **Graceful shutdown order is load-bearing.** Container orchestrators send SIGTERM with a grace window (commonly 30s on most platforms). Must `boss.stop({ graceful: true })` before closing the HTTP listener so in-flight strategy sweeps complete. Tested.
-- **Migration window.** When the new backend image rolls out with pg-boss wired in, the old worker service is still running. For ~1 deploy both will try to consume queues. pg-boss singleton keys + `FOR UPDATE SKIP LOCKED` make double-processing safe, but we schedule the worker service teardown in the same Terraform apply to minimize the overlap.
+- **Migration window.** When the new backend image rolls out with pg-boss wired in, the old worker service is still running. For ~1 deploy both will try to consume queues. pg-boss singleton keys + `FOR UPDATE SKIP LOCKED` make double-processing safe, but we schedule the worker service teardown in the same deploy to minimize the overlap.
 
 ### Neutral
 

@@ -1,9 +1,65 @@
-# Soup.net
+<p align="center">
+  <a href="https://www.soup.net">
+    <img src="apps/frontend/public/og-image.png" alt="Soup.net — a person works at a table among glowing AI agent figures, connected by threads of shared taste and judgment" width="640">
+  </a>
+</p>
 
-A stigmergic search engine for taste and judgment. AI agents check recipes — structured traces of preferences and decisions with evidence — and the system finds similar recipes from previous sessions. Every check makes future searches smarter.
+<p align="center"><strong>Your taste and judgment, in every AI agent you use.</strong></p>
 
-- [`docs/architecture/overview.md`](docs/architecture/overview.md) — system topology, three agent surfaces, data model at a glance
+<p align="center">
+  <a href="https://github.com/AndyForest/SoupNet/actions/workflows/ci.yml"><img src="https://github.com/AndyForest/SoupNet/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+</p>
+
+Soup.net is shared memory for AI agents. The agents you work with record your judgment calls as they happen, then bring them back in your next session, on a different tool, or to a collaborator's agent joining the project. The recipe book builds itself.
+
+The unit of storage is a **recipe**: one judgment call in a structured, evidence-backed form — *"As a [role] working on [goal], I prefer [X] so that [reason]"*, plus verbatim supporting quotes. Agents use it through a **recipe check**: a semantic search whose only side effect is an append. Your agent searches with its current hypothesis about your taste, gets back your prior decisions with their evidence, and the hypothesis itself becomes a trace future agents can find. Nothing is ever overwritten, and every check makes the next one smarter — the same mechanism ants use to reinforce pheromone trails (stigmergy).
+
+## Why
+
+AI agents finish bigger and bigger pieces of work on their own, and you never run just one. Every new session is a fresh agent, every tool is another, and collaborators bring their own. Each one needs your answers, separately, from scratch. The scarce resource is you.
+
+Most agent memory stores facts and conversation state, inside one vendor's ecosystem. Soup.net stores the judgment call itself, with the context and evidence that scope it, and it lives with you — portable across Claude Code, ChatGPT, Gemini, or the custom agent your team wrote in-house. Past decisions come back as **context, not directives**: your agent weighs them against the current task instead of replaying stale facts.
+
+Because every check leaves a dated, append-only trace, you also get observability for free: one inspectable log of the judgment your agents exercised on your behalf. As agents run longer between check-ins, that record is what keeps you in the driver's seat.
+
+Soup.net is developed with its own workflow. The AI agents that build it recipe-check their design decisions into the maintainer's corpus as they work — so the system's design history lives in the system, and the agents extending it retrieve the judgment calls that shaped the code they're changing.
+
+The Recipe Map is how a human watches that corpus grow: recipes cluster by semantic similarity, projected onto any two concept axes you choose.
+
+<p align="center">
+  <img src="apps/frontend/src/assets/recipe-map-discover.png" alt="Recipe Map: clustered recipe circles plotted between two concept axes, with an exemplar recipe popover showing a cluster's contents" width="560">
+</p>
+
+## Field data
+
+A field evaluation ran over the maintainer's real work in mid-2026 — two projects, coordinator agents spawning sub-agent fleets, every agent briefed to check at judgment moments and self-report what each check did for it. The honest scope: one developer, a 3-day feedback window over a 3-month corpus, all Claude-family agents. Observational, not a benchmark.
+
+- 178 checks across 64 distinct agent sessions, in one joinable log.
+- 68% of checks confirmed a prior decision, so the agent kept working instead of interrupting the human.
+- ~4.5% of checks changed the agent's action. Rare by design — but that tail is where the value concentrates: the strongest case was an agent's measured-but-wrong "drop this index" conclusion being challenged by the human, re-tested, reversed, and permanently logged so no future agent re-derives it.
+- 12 of 12 audited high-impact cases held up against the raw corpus; none was contradicted.
+- Costs: ~1–3 KB of returned context per check, a 4–6 KB session briefing, 0.15–0.36 s warm check latency.
+
+Known failure modes, from the same evaluation: the self-reporting never once said "no" (treat every percentage as an upper bound); a young corpus returns nothing for roughly 1 in 10 checks (that's seeding, not failure); and batched end-of-session checks mostly retrieve the agent's own fresh traces. Check at the judgment moment, not in a closing ceremony. And one honest gap: the plain-URL path is tested working with ChatGPT (web), Gemini, and Claude — but every *instrumented* field row so far comes from Claude-family agents in Claude Code, so cross-vendor effectiveness numbers don't exist yet. If you run it from another harness, you're generating the first real data.
+
+## Try it
+
+- **Hosted** — free, open to new signups: [soup.net](https://www.soup.net). The site generates a one-click briefing for whatever agent you use, from web-only chatbots to full MCP clients.
+
+  The web-chatbot path is a first-class interface, not a fallback: agents without MCP participate through generated links — the recipe check is a URL the agent constructs or the human clicks. Tested working with ChatGPT (web), Gemini, and Claude, free tiers included.
+- **Self-host** — MIT-licensed, deliberately boring stack (Postgres 17 + pgvector, Hono, React). No LLM runs on the server: agents do the reasoning wherever they already run; the server does storage and vector search. The one external dependency is Google's Gemini embedding API (an [AI Studio key](https://aistudio.google.com/apikey) works; a deterministic stub provider covers dev and tests with zero API calls). Quick start below. Either way your corpus exports as a single JSON file.
+
+Point an MCP-capable agent at the hosted service in one line:
+
+```
+claude mcp add --transport http soupnet https://mcp.soup.net/mcp --header "Authorization: Bearer YOUR_KEY"
+```
+
+## Learn more
+
 - [`docs/design-thinking.md`](docs/design-thinking.md) — product vision, user archetypes, recipe-check scenarios
+- [`docs/architecture/overview.md`](docs/architecture/overview.md) — system topology, three agent surfaces, data model at a glance
 - [`docs/planning/pivot-search-as-logging.md`](docs/planning/pivot-search-as-logging.md) — the search-as-logging pivot (decision history)
 - [`docs/engineering-principles.md`](docs/engineering-principles.md) — 13 principles that govern every design choice
 - [`docs/backlog.md`](docs/backlog.md) — current work queue; completed items in `docs/backlog-completed.md`
@@ -29,7 +85,7 @@ Open `http://localhost:5273` — log in, generate a recipe check link, and start
 
 ---
 
-Mailpit Web UI for local dev: http://localhost:8625 
+Mailpit Web UI for local dev: http://localhost:8625
 
 ## Repo layout
 
@@ -72,24 +128,14 @@ The primary path is **remote MCP over Streamable HTTP** (stateless, ADR-0021). P
 
 **1. Generate an API key** — Log in to the SPA, open **API keys**, create a daily or scoped key, copy the raw value.
 
-**2. Paste the config block that matches your client.** Each client's schema differs; don't mix them.
+**2. Add the server.** In Claude Code it's a one-liner:
 
-**Codex** — Codex uses `config.toml`, not `.mcp.json`. Use project-scoped `.codex/config.toml` in a trusted project when this repo should use its own Soup.net key; use `~/.codex/config.toml` only when the same key should apply globally. Prefer an environment variable:
-
-```toml
-[mcp_servers.soupnet]
-url = "http://localhost:3101/mcp"
-bearer_token_env_var = "SOUPNET_API_KEY"
-```
-
-Make `SOUPNET_API_KEY` available where Codex starts, then restart Codex or start a new session. Verify with `/mcp` in the TUI or `codex mcp list`. Inline `http_headers = { Authorization = "Bearer YOUR_KEY" }` also works, but do not commit a config file containing a token. Checked against Codex docs on 2026-05-16; if it fails, consult the OpenAI Developers docs MCP for current Codex MCP configuration.
-
-**Claude Code** — per-project `.mcp.json` at the repo root (or `~/.claude/.mcp.json` for global). One-liner:
 ```
 claude mcp add --transport http soupnet http://localhost:3101/mcp --header "Authorization: Bearer YOUR_KEY"
 ```
 
-Or in `.mcp.json`:
+Any HTTP-MCP client uses the same three facts, whatever its config schema calls them:
+
 ```jsonc
 {
   "mcpServers": {
@@ -102,35 +148,11 @@ Or in `.mcp.json`:
 }
 ```
 
-**VS Code** — per-project `.vscode/mcp.json`. Top-level key is `servers` (not `mcpServers`); `inputs` is required:
-```jsonc
-{
-  "servers": {
-    "soupnet": {
-      "type": "http",
-      "url": "http://localhost:3101/mcp",
-      "headers": { "Authorization": "Bearer YOUR_KEY" }
-    }
-  },
-  "inputs": []
-}
-```
-
-**Google Antigravity** — user-global `~/.gemini/antigravity/mcp_config.json`. Uses `serverUrl` (not `url`):
-```jsonc
-{
-  "mcpServers": {
-    "soupnet": {
-      "serverUrl": "http://localhost:3101/mcp",
-      "headers": { "Authorization": "Bearer YOUR_KEY" }
-    }
-  }
-}
-```
+Per-client config blocks (Codex, VS Code, Google Antigravity, Claude Desktop via `mcp-remote` or the stdio server in `apps/mcp-server/`) live in the guide at `/docs/mcp-setup` — served by your own instance, or [hosted](https://mcp.soup.net/docs/mcp-setup) with your key pre-filled when reached from the dashboard. One living page instead of forked copies.
 
 **3. Restart the client** (or run `/mcp` in Claude Code) to pick up the new server. Available tools: `check_recipe`, `get_briefing`, `list_my_recipe_books`, `update_recipe_book_description`.
 
-Clients that can't speak HTTP MCP natively (Claude Desktop, older tooling) can bridge via `mcp-remote` or run the stdio server in `apps/mcp-server/` — both covered in the live guide at `/docs/mcp-setup` (serves with your key pre-filled when reached from the dashboard).
+The tool contract is read + append only. There is no update or delete surface, so a confused (or prompt-injected) agent can add traces but can never destroy or rewrite the record — worth knowing if you evaluate MCP servers on security posture.
 
 ---
 
@@ -201,3 +223,19 @@ The application is deployment-agnostic — only Postgres 17 with `pgvector` and 
 - Never make direct DB edits — always use Drizzle migrations
 - `import type { ... }` for type-only imports; `unknown` not `any`
 - See [`docs/engineering-principles.md`](docs/engineering-principles.md)
+
+---
+
+## The human behind this
+
+Much of Soup.net — code, docs, parts of this README — is written by AI agents. All of it is directed, reviewed, and answered for by one verifiable human: [Andy Forest](https://github.com/AndyForest), a systems architect and developer of 30 years. Recent work: AI Platform Architect at the Scratch Foundation; a decade running [Steamlabs](https://steamlabs.ca), a Canadian nonprofit that brought hands-on AI education to 850,000+ young learners; co-author of [*Make: AI Robots*](https://www.amazon.ca/Make-Robots-Amazing-Artificial-Intelligence/dp/1680457292) (O'Reilly, [translated into Japanese](https://www.amazon.co.jp/-/en/micro-bit%E3%81%A7%E3%81%AF%E3%81%98%E3%82%81%E3%82%8BAI%E5%B7%A5%E4%BD%9C-%E2%80%95%E8%A6%AA%E5%AD%90%E3%81%A7%E4%BD%9C%E3%82%8D%E3%81%86%EF%BC%81AI%E3%81%A7%E5%8B%95%E3%81%8F%E3%83%AD%E3%83%9C%E3%83%83%E3%83%88%E3%80%81%E3%82%B2%E3%83%BC%E3%83%A0%E3%80%81%E3%81%8A%E3%82%82%E3%81%A1%E3%82%83-Reade-Richard/dp/4814400993)); [LiteLLM](https://github.com/BerriAI/litellm) contributor.
+
+Soup.net exists because he runs a lot of agents and wanted his judgment to survive between them. The accountability model this README describes — agents do the work, a human answers for it — is the one the repo itself is built with.
+
+---
+
+## License and trademarks
+
+The code and documentation in this repository are licensed under the [MIT License](LICENSE).
+
+The **Soup.net** name, logo, wordmark, and brand illustration assets identify the hosted service at [soup.net](https://www.soup.net) and are not covered by the MIT grant. Fork the code, self-host it, build on it freely — but present your own public instance under your own name and branding.
