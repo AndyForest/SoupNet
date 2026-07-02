@@ -361,7 +361,7 @@ export async function submitAndSearch(
   // 3. Idempotency check: hash the claim text, ON CONFLICT return existing
   const claimTextHash = crypto.createHash("sha256").update(params.traceText).digest("hex");
   let traceId: string | undefined;
-  let _isExisting = false;
+  let isExisting = false;
 
   // 4. Resolve the two sync embeddings in PARALLEL, BEFORE the transaction —
   // external API calls don't belong inside an open transaction, and running
@@ -464,7 +464,7 @@ export async function submitAndSearch(
       // per check (operator decision, 2026-07-01).
     } else {
       // Duplicate — find the existing trace
-      _isExisting = true;
+      isExisting = true;
       const existingRows = await tx.execute(sql`
         SELECT id FROM claimnet.traces
         WHERE api_key_id = ${keyId}::uuid
@@ -549,7 +549,15 @@ export async function submitAndSearch(
   // One structured timing line per check — the per-stage attribution the
   // 2026-07-01 investigation had to reconstruct by black-box measurement.
   // console.warn is the repo's operational-log channel (lint allows warn/error).
-  console.warn(`[check-timing] ${JSON.stringify({ traceId, ...timer.toLogObject() })}`);
+  // `req` disambiguates lines that share a traceId (duplicate re-checks of the
+  // same recipe log one line each — N probes of one recipe are N requests, not
+  // one request executing N times); `dup` marks the idempotent-duplicate path.
+  console.warn(`[check-timing] ${JSON.stringify({
+    req: crypto.randomUUID().slice(0, 8),
+    traceId,
+    dup: isExisting,
+    ...timer.toLogObject(),
+  })}`);
 
   return {
     traceId,
