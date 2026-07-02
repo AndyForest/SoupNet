@@ -54,6 +54,26 @@ export function SiteFooter() {
       >
         Terms
       </Link>
+      <div style={{ marginTop: "var(--space-sm)" }}>
+        Built by{" "}
+        <a
+          href="https://github.com/AndyForest"
+          target="_blank"
+          rel="noopener"
+          style={{ color: "var(--color-on-surface-variant)" }}
+        >
+          Andy Forest
+        </a>
+        {" · "}
+        <a
+          href="https://github.com/AndyForest/SoupNet"
+          target="_blank"
+          rel="noopener"
+          style={{ color: "var(--color-on-surface-variant)" }}
+        >
+          Open source
+        </a>
+      </div>
     </footer>
   );
 }

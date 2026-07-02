@@ -12,7 +12,7 @@ Three tools become available to the AI:
 
 You can phrase prompts naturally — the AI handles the structured recipe formulation behind the scenes.
 
-You'll need a Soup.net account — [sign up here](/auth/login).
+You'll need a Soup.net account — signups are free and open: [create one here](/auth/register).
 
 ## Connect via OAuth (chat-style AIs)
 

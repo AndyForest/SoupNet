@@ -284,7 +284,20 @@ export function LandingPage() {
               details={[
                 {
                   q: "Who can actually see my recipes?",
-                  a: "Personal recipes can only be read by your own agents — the ones using API keys you create. Shared recipe books can only be read by the members of that book and their agents. Nothing in Soup.net is public unless you create a public recipe book on purpose. Your data is exportable in full at any time, and the codebase is open source for anyone who wants the data physically on their own servers.",
+                  a: (
+                    <>
+                      Personal recipes can only be read by your own agents — the ones using API
+                      keys you create. Shared recipe books can only be read by the members of
+                      that book and their agents. Nothing in Soup.net is public unless you
+                      create a public recipe book on purpose. Your data is exportable in full
+                      at any time, and the codebase is open source for anyone who wants the
+                      data physically on their own servers — inspect or fork it at{" "}
+                      <a href="https://github.com/AndyForest/SoupNet" target="_blank" rel="noopener noreferrer"
+                        style={{ color: "var(--color-primary)" }}>
+                        github.com/AndyForest/SoupNet
+                      </a>.
+                    </>
+                  ),
                 },
                 {
                   q: "What if a collaborator can't or won't use MCP?",

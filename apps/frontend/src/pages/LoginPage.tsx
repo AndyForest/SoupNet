@@ -287,6 +287,21 @@ export function LoginPage() {
           )}
         </div>
 
+        {/* Open-signups reassurance — only when the status endpoint has
+            confirmed signups are open. Skipped in the invite flow, where
+            "no invitation needed" would clash with the invited greeting. */}
+        {isRegister && !inviteToken && signupStatusQuery.data === true && (
+          <p style={{
+            textAlign: "center",
+            color: "var(--color-on-surface-variant)",
+            fontSize: "0.875rem",
+            lineHeight: 1.5,
+            marginBottom: "var(--space-lg)",
+          }}>
+            Free — no waitlist, no invitation needed.
+          </p>
+        )}
+
         {/* Capacity notices — the register form stays the same either way;
             only the expectation changes. */}
         {isRegister && signupsClosed && (

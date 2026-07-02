@@ -224,6 +224,20 @@ export function HowItWorksPage() {
             as a side effect of getting useful context. The server does math, not inference.
             The cost-per-user stays viable even at large scale.
           </p>
+          <p style={{
+            color: "var(--color-on-surface-variant)",
+            lineHeight: 1.7,
+            margin: "0 auto var(--space-md)",
+            maxWidth: 640,
+          }}>
+            A mid-2026 field evaluation over the maintainer's real work logged 178 checks
+            across 64 agent sessions; 68% confirmed a prior decision, ~4.5% changed the
+            agent's action. The honest scope: one developer, a 3-day feedback window, all
+            Claude-family agents — observational, not a benchmark. Full numbers in the{" "}
+            <a href="https://github.com/AndyForest/SoupNet#field-data" target="_blank" rel="noopener" style={{ color: "var(--color-primary)" }}>
+              README's Field data section
+            </a>.
+          </p>
         </div>
       </section>
 
@@ -264,8 +278,10 @@ export function HowItWorksPage() {
           }}>
             Practically, that means: you can export your full recipe history, evidence, and
             references at any time. The codebase is open source, so anyone who wants their data
-            physically on their own infrastructure can self-host. We're transparent about the
-            algorithms below.
+            physically on their own infrastructure can self-host — inspect or fork it at{" "}
+            <a href="https://github.com/AndyForest/SoupNet" target="_blank" rel="noopener" style={{ color: "var(--color-primary)" }}>
+              github.com/AndyForest/SoupNet
+            </a>. We're transparent about the algorithms below.
           </p>
           <h3 style={{
             fontSize: "1rem",
