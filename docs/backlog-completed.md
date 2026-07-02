@@ -38,6 +38,18 @@ Migrations `0022_waitlist`, `0023_waitlist_crm_invite_semantics`. Tests: `waitli
 
 ## Recipe checks
 
+### 2026-07-01 — Recipe-check latency wave 2: search recall + task-type cleanup + instrumentation
+
+Same-day follow-up to the embed-call reduction below, driven by three operator decisions:
+
+- **Production-strategy search filter** (operator picked "filter" from the presented options): `hybridSearch` searches only `PRODUCTION_SEARCH_STRATEGY_IDS` (`full_document`, `full_recipe_context`; new export in `@soupnet/domain`). Measured: candidate pool went from 141 → 754 distinct traces at the same latency. `fetchTraceVectors` now prefers production strategies for clustering vectors too (previously alphabetical order silently picked `exp_full_headed`).
+- **No candidate LIMIT** (operator: "increase or drop if feasible" → dropped): the planner top-N seq-scans exactly regardless — HNSW investigation showed pgvector 0.8.2 declines the index even with `enable_seqscan=off`, so the LIMIT only truncated output and silently capped recall. Every in-scope trace is now ranked. `SET hnsw.ef_search` removed (was a no-op). ANN revisit note stays in backlog (~10× corpus).
+- **RETRIEVAL_DOCUMENT generation dropped entirely** (operator): the model ignores task_type, so the twins doubled `embedding_vectors` + `vector_cache` for byte-identical data. `TASK_TYPES` is SEMANTIC-only in `enqueue.ts` + `strategy-check.ts`; re-add path documented in the KNOWN BUG note. Migration `0025` deletes existing RETRIEVAL rows (~half of embedding_vectors) and all `exp_trace_minimal` pipeline rows.
+- **`exp_trace_minimal` removed from the registry** (operator): byte-identical to `full_document`, which is now the labeled trace-only baseline in the map's strategy dropdown.
+- **Per-stage instrumentation**: new `StageTimer` (`lib/stage-timer.ts`); `/check` responses carry a `Server-Timing` header (`embed/write/query_embed/search/vectors/cluster/evidence/total`) and every check logs one `[check-timing] {...}` JSON line for log-based dashboards (pairs with the private-repo observability briefing).
+
+Verified live: `Server-Timing: embed;dur=260.0, write;dur=19.0, search;dur=47.5, vectors;dur=38.0, cluster;dur=0.9, evidence;dur=69.0, total;dur=436.9` on a 0.44s new check. Tests updated (`sync-embed-path.test.ts` asserts SEMANTIC-only rows; queryvector embed-once contract unchanged).
+
 ### 2026-07-01 — Recipe-check embed-call reduction (measurement items 1+2)
 
 From the same-day latency measurement ([rough-notes/2026-07-01/recipe-check-latency-findings.md](rough-notes/2026-07-01/recipe-check-latency-findings.md)); landed together as one write-path change:

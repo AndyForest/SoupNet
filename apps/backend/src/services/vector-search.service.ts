@@ -20,6 +20,7 @@
 
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
+import { PRODUCTION_SEARCH_STRATEGY_IDS } from "@soupnet/domain";
 import { embedQuery } from "../lib/embeddings/provider";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -54,13 +55,15 @@ export interface HybridSearchResponse {
 
 // ── Main search function ─────────────────────────────────────────────────────
 
-// HNSW requires a LIMIT to use the index (otherwise falls back to sequential scan).
-// ef_search controls how many candidates HNSW examines internally.
-// LIMIT should match ef_search — setting LIMIT higher is wasteful since HNSW
-// won't find more than ef_search good candidates.
-// Increase both together when corpus grows beyond current capacity.
-const HNSW_EF_SEARCH = 1000;
-const SEARCH_CANDIDATE_LIMIT = HNSW_EF_SEARCH;
+// No candidate LIMIT (operator decision 2026-07-01): the planner exhaustively
+// top-N-scans this query at current scale regardless (it declines the HNSW
+// index even when forced — measured, see the query comment below), so a LIMIT
+// only truncated output rows. The old 1000-row cap silently capped recall:
+// each trace's strategy vectors crowded the budget, so a check could rank at
+// most ~500 distinct traces. With the production-strategy filter the row
+// count is ~2 per trace in scope — memory stays proportional to corpus size.
+// Revisit (reintroduce a LIMIT + ANN index) when the corpus makes the exact
+// scan itself too slow, ~10× current scale.
 
 export async function hybridSearch(
   db: PostgresJsDatabase,
@@ -92,27 +95,38 @@ export async function hybridSearch(
   }
 
   try {
-    // Set HNSW search parameter for this transaction
-    // SET doesn't accept parameterized values — use raw SQL
-    await db.execute(sql.raw(`SET hnsw.ef_search = ${HNSW_EF_SEARCH}`));
-
-    // Search all trace embedding strategies (full_document, full_recipe_context, etc.)
-    // HNSW requires ORDER BY + LIMIT to use the index. Deduplication by trace ID
-    // happens in application code since DISTINCT ON defeats the index.
+    // Search the PRODUCTION trace embedding strategies only (full_document,
+    // full_recipe_context) — experimental exp_* strategies don't compete here
+    // (operator decision 2026-07-01: with all 8 strategies searched, each
+    // trace's variants crowded the 1000-candidate budget down to ~141 distinct
+    // traces; see PRODUCTION_SEARCH_STRATEGY_IDS in @soupnet/domain).
+    // Deduplication by trace ID happens in application code below.
+    //
+    // Execution note: at current scale the planner top-N seq-scans this
+    // exactly rather than using the HNSW index — measured 2026-07-01, it
+    // declines the index even with enable_seqscan=off, and the exact scan is
+    // ~50-65ms warm. Every ranked row in scope is returned (no LIMIT — see
+    // the module comment above). Revisit an ANN index + LIMIT when the corpus
+    // is ~10× (backlog §Recipe-check latency).
+    const strategyIdsSql = sql.join(
+      PRODUCTION_SEARCH_STRATEGY_IDS.map((s) => sql`${s}`),
+      sql`, `,
+    );
     const semanticRows = await db.execute(sql`
       SELECT es.source_id AS trace_id,
              1 - (ev.vector <=> ${vectorStr}::halfvec(3072)) AS semantic_score
       FROM claimnet.embedding_vectors ev
       JOIN claimnet.embedding_chunks ec ON ec.id = ev.embedding_chunk_id
+      JOIN claimnet.embedding_chunk_strategies ecs ON ecs.id = ec.chunk_strategy_id
       JOIN claimnet.embedding_sources es ON es.id = ec.embedding_source_id
       WHERE ev.status = 'complete'
         AND ev.vector IS NOT NULL
         AND ev.task_type = 'SEMANTIC_SIMILARITY'
+        AND ecs.strategy_id IN (${strategyIdsSql})
         AND es.source_type = 'trace'
         AND es.group_id IN (${groupIdsSql})
         ${excludeTraceId ? sql`AND es.source_id != ${excludeTraceId}::uuid` : sql``}
       ORDER BY ev.vector <=> ${vectorStr}::halfvec(3072)
-      LIMIT ${SEARCH_CANDIDATE_LIMIT}
     `);
 
     // Deduplicate by trace ID — same trace may appear from multiple strategies.

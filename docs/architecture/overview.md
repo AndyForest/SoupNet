@@ -317,7 +317,7 @@ Every recipe check is simultaneously a search and a contribution: the agent's re
 
 1. No business logic in routes or components — routes → services → Drizzle.
 2. Two credential populations, strictly separate — JWT for humans, API keys for agents, no cross-surface fallback (engineering-principles.md §7).
-3. Embeddings never block primary writes — the sync path pre-resolves the two search-critical `SEMANTIC_SIMILARITY` vectors in parallel outside the transaction; async pg-boss consumers fill in everything else (`RETRIEVAL_DOCUMENT` twins, evidence, experimental strategies).
+3. Embeddings never block primary writes — the sync path pre-resolves the two search-critical `SEMANTIC_SIMILARITY` vectors in parallel outside the transaction; async pg-boss consumers fill in everything else (evidence, experimental strategies).
 4. Multimodal embeddings are sync-only (ADR-0019) — the async job shape doesn't carry file bytes, and diverging the two paths would corrupt the content-hashed vector cache.
 5. Agents are first-class — `/check` is designed for agent consumption; the SPA is a second-class citizen that happens to use the same backend.
 6. No LLM on the server — the server indexes, searches, and ranks; remote agents do the reasoning.

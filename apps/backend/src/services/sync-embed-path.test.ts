@@ -5,10 +5,9 @@ import { describe, it, expect, beforeAll } from "vitest";
  *
  * Verifies the 2026-07-01 latency posture (docs/rough-notes/2026-07-01/
  * recipe-check-latency-findings.md) of the recipe-check write path:
- *   - SEMANTIC_SIMILARITY (the only task type the search path reads) is
- *     generated synchronously and complete immediately after the check;
- *   - RETRIEVAL_DOCUMENT is inserted 'pending' for the async worker instead
- *     of paying a second identical embedding call inline;
+ *   - SEMANTIC_SIMILARITY (the only task type generated at all — the model
+ *     ignores task_type, so RETRIEVAL_DOCUMENT twins were dropped entirely)
+ *     is generated synchronously and complete immediately after the check;
  *   - experimental strategies are NOT enqueued on the check path (the worker
  *     strategy sweep backfills them — operator decision 2026-07-01);
  *   - duplicate re-checks are idempotent: no new embedding pipeline rows.
@@ -110,7 +109,7 @@ describe.skipIf(!BASE)("sync embedding path (recipe check write)", () => {
     if (!apiKey) throw new Error("Failed to generate test API key");
   }, 60_000);
 
-  it("generates SEMANTIC sync-complete and RETRIEVAL pending, no inline experimental strategies", { timeout: 15_000 }, async () => {
+  it("generates SEMANTIC-only sync-complete vectors, no inline experimental strategies", { timeout: 15_000 }, async () => {
     const recipe = `As a backend engineer testing the sync embed path (run ${uid}), I prefer generating only the searched task type synchronously so that checks stay fast.`;
     const body = await submitCheck(recipe);
     expect(body.ok).toBe(true);
@@ -119,23 +118,20 @@ describe.skipIf(!BASE)("sync embedding path (recipe check write)", () => {
 
     const rows = await traceVectorShape(recipeId!);
 
-    // Exactly the two production strategies, each with both task-type rows.
-    // Experimental strategies are backfilled by the worker sweep (1-minute
-    // cadence), not the check path — this SELECT runs milliseconds after the
-    // check, so their absence here asserts the check path didn't create them.
+    // Exactly the two production strategies, one SEMANTIC row each — no
+    // RETRIEVAL_DOCUMENT twins (dropped 2026-07-01: the model ignores
+    // task_type). Experimental strategies are backfilled by the worker sweep
+    // (1-minute cadence), not the check path — this SELECT runs milliseconds
+    // after the check, so their absence asserts the check path didn't create
+    // them.
     const strategies = [...new Set(rows.map((r) => r.strategy_id))].sort();
     expect(strategies).toEqual(["full_document", "full_recipe_context"]);
-    expect(rows).toHaveLength(4);
+    expect(rows).toHaveLength(2);
 
     for (const row of rows) {
-      if (row.task_type === "SEMANTIC_SIMILARITY") {
-        expect(row.status, `${row.strategy_id}/${row.task_type}`).toBe("complete");
-        expect(row.has_vector, `${row.strategy_id}/${row.task_type}`).toBe(true);
-      } else {
-        expect(row.task_type).toBe("RETRIEVAL_DOCUMENT");
-        expect(row.status, `${row.strategy_id}/${row.task_type}`).toBe("pending");
-        expect(row.has_vector, `${row.strategy_id}/${row.task_type}`).toBe(false);
-      }
+      expect(row.task_type, `${row.strategy_id}`).toBe("SEMANTIC_SIMILARITY");
+      expect(row.status, `${row.strategy_id}`).toBe("complete");
+      expect(row.has_vector, `${row.strategy_id}`).toBe(true);
     }
   });
 

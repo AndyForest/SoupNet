@@ -7,14 +7,10 @@
  * - Graceful degradation: if Gemini fails, inserts 'pending' stubs for worker
  *
  * Latency posture (2026-07-01 measurement, docs/rough-notes/2026-07-01/
- * recipe-check-latency-findings.md): only SEMANTIC_SIMILARITY is generated
- * synchronously for text chunks — it's the only task type the search path
- * reads. RETRIEVAL_DOCUMENT rows are inserted 'pending' for the async worker,
- * halving the user-facing embed cost per sync chunk. Multimodal chunks still
- * generate both task types synchronously because the async pipeline cannot
- * re-embed file bytes (ADR-0019). Callers on a hot path can also pre-resolve
- * vectors (in parallel, outside any transaction) via getOrCreateCachedVector
- * and hand them in through `precomputedVectors`.
+ * recipe-check-latency-findings.md): SEMANTIC_SIMILARITY is the only task
+ * type generated — it's the only one the search path reads. Callers on a hot
+ * path can pre-resolve vectors (in parallel, outside any transaction) via
+ * getOrCreateCachedVector and hand them in through `precomputedVectors`.
  *
  * The vector_cache table has no source text and no FKs — safe for PII cleanup.
  * Only stores: content_hash + model_id + task_type + vector.
@@ -29,11 +25,15 @@ import type { ContentPart } from "../gemini-client";
 const MODEL_ID = "gemini-embedding-2-preview";
 
 // KNOWN BUG (2026-03-29): gemini-embedding-2-preview ignores task_type — all types produce
-// identical vectors (cosine similarity 1.0). We keep generating both so we're positioned
-// to benefit when Google fixes this. Regenerate vector_cache when fixed.
+// identical vectors (cosine similarity 1.0). RETRIEVAL_DOCUMENT generation was therefore
+// dropped entirely on 2026-07-01 (operator decision): it doubled embedding_vectors and
+// vector_cache for byte-identical data, and search only reads SEMANTIC_SIMILARITY.
+// If Google fixes task_type and the distinction becomes valuable: add the task type back
+// here AND in embedding-worker/jobs/strategy-check.ts, then run a backfill — the strategy
+// sweep discovers strategy-level gaps, not missing task-type rows.
 // See: docs/architecture/embedding-test-results.md
 // Bug report: https://discuss.ai.google.dev/t/gemini-embedding-2-preview-appears-to-ignore-task-type-for-text-and-image-embeddings/134720
-const TASK_TYPES = ["RETRIEVAL_DOCUMENT", "SEMANTIC_SIMILARITY"] as const;
+const TASK_TYPES = ["SEMANTIC_SIMILARITY"] as const;
 
 /**
  * Get a vector from cache, or generate via Gemini and cache it.
@@ -214,21 +214,13 @@ export async function enqueueEmbedding(
     return;
   }
 
-  // Sync path: only the task type the search path reads (SEMANTIC_SIMILARITY)
-  // is generated inline for text chunks; RETRIEVAL_DOCUMENT rows are inserted
-  // 'pending' for the async worker (see header — latency posture). Multimodal
-  // chunks generate both task types inline because the worker can't re-embed
-  // file bytes (ADR-0019).
+  // Sync path: resolve each task type from precomputed/cache/API.
+  // (TASK_TYPES is SEMANTIC_SIMILARITY only — see the KNOWN BUG note above.)
   for (const taskType of TASK_TYPES) {
-    const syncThisType = multimodalParts !== undefined || taskType === "SEMANTIC_SIMILARITY";
-
-    let vectorStr: string | null = null;
-    if (syncThisType) {
-      const pre = params.precomputedVectors?.[taskType];
-      vectorStr = pre !== undefined
-        ? pre
-        : await getOrCreateCachedVector(db, chunkHash, params.sourceText, taskType, multimodalParts);
-    }
+    const pre = params.precomputedVectors?.[taskType];
+    const vectorStr = pre !== undefined
+      ? pre
+      : await getOrCreateCachedVector(db, chunkHash, params.sourceText, taskType, multimodalParts);
 
     if (vectorStr) {
       await db.execute(sql`
@@ -238,7 +230,7 @@ export async function enqueueEmbedding(
           (${chunkRow.id}::uuid, ${MODEL_ID}, ${taskType}, 'complete', ${vectorStr}::vector(3072)::halfvec(3072))
       `);
     } else {
-      // Deferred task type, or Gemini unavailable — pending stub for worker
+      // Gemini unavailable — insert pending stub for worker
       await db.execute(sql`
         INSERT INTO claimnet.embedding_vectors
           (embedding_chunk_id, model_id, task_type, status, vector)

@@ -226,19 +226,11 @@ When stigmergic decay lands (search-algorithms.md §Stigmergic Decay), weight re
 
 ## Recipe-check latency (2026-07-01 measurement)
 
-Source: [docs/rough-notes/2026-07-01/recipe-check-latency-findings.md](rough-notes/2026-07-01/recipe-check-latency-findings.md) — black-box prod matrix + local 1,300-trace reproduction + EXPLAIN. Clustering ruled out (sub-5ms, operator's initial suspicion); bottleneck was 6 sequential Gemini embed calls per new check (2 per duplicate) plus ANN queries that seq-scan instead of using the HNSW index (the linear-in-corpus-size component). The embed-call reduction landed 2026-07-01 (see backlog-completed) — local timings with real Gemini dropped to 0.53s new / 0.11s duplicate. Remaining items:
+Source: [docs/rough-notes/2026-07-01/recipe-check-latency-findings.md](rough-notes/2026-07-01/recipe-check-latency-findings.md). Both waves landed 2026-07-01 (see backlog-completed): embed-call reduction (0.53s new / 0.11s duplicate locally), production-strategy search filter + no candidate LIMIT (recall un-capped), RETRIEVAL_DOCUMENT twins and `exp_trace_minimal` dropped + cleaned up (migration 0025), and Server-Timing/structured-log instrumentation. Remaining:
 
-### `[IMPL]` Restore HNSW index usage for ANN search queries
+### `[DESIGN]` Reintroduce an ANN index path when the exact scan gets slow (~10× corpus)
 
-EXPLAIN (literal and parameterized) shows both ANN queries seq-scan `embedding_vectors` (~12k distance computations per query, twice per check) because the `ORDER BY ... LIMIT` sits above joins with post-join filters. Restructure as an inner subquery ordering/limiting on `embedding_vectors` alone, join/filter outside; add a partial HNSW index (`WHERE task_type='SEMANTIC_SIMILARITY' AND status='complete' AND vector IS NOT NULL`). Coordinate with the strategy-filter decision below (it changes what the index should cover).
-
-### `[DECISION NEEDED]` Experimental strategies compete in production search + recall cap
-
-`embedding-strategies.ts` says `exp_*` strategies are "not used in production search," but `hybridSearch` has no strategy filter — each trace contributes ~8 SEMANTIC vectors, so the 1000-row candidate budget covers only ~260 distinct traces (prod checks return `totalResults ≈ 255–269` against 1,286 recipes): a silent recall cap. Also `exp_trace_minimal` duplicates `full_document` byte-for-byte. Decide: filter search to production strategies (restores stated intent, ~4× less scan work, un-caps recall), or bless best-score-across-strategies as intended behavior and update the comment + size `ef_search`/`LIMIT` accordingly. Related evidence from the corpus (2026-07-01 check): the multi-strategy infrastructure was deliberately "built for exactly this comparison" but "the experimental strategies have never been scored beyond visual map inspection" — so the decision may hinge on running the deferred retrieval-quality scoring first. Note the *write-path* half is already decided and done (2026-07-01, operator): `exp_*` strategies are no longer enqueued at check time; the worker sweep backfills them.
-
-### `[IMPL]` Per-stage timing instrumentation on /check
-
-`Server-Timing` response header + one structured timing log line per check (embed calls, ANN queries, write block, clustering). Needed to close the one remaining unknown: prod new−duplicate delta is 4–10 s for 4 embed calls that take ~1 s from a dev machine — only prod-side per-stage numbers can attribute it. Companion infra briefing lives in the private deployment repo (`docs/briefings/check-latency-observability.md`).
+Search now ranks every in-scope trace exactly with no LIMIT; the planner top-N seq-scans and declines the HNSW index even when forced (measured 2026-07-01 at 23k vectors, pgvector 0.8.2 — see the comment in `vector-search.service.ts` and the findings doc). Cost grows linearly (~2 vectors/trace post-filter). When the corpus is ~10× current (roughly >10k recipes) revisit: partial HNSW index matching the search predicate + inner-subquery shape + `hnsw.iterative_scan`, and re-benchmark recall vs the exact scan. Cold-start (buffer-cache) behavior is the infra briefing's territory (`pg_prewarm`, instance memory).
 
 ---
 

@@ -688,6 +688,13 @@ async function handleCheck(
     });
   }
 
+  // Per-stage latency attribution (embed/write/search/evidence/cluster/total)
+  // as a Server-Timing header on both JSON and HTML responses — never in the
+  // payload. See docs/rough-notes/2026-07-01/recipe-check-latency-findings.md.
+  if (result?.serverTiming) {
+    c.header("Server-Timing", result.serverTiming);
+  }
+
   // JSON response path
   if (jsonMode) {
     if (!result) {

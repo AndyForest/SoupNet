@@ -36,7 +36,9 @@ export interface EmbeddingStrategy {
 export const ALL_STRATEGY_IDS = [
   "full_document",
   "full_recipe_context",
-  "exp_trace_minimal",
+  // exp_trace_minimal removed 2026-07-01 (operator decision): its text was
+  // byte-identical to full_document, so full_document IS the trace-only
+  // baseline for map experiments. Existing rows cleaned up by migration.
   "exp_trace_instructed",
   "exp_trace_evidence_headed",
   "exp_trace_evidence_weighted",
@@ -49,6 +51,19 @@ export type StrategyId = (typeof ALL_STRATEGY_IDS)[number];
 /** Strategies that are experimental (not used in production search). */
 export const EXPERIMENTAL_STRATEGY_IDS = ALL_STRATEGY_IDS.filter(
   (id) => id.startsWith("exp_"),
+);
+
+/**
+ * Strategies searched by the production recipe-check path (hybridSearch) and
+ * preferred when fetching one vector per trace for clustering. Operator
+ * decision 2026-07-01: experimental strategies do NOT compete in production
+ * search — with all 8 strategies searched, the 1000-candidate budget covered
+ * only ~141 of 1,301 traces (each trace's variants crowd out other traces);
+ * filtering to these two raised that to ~754 at the same latency. exp_*
+ * vectors remain available for the /traces/map strategy experiments.
+ */
+export const PRODUCTION_SEARCH_STRATEGY_IDS = ALL_STRATEGY_IDS.filter(
+  (id) => !id.startsWith("exp_"),
 );
 
 // ── Text builders ────────────────────────────────────────────────────────────
@@ -100,9 +115,6 @@ export function buildStrategyText(
 
     case "full_recipe_context":
       return buildFullRecipeContext(traceText, entries);
-
-    case "exp_trace_minimal":
-      return traceText;
 
     case "exp_trace_instructed":
       return `Taste and judgment claim (format: "As a [role] working on [goal], I [chose/prefer] so that [reason]"):\n${traceText}`;

@@ -745,7 +745,9 @@ export function RecipeMapPage() {
               <option value="full_recipe_context">Trace + evidence + references</option>
             </optgroup>
             <optgroup label="Experimental — trace only">
-              <option value="exp_trace_minimal">Minimal (raw text)</option>
+              {/* exp_trace_minimal removed 2026-07-01 — it was byte-identical
+                  to full_document ("Trace text only" above IS the minimal
+                  baseline). */}
               <option value="exp_trace_instructed">Instructed (with preamble)</option>
             </optgroup>
             <optgroup label="Experimental — trace + evidence">

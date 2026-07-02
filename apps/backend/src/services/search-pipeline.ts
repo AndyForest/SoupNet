@@ -19,12 +19,14 @@
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 
+import { PRODUCTION_SEARCH_STRATEGY_IDS } from "@soupnet/domain";
 import { hybridSearch, evidenceSearch } from "./vector-search.service";
 import type { EvidenceSearchResult } from "./vector-search.service";
 import type { SearchResultItem } from "./trace.service";
 import { clusterResults } from "./clustering.service";
 import type { ClusterResult } from "./clustering.service";
 import { embedQuery } from "../lib/embeddings/provider";
+import { StageTimer } from "../lib/stage-timer";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -54,7 +56,7 @@ export interface SearchPipelineParams {
    *  Each trace is positioned by cosine similarity to each concept embedding.
    *  Research basis: Kim et al. 2018, "Testing with Concept Activation Vectors" (ICLR). */
   axes?: string | undefined;
-  /** Filter vectors by embedding strategy (e.g., 'full_document', 'exp_trace_minimal').
+  /** Filter vectors by embedding strategy (e.g., 'full_document', 'exp_trace_instructed').
    *  When set, fetchTraceVectors returns only vectors from this strategy.
    *  Used by /traces/map for clustering experiments. */
   vectorStrategy?: string | undefined;
@@ -63,6 +65,9 @@ export interface SearchPipelineParams {
    *  zero embedding API calls. When absent, the pipeline embeds the query
    *  once and shares the vector between trace search and evidence search. */
   queryVectorStr?: string | undefined;
+  /** Optional per-request stage timer — the check path passes its own so
+   *  pipeline stages land in the same Server-Timing header / log line. */
+  timer?: StageTimer | undefined;
 }
 
 export interface ClusterAssignment {
@@ -108,7 +113,7 @@ export function parseVector(s: string): number[] {
  * Returns one vector per trace (DISTINCT ON source_id).
  *
  * @param strategyId — when set, only returns vectors from this embedding strategy.
- *   Used by /traces/map for clustering experiments (e.g., 'exp_trace_minimal').
+ *   Used by /traces/map for clustering experiments (e.g., 'exp_trace_instructed').
  */
 export async function fetchTraceVectors(
   db: PostgresJsDatabase,
@@ -124,9 +129,13 @@ export async function fetchTraceVectors(
   // ORDER BY on DISTINCT ON is load-bearing: without it, PostgreSQL picks an
   // arbitrary row per source_id, which means (a) nondeterministic responses
   // across calls, and (b) could pick a halfvec row when a full-precision
-  // vector_cache row exists for the same trace. The ORDER BY below makes
-  // vector_cache rows win the tiebreak, then picks by strategy_id for
-  // stability.
+  // vector_cache row exists for the same trace. The ORDER BY below prefers
+  // production search strategies over exp_* (previously alphabetical order
+  // made exp_full_headed win — the same 2026-07-01 operator decision that
+  // took exp_* out of production search applies to clustering vectors),
+  // then vector_cache rows, then strategy_id for stability ('full_document'
+  // sorts before 'full_recipe_context', so clustering runs on the trace-text
+  // embedding when both are cached).
   const vectorRows = await db.execute(sql`
     SELECT DISTINCT ON (es.source_id) es.source_id::text AS trace_id,
       COALESCE(vc.vector, ev.vector)::text AS vector_str
@@ -144,7 +153,10 @@ export async function fetchTraceVectors(
       AND es.source_type = 'trace'
       AND (vc.vector IS NOT NULL OR ev.vector IS NOT NULL)
       ${strategyFilter}
-    ORDER BY es.source_id, (vc.vector IS NOT NULL) DESC, ecs.strategy_id
+    ORDER BY es.source_id,
+      (ecs.strategy_id IN (${sql.join(PRODUCTION_SEARCH_STRATEGY_IDS.map((s) => sql`${s}`), sql`, `)})) DESC,
+      (vc.vector IS NOT NULL) DESC,
+      ecs.strategy_id
   `);
 
   const result = new Map<string, number[]>();
@@ -215,26 +227,29 @@ export async function runSearchPipeline(
   let totalResults: number;
   let searchMode: "semantic" | "corpus";
 
+  const timer = params.timer ?? new StageTimer();
+
   // Resolve the query embedding once — trace search and evidence search share
   // it. The check path hands in the vector it just cached (queryVectorStr);
   // other query-mode callers pay one embedQuery here instead of one per search.
   let queryVectorStr = params.queryVectorStr;
   if (params.query && !queryVectorStr) {
-    const embedded = await embedQuery(params.query, "SEMANTIC_SIMILARITY");
+    const embedded = await timer.time("query_embed", () =>
+      embedQuery(params.query!, "SEMANTIC_SIMILARITY"));
     if (embedded) queryVectorStr = `[${embedded.join(",")}]`;
     // null → leave undefined; hybridSearch/evidenceSearch degrade gracefully.
   }
 
   if (params.query) {
     // ── Query mode: semantic vector search ─────────────────────────────────
-    const searchResponse = await hybridSearch(db, {
-      recipeText: params.query,
+    const searchResponse = await timer.time("search", () => hybridSearch(db, {
+      recipeText: params.query!,
       groupIds,
       limit: perPage,
       offset,
       excludeTraceId: params.excludeTraceId,
       queryVectorStr,
-    });
+    }));
 
     results = searchResponse.results.map((r) => ({
       id: r.id,
@@ -277,7 +292,8 @@ export async function runSearchPipeline(
   if (shouldCluster || params.includeVectors || params.axes) {
     // Fetch vectors for all results (optionally filtered by strategy for experiments)
     const resultIds = results.map((r) => r.id);
-    vectorMap = await fetchTraceVectors(db, resultIds, params.vectorStrategy);
+    vectorMap = await timer.time("vectors", () =>
+      fetchTraceVectors(db, resultIds, params.vectorStrategy));
   }
 
   if (shouldCluster && vectorMap && vectorMap.size > 1) {
@@ -294,12 +310,12 @@ export async function runSearchPipeline(
     }
 
     if (vectors.length > 1) {
-      const rawClusters = clusterResults({
+      const rawClusters = timer.timeSync("cluster", () => clusterResults({
         vectors,
         k: params.k,
         maxChars: params.maxChars,
         resultTexts: validIndices.map((i) => results[i]!.claimText),
-      });
+      }));
 
       // Build cluster assignments with member tracking
       clusterAssignments = rawClusters.map((c) => ({
@@ -343,7 +359,8 @@ export async function runSearchPipeline(
       };
       if (params.excludeTraceId) evidenceParams.excludeTraceId = params.excludeTraceId;
       if (queryVectorStr) evidenceParams.queryVectorStr = queryVectorStr;
-      const evidenceCandidates = await evidenceSearch(db, evidenceParams);
+      const evidenceCandidates = await timer.time("evidence", () =>
+        evidenceSearch(db, evidenceParams));
 
       if (evidenceCandidates.length > 0) {
         const targetCount = params.k

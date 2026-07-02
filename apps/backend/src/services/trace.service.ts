@@ -37,6 +37,7 @@ import type { RegionMeta } from "../lib/image-roi";
 import type { EvidenceSearchResult } from "./vector-search.service";
 import { scoreFormatAdherence } from "./format-adherence";
 import { runSearchPipeline } from "./search-pipeline";
+import { StageTimer } from "../lib/stage-timer";
 import { auditLog } from "@soupnet/db";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -107,6 +108,9 @@ export interface SubmitAndSearchResult {
     axisB: string;
     positions: Record<string, { x: number; y: number }>;
   } | undefined;
+  /** Server-Timing header value for the check's per-stage latencies.
+   *  Routes attach it as a response header; never part of the JSON payload. */
+  serverTiming?: string | undefined;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -370,17 +374,19 @@ export async function submitAndSearch(
   // text IS the trace text, so the pipeline makes zero additional embedding
   // calls. Full-recipe context (Strategy 3) is built from the same parsed
   // entries the insert path uses.
+  const timer = new StageTimer();
   const fullRecipeText = buildFullRecipeContext(params.traceText, forEntries);
-  const [traceVectorStr, fullContextVectorStr] = await Promise.all([
-    getOrCreateCachedVector(
-      db, computeChunkHash(params.traceText), params.traceText, "SEMANTIC_SIMILARITY",
-    ),
-    getOrCreateCachedVector(
-      db, computeChunkHash(fullRecipeText), fullRecipeText, "SEMANTIC_SIMILARITY",
-    ),
-  ]);
+  const [traceVectorStr, fullContextVectorStr] = await timer.time("embed", () =>
+    Promise.all([
+      getOrCreateCachedVector(
+        db, computeChunkHash(params.traceText), params.traceText, "SEMANTIC_SIMILARITY",
+      ),
+      getOrCreateCachedVector(
+        db, computeChunkHash(fullRecipeText), fullRecipeText, "SEMANTIC_SIMILARITY",
+      ),
+    ]));
 
-  await db.transaction(async (tx) => {
+  await timer.time("write", () => db.transaction(async (tx) => {
     // Try to insert — unique constraint on (api_key_id, group_id, claim_text_hash)
     // prevents duplicates from the same agent + group
     const traceRows = await tx.execute(sql`
@@ -429,7 +435,7 @@ export async function submitAndSearch(
 
       // Trace-level embedding (text only — evidence embeddings are separate).
       // Vector was resolved in parallel before the transaction; this inserts
-      // pipeline rows only. RETRIEVAL_DOCUMENT defers to the worker.
+      // pipeline rows only.
       await enqueueEmbedding(tx, {
         sourceType: "trace",
         sourceId: traceId,
@@ -468,7 +474,7 @@ export async function submitAndSearch(
       `);
       traceId = (existingRows as unknown as Array<{ id: string }>)[0]?.id;
     }
-  });
+  }));
 
   if (!traceId) {
     return {
@@ -497,6 +503,7 @@ export async function submitAndSearch(
     axes: params.axes,
     includeVectors: !!params.axes, // need vectors for concept-axis computation
     queryVectorStr: traceVectorStr ?? undefined,
+    timer,
   });
 
   // 7. Audit log — record what the agent saw for later analysis and "Map from here".
@@ -539,6 +546,11 @@ export async function submitAndSearch(
     console.error("[trace.service] Audit log write failed:", err);
   }
 
+  // One structured timing line per check — the per-stage attribution the
+  // 2026-07-01 investigation had to reconstruct by black-box measurement.
+  // console.warn is the repo's operational-log channel (lint allows warn/error).
+  console.warn(`[check-timing] ${JSON.stringify({ traceId, ...timer.toLogObject() })}`);
+
   return {
     traceId,
     traceText: params.traceText,
@@ -557,6 +569,7 @@ export async function submitAndSearch(
         positions: Object.fromEntries(pipelineResult.conceptAxes.positions),
       }
       : undefined,
+    serverTiming: timer.toServerTimingHeader(),
   };
 }
 

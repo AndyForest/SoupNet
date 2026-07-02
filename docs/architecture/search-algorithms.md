@@ -257,13 +257,13 @@ Follows Anthropic's Contextual Retrieval pattern — parent trace text prepended
 
 ### How search uses these strategies
 
-**Recipe search** (`hybridSearch`): Searches `embedding_vectors` WHERE `source_type='trace'` — no `strategy_name` filter. Both `full_document` and `full_recipe_context` vectors are searched. Results are deduplicated by trace ID, keeping the best semantic score per trace. This means a trace can match via its claim text OR via its combined evidence context — whichever produces the better score.
+**Recipe search** (`hybridSearch`): Searches `embedding_vectors` WHERE `source_type='trace'` AND `strategy_id IN PRODUCTION_SEARCH_STRATEGY_IDS` (`full_document`, `full_recipe_context`) — experimental strategies do not compete (operator decision 2026-07-01: with all 8 strategies searched, each trace's variants crowded the old 1000-candidate budget down to ~141 distinct traces; the filter plus dropping the LIMIT un-capped recall entirely). Results are deduplicated by trace ID, keeping the best semantic score per trace. This means a trace can match via its claim text OR via its combined evidence context — whichever produces the better score.
 
 **Evidence search** (`evidenceSearch`): Searches `embedding_vectors` WHERE `source_type='evidence'`. Returns individual evidence entries from other recipes that are topically related to the current recipe.
 
 ### Task types
 
-Two task types are stored per chunk: `RETRIEVAL_DOCUMENT` and `SEMANTIC_SIMILARITY`. **Only `SEMANTIC_SIMILARITY` is used in search**, so it's the only one generated synchronously for text chunks — `RETRIEVAL_DOCUMENT` rows are inserted `status='pending'` and filled by the async worker (2026-07-01 latency change). Both continue to exist because `gemini-embedding-2-preview` currently ignores `task_type` (produces identical vectors), but we want to be positioned to benefit when Google fixes this. Multimodal chunks still generate both synchronously (the worker can't re-embed file bytes, ADR-0019). See `apps/backend/src/lib/embeddings/enqueue.ts`.
+One task type is generated per chunk: `SEMANTIC_SIMILARITY` — the only one search reads. `RETRIEVAL_DOCUMENT` twins were dropped entirely on 2026-07-01 (operator decision): `gemini-embedding-2-preview` ignores `task_type` (produces identical vectors), so the twins doubled `embedding_vectors` and `vector_cache` for byte-identical data; existing rows were deleted by migration 0025. If Google fixes `task_type`, re-add it to the `TASK_TYPES` lists in `enqueue.ts` and `strategy-check.ts` and run a backfill (the sweep discovers strategy-level gaps, not missing task-type rows). See the KNOWN BUG note in `apps/backend/src/lib/embeddings/enqueue.ts`.
 
 ### Strategies defined but not yet implemented
 
@@ -294,9 +294,9 @@ Six experimental strategies designed to test whether different text formatting a
 **Research basis:**
 - E5 (Wang et al. 2024, "Improving Text Embeddings with Large Language Models") — instruction-prefixed embeddings improve downstream task quality
 - Anthropic Contextual Retrieval (2024) — structural context improves retrieval 35-67%
-- The `exp_trace_minimal` strategy is identical to `full_document` — included as a labeled baseline for the selector UI
+- ~~The `exp_trace_minimal` strategy is identical to `full_document`~~ — removed 2026-07-01 for exactly that reason; `full_document` IS the trace-only baseline in the selector UI, and existing `exp_trace_minimal` rows were cleaned up by migration 0025.
 
-**Implementation:** `apps/backend/src/services/trace.service.ts`, function `buildExperimentalStrategies()`. All 6 are enqueued as `deferToWorker: true` on every new recipe check.
+**Implementation:** `packages/domain/src/embedding-strategies.ts`, function `buildExperimentalStrategies()`. Not enqueued at check time — the worker strategy sweep backfills traces missing them within ~1 minute.
 
 ---
 
@@ -304,13 +304,13 @@ Six experimental strategies designed to test whether different text formatting a
 
 > **History:** Prior to 2026-04-11, search used a hybrid approach combining semantic (pgvector) and lexical (tsvector) results via Reciprocal Rank Fusion (RRF, k=60). This was simplified to pure vector similarity because the hybrid layer added complexity without validated improvement. The function is still named `hybridSearch()` for code stability. See [research-foundations.md Appendix](research-foundations.md#appendix-paused-techniques) for the RRF math and citations.
 
-### Semantic Search (pgvector HNSW)
+### Semantic Search (pgvector, exact scan)
 - Model: gemini-embedding-2-preview (3072-dim halfvec)
-- Index: HNSW with halfvec_cosine_ops (m=16, ef_construction=64)
-- Query: cosine distance, ef_search=100
+- Query: cosine distance over the production-strategy `SEMANTIC_SIMILARITY` vectors, no candidate LIMIT — every trace in scope is ranked exactly (2026-07-01)
+- Execution: the planner top-N seq-scans this exactly; it declines the HNSW index even when forced at current scale (measured 2026-07-01, ~50-65ms warm). The HNSW index (halfvec_cosine_ops, m=16, ef_construction=64) still exists for when the corpus grows ~10× and an ANN path becomes worth reintroducing.
 - Scoring: 1 - cosine_distance (0=unrelated, 1=identical)
-- Strengths: catches meaning, handles paraphrasing, cross-vocabulary matching
-- Weaknesses: requires API call for query embedding, vectors must exist
+- Strengths: catches meaning, handles paraphrasing, cross-vocabulary matching; exact ranking (no recall cap)
+- Weaknesses: query embedding needs an API call only when the vector isn't already cached (the check path reuses the just-cached trace vector); scan cost grows linearly with corpus
 
 ### Fallback behavior
 - No GEMINI_API_KEY → search unavailable (no lexical fallback)

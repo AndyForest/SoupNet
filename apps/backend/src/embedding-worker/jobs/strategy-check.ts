@@ -20,7 +20,9 @@ import { QUEUES } from "../queues";
 import type { VectorCheckItem } from "../queues";
 
 const MODEL_ID = "gemini-embedding-2-preview";
-const TASK_TYPES = ["RETRIEVAL_DOCUMENT", "SEMANTIC_SIMILARITY"] as const;
+// SEMANTIC_SIMILARITY only — RETRIEVAL_DOCUMENT generation dropped 2026-07-01
+// (model ignores task_type; see enqueue.ts KNOWN BUG note for the re-add path).
+const TASK_TYPES = ["SEMANTIC_SIMILARITY"] as const;
 const MAX_TRACES_PER_JOB = 200;
 const VECTOR_BATCH_SIZE = 64;
 

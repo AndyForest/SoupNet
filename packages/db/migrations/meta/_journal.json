@@ -176,6 +176,13 @@
       "when": 1781218784928,
       "tag": "0024_waitlist_v2_user_records",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1782961693015,
+      "tag": "0025_drop_retrieval_document_and_exp_trace_minimal",
+      "breakpoints": true
     }
   ]
 }
