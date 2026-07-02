@@ -784,3 +784,175 @@ describe.skipIf(!BASE)("daily-link group preferences", () => {
     expect(body.error).toBe("no_write_recipe_books_configured");
   });
 });
+
+// ── Email case-insensitivity (invite visibility bug, 2026-07-02) ──────────
+//
+// Emails are canonicalized to lowercase at every write and lookup boundary.
+// Before this, registration stored the email as typed while invite creation
+// lowercased it, so a user who signed up as "Alice@x.com" never saw an
+// invite stored as "alice@x.com" — the pending-invitations query compares
+// byte-exact. These tests pin the canonical-form contract end to end.
+describe.skipIf(!BASE)("email case-insensitivity", () => {
+  const caseUid = Date.now() + 2;
+  // Registered with a mixed-case local part — the production repro.
+  const mixedCaseEmail = `Test-Case-Invitee-${caseUid}@test.local`;
+  const lowerCaseEmail = mixedCaseEmail.toLowerCase();
+  const mixedCasePw = "case-invitee-password";
+  let inviteeToken = "";
+  let caseOwnerToken = "";
+  let caseGroupId = "";
+
+  async function registerAndVerify(email: string, password: string): Promise<string> {
+    const reg = await fetch(`${BASE}/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password, tosAccepted: true }),
+    });
+    const regBody = (await reg.json()) as { data?: { verificationToken?: string } };
+    const verificationToken = regBody.data?.verificationToken;
+    if (!verificationToken) throw new Error("Backend did not return verificationToken — ALLOW_AUTO_SETUP must be true");
+    await fetch(`${BASE}/auth/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: verificationToken }),
+    });
+    const login = await fetch(`${BASE}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    const loginBody = (await login.json()) as { data?: { token?: string } };
+    const token = loginBody.data?.token ?? "";
+    if (!token) throw new Error(`Failed to log in ${email}`);
+    return token;
+  }
+
+  beforeAll(async () => {
+    inviteeToken = await registerAndVerify(mixedCaseEmail, mixedCasePw);
+    caseOwnerToken = await registerAndVerify(`test-case-owner-${caseUid}@test.local`, "case-owner-password");
+
+    const groupsRes = await fetch(`${BASE}/recipe-books`, {
+      headers: { Authorization: `Bearer ${caseOwnerToken}` },
+    });
+    const groupsBody = (await groupsRes.json()) as { data: Array<{ organization_id: string }> };
+    const orgId = groupsBody.data?.[0]?.organization_id ?? "";
+
+    const create = await fetch(`${BASE}/recipe-books`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${caseOwnerToken}` },
+      body: JSON.stringify({
+        name: `Case Test ${caseUid}`,
+        slug: `case-test-${caseUid}`,
+        organizationId: orgId,
+        description: "Integration test for email case-insensitivity",
+      }),
+    });
+    const created = (await create.json()) as { data?: { id: string } };
+    caseGroupId = created.data?.id ?? "";
+    if (!caseGroupId) throw new Error("Failed to create case-test group");
+  });
+
+  it("stores the registered email in canonical lowercase form (GET /auth/me)", async () => {
+    const res = await fetch(`${BASE}/auth/me`, {
+      headers: { Authorization: `Bearer ${inviteeToken}` },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data?: { user?: { email?: string } } };
+    expect(body.data?.user?.email).toBe(lowerCaseEmail);
+  });
+
+  it("login succeeds with a differently-cased email than the stored form", async () => {
+    const res = await fetch(`${BASE}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: mixedCaseEmail.toUpperCase(), password: mixedCasePw }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; data?: { token?: string } };
+    expect(body.ok).toBe(true);
+    expect(body.data?.token).toBeTruthy();
+  });
+
+  it("an invite sent to the lowercase form is visible to the mixed-case registrant and acceptable", async () => {
+    // The production bug: owner invites the lowercase form of an email whose
+    // account was registered with mixed case. The invite must show up.
+    const inv = await fetch(`${BASE}/recipe-books/${caseGroupId}/invite`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${caseOwnerToken}` },
+      body: JSON.stringify({ email: lowerCaseEmail }),
+    });
+    expect(inv.status).toBe(201);
+
+    const pending = await fetch(`${BASE}/invitations/pending`, {
+      headers: { Authorization: `Bearer ${inviteeToken}` },
+    });
+    expect(pending.status).toBe(200);
+    const pendingBody = (await pending.json()) as { data: Array<{ id: string; groupId: string }> };
+    const invite = pendingBody.data.find((i) => i.groupId === caseGroupId);
+    expect(invite).toBeDefined();
+
+    const acc = await fetch(`${BASE}/invitations/${invite!.id}/accept`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${inviteeToken}` },
+    });
+    expect(acc.status).toBe(200);
+    const accBody = (await acc.json()) as { ok: boolean };
+    expect(accBody.ok).toBe(true);
+  });
+
+  it("adding a member by a differently-cased email finds the account", async () => {
+    // Second group so the accept above doesn't mask the lookup path.
+    const groupsRes = await fetch(`${BASE}/recipe-books`, {
+      headers: { Authorization: `Bearer ${caseOwnerToken}` },
+    });
+    const groupsBody = (await groupsRes.json()) as { data: Array<{ organization_id: string }> };
+    const orgId = groupsBody.data?.[0]?.organization_id ?? "";
+    const create = await fetch(`${BASE}/recipe-books`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${caseOwnerToken}` },
+      body: JSON.stringify({
+        name: `Case Member Test ${caseUid}`,
+        slug: `case-member-test-${caseUid}`,
+        organizationId: orgId,
+      }),
+    });
+    const created = (await create.json()) as { data?: { id: string } };
+    const memberGroupId = created.data?.id ?? "";
+
+    const res = await fetch(`${BASE}/recipe-books/${memberGroupId}/members`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${caseOwnerToken}` },
+      body: JSON.stringify({ email: mixedCaseEmail.toUpperCase() }),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { ok: boolean; data?: { email: string } };
+    expect(body.ok).toBe(true);
+    expect(body.data?.email).toBe(lowerCaseEmail);
+  });
+
+  it("registering a case-variant of an existing email does not create a second account", async () => {
+    // Same address, different case, different password. The register response
+    // is deliberately generic (F30 — no enumeration signal), so we verify via
+    // login: the case-variant password must NOT work, the original must.
+    const dupRes = await fetch(`${BASE}/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: mixedCaseEmail.toUpperCase(), password: "a-different-password-123", tosAccepted: true }),
+    });
+    expect(dupRes.status).toBe(200);
+
+    const dupLogin = await fetch(`${BASE}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: lowerCaseEmail, password: "a-different-password-123" }),
+    });
+    expect(dupLogin.status).toBe(401);
+
+    const origLogin = await fetch(`${BASE}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: lowerCaseEmail, password: mixedCasePw }),
+    });
+    expect(origLogin.status).toBe(200);
+  });
+});

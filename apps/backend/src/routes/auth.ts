@@ -9,6 +9,7 @@ import { isSignupCapReached, mayRegister } from "../services/system-settings.ser
 import { purgeStaleWaitlistedUsers } from "../services/waitlist.service";
 import { sendVerificationEmail, sendPasswordResetEmail } from "../services/email.service";
 import { rateLimit } from "../middleware/rate-limit";
+import { normalizeEmail } from "../lib/normalize-email";
 import type { AppEnv } from "../types";
 
 const loginSchema = z.object({
@@ -85,7 +86,10 @@ auth.post("/register", authRateLimit, async (c) => {
     // not data exposure. Zod errors stay specific.
     return c.json({ ok: false, error: "Invalid input", details: parsed.error.issues }, 400);
   }
-  const { email, password, inviteToken } = parsed.data;
+  // Canonical lowercase form everywhere: the invite lookup below, the user
+  // row registerUser inserts, and the verification email must all agree.
+  const email = normalizeEmail(parsed.data.email);
+  const { password, inviteToken } = parsed.data;
   const signupReason = parsed.data.reason?.trim() || null;
   const db = getDb();
 
@@ -797,7 +801,9 @@ auth.post("/forgot-password", forgotPasswordRateLimit, async (c) => {
     // so 400 is fine here (it's not "this email doesn't exist").
     return c.json({ ok: false, error: "Invalid input" }, 400);
   }
-  const { email } = parsed.data;
+  // Same normalization as register/login — the not-exists branch does the
+  // identical work, so this adds no enumeration signal (F45).
+  const email = normalizeEmail(parsed.data.email);
   const db = getDb();
 
   // Look up the user — but never reveal whether they exist.

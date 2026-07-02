@@ -6,6 +6,7 @@ import type { AppEnv } from "../types";
 import { sql } from "drizzle-orm";
 import { groups, groupMembers } from "@soupnet/db";
 import { writeAudit } from "../services/audit-log.service";
+import { normalizeEmail } from "../lib/normalize-email";
 
 const createGroupSchema = z.object({
   name: z.string().min(1).max(100),
@@ -238,9 +239,9 @@ groupsRouter.post("/:id/members", async (c) => {
     return c.json({ ok: false, error: "Only recipe-book owners and admins can add members" }, 403);
   }
 
-  // Look up target user by email
+  // Look up target user by email (stored in canonical lowercase form)
   const targetUser = await db.execute(sql`
-    SELECT id, email FROM claimnet.users WHERE email = ${parsed.data.email}
+    SELECT id, email FROM claimnet.users WHERE email = ${normalizeEmail(parsed.data.email)}
   `);
   const target = (targetUser as unknown as Array<{ id: string; email: string }>)[0];
   if (!target) {
@@ -287,7 +288,7 @@ groupsRouter.post("/:id/invite", async (c) => {
   if (!parsed.success) {
     return c.json({ ok: false, error: "Invalid email" }, 400);
   }
-  const inviteeEmail = parsed.data.email.toLowerCase().trim();
+  const inviteeEmail = normalizeEmail(parsed.data.email);
 
   const db = getDb();
 

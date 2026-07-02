@@ -13,6 +13,7 @@ import {
 import { QUEUE_DESCRIPTIONS, getQueueDescription } from "@soupnet/domain";
 import { approveWaitlistedUser, promoteTopWaitlisted } from "../services/waitlist.service";
 import { sendWaitlistApprovedEmail } from "../services/email.service";
+import { normalizeEmail } from "../lib/normalize-email";
 import { rateLimit } from "../middleware/rate-limit";
 import type { AppEnv } from "../types";
 
@@ -127,7 +128,7 @@ admin.post("/invite", inviteRateLimit, async (c) => {
     return c.json({ ok: false, error: "Invalid input", details: parsed.error.issues }, 400);
   }
 
-  const email = parsed.data.email.toLowerCase().trim();
+  const email = normalizeEmail(parsed.data.email);
   const { groupId } = parsed.data;
   const user = c.get("user");
   const db = getDb();

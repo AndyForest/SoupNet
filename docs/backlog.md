@@ -288,6 +288,10 @@ Found 2026-06-11 while investigating "the settings page isn't in the admin nav":
 
 The waitlist form promises "we'll email you when a spot opens up." Today that promise is fulfilled manually: the admin Settings page's per-row Invite button sends a cap-bypass invitation email via SES. Fine at cap≈5–50; if the waitlist grows past what manual triage handles, add batch-invite (top N oldest) and/or an automatic "spot opened" notification when the cap rises.
 
+### `[IMPL]` Structural guarantee for email canonicalization (follow-up to the 2026-07-02 invite-case bugfix)
+
+Emails are now canonicalized to lowercase at every write/lookup boundary (`apps/backend/src/lib/normalize-email.ts`) and migration 0026 lowercased pre-existing rows — that fixed invitations being invisible to users who registered with non-lowercase emails. The remaining gap is that the guarantee is code-discipline, not schema: a future code path that inserts a non-canonical email would reintroduce the class of bug. Options when touching this area: a unique index on `lower(email)` (blocks case-duplicates even from non-normalized paths) or a `CHECK (email = lower(email))` constraint (stronger — rejects any non-canonical write). Either needs the migration-0026 collision-guard caveat handled first: 0026 deliberately skips rows that differ only by case from an existing account, so verify no stragglers exist before adding a constraint (`SELECT email FROM claimnet.users WHERE email <> lower(email)`).
+
 ### `[IMPL]` Delete or revive `packages/client-sdk`
 
 Discovered 2026-05-27 while drafting the workspace package map in `docs/architecture/overview.md`. `packages/client-sdk` is listed as a dependency by `apps/frontend` and `apps/mcp-server` but no source file outside its own internals imports `@soupnet/client-sdk`. The surface area still references pre-pivot endpoints (`/api/claims`, `/api/requests`, `/api/validations`) that the current Hono backend doesn't serve.

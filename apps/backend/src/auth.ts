@@ -4,6 +4,7 @@ import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import type { Context, Next } from "hono";
 import { users, organizations, groups, groupMembers } from "@soupnet/db";
+import { normalizeEmail } from "./lib/normalize-email";
 
 const JWT_SECRET = () => {
   const secret = process.env["JWT_SECRET"];
@@ -71,7 +72,11 @@ export async function requireAuth(c: Context, next: Next): Promise<Response | vo
   if (!payload) {
     return c.json({ ok: false, error: "Invalid or expired token" }, 401);
   }
-  c.set("user", { id: payload.sub, email: payload.email, role: payload.role } as AuthUser);
+  // Emails are stored in canonical lowercase form (see lib/normalize-email),
+  // but a JWT signed before migration 0027 can still carry the as-typed
+  // casing for its remaining lifetime. Normalizing here closes that window
+  // for every downstream email comparison (e.g. /invitations/pending).
+  c.set("user", { id: payload.sub, email: normalizeEmail(payload.email), role: payload.role } as AuthUser);
   return next();
 }
 
@@ -142,6 +147,7 @@ export async function registerUser(
     signupReason?: string | null;
   },
 ): Promise<{ user: { id: string; email: string; role: string }; token: string }> {
+  email = normalizeEmail(email);
   const passwordHash = await hashPassword(password);
 
   // Insert user
@@ -213,7 +219,7 @@ export async function loginUser(
   | { user: { id: string; email: string; role: string }; token: null; waitlistedAt: Date }
   | null
 > {
-  const rows = await db.select().from(users).where(sql`${users.email} = ${email}`).limit(1);
+  const rows = await db.select().from(users).where(sql`${users.email} = ${normalizeEmail(email)}`).limit(1);
   const user = rows[0];
   if (!user) return null;
 
@@ -291,7 +297,7 @@ export async function autoSetup(db: PostgresJsDatabase): Promise<void> {
   const testPassword = process.env["TEST_PASSWORD"];
   if (testEmail && testPassword) {
     const existing = await db.execute(
-      sql`SELECT id FROM claimnet.users WHERE email = ${testEmail} LIMIT 1`,
+      sql`SELECT id FROM claimnet.users WHERE email = ${normalizeEmail(testEmail)} LIMIT 1`,
     );
     if ((existing as unknown[]).length === 0) {
       console.log(`[auto-setup] Creating test user: ${testEmail}`); // eslint-disable-line no-console
