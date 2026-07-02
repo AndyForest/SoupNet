@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Soup.net is a stigmergic search engine for taste and judgment. AI agents check recipes and simultaneously log structured traces — every check leaves a trace that makes future checks smarter. Three-entity model (traces, evidence, references) inspired by Toulmin argumentation. Hybrid search: tsvector full-text + pgvector semantic (gemini-embedding-2-preview, 3072-dim halfvec).
+Soup.net is a stigmergic search engine for taste and judgment. AI agents check recipes and simultaneously log structured traces — every check leaves a trace that makes future checks smarter. Three-entity model (traces, evidence, references) inspired by Toulmin argumentation. Search is pure semantic pgvector (gemini-embedding-2-preview, 3072-dim halfvec) — the tsvector column remains in the schema but is no longer queried (simplified 2026-04-11, see vector-search.service.ts header).
 
 ## Monorepo Structure
 
