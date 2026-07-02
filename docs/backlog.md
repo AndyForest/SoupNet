@@ -228,15 +228,11 @@ When stigmergic decay lands (search-algorithms.md §Stigmergic Decay), weight re
 
 Source: [docs/rough-notes/2026-07-01/recipe-check-latency-findings.md](rough-notes/2026-07-01/recipe-check-latency-findings.md). Both waves landed 2026-07-01 (see backlog-completed): embed-call reduction (0.53s new / 0.11s duplicate locally), production-strategy search filter + no candidate LIMIT (recall un-capped), RETRIEVAL_DOCUMENT twins and `exp_trace_minimal` dropped + cleaned up (migration 0025), and Server-Timing/structured-log instrumentation. Remaining:
 
-### `[IMPL]` Recipe Map (and briefing exemplars) are app-CPU-bound — 59s on prod
+### `[IMPL]` Recipe Map follow-ups (core fix landed 2026-07-02)
 
-`/traces/map?k=5` took 59s on prod (operator report 2026-07-02) vs **2.08s locally on the identical imported 1,316-trace corpus** — so it's dominated by the 0.25 vCPU app task (k-means over 1,316 × 3,072-dim vectors + parsing ~80MB of full-precision vector text), plus a cold TOAST read of the whole vector set. The DB instance upgrade helps only the fetch portion. Fix candidates, roughly in order:
-- **Cache the computed layout** keyed by (group set, corpus version — e.g. max created_at + count), TTL or invalidate-on-write. The map only changes when traces land; repeat loads become instant.
-- **MRL truncation for map math**: gemini embeddings are Matryoshka — slicing the first 768 dims (+ renormalize) is valid and cuts transfer + k-means cost 4×.
-- Fetch halfvec instead of full-precision `vector_cache` text for map purposes.
-- Precompute layouts async (worker) into a coordinates table if interactive latency still matters after the above.
+The layout cache + read-time 768-dim MRL truncation shipped (see backlog-completed): local compute 2.08s → 0.84s, cached repeats 10ms, payload −34%. Remaining smaller levers if prod numbers still warrant them after deploy:
+- Precompute layouts async (worker) into a coordinates table if the first uncached load still matters on the 0.25 vCPU task.
 - Infra lever (flagged to the infra agent): the ECS task's 0.25 vCPU is the map's and check-burst's shared bottleneck — a bump is cheap and independent of the DB class.
-`get_briefing`'s exemplar selection (UMAP in `briefing-exemplars.ts`) shares the same shape and likely the same fix.
 
 *(The former "reintroduce ANN at ~10×" item here is superseded: the ANN path shipped 2026-07-02 as the ANN-first `hybridSearch` reshape — see backlog-completed.)*
 

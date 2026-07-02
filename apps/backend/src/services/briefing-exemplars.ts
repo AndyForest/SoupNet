@@ -13,7 +13,7 @@
  */
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { runSearchPipeline } from "./search-pipeline";
+import { runSearchPipeline, MAP_VECTOR_DIMS } from "./search-pipeline";
 import type { BriefingExemplar } from "@soupnet/domain";
 
 export interface ExemplarFetchOptions {
@@ -55,6 +55,8 @@ export async function fetchBriefingExemplars(
   // Run the same clustering pipeline the recipe-map UI uses. The map calls
   // /traces/map; we call the underlying function directly to skip the HTTP
   // roundtrip and to keep this composable from the MCP tool handler too.
+  // vectorDims: whole-corpus k-means at the MRL-truncated 768 dims (stored
+  // vectors untouched) — same read-time optimization as the map route.
   const result = await runSearchPipeline({
     db,
     groupIds,
@@ -64,6 +66,7 @@ export async function fetchBriefingExemplars(
     axes: options.axes,
     perPage: 10000,
     vectorStrategy: options.vectorStrategy,
+    vectorDims: MAP_VECTOR_DIMS,
   });
 
   const clusters = result.clusters ?? [];

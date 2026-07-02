@@ -336,3 +336,72 @@ describe.skipIf(!BASE)("/traces/map cross-author visibility in shared groups", (
     expect(res.status).toBe(403);
   });
 });
+
+describe.skipIf(!BASE)("/traces/map layout cache + read-time vector truncation", () => {
+  const cuid = Date.now() + 1;
+  const email = `test-mapcache-${cuid}@test.local`;
+  const password = "traces-mapcache-test-pw";
+  let jwt = "";
+  let apiKey = "";
+
+  async function submitCheck(n: number): Promise<void> {
+    const recipe = `As a developer testing the map layout cache (variant ${cuid}-${n}), I prefer corpus-version cache keys so that new traces invalidate implicitly.`;
+    const res = await fetch(
+      `${BASE}/check?key=${encodeURIComponent(apiKey)}&recipe=${encodeURIComponent(recipe)}&evidence=${encodeURIComponent("Cache invalidation test.\n> \"version key\"\n-- traces.test.ts")}&format=json`,
+    );
+    if (res.status !== 200) throw new Error("check failed in map cache setup");
+  }
+
+  async function fetchMap(): Promise<{ cached: boolean; vectorDims: number; clusters: Array<{ exemplarVector: number[] | null }> }> {
+    const res = await fetch(`${BASE}/traces/map?k=2`, { headers: { Authorization: `Bearer ${jwt}` } });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { meta: { cached: boolean; vectorDims: number }; clusters: Array<{ exemplarVector: number[] | null }> } };
+    return { cached: body.data.meta.cached, vectorDims: body.data.meta.vectorDims, clusters: body.data.clusters };
+  }
+
+  beforeAll(async () => {
+    const reg = await fetch(`${BASE}/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password, tosAccepted: true }),
+    });
+    const regBody = (await reg.json()) as { data?: { verificationToken?: string } };
+    await fetch(`${BASE}/auth/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: regBody.data?.verificationToken ?? "" }),
+    });
+    const login = await fetch(`${BASE}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    jwt = ((await login.json()) as { data?: { token?: string } }).data?.token ?? "";
+    const keyRes = await fetch(`${BASE}/keys/daily`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+    });
+    apiKey = ((await keyRes.json()) as { data?: { key?: string } }).data?.key ?? "";
+    if (!jwt || !apiKey) throw new Error("map cache test setup failed");
+    // Two traces so k=2 clustering has something to cluster.
+    await submitCheck(1);
+    await submitCheck(2);
+  }, 60_000);
+
+  it("caches the default layout by corpus version and invalidates on a new trace", { timeout: 30_000 }, async () => {
+    const first = await fetchMap();
+    expect(first.cached).toBe(false);
+    // Vectors are MRL-truncated at read time — stored vectors stay 3,072-dim.
+    expect(first.vectorDims).toBe(768);
+    const withVector = first.clusters.find((c) => Array.isArray(c.exemplarVector));
+    expect(withVector?.exemplarVector).toHaveLength(768);
+
+    const second = await fetchMap();
+    expect(second.cached).toBe(true);
+
+    // A new trace changes the corpus version → cache key changes → recompute.
+    await submitCheck(3);
+    const third = await fetchMap();
+    expect(third.cached).toBe(false);
+  });
+});

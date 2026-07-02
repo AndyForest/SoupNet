@@ -38,6 +38,15 @@ Migrations `0022_waitlist`, `0023_waitlist_crm_invite_semantics`. Tests: `waitli
 
 ## Recipe checks
 
+### 2026-07-02 — Recipe Map: layout cache + read-time 768-dim MRL truncation
+
+`/traces/map` took 59s on prod (0.25 vCPU task doing k-means over 1,316 × 3,072-dim vectors + parsing ~80MB of vector text). Two-part fix, verified on the imported real corpus:
+
+- **In-memory layout cache** (`map-layout-cache.ts`, 16-entry LRU) keyed by (groups, k/maxChars/expand/strategy, corpus version = trace count + newest created_at) — new traces invalidate implicitly by changing the key. Default map loads only; query/axes/traceIds variants skip it. `meta.cached` exposed for tests/debugging.
+- **Read-time MRL truncation**: `fetchTraceVectors` gained a `dims` param using pgvector `subvector()` — the map + briefing-exemplar surfaces run whole-corpus k-means at 768 dims (`MAP_VECTOR_DIMS`). **Stored vectors are untouched** (operator's explicit guard): halfvec(3072) rows and the float32 vector_cache remain the source of truth; search runs in SQL on full vectors; concept-axis cosine stays valid because the similarity loop truncates both sides to the trace vector's length.
+
+Measured (local, real 1,316-trace corpus): compute 2.08s → 0.84s, cached repeats 10ms, payload 428KB → 282KB. `get_briefing` exemplars get the same truncation win. Tests: `map-layout-cache.test.ts` (Layer 1) + a `/traces/map` integration test (cached flag lifecycle + 768-dim response vectors + implicit invalidation on new trace).
+
 ### 2026-07-02 — ANN-first hybridSearch (the index earns its keep)
 
 Operator challenged the just-committed HNSW index drop ("shouldn't we optimize the query so it IS used?") and was right: the "planner never picks HNSW" conclusion was an artifact of only testing `LIMIT 1000`+. Reverted the drop (`bd2ea7c`) and reshaped the search instead:

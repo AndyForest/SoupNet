@@ -68,7 +68,24 @@ export interface SearchPipelineParams {
   /** Optional per-request stage timer — the check path passes its own so
    *  pipeline stages land in the same Server-Timing header / log line. */
   timer?: StageTimer | undefined;
+  /** Read-time MRL truncation for fetched trace vectors (clustering, concept
+   *  axes, response vectors). Stored vectors are NEVER modified — pgvector's
+   *  subvector() slices the leading dims at query time. gemini embeddings are
+   *  Matryoshka-trained, so a leading-prefix slice is a valid lower-dim
+   *  embedding, and cosine math normalizes internally (no re-normalization
+   *  needed). Used by the map + briefing-exemplar surfaces where k-means over
+   *  the whole corpus at 3,072 dims dominated latency; see MAP_VECTOR_DIMS. */
+  vectorDims?: number | undefined;
 }
+
+/**
+ * Read-time vector dimensionality for whole-corpus visualization math (map
+ * clustering, briefing exemplars). 768 is an MRL-supported truncation point
+ * for gemini-embedding-2-preview — 4× less transfer/parse/k-means work than
+ * the full 3,072 dims with near-identical 2D-layout quality. Search is
+ * unaffected (it runs in SQL on the full stored vectors).
+ */
+export const MAP_VECTOR_DIMS = 768;
 
 export interface ClusterAssignment {
   exemplarIndex: number;
@@ -114,17 +131,27 @@ export function parseVector(s: string): number[] {
  *
  * @param strategyId — when set, only returns vectors from this embedding strategy.
  *   Used by /traces/map for clustering experiments (e.g., 'exp_trace_instructed').
+ * @param dims — when set, vectors are MRL-truncated to the leading `dims`
+ *   dimensions IN SQL (pgvector subvector) — stored vectors are untouched.
+ *   Cuts transfer + parse + downstream k-means cost proportionally.
  */
 export async function fetchTraceVectors(
   db: PostgresJsDatabase,
   traceIds: string[],
   strategyId?: string,
+  dims?: number,
 ): Promise<Map<string, number[]>> {
   if (traceIds.length === 0) return new Map();
 
   const strategyFilter = strategyId
     ? sql`AND ecs.strategy_id = ${strategyId}`
     : sql``;
+
+  // Full precision by default; MRL leading-prefix slice when dims is set.
+  // (subvector needs the vector type — halfvec rows are cast first.)
+  const vectorExpr = dims
+    ? sql`subvector(COALESCE(vc.vector, ev.vector::vector(3072)), 1, ${sql.raw(String(Math.trunc(dims)))})`
+    : sql`COALESCE(vc.vector, ev.vector)`;
 
   // ORDER BY on DISTINCT ON is load-bearing: without it, PostgreSQL picks an
   // arbitrary row per source_id, which means (a) nondeterministic responses
@@ -138,7 +165,7 @@ export async function fetchTraceVectors(
   // embedding when both are cached).
   const vectorRows = await db.execute(sql`
     SELECT DISTINCT ON (es.source_id) es.source_id::text AS trace_id,
-      COALESCE(vc.vector, ev.vector)::text AS vector_str
+      (${vectorExpr})::text AS vector_str
     FROM claimnet.embedding_sources es
     JOIN claimnet.embedding_chunks ec ON ec.embedding_source_id = es.id
     JOIN claimnet.embedding_chunk_strategies ecs ON ecs.id = ec.chunk_strategy_id
@@ -293,7 +320,7 @@ export async function runSearchPipeline(
     // Fetch vectors for all results (optionally filtered by strategy for experiments)
     const resultIds = results.map((r) => r.id);
     vectorMap = await timer.time("vectors", () =>
-      fetchTraceVectors(db, resultIds, params.vectorStrategy));
+      fetchTraceVectors(db, resultIds, params.vectorStrategy, params.vectorDims));
   }
 
   if (shouldCluster && vectorMap && vectorMap.size > 1) {
@@ -410,8 +437,12 @@ export async function runSearchPipeline(
       // Ensure we have vectors for all results
       if (!vectorMap) {
         const allIds = (preClusterResults ?? results).map((r) => r.id);
-        vectorMap = await fetchTraceVectors(db, allIds, params.vectorStrategy);
+        vectorMap = await fetchTraceVectors(db, allIds, params.vectorStrategy, params.vectorDims);
       }
+
+      // Concept-axis cosine with truncated trace vectors stays valid: the
+      // similarity loop iterates the TRACE vector's length, so the concept
+      // embedding is implicitly truncated to the same MRL prefix.
 
       // Embed the two concept terms (2 Gemini API calls)
       const [axisAVec, axisBVec] = await Promise.all([

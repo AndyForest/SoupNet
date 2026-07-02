@@ -3,7 +3,12 @@ import { getDb } from "../db";
 import { requireAuth, requireVerifiedEmail } from "../auth";
 import type { AppEnv } from "../types";
 import { sql } from "drizzle-orm";
-import { runSearchPipeline } from "../services/search-pipeline";
+import { runSearchPipeline, MAP_VECTOR_DIMS } from "../services/search-pipeline";
+import {
+  mapLayoutCacheKey,
+  getCachedMapLayout,
+  setCachedMapLayout,
+} from "../services/map-layout-cache";
 import { deleteTraceCascade } from "../services/trace-delete.service";
 import { writeAudit } from "../services/audit-log.service";
 
@@ -69,7 +74,36 @@ traces.get("/map", async (c) => {
     groupIds.push(...requested);
   }
 
-  // Run pipeline with clustering + vectors
+  // ── Layout cache ─────────────────────────────────────────────────────────
+  // The default map load (no query/axes/traceIds) recomputes the same layout
+  // until the corpus changes; a corpus-version key makes repeat loads instant.
+  // Query/axes/traceIds variants are per-interaction and skip the cache.
+  const cacheable = !query && !axes && !traceIds;
+  let cacheKey: string | undefined;
+  if (cacheable) {
+    const versionRows = await db.execute(sql`
+      SELECT count(*)::int AS n, COALESCE(max(created_at)::text, '') AS newest
+      FROM claimnet.traces
+      WHERE group_id IN (${sql.join(groupIds.map((g) => sql`${g}::uuid`), sql`, `)})
+    `);
+    const version = (versionRows as unknown as Array<{ n: number; newest: string }>)[0];
+    cacheKey = mapLayoutCacheKey({
+      groupIds,
+      k: expand ? undefined : k,
+      maxChars,
+      expand,
+      strategy,
+      corpusVersion: `${version?.n ?? 0}:${version?.newest ?? ""}`,
+    });
+    const cached = getCachedMapLayout(cacheKey);
+    if (cached !== undefined) {
+      return c.json({ ok: true, data: { ...(cached as Record<string, unknown>), meta: { ...((cached as { meta: Record<string, unknown> }).meta), cached: true } } });
+    }
+  }
+
+  // Run pipeline with clustering + vectors. Vectors are MRL-truncated at read
+  // time (stored vectors untouched) — whole-corpus k-means at 768 dims costs
+  // 1/4 of full precision with near-identical 2D layout quality.
   const result = await runSearchPipeline({
     db,
     groupIds,
@@ -82,6 +116,7 @@ traces.get("/map", async (c) => {
     axes,
     perPage: 10000, // no pagination limit — clustering IS the pagination
     vectorStrategy: strategy,
+    vectorDims: MAP_VECTOR_DIMS,
   });
 
   // allResults has the pre-clustered full list; results has exemplars only
@@ -133,21 +168,24 @@ traces.get("/map", async (c) => {
     conceptAxes = { axisA: result.conceptAxes.axisA, axisB: result.conceptAxes.axisB, positions: posObj };
   }
 
-  return c.json({
-    ok: true,
-    data: {
-      clusters,
-      unclustered,
-      conceptAxes,
-      meta: {
-        totalTraces: allTraces.length,
-        tracesInScope: allTraces.length,
-        k: clusters.length,
-        searchMode: query ? result.searchMode : "corpus",
-        vectorStrategy: strategy ?? "all",
-      },
+  const data = {
+    clusters,
+    unclustered,
+    conceptAxes,
+    meta: {
+      totalTraces: allTraces.length,
+      tracesInScope: allTraces.length,
+      k: clusters.length,
+      searchMode: query ? result.searchMode : "corpus",
+      vectorStrategy: strategy ?? "all",
+      vectorDims: MAP_VECTOR_DIMS,
+      cached: false,
     },
-  });
+  };
+  if (cacheKey) {
+    setCachedMapLayout(cacheKey, data);
+  }
+  return c.json({ ok: true, data });
 });
 
 // GET /traces/checks — recipe check audit log
