@@ -304,13 +304,16 @@ Six experimental strategies designed to test whether different text formatting a
 
 > **History:** Prior to 2026-04-11, search used a hybrid approach combining semantic (pgvector) and lexical (tsvector) results via Reciprocal Rank Fusion (RRF, k=60). This was simplified to pure vector similarity because the hybrid layer added complexity without validated improvement. The function is still named `hybridSearch()` for code stability. See [research-foundations.md Appendix](research-foundations.md#appendix-paused-techniques) for the RRF math and citations.
 
-### Semantic Search (pgvector, exact scan)
+### Semantic Search (pgvector, ANN-first with exact guarantees)
 - Model: gemini-embedding-2-preview (3072-dim halfvec)
-- Query: cosine distance over the production-strategy `SEMANTIC_SIMILARITY` vectors, no candidate LIMIT — every trace in scope is ranked exactly (2026-07-01)
-- Execution: the planner top-N seq-scans this exactly; it declines the HNSW index even when forced at current scale (measured 2026-07-01, ~50-65ms warm). The HNSW index (halfvec_cosine_ops, m=16, ef_construction=64) still exists for when the corpus grows ~10× and an ANN path becomes worth reintroducing.
-- Scoring: 1 - cosine_distance (0=unrelated, 1=identical)
-- Strengths: catches meaning, handles paraphrasing, cross-vocabulary matching; exact ranking (no recall cap)
-- Weaknesses: query embedding needs an API call only when the vector isn't already cached (the check path reuses the just-cached trace vector); scan cost grows linearly with corpus
+- Three cooperating queries per search (2026-07-02, see `hybridSearch`):
+  1. **totalResults** — exact `COUNT(DISTINCT trace)`, no distance work (~5ms). No silent candidate cap (operator decision 2026-07-01).
+  2. **Results** — HNSW-streamed top-k (`hnsw.iterative_scan = relaxed_order`, `ef_search = max(200, k)`, `k = clamp((offset+perPage)×3, 60, 400)`). The planner picks the HNSW index unforced at these limits through the full join shape; cold it touches ~k vectors' pages instead of the whole table (removes the after-idle latency cliff).
+  3. **Fallback** — exhaustive no-LIMIT exact scan when top-k under-fills the page, when k would exceed 400 (deep pagination), or when the ANN transaction errors (e.g. pgvector <0.8).
+- Recall (validated 2026-07-02 on the real 1,316-trace corpus, leave-one-out ×30): recall@20 mean 99.0% / min 85%, top-3 exemplar agreement 28/30 vs exact — residuals are near-tie score inversions that clustering absorbs.
+- Scoring: 1 - cosine_distance (0=unrelated, 1=identical); app-side best-score-per-trace dedupe + exact sort over the candidate set.
+- Strengths: catches meaning, handles paraphrasing, cross-vocabulary matching; honest total count; cache-resilient and roughly scale-flat.
+- Weaknesses: query embedding needs an API call only when the vector isn't already cached (the check path reuses the just-cached trace vector); top-k is approximate within measured bounds.
 
 ### Fallback behavior
 - No GEMINI_API_KEY → search unavailable (no lexical fallback)

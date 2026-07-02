@@ -228,9 +228,17 @@ When stigmergic decay lands (search-algorithms.md §Stigmergic Decay), weight re
 
 Source: [docs/rough-notes/2026-07-01/recipe-check-latency-findings.md](rough-notes/2026-07-01/recipe-check-latency-findings.md). Both waves landed 2026-07-01 (see backlog-completed): embed-call reduction (0.53s new / 0.11s duplicate locally), production-strategy search filter + no candidate LIMIT (recall un-capped), RETRIEVAL_DOCUMENT twins and `exp_trace_minimal` dropped + cleaned up (migration 0025), and Server-Timing/structured-log instrumentation. Remaining:
 
-### `[DESIGN]` Reintroduce an ANN index path when the exact scan gets slow (~10× corpus)
+### `[IMPL]` Recipe Map (and briefing exemplars) are app-CPU-bound — 59s on prod
 
-Search now ranks every in-scope trace exactly with no LIMIT; the planner top-N seq-scans and declines the HNSW index even when forced (measured 2026-07-01 at 23k vectors, pgvector 0.8.2 — see the comment in `vector-search.service.ts` and the findings doc). Cost grows linearly (~2 vectors/trace post-filter). When the corpus is ~10× current (roughly >10k recipes) revisit: partial HNSW index matching the search predicate + inner-subquery shape + `hnsw.iterative_scan`, and re-benchmark recall vs the exact scan. Cold-start (buffer-cache) behavior is the infra briefing's territory (`pg_prewarm`, instance memory).
+`/traces/map?k=5` took 59s on prod (operator report 2026-07-02) vs **2.08s locally on the identical imported 1,316-trace corpus** — so it's dominated by the 0.25 vCPU app task (k-means over 1,316 × 3,072-dim vectors + parsing ~80MB of full-precision vector text), plus a cold TOAST read of the whole vector set. The DB instance upgrade helps only the fetch portion. Fix candidates, roughly in order:
+- **Cache the computed layout** keyed by (group set, corpus version — e.g. max created_at + count), TTL or invalidate-on-write. The map only changes when traces land; repeat loads become instant.
+- **MRL truncation for map math**: gemini embeddings are Matryoshka — slicing the first 768 dims (+ renormalize) is valid and cuts transfer + k-means cost 4×.
+- Fetch halfvec instead of full-precision `vector_cache` text for map purposes.
+- Precompute layouts async (worker) into a coordinates table if interactive latency still matters after the above.
+- Infra lever (flagged to the infra agent): the ECS task's 0.25 vCPU is the map's and check-burst's shared bottleneck — a bump is cheap and independent of the DB class.
+`get_briefing`'s exemplar selection (UMAP in `briefing-exemplars.ts`) shares the same shape and likely the same fix.
+
+*(The former "reintroduce ANN at ~10×" item here is superseded: the ANN path shipped 2026-07-02 as the ANN-first `hybridSearch` reshape — see backlog-completed.)*
 
 ---
 

@@ -55,15 +55,34 @@ export interface HybridSearchResponse {
 
 // ── Main search function ─────────────────────────────────────────────────────
 
-// No candidate LIMIT (operator decision 2026-07-01): the planner exhaustively
-// top-N-scans this query at current scale regardless (it declines the HNSW
-// index even when forced — measured, see the query comment below), so a LIMIT
-// only truncated output rows. The old 1000-row cap silently capped recall:
-// each trace's strategy vectors crowded the budget, so a check could rank at
-// most ~500 distinct traces. With the production-strategy filter the row
-// count is ~2 per trace in scope — memory stays proportional to corpus size.
-// Revisit (reintroduce a LIMIT + ANN index) when the corpus makes the exact
-// scan itself too slow, ~10× current scale.
+// ANN-first search (2026-07-02, operator direction "optimize the query so the
+// index IS used"). Three cooperating pieces, each with a distinct job:
+//
+//   1. totalResults — an exact COUNT(DISTINCT trace) with no distance work
+//      (~5ms). Keeps the recall un-cap's honesty (operator decision
+//      2026-07-01: no silent candidate cap) without ranking everything.
+//   2. Results — an HNSW-streamed top-k query. At display-relevant limits
+//      (k ≤ ~400) the planner picks the HNSW index unforced through the full
+//      join shape when `hnsw.iterative_scan = relaxed_order` is set (measured
+//      2026-07-01: 8-18ms at k=40-100 vs 50-65ms exhaustive warm — and cold
+//      it touches ~k vectors' pages instead of the whole table, which removes
+//      the after-idle latency cliff). k is sized with a dedupe margin: each
+//      trace contributes up to 2 production-strategy rows.
+//   3. Fallback — if top-k under-fills the requested page after dedup (narrow
+//      group scope, deep pagination, or ANN approximation), rerun exhaustively
+//      with no LIMIT: exact, guaranteed-complete, the pre-reshape behavior.
+//
+// relaxed_order returns rows in approximate distance order; the app-side
+// best-score-per-trace dedupe + sort makes final ordering exact over the
+// candidate set.
+
+const ANN_CANDIDATE_MIN = 60;
+// Above ~400 the planner flips back to the exhaustive plan anyway (measured),
+// so past this we just run the exact scan directly.
+const ANN_CANDIDATE_MAX = 400;
+// Each trace has ≤2 production-strategy rows; ×3 leaves slack for uneven
+// score interleaving across traces.
+const ANN_DEDUPE_MARGIN = 3;
 
 export async function hybridSearch(
   db: PostgresJsDatabase,
@@ -95,57 +114,107 @@ export async function hybridSearch(
   }
 
   try {
-    // Search the PRODUCTION trace embedding strategies only (full_document,
-    // full_recipe_context) — experimental exp_* strategies don't compete here
-    // (operator decision 2026-07-01: with all 8 strategies searched, each
-    // trace's variants crowded the 1000-candidate budget down to ~141 distinct
-    // traces; see PRODUCTION_SEARCH_STRATEGY_IDS in @soupnet/domain).
-    // Deduplication by trace ID happens in application code below.
-    //
-    // Execution note: at current scale the planner top-N seq-scans this
-    // exactly rather than using the HNSW index — measured 2026-07-01, it
-    // declines the index even with enable_seqscan=off, and the exact scan is
-    // ~50-65ms warm. Every ranked row in scope is returned (no LIMIT — see
-    // the module comment above). Revisit an ANN index + LIMIT when the corpus
-    // is ~10× (backlog §Recipe-check latency).
+    // Shared predicates: PRODUCTION trace embedding strategies only
+    // (full_document, full_recipe_context) — experimental exp_* strategies
+    // don't compete (operator decision 2026-07-01; see
+    // PRODUCTION_SEARCH_STRATEGY_IDS in @soupnet/domain).
     const strategyIdsSql = sql.join(
       PRODUCTION_SEARCH_STRATEGY_IDS.map((s) => sql`${s}`),
       sql`, `,
     );
-    const semanticRows = await db.execute(sql`
-      SELECT es.source_id AS trace_id,
-             1 - (ev.vector <=> ${vectorStr}::halfvec(3072)) AS semantic_score
-      FROM claimnet.embedding_vectors ev
-      JOIN claimnet.embedding_chunks ec ON ec.id = ev.embedding_chunk_id
-      JOIN claimnet.embedding_chunk_strategies ecs ON ecs.id = ec.chunk_strategy_id
-      JOIN claimnet.embedding_sources es ON es.id = ec.embedding_source_id
-      WHERE ev.status = 'complete'
+    const searchPredicates = sql`
+        ev.status = 'complete'
         AND ev.vector IS NOT NULL
         AND ev.task_type = 'SEMANTIC_SIMILARITY'
         AND ecs.strategy_id IN (${strategyIdsSql})
         AND es.source_type = 'trace'
         AND es.group_id IN (${groupIdsSql})
-        ${excludeTraceId ? sql`AND es.source_id != ${excludeTraceId}::uuid` : sql``}
-      ORDER BY ev.vector <=> ${vectorStr}::halfvec(3072)
-    `);
+        ${excludeTraceId ? sql`AND es.source_id != ${excludeTraceId}::uuid` : sql``}`;
+    const searchJoins = sql`
+      FROM claimnet.embedding_vectors ev
+      JOIN claimnet.embedding_chunks ec ON ec.id = ev.embedding_chunk_id
+      JOIN claimnet.embedding_chunk_strategies ecs ON ecs.id = ec.chunk_strategy_id
+      JOIN claimnet.embedding_sources es ON es.id = ec.embedding_source_id`;
 
-    // Deduplicate by trace ID — same trace may appear from multiple strategies.
-    // Keep the best score per trace.
-    const semanticMap = new Map<string, number>();
-    for (const row of semanticRows as unknown as Record<string, unknown>[]) {
-      const traceId = row["trace_id"] as string;
-      const score = Number(row["semantic_score"]);
-      const existing = semanticMap.get(traceId);
-      if (existing === undefined || score > existing) {
-        semanticMap.set(traceId, score);
-      }
+    // ── 1. Exact result count (no distance computations) ─────────────────
+    const countRows = await db.execute(sql`
+      SELECT count(DISTINCT es.source_id)::int AS n
+      ${searchJoins}
+      WHERE ${searchPredicates}
+    `);
+    const totalResults = Number(
+      (countRows as unknown as Array<{ n: number }>)[0]?.n ?? 0,
+    );
+    if (totalResults === 0) {
+      return { results: [], totalResults: 0, searchMode: "semantic" };
     }
 
-    // Sort by score descending
-    const sorted = [...semanticMap.entries()]
-      .sort((a, b) => b[1] - a[1]);
+    // Deduplicate by trace ID — same trace may appear from multiple
+    // strategies. Keep the best score per trace, then sort exactly.
+    const dedupeAndSort = (rows: unknown): Array<[string, number]> => {
+      const map = new Map<string, number>();
+      for (const row of rows as Record<string, unknown>[]) {
+        const traceId = row["trace_id"] as string;
+        const score = Number(row["semantic_score"]);
+        const existing = map.get(traceId);
+        if (existing === undefined || score > existing) {
+          map.set(traceId, score);
+        }
+      }
+      return [...map.entries()].sort((a, b) => b[1] - a[1]);
+    };
 
-    const totalResults = sorted.length;
+    const runExhaustive = async () =>
+      dedupeAndSort(await db.execute(sql`
+        SELECT es.source_id AS trace_id,
+               1 - (ev.vector <=> ${vectorStr}::halfvec(3072)) AS semantic_score
+        ${searchJoins}
+        WHERE ${searchPredicates}
+        ORDER BY ev.vector <=> ${vectorStr}::halfvec(3072)
+      `));
+
+    // ── 2. ANN-streamed top-k (HNSW via iterative scan) ───────────────────
+    const k = Math.max(ANN_CANDIDATE_MIN, (offset + limit) * ANN_DEDUPE_MARGIN);
+    let sorted: Array<[string, number]>;
+    if (k > ANN_CANDIDATE_MAX) {
+      // Deep pagination — the planner would pick the exhaustive plan at this
+      // k anyway; run it directly (exact).
+      sorted = await runExhaustive();
+    } else {
+      try {
+        sorted = dedupeAndSort(await db.transaction(async (tx) => {
+          // SET LOCAL scopes both settings to this transaction (pgvector ≥0.8
+          // for iterative_scan; ef_search must be ≥ k so the index can yield
+          // enough candidates before iteration kicks in). Floor of 200 tuned
+          // on the real 1,316-trace corpus 2026-07-02: recall@20 mean 99.0%,
+          // min 85%, top-3 exemplar agreement 28/30 vs exact — residual
+          // disagreements are near-tie score inversions.
+          await tx.execute(sql.raw(`SET LOCAL hnsw.iterative_scan = relaxed_order`));
+          await tx.execute(sql.raw(`SET LOCAL hnsw.ef_search = ${Math.max(200, k)}`));
+          return await tx.execute(sql`
+            SELECT es.source_id AS trace_id,
+                   1 - (ev.vector <=> ${vectorStr}::halfvec(3072)) AS semantic_score
+            ${searchJoins}
+            WHERE ${searchPredicates}
+            ORDER BY ev.vector <=> ${vectorStr}::halfvec(3072)
+            LIMIT ${k}
+          `);
+        }));
+      } catch (annErr) {
+        // e.g. pgvector <0.8 without iterative_scan — degrade to exact scan.
+        console.error("[vector-search] ANN path failed, falling back to exhaustive:", annErr);
+        sorted = await runExhaustive();
+      }
+
+      // ── 3. Under-fill fallback (guaranteed no recall regression) ────────
+      // If the deduped top-k can't fill the requested page even though more
+      // matches exist (narrow scope post-filtering, or ANN approximation),
+      // rerun exhaustively — the exact pre-reshape behavior.
+      const needed = Math.min(totalResults, offset + limit);
+      if (sorted.length < needed) {
+        sorted = await runExhaustive();
+      }
+    }
 
     // Apply pagination
     const paged = sorted.slice(offset, offset + limit);
@@ -256,8 +325,11 @@ export async function evidenceSearch(
     sql`, `,
   );
 
-  // Search evidence embeddings — joins back to evidence and parent trace
-  const rows = await db.execute(sql`
+  // Search evidence embeddings — joins back to evidence and parent trace.
+  // Same ANN posture as hybridSearch: at LIMIT ~100 the planner streams from
+  // the HNSW index when iterative scan is on (post-join filters can't starve
+  // it), and falls back to the exact plan on its own when that's cheaper.
+  const runQuery = (tx: Pick<PostgresJsDatabase, "execute">) => tx.execute(sql`
     SELECT
       es.source_id AS evidence_id,
       te.trace_id AS parent_trace_id,
@@ -279,6 +351,18 @@ export async function evidenceSearch(
     ORDER BY ev.vector <=> ${vectorStr}::halfvec(3072)
     LIMIT ${limit}
   `);
+
+  let rows: unknown;
+  try {
+    rows = await db.transaction(async (tx) => {
+      await tx.execute(sql.raw(`SET LOCAL hnsw.iterative_scan = relaxed_order`));
+      await tx.execute(sql.raw(`SET LOCAL hnsw.ef_search = ${Math.max(200, limit)}`));
+      return await runQuery(tx);
+    });
+  } catch (annErr) {
+    console.error("[vector-search] Evidence ANN path failed, falling back:", annErr);
+    rows = await runQuery(db);
+  }
 
   return (rows as unknown as Record<string, unknown>[]).map((row) => ({
     evidenceId: row["evidence_id"] as string,

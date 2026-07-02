@@ -38,6 +38,14 @@ Migrations `0022_waitlist`, `0023_waitlist_crm_invite_semantics`. Tests: `waitli
 
 ## Recipe checks
 
+### 2026-07-02 — ANN-first hybridSearch (the index earns its keep)
+
+Operator challenged the just-committed HNSW index drop ("shouldn't we optimize the query so it IS used?") and was right: the "planner never picks HNSW" conclusion was an artifact of only testing `LIMIT 1000`+. Reverted the drop (`bd2ea7c`) and reshaped the search instead:
+
+- **`hybridSearch` = exact COUNT + ANN top-k + exact fallback.** totalResults from a ~5ms `COUNT(DISTINCT)` (no distance work; keeps the no-silent-cap decision). Results from an HNSW-streamed top-k (`hnsw.iterative_scan = relaxed_order`, `ef_search = max(200, k)`, `k = clamp((offset+perPage)×3, 60, 400)`) — the planner picks the index unforced at these limits through the full join shape. Exhaustive no-LIMIT fallback on page under-fill, deep pagination (k>400), or ANN-transaction error (pgvector <0.8) — guaranteed no recall regression. `evidenceSearch` got the same iterative-scan posture.
+- **Validated on real vectors**: imported the operator's prod export (1,316 traces, 3,050 evidence) into a fresh local stack, embedded with real Gemini (12,262 vectors, 0 failures), leave-one-out ×30: recall@20 mean 99.0% / min 85%, top-3 exemplar agreement 28/30, ANN p50 51ms vs exact 69ms warm — and cold behavior is the real win (top-k touches ~k vectors' pages instead of the whole ~200MB TOAST set, removing the after-idle cliff structurally).
+- Cost acknowledged: the index stays (~95MB working set; 125s rebuild inside any future VACUUM FULL, measured by infra).
+
 ### 2026-07-01 — Recipe-check latency wave 2: search recall + task-type cleanup + instrumentation
 
 Same-day follow-up to the embed-call reduction below, driven by three operator decisions:
