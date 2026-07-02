@@ -224,6 +224,24 @@ When stigmergic decay lands (search-algorithms.md §Stigmergic Decay), weight re
 
 ---
 
+## Recipe-check latency (2026-07-01 measurement)
+
+Source: [docs/rough-notes/2026-07-01/recipe-check-latency-findings.md](rough-notes/2026-07-01/recipe-check-latency-findings.md) — black-box prod matrix + local 1,300-trace reproduction + EXPLAIN. Clustering ruled out (sub-5ms, operator's initial suspicion); bottleneck was 6 sequential Gemini embed calls per new check (2 per duplicate) plus ANN queries that seq-scan instead of using the HNSW index (the linear-in-corpus-size component). The embed-call reduction landed 2026-07-01 (see backlog-completed) — local timings with real Gemini dropped to 0.53s new / 0.11s duplicate. Remaining items:
+
+### `[IMPL]` Restore HNSW index usage for ANN search queries
+
+EXPLAIN (literal and parameterized) shows both ANN queries seq-scan `embedding_vectors` (~12k distance computations per query, twice per check) because the `ORDER BY ... LIMIT` sits above joins with post-join filters. Restructure as an inner subquery ordering/limiting on `embedding_vectors` alone, join/filter outside; add a partial HNSW index (`WHERE task_type='SEMANTIC_SIMILARITY' AND status='complete' AND vector IS NOT NULL`). Coordinate with the strategy-filter decision below (it changes what the index should cover).
+
+### `[DECISION NEEDED]` Experimental strategies compete in production search + recall cap
+
+`embedding-strategies.ts` says `exp_*` strategies are "not used in production search," but `hybridSearch` has no strategy filter — each trace contributes ~8 SEMANTIC vectors, so the 1000-row candidate budget covers only ~260 distinct traces (prod checks return `totalResults ≈ 255–269` against 1,286 recipes): a silent recall cap. Also `exp_trace_minimal` duplicates `full_document` byte-for-byte. Decide: filter search to production strategies (restores stated intent, ~4× less scan work, un-caps recall), or bless best-score-across-strategies as intended behavior and update the comment + size `ef_search`/`LIMIT` accordingly. Related evidence from the corpus (2026-07-01 check): the multi-strategy infrastructure was deliberately "built for exactly this comparison" but "the experimental strategies have never been scored beyond visual map inspection" — so the decision may hinge on running the deferred retrieval-quality scoring first. Note the *write-path* half is already decided and done (2026-07-01, operator): `exp_*` strategies are no longer enqueued at check time; the worker sweep backfills them.
+
+### `[IMPL]` Per-stage timing instrumentation on /check
+
+`Server-Timing` response header + one structured timing log line per check (embed calls, ANN queries, write block, clustering). Needed to close the one remaining unknown: prod new−duplicate delta is 4–10 s for 4 embed calls that take ~1 s from a dev machine — only prod-side per-stage numbers can attribute it. Companion infra briefing lives in the private deployment repo (`docs/briefings/check-latency-observability.md`).
+
+---
+
 ## Eval + transcript-mining findings (2026-06-10)
 
 Source detail: `docs/rough-notes/2026-06-10/scenario-mining-batch-1.md` (7 scenario candidates + 22-question operator interview batch, awaiting answers), the two `transcript-mining-report-*.md` files (self-audits from live sessions), and the SoupNet-evals ground-truth run record.
@@ -238,7 +256,7 @@ CLAUDE.md, `mcp.ts` (~line 793), and design-thinking.md all point agents at a `f
 
 ### `[IMPL]` Evidence stored with `%97` encoding artifact
 
-Ground-truth run logged evidence containing `%97` where an em-dash belongs (windows-1252-style percent-encoding artifact) via a GET `/check` submission. Find whether the decode bug is client-side guidance or server-side parsing; add a test with non-ASCII evidence through the GET path.
+Ground-truth run logged evidence containing `%97` where an em-dash belongs (windows-1252-style percent-encoding artifact) via a GET `/check` submission. Find whether the decode bug is client-side guidance or server-side parsing; add a test with non-ASCII evidence through the GET path. **Re-confirmed 2026-07-01:** a curl GET with standard UTF-8 `--data-urlencode` em-dashes was stored as `%97` (visible in the test-project latency-bench traces, e.g. the "embeds the same query text twice per request %97 once in hybridSearch" evidence) — so the bug is server-side decoding, not client guidance.
 
 ### `[IMPL]` `/briefing` returns `exemplarCount: 0` for a book with one fresh trace
 

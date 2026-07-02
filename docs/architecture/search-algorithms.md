@@ -263,7 +263,7 @@ Follows Anthropic's Contextual Retrieval pattern — parent trace text prepended
 
 ### Task types
 
-Two task types are generated per chunk: `RETRIEVAL_DOCUMENT` and `SEMANTIC_SIMILARITY`. **Only `SEMANTIC_SIMILARITY` is used in search.** Both are generated because `gemini-embedding-2-preview` currently ignores `task_type` (produces identical vectors), but we want to be positioned to benefit when Google fixes this. See `apps/backend/src/lib/embeddings/enqueue.ts:21-25`.
+Two task types are stored per chunk: `RETRIEVAL_DOCUMENT` and `SEMANTIC_SIMILARITY`. **Only `SEMANTIC_SIMILARITY` is used in search**, so it's the only one generated synchronously for text chunks — `RETRIEVAL_DOCUMENT` rows are inserted `status='pending'` and filled by the async worker (2026-07-01 latency change). Both continue to exist because `gemini-embedding-2-preview` currently ignores `task_type` (produces identical vectors), but we want to be positioned to benefit when Google fixes this. Multimodal chunks still generate both synchronously (the worker can't re-embed file bytes, ADR-0019). See `apps/backend/src/lib/embeddings/enqueue.ts`.
 
 ### Strategies defined but not yet implemented
 
@@ -278,7 +278,7 @@ These are defined in the schema (`packages/db/src/schema/vectors.ts:128-134`) bu
 
 ### Experimental Embedding Strategies (clustering experiments)
 
-Six experimental strategies designed to test whether different text formatting and content levels produce tighter semantic clusters. All deferred to worker. Selectable on the `/traces/map` page via the strategy dropdown.
+Six experimental strategies designed to test whether different text formatting and content levels produce tighter semantic clusters. Not enqueued on the check path at all — the worker strategy sweep discovers traces missing them and backfills within ~1 minute (operator decision 2026-07-01; previously they were enqueued inline as pending rows). Selectable on the `/traces/map` page via the strategy dropdown.
 
 **Hypothesis:** Evidence dilutes clustering — the `full_recipe_context` strategy conflates the core judgment with diverse evidence topics, pulling the embedding in multiple directions. Trace-only vectors should produce clusters more aligned with the actual taste/judgment. Instruction prefixes may further help by telling the embedding model what to weight.
 

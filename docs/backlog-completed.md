@@ -38,6 +38,16 @@ Migrations `0022_waitlist`, `0023_waitlist_crm_invite_semantics`. Tests: `waitli
 
 ## Recipe checks
 
+### 2026-07-01 — Recipe-check embed-call reduction (measurement items 1+2)
+
+From the same-day latency measurement ([rough-notes/2026-07-01/recipe-check-latency-findings.md](rough-notes/2026-07-01/recipe-check-latency-findings.md)); landed together as one write-path change:
+
+- **Query embeds reuse the trace vector.** `runSearchPipeline` resolves the query embedding once and shares it between `hybridSearch` and `evidenceSearch` (both gained an optional `queryVectorStr`); the check path passes the trace vector it just cached — the query text IS the trace text — so the search half makes zero embedding calls. Duplicate re-checks are all `vector_cache` hits: zero Gemini calls end-to-end.
+- **Sync write path pays ~one embed round-trip instead of six sequential.** The `full_document` + `full_recipe_context` `SEMANTIC_SIMILARITY` vectors resolve in parallel BEFORE the transaction (`getOrCreateCachedVector` + `computeChunkHash` now exported from `enqueue.ts`; `enqueueEmbedding` accepts `precomputedVectors`); `RETRIEVAL_DOCUMENT` rows insert as `pending` for the worker (the documented task_type bug makes them byte-identical anyway; multimodal chunks still sync-generate both per ADR-0019).
+- **Experimental strategies off the check path** (operator decision 2026-07-01): the 6 `exp_*` variants are no longer enqueued inline (~30 inserts saved per check); the strategy sweep's discovery loop backfills them within ~1 minute.
+
+Measured effect (local stack, real Gemini): new check 2–3s → **0.53s**; duplicate re-check → **0.11s**. Tests: `sync-embed-path.test.ts` (SEMANTIC complete + RETRIEVAL pending + no inline exp rows + idempotent duplicates), `vector-search.queryvector.test.ts` (embed-once contract, provider mocked). Docs updated: search-strategies.md §Sync vs Async, search-algorithms.md §Task types + §Experimental, overview.md pipeline drill-down. Remaining siblings (HNSW seq-scan fix, strategy-filter decision, Server-Timing instrumentation) stay in backlog.md §Recipe-check latency.
+
 ### 2026-06-10 — `decided_at`: backfill historical decisions with their original judgment date
 
 New optional parameter on recipe checks for decision archaeology (design-thinking.md §Decision Archaeology — driven by the discovery-agents-on-an-unfamiliar-codebase use case): when an agent finds a past decision in git history, ADRs, or other dated artifacts, it checks the recipe with `decided_at` set to the artifact's timestamp so the judgment carries its original date instead of the logging date.

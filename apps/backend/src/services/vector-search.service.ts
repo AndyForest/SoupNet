@@ -31,6 +31,11 @@ export interface HybridSearchParams {
   limit: number;
   offset: number;
   excludeTraceId?: string | undefined;
+  /** Pre-resolved query vector in pgvector text format ("[0.1,0.2,...]").
+   *  When provided, no embedding API call is made — the caller already has
+   *  the vector (e.g. the sync write path just cached the identical text).
+   *  See docs/rough-notes/2026-07-01/recipe-check-latency-findings.md. */
+  queryVectorStr?: string | undefined;
 }
 
 export interface HybridSearchResult {
@@ -73,14 +78,18 @@ export async function hybridSearch(
   );
 
   // ── Semantic search (pure vector cosine similarity) ─────────────────────
+  // Reuse the caller's pre-resolved vector when available; otherwise embed.
 
-  const queryVector = await embedQuery(recipeText, "SEMANTIC_SIMILARITY");
-
-  if (!queryVector) {
-    return { results: [], totalResults: 0, searchMode: "semantic" };
+  let vectorStr: string;
+  if (params.queryVectorStr) {
+    vectorStr = params.queryVectorStr;
+  } else {
+    const queryVector = await embedQuery(recipeText, "SEMANTIC_SIMILARITY");
+    if (!queryVector) {
+      return { results: [], totalResults: 0, searchMode: "semantic" };
+    }
+    vectorStr = `[${queryVector.join(",")}]`;
   }
-
-  const vectorStr = `[${queryVector.join(",")}]`;
 
   try {
     // Set HNSW search parameter for this transaction
@@ -210,15 +219,23 @@ export async function evidenceSearch(
     groupIds: string[];
     limit?: number;
     excludeTraceId?: string;
+    /** Pre-resolved query vector (pgvector text format) — skips the embedding
+     *  API call. The search pipeline resolves the query text once and shares
+     *  the vector between trace search and evidence search. */
+    queryVectorStr?: string;
   },
 ): Promise<EvidenceSearchResult[]> {
   const limit = params.limit ?? 50;
 
-  // Embed the query text
-  const queryVector = await embedQuery(params.queryText, "SEMANTIC_SIMILARITY");
-  if (!queryVector) return []; // graceful fallback
-
-  const vectorStr = `[${queryVector.join(",")}]`;
+  // Reuse the caller's pre-resolved vector when available; otherwise embed.
+  let vectorStr: string;
+  if (params.queryVectorStr) {
+    vectorStr = params.queryVectorStr;
+  } else {
+    const queryVector = await embedQuery(params.queryText, "SEMANTIC_SIMILARITY");
+    if (!queryVector) return []; // graceful fallback
+    vectorStr = `[${queryVector.join(",")}]`;
+  }
 
   const groupIdsSql = sql.join(
     params.groupIds.map((id) => sql`${id}::uuid`),

@@ -176,7 +176,7 @@ Worth knowing for navigation:
 
 ## Subsystem: recipe-check pipeline
 
-Drill-down for the `/check` and `/mcp` hot path. The write side is synchronous and writes one full-document vector immediately (so the trace is searchable on the next request). Experimental embedding strategies are enqueued and processed by the worker below. The read side is pure semantic search + optional clustering.
+Drill-down for the `/check` and `/mcp` hot path. The write side resolves the `full_document` and `full_recipe_context` SEMANTIC_SIMILARITY vectors in parallel before the transaction (so the trace is searchable on the next request) and reuses the trace vector as the search query vector — the read side makes zero embedding calls of its own. Experimental embedding strategies are backfilled by the worker's strategy sweep. The read side is pure semantic search + optional clustering.
 
 ```mermaid
 flowchart TB
@@ -317,7 +317,7 @@ Every recipe check is simultaneously a search and a contribution: the agent's re
 
 1. No business logic in routes or components — routes → services → Drizzle.
 2. Two credential populations, strictly separate — JWT for humans, API keys for agents, no cross-surface fallback (engineering-principles.md §7).
-3. Embeddings never block primary writes — sync path writes one `full_document` vector for immediate search; async pg-boss consumers fill in experimental strategies.
+3. Embeddings never block primary writes — the sync path pre-resolves the two search-critical `SEMANTIC_SIMILARITY` vectors in parallel outside the transaction; async pg-boss consumers fill in everything else (`RETRIEVAL_DOCUMENT` twins, evidence, experimental strategies).
 4. Multimodal embeddings are sync-only (ADR-0019) — the async job shape doesn't carry file bytes, and diverging the two paths would corrupt the content-hashed vector cache.
 5. Agents are first-class — `/check` is designed for agent consumption; the SPA is a second-class citizen that happens to use the same backend.
 6. No LLM on the server — the server indexes, searches, and ranks; remote agents do the reasoning.

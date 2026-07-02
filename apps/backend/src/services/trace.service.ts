@@ -27,7 +27,11 @@ import {
 import { getDb } from "../db";
 import { parseEvidenceMarkdown } from "./evidence-parser";
 import { validateKey } from "./api-key.service";
-import { enqueueEmbedding } from "../lib/embeddings/enqueue";
+import {
+  enqueueEmbedding,
+  getOrCreateCachedVector,
+  computeChunkHash,
+} from "../lib/embeddings/enqueue";
 import { storeFile } from "../lib/file-store";
 import type { RegionMeta } from "../lib/image-roi";
 import type { EvidenceSearchResult } from "./vector-search.service";
@@ -248,10 +252,9 @@ async function insertEvidenceEntries(opts: InsertEvidenceOptions): Promise<void>
 
 // ── Embedding strategies — imported from @soupnet/domain ────────────────────
 // See: docs/architecture/search-algorithms.md §Experimental Embedding Strategies
-import {
-  buildExperimentalStrategies,
-  buildFullRecipeContext,
-} from "@soupnet/domain";
+// (Experimental variants are backfilled by the worker strategy sweep, not
+// enqueued on the check path.)
+import { buildFullRecipeContext } from "@soupnet/domain";
 
 // ── Main service function ────────────────────────────────────────────────────
 
@@ -356,6 +359,27 @@ export async function submitAndSearch(
   let traceId: string | undefined;
   let _isExisting = false;
 
+  // 4. Resolve the two sync embeddings in PARALLEL, BEFORE the transaction —
+  // external API calls don't belong inside an open transaction, and running
+  // them concurrently makes the write path cost ~one embed round-trip instead
+  // of a sequential sum (2026-07-01 latency findings). Content-hash cache
+  // (vector_cache) makes both cache hits for an identical re-check; a
+  // duplicate submitted with DIFFERENT evidence wastes one speculative
+  // full-context embed (harmless: cached, and duplicates are the rare path).
+  // The trace vector doubles as the search query vector below — the query
+  // text IS the trace text, so the pipeline makes zero additional embedding
+  // calls. Full-recipe context (Strategy 3) is built from the same parsed
+  // entries the insert path uses.
+  const fullRecipeText = buildFullRecipeContext(params.traceText, forEntries);
+  const [traceVectorStr, fullContextVectorStr] = await Promise.all([
+    getOrCreateCachedVector(
+      db, computeChunkHash(params.traceText), params.traceText, "SEMANTIC_SIMILARITY",
+    ),
+    getOrCreateCachedVector(
+      db, computeChunkHash(fullRecipeText), fullRecipeText, "SEMANTIC_SIMILARITY",
+    ),
+  ]);
+
   await db.transaction(async (tx) => {
     // Try to insert — unique constraint on (api_key_id, group_id, claim_text_hash)
     // prevents duplicates from the same agent + group
@@ -403,19 +427,20 @@ export async function submitAndSearch(
       });
       // No "against" entries — stance discovery is handled by the evidence search pipeline
 
-      // Trace-level embedding (text only — evidence embeddings are separate)
+      // Trace-level embedding (text only — evidence embeddings are separate).
+      // Vector was resolved in parallel before the transaction; this inserts
+      // pipeline rows only. RETRIEVAL_DOCUMENT defers to the worker.
       await enqueueEmbedding(tx, {
         sourceType: "trace",
         sourceId: traceId,
         groupId,
         sourceText: params.traceText,
         artifactCategory: "text",
+        precomputedVectors: { SEMANTIC_SIMILARITY: traceVectorStr },
       });
 
       // Full-recipe context embedding — concatenates trace + all evidence + references.
       // See: docs/architecture/search-strategies.md (Strategy 3)
-      const fullRecipeText = buildFullRecipeContext(params.traceText, forEntries);
-
       await enqueueEmbedding(tx, {
         sourceType: "trace",
         sourceId: traceId,
@@ -423,30 +448,14 @@ export async function submitAndSearch(
         sourceText: fullRecipeText,
         artifactCategory: "text",
         strategyId: "full_recipe_context",
+        precomputedVectors: { SEMANTIC_SIMILARITY: fullContextVectorStr },
       });
 
-      // ── Experimental embedding strategies (6 variants) ──────────────────
-      // Deferred to worker — these are for map visualization experiments,
-      // not for recipe check search results. The worker strategy sweep
-      // discovers and processes them within 1 minute.
-      // See: docs/architecture/search-algorithms.md §Experimental Embedding Strategies
-
-      const experimentalStrategies = buildExperimentalStrategies(
-        params.traceText,
-        forEntries,
-      );
-
-      for (const strategy of experimentalStrategies) {
-        await enqueueEmbedding(tx, {
-          sourceType: "trace",
-          sourceId: traceId,
-          groupId,
-          sourceText: strategy.text,
-          artifactCategory: "text",
-          strategyId: strategy.id,
-          deferToWorker: true,
-        });
-      }
+      // Experimental embedding strategies (6 map-visualization variants) are
+      // NOT enqueued here — the worker strategy sweep discovers traces missing
+      // them and backfills within ~1 minute (strategy-sweep.ts, second
+      // discovery loop). Keeping them off the check path saves ~30 inserts
+      // per check (operator decision, 2026-07-01).
     } else {
       // Duplicate — find the existing trace
       _isExisting = true;
@@ -473,6 +482,8 @@ export async function submitAndSearch(
 
   // 6. Run unified search pipeline
   // See docs/architecture/search-algorithms.md for the full algorithm description.
+  // The pre-resolved trace vector doubles as the query vector (identical text),
+  // so the pipeline makes no embedding API calls of its own.
   const pipelineResult = await runSearchPipeline({
     db,
     groupIds: effectiveReadGroupIds,
@@ -485,6 +496,7 @@ export async function submitAndSearch(
     excludeTraceId: traceId,
     axes: params.axes,
     includeVectors: !!params.axes, // need vectors for concept-axis computation
+    queryVectorStr: traceVectorStr ?? undefined,
   });
 
   // 7. Audit log — record what the agent saw for later analysis and "Map from here".

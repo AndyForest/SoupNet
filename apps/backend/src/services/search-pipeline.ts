@@ -58,6 +58,11 @@ export interface SearchPipelineParams {
    *  When set, fetchTraceVectors returns only vectors from this strategy.
    *  Used by /traces/map for clustering experiments. */
   vectorStrategy?: string | undefined;
+  /** Pre-resolved embedding of `query` in pgvector text format. The recipe
+   *  check path passes the trace vector it just cached, so the pipeline makes
+   *  zero embedding API calls. When absent, the pipeline embeds the query
+   *  once and shares the vector between trace search and evidence search. */
+  queryVectorStr?: string | undefined;
 }
 
 export interface ClusterAssignment {
@@ -210,6 +215,16 @@ export async function runSearchPipeline(
   let totalResults: number;
   let searchMode: "semantic" | "corpus";
 
+  // Resolve the query embedding once — trace search and evidence search share
+  // it. The check path hands in the vector it just cached (queryVectorStr);
+  // other query-mode callers pay one embedQuery here instead of one per search.
+  let queryVectorStr = params.queryVectorStr;
+  if (params.query && !queryVectorStr) {
+    const embedded = await embedQuery(params.query, "SEMANTIC_SIMILARITY");
+    if (embedded) queryVectorStr = `[${embedded.join(",")}]`;
+    // null → leave undefined; hybridSearch/evidenceSearch degrade gracefully.
+  }
+
   if (params.query) {
     // ── Query mode: semantic vector search ─────────────────────────────────
     const searchResponse = await hybridSearch(db, {
@@ -218,6 +233,7 @@ export async function runSearchPipeline(
       limit: perPage,
       offset,
       excludeTraceId: params.excludeTraceId,
+      queryVectorStr,
     });
 
     results = searchResponse.results.map((r) => ({
@@ -326,6 +342,7 @@ export async function runSearchPipeline(
         limit: 100,
       };
       if (params.excludeTraceId) evidenceParams.excludeTraceId = params.excludeTraceId;
+      if (queryVectorStr) evidenceParams.queryVectorStr = queryVectorStr;
       const evidenceCandidates = await evidenceSearch(db, evidenceParams);
 
       if (evidenceCandidates.length > 0) {

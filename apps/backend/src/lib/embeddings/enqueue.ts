@@ -6,6 +6,16 @@
  * - Cache miss: calls Gemini API (~200-500ms), writes to cache + embedding_vectors
  * - Graceful degradation: if Gemini fails, inserts 'pending' stubs for worker
  *
+ * Latency posture (2026-07-01 measurement, docs/rough-notes/2026-07-01/
+ * recipe-check-latency-findings.md): only SEMANTIC_SIMILARITY is generated
+ * synchronously for text chunks — it's the only task type the search path
+ * reads. RETRIEVAL_DOCUMENT rows are inserted 'pending' for the async worker,
+ * halving the user-facing embed cost per sync chunk. Multimodal chunks still
+ * generate both task types synchronously because the async pipeline cannot
+ * re-embed file bytes (ADR-0019). Callers on a hot path can also pre-resolve
+ * vectors (in parallel, outside any transaction) via getOrCreateCachedVector
+ * and hand them in through `precomputedVectors`.
+ *
  * The vector_cache table has no source text and no FKs — safe for PII cleanup.
  * Only stores: content_hash + model_id + task_type + vector.
  */
@@ -32,8 +42,12 @@ const TASK_TYPES = ["RETRIEVAL_DOCUMENT", "SEMANTIC_SIMILARITY"] as const;
  * When multimodalParts is provided, uses embedMultimodal instead of embedQuery.
  * Cache still works via contentHash — but multimodal embeddings aren't cacheable
  * across different image+text combinations (the hash must reflect all parts).
+ *
+ * Exported for hot-path callers that pre-resolve vectors in parallel before
+ * a transaction (trace.service) or reuse a just-written vector as the search
+ * query vector (content hash = sha256 of the exact text, see computeChunkHash).
  */
-async function getOrCreateCachedVector(
+export async function getOrCreateCachedVector(
   db: PostgresJsDatabase,
   contentHash: string,
   sourceText: string,
@@ -73,6 +87,15 @@ async function getOrCreateCachedVector(
   return vectorStr;
 }
 
+/** Content hash for a chunk — text plus file bytes when multimodal. The
+ *  vector_cache key and the embedding_chunks.chunk_hash both derive from this. */
+export function computeChunkHash(sourceText: string, fileBuffer?: Buffer): string {
+  const hasher = crypto.createHash("sha256");
+  hasher.update(sourceText);
+  if (fileBuffer) hasher.update(fileBuffer);
+  return hasher.digest("hex");
+}
+
 export interface EnqueueEmbeddingParams {
   sourceType: string;
   sourceId: string;
@@ -92,6 +115,13 @@ export interface EnqueueEmbeddingParams {
    * to be searchable immediately.
    */
   deferToWorker?: boolean;
+  /**
+   * Vectors resolved ahead of time (halfvec text format, keyed by task type),
+   * e.g. via getOrCreateCachedVector run in parallel before a transaction.
+   * A present-and-null entry means resolution was attempted and failed —
+   * a 'pending' stub is inserted without retrying the API inline.
+   */
+  precomputedVectors?: Partial<Record<(typeof TASK_TYPES)[number], string | null>>;
 }
 
 export async function enqueueEmbedding(
@@ -147,12 +177,7 @@ export async function enqueueEmbedding(
   }
 
   // Content hash: combine text + image bytes for multimodal (ensures unique cache keys)
-  const hasher = crypto.createHash("sha256");
-  hasher.update(params.sourceText);
-  if (params.fileBuffer) {
-    hasher.update(params.fileBuffer);
-  }
-  const chunkHash = hasher.digest("hex");
+  const chunkHash = computeChunkHash(params.sourceText, params.fileBuffer);
 
   const chunkRows = await db.execute(sql`
     INSERT INTO claimnet.embedding_chunks
@@ -189,11 +214,21 @@ export async function enqueueEmbedding(
     return;
   }
 
-  // Sync path: get vectors from cache or Gemini API for each task type
+  // Sync path: only the task type the search path reads (SEMANTIC_SIMILARITY)
+  // is generated inline for text chunks; RETRIEVAL_DOCUMENT rows are inserted
+  // 'pending' for the async worker (see header — latency posture). Multimodal
+  // chunks generate both task types inline because the worker can't re-embed
+  // file bytes (ADR-0019).
   for (const taskType of TASK_TYPES) {
-    const vectorStr = await getOrCreateCachedVector(
-      db, chunkHash, params.sourceText, taskType, multimodalParts,
-    );
+    const syncThisType = multimodalParts !== undefined || taskType === "SEMANTIC_SIMILARITY";
+
+    let vectorStr: string | null = null;
+    if (syncThisType) {
+      const pre = params.precomputedVectors?.[taskType];
+      vectorStr = pre !== undefined
+        ? pre
+        : await getOrCreateCachedVector(db, chunkHash, params.sourceText, taskType, multimodalParts);
+    }
 
     if (vectorStr) {
       await db.execute(sql`
@@ -203,7 +238,7 @@ export async function enqueueEmbedding(
           (${chunkRow.id}::uuid, ${MODEL_ID}, ${taskType}, 'complete', ${vectorStr}::vector(3072)::halfvec(3072))
       `);
     } else {
-      // Gemini unavailable — insert pending stub for worker
+      // Deferred task type, or Gemini unavailable — pending stub for worker
       await db.execute(sql`
         INSERT INTO claimnet.embedding_vectors
           (embedding_chunk_id, model_id, task_type, status, vector)
