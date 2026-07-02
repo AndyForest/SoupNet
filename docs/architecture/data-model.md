@@ -112,6 +112,6 @@ The service layer enforces referential integrity for all UUID references. The ge
 Some database objects are created by raw SQL in migration files because Drizzle doesn't support them natively:
 
 - **`traces.tsv`** — `tsvector` generated column: `to_tsvector('english', claim_text)`. GIN-indexed for full-text search.
-- ~~`embedding_vectors_hnsw_idx`~~ — dropped in migration 0026 (2026-07-02): the planner never chose it for the production search (exact top-N scan wins at current scale) while it cost 95 MB of buffer space + per-insert maintenance. Recreate (halfvec_cosine_ops, m=16, ef_construction=64) alongside a query reshape when scale demands — see backlog §Recipe-check latency.
+- **`embedding_vectors_hnsw_idx`** — HNSW index on `embedding_vectors.vector` using `halfvec_cosine_ops` (m=16, ef_construction=64). Query-time: `SET hnsw.ef_search = 100`.
 
 These are documented in the generated reference but not captured by the Drizzle snapshot JSON.

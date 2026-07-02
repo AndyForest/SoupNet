@@ -1,9 +1,9 @@
 # ClaimNet Data Model — Generated Reference
 
-> **Auto-generated** from Drizzle migration snapshot `0026_snapshot.json`.
+> **Auto-generated** from Drizzle migration snapshot `0024_snapshot.json`.
 > Do not edit by hand. Regenerate with: `npx tsx scripts/generate-data-model-docs.ts`
 >
-> Generated: 2026-07-02
+> Generated: 2026-06-11
 > Tables: 24 | Schema: `claimnet`
 
 For design rationale, conventions, and context, see [data-model.md](data-model.md).
@@ -332,7 +332,7 @@ erDiagram
 These are created by raw SQL in migration files and are not captured in the snapshot JSON:
 
 - **`traces.tsv`** — `tsvector` generated column: `to_tsvector('english', claim_text)`. GIN-indexed (`traces_tsv_idx`).
-- ~~`embedding_vectors_hnsw_idx`~~ — the HNSW index (halfvec_cosine_ops, m=16, ef_construction=64) was created in migration 0000 and **dropped in migration 0026** (unused by the planner at current scale; recreate alongside a query reshape when the corpus makes the exact scan slow — see backlog §Recipe-check latency).
+- **`embedding_vectors_hnsw_idx`** — HNSW index on `embedding_vectors.vector` using `halfvec_cosine_ops` (m=16, ef_construction=64).
 
 ---
 

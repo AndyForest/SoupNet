@@ -230,7 +230,7 @@ Source: [docs/rough-notes/2026-07-01/recipe-check-latency-findings.md](rough-not
 
 ### `[DESIGN]` Reintroduce an ANN index path when the exact scan gets slow (~10× corpus)
 
-Search now ranks every in-scope trace exactly with no LIMIT; the planner top-N seq-scans and declines the HNSW index even when forced (measured 2026-07-01 at 23k vectors, pgvector 0.8.2 — see the comment in `vector-search.service.ts` and the findings doc). The HNSW index itself was **dropped in migration 0026** (2026-07-02): prod `pg_stat` showed 81 lifetime scans against 95 MB of buffer cost + per-insert graph maintenance on a 1 GiB instance. Cost grows linearly (~2 vectors/trace post-filter). When the corpus is ~10× current (roughly >10k recipes) revisit as one piece: recreate a (possibly partial) HNSW index matching the search predicate + inner-subquery query shape + `hnsw.iterative_scan` + a bounded LIMIT, and re-benchmark recall vs the exact scan (rebuild is ~30s at 2026 scale — see migration 0026's comment for the exact CREATE INDEX). Cold-start (buffer-cache) behavior is the infra briefing's territory (`pg_prewarm`, instance memory).
+Search now ranks every in-scope trace exactly with no LIMIT; the planner top-N seq-scans and declines the HNSW index even when forced (measured 2026-07-01 at 23k vectors, pgvector 0.8.2 — see the comment in `vector-search.service.ts` and the findings doc). Cost grows linearly (~2 vectors/trace post-filter). When the corpus is ~10× current (roughly >10k recipes) revisit: partial HNSW index matching the search predicate + inner-subquery shape + `hnsw.iterative_scan`, and re-benchmark recall vs the exact scan. Cold-start (buffer-cache) behavior is the infra briefing's territory (`pg_prewarm`, instance memory).
 
 ---
 

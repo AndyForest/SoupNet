@@ -307,7 +307,7 @@ Six experimental strategies designed to test whether different text formatting a
 ### Semantic Search (pgvector, exact scan)
 - Model: gemini-embedding-2-preview (3072-dim halfvec)
 - Query: cosine distance over the production-strategy `SEMANTIC_SIMILARITY` vectors, no candidate LIMIT — every trace in scope is ranked exactly (2026-07-01)
-- Execution: the planner top-N seq-scans this exactly; it declined the HNSW index even when forced at current scale (measured 2026-07-01, ~50-65ms warm). The HNSW index was subsequently **dropped** (migration 0026, 2026-07-02 — prod showed idx_scan=81 lifetime vs 95 MB of buffer cost + per-insert maintenance); recreate it alongside a query reshape when the corpus grows ~10× and an ANN path becomes worth reintroducing.
+- Execution: the planner top-N seq-scans this exactly; it declines the HNSW index even when forced at current scale (measured 2026-07-01, ~50-65ms warm). The HNSW index (halfvec_cosine_ops, m=16, ef_construction=64) still exists for when the corpus grows ~10× and an ANN path becomes worth reintroducing.
 - Scoring: 1 - cosine_distance (0=unrelated, 1=identical)
 - Strengths: catches meaning, handles paraphrasing, cross-vocabulary matching; exact ranking (no recall cap)
 - Weaknesses: query embedding needs an API call only when the vector isn't already cached (the check path reuses the just-cached trace vector); scan cost grows linearly with corpus

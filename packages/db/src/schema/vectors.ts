@@ -51,12 +51,11 @@ import { claimnetSchema } from "./traces";
  * WHY halfvec AND NOT vector:
  *   pgvector's HNSW index has a hard 2,000-dimension limit for the `vector`
  *   type. `halfvec` (16-bit floats, pgvector ≥ 0.7.0) raises that limit to
- *   4,000 dimensions, making it the required type for 3072-dim embeddings
- *   should an ANN index return (see migration 0026 — the HNSW index was
- *   dropped as unused at current scale). Standing benefit: 50% storage
- *   reduction vs float32, with similar search quality.
+ *   4,000 dimensions, making it the required type for 3072-dim embeddings.
+ *   Side benefit: 50% storage reduction vs float32, with similar search quality.
  *
- * Queries cast the query vector: `$vec::halfvec(3072) <=> vector`.
+ * HNSW index uses `halfvec_cosine_ops` (not vector_cosine_ops).
+ * Queries must cast the query vector: `$vec::halfvec(3072) <=> vector`.
  *
  * MRL: gemini-embedding-2-preview supports truncation to 128/768/1536/3072
  * via output_dimensionality. Re-embedding is not required to truncate.
@@ -304,12 +303,12 @@ export const embeddingVectors = claimnetSchema.table(
     index("embedding_vectors_status_idx").on(t.status),
     index("embedding_vectors_chunk_idx").on(t.embeddingChunkId),
     index("embedding_vectors_source_idx").on(t.vectorSource),
-    // No vector (ANN) index: the original HNSW index was dropped in migration
-    // 0026 — the planner never chose it (search top-N seq-scans exactly at
-    // current scale) while it cost 95 MB of buffer space + per-insert graph
-    // maintenance. Recreate it (halfvec_cosine_ops, m=16, ef_construction=64)
-    // alongside a query reshape when the corpus makes the exact scan slow —
-    // see docs/backlog.md §Recipe-check latency and migration 0026's comment.
+    // HNSW index defined in migration SQL — uses halfvec_cosine_ops:
+    // CREATE INDEX ON claimnet.embedding_vectors
+    //   USING hnsw (vector halfvec_cosine_ops)
+    //   WITH (m = 16, ef_construction = 64);
+    // Query must cast: WHERE ev.vector <=> $query::halfvec(3072)
+    // Set at query time: SET hnsw.ef_search = 100;
   ]
 );
 
