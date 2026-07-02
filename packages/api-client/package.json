@@ -17,7 +17,7 @@
   },
   "devDependencies": {
     "@soupnet/config": "*",
-    "orval": "^7.0.0",
+    "orval": "^7.21.0",
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
