@@ -242,6 +242,8 @@ Without the cast, the planner may fall back to a sequential scan or error on typ
 
 ## HNSW index
 
+> **Status (2026-07-02): dropped in migration 0026.** At current corpus scale the planner never chose the index — the exact top-N scan wins — while it cost 95 MB of buffer space (measured in prod, idx_scan=81 lifetime) plus graph maintenance on every vector insert. The design notes below are kept for the reintroduction (backlog §Recipe-check latency, ~10× corpus): recreate alongside an inner-subquery query shape + `hnsw.iterative_scan` + a bounded LIMIT.
+
 ```sql
 -- halfvec_cosine_ops, not vector_cosine_ops
 CREATE INDEX ON claimnet.embedding_vectors

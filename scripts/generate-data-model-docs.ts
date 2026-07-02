@@ -298,7 +298,7 @@ function generate(): string {
   sections.push("These are created by raw SQL in migration files and are not captured in the snapshot JSON:");
   sections.push("");
   sections.push("- **`traces.tsv`** — `tsvector` generated column: `to_tsvector('english', claim_text)`. GIN-indexed (`traces_tsv_idx`).");
-  sections.push("- **`embedding_vectors_hnsw_idx`** — HNSW index on `embedding_vectors.vector` using `halfvec_cosine_ops` (m=16, ef_construction=64).");
+  sections.push("- ~~`embedding_vectors_hnsw_idx`~~ — the HNSW index (halfvec_cosine_ops, m=16, ef_construction=64) was created in migration 0000 and **dropped in migration 0026** (unused by the planner at current scale; recreate alongside a query reshape when the corpus makes the exact scan slow — see backlog §Recipe-check latency).");
   sections.push("");
   sections.push("---");
 

@@ -183,6 +183,13 @@
       "when": 1782961693015,
       "tag": "0025_drop_retrieval_document_and_exp_trace_minimal",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1782963946117,
+      "tag": "0026_drop_unused_hnsw_index",
+      "breakpoints": true
     }
   ]
 }
