@@ -87,6 +87,15 @@ Duplicate re-checks make calls #5 and #6 only — meaning today's ~1 s search-on
 
 Expected end state: new checks ~1–1.5 s, duplicate/search-only checks ~0.5–0.8 s, both roughly flat in corpus size.
 
+## Postscript — outcomes (2026-07-02)
+
+All recommendations shipped within ~24 hours of this measurement, plus work the measurement didn't anticipate. Final prod numbers, each measured against a baseline taken immediately before its deploy (operator directive — see the baseline-before-deploy recipe):
+
+- **Checks:** 5.3–11.6 s new / up-to-44 s cold → **0.15–0.36 s server-side** warm, ~2.3 s first-after-cold. Embed-once write path (`da41a8b`), recall un-cap + RETRIEVAL twin removal (`e8d389e`, migration 0025), ANN-first search (`8ca1eb9`).
+- **The HNSW conclusion in this doc was later overturned** — correctly — by the operator: "planner declines the index" was an artifact of testing only `LIMIT 1000+`. At display-relevant top-k the planner uses it unforced; search is now ANN-first with an exact-count and exact-fallback design. The drop migration was reverted before deploy.
+- **Recipe Map:** 59 s → 13.7 s (DB instance upgrade, infra) → **4.9 s first load / 0.55 s cached** (`a16abba`: corpus-version layout cache + read-time 768-dim MRL truncation; stored vectors untouched). Briefing/`get_briefing`: 6.9 s → **2.0–2.5 s**.
+- Companion observability record: private deployment repo, `docs/briefings/check-latency-observability.md` (8 app/infra updates spanning the arc).
+
 ## Artifacts
 
 - Prod matrix CSV + local scaling CSV + EXPLAIN output: session scratchpad (`bench-results.csv`, `local-scaling.csv`); summarized fully above.
