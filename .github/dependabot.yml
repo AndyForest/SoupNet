@@ -1,0 +1,42 @@
+# Dependabot configuration.
+#
+# The cooldown settings below exist to stay consistent with the supply-chain
+# quarantine in the root .npmrc (min-release-age=7, added 2026-05-12): npm
+# refuses to install any package version younger than 7 days. Without a
+# matching cooldown here, Dependabot proposes fresh releases that CI's npm
+# then rejects (ETARGET "no matching version with a date before ..."), and
+# the PR fails until the version ages out. Cooldown is set to 8 days so a
+# proposed version has always cleared the quarantine by the time CI runs.
+#
+# Known gap, accepted deliberately: Dependabot IGNORES cooldown for
+# *security* updates (fixes shouldn't wait, by GitHub's design). So a
+# security PR can still propose a <7-day-old version and fail CI on the
+# quarantine. When that happens it is the two policies disagreeing on
+# purpose — either wait for the fix to age out and comment
+# `@dependabot rebase`, or manually review the specific release and install
+# with `--min-release-age=0` per the .npmrc's documented override.
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 8
+    groups:
+      minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Keeps the SHA-pinned actions current (Dependabot updates the pinned
+  # SHAs, preserving the pin-by-SHA posture). Also resolves the recurring
+  # "Node.js 20 is deprecated" runner warnings as action releases move to
+  # newer runtimes.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 8
