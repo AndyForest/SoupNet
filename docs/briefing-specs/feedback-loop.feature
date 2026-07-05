@@ -26,7 +26,7 @@ Feature: Feedback ingestion — chained on the next check, or via log_feedback
     Given the session is ending and no further check_recipe call is planned
     When the agent has an outcome to report on an earlier check
     Then it calls the standalone log_feedback tool
-    And the outcome kind (e.g. confirmed, corrected, contradicted) is recorded even though no new recipe was checked
+    And the row is recorded with the schema's real vocabulary — kind "outcome", plus impact (none/new/subtle/big) and disposition (proceeded/corrected/asked-human/charted-new/deferred) — even though no new recipe was checked
 
   Scenario: Feedback does not require the agent to specify a recipe-book
     When the agent submits feedback (chained or standalone) about a prior check
