@@ -268,6 +268,32 @@ The check-log-mock rejection (landing session) was predicted verbatim by documen
 
 ---
 
+## Next-improvements batch (2026-07-05 work-tree plan)
+
+Five parallel work trees scoped in [docs/rough-notes/2026-07-05/next-improvements-worktree-plan.md](rough-notes/2026-07-05/next-improvements-worktree-plan.md) (proposal — operator decisions marked ⚑ there): WT-1 nav regroup + mobile bottom-bar overflow; WT-2 dashboard empty-state onboarding (agent-archetype picker) + briefing-scope truth-in-labeling; WT-3 recipe lookup by id (`get_recipes` + `get_briefing recipe_ids`) + briefing `purpose` param; WT-4 structured check results + server-side feedback ingestion + `known_recipes` dedup; WT-5 regression phase-1 specs + docs housekeeping. The plan subsumes and sequences the existing "Side-nav regrouping", "Onboarding polish", "Reasoning-window emphasis pass", and "Markdown response option for web `/check`" items rather than replacing them. Operator review 2026-07-05 approved all five trees with revisions (recorded in the plan doc's §Decisions): check responses use a `response_format` flag (markdown default, kept for web copy-back) rather than emitting prose + structured together; feedback is human-observable on the trace detail page in this batch; the archetype picker gets a permanent nav-reachable home; and a §Validating the UVP section defines feedback schema v2 (server-stamped fields, computed echo/provenance/cross-agent metrics, human ground-truth reactions, lineage links). Concrete bugs found during its code survey (valid regardless of plan approval):
+
+### `[IMPL]` Dashboard daily-key scope copy is wrong ("reads all recipe books")
+
+`DashboardPage.tsx:359` promises the daily key "reads all recipe books", but `POST /keys/daily` scopes reads to the `daily_read`-flagged books, falling back to all only when zero are configured (`apps/backend/src/routes/keys.ts:101`). New memberships default to excluded (migration 0016), so the claim drifts more wrong as books are added. Fix: render the actual resolved book list and surface (or link) the `DailyPrefsToggles` at the point of use.
+
+### `[IMPL]` MCP `check_recipe` advertises pagination it doesn't accept
+
+The response's `actions.nextPage` hint ("Request page=N for more", `mcp.ts:830`) references a `page` param absent from the tool's zod schema — an MCP agent can never page. Field data (2026-07-05 report) shows zero paging in ~15 checks anyway; preferred fix is removing the pagination affordance from agent-facing prose and replacing it with a narrowing hint (`read_recipe_books` / `axes`), part of WT-4.
+
+### `[IMPL]` Briefing trace-link template may mint broken links
+
+The briefing's "Annotating creative output" section instructs agents to link `https://www.soup.net/traces/<recipeId>`, but the SPA route is `/app/traces/$traceId` and no bare `/traces/*` frontend route exists in `routeTree.ts`. Verify prod redirect behavior; either add the redirect or fix the template in `recipe-guide-content.ts`.
+
+### `[IMPL]` Restore the `known_recipes` context-bloat item (dangling reference)
+
+`docs/design-thinking.md:229` cites backlog item "Context-bloat optimization: `known_recipes` / `recipe_book` mechanism", which exists in neither backlog.md nor backlog-completed.md. The mechanism itself is now scoped as WT-4 phase-1 dedup in the 2026-07-05 plan; this entry restores the pointer until that ships.
+
+### `[IMPL]` Flag `docs/architecture/api.md` as historical
+
+It still documents the pre-pivot ClaimNet tool vocabulary with `get_claim` ("Get full claim card by ID") marked ✅ implemented — no such tool exists in current code. Mark the doc historical or rewrite it against the current surface; notable that the by-id lookup it fossilizes is exactly what WT-3 rebuilds under the recipe/trace vocabulary.
+
+---
+
 ## Unsorted
 
 ### `[IMPL]` Fresh security audit (last general audit 2026-04-09; surface has grown)
