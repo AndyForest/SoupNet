@@ -4,7 +4,9 @@ import { useState, useRef } from "react";
 import { authFetch } from "../auth.js";
 import { useTraces, useTraceCount } from "../hooks/useTraces.js";
 import { Icon } from "../components/Icon.js";
-import { useClipboard } from "../hooks/useClipboard.js";
+import { AgentTypePicker } from "../components/AgentTypePicker.js";
+import { CopyBriefingButton } from "../components/CopyBriefingButton.js";
+import { describeDailyReadScope } from "../lib/daily-scope.js";
 
 // Note: the email-verification banner that used to live here has been
 // replaced by the /verify-pending route, which is the only authed route an
@@ -15,6 +17,9 @@ interface Group {
   name: string;
   slug: string;
   description: string | null;
+  /** Per-user daily-key preferences (wire format from GET /recipe-books). */
+  daily_read: boolean;
+  daily_write: boolean;
 }
 
 interface PendingInvite {
@@ -45,9 +50,7 @@ export function DashboardPage() {
   const tracesQuery = useTraces(10);
   const traceCountQuery = useTraceCount();
   const [selectedGroupId, setSelectedGroupId] = useState<string>("");
-  const { copyAsync, copied } = useClipboard(2500);
   const [dailyOpened, setDailyOpened] = useState(false);
-  const [briefingPending, setBriefingPending] = useState<boolean>(false);
   const groupSelectRef = useRef<HTMLSelectElement>(null);
 
   // Pending group invitations — top of the dashboard feed (tier 1: action
@@ -116,35 +119,9 @@ export function DashboardPage() {
   const effectiveGroupId = selectedGroupId || (groups.length > 0 ? groups[0]!.id : "");
   const selectedGroup = groups.find(g => g.id === effectiveGroupId);
 
-  // Mint a daily key scoped to the focus group, then fetch the unified briefing.
-  // Called inside copyAsync so the ClipboardItem Promise keeps iOS Safari's
-  // user-gesture context alive across both awaits — a plain onSuccess copy
-  // would silently no-op on iPhone.
-  async function fetchBriefingText(): Promise<string> {
-    const body = effectiveGroupId ? { writeRecipeBookId: effectiveGroupId } : undefined;
-    const keyRes = await authFetch("/keys/daily", {
-      method: "POST",
-      ...(body ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}),
-    });
-    const keyJson = (await keyRes.json()) as { ok: boolean; data?: { key: string; searchUrl: string } };
-    if (!keyJson.ok || !keyJson.data) throw new Error("Failed to generate key");
-
-    const briefRes = await authFetch(`/keys/briefing?key=${encodeURIComponent(keyJson.data.key)}`);
-    const briefJson = (await briefRes.json()) as { ok: boolean; data?: { text: string } };
-    if (!briefJson.ok || !briefJson.data) throw new Error("Failed to get briefing");
-
-    void queryClient.invalidateQueries({ queryKey: ["keys"] });
-    return briefJson.data.text;
-  }
-
-  async function handleCopyBriefing() {
-    setBriefingPending(true);
-    try {
-      await copyAsync(() => fetchBriefingText(), "briefing");
-    } finally {
-      setBriefingPending(false);
-    }
-  }
+  // The "Copy agent briefing" flow (mint daily key → fetch unified briefing →
+  // clipboard) lives in the shared CopyBriefingButton component, used here in
+  // both the sidebar and the zero-checks onboarding picker.
 
   const dailyGoMutation = useMutation({
     mutationFn: async () => {
@@ -269,6 +246,37 @@ export function DashboardPage() {
             </Link>
           </div>
           {tracesQuery.isLoading && <p style={{ color: "var(--color-on-surface-variant)" }}>Loading...</p>}
+
+          {/* Zero-checks onboarding — the moment after signup. Disappears
+              forever once the first recipe check is logged. */}
+          {!tracesQuery.isLoading && tracesQuery.data && tracesQuery.data.length === 0 && (
+            <div className="card" style={{ padding: "var(--space-lg) var(--space-xl)" }}>
+              <h3 style={{ fontSize: "1.05rem", marginBottom: "var(--space-xs)" }}>
+                Connect your first AI agent
+              </h3>
+              <p className="text-sm" style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)", lineHeight: 1.55 }}>
+                Recipe checks appear here as your agents make them. Each check logs a
+                little of your taste and judgment — and makes every later check
+                smarter. Pick the kind of AI you use and you're a few steps from the
+                first entry.
+              </p>
+              <AgentTypePicker
+                briefingSlot={
+                  <CopyBriefingButton
+                    writeRecipeBookId={effectiveGroupId || undefined}
+                    style={{ width: "100%" }}
+                  />
+                }
+                footnote={
+                  <>
+                    Full per-client instructions live on the{" "}
+                    <Link to="/info/connect" style={{ color: "var(--color-primary)" }}>Connect to AI page</Link>.
+                  </>
+                }
+              />
+            </div>
+          )}
+
           <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-sm)" }}>
             {tracesQuery.data?.map((trace) => (
               <div
@@ -355,18 +363,21 @@ export function DashboardPage() {
           {/* For Your Agents */}
           <section>
             <h2 style={{ fontSize: "1.05rem", marginBottom: "var(--space-md)" }}>For Your Agents</h2>
-            <p className="text-xs" style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-md)" }}>
-              Generates a 24-hour key: reads all recipe books, writes to <strong>{selectedGroup?.name ?? "your recipe book"}</strong>.
+            <p className="text-xs" style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-xs)" }}>
+              {/* Scope label mirrors the actual POST /keys/daily resolution
+                  (daily_read set, falling back to all) — see lib/daily-scope.ts. */}
+              Generates a 24-hour key: reads {describeDailyReadScope(groups)}, writes to <strong>{selectedGroup?.name ?? "your recipe book"}</strong>.
+            </p>
+            <p className="text-xs" style={{ marginBottom: "var(--space-md)" }}>
+              <Link to="/app/recipe-books" style={{ color: "var(--color-primary)" }}>
+                Change which books are included →
+              </Link>
             </p>
             <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-sm)" }}>
-              <button
-                onClick={() => void handleCopyBriefing()}
-                disabled={briefingPending}
-                style={{ width: "100%", justifyContent: "center", fontSize: "0.85rem" }}
-              >
-                <Icon name="copy" size={14} />
-                {copied === "briefing" ? "Copied!" : briefingPending ? "Generating..." : "Copy agent briefing"}
-              </button>
+              <CopyBriefingButton
+                writeRecipeBookId={effectiveGroupId || undefined}
+                style={{ width: "100%" }}
+              />
               <button
                 className="btn-secondary"
                 onClick={() => dailyGoMutation.mutate()}

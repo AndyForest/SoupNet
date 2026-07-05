@@ -14,6 +14,11 @@ You can phrase prompts naturally — the AI handles the structured recipe formul
 
 You'll need a Soup.net account — signups are free and open: [create one here](/auth/register).
 
+<!-- agent-type-picker: the live /info/connect page (ConnectPage.tsx) splices
+     the interactive agent-type picker in at this marker. The picker curates
+     the sections below into four entry paths; the sections remain the full
+     reference, so keep them complete when editing. -->
+
 ## Connect via OAuth (chat-style AIs)
 
 The fastest setup. The AI redirects you to Soup.net, you sign in, you pick which recipe books to share, and you're done. All four clients below use the same Soup.net URL: `https://mcp.soup.net/mcp`.
