@@ -4,8 +4,8 @@
  * Icons with multiple paths use string arrays.
  */
 
-interface IconProps {
-  name: "home" | "search" | "key" | "users" | "settings" | "chevron-right" | "copy" | "plus" | "x" | "clock" | "arrow-left" | "clipboard-check" | "external-link" | "upload" | "download" | "map" | "book-open" | "mail";
+export interface IconProps {
+  name: "home" | "search" | "key" | "users" | "settings" | "chevron-right" | "copy" | "plus" | "x" | "clock" | "arrow-left" | "clipboard-check" | "external-link" | "upload" | "download" | "map" | "book-open" | "mail" | "shield";
   size?: number;
   className?: string;
 }
@@ -39,6 +39,12 @@ const paths: Record<IconProps["name"], string | string[]> = {
   mail: [
     "M3 5h14v10H3V5z",
     "M3 5.5l7 5 7-5",
+  ],
+  // Distinct from `settings` (the gear) so Admin no longer visually
+  // duplicates the Settings nav item.
+  shield: [
+    "M10 2.5l6 2.2v4.3c0 4.2-2.6 7.6-6 8.5-3.4-.9-6-4.3-6-8.5V4.7l6-2.2z",
+    "M7.3 10l2 2 3.4-4",
   ],
 };
 

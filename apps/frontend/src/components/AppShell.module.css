@@ -16,6 +16,10 @@
   left: 0;
   bottom: 0;
   z-index: 10;
+  /* The Learn group can push total nav height past the viewport on short
+     screens now that it's expandable; scroll the sidebar itself rather than
+     letting content spill past the fixed bottom edge. */
+  overflow-y: auto;
 }
 
 .logo {
@@ -60,6 +64,74 @@
 }
 .navLinkActive {
   background: var(--color-surface-container-lowest);
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+/* ── Sidebar "Learn" group (rule-of-7 regrouping) ──────────────────
+   Native <details>/<summary> matches the disclosure pattern already used
+   elsewhere in the app (RecipeInstructions.tsx) rather than inventing a
+   button+aria-expanded toggle — free keyboard support, no extra JS. */
+.navGroup summary {
+  list-style: none;
+  cursor: pointer;
+}
+.navGroup summary::-webkit-details-marker { display: none; }
+
+.navGroupToggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 0.55rem var(--space-md);
+  border-radius: var(--radius-md);
+  font-family: var(--font-headline);
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--color-on-surface-variant);
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.navGroupToggle:hover {
+  background: var(--color-surface-container);
+  color: var(--color-on-surface);
+}
+.navGroupToggleActive {
+  color: var(--color-primary);
+  font-weight: 600;
+}
+.navGroupToggleLabel {
+  flex: 1;
+}
+.navGroupChevron {
+  display: inline-flex;
+  transition: transform var(--transition-fast);
+}
+.navGroup[open] .navGroupChevron {
+  transform: rotate(90deg);
+}
+
+.navGroupItems {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px var(--space-sm) 0 calc(18px + var(--space-sm) + var(--space-md));
+}
+
+.navSubLink {
+  display: block;
+  padding: 0.4rem var(--space-sm);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-headline);
+  font-size: 0.8rem;
+  color: var(--color-on-surface-variant);
+  text-decoration: none;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.navSubLink:hover {
+  background: var(--color-surface-container);
+  color: var(--color-on-surface);
+  text-decoration: none;
+}
+.navSubLinkActive {
   color: var(--color-primary);
   font-weight: 600;
 }
@@ -113,16 +185,30 @@
   align-items: center;
 }
 
+/* Root cause of the old overflow bug: flex items default to `min-width:
+   auto`, which floors shrinkage at each item's own content width — so once
+   enough items were on the bar, their combined min-content width exceeded
+   the viewport and the row overflowed instead of compressing. `flex: 1 1 0`
+   plus `min-width: 0` gives every item (including the button, below) an
+   equal, fully-shrinkable share of the bar, so five items or nine would both
+   fit the same 320px row — labels wrap to a second line under the icon
+   instead of pushing the row wider than the screen. */
 .bottomLink {
   display: flex;
+  flex: 1 1 0;
+  min-width: 0;
   flex-direction: column;
   align-items: center;
   gap: 2px;
   padding: var(--space-xs) var(--space-sm);
   border-radius: var(--radius-sm);
+  border: none;
+  background: transparent;
   font-family: var(--font-headline);
   font-size: 0.6rem;
   font-weight: 500;
+  line-height: 1.15;
+  text-align: center;
   color: var(--color-on-surface-variant);
   text-decoration: none;
   transition: color var(--transition-fast);
@@ -131,6 +217,96 @@
 .bottomLinkActive {
   color: var(--color-primary);
   font-weight: 600;
+}
+
+.bottomMoreChevron {
+  display: inline-flex;
+  transform: rotate(90deg);
+}
+
+/* ── "More" sheet (mobile) ──────────────────────────────────────────
+   z-index sequence in this app: sidebar/bottomBar = 10, the delete-trace
+   confirm modal = 100, CookieNotice = 200. This sheet sits above all three
+   (it's a full nav surface, not a small dialog) — 210/211 continues that
+   sequence rather than starting a new one. Backdrop color and the sheet's
+   corner radius/shadow follow the existing modal and CookieNotice precedents
+   rather than introducing new values. */
+.moreOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 210;
+}
+
+.moreSheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: 75vh;
+  overflow-y: auto;
+  background: var(--color-surface-container-low);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.15);
+  padding: var(--space-sm) 0 var(--space-lg);
+  z-index: 211;
+}
+
+.moreSheetHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-xs) var(--space-md) var(--space-sm);
+}
+
+.moreSheetTitle {
+  font-family: var(--font-headline);
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--color-on-surface);
+}
+
+.moreSheetClose {
+  display: flex;
+  background: transparent;
+  border: none;
+  padding: var(--space-xs);
+  color: var(--color-on-surface-variant);
+}
+
+.moreSheetSection {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 var(--space-sm);
+}
+
+.moreSheetLabel {
+  padding: var(--space-md) var(--space-md) var(--space-xs);
+  font-family: var(--font-headline);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-on-surface-variant);
+}
+
+.moreSheetLink {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 0.6rem var(--space-md);
+  border-radius: var(--radius-md);
+  font-family: var(--font-headline);
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--color-on-surface);
+  text-decoration: none;
+  transition: background var(--transition-fast);
+}
+.moreSheetLink:hover {
+  background: var(--color-surface-container);
+  text-decoration: none;
 }
 
 /* ── Responsive ─────────────────────────────────────────────────── */
@@ -144,4 +320,14 @@
     padding: var(--space-md);
   }
   .bottomBar { display: block; }
+}
+
+/* The "More" sheet button only exists inside the mobile bottom bar, so in
+   practice this can't open above 768px — but guard it explicitly in case a
+   window resize happens while the sheet is open. */
+@media (min-width: 769px) {
+  .moreOverlay,
+  .moreSheet {
+    display: none;
+  }
 }
