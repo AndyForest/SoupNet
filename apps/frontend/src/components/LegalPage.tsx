@@ -32,10 +32,21 @@ export function LegalPage({ content }: LegalPageProps) {
         <Link to="/">← Back to soup.net</Link>
       </p>
 
-      <ReactMarkdown components={mdComponents}>
-        {content}
-      </ReactMarkdown>
+      <MarkdownContent content={content} />
     </div>
+  );
+}
+
+/**
+ * The markdown renderer without the page wrapper — for pages that interleave
+ * interactive components with .md-sourced prose (ConnectPage splices the
+ * agent-type picker into docs/connectors/index.md at a comment marker).
+ */
+export function MarkdownContent({ content }: LegalPageProps) {
+  return (
+    <ReactMarkdown components={mdComponents}>
+      {content}
+    </ReactMarkdown>
   );
 }
 
