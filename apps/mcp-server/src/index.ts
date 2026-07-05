@@ -21,134 +21,18 @@ import {
   MCP_PARAM_DESCRIPTIONS,
   MCP_TOOL_DESCRIPTIONS,
   buildCheckRecipeToolDescription,
+  renderCheckResponseMarkdown,
 } from "@soupnet/domain";
+import type { CheckResponseJson } from "@soupnet/domain";
 
 const backendUrl = process.env["SOUPNET_BACKEND_URL"] ?? "http://localhost:3101";
 const apiKey = process.env["SOUPNET_API_KEY"] ?? "";
 
-// ── Types for the JSON API response ─────────────────────────────────────────
-
-interface CheckReference {
-  quote: string;
-  source: string;
-  fileUrl?: string;
-  fileMimeType?: string;
-}
-
-interface CheckEvidence {
-  interpretation: string;
-  references: CheckReference[];
-}
-
-interface RelatedEvidence {
-  evidenceId: string;
-  parentRecipe: string;
-  evidence: string;
-  similarity: number;
-  strategy: string;
-}
-
-interface CheckResultItem {
-  id: string;
-  recipe: string;
-  createdAt: string;
-  score: { combined: number; semantic: number | null; lexical: number | null };
-  clusterSize?: number;
-  evidence: CheckEvidence[];
-}
-
-interface CheckResponse {
-  ok: boolean;
-  error?: string;
-  formatWarning?: string;
-  data?: {
-    recipeId: string;
-    searchMode: string;
-    clustered?: boolean;
-    results: CheckResultItem[];
-    relatedEvidence?: RelatedEvidence[];
-    totalResults: number;
-    page: number;
-    totalPages: number;
-  };
-}
-
-// ── Formatting helpers ──────────────────────────────────────────────────────
-
-function formatEvidence(label: string, items: CheckEvidence[]): string {
-  if (items.length === 0) return "";
-  const entries = items
-    .map((e) => {
-      let text = `  - ${e.interpretation}`;
-      for (const ref of e.references) {
-        if (ref.quote) text += `\n    > "${ref.quote}"`;
-        if (ref.source) text += `\n    -- ${ref.source}`;
-        if (ref.fileUrl) text += `\n    [file: ${ref.fileUrl}]`;
-      }
-      return text;
-    })
-    .join("\n");
-  return `${label}:\n${entries}`;
-}
-
-function formatRelatedEvidence(items: RelatedEvidence[]): string {
-  if (items.length === 0) return "";
-  const entries = items
-    .map((e, i) => {
-      const pct = Math.round(e.similarity * 100);
-      return `  ${i + 1}. ${e.evidence}\n     From recipe: "${e.parentRecipe.slice(0, 100)}${e.parentRecipe.length > 100 ? "..." : ""}"\n     (${pct}% similar, strategy: ${e.strategy})`;
-    })
-    .join("\n");
-  return `\nRelated evidence from other recipes:\n${entries}`;
-}
-
-function formatResults(response: CheckResponse): string {
-  if (!response.ok || !response.data) {
-    return `Error: ${response.error ?? "Unknown error"}`;
-  }
-
-  const { data } = response;
-  let text = `Recipe checked as #${data.recipeId}\nSearch mode: ${data.searchMode}\n`;
-
-  if (response.formatWarning) {
-    text += `\nFormat suggestion: ${response.formatWarning}\n`;
-  }
-
-  if (data.results.length === 0) {
-    text += "\nNo similar recipes found.";
-    return text;
-  }
-
-  text += `${data.totalResults} similar recipe(s) found`;
-  if (data.clustered) {
-    text += ` (clustered to ${data.results.length} exemplars)`;
-  }
-  text += ":\n";
-
-  for (let i = 0; i < data.results.length; i++) {
-    const r = data.results[i]!;
-    const pct = r.score.semantic !== null ? `${Math.round(r.score.semantic * 100)}%` : r.score.lexical !== null ? `${Math.round(r.score.lexical * 100)}% keyword` : `${r.score.combined.toFixed(2)}`;
-    text += `\n#${i + 1} (${pct} similar) -- ${r.createdAt.split("T")[0]}`;
-    if (r.clusterSize) {
-      text += ` (represents ${r.clusterSize} similar recipes)`;
-    }
-    text += `\nRecipe: ${r.recipe}`;
-    const ev = formatEvidence("Evidence", r.evidence);
-    if (ev) text += `\n${ev}`;
-    text += "\n";
-  }
-
-  // Related evidence from other recipes (evidence discovery pipeline)
-  if (data.relatedEvidence && data.relatedEvidence.length > 0) {
-    text += formatRelatedEvidence(data.relatedEvidence);
-  }
-
-  if (data.totalPages > 1) {
-    text += `\nPage ${data.page} of ${data.totalPages}`;
-  }
-
-  return text;
-}
+// The local formatting helpers that used to live here (formatResults etc.)
+// were replaced by @soupnet/domain renderCheckResponseMarkdown — the same
+// renderer the HTTP MCP route and the web /check copy-back block use, so the
+// two MCP surfaces can't drift. Pagination text is gone with them: agents
+// can't page (no page param), so the renderer emits a narrowing hint instead.
 
 // ── MCP Server ─────────────────────────────────────────────────────────────────
 
@@ -171,6 +55,10 @@ server.tool(
     clusters: z.number().optional().describe(MCP_PARAM_DESCRIPTIONS.clusters),
     max_chars: z.number().optional().describe(MCP_PARAM_DESCRIPTIONS.maxChars),
     decided_at: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.decidedAt),
+    // No SDK-level outputSchema — see the HTTP MCP route (routes/mcp.ts):
+    // declaring one would force structuredContent onto every response,
+    // violating the one-format-per-response rule.
+    response_format: z.enum(["markdown", "structured"]).optional().describe(MCP_PARAM_DESCRIPTIONS.responseFormat),
     file: z.string().optional().describe(
       "Optional file to attach as reference evidence (multimodal embedding). " +
       "Local file path (e.g., 'docs/screenshot.png') or URL. " +
@@ -185,7 +73,7 @@ server.tool(
     idempotentHint: false,
     openWorldHint: true,
   },
-  async ({ recipe, supporting_evidence, clusters, max_chars, decided_at, file }) => {
+  async ({ recipe, supporting_evidence, clusters, max_chars, decided_at, response_format, file }) => {
     if (!apiKey) {
       return {
         content: [{ type: "text" as const, text: "Error: SOUPNET_API_KEY not configured. Get a key from your Soup.net dashboard." }],
@@ -251,8 +139,20 @@ server.tool(
         });
       }
 
-      const data = (await response.json()) as CheckResponse;
-      const text = formatResults(data);
+      const json = (await response.json()) as CheckResponseJson;
+
+      // One format per response: structured returns the backend's JSON data
+      // as structuredContent with a one-line stub; markdown (default) is the
+      // shared readable report. Never both.
+      if (response_format === "structured" && json.ok && json.data) {
+        const stub = `Recipe checked as #${json.data.recipeId ?? "?"}. ${json.data.totalResults ?? 0} similar recipe(s) — see structuredContent.`;
+        return {
+          content: [{ type: "text" as const, text: stub }],
+          structuredContent: json.data as unknown as Record<string, unknown>,
+        };
+      }
+
+      const text = renderCheckResponseMarkdown(json);
 
       return {
         content: [{ type: "text" as const, text }],

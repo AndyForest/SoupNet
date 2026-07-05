@@ -712,6 +712,13 @@ export const MCP_PARAM_DESCRIPTIONS = {
     "discovered in dated artifacts (git history, ADRs, old docs): set it to the artifact's timestamp so " +
     "the recipe carries the original judgment date instead of today's. Must not be in the future. " +
     "Omit for contemporaneous judgments.",
+
+  responseFormat:
+    "Response format. 'markdown' (default): a readable report — each exemplar line carries its full " +
+    "recipe UUID and similarity inline, so you can cite trace ids in later feedback without re-fetching. " +
+    "'structured': the same data as MCP structuredContent (JSON with recipeId, per-result id/recipe/" +
+    "createdAt/group/score/evidence, relatedEvidence, totalResults) plus a one-line text stub — useful " +
+    "when you parse results programmatically. Each response carries exactly one format, never both.",
 } as const;
 
 /** Compose the full check_recipe tool description, optionally with the file-attachment sentence. */

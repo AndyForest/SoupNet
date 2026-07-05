@@ -24,7 +24,9 @@ import {
   MCP_PARAM_DESCRIPTIONS,
   MCP_TOOL_DESCRIPTIONS,
   buildCheckRecipeToolDescription,
+  renderCheckResponseMarkdown,
 } from "@soupnet/domain";
+import type { CheckResponseJson } from "@soupnet/domain";
 import { composeBriefing, composeCorpusContext } from "../services/briefing";
 import { rateLimit, perKeyRateLimit, extractMcpBearerKey, getClientIp, hashApiKey } from "../middleware/rate-limit";
 import type { SubmitAndSearchResult, ImageAttachment } from "../services/trace.service";
@@ -324,6 +326,13 @@ function createMcpServer(backendUrl: string): McpServer {
       clusters: z.number().optional().describe(MCP_PARAM_DESCRIPTIONS.clusters),
       max_chars: z.number().optional().describe(MCP_PARAM_DESCRIPTIONS.maxChars),
       decided_at: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.decidedAt),
+      // No SDK-level outputSchema is declared for this tool: the SDK (1.29.0)
+      // requires structuredContent on EVERY non-error response once an
+      // outputSchema exists, which would force prose+JSON into one payload —
+      // exactly what the one-format-per-response rule (operator review
+      // 2026-07-05) rejects. structuredContent without outputSchema is
+      // spec-legal; the shape is documented in the param description.
+      response_format: z.enum(["markdown", "structured"]).optional().describe(MCP_PARAM_DESCRIPTIONS.responseFormat),
       axes: z.string().optional().describe(
         "Two concept terms for semantic projection (comma-separated, e.g., 'accessibility, dark mode'). " +
         "Each result gets x/y positions showing its similarity to each concept (0-1). " +
@@ -384,7 +393,7 @@ function createMcpServer(backendUrl: string): McpServer {
       idempotentHint: false,
       openWorldHint: true,
     },
-    async ({ recipe, supporting_evidence, clusters, max_chars, decided_at, axes, recipe_book, read_recipe_books, file_url, file_base64, file_name, file_mime_type, region }, extra) => {
+    async ({ recipe, supporting_evidence, clusters, max_chars, decided_at, axes, recipe_book, read_recipe_books, file_url, file_base64, file_name, file_mime_type, region, response_format }, extra) => {
       // Get API key from auth info (passed by the transport middleware)
       const apiKey = (extra.authInfo as Record<string, unknown> | undefined)?.["token"] as string | undefined;
       if (!apiKey) {
@@ -487,10 +496,23 @@ function createMcpServer(backendUrl: string): McpServer {
         let enriched = await enrichResults(db, result.results);
         enriched = await clusterEvidenceInResults(db, enriched);
 
-        // Build the JSON shape that formatCheckResponse expects
         const jsonResponse = buildMcpJsonResponse(result, enriched, 1);
-        const text = formatCheckResponse(jsonResponse);
-        console.warn(`[mcp] check_recipe: success — ${result.results.length} results`);
+        console.warn(`[mcp] check_recipe: success — ${result.results.length} results (${response_format ?? "markdown"})`);
+
+        // One format per response (operator review 2026-07-05): markdown is
+        // the default readable report (ids + similarities inline); structured
+        // returns the JSON as structuredContent with a one-line text stub.
+        // Never both.
+        if (response_format === "structured") {
+          const data = jsonResponse["data"] as Record<string, unknown>;
+          const stub = `Recipe checked as #${String(data["recipeId"])}. ${String(data["totalResults"])} similar recipe(s) — see structuredContent.`;
+          return {
+            content: [{ type: "text" as const, text: stub }],
+            structuredContent: data,
+          };
+        }
+
+        const text = renderCheckResponseMarkdown(jsonResponse as unknown as CheckResponseJson);
         return { content: [{ type: "text" as const, text }] };
       } catch (err) {
         return { content: [{ type: "text" as const, text: toolErrorText(err, "check_recipe") }] };
@@ -748,8 +770,9 @@ function createMcpServer(backendUrl: string): McpServer {
 }
 
 // ── Build JSON response from service results (mirrors check.ts buildJsonResponse) ──
+// Exported for unit tests (actions hints, structured-mode payload shape).
 
-function buildMcpJsonResponse(
+export function buildMcpJsonResponse(
   result: SubmitAndSearchResult,
   enriched: EnrichedResult[],
   page: number,
@@ -787,9 +810,12 @@ function buildMcpJsonResponse(
       };
       if (r.clusterSize) {
         item["clusterSize"] = r.clusterSize;
-        // Drill-down hint: agent can re-check with the exemplar text to explore this cluster
+        // Drill-down hint: agent can re-check with the exemplar text to
+        // explore this cluster. Phrased around params the tool actually
+        // accepts (clusters) — the old expand=true wording advertised a web
+        // /check param this tool doesn't have.
         item["drillDown"] = {
-          hint: `This exemplar represents ${r.clusterSize} similar recipes. To explore them, re-check with this recipe text and expand=true or a higher cluster count.`,
+          hint: `This exemplar represents ${r.clusterSize} similar recipes. To explore them, re-check with this recipe text and a higher clusters value.`,
           exemplarText: r.claimText,
         };
       }
@@ -821,113 +847,29 @@ function buildMcpJsonResponse(
     data["conceptAxes"] = result.conceptAxes;
   }
 
-  // Available actions — what the agent can do next
+  // Available actions — what the agent can do next. Only params this tool
+  // actually accepts (pagination cleanup, 2026-07-05: the old nextPage hint
+  // advertised a page param the tool doesn't take, and the expand/sort/filter
+  // hints advertised web-/check params with no MCP equivalent — field data
+  // showed zero agents paging anyway).
   const actions: Record<string, unknown> = {};
   if (result.clustered && enriched.some((r) => r.clusterSize && r.clusterSize > 1)) {
-    actions["expandClusters"] = "Re-check with expand=true to see all results without clustering.";
     actions["moreClusters"] = "Re-check with a higher clusters value (e.g., clusters=10) for finer granularity.";
   }
   if (result.totalPages > page) {
-    actions["nextPage"] = `Results are paginated. Request page=${page + 1} for more.`;
+    actions["narrow"] = "More recipes exist beyond these exemplars. Narrow with read_recipe_books=<slugs>, project with axes=\"concept A, concept B\", or raise clusters.";
   }
-  actions["sortByRecent"] = "Add sort=recent to order results by date instead of relevance.";
-  actions["filterByKeyword"] = "Add filter=keyword to narrow results. Use comma-separated terms for concept-axis projection.";
   data["actions"] = actions;
 
   return { ok: true, data };
 }
 
-// ── Simple check response formatter (subset of stdio MCP's formatter) ───────
-
-function formatCheckResponse(response: Record<string, unknown>): string {
-  if (!response["ok"] || !response["data"]) {
-    return `Error: ${(response["error"] as string) ?? "Unknown error"}`;
-  }
-
-  const data = response["data"] as Record<string, unknown>;
-  let text = `Recipe checked as #${data["recipeId"]}\nSearch mode: ${data["searchMode"]}\n`;
-
-  // Format warning
-  if (data["formatWarning"]) {
-    text += `Format suggestion: ${data["formatWarning"]}\n`;
-  }
-
-  const results = (data["results"] as Array<Record<string, unknown>>) ?? [];
-  if (results.length === 0) {
-    text += "\nNo similar recipes found.";
-    return text;
-  }
-
-  text += `${data["totalResults"]} similar recipe(s) found`;
-  if (data["clustered"]) {
-    text += ` (clustered to ${results.length} exemplars)`;
-  }
-  text += ":\n";
-
-  for (let i = 0; i < results.length; i++) {
-    const r = results[i]!;
-    const score = r["score"] as Record<string, unknown>;
-    const pct = score["semantic"] !== null
-      ? `${Math.round(Number(score["semantic"]) * 100)}%`
-      : `${Number(score["combined"]).toFixed(2)}`;
-    text += `\n#${i + 1} (${pct} similar) -- ${String(r["createdAt"]).split("T")[0]}`;
-    if (r["clusterSize"]) text += ` (represents ${r["clusterSize"]} similar recipes)`;
-    const group = r["group"] as Record<string, unknown> | undefined;
-    if (group) text += ` [${group["name"]}]`;
-    text += `\nRecipe: ${r["recipe"]}\n`;
-
-    // Evidence for this recipe
-    const evidenceFor = (r["evidenceFor"] as Array<Record<string, unknown>>) ?? [];
-    if (evidenceFor.length > 0) {
-      for (const ev of evidenceFor) {
-        text += `  Supporting: ${ev["interpretation"]}`;
-        if (ev["clusterSize"]) text += ` (${ev["clusterSize"]} similar entries)`;
-        text += "\n";
-        const refs = (ev["references"] as Array<Record<string, unknown>>) ?? [];
-        for (const ref of refs) {
-          if (ref["quote"]) text += `    > "${ref["quote"]}"\n`;
-          if (ref["source"]) text += `    -- ${ref["source"]}\n`;
-          if (ref["fileUrl"]) {
-            const filename = (ref["originalFilename"] as string) || (ref["fileUrl"] as string);
-            const mime = ref["fileMimeType"] ? ` (${ref["fileMimeType"] as string})` : "";
-            text += `    [file: ${filename}${mime}]\n`;
-            const hash = ref["fileHash"] as string | undefined;
-            if (hash) text += `    [sha256: ${hash}]\n`;
-            const rm = ref["regionMeta"] as { image_box?: { x0: number; y0: number; x1: number; y1: number } } | undefined;
-            const box = rm?.image_box;
-            if (box) {
-              const pct = (n: number) => `${Math.round(n * 100)}%`;
-              text += `    [region x ${pct(box.x0)}–${pct(box.x1)}, y ${pct(box.y0)}–${pct(box.y1)}]\n`;
-            }
-          }
-        }
-      }
-    }
-  }
-
-  // Related evidence from other recipes
-  const related = (data["relatedEvidence"] as Array<Record<string, unknown>>) ?? [];
-  if (related.length > 0) {
-    text += "\nRelated evidence from other recipes:\n";
-    for (const e of related) {
-      text += `  - ${e["evidence"]} (${Math.round(Number(e["similarity"]) * 100)}% similar)\n`;
-      text += `    From: "${String(e["parentRecipe"]).slice(0, 100)}"\n`;
-    }
-  }
-
-  // Concept axes
-  const axes = data["conceptAxes"] as Record<string, unknown> | undefined;
-  if (axes) {
-    text += `\nConcept axes: "${axes["axisA"]}" (X) / "${axes["axisB"]}" (Y)\n`;
-  }
-
-  // Pagination info
-  if (Number(data["totalPages"]) > 1) {
-    text += `\nPage ${data["page"]} of ${data["totalPages"]}`;
-  }
-
-  return text;
-}
+// The flattened-text formatter that used to live here (formatCheckResponse)
+// moved to @soupnet/domain renderCheckResponseMarkdown — one renderer shared
+// by the HTTP MCP default response, the stdio mirror, and the web /check
+// copy-back block. The move also fixed a latent bug: the old formatter read
+// r["evidenceFor"] while buildMcpJsonResponse emits r["evidence"], so HTTP
+// MCP text responses silently omitted all evidence.
 
 // ── Route handler ───────────────────────────────────────────────────────────
 

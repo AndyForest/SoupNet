@@ -8,7 +8,8 @@ import type { EnrichedResult, EnrichedEvidence, EnrichedReference } from "../ser
 import { getDb } from "../db";
 import { sql } from "drizzle-orm";
 import { validateKey } from "../services/api-key.service";
-import { HTML_ACCEPT_TYPES } from "@soupnet/domain";
+import { HTML_ACCEPT_TYPES, renderCheckResponseMarkdown, fenceCheckResponseMarkdown } from "@soupnet/domain";
+import type { CheckResponseJson } from "@soupnet/domain";
 import { rateLimit, perKeyRateLimit, extractCheckRequestKey } from "../middleware/rate-limit";
 
 // Rate limit check/search:
@@ -349,13 +350,33 @@ function renderPage(
   if (result && !result.error && hasSearch) {
     const jsonQs = buildQs(params, { format: "json" });
     const hiddenCarryFields = renderHiddenCarryFields(params);
+
+    // Markdown copy-back (2026-07-05, absorbs the backlog "Markdown response
+    // option for web /check page" item): the same renderer that serves the
+    // MCP default format, fenced so a paste into a chat UI renders as an
+    // attachment-like card. Readable by the human on the way back to their
+    // agent — the 2026-05-27 demo showed raw JSON alienates even technical
+    // users. format=json stays unchanged for API integrators.
+    const page = params.page ? parseInt(params.page, 10) : 1;
+    const markdownFenced = fenceCheckResponseMarkdown(
+      renderCheckResponseMarkdown(
+        buildJsonResponse(result, enriched ?? [], page) as unknown as CheckResponseJson,
+      ),
+    );
+
     nextStepsHtml = `
   <section id="next-steps" style="background:#f0efe3;padding:0.75rem 1rem;border-radius:4px;margin:0.5rem 0">
     <p style="margin:0.25rem 0"><strong>Your recipe was checked as #${esc(result.traceId)}</strong>
-    <button id="copy-json-btn" style="font-size:0.85em;padding:3px 10px;margin-left:1em;cursor:pointer">Copy results for AI agent</button></p>
+    <button id="copy-md-btn" style="font-size:0.85em;padding:3px 10px;margin-left:1em;cursor:pointer">Copy results for AI agent</button>
+    <button id="copy-json-btn" style="font-size:0.85em;padding:3px 10px;margin-left:0.5em;cursor:pointer">Copy as JSON</button></p>
     <script nonce="${nonce ?? ""}">
-    document.getElementById('copy-json-btn').addEventListener('click',function(){var btn=this;btn.textContent='Fetching...';var url='/check${jsonQs.replace(/'/g, "\\'")}';try{var blob=fetch(url).then(function(r){return r.text()}).then(function(t){return new Blob([t],{type:'text/plain'})});navigator.clipboard.write([new ClipboardItem({'text/plain':blob})]).then(function(){btn.textContent='Copied!';setTimeout(function(){btn.textContent='Copy results for AI agent'},2000)}).catch(function(e){fetch(url).then(function(r){return r.text()}).then(function(j){var ta=document.createElement('textarea');ta.value=j;ta.style.position='fixed';ta.style.left='-9999px';document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);btn.textContent='Copied!';setTimeout(function(){btn.textContent='Copy results for AI agent'},2000)}).catch(function(e2){console.error(e2);btn.textContent='Copy failed: '+e2.message})})}catch(e){console.error(e);btn.textContent='Copy failed: '+e.message}});
+    document.getElementById('copy-md-btn').addEventListener('click',function(){var btn=this;var txt=document.getElementById('md-result').textContent;function ok(){btn.textContent='Copied!';setTimeout(function(){btn.textContent='Copy results for AI agent'},2000)}try{navigator.clipboard.writeText(txt).then(ok).catch(function(){var ta=document.createElement('textarea');ta.value=txt;ta.style.position='fixed';ta.style.left='-9999px';document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);ok()})}catch(e){console.error(e);btn.textContent='Copy failed: '+e.message}});
+    document.getElementById('copy-json-btn').addEventListener('click',function(){var btn=this;btn.textContent='Fetching...';var url='/check${jsonQs.replace(/'/g, "\\'")}';try{var blob=fetch(url).then(function(r){return r.text()}).then(function(t){return new Blob([t],{type:'text/plain'})});navigator.clipboard.write([new ClipboardItem({'text/plain':blob})]).then(function(){btn.textContent='Copied!';setTimeout(function(){btn.textContent='Copy as JSON'},2000)}).catch(function(e){fetch(url).then(function(r){return r.text()}).then(function(j){var ta=document.createElement('textarea');ta.value=j;ta.style.position='fixed';ta.style.left='-9999px';document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);btn.textContent='Copied!';setTimeout(function(){btn.textContent='Copy as JSON'},2000)}).catch(function(e2){console.error(e2);btn.textContent='Copy failed: '+e2.message})})}catch(e){console.error(e);btn.textContent='Copy failed: '+e.message}});
     </script>
+    <details style="margin-top:0.5rem">
+      <summary style="cursor:pointer;font-size:0.9em">Results as markdown &mdash; readable report to paste into any AI chat</summary>
+      <pre id="md-result" style="white-space:pre-wrap;font-size:0.8em;background:#faf9f2;border:1px solid #ddd;border-radius:4px;padding:0.5rem;max-height:24rem;overflow:auto">${esc(markdownFenced)}</pre>
+    </details>
     <details style="margin-top:0.5rem">
       <summary style="cursor:pointer;font-size:0.9em">Add a file attachment &mdash; image, video, audio, or PDF as reference evidence</summary>
       <form method="post" action="/check" enctype="multipart/form-data" style="margin-top:0.5rem">
