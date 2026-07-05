@@ -1,6 +1,16 @@
 # ClaimNet API Capabilities
 
-> **Doc status (2026-05-10):** This document still describes the pre-pivot claims/validations API surface (claims, validations, `claim_group_shares`, `/api/v1/groups/...`). The current backend exposes `/check`, `/traces`, `/uploads`, `/recipe-books/*` (with `/groups/*` 308-redirecting), and the remote MCP at `POST /mcp` — see `CLAUDE.md` and `docs/architecture/data-flow.md` for the live shape. Backlog tracks the full consolidation. References to "group" below should be read as the schema-level term for what the user sees as a **recipe book** (see ADR-0016).
+---
+
+> ## ⚠️ HISTORICAL DOCUMENT — pre-pivot vocabulary, does not describe the current API
+>
+> **This entire document describes the pre-pivot ClaimNet claims/validations surface** — claims, validations, `claim_group_shares`, `/api/v1/claims`, `/api/v1/groups/...`. **None of it reflects the current Soup.net API.** In particular, tools and endpoints marked ✅ below (e.g. `get_claim`, "Get full claim card by ID") **do not exist in current code** — they are fossils of the pre-pivot model, not implemented capabilities.
+>
+> **For the current, live API surface, see [`CLAUDE.md`](../../CLAUDE.md) and [`docs/architecture/overview.md`](overview.md)** — the current backend exposes `/check`, `/traces`, `/uploads`, `/recipe-books/*` (with legacy `/groups/*` paths 308-redirecting), and the remote MCP at `POST /mcp`. See also `docs/architecture/data-flow.md` for the live request shape. The backlog tracks full consolidation of this document against the current surface. Until then, read every reference to "group" below as the schema-level term for what the user-facing product calls a **recipe book** (see ADR-0016), and read "claim" as the schema-level ancestor of today's **recipe/trace**.
+>
+> *(Doc status originally added 2026-05-10; strengthened 2026-07-05 — see `docs/backlog.md` "Flag `docs/architecture/api.md` as historical".)*
+
+---
 
 **This document is the narrative source of truth for everything ClaimNet exposes.**
 
