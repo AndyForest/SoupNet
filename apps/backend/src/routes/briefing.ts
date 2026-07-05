@@ -13,6 +13,7 @@ import { getDb } from "../db";
 import type { AppEnv } from "../types";
 import { composeBriefing } from "../services/briefing";
 import { validateKey } from "../services/api-key.service";
+import { parseRecipeIds } from "../services/recipe-lookup.service";
 
 const briefing = new Hono<AppEnv>();
 
@@ -38,6 +39,11 @@ briefing.get("/", async (c) => {
   const kParam = c.req.query("k");
   const k = kParam ? parseInt(kParam, 10) : undefined;
 
+  // WT-3: purpose biases within-cluster exemplar choice; recipe_ids renders
+  // a "Requested recipes" section (same service/ACL/markers as GET /recipes).
+  const recipeIdsParam = c.req.query("recipe_ids");
+  const recipeIds = recipeIdsParam ? parseRecipeIds(recipeIdsParam) : undefined;
+
   const result = await composeBriefing({
     db,
     rawKey,
@@ -49,6 +55,8 @@ briefing.get("/", async (c) => {
       filter: c.req.query("filter"),
       vectorStrategy: c.req.query("strategy"),
       recipeBookIdOrSlug: c.req.query("recipe_book"),
+      purpose: c.req.query("purpose"),
+      ...(recipeIds && recipeIds.length > 0 ? { recipeIds } : {}),
     },
   });
 

@@ -60,6 +60,15 @@ Operator direction (2026-06-10), captured in [docs/rough-notes/2026-06-10/agent-
 
 design-thinking.md §The Reasoning-Trace Gap (2026-06-10): reasoning models discard hidden deliberation after each turn, so the judgment-call moment is the only checking moment inside the reasoning window — checks deferred to session end lose the warrant. Audit briefing copy + `check_recipe` tool descriptions for anything that makes mid-work checking feel heavyweight, and weight the "facing a judgment call" moment accordingly. Deliberately sequenced after the regression harness exists, so this edit is the first one made under the declared-intent rule rather than another over-correction.
 
+### `[IMPL]` Retrieval API follow-ups (WT-3 shipped 2026-07-05: `get_recipes` + `GET /recipes`, briefing `purpose`/`recipe_ids`, `/traces/:id` SPA redirect)
+
+The WT-3 tree of [docs/rough-notes/2026-07-05/next-improvements-worktree-plan.md](rough-notes/2026-07-05/next-improvements-worktree-plan.md) landed the by-id lookup (batch ≤20, key read-scope ACL, uniform `not_found_or_unreadable` markers) across REST + both MCP surfaces, plus briefing tailoring params. Remaining follow-ups:
+
+- **Slimming levers stay sequenced behind WT-5 phase-1 specs** (per the plan): top-N evidence per exemplar with a `get_recipes` pointer, briefing `max_chars`, and the `exemplarCount: 0` fresh-book bug.
+- **Contracts/OpenAPI entry for `GET /recipes`** — validates inline like the other post-pivot routes; fold into the existing contracts-consolidation item.
+- **Briefing copy pointer** — the briefing text doesn't yet mention `get_recipes`/`purpose` outside the tool descriptions and the sections that render when the params are used; a one-line mention in "How to check" is a briefing-content edit, so it waits for the regression-spec gate like other briefing copy.
+- **Rate-limit note for the fresh audit** (plan §7): `/recipes` uses an in-memory 600/h per-credential cap + 1000/h per-IP (documented in `apps/backend/src/routes/recipes.ts` header); MCP `get_recipes` rides the F43 per-bearer backstop. The pending audit should confirm this is sufficient for an IDOR-class read surface.
+
 ### `[IMPL]` Flag drift between briefing voice rules and `bootstrap-your-corpus.md`
 
 `apps/backend/public/docs/bootstrap-your-corpus.md` restates voice/format guidance in compressed form ("recipes are written in MY voice with a transferable role, not yours and not my name, and not duplicating context the group description already provides"). When the canonical `ROLE_PATTERNS` in `packages/domain/src/recipe-guide-content.ts` changes, this restatement can drift silently. Either (a) refactor bootstrap to import the canonical guidance, (b) shorten it to a one-line pointer at the canonical text, or (c) add a comment on `ROLE_PATTERNS` reminding maintainers to grep bootstrap-your-corpus.md after edits.

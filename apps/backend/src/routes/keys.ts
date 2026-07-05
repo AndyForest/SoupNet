@@ -7,6 +7,7 @@ import { generateDailyKey, generateScopedKey, listKeys, revokeKey } from "../ser
 import { rateLimit } from "../middleware/rate-limit";
 import { sql } from "drizzle-orm";
 import { composeBriefing } from "../services/briefing";
+import { parseRecipeIds } from "../services/recipe-lookup.service";
 
 // C1 — recipe-book rename. Wire-format field names use the new "recipe book"
 // vocabulary. Internal TS variables and DB columns keep the schema-level
@@ -176,7 +177,7 @@ keys.delete("/:id", async (c) => {
   return c.json({ ok: true, data: { deleted } });
 });
 
-// GET /keys/briefing?key=<raw-key>&[recipe_book=]&[axes=]&[filter=]&[k=]&[strategy=]
+// GET /keys/briefing?key=<raw-key>&[recipe_book=]&[axes=]&[filter=]&[k=]&[strategy=]&[purpose=]&[recipe_ids=]
 //
 // Unified briefing — returns a single markdown artifact that covers both
 // MCP-capable and web-only agents (the prior `type=mcp|web` split was
@@ -201,6 +202,11 @@ keys.get("/briefing", async (c) => {
   const backendUrl = process.env["BACKEND_URL"] ?? "http://localhost:3101";
   const frontendUrl = process.env["FRONTEND_URL"] ?? "http://localhost:5273";
 
+  // WT-3 passthrough: purpose (within-cluster exemplar biasing) + recipe_ids
+  // ("Requested recipes" section) — same semantics as GET /briefing.
+  const recipeIdsParam = c.req.query("recipe_ids");
+  const recipeIds = recipeIdsParam ? parseRecipeIds(recipeIdsParam) : undefined;
+
   const result = await composeBriefing({
     db: getDb(),
     rawKey,
@@ -213,6 +219,8 @@ keys.get("/briefing", async (c) => {
       filter: c.req.query("filter"),
       vectorStrategy: c.req.query("strategy"),
       recipeBookIdOrSlug: c.req.query("recipe_book"),
+      purpose: c.req.query("purpose"),
+      ...(recipeIds && recipeIds.length > 0 ? { recipeIds } : {}),
     },
   });
 

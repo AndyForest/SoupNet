@@ -12,6 +12,7 @@ import { keyRoutes } from "./routes/keys";
 import { meRoutes } from "./routes/me";
 import { briefingRoutes } from "./routes/briefing";
 import { checkRoutes } from "./routes/check";
+import { recipeRoutes } from "./routes/recipes";
 import { groupRoutes } from "./routes/groups";
 import { invitationRoutes } from "./routes/invitations";
 import { adminRoutes } from "./routes/admin";
@@ -95,6 +96,8 @@ app.route("/keys", keyRoutes);
 app.route("/me", meRoutes);
 app.route("/briefing", briefingRoutes);
 app.route("/check", checkRoutes);
+// WT-3: recipe lookup by id (API-key Bearer) — REST twin of MCP get_recipes.
+app.route("/recipes", recipeRoutes);
 // B1: primary path is /recipe-books. /groups is mounted with a 301 redirect
 // alias so existing clients (briefing-link copies, in-flight invitation links,
 // any cached frontend bundle still referencing /groups) keep working through

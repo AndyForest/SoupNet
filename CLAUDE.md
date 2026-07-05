@@ -133,7 +133,8 @@ Hono HTTP server. JWT for humans, API keys (Bearer) for agents — strictly sepa
 - `/invitations` — accept/decline flow for recipe-book invites
 - `/admin` — system-role-only: organizations, settings (signup cap, embeddings toggle), invite (cap bypass), users list/detail, stats, audit-log, queues, workers/embeddings
 - `/docs` — agent-facing HTML guides: `recipe-check-guide`, `recipe-scenarios`, `mcp-setup`, `bootstrap`. Read-only; some pre-fill with `?key=` for copy-paste configs.
-- `/traces` — list, map (k-means clustering + UMAP), traces-by-id
+- `/recipes` — recipe lookup by id (batch ≤20, API-key Bearer). Same read-scope ACL as `/check`; ids that don't resolve return uniform `not_found_or_unreadable` markers (anti-enumeration). REST twin of the MCP `get_recipes` tool.
+- `/traces` — list, map (k-means clustering + UMAP), traces-by-id (JWT)
 - `/uploads` — multipart POST for multimodal evidence (images, PDFs, audio). GET always 404 — URLs are opaque capability tokens tied to the issuing api_key_id.
 - `/mcp` — remote MCP endpoint. Streamable HTTP transport, stateless mode per ADR-0021, Bearer-token auth with API key.
 - `/health`, `/health/ready` — liveness + DB readiness. Point a load balancer / health-check probe at `/health/ready` if the deployment uses a rotating database password (the `SELECT 1` lets the probe detect auth drift after rotation and trigger task replacement).

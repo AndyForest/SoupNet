@@ -488,8 +488,12 @@ export async function runSearchPipeline(
 
 // ── Vector math helpers ──────────────────────────────────────────────────────
 
-/** Cosine similarity between two vectors (0 = orthogonal, 1 = identical). */
-function cosineSimilarity(a: number[], b: number[]): number {
+/** Cosine similarity between two vectors (0 = orthogonal, 1 = identical).
+ *  Iterates over `a`'s length, so passing an MRL-truncated trace vector as
+ *  `a` implicitly truncates a full-dim query embedding as `b` — valid for
+ *  Matryoshka-trained gemini embeddings (same rationale as MAP_VECTOR_DIMS).
+ *  Exported for the briefing-exemplars purpose-biasing pass. */
+export function cosineSimilarity(a: number[], b: number[]): number {
   let dot = 0, normA = 0, normB = 0;
   for (let i = 0; i < a.length; i++) {
     dot += a[i]! * b[i]!;
