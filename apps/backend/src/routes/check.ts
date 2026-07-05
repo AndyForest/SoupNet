@@ -84,6 +84,7 @@ export const CHECK_PARAMS = [
   { field: "readGroups", wire: "read_recipe_books",  aliases: ["read_groups"], roundTrip: "carry" },
   { field: "axes",       wire: "axes",               aliases: [],              roundTrip: "carry" },
   { field: "decidedAt",  wire: "decided_at",         aliases: ["decided"],     roundTrip: "carry" },
+  { field: "agentId",    wire: "agent_id",           aliases: [],              roundTrip: "carry" },
   { field: "sort",       wire: "sort",               aliases: [],              roundTrip: "carry" },
   { field: "clusters",   wire: "clusters",           aliases: [],              roundTrip: "carry-unless-expand" },
   { field: "maxChars",   wire: "max_chars",          aliases: [],              roundTrip: "carry-unless-expand" },
@@ -706,6 +707,7 @@ async function handleCheck(
       targetGroup: params.group,
       readGroups: params.readGroups,
       decidedAt: params.decidedAt,
+      agentId: params.agentId,
     });
   }
 

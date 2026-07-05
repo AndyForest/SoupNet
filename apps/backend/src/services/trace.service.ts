@@ -77,6 +77,11 @@ export interface SubmitAndSearchParams {
    *  created_at stays the insertion time. See design-thinking.md §Decision
    *  Archaeology. */
   decidedAt?: string | undefined;
+  /** Free-text self-minted agent identity. CAPTURE ONLY (WT-4 phase 2,
+   *  2026-07-05): stamped into the recipe.checked audit metadata so agent
+   *  lineages are joinable later. No dedup or behavior change — phase-2
+   *  auto-stubbing is gated on recall evals (see the worktree plan). */
+  agentId?: string | undefined;
 }
 
 export interface SearchResultItem {
@@ -526,6 +531,11 @@ export async function submitAndSearch(
       clustered: pipelineResult.clustered,
       resultTraceIds: pipelineResult.results.map((r) => r.id),
     };
+    if (params.agentId) {
+      // Self-minted agent identity — capture only (no behavior; see
+      // SubmitAndSearchParams.agentId).
+      metadata["agentId"] = params.agentId;
+    }
     if (params.image) {
       const imageHash = crypto.createHash("sha256").update(params.image.buffer).digest("hex");
       metadata["hasFile"] = true;

@@ -46,6 +46,8 @@ import { sql } from "drizzle-orm";
 import type { AppEnv } from "../types";
 import { writeAudit } from "../services/audit-log.service";
 import { ClientSafeError, publicErrorMessage } from "../lib/client-safe-error";
+import type { RawFeedbackRow } from "../services/feedback.service";
+import { ingestFeedback, summarizeFeedbackResults } from "../services/feedback.service";
 
 // F47 (security-audit-2026-06-11): tool catch-alls surface only deliberate
 // ClientSafeError messages (validation, size caps, MIME — written for the
@@ -306,6 +308,26 @@ function imageFromBase64(base64: string, filename: string, mimeTypeHint?: string
 
 // ── MCP server factory ──────────────────────────────────────────────────────
 
+// Loose zod shape for feedback rows — presence-level only. Strict enum/uuid
+// validation happens per-row in the feedback service so one bad row gets a
+// marker instead of a zod error killing the whole call (the ride-along
+// surface must never take down the check it rides on).
+const feedbackRowSchema = z.object({
+  trace_id: z.string().optional(),
+  kind: z.string().optional(),
+  impact: z.string().optional(),
+  disposition: z.string().optional(),
+  story_fulfilled: z.string().optional(),
+  story: z.string().optional(),
+  note: z.string().optional(),
+  agent_id: z.string().optional(),
+  top_similarity: z.number().optional(),
+  model: z.string().optional(),
+  harness: z.string().optional(),
+  harness_version: z.string().optional(),
+  related_trace_ids: z.array(z.string()).optional(),
+});
+
 function createMcpServer(backendUrl: string): McpServer {
   const server = new McpServer({
     name: "soupnet",
@@ -333,6 +355,8 @@ function createMcpServer(backendUrl: string): McpServer {
       // 2026-07-05) rejects. structuredContent without outputSchema is
       // spec-legal; the shape is documented in the param description.
       response_format: z.enum(["markdown", "structured"]).optional().describe(MCP_PARAM_DESCRIPTIONS.responseFormat),
+      agent_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.agentId),
+      feedback: z.array(feedbackRowSchema).optional().describe(MCP_PARAM_DESCRIPTIONS.feedbackParam),
       axes: z.string().optional().describe(
         "Two concept terms for semantic projection (comma-separated, e.g., 'accessibility, dark mode'). " +
         "Each result gets x/y positions showing its similarity to each concept (0-1). " +
@@ -393,7 +417,7 @@ function createMcpServer(backendUrl: string): McpServer {
       idempotentHint: false,
       openWorldHint: true,
     },
-    async ({ recipe, supporting_evidence, clusters, max_chars, decided_at, axes, recipe_book, read_recipe_books, file_url, file_base64, file_name, file_mime_type, region, response_format }, extra) => {
+    async ({ recipe, supporting_evidence, clusters, max_chars, decided_at, axes, recipe_book, read_recipe_books, file_url, file_base64, file_name, file_mime_type, region, response_format, agent_id, feedback }, extra) => {
       // Get API key from auth info (passed by the transport middleware)
       const apiKey = (extra.authInfo as Record<string, unknown> | undefined)?.["token"] as string | undefined;
       if (!apiKey) {
@@ -484,6 +508,7 @@ function createMcpServer(backendUrl: string): McpServer {
           decidedAt: decided_at ?? undefined,
           image,
           region: regionMeta,
+          agentId: agent_id ?? undefined,
         });
 
         if (result.error) {
@@ -499,12 +524,36 @@ function createMcpServer(backendUrl: string): McpServer {
         const jsonResponse = buildMcpJsonResponse(result, enriched, 1);
         console.warn(`[mcp] check_recipe: success — ${result.results.length} results (${response_format ?? "markdown"})`);
 
+        // Ride-along feedback about PRIOR checks. Processed only after the
+        // check itself succeeded; per-row markers, never a request-killing
+        // error. The check-level agent_id becomes each row's default.
+        let feedbackSummary = "";
+        let feedbackResults: unknown;
+        if (feedback && feedback.length > 0) {
+          const keyResult = await validateKey(db, apiKey);
+          if (keyResult) {
+            const rows: RawFeedbackRow[] = feedback.map((row) => ({
+              ...(agent_id ? { agent_id } : {}),
+              ...row,
+            }));
+            const results = await ingestFeedback({
+              db,
+              apiKeyId: keyResult.keyId,
+              readGroupIds: keyResult.readGroupIds,
+              rows,
+            });
+            feedbackSummary = summarizeFeedbackResults(results);
+            feedbackResults = results;
+          }
+        }
+
         // One format per response (operator review 2026-07-05): markdown is
         // the default readable report (ids + similarities inline); structured
         // returns the JSON as structuredContent with a one-line text stub.
         // Never both.
         if (response_format === "structured") {
           const data = jsonResponse["data"] as Record<string, unknown>;
+          if (feedbackResults !== undefined) data["feedbackResults"] = feedbackResults;
           const stub = `Recipe checked as #${String(data["recipeId"])}. ${String(data["totalResults"])} similar recipe(s) — see structuredContent.`;
           return {
             content: [{ type: "text" as const, text: stub }],
@@ -512,7 +561,8 @@ function createMcpServer(backendUrl: string): McpServer {
           };
         }
 
-        const text = renderCheckResponseMarkdown(jsonResponse as unknown as CheckResponseJson);
+        let text = renderCheckResponseMarkdown(jsonResponse as unknown as CheckResponseJson);
+        if (feedbackSummary) text += `\n\n${feedbackSummary}`;
         return { content: [{ type: "text" as const, text }] };
       } catch (err) {
         return { content: [{ type: "text" as const, text: toolErrorText(err, "check_recipe") }] };
@@ -754,6 +804,75 @@ function createMcpServer(backendUrl: string): McpServer {
         };
       } catch (err) {
         return { content: [{ type: "text" as const, text: toolErrorText(err, "update_recipe_book_description") }] };
+      }
+    },
+  );
+
+  // ── log_feedback tool ──────────────────────────────────────────────────
+  //
+  // Standalone surface for feedback rows (end-of-session, outcome/operational
+  // kinds with no next check to ride on). Flat single-row params — tool-
+  // calling LLMs fill named fields more reliably than nested arrays; batching
+  // lives on check_recipe's feedback param. Same service, same validation and
+  // ACL path as the ride-along and REST POST /feedback.
+
+  server.tool(
+    "log_feedback",
+    MCP_TOOL_DESCRIPTIONS.logFeedback,
+    {
+      trace_id: z.string().describe(
+        "Full recipe UUID of the prior check this feedback is about — every check response carries it inline."
+      ),
+      kind: z.string().describe("check-feedback | operational | outcome"),
+      impact: z.string().describe("none | new | subtle | big | operational"),
+      disposition: z.string().describe("proceeded | corrected | asked-human | charted-new | deferred"),
+      story_fulfilled: z.string().describe("yes | partial | no | unknown"),
+      story: z.string().describe(
+        "The user story behind the check — why it was made (e.g. 'As an AI sub-agent working on X, I wanted Y so that Z')."
+      ),
+      note: z.string().optional().describe("What you did with the result — how it changed (or confirmed) your approach."),
+      agent_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.agentId),
+      top_similarity: z.number().optional().describe("Top similarity the check returned (0-1), as you saw it."),
+      model: z.string().optional().describe("Your model id (e.g. 'claude-fable-5')."),
+      harness: z.string().optional().describe("Your harness (e.g. 'claude-code', 'codex')."),
+      harness_version: z.string().optional().describe("Harness version, if known."),
+      related_trace_ids: z.array(z.string()).optional().describe(
+        "Lineage links — recipe UUIDs in the same arc (e.g. the recipe that changed the action and the trace that logged the new decision)."
+      ),
+    },
+    {
+      title: "Log feedback",
+      // Appends a feedback row — not read-only, not destructive, not
+      // idempotent (each call logs a new row).
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+    async (args, extra) => {
+      const apiKey = (extra.authInfo as Record<string, unknown> | undefined)?.["token"] as string | undefined;
+      if (!apiKey) {
+        return { content: [{ type: "text" as const, text: "Error: No API key in auth context." }] };
+      }
+      try {
+        const db = getDb();
+        const keyResult = await validateKey(db, apiKey);
+        if (!keyResult) {
+          return { content: [{ type: "text" as const, text: "Error: Invalid or expired API key." }] };
+        }
+        const results = await ingestFeedback({
+          db,
+          apiKeyId: keyResult.keyId,
+          readGroupIds: keyResult.readGroupIds,
+          rows: [args as RawFeedbackRow],
+        });
+        const r = results[0];
+        if (r?.ok) {
+          return { content: [{ type: "text" as const, text: `Feedback recorded for check ${r.traceId} (feedback id ${r.feedbackId}).` }] };
+        }
+        return { content: [{ type: "text" as const, text: `Feedback rejected: ${r?.error ?? "unknown error"}` }] };
+      } catch (err) {
+        return { content: [{ type: "text" as const, text: toolErrorText(err, "log_feedback") }] };
       }
     },
   );

@@ -38,3 +38,4 @@ export * from "./email-log";
 export * from "./uploads";
 export * from "./oauth-clients";
 export * from "./oauth-authorization-codes";
+export * from "./check-feedback";
