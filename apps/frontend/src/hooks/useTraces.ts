@@ -173,6 +173,93 @@ export function useTraceDetail(traceId: string) {
   });
 }
 
+// ── Feedback lineage + human reactions (WT-4 phase 3) ───────────────────────
+
+export interface TraceFeedbackRow {
+  id: string;
+  agentId: string | null;
+  kind: string;
+  impact: string;
+  disposition: string;
+  storyFulfilled: string;
+  story: string;
+  note: string | null;
+  topSimilarity: number | null;
+  model: string | null;
+  harness: string | null;
+  harnessVersion: string | null;
+  relatedTraceIds: string[] | null;
+  createdAt: string;
+  apiKeyLabel: string | null;
+  starCount: number;
+  starredByMe: boolean;
+}
+
+export type TraceReaction = "still_true" | "stale" | "wrong";
+
+export interface TraceFeedbackData {
+  feedback: TraceFeedbackRow[];
+  reactions: {
+    mine: TraceReaction | null;
+    counts: Partial<Record<TraceReaction, number>>;
+  };
+}
+
+export function useTraceFeedback(traceId: string) {
+  return useQuery<TraceFeedbackData | null>({
+    queryKey: ["trace-feedback", traceId],
+    queryFn: async () => {
+      const res = await authFetch(`/traces/${traceId}/feedback`);
+      if (!res.ok) return null;
+      const json = (await res.json()) as { ok: boolean; data: TraceFeedbackData };
+      return json.ok ? json.data : null;
+    },
+    enabled: !!traceId,
+  });
+}
+
+/** Set (PUT) or clear (DELETE) my reaction on a recipe. Pass null to clear. */
+export function useSetTraceReaction(traceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (reaction: TraceReaction | null) => {
+      const res = await authFetch(`/traces/${traceId}/reaction`, {
+        method: reaction === null ? "DELETE" : "PUT",
+        headers: { "Content-Type": "application/json" },
+        ...(reaction !== null ? { body: JSON.stringify({ reaction }) } : {}),
+      });
+      if (!res.ok) {
+        const json = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(json.error ?? `Reaction failed (HTTP ${res.status})`);
+      }
+      return res.json() as Promise<{ ok: true }>;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["trace-feedback", traceId] });
+    },
+  });
+}
+
+/** Star / unstar a feedback row ("this one mattered"). */
+export function useSetFeedbackStar(traceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (params: { feedbackId: string; starred: boolean }) => {
+      const res = await authFetch(`/traces/feedback/${params.feedbackId}/star`, {
+        method: params.starred ? "PUT" : "DELETE",
+      });
+      if (!res.ok) {
+        const json = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(json.error ?? `Star failed (HTTP ${res.status})`);
+      }
+      return res.json() as Promise<{ ok: true }>;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["trace-feedback", traceId] });
+    },
+  });
+}
+
 export function useDeleteTrace() {
   const queryClient = useQueryClient();
   return useMutation({

@@ -11,8 +11,28 @@ import {
 } from "../services/map-layout-cache";
 import { deleteTraceCascade } from "../services/trace-delete.service";
 import { writeAudit } from "../services/audit-log.service";
+import { TRACE_REACTIONS, vocab } from "@soupnet/domain";
 
 const traces = new Hono<AppEnv>();
+
+/** Shared read-access gate for a trace: the requester owns it or is a member
+ *  of its recipe book. Returns true when readable. Same predicate as
+ *  GET /traces/:id. */
+async function canReadTrace(
+  db: ReturnType<typeof getDb>,
+  traceId: string,
+  userId: string,
+): Promise<boolean> {
+  const rows = await db.execute(sql`
+    SELECT t.id
+    FROM claimnet.traces t
+    LEFT JOIN claimnet.group_members gm
+      ON gm.group_id = t.group_id AND gm.user_id = ${userId}::uuid
+    WHERE t.id = ${traceId}::uuid
+      AND (t.user_id = ${userId}::uuid OR gm.user_id IS NOT NULL)
+  `);
+  return (rows as unknown as Array<{ id: string }>).length > 0;
+}
 
 // Secure-by-default: every JWT-authed route also requires email verification.
 // See routes/auth.ts for the (very small) opt-out list.
@@ -341,6 +361,179 @@ traces.get("/", async (c) => {
   `);
 
   return c.json({ ok: true, data: rows });
+});
+
+// ── Feedback lineage + human reactions (WT-4 phase 3, 2026-07-05) ───────────
+//
+// The trace detail page renders the checks-against-this-recipe lineage:
+// agent feedback rows (impact/disposition chips, story, note, agent id) plus
+// the human ground-truth signals from §Validating the UVP Layer 3 — a
+// still_true|stale|wrong reaction per user per recipe, and a "mattered" star
+// per user per feedback row. JWT-auth, same read predicate as GET /traces/:id.
+
+// GET /traces/:id/feedback — feedback rows + reaction summary for one trace
+traces.get("/:id/feedback", async (c) => {
+  const user = c.get("user");
+  const traceId = c.req.param("id");
+  const db = getDb();
+
+  if (!(await canReadTrace(db, traceId, user.id))) {
+    return c.json({ ok: false, error: "Trace not found" }, 404);
+  }
+
+  const feedbackRows = await db.execute(sql`
+    SELECT
+      cf.id,
+      cf.agent_id AS "agentId",
+      cf.kind,
+      cf.impact,
+      cf.disposition,
+      cf.story_fulfilled AS "storyFulfilled",
+      cf.story,
+      cf.note,
+      cf.top_similarity AS "topSimilarity",
+      cf.model,
+      cf.harness,
+      cf.harness_version AS "harnessVersion",
+      cf.related_trace_ids AS "relatedTraceIds",
+      cf.created_at AS "createdAt",
+      ak.label AS "apiKeyLabel",
+      COALESCE(sc.star_count, 0)::int AS "starCount",
+      (my.id IS NOT NULL) AS "starredByMe"
+    FROM claimnet.check_feedback cf
+    LEFT JOIN claimnet.api_keys ak ON ak.id = cf.api_key_id
+    LEFT JOIN LATERAL (
+      SELECT COUNT(*) AS star_count
+      FROM claimnet.check_feedback_stars s
+      WHERE s.feedback_id = cf.id
+    ) sc ON true
+    LEFT JOIN claimnet.check_feedback_stars my
+      ON my.feedback_id = cf.id AND my.user_id = ${user.id}::uuid
+    WHERE cf.trace_id = ${traceId}::uuid
+    ORDER BY cf.created_at DESC
+  `);
+
+  const reactionCounts = await db.execute(sql`
+    SELECT reaction, COUNT(*)::int AS n
+    FROM claimnet.trace_reactions
+    WHERE trace_id = ${traceId}::uuid
+    GROUP BY reaction
+  `);
+  const mineRows = await db.execute(sql`
+    SELECT reaction FROM claimnet.trace_reactions
+    WHERE trace_id = ${traceId}::uuid AND user_id = ${user.id}::uuid
+  `);
+
+  const counts: Record<string, number> = {};
+  for (const r of reactionCounts as unknown as Array<{ reaction: string; n: number }>) {
+    counts[r.reaction] = r.n;
+  }
+
+  return c.json({
+    ok: true,
+    data: {
+      feedback: feedbackRows,
+      reactions: {
+        mine: (mineRows as unknown as Array<{ reaction: string }>)[0]?.reaction ?? null,
+        counts,
+      },
+    },
+  });
+});
+
+// PUT /traces/:id/reaction — set my reaction (upsert: latest click wins).
+// DELETE /traces/:id/reaction — clear it.
+traces.put("/:id/reaction", async (c) => {
+  const user = c.get("user");
+  const traceId = c.req.param("id");
+  const db = getDb();
+
+  if (!(await canReadTrace(db, traceId, user.id))) {
+    return c.json({ ok: false, error: "Trace not found" }, 404);
+  }
+
+  let reaction: unknown;
+  try {
+    reaction = ((await c.req.json()) as { reaction?: unknown }).reaction;
+  } catch {
+    return c.json({ ok: false, error: "Body must be JSON" }, 400);
+  }
+  if (typeof reaction !== "string" || !(TRACE_REACTIONS as readonly string[]).includes(reaction)) {
+    return c.json(
+      { ok: false, error: `reaction must be one of: ${vocab(TRACE_REACTIONS)}` },
+      400,
+    );
+  }
+
+  await db.execute(sql`
+    INSERT INTO claimnet.trace_reactions (trace_id, user_id, reaction)
+    VALUES (${traceId}::uuid, ${user.id}::uuid, ${reaction})
+    ON CONFLICT (trace_id, user_id)
+    DO UPDATE SET reaction = ${reaction}, updated_at = NOW()
+  `);
+
+  return c.json({ ok: true, data: { reaction } });
+});
+
+traces.delete("/:id/reaction", async (c) => {
+  const user = c.get("user");
+  const traceId = c.req.param("id");
+  const db = getDb();
+
+  if (!(await canReadTrace(db, traceId, user.id))) {
+    return c.json({ ok: false, error: "Trace not found" }, 404);
+  }
+
+  await db.execute(sql`
+    DELETE FROM claimnet.trace_reactions
+    WHERE trace_id = ${traceId}::uuid AND user_id = ${user.id}::uuid
+  `);
+
+  return c.json({ ok: true, data: { reaction: null } });
+});
+
+// PUT /traces/feedback/:feedbackId/star — star a feedback row ("mattered").
+// DELETE — unstar. Row existence is the star; both are idempotent.
+traces.put("/feedback/:feedbackId/star", async (c) => {
+  const user = c.get("user");
+  const feedbackId = c.req.param("feedbackId");
+  const db = getDb();
+
+  // ACL through the feedback row's trace — reader access required. Missing
+  // feedback row and unreadable trace collapse to the same 404.
+  const rows = await db.execute(sql`
+    SELECT cf.id
+    FROM claimnet.check_feedback cf
+    JOIN claimnet.traces t ON t.id = cf.trace_id
+    LEFT JOIN claimnet.group_members gm
+      ON gm.group_id = t.group_id AND gm.user_id = ${user.id}::uuid
+    WHERE cf.id = ${feedbackId}::uuid
+      AND (t.user_id = ${user.id}::uuid OR gm.user_id IS NOT NULL)
+  `);
+  if ((rows as unknown as Array<{ id: string }>).length === 0) {
+    return c.json({ ok: false, error: "Feedback not found" }, 404);
+  }
+
+  await db.execute(sql`
+    INSERT INTO claimnet.check_feedback_stars (feedback_id, user_id)
+    VALUES (${feedbackId}::uuid, ${user.id}::uuid)
+    ON CONFLICT (feedback_id, user_id) DO NOTHING
+  `);
+
+  return c.json({ ok: true, data: { starred: true } });
+});
+
+traces.delete("/feedback/:feedbackId/star", async (c) => {
+  const user = c.get("user");
+  const feedbackId = c.req.param("feedbackId");
+  const db = getDb();
+
+  await db.execute(sql`
+    DELETE FROM claimnet.check_feedback_stars
+    WHERE feedback_id = ${feedbackId}::uuid AND user_id = ${user.id}::uuid
+  `);
+
+  return c.json({ ok: true, data: { starred: false } });
 });
 
 // GET /traces/:id — single trace with full evidence and references
