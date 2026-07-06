@@ -320,3 +320,13 @@ The blocker is the contracts-consolidation work — until `/check`, `/traces`, `
 3. Migrate `apps/frontend/src/hooks/*.ts` to import the generated hooks, deleting hand-written shapes (`interface Trace`, etc.).
 
 Until step 3 ships, the headline claim in `docs/architecture/type-safety.md` ("type errors at one end of the stack surface at the other") is only true up to the package boundary on the frontend side. The doc is now honest about this; closing the gap is the work.
+
+Note (2026-07-06, dep-remediation): `orval` was bumped `^7.0.0`→`^8.19.0` and the unused `@orval/msw@^6.20.0` dependency was removed (it carried a critical code-injection advisory with no v6 fix and was only referenced by a commented-out config block). The orval 8 major cleared the whole codegen advisory subtree (`@ibm-cloud/openapi-ruleset`, `@stoplight/spectral-*`, `lodash`, `js-yaml`). Whoever revives this pipeline should regenerate against orval 8's config API and re-add an MSW mock package matching the installed orval major if MSW handlers are wanted (see `orval.config.ts` comment).
+
+### `[IMPL]` Deferred npm-audit findings after 2026-07-06 remediation
+
+The 2026-07-06 dependency sweep took `npm audit` from 32 (12 critical / 9 high / 10 moderate / 1 low) to 8 (1 high / 7 moderate). What remains is deliberate, each with a documented upgrade path (per recipe `836786c6`):
+
+- **nodemailer high — `raw`-option file-read/SSRF (GHSA-p6gq-j5cr-w38f).** Fix is a runtime semver-major (8→9.0.3). The three reachable CRLF/header-injection advisories were fixed by the non-major 8.0.11 bump; this residual advisory requires the message-level `raw` option, which `email.service.ts` never uses (templated `from/to/subject/text/html` only). Upgrade path: bump to nodemailer 9.x in its own change that exercises the email path (verification/reset/waitlist sends) against the v9 API.
+- **drizzle-kit / esbuild / @esbuild-kit/* (4 moderate).** Dev-only (migration codegen). `npm audit`'s suggested "fix" is a nonsensical drizzle-kit 0.31→0.18 major downgrade that would break migrations; the esbuild advisory (GHSA-67mh-4wv8-2f99) only affects esbuild's dev server, which drizzle-kit doesn't expose. Accepted; re-check when drizzle-kit ships a patched esbuild.
+- **storybook cluster — @storybook/addon-essentials, addon-actions, uuid<11.1.1 (3 moderate).** Dev-only (component dev tool, not shipped). Only fix is a @storybook/addon-essentials 8→7 major downgrade. Accepted; revisit on a deliberate Storybook major upgrade.
