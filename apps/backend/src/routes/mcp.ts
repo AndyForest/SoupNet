@@ -383,37 +383,29 @@ function createMcpServer(backendUrl: string): McpServer {
       agent_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.agentId),
       feedback: z.array(feedbackRowSchema).optional().describe(MCP_PARAM_DESCRIPTIONS.feedbackParam),
       axes: z.string().optional().describe(
-        "Two concept terms for semantic projection (comma-separated, e.g., 'accessibility, dark mode'). " +
-        "Each result gets x/y positions showing its similarity to each concept (0-1). " +
-        "Based on Semantic Projection (Grand et al., 2022)."
+        "Two comma-separated concept terms; each result gets x/y similarity positions (0-1) against them (semantic projection)."
       ),
       recipe_book: z.string().optional().describe(
-        "Recipe book slug or ID to write this recipe to. Must be in your key's write recipe books. " +
-        "Defaults to your key's default recipe book (most private). Use list_my_recipe_books to see what's available."
+        "Recipe book slug or id to write to. Must be in your key's write scope; defaults to your key's default book. " +
+        "list_my_recipe_books shows what's available."
       ),
       read_recipe_books: z.string().optional().describe(
-        "Comma-separated recipe-book slugs to restrict search scope. " +
-        "Default: all readable recipe books. Use to focus search on a specific project context."
+        "Comma-separated recipe-book slugs to restrict result scope. Default: all readable books."
       ),
       file_url: z.string().optional().describe(
-        "Optional: public URL to fetch as reference evidence (image, PDF, audio, or video). " +
-        "The server fetches the URL on your behalf. http/https only; private/internal hostnames are rejected. " +
-        "MIME type inferred from Content-Type (or URL extension as fallback). " +
-        "For private local files (screenshots, generated artifacts) that have no public URL, " +
-        "POST the file to the /uploads endpoint first using your same Bearer token, then pass the returned file_url here. " +
-        "Mutually exclusive with file_base64."
+        "Public URL the server fetches as reference evidence (image, PDF, audio, video); http(s) only, " +
+        "private hostnames rejected. For local files, POST to /uploads with your Bearer token first and " +
+        "pass the returned URL. Mutually exclusive with file_base64."
       ),
       file_base64: z.string().optional().describe(
-        "Optional: base64-encoded file bytes (image, PDF, audio, or video). Accepts raw base64 or 'data:...;base64,' data-URL form. " +
-        "Requires file_name (for extension-based MIME inference) or file_mime_type (explicit). " +
-        "Mutually exclusive with file_url."
+        "Base64 file bytes (raw or data-URL form). Requires file_name or file_mime_type. Mutually exclusive with file_url."
       ),
       file_name: z.string().optional().describe(
-        "Optional filename hint for base64 uploads. Extension is used to infer MIME type when file_mime_type isn't given."
+        "Filename hint for base64 uploads; the extension infers the MIME type."
       ),
       file_mime_type: z.string().optional().describe(
-        "Optional explicit MIME type (e.g., 'image/png'). Must be one of the supported media types: " +
-        "image/png, image/jpeg, image/webp, video/mp4, video/quicktime, audio/mpeg, audio/wav, audio/flac, audio/ogg, application/pdf."
+        "Explicit MIME type, one of: image/png, image/jpeg, image/webp, video/mp4, video/quicktime, " +
+        "audio/mpeg, audio/wav, audio/flac, audio/ogg, application/pdf."
       ),
       region: z.object({
         image_box: z.object({
@@ -422,14 +414,14 @@ function createMcpServer(backendUrl: string): McpServer {
           x1: z.number().min(0).max(1),
           y1: z.number().min(0).max(1),
         }).optional().describe(
-          "Normalized region of interest box on the attached image. All values are fractions in [0, 1] with top-left origin (y grows downward). " +
-          "Must satisfy x0 < x1 and y0 < y1. When set, the embedding pipeline crops to ROI+padding, blurs the padding, and appends a text hint describing the ROI — so the resulting embedding weights the marked region heavily. " +
-          "The original image is stored unmodified; ROI processing is applied at embed time and can be re-done later with a different visual-cue technique (see ADR-0019). " +
-          "Image MIME types only; ignored (with a warning logged) for video/audio/PDF."
+          // Depth (padding/blur mechanics, re-embedding, ADR-0019) lives in the
+          // briefing's multimodal section — this is the affordance + constraints.
+          "Region-of-interest box on the attached image: fractions in [0,1], top-left origin, x0<x1 and " +
+          "y0<y1. The embedding weights the marked region heavily; the original image is stored unmodified. Images only."
         ),
         // Future: time_range for video/audio; page_range for PDF.
       }).optional().describe(
-        "Optional region-of-interest metadata for the attached file. Currently supports image_box; video and PDF region types planned."
+        "Region-of-interest metadata for the attached file (image_box for images)."
       ),
     },
     {
@@ -786,22 +778,15 @@ function createMcpServer(backendUrl: string): McpServer {
   if (!lean)
   server.tool(
     "update_recipe_book_description",
-    "Update the description of a recipe book your API key has write access to. " +
-    "Agents should recipe-check the proposed description first (e.g., 'As a " +
-    "[role] working on [project], I want [recipe book] to be described as " +
-    "[proposed description] so that agents writing here understand [context]'). " +
-    "The description shapes how every future agent reads and writes to this " +
-    "recipe book, so a small change can have outsized effect — check before " +
-    "committing. Authorization: your api key's user must be an owner or admin " +
-    "of the recipe book, AND the recipe book must be in your key's write " +
-    "recipe books (a read-only key cannot mutate recipe-book metadata).",
+    "Update a recipe book's description. It shapes how every future agent reads and writes there, " +
+    "so recipe-check the proposed text before committing. Requires the key's user to be an owner or " +
+    "admin AND the book to be in the key's write scope.",
     {
       recipe_book_id_or_slug: z.string().describe(
-        "The recipe book's UUID or slug. Use list_my_recipe_books to find the slug or ID."
+        "The recipe book's UUID or slug (list_my_recipe_books shows both)."
       ),
       description: z.string().min(1).max(2000).describe(
-        "The new description text. Max 2000 chars. Pass an empty string only " +
-        "if you genuinely intend to clear the description."
+        "The new description text (max 2000 chars)."
       ),
     },
     {

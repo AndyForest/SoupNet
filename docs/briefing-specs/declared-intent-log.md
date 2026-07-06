@@ -32,3 +32,11 @@ Also in this PR: dropped the stale feature-level `@unreleased` tag on `feedback-
 - Suite re-run: the agent-run harness is not yet wired (README §regression rule "once wired"); per README, the .feature files double as the manual checklist until then.
 
 Briefing size: 18,560 → 19,324 bytes (+764, +4.1%) with fixed reference inputs.
+
+## 2026-07-06 — Tool/param descriptions trimmed to affordances (18KB → 11.6KB tools/list)
+
+**Edits:** every MCP tool and param description reduced to affordance size (what it does, when to reach for it, hard constraints); teaching content (voice-mistake examples, ROI mechanics, feedback-field tutorials, worked decided_at example) removed from schema — it already lives in the briefing, which remains the canonical teaching surface. Operator-specific example vocabulary removed from static schema copy. The briefing's "How to check" section gains a one-paragraph pointer at the optional power params (known_recipes, decided_at, response_format, agent_id, feedback) and absorbs the region depth line. Budget guard added (mcp-tool-descriptions.test.ts: ≤420 chars per shared description, ≤4,000 total).
+
+**Scenarios intended to move:** none — this is a redundancy reduction, not a behavior change; all teaching remains reachable via get_briefing, which every comprehension scenario already routes through.
+
+**Scenarios watched, with rationale for holding:** voice/format scenarios (voice-and-format.feature and kin) — the one behavioral risk is agents that skip get_briefing now get a one-line voice rule in the recipe param instead of the example set; mitigated by keeping the rule itself plus an explicit "get_briefing teaches the voice rules" pointer in both the check_recipe trailer and the recipe param. If the naive-agent evals show voice quality regressing for briefing-skipping agents, the reversal is scoped: restore examples to the recipe param only.
