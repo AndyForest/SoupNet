@@ -355,6 +355,7 @@ function createMcpServer(backendUrl: string): McpServer {
       // 2026-07-05) rejects. structuredContent without outputSchema is
       // spec-legal; the shape is documented in the param description.
       response_format: z.enum(["markdown", "structured"]).optional().describe(MCP_PARAM_DESCRIPTIONS.responseFormat),
+      known_recipes: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.knownRecipes),
       agent_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.agentId),
       feedback: z.array(feedbackRowSchema).optional().describe(MCP_PARAM_DESCRIPTIONS.feedbackParam),
       axes: z.string().optional().describe(
@@ -417,7 +418,7 @@ function createMcpServer(backendUrl: string): McpServer {
       idempotentHint: false,
       openWorldHint: true,
     },
-    async ({ recipe, supporting_evidence, clusters, max_chars, decided_at, axes, recipe_book, read_recipe_books, file_url, file_base64, file_name, file_mime_type, region, response_format, agent_id, feedback }, extra) => {
+    async ({ recipe, supporting_evidence, clusters, max_chars, decided_at, axes, recipe_book, read_recipe_books, file_url, file_base64, file_name, file_mime_type, region, response_format, known_recipes, agent_id, feedback }, extra) => {
       // Get API key from auth info (passed by the transport middleware)
       const apiKey = (extra.authInfo as Record<string, unknown> | undefined)?.["token"] as string | undefined;
       if (!apiKey) {
@@ -521,7 +522,15 @@ function createMcpServer(backendUrl: string): McpServer {
         let enriched = await enrichResults(db, result.results);
         enriched = await clusterEvidenceInResults(db, enriched);
 
-        const jsonResponse = buildMcpJsonResponse(result, enriched, 1);
+        // known_recipes dedup, phase 1 (rendering only): ids the agent
+        // declared it already holds render as one-line stubs. Trace logging,
+        // idempotency, and cluster math upstream are untouched — stubs still
+        // occupy their cluster slots.
+        const knownRecipeIds = new Set(
+          (known_recipes ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+        );
+
+        const jsonResponse = buildMcpJsonResponse(result, enriched, 1, knownRecipeIds);
         console.warn(`[mcp] check_recipe: success — ${result.results.length} results (${response_format ?? "markdown"})`);
 
         // Ride-along feedback about PRIOR checks. Processed only after the
@@ -561,7 +570,9 @@ function createMcpServer(backendUrl: string): McpServer {
           };
         }
 
-        let text = renderCheckResponseMarkdown(jsonResponse as unknown as CheckResponseJson);
+        let text = renderCheckResponseMarkdown(jsonResponse as unknown as CheckResponseJson, {
+          knownRecipeIds: [...knownRecipeIds],
+        });
         if (feedbackSummary) text += `\n\n${feedbackSummary}`;
         return { content: [{ type: "text" as const, text }] };
       } catch (err) {
@@ -895,13 +906,27 @@ export function buildMcpJsonResponse(
   result: SubmitAndSearchResult,
   enriched: EnrichedResult[],
   page: number,
+  knownRecipeIds?: ReadonlySet<string>,
 ): Record<string, unknown> {
+  const KNOWN_GIST_CHARS = 80;
   const data: Record<string, unknown> = {
     recipeId: result.traceId,
     checkedRecipe: result.traceText,
     searchMode: result.searchMode ?? "lexical",
     clustered: result.clustered ?? false,
     results: enriched.map((r) => {
+      // known_recipes stub (rendering only): id + gist + similarity, no
+      // evidence body. clusterSize stays so the cluster slot remains visible.
+      if (knownRecipeIds?.has(r.id)) {
+        return {
+          id: r.id,
+          known: true,
+          recipe: r.claimText.slice(0, KNOWN_GIST_CHARS) + (r.claimText.length > KNOWN_GIST_CHARS ? "…" : ""),
+          createdAt: r.createdAt,
+          score: { combined: r.combinedScore, semantic: r.semanticScore },
+          ...(r.clusterSize ? { clusterSize: r.clusterSize } : {}),
+        };
+      }
       const item: Record<string, unknown> = {
         id: r.id,
         recipe: r.claimText,

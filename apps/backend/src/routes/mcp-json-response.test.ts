@@ -71,6 +71,26 @@ describe("buildMcpJsonResponse actions hints", () => {
     expect(String(actions["moreClusters"])).toContain("clusters");
   });
 
+  it("known_recipes renders a stub (id + gist + similarity + cluster slot) with no evidence body", () => {
+    const enriched = makeEnriched("known-1", 4);
+    enriched.claimText = "A".repeat(120);
+    enriched.evidence = [{ id: "e1", content: "should not appear", references: [] }];
+    const response = buildMcpJsonResponse(makeResult(), [enriched, makeEnriched("fresh-2")], 1, new Set(["known-1"]));
+    const results = (response["data"] as Record<string, unknown>)["results"] as Array<Record<string, unknown>>;
+
+    const stub = results[0]!;
+    expect(stub["known"]).toBe(true);
+    expect(String(stub["recipe"])).toHaveLength(81); // 80 chars + ellipsis
+    expect(stub["clusterSize"]).toBe(4); // stub keeps its cluster slot
+    expect(stub["evidence"]).toBeUndefined();
+    expect(stub["drillDown"]).toBeUndefined();
+    expect((stub["score"] as Record<string, unknown>)["semantic"]).toBe(0.8);
+
+    const fresh = results[1]!;
+    expect(fresh["known"]).toBeUndefined();
+    expect(fresh["evidence"]).toBeDefined();
+  });
+
   it("drill-down hint references the clusters param, not expand", () => {
     const response = buildMcpJsonResponse(makeResult(), [makeEnriched("a", 9)], 1);
     const results = (response["data"] as Record<string, unknown>)["results"] as Array<Record<string, unknown>>;

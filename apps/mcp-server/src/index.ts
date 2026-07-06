@@ -59,6 +59,7 @@ server.tool(
     // declaring one would force structuredContent onto every response,
     // violating the one-format-per-response rule.
     response_format: z.enum(["markdown", "structured"]).optional().describe(MCP_PARAM_DESCRIPTIONS.responseFormat),
+    known_recipes: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.knownRecipes),
     agent_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.agentId),
     feedback: z.array(z.object({
       trace_id: z.string().optional(),
@@ -89,7 +90,7 @@ server.tool(
     idempotentHint: false,
     openWorldHint: true,
   },
-  async ({ recipe, supporting_evidence, clusters, max_chars, decided_at, response_format, agent_id, feedback, file }) => {
+  async ({ recipe, supporting_evidence, clusters, max_chars, decided_at, response_format, known_recipes, agent_id, feedback, file }) => {
     if (!apiKey) {
       return {
         content: [{ type: "text" as const, text: "Error: SOUPNET_API_KEY not configured. Get a key from your Soup.net dashboard." }],
@@ -133,6 +134,7 @@ server.tool(
         if (max_chars) formData.set("max_chars", String(max_chars));
         if (decided_at) formData.set("decided_at", decided_at);
         if (agent_id) formData.set("agent_id", agent_id);
+        if (known_recipes) formData.set("known_recipes", known_recipes);
         formData.set("format", "json");
         formData.set("image", new Blob([fileBuffer], { type: mimeType }), fileName);
 
@@ -150,6 +152,7 @@ server.tool(
         if (max_chars) params.set("max_chars", String(max_chars));
         if (decided_at) params.set("decided_at", decided_at);
         if (agent_id) params.set("agent_id", agent_id);
+        if (known_recipes) params.set("known_recipes", known_recipes);
         params.set("format", "json");
 
         response = await fetch(`${backendUrl}/check?${params.toString()}`, {
@@ -202,7 +205,9 @@ server.tool(
         };
       }
 
-      let text = renderCheckResponseMarkdown(json);
+      let text = renderCheckResponseMarkdown(json, {
+        knownRecipeIds: (known_recipes ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+      });
       if (feedbackSummary) text += `\n\n${feedbackSummary}`;
 
       return {

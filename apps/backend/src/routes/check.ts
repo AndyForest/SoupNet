@@ -85,6 +85,7 @@ export const CHECK_PARAMS = [
   { field: "axes",       wire: "axes",               aliases: [],              roundTrip: "carry" },
   { field: "decidedAt",  wire: "decided_at",         aliases: ["decided"],     roundTrip: "carry" },
   { field: "agentId",    wire: "agent_id",           aliases: [],              roundTrip: "carry" },
+  { field: "knownRecipes", wire: "known_recipes",    aliases: [],              roundTrip: "carry" },
   { field: "sort",       wire: "sort",               aliases: [],              roundTrip: "carry" },
   { field: "clusters",   wire: "clusters",           aliases: [],              roundTrip: "carry-unless-expand" },
   { field: "maxChars",   wire: "max_chars",          aliases: [],              roundTrip: "carry-unless-expand" },
@@ -138,6 +139,12 @@ const HTML_DEFAULT_MAX_CHARS = 3000;
 // max_chars overrides this when specified.
 const JSON_DEFAULT_CLUSTERS = 3;
 
+/** Parse the known_recipes wire param (comma-separated recipe UUIDs) into a
+ *  set. Rendering-only dedup — see the stub branches below. */
+function parseKnownRecipes(value: string | undefined): Set<string> {
+  return new Set((value ?? "").split(",").map((s) => s.trim()).filter(Boolean));
+}
+
 // ── Content negotiation ─────────────────────────────────────────────────────
 
 function wantsJson(c: Context, params: PageParams): boolean {
@@ -153,11 +160,13 @@ function buildJsonResponse(
   result: SubmitAndSearchResult,
   enriched: EnrichedResult[],
   page: number,
+  knownRecipeIds?: ReadonlySet<string>,
 ) {
   if (result.error) {
     return { ok: false, error: result.error };
   }
 
+  const KNOWN_GIST_CHARS = 80;
   const response: Record<string, unknown> = {
     ok: true,
     data: {
@@ -166,6 +175,18 @@ function buildJsonResponse(
       searchMode: result.searchMode ?? "semantic",
       clustered: result.clustered ?? false,
       results: enriched.map((r) => {
+        // known_recipes stub (rendering only — logging and cluster math are
+        // untouched upstream; the stub keeps its cluster slot).
+        if (knownRecipeIds?.has(r.id)) {
+          return {
+            id: r.id,
+            known: true,
+            recipe: r.claimText.slice(0, KNOWN_GIST_CHARS) + (r.claimText.length > KNOWN_GIST_CHARS ? "…" : ""),
+            createdAt: r.createdAt,
+            score: { combined: r.combinedScore, semantic: r.semanticScore },
+            ...(r.clusterSize ? { clusterSize: r.clusterSize } : {}),
+          };
+        }
         const item: Record<string, unknown> = {
           id: r.id,
           recipe: r.claimText,
@@ -359,9 +380,11 @@ function renderPage(
     // agent — the 2026-05-27 demo showed raw JSON alienates even technical
     // users. format=json stays unchanged for API integrators.
     const page = params.page ? parseInt(params.page, 10) : 1;
+    const knownIds = parseKnownRecipes(params.knownRecipes);
     const markdownFenced = fenceCheckResponseMarkdown(
       renderCheckResponseMarkdown(
-        buildJsonResponse(result, enriched ?? [], page) as unknown as CheckResponseJson,
+        buildJsonResponse(result, enriched ?? [], page, knownIds) as unknown as CheckResponseJson,
+        { knownRecipeIds: [...knownIds] },
       ),
     );
 
@@ -393,6 +416,7 @@ function renderPage(
   // Build results HTML
   let resultsHtml = "";
   if (result && !result.error && hasSearch && enriched) {
+    const knownIdsForHtml = parseKnownRecipes(params.knownRecipes);
     const resultItems = enriched
       .map((r) => {
         let scoreDetail: string;
@@ -400,6 +424,16 @@ function renderPage(
           scoreDetail = `${Math.round(r.semanticScore * 100)}% similar`;
         } else {
           scoreDetail = `Score: ${r.combinedScore.toFixed(4)}`;
+        }
+
+        // known_recipes stub — one line: id + gist + similarity. Rendering
+        // only; the result still occupies its cluster slot.
+        if (knownIdsForHtml.has(r.id)) {
+          const gist = esc(r.claimText.slice(0, 80)) + (r.claimText.length > 80 ? "&hellip;" : "");
+          return `
+    <article class="result">
+      <p><small><code>${esc(r.id)}</code> [known to you] ${esc(scoreDetail)}${r.clusterSize ? ` &mdash; represents ${r.clusterSize} similar recipes` : ""} &mdash; ${gist}</small></p>
+    </article>`;
         }
 
         // Cluster drill-down: search using the exemplar's text to find all its cluster members
@@ -733,7 +767,7 @@ async function handleCheck(
     let enriched = await enrichResults(db, result.results);
     enriched = await clusterEvidenceInResults(db, enriched);
     const page = params.page ? parseInt(params.page, 10) : 1;
-    return c.json(buildJsonResponse(result, enriched, page));
+    return c.json(buildJsonResponse(result, enriched, page, parseKnownRecipes(params.knownRecipes)));
   }
 
   // HTML response path — always enrich + cluster evidence

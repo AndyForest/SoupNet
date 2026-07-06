@@ -741,6 +741,13 @@ export const MCP_PARAM_DESCRIPTIONS = {
     "Stamped on the check's audit record and usable on feedback rows, so lineages of checks from the " +
     "same agent thread are joinable later. Capture only — it does not change search or logging behavior.",
 
+  knownRecipes:
+    "Optional comma-separated recipe UUIDs you already hold in context (from earlier checks, a " +
+    "briefing, or frontmatter). Matching results come back as one-line stubs — id, a short gist, and " +
+    "similarity — instead of full bodies, saving your context for recipes you haven't seen. Rendering " +
+    "only: stubs still occupy their cluster slots, and trace logging is unchanged. You stay " +
+    "authoritative about your own context — declare only ids whose content you actually still hold.",
+
   feedbackParam:
     "Optional feedback rows about PRIOR checks, riding along with this check (saves a round trip " +
     "mid-flow). Each row carries its own trace_id — the recipe UUID a previous check response " +
