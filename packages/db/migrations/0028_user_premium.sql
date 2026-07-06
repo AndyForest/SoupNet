@@ -1,0 +1,1 @@
+ALTER TABLE "claimnet"."users" ADD COLUMN "premium_at" timestamp with time zone;

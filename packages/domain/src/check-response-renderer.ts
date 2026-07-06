@@ -82,6 +82,14 @@ export interface CheckResponseData {
   totalResults?: number;
   page?: number;
   totalPages?: number;
+  /** Premium retrieval synthesis: the distilled "current preference profile"
+   *  paragraph, present only when a premium+flagged caller passed synthesize.
+   *  See docs/planning/premium-llm-features.md. */
+  synthesis?: string;
+  /** One-line hint shown when a non-eligible caller requested synthesis —
+   *  the request is a silent no-op, this explains why. Mutually exclusive
+   *  with `synthesis` in practice. */
+  synthesisNotice?: string;
   /** MCP builder puts the warning here… */
   formatWarning?: string;
 }
@@ -205,6 +213,16 @@ export function renderCheckResponseMarkdown(
   const warning = data.formatWarning ?? response.formatWarning;
   if (warning) {
     text += `Format suggestion: ${warning}\n`;
+  }
+
+  // Premium synthesis sits between the header block and the exemplar list: the
+  // distilled profile is the headline for eligible callers; the notice is the
+  // one-line "this is a premium feature" hint for everyone else. Rendered here
+  // so it appears in position even when there are no exemplars below.
+  if (data.synthesis) {
+    text += `\n## Synthesis\n${data.synthesis}\n`;
+  } else if (data.synthesisNotice) {
+    text += `\n${data.synthesisNotice}\n`;
   }
 
   const results = data.results ?? [];

@@ -194,6 +194,65 @@ describe("renderCheckResponseMarkdown", () => {
     expect(text).toContain(`#2 (similarity n/a) ${UUID_B}`);
   });
 
+  describe("premium synthesis", () => {
+    it("renders a ## Synthesis section between the header and the exemplars when synthesis is present", () => {
+      const res = baseResponse();
+      res.data!.synthesis = "You favor Hono for edge deployment [id-a] over warm palettes [id-b].";
+      const text = renderCheckResponseMarkdown(res);
+      const headerPos = text.indexOf(`Recipe checked as #${CHECK_ID}`);
+      const synthPos = text.indexOf("## Synthesis");
+      const firstExemplarPos = text.indexOf("#1 ");
+      expect(synthPos).toBeGreaterThan(headerPos);
+      expect(synthPos).toBeLessThan(firstExemplarPos);
+      expect(text).toContain("## Synthesis\nYou favor Hono for edge deployment [id-a] over warm palettes [id-b].");
+    });
+
+    it("renders the notice as a plain line (no heading) when only synthesisNotice is present", () => {
+      const res = baseResponse();
+      res.data!.synthesisNotice = "Synthesis is a premium feature — enable it in settings.";
+      const text = renderCheckResponseMarkdown(res);
+      expect(text).not.toContain("## Synthesis");
+      const noticePos = text.indexOf("Synthesis is a premium feature");
+      const firstExemplarPos = text.indexOf("#1 ");
+      expect(noticePos).toBeGreaterThan(0);
+      expect(noticePos).toBeLessThan(firstExemplarPos);
+    });
+
+    it("prefers the synthesis section over the notice when both are set", () => {
+      const res = baseResponse();
+      res.data!.synthesis = "Profile paragraph.";
+      res.data!.synthesisNotice = "premium hint";
+      const text = renderCheckResponseMarkdown(res);
+      expect(text).toContain("## Synthesis\nProfile paragraph.");
+      expect(text).not.toContain("premium hint");
+    });
+
+    it("omits both when neither is set", () => {
+      const text = renderCheckResponseMarkdown(baseResponse());
+      expect(text).not.toContain("## Synthesis");
+    });
+
+    it("still renders the synthesis section in position when there are no exemplars", () => {
+      const res: CheckResponseJson = {
+        ok: true,
+        data: {
+          recipeId: CHECK_ID,
+          searchMode: "semantic",
+          results: [],
+          totalResults: 0,
+          page: 1,
+          totalPages: 0,
+          synthesis: "A profile even with no similar recipes.",
+        },
+      };
+      const text = renderCheckResponseMarkdown(res);
+      const synthPos = text.indexOf("## Synthesis");
+      const noResultsPos = text.indexOf("No similar recipes found.");
+      expect(synthPos).toBeGreaterThan(0);
+      expect(synthPos).toBeLessThan(noResultsPos);
+    });
+  });
+
   describe("known_recipes stubs (rendering only)", () => {
     it("renders a declared-known result as a one-line stub with id, gist, and similarity", () => {
       const res = baseResponse();
