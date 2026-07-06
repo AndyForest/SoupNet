@@ -288,7 +288,7 @@ Found 2026-06-11 while investigating "the settings page isn't in the admin nav":
 
 ### `[IMPL]` Audit-log event coverage beyond recipe.checked (F9 follow-up)
 
-`claimnet.audit_log` only records `recipe.checked`. The F9 finding (2026-04-09 audit) calls for auth events (login success/fail, register, verify), API-key lifecycle (create/revoke), and admin actions (settings changes, invites, waitlist notify). Now that the email log covers the outbound-email surface (2026-06-11), audit_log is the remaining gap for security sweeps. Design note: keep writes through `writeAudit`, one event type per action, and mind that F29 per-key rate limiting queries this table — schema changes must keep that path fast.
+`claimnet.audit_log` only records `recipe.checked` plus a few point additions (`check.searched`, `group.description_updated`, and — since 2026-07-06 — `user.premium_set` from the admin premium toggle, a partial advance on the admin-actions gap). The F9 finding (2026-04-09 audit) calls for auth events (login success/fail, register, verify), API-key lifecycle (create/revoke), and admin actions (settings changes, invites, waitlist notify). Now that the email log covers the outbound-email surface (2026-06-11), audit_log is the remaining gap for security sweeps. Design note: keep writes through `writeAudit`, one event type per action, and mind that F29 per-key rate limiting queries this table — schema changes must keep that path fast.
 
 ### `[IMPL]` Waitlist: notify when a spot opens
 

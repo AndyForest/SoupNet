@@ -22,6 +22,7 @@ interface UsersListResponse {
       email: string;
       role: string;
       emailVerifiedAt: string | null;
+      premiumAt: string | null;
       lastLoginAt: string | null;
       activeKeyCount: number;
       recipeCount: number;
@@ -46,6 +47,7 @@ interface StatsResponse {
 }
 
 let adminToken = "";
+let adminUserId = "";
 let tenantToken = "";
 const tenantEmail = `admin-users-tenant-${Date.now()}@test.local`;
 const tenantPassword = "integration-test-password-123";
@@ -63,6 +65,7 @@ describe.skipIf(!BASE || !DEV_EMAIL || !DEV_PASSWORD)("/admin/users + /admin/sta
       throw new Error("Admin login failed: " + JSON.stringify(adminJson));
     }
     adminToken = adminJson.data.token;
+    adminUserId = adminJson.data.user?.id ?? "";
 
     // Create a non-admin tenant to exercise the role gate
     await fetch(`${BASE}/auth/register`, {
@@ -145,6 +148,80 @@ describe.skipIf(!BASE || !DEV_EMAIL || !DEV_PASSWORD)("/admin/users + /admin/sta
     const emails = body.data!.users.map((u) => u.email);
     const sorted = [...emails].sort();
     expect(emails).toEqual(sorted);
+  });
+
+  // ── PUT /admin/users/:userId/premium ──────────────────────────────────────
+
+  it("PUT /admin/users/:userId/premium requires auth", async () => {
+    const res = await fetch(`${BASE}/admin/users/${adminUserId}/premium`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ premium: true }),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it("PUT /admin/users/:userId/premium forbids non-system tenants", async () => {
+    if (!tenantToken) return; // tenant may be unverified; the gate still blocks at verify step
+    const res = await fetch(`${BASE}/admin/users/${adminUserId}/premium`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${tenantToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ premium: true }),
+    });
+    expect([401, 403]).toContain(res.status);
+  });
+
+  it("PUT /admin/users/:userId/premium rejects a non-boolean body with 400", async () => {
+    const res = await fetch(`${BASE}/admin/users/${adminUserId}/premium`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${adminToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ premium: "yes" }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("PUT /admin/users/:userId/premium 404s for an unknown user", async () => {
+    const res = await fetch(`${BASE}/admin/users/00000000-0000-0000-0000-000000000000/premium`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${adminToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ premium: true }),
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it("system admin can set and unset premium; GET /admin/users reflects it", async () => {
+    // Grant premium on the admin's own account, then verify the list + filter.
+    const grant = await fetch(`${BASE}/admin/users/${adminUserId}/premium`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${adminToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ premium: true }),
+    });
+    expect(grant.status).toBe(200);
+    const grantBody = (await grant.json()) as { ok: boolean; data?: { premium: boolean } };
+    expect(grantBody.ok).toBe(true);
+    expect(grantBody.data?.premium).toBe(true);
+
+    const listPremium = await fetch(`${BASE}/admin/users?premium=yes&limit=200`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    });
+    const listPremiumBody = (await listPremium.json()) as UsersListResponse;
+    const adminRow = listPremiumBody.data!.users.find((u) => u.id === adminUserId);
+    expect(adminRow).toBeDefined();
+    expect(adminRow!.premiumAt).not.toBeNull();
+
+    // Revoke and confirm the row drops out of the premium filter.
+    const revoke = await fetch(`${BASE}/admin/users/${adminUserId}/premium`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${adminToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ premium: false }),
+    });
+    expect(revoke.status).toBe(200);
+
+    const listAfter = await fetch(`${BASE}/admin/users?premium=yes&limit=200`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    });
+    const listAfterBody = (await listAfter.json()) as UsersListResponse;
+    expect(listAfterBody.data!.users.some((u) => u.id === adminUserId)).toBe(false);
   });
 
   it("GET /admin/stats returns required fields", async () => {
