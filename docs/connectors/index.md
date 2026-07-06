@@ -21,7 +21,9 @@ You'll need a Soup.net account — signups are free and open: [create one here](
 
 ## Connect via OAuth (chat-style AIs)
 
-The fastest setup. The AI redirects you to Soup.net, you sign in, you pick which recipe books to share, and you're done. All four clients below use the same Soup.net URL: `https://mcp.soup.net/mcp`.
+The fastest setup. The AI redirects you to Soup.net, you sign in, you pick which recipe books to share, and you're done. All four clients below use the same Soup.net URL:
+
+`https://mcp.soup.net/mcp`
 
 ### Claude (claude.ai)
 
