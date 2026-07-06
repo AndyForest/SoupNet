@@ -50,6 +50,10 @@ export interface SearchPipelineParams {
   traceIds?: string[] | undefined;
   /** Trace ID to exclude from results (typically the just-submitted trace). */
   excludeTraceId?: string | undefined;
+  /** Keyword narrowing over recipe text (whitespace/comma-separated terms,
+   *  ANDed, case-insensitive substring). Applied in SQL by hybridSearch so
+   *  counts and pagination stay exact. Only meaningful in query mode. */
+  keywordFilter?: string | undefined;
   /** Include raw vectors in response (for visualization). */
   includeVectors?: boolean | undefined;
   /** Two concept terms for TCAV-style axis projection (comma-separated).
@@ -276,6 +280,7 @@ export async function runSearchPipeline(
       offset,
       excludeTraceId: params.excludeTraceId,
       queryVectorStr,
+      keywordFilter: params.keywordFilter,
     }));
 
     results = searchResponse.results.map((r) => ({

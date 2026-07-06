@@ -14,6 +14,7 @@ import type { AppEnv } from "../types";
 import { composeBriefing } from "../services/briefing";
 import { validateKey } from "../services/api-key.service";
 import { parseRecipeIds } from "../services/recipe-lookup.service";
+import { invalidKeyMessage } from "../lib/key-remediation";
 
 const briefing = new Hono<AppEnv>();
 
@@ -30,7 +31,10 @@ briefing.get("/", async (c) => {
   const db = getDb();
   const validated = await validateKey(db, rawKey);
   if (!validated) {
-    return c.json({ ok: false, error: "Invalid or expired API key" }, 401);
+    // Remediation copy rides in the error string so the stdio MCP proxy
+    // (which surfaces backend `error` verbatim) inherits it — the bare
+    // message stranded agents mid-task (2026-07-05 eval, key-death finding).
+    return c.json({ ok: false, error: invalidKeyMessage() }, 401);
   }
 
   const backendUrl = process.env["BACKEND_URL"] ?? "http://localhost:3101";
