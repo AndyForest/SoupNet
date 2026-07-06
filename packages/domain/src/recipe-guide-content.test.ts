@@ -1,22 +1,23 @@
 import { describe, it, expect } from "vitest";
-import { BRIEFING, buildCorpusContextSection } from "./recipe-guide-content";
+import { BRIEFING, BRIEFING_KEY_PLACEHOLDER, buildCorpusContextSection } from "./recipe-guide-content";
 import type { BriefingBuildInput, BriefingGroup } from "./recipe-guide-content";
 
 /**
- * Briefing template tests — the OAuth-connection branch.
+ * Briefing template tests — the no-raw-credential invariant.
  *
- * An OAuth access token (api_keys.key_type = 'oauth') expires within the hour
- * and is refreshed automatically by the connecting client. Rendering it in the
- * "## Your API key" section (or embedding it as ?key= in setup URLs) is false
- * and alarming — a claude.ai agent warned its user about a "leaked key"
- * (2026-07-06). These tests pin the two contracts:
- *   1. oauthConnection: true → NO raw credential, NO key-embedded URL, even
- *      when the caller (wrongly) passes the raw token as apiKey.
- *   2. non-OAuth (flag omitted or false) → byte-identical legacy output with
- *      the pasteable key stated plainly and embedded in every URL.
+ * BRIEFING.build takes NO key input: a raw credential physically cannot
+ * appear in composed output. Two modes exist:
+ *   1. Placeholder mode (every non-OAuth composition): the literal
+ *      BRIEFING_KEY_PLACEHOLDER renders wherever a key belongs. Every Bearer
+ *      consumer already holds the real key (they authenticated with it);
+ *      the human copy-briefing flow substitutes the placeholder client-side
+ *      (apps/frontend/src/lib/briefing-key.ts — the literals must match).
+ *   2. OAuth mode: credential-free connection notes — no placeholder-in-URL
+ *      sections at all, because a 1h access token is not a pasteable key
+ *      (a claude.ai agent warned its user about a "leaked key" when the raw
+ *      token rendered here, 2026-07-06).
  */
 
-const FAKE_KEY = "cn_s_FAKEKEYFORTESTSONLY0000000000";
 const BACKEND = "https://mcp.example.test";
 const FRONTEND = "https://www.example.test";
 
@@ -44,47 +45,70 @@ const groups: BriefingGroup[] = [
 function buildInput(overrides: Partial<BriefingBuildInput> = {}): BriefingBuildInput {
   return {
     user: { displayName: "Test User", email: "user@example.test" },
-    apiKey: FAKE_KEY,
     backendUrl: BACKEND,
     frontendUrl: FRONTEND,
-    checkUrl: `${BACKEND}/check?key=${FAKE_KEY}`,
     groups,
     exemplarsSection: "## Context from all your recipe books\n\n(exemplars)",
     ...overrides,
   };
 }
 
-describe("BRIEFING.build — non-OAuth (daily/scoped) keys", () => {
-  it("states the pasteable key plainly and embeds it in setup URLs", () => {
-    const text = BRIEFING.build(buildInput());
+/** A raw key can only look like cn_d_/cn_s_ + base62 — assert none renders. */
+function expectNoRawKey(text: string) {
+  expect(text).not.toMatch(/cn_[sd]_[A-Za-z0-9]+/);
+}
+
+describe("BRIEFING.build — placeholder mode (daily/scoped keys)", () => {
+  const text = BRIEFING.build(buildInput());
+
+  it("renders the literal placeholder in the key section and every key-bearing URL/config", () => {
     expect(text).toContain("## Your API key");
-    expect(text).toContain(`\n${FAKE_KEY}\n`);
-    expect(text).toContain(`?key=${FAKE_KEY}`);
-    expect(text).toContain(`Bearer ${FAKE_KEY}`);
-    expect(text).toContain("## Setup — MCP-capable agents");
-    expect(text).toContain("## Setup — web-only agents");
-    expect(text).toContain("## Formatting recipe-check links — for web agents that hand URLs back to the user");
+    expect(text).toContain(`\n${BRIEFING_KEY_PLACEHOLDER}\n`);
+    expect(text).toContain(`/check?key=${BRIEFING_KEY_PLACEHOLDER}`);
+    expect(text).toContain(`/docs/recipe-check-guide?key=${BRIEFING_KEY_PLACEHOLDER}`);
+    expect(text).toContain(`/docs/mcp-setup?key=${BRIEFING_KEY_PLACEHOLDER}`);
+    expect(text).toContain(`Bearer ${BRIEFING_KEY_PLACEHOLDER}`);
+    expect(text).toContain(`SOUPNET_API_KEY=${BRIEFING_KEY_PLACEHOLDER}`);
     expect(text).not.toContain("## Your connection");
   });
 
+  it("never renders anything shaped like a raw key", () => {
+    expectNoRawKey(text);
+  });
+
+  it("explains both artifact states truthfully (pre- and post-substitution)", () => {
+    // Pre-substitution reader (Bearer agent, incl. stdio-proxy consumers):
+    expect(text).toContain("the same Bearer token this briefing was fetched with");
+    // Post-substitution reader (human-pasted artifact):
+    expect(text).toContain("it was filled in for you");
+  });
+
+  it("keeps prose free of the placeholder literal outside key positions, so replaceAll cannot mangle a sentence", () => {
+    // Every occurrence must sit in a key position: directly after "?key=",
+    // "Bearer ", "SOUPNET_API_KEY=", or at the start of a line (the key
+    // section's value line). Prose like "substitute YOUR_API_KEY here" would
+    // get a raw key spliced mid-sentence by the frontend's replaceAll.
+    const allowedBefore = ["?key=", "Bearer ", "SOUPNET_API_KEY=", "\n"];
+    let idx = text.indexOf(BRIEFING_KEY_PLACEHOLDER);
+    expect(idx).toBeGreaterThan(-1);
+    while (idx !== -1) {
+      const ok = allowedBefore.some((prefix) => text.slice(Math.max(0, idx - prefix.length), idx) === prefix);
+      expect(ok, `placeholder at index ${idx} preceded by ${JSON.stringify(text.slice(Math.max(0, idx - 20), idx))}`).toBe(true);
+      idx = text.indexOf(BRIEFING_KEY_PLACEHOLDER, idx + 1);
+    }
+  });
+
   it("is byte-identical whether oauthConnection is omitted or false", () => {
-    const omitted = BRIEFING.build(buildInput());
     const explicitFalse = BRIEFING.build(buildInput({ oauthConnection: false }));
-    expect(explicitFalse).toBe(omitted);
+    expect(explicitFalse).toBe(text);
   });
 });
 
 describe("BRIEFING.build — OAuth connections", () => {
-  // Deliberately pass the raw token as apiKey: the template branch itself must
-  // guarantee the credential never renders, independent of the caller's
-  // defense-in-depth (composeBriefing additionally passes apiKey: "" and a
-  // keyless checkUrl for oauth keys).
   const oauthText = BRIEFING.build(buildInput({ oauthConnection: true }));
 
   it("renders no raw credential and no key-embedded URL", () => {
-    expect(oauthText).not.toContain(FAKE_KEY);
-    expect(oauthText).not.toContain("cn_s_");
-    expect(oauthText).not.toContain("cn_d_");
+    expectNoRawKey(oauthText);
     expect(oauthText).not.toContain("?key=");
     expect(oauthText).not.toContain("&key=");
   });
@@ -145,9 +169,8 @@ describe("buildCorpusContextSection", () => {
       groups,
       exemplarsSection: "## Context from all your recipe books\n\n(exemplars)",
     });
+    expectNoRawKey(text);
     expect(text).not.toContain("?key=");
-    expect(text).not.toContain("cn_s_");
-    expect(text).not.toContain("cn_d_");
     expect(text).toContain("## Your recipe books");
   });
 });

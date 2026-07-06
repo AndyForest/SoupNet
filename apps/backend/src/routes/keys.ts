@@ -187,7 +187,7 @@ keys.delete("/:id", async (c) => {
   return c.json({ ok: true, data: { deleted } });
 });
 
-// GET /keys/briefing?key=<raw-key>&[recipe_book=]&[axes=]&[filter=]&[k=]&[strategy=]&[purpose=]&[recipe_ids=]
+// POST /keys/briefing  body: { key, [recipe_book], [axes], [filter], [k], [strategy], [purpose], [recipe_ids] }
 //
 // Unified briefing — returns a single markdown artifact that covers both
 // MCP-capable and web-only agents (the prior `type=mcp|web` split was
@@ -196,25 +196,42 @@ keys.delete("/:id", async (c) => {
 // (Dashboard, Recipe Map, ApiKeys page, MCP get_briefing) primes the
 // receiving agent with the same shape-of-the-corpus context.
 //
-// Optional query params let the recipe-map page pass through user-tuned
+// POST with the raw key in the JSON body — this was GET ?key=<raw-key>
+// until 2026-07-06. Request URLs land in load-balancer access logs (F24
+// keeps ALB logs disabled for exactly that reason), so the raw key must
+// not transit the URL. The briefing text itself renders only the
+// BRIEFING_KEY_PLACEHOLDER literal; the frontend substitutes the real key
+// client-side at copy time (substituteBriefingKey helper).
+//
+// Optional body fields let the recipe-map page pass through user-tuned
 // clustering knobs; others get sensible defaults from the user's preferences.
-keys.get("/briefing", async (c) => {
+keys.post("/briefing", async (c) => {
   const user = c.get("user");
-  const rawKey = c.req.query("key");
 
-  if (!rawKey) {
-    return c.json({ ok: false, error: "key parameter is required" }, 400);
+  let body: Record<string, unknown>;
+  try {
+    body = (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return c.json({ ok: false, error: "JSON body required" }, 400);
   }
 
-  const kParam = c.req.query("k");
-  const k = kParam ? parseInt(kParam, 10) : undefined;
+  const rawKey = typeof body["key"] === "string" ? body["key"] : "";
+  if (!rawKey) {
+    return c.json({ ok: false, error: "key field is required in the JSON body" }, 400);
+  }
+
+  const asString = (field: string): string | undefined =>
+    typeof body[field] === "string" ? (body[field] as string) : undefined;
+
+  const kRaw = body["k"];
+  const k = typeof kRaw === "number" ? kRaw : typeof kRaw === "string" ? parseInt(kRaw, 10) : undefined;
 
   const backendUrl = process.env["BACKEND_URL"] ?? "http://localhost:3101";
   const frontendUrl = process.env["FRONTEND_URL"] ?? "http://localhost:5273";
 
   // WT-3 passthrough: purpose (within-cluster exemplar biasing) + recipe_ids
   // ("Requested recipes" section) — same semantics as GET /briefing.
-  const recipeIdsParam = c.req.query("recipe_ids");
+  const recipeIdsParam = asString("recipe_ids");
   const recipeIds = recipeIdsParam ? parseRecipeIds(recipeIdsParam) : undefined;
 
   const result = await composeBriefing({
@@ -224,12 +241,12 @@ keys.get("/briefing", async (c) => {
     backendUrl,
     frontendUrl,
     options: {
-      k: k && !Number.isNaN(k) ? k : undefined,
-      axes: c.req.query("axes"),
-      filter: c.req.query("filter"),
-      vectorStrategy: c.req.query("strategy"),
-      recipeBookIdOrSlug: c.req.query("recipe_book"),
-      purpose: c.req.query("purpose"),
+      k: k !== undefined && !Number.isNaN(k) ? k : undefined,
+      axes: asString("axes"),
+      filter: asString("filter"),
+      vectorStrategy: asString("strategy"),
+      recipeBookIdOrSlug: asString("recipe_book"),
+      purpose: asString("purpose"),
       ...(recipeIds && recipeIds.length > 0 ? { recipeIds } : {}),
     },
   });

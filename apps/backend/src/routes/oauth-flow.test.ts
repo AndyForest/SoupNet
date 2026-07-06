@@ -460,7 +460,13 @@ describe.skipIf(!BASE)("OAuth 2.1 end-to-end flow", () => {
     expect(text).toContain("You're already connected");
   });
 
-  it("briefing composed for a plain daily key still states the pasteable key and embeds it in URLs", async () => {
+  // Placeholder invariant (2026-07-06): every consumer of GET /briefing
+  // supplied the key to fetch it, so echoing the raw key back is redundant —
+  // and raw keys must never appear in responses not gated by human-only JWT
+  // auth. The needle is the key we authenticated with, plus a shape-match
+  // for anything raw-key-like. These are the Bearer-path CI guards (the
+  // JWT-path guard lives in keys.test.ts).
+  it("GET /briefing for a plain daily key renders the placeholder, never the raw key", async () => {
     const keyRes = await postJson("/keys/daily", { label: `oauth-brief-plain-${uid}` }, userToken);
     expect(keyRes.status).toBe(200);
     const keyBody = (await keyRes.json()) as { ok: boolean; data?: { key?: string } };
@@ -471,12 +477,43 @@ describe.skipIf(!BASE)("OAuth 2.1 end-to-end flow", () => {
       headers: { Authorization: `Bearer ${plainKey}` },
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { ok: boolean; data?: { text?: string } };
+    const raw = await res.text();
+    expect(raw).not.toContain(plainKey);
+    const body = JSON.parse(raw) as { ok: boolean; data?: { text?: string } };
     const text = body.data?.text ?? "";
     expect(text).toContain("## Your API key");
-    expect(text).toContain(plainKey);
-    expect(text).toContain(`?key=${plainKey}`);
+    expect(text).toContain("YOUR_API_KEY");
+    expect(text).toContain("?key=YOUR_API_KEY");
+    expect(text).not.toMatch(/cn_[sd]_[A-Za-z0-9]+/);
     expect(text).not.toContain("## Your connection");
+  });
+
+  it("MCP get_briefing renders the placeholder, never the raw key", async () => {
+    const keyRes = await postJson("/keys/daily", { label: `oauth-brief-mcp-${uid}` }, userToken);
+    const keyBody = (await keyRes.json()) as { ok: boolean; data?: { key?: string } };
+    const mcpKey = keyBody.data?.key ?? "";
+    expect(mcpKey).toBeTruthy();
+
+    const callRes = await fetch(`${BASE}/mcp`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+        Authorization: `Bearer ${mcpKey}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "tools/call",
+        params: { name: "get_briefing", arguments: {} },
+        id: 1,
+      }),
+    });
+    expect(callRes.status).toBe(200);
+    const raw = await callRes.text();
+    expect(raw).toContain("Soup.net Agent Briefing");
+    expect(raw).not.toContain(mcpKey);
+    expect(raw).toContain("YOUR_API_KEY");
+    expect(raw).not.toMatch(/cn_[sd]_[A-Za-z0-9]{10,}/);
   });
 
   // Migration 0028 backfill: rows consumed under the OLD marker scheme carry

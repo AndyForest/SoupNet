@@ -124,16 +124,15 @@ export async function composeBriefing(input: BriefingComposeInput): Promise<Brie
     metadata: { surface: input.surface ?? null, exemplarCount },
   });
 
-  // OAuth access tokens (key_type = 'oauth') expire within the hour and are
-  // refreshed automatically by the connecting client — they are not pasteable
-  // credentials. The briefing template renders credential-free sections when
-  // oauthConnection is set; passing a keyless checkUrl and an empty apiKey on
-  // top of that means the raw token physically cannot appear in the output
-  // even if a future template edit misses the branch (defense in depth).
+  // No raw credential ever reaches the template: BRIEFING.build takes no key
+  // input at all. Non-OAuth briefings render the literal placeholder
+  // (BRIEFING_KEY_PLACEHOLDER) — every Bearer consumer already supplied the
+  // key to fetch this briefing, and the human copy-briefing flow substitutes
+  // the placeholder client-side at copy time. OAuth connections
+  // (key_type = 'oauth') get credential-free connection notes instead — a
+  // placeholder would mislead there (the 1h access token is not a pasteable
+  // key).
   const isOAuth = scope.keyType === "oauth";
-  const checkUrl = isOAuth
-    ? `${input.backendUrl}/check`
-    : `${input.backendUrl}/check?key=${encodeURIComponent(input.rawKey)}`;
 
   // Requested recipes (WT-3): render exactly the ids the caller named, with
   // the same ACL and marker semantics as GET /recipes / the get_recipes tool.
@@ -153,10 +152,8 @@ ${renderRecipeEntries(entries)}${truncated}`;
 
   const text = BRIEFING.build({
     user: scope.user,
-    apiKey: isOAuth ? "" : input.rawKey,
     backendUrl: input.backendUrl,
     frontendUrl: input.frontendUrl,
-    checkUrl,
     groups: scope.groups,
     ...(isOAuth ? { oauthConnection: true } : {}),
     ...(exemplarsSection ? { exemplarsSection } : {}),

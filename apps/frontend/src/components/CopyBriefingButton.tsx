@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { authFetch } from "../auth.js";
 import { useClipboard } from "../hooks/useClipboard.js";
+import { substituteBriefingKey } from "../lib/briefing-key.js";
 import { Icon } from "./Icon.js";
 
 interface CopyBriefingButtonProps {
@@ -25,9 +26,14 @@ interface CopyBriefingButtonProps {
 
 /**
  * The standard "Copy agent briefing" button: mints a 24-hour daily key, then
- * copies the unified briefing (GET /keys/briefing) to the clipboard. Same
+ * copies the unified briefing (POST /keys/briefing) to the clipboard. Same
  * flow as the API Keys / Recipe Books / Recipe Map briefing buttons — one
  * artifact, no variants.
+ *
+ * The server response carries only the YOUR_API_KEY placeholder (raw keys
+ * never appear in briefing responses or URLs); substituteBriefingKey splices
+ * the freshly minted key in client-side so the copied artifact works
+ * standalone.
  *
  * The fetch runs inside copyAsync so the ClipboardItem Promise keeps iOS
  * Safari's user-gesture context alive across both awaits — a copy after a
@@ -57,12 +63,16 @@ export function CopyBriefingButton({ writeRecipeBookId, label, style }: CopyBrie
       throw new Error(keyJson.error ?? "Failed to generate key");
     }
 
-    const briefRes = await authFetch(`/keys/briefing?key=${encodeURIComponent(keyJson.data.key)}`);
+    const briefRes = await authFetch("/keys/briefing", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: keyJson.data.key }),
+    });
     const briefJson = (await briefRes.json()) as { ok: boolean; data?: { text: string } };
     if (!briefJson.ok || !briefJson.data) throw new Error("Failed to get briefing");
 
     void queryClient.invalidateQueries({ queryKey: ["keys"] });
-    return briefJson.data.text;
+    return substituteBriefingKey(briefJson.data.text, keyJson.data.key);
   }
 
   async function handleCopy() {

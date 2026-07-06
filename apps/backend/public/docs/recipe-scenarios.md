@@ -299,8 +299,8 @@ They drag the k slider to 5 so they get a small, focused exemplar set rather tha
 The user clicks **Copy agent briefing**. The Soup.net frontend:
 
 1. Mints the daily API key (or reuses the one in custom-briefing mode).
-2. Calls `GET /keys/briefing?key=...&k=5&axes=retro%20pixel,industrial%20machinery&filter=...&strategy=...` with the map's current refinement params.
-3. The backend re-runs clustering with those params and composes the unified briefing — connection setup, principles, recipe books, and **a `## Context from <books>` section with 5 exemplar recipes** drawn from the corpus slice the user just framed on the map.
+2. Calls `POST /keys/briefing` with the key and the map's current refinement params (`k=5`, `axes=retro pixel,industrial machinery`, `filter`, `strategy`) in the JSON body — the raw key never rides in a URL.
+3. The backend re-runs clustering with those params and composes the unified briefing — connection setup, principles, recipe books, and **a `## Context from <books>` section with 5 exemplar recipes** drawn from the corpus slice the user just framed on the map. The composed text carries only a key placeholder; the frontend substitutes the real key at copy time.
 4. The full markdown lands in the user's clipboard.
 
 ### Phase 4: Paste into ChatGPT

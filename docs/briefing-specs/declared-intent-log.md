@@ -2,6 +2,34 @@
 
 Every PR that touches briefing copy (`packages/domain/src/recipe-guide-content.ts`, the briefing composer, MCP tool descriptions) appends an entry here **before** merging: the date, each edit, the scenarios it intends to move, and the rationale for why every other scenario holds. See [README.md](README.md) §The regression rule. Newest entry first.
 
+## 2026-07-06 — Placeholder mode: no raw key in any briefing response
+
+Operator-approved generalization of the same day's OAuth branch. Principle: every MCP/API consumer of the briefing had to supply the key to get the briefing, so echoing it back is redundant; the only consumer that needs an inline key is the human copy-briefing flow, and the browser does that substitution itself. Raw keys never appear in responses — not even on the JWT path.
+
+### Edits
+
+1. **`BRIEFING.build` takes no key input at all** (`apiKey` and `checkUrl` removed from `BriefingBuildInput`). Non-OAuth compositions render the exported `BRIEFING_KEY_PLACEHOLDER` literal (`YOUR_API_KEY`) in the key section and every key-bearing URL/config (check URL, guide URL, mcp-setup link, Codex env/inline configs, Claude Code one-liner/JSON, link-format example). The OAuth mode from the previous entry is unchanged (placeholders would mislead there — nothing pasteable exists).
+2. **"## Your API key" copy** rewritten as a dual-state explanation, true both pre-substitution (Bearer agents — GET /briefing, MCP get_briefing, and the stdio proxy's Claude Desktop consumers, who hold their key in client config) and post-substitution (the human-pasted artifact, where the dashboard spliced the real key in). Copy rule, enforced by a domain test: the placeholder literal never appears in prose — only in key positions — because the frontend's `replaceAll` would splice a raw key mid-sentence.
+3. **`GET /keys/briefing?key=` → `POST /keys/briefing` with the key in the JSON body** — minted keys stop transiting request URLs (F24 keeps ALB access logs disabled precisely because URLs carried keys). All four dashboard call sites (CopyBriefingButton, ApiKeysPage, RecipeMapPage, GroupsPage AgentConnectBox) now POST and substitute the raw key they already hold client-side via the shared `substituteBriefingKey` helper (`apps/frontend/src/lib/briefing-key.ts`; its literal must match the domain's).
+
+### Guards (CI-enforced under test:ci)
+
+- Domain: placeholder mode renders the literal in every key position, nothing raw-key-shaped (`cn_[sd]_` pattern), prose free of the literal (`recipe-guide-content.test.ts`).
+- Bearer paths: GET /briefing and MCP get_briefing responses contain neither the authenticated key nor any `cn_[sd]_`-shaped substring, and do contain the placeholder (`oauth-flow.test.ts`).
+- JWT path: POST /keys/briefing output carries the placeholder and never the raw key (`keys.test.ts`).
+- Frontend: `substituteBriefingKey` composes an artifact carrying the key at every placeholder position (`briefing-key.test.ts`).
+
+### Scenarios intended to move
+
+None — no scenario asserts the briefing artifact's key is server-inlined; they assert what the *received* artifact affords.
+
+### Scenarios watched, with rationale for holding
+
+- **`web-only-agents.feature` (all scenarios)** — that population receives the HUMAN-pasted artifact, which after the dashboard's copy-time substitution still carries a real key in the identical positions (key section value line, `?key=` URLs, Bearer configs). The frontend unit test proves the composed artifact is position-for-position what the server used to inline, so the pasted-briefing UX is unchanged.
+- **Bearer MCP agents (comprehension/checking scenarios)** — they never needed the echoed key (they call tools directly); the key section now says exactly that. The stdio-proxy population (Claude Desktop) holds its key in client config per the connection it was set up with.
+- **All other scenarios** — principles, format, when/how-to-check, feedback, divergence, corpus-context copy untouched in both modes.
+- Suite re-run: harness not yet wired (README §regression rule "once wired"); .feature files remain the manual checklist.
+
 ## 2026-07-06 — OAuth connections: credential-free briefing branch
 
 Backlog item "Reconcile the briefing's API-key-in-URL assumptions for OAuth-connected agents". Live failure (2026-07-06, claude.ai connector): the briefing rendered the raw 1-hour OAuth access token in "## Your API key" and embedded it as `?key=` in every setup URL; the connected agent warned the user about a "leaked key" that wasn't one.

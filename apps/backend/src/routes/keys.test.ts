@@ -28,6 +28,16 @@ let keyB = "";
 let groupASlug = "";
 let groupBSlug = "";
 
+// POST with the raw key in the JSON body — the ?key= query param was dropped
+// 2026-07-06 so minted keys stop transiting request URLs (F24: access logs).
+function fetchBriefing(rawKey: string): Promise<Response> {
+  return fetch(`${BASE}/keys/briefing`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${userToken}` },
+    body: JSON.stringify({ key: rawKey }),
+  });
+}
+
 describe.skipIf(!BASE)("/keys briefing — F33 lookup-by-hashed-key", () => {
   beforeAll(async () => {
     const email = `keys-f33-${uid}@test.local`;
@@ -124,10 +134,7 @@ describe.skipIf(!BASE)("/keys briefing — F33 lookup-by-hashed-key", () => {
   // ally selects the exact key, so the briefing's group set must reflect
   // *that* key — not a sibling key.
   it("F33: each scoped key's briefing returns its own group set (no prefix collision)", async () => {
-    const briefA = await fetch(
-      `${BASE}/keys/briefing?key=${encodeURIComponent(keyA)}`,
-      { headers: { Authorization: `Bearer ${userToken}` } },
-    );
+    const briefA = await fetchBriefing(keyA);
     expect(briefA.status).toBe(200);
     const bodyA = (await briefA.json()) as BriefingResponse;
     expect(bodyA.ok).toBe(true);
@@ -135,16 +142,41 @@ describe.skipIf(!BASE)("/keys briefing — F33 lookup-by-hashed-key", () => {
     expect(slugsA).toContain(groupASlug);
     expect(slugsA).not.toContain(groupBSlug);
 
-    const briefB = await fetch(
-      `${BASE}/keys/briefing?key=${encodeURIComponent(keyB)}`,
-      { headers: { Authorization: `Bearer ${userToken}` } },
-    );
+    const briefB = await fetchBriefing(keyB);
     expect(briefB.status).toBe(200);
     const bodyB = (await briefB.json()) as BriefingResponse;
     expect(bodyB.ok).toBe(true);
     const slugsB = (bodyB.data?.groups ?? []).map((g) => g.slug);
     expect(slugsB).toContain(groupBSlug);
     expect(slugsB).not.toContain(groupASlug);
+  });
+
+  // Placeholder invariant (2026-07-06): raw keys never appear in briefing
+  // responses — the text carries only the YOUR_API_KEY placeholder, and the
+  // frontend substitutes the real key client-side at copy time. This is the
+  // JWT-path half of the CI enforcement (the Bearer-path guards live in
+  // oauth-flow.test.ts).
+  it("briefing text carries the placeholder and never the raw key", async () => {
+    const res = await fetchBriefing(keyA);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as BriefingResponse;
+    const text = body.data?.text ?? "";
+    expect(text).toBeTruthy();
+
+    expect(text).toContain("YOUR_API_KEY");
+    expect(text).toContain("## Your API key");
+    expect(text).not.toContain(keyA);
+    // Nothing raw-key-shaped at all, from any key.
+    expect(text).not.toMatch(/cn_[sd]_[A-Za-z0-9]+/);
+  });
+
+  it("POST /keys/briefing without a key field is a 400", async () => {
+    const res = await fetch(`${BASE}/keys/briefing`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${userToken}` },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(400);
   });
 
   it("F33: briefing 404s a key that doesn't belong to the authed user", async () => {
@@ -178,10 +210,7 @@ describe.skipIf(!BASE)("/keys briefing — F33 lookup-by-hashed-key", () => {
     const otherUsersKey = otherKeyBody.data?.key ?? "";
     expect(otherUsersKey).toBeTruthy();
 
-    const cross = await fetch(
-      `${BASE}/keys/briefing?key=${encodeURIComponent(otherUsersKey)}`,
-      { headers: { Authorization: `Bearer ${userToken}` } },
-    );
+    const cross = await fetchBriefing(otherUsersKey);
     expect(cross.status).toBe(404);
   });
 });
