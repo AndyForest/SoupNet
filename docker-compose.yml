@@ -46,6 +46,11 @@ services:
       # Embedding provider — "gemini" (real API) or "stub" (deterministic fake
       # vectors for tests, no quota cost).
       EMBEDDINGS_PROVIDER: ${EMBEDDINGS_PROVIDER:-gemini}
+      # Synthesis provider for the premium `synthesize` feature — "gemini"
+      # (real LLM call via SYNTHESIS_MODEL) or "stub" (deterministic profile,
+      # no LLM call). Reuses GEMINI_API_KEY.
+      SYNTHESIS_PROVIDER: ${SYNTHESIS_PROVIDER:-gemini}
+      SYNTHESIS_MODEL: ${SYNTHESIS_MODEL:-gemini-3.5-flash}
       # Async embedding pipeline (pg-boss consumers) runs in-process. Set to
       # "false" to disable and run HTTP-only. See ADR-0020.
       EMBEDDING_WORKER_ENABLED: ${EMBEDDING_WORKER_ENABLED:-true}

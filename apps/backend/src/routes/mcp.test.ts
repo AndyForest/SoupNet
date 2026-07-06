@@ -297,6 +297,89 @@ describe.skipIf(!BASE)("/mcp stateless behavior", () => {
     expect(res.status).toBe(200);
   });
 
+  // WP2: premium synthesis over MCP. A premium+flagged caller passing
+  // synthesize=true with response_format=structured gets the synthesis carried
+  // in structuredContent. CI runs SYNTHESIS_PROVIDER=stub so the profile is the
+  // deterministic "stub synthesis" text — asserting that string proves the
+  // field reached structuredContent without a live LLM.
+  it("check_recipe with synthesize=true (premium+flag) carries synthesis in structuredContent", { timeout: 20_000 }, async () => {
+    const uid = Date.now();
+    const email = `mcp-synth-${uid}@test.local`;
+    const password = "mcp-test-password-123";
+    const reg = await fetch(`${BASE}/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password, tosAccepted: true }),
+    });
+    const regBody = (await reg.json()) as { data?: { verificationToken?: string } };
+    const vtok = regBody.data?.verificationToken ?? "";
+    await fetch(`${BASE}/auth/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: vtok }),
+    });
+    const login = await fetch(`${BASE}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    const jwt = ((await login.json()) as { data?: { token?: string } }).data?.token ?? "";
+    const keyRes = await fetch(`${BASE}/keys/daily`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+    });
+    const synthKey = ((await keyRes.json()) as { data?: { key?: string } }).data?.key ?? "";
+    if (!synthKey) throw new Error("Failed to generate synthesis test key");
+
+    // Grant premium (direct SQL, mirroring check.test.ts) + flip the opt-in.
+    const postgres = (await import("postgres")).default;
+    const sql = postgres({
+      host: process.env["PGHOST"] ?? "localhost",
+      port: Number(process.env["PGPORT"] ?? 5633),
+      user: process.env["PGUSER"] ?? "claimnet",
+      password: process.env["PGPASSWORD"] ?? "claimnet",
+      database: process.env["PGDATABASE"] ?? "claimnet",
+    });
+    try {
+      await sql`UPDATE claimnet.users SET premium_at = now() WHERE email = ${email}`;
+    } finally {
+      await sql.end();
+    }
+    await fetch(`${BASE}/me/preferences`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+      body: JSON.stringify({ features: { synthesize: true } }),
+    });
+
+    const callRes = await fetch(`${BASE}/mcp`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: ACCEPT_BOTH,
+        Authorization: `Bearer ${synthKey}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "tools/call",
+        params: {
+          name: "check_recipe",
+          arguments: {
+            recipe: `As a preference-profiling engineer working on MCP synthesis coverage ${uid}, I prefer deterministic stub synthesis so that the structuredContent assertion is stable.`,
+            supporting_evidence: `Determinism keeps the gate testable.\n> "Same input, same profile"\n-- Synthesis test plan`,
+            synthesize: true,
+            response_format: "structured",
+          },
+        },
+        id: 7,
+      }),
+    });
+    expect(callRes.status).toBe(200);
+    const callText = await callRes.text();
+    // The deterministic stub profile is emitted only for an eligible caller,
+    // and only inside structuredContent for response_format=structured.
+    expect(callText).toContain("stub synthesis");
+  });
+
   // F41: framework-level body cap on /mcp (28 MiB = 20 MiB MAX_UPLOAD_BYTES
   // × 4/3 base64 inflation + JSON-RPC envelope slack). Must be the LAST test
   // in this describe — bodyLimit emits the 413 before draining the request,

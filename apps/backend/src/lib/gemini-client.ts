@@ -149,3 +149,53 @@ export async function batchEmbed(
   const data = (await response.json()) as { embeddings: Array<{ values: number[] }> };
   return data.embeddings.map((e) => e.values);
 }
+
+/**
+ * Generate text from a prompt via the Gemini generateContent endpoint — the
+ * server-side LLM call behind the premium `synthesize` feature (the first and
+ * only text-generation call in the stack; embeddings above are the rest).
+ *
+ * Graceful-degradation contract, mirroring embedParts: returns null on any
+ * failure (missing key, non-OK response, parse error, timeout) so the caller
+ * omits the synthesis rather than failing the check. An LLM hiccup must never
+ * break the recipe check it rides along with.
+ */
+export async function generateText(
+  prompt: string,
+  model: string,
+): Promise<string | null> {
+  const apiKey = process.env["GEMINI_API_KEY"];
+  if (!apiKey) return null; // graceful fallback — no API key means no synthesis
+
+  const url = `${GEMINI_API_URL}/${model}:generateContent`;
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+      }),
+      signal: AbortSignal.timeout(30_000),
+    });
+
+    if (!response.ok) {
+      console.warn(
+        `[gemini] generateText failed: ${response.status} ${await response.text()}`,
+      );
+      return null;
+    }
+
+    const data = (await response.json()) as {
+      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    };
+    const text = data.candidates?.[0]?.content?.parts
+      ?.map((p) => p.text ?? "")
+      .join("")
+      .trim();
+    return text && text.length > 0 ? text : null;
+  } catch (err) {
+    console.warn("[gemini] generateText request error:", err);
+    return null;
+  }
+}

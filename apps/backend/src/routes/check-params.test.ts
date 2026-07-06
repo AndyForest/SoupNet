@@ -7,6 +7,7 @@ const empty: PageParams = {
   clusters: undefined, maxChars: undefined, expand: undefined, compact: undefined,
   axes: undefined, group: undefined, readGroups: undefined, decidedAt: undefined,
   agentId: undefined, knownRecipes: undefined, filter: undefined,
+  synthesize: undefined,
   imageFile: undefined,
 };
 

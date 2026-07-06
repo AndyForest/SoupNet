@@ -36,6 +36,8 @@ import type { EnrichedResult } from "../services/result-enricher";
 import { enrichResults, clusterEvidenceInResults } from "../services/result-enricher";
 import { getDb } from "../db";
 import { validateKey } from "../services/api-key.service";
+import { maybeSynthesize, SYNTHESIS_INELIGIBLE_NOTICE } from "../services/synthesis.service";
+import type { SynthesisResult } from "../services/synthesis.service";
 import {
   RECIPE_LOOKUP_MAX_IDS,
   lookupRecipes,
@@ -364,6 +366,10 @@ function createMcpServer(backendUrl: string): McpServer {
       response_format: z.enum(["markdown", "structured"]).optional().describe(MCP_PARAM_DESCRIPTIONS.responseFormat),
       known_recipes: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.knownRecipes),
       agent_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.agentId),
+      synthesize: z.boolean().optional().describe(
+        "Premium opt-in: distil the returned recipes into one short 'current preference profile' paragraph (newest judgment wins on conflicts, recipe ids cited inline). " +
+        "Non-premium callers get the normal response plus a one-line hint that synthesis is a premium feature — never an error."
+      ),
       feedback: z.array(feedbackRowSchema).optional().describe(MCP_PARAM_DESCRIPTIONS.feedbackParam),
       axes: z.string().optional().describe(
         "Two concept terms for semantic projection (comma-separated, e.g., 'accessibility, dark mode'). " +
@@ -425,7 +431,7 @@ function createMcpServer(backendUrl: string): McpServer {
       idempotentHint: false,
       openWorldHint: true,
     },
-    async ({ recipe, supporting_evidence, clusters, max_chars, decided_at, axes, recipe_book, read_recipe_books, file_url, file_base64, file_name, file_mime_type, region, response_format, known_recipes, agent_id, feedback }, extra) => {
+    async ({ recipe, supporting_evidence, clusters, max_chars, decided_at, axes, recipe_book, read_recipe_books, file_url, file_base64, file_name, file_mime_type, region, response_format, known_recipes, agent_id, synthesize, feedback }, extra) => {
       // Get API key from auth info (passed by the transport middleware)
       const apiKey = (extra.authInfo as Record<string, unknown> | undefined)?.["token"] as string | undefined;
       if (!apiKey) {
@@ -538,7 +544,26 @@ function createMcpServer(backendUrl: string): McpServer {
           (known_recipes ?? "").split(",").map((s) => s.trim()).filter(Boolean),
         );
 
-        const jsonResponse = buildMcpJsonResponse(result, enriched, 1, knownRecipeIds);
+        // Premium synthesis (opt-in). Resolve the user via a dedicated
+        // validateKey lookup only on this branch, mirroring the web /check
+        // path — non-synthesize calls never pay for it and the audited
+        // api-key seam stays untouched (recipe 5c33168b).
+        let synthesis: SynthesisResult | undefined;
+        if (synthesize) {
+          const keyResult = await validateKey(db, apiKey);
+          synthesis = keyResult
+            ? await maybeSynthesize({
+                db,
+                userId: keyResult.userId,
+                requested: true,
+                checkedRecipe: result.traceText ?? recipe,
+                results: enriched,
+                relatedEvidence: result.relatedEvidence,
+              })
+            : { synthesisNotice: SYNTHESIS_INELIGIBLE_NOTICE };
+        }
+
+        const jsonResponse = buildMcpJsonResponse(result, enriched, 1, knownRecipeIds, synthesis);
         console.warn(`[mcp] check_recipe: success — ${result.results.length} results (${response_format ?? "markdown"})`);
 
         // Ride-along feedback about PRIOR checks. Processed only after the
@@ -980,6 +1005,7 @@ export function buildMcpJsonResponse(
   enriched: EnrichedResult[],
   page: number,
   knownRecipeIds?: ReadonlySet<string>,
+  synthesis?: SynthesisResult,
 ): Record<string, unknown> {
   const KNOWN_GIST_CHARS = 80;
   const data: Record<string, unknown> = {
@@ -1046,6 +1072,15 @@ export function buildMcpJsonResponse(
   // Format warning
   if (result.formatWarning) {
     data["formatWarning"] = result.formatWarning;
+  }
+
+  // Premium synthesis: exactly one of the profile or the one-line notice.
+  // Carried in structuredContent so structured-mode callers get it too; the
+  // shared markdown renderer picks it up for the default format.
+  if (synthesis?.synthesis) {
+    data["synthesis"] = synthesis.synthesis;
+  } else if (synthesis?.synthesisNotice) {
+    data["synthesisNotice"] = synthesis.synthesisNotice;
   }
 
   // Related evidence (full fields). recipeId per entry (2026-07-05):

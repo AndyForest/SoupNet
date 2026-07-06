@@ -60,3 +60,21 @@ describe("MCP tool registrations — WT-3 retrieval API", () => {
     expect(stdioSource).toContain("purpose: z.string().optional()");
   });
 });
+
+// WP2 (2026-07-06): premium `synthesize` opt-in. Both MCP surfaces must expose
+// the param — if either registration drops, one surface silently loses the
+// feature while the other keeps advertising it (the same drift the WT-3 guard
+// above protects against).
+describe("MCP tool registrations — WP2 premium synthesize", () => {
+  it("the HTTP MCP check_recipe registers the synthesize param", () => {
+    expect(mcpSource).toContain("synthesize: z.boolean().optional()");
+  });
+
+  it("the stdio mirror registers the synthesize param too", () => {
+    const stdioSource = readFileSync(
+      join(here, "..", "..", "..", "mcp-server", "src", "index.ts"),
+      "utf-8",
+    );
+    expect(stdioSource).toContain("synthesize: z.boolean().optional()");
+  });
+});
