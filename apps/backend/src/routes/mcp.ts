@@ -1099,6 +1099,15 @@ mcpRouter.all("/", mcpBodyLimit, mcpRateLimit, mcpPerBearerBackstop, mcpPerKeyRa
   // Extract and validate API key from Bearer token
   const authHeader = c.req.header("Authorization");
   if (!authHeader?.startsWith("Bearer ")) {
+    // MCP auth spec (2025-06-18): a 401 MUST carry WWW-Authenticate pointing
+    // at the protected-resource metadata so OAuth-capable clients (claude.ai,
+    // MCP Inspector) can discover the authorization server. Clients that
+    // probe /.well-known directly still work; this is the spec'd path.
+    const base = process.env["BACKEND_URL"] ?? `http://localhost:${process.env["PORT"] ?? "3101"}`;
+    c.header(
+      "WWW-Authenticate",
+      `Bearer resource_metadata="${base}/.well-known/oauth-protected-resource"`,
+    );
     return c.json(
       { jsonrpc: "2.0", error: { code: -32001, message: "Missing or invalid Authorization header. Use: Bearer <api-key>" } },
       401,

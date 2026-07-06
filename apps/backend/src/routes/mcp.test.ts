@@ -59,6 +59,12 @@ describe.skipIf(!BASE)("/mcp stateless behavior", () => {
       body: JSON.stringify({ jsonrpc: "2.0", method: "initialize", params: {}, id: 1 }),
     });
     expect(res.status).toBe(401);
+    // MCP auth spec (2025-06-18): the 401 carries WWW-Authenticate pointing at
+    // the protected-resource metadata so OAuth clients can discover the
+    // authorization server. Directory reviewers validate this via Inspector.
+    const challenge = res.headers.get("www-authenticate") ?? "";
+    expect(challenge).toContain("Bearer");
+    expect(challenge).toContain("/.well-known/oauth-protected-resource");
   });
 
   it("accepts initialize without any session header (stateless)", async () => {
