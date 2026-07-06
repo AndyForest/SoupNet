@@ -11,6 +11,14 @@ When you complete an item, move it to `backlog-completed.md` with a date stamp. 
 
 ---
 
+## Data portability
+
+### `[IMPL]` Corpus import — the inverse of `/auth/me/export`
+
+Operator request (2026-07-06, benchmark session): the export function already produces a complete single-JSON corpus (traces, evidence, references, groups; schemaVersion-stamped), and the PERMA benchmark run archived a 40,822-trace corpus that way (`SoupNet-evals/evals/perma-ab/baselines/run-full1/corpus-export.json.gz`, 20 MB gz) — but there is no way to load an export into an instance. An import endpoint/CLI would let (a) anyone reproduce the published benchmark results (`docs/benchmarks.md`) without re-spending ~$35 of scribe LLM calls, (b) users migrate between hosted and self-hosted, (c) operators treat the export as a restore format. Design points: idempotency (re-import must not duplicate — trace ids are UUIDs, upsert on id); ownership remap (imported rows belong to the importing user; group slugs may collide → suffix or map); **embeddings** — the export carries no vectors, so import must enqueue re-embedding (~$1/40k recipes via Gemini); consider an optional `vector_cache` sidecar in export/import to make reproduction zero-API-cost; `schemaVersion` gate with explicit migration path; and the prompt-injection posture of imported content (imported traces are third-party text entering briefings — same review consideration as shared books). Benchmark reproduction is the first concrete consumer.
+
+---
+
 ## Evidence ingestion
 
 ### `[DESIGN]` Support multiple references per one interpretation in `parseEvidenceMarkdown`
