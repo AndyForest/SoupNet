@@ -209,7 +209,7 @@ export const CONNECTION_TIERS = {
 
 1. MCP tools (Codex, Claude Code, Claude Desktop, Antigravity): Full automation via check_recipe, get_briefing, and list_my_recipe_books tools. One-command setup.
 
-2. Web browsing with URL construction: If your agent can construct and fetch URLs, build recipe check URLs directly: /check?key=YOUR_KEY&recipe=URL_ENCODED_RECIPE&evidence=URL_ENCODED_EVIDENCE&recipe_book=RECIPE_BOOK_SLUG. The page accepts human-readable parameter names (recipe, evidence, recipe_book) via GET; the legacy parameter \`group\` is still accepted for backwards compatibility. Results appear on the same page. Recipe-book slugs are shown on the check page when you visit with your key. When backfilling a decision discovered in a dated artifact (git history, an ADR), add decided_at=ISO_DATE so the recipe carries the original judgment date instead of today's.
+2. Web browsing with URL construction: If your agent can construct and fetch URLs, build recipe check URLs directly: /check?key=YOUR_KEY&recipe=URL_ENCODED_RECIPE&evidence=URL_ENCODED_EVIDENCE&recipe_book=RECIPE_BOOK_SLUG. The page accepts human-readable parameter names (recipe, evidence, recipe_book) via GET; the legacy parameter \`group\` is still accepted for backwards compatibility. Results appear on the same page. Recipe-book slugs are shown on the check page when you visit with your key. When backfilling a decision discovered in a dated artifact (git history, an ADR), add decided_at=ISO_DATE so the recipe carries the original judgment date instead of today's — e.g. a framework choice found in an ADR dated 2024-03-15 backfills as &decided_at=2024-03-15.
 
 3. User-assisted checking: Many web-based AI assistants (such as ChatGPT and Google Gemini web chat) have read-only web access by design — a responsible AI guardrail that we respect and support. These agents can read the recipe guide and check page, but cannot submit forms on external sites. For these systems:
 
@@ -416,7 +416,7 @@ export const BRIEFING = {
       : "";
 
     const body = `# Soup.net Agent Briefing
-You already work to understand your user's taste and judgment — and you lose that understanding every time the session ends. Soup.net makes it persistent: recipe checks are read-only semantic searches with an append-only side effect — your recipe is compared against the corpus, and the trace you leave makes future checks smarter for every agent this user works with. There are no destructive operations. Check freely and often.${purposeLine}
+You already work to understand your user's taste and judgment — and you lose that understanding every time the session ends. Soup.net makes it persistent: recipe checks are read-only semantic searches with an append-only side effect — your recipe is compared against the corpus, and the trace you leave makes future checks smarter for every agent this user works with. There are no destructive operations. Check freely and often. One honest mechanic: every check submission logs a real trace (there is no dry run), so explore the system itself on the docs pages, and when you only want a keyword lookup, use the check page's \`filter\` (alias \`f\`) parameter — it returns matches without logging a recipe.${purposeLine}
 
 ## Principles
 ${PRINCIPLES}
@@ -478,7 +478,7 @@ The check page shows the recipe-check form, your recipe books, and full instruct
 Recipe-check URLs follow this shape:
 ${checkUrl}&recipe=URL_ENCODED_RECIPE&evidence=URL_ENCODED_EVIDENCE&recipe_book=SLUG
 
-Human-readable parameter names (\`recipe\`, \`evidence\`, \`recipe_book\`) and the combined "recipe text, blank line, evidence" format are both accepted. The legacy \`&group=SLUG\` parameter is still accepted for backwards compatibility.
+Human-readable parameter names (\`recipe\`, \`evidence\`, \`recipe_book\`) and the combined "recipe text, blank line, evidence" format are both accepted. The legacy \`&group=SLUG\` parameter is still accepted for backwards compatibility. Percent-encode the recipe and evidence values (spaces %20, quotes %22) — for example: \`recipe=As%20a%20designer%2C%20I%20prefer%20%22bold%22%20posters\`.
 
 ## How to check
 \`check_recipe\` accepts: \`recipe\` (the claim), \`supporting_evidence\` (warrant + data), and \`recipe_book\` (slug). Optional: \`axes\` (concept projection), \`clusters\`/\`max_chars\` (response size), and reference file attachments (images, PDF, audio, video) — see your tool schema for the exact file-input params. HTTP MCP also accepts an optional \`region.image_box\` with normalized \`{x0, y0, x1, y1}\` coordinates (0-1) to mark a specific area of an attached image — the embedding pipeline crops to that region, blurs the padding, and weights the marked area heavily.
@@ -495,7 +495,7 @@ The returned \`file_url\` is opaque (a GET against it returns 404) and only reso
 Evidence entries follow this shape: your interpretation, then \`> "direct quote"\`, then \`-- source citation\`, separated by blank lines.
 
 ## Closing the loop — feedback
-Stateless sessions lose what happened after a check — whether the surfaced recipes confirmed, corrected, or redirected your work. If your tools include \`log_feedback\` (or \`check_recipe\`'s optional \`feedback\` parameter), you can close that loop: after a check shapes a decision, log a short feedback row about the PRIOR check, joined by the recipe UUID the check response reported. A row carries kind (check-feedback | operational | outcome), impact (none | new | subtle | big | operational), disposition (proceeded | corrected | asked-human | charted-new | deferred), story_fulfilled (yes | partial | no | unknown), the story behind the check, and a note on what you did with the result. Feedback renders on the recipe's detail page, so the human sees which recipes earned their keep — and null results seed value too: "nothing similar found" tells the corpus where it's thin. Mid-flow, attach rows to your next check (fewer calls); use standalone \`log_feedback\` for end-of-session rows.
+Stateless sessions lose what happened after a check — whether the surfaced recipes confirmed, corrected, or redirected your work. If your tools include \`log_feedback\` (or \`check_recipe\`'s optional \`feedback\` parameter), you can close that loop: after a check shapes a decision, log a short feedback row about the PRIOR check, joined by the recipe UUID the check response reported. Without MCP tools, the same loop closes over REST: POST ${backendUrl}/feedback with your Bearer API key — the body is one row object (with trace_id) or {"feedback": [rows]}, same fields as below. A row carries kind (check-feedback | operational | outcome), impact (none | new | subtle | big | operational), disposition (proceeded | corrected | asked-human | charted-new | deferred), story_fulfilled (yes | partial | no | unknown), the story behind the check, and a note on what you did with the result. Feedback renders on the recipe's detail page, so the human sees which recipes earned their keep — and results that didn't help are worth a row too: "nothing similar found" tells the corpus where it's thin, and an ignored or contradicted result is exactly the calibration future agents lack. Mid-flow, attach rows to your next check (fewer calls); use standalone \`log_feedback\` or POST /feedback for end-of-session rows.
 
 ## Annotating creative output
 ${WORKFLOW_ANNOTATION}
@@ -521,7 +521,7 @@ If none of your framings fit, ask the user to clarify and form new hypotheses ra
 You may not know your UI's capabilities, but you do know your system identity. Use what you know about yourself to pick the link format that will survive the round-trip to the user — the user opening that link is what runs the check, so formatting it for them is the whole job (nothing to fetch via code interpreter or browsing yourself):
 
 - **Gemini and other Google LLMs:** your chat UI wraps complex URLs in search redirects (\`google.com/search?q=...\`). Markdown links look clean but break at click time. Output each recipe-check URL as a **fenced code block with the \`plaintext\` language tag**. Do NOT wrap URLs in inline code, markdown link syntax, or both combined — only the fenced plaintext code block survives Gemini's UI intact, letting the user copy the URL directly.
-- **Claude, ChatGPT, and similar:** your chat UI renders markdown links natively. Standard markdown links like \`[Check this recipe](https://mcp.soup.net/check?key=...&recipe=...)\` work well.
+- **Claude, ChatGPT, and similar:** your chat UI renders markdown links natively. Standard markdown links like \`[Check this recipe](${checkUrl}&recipe=...)\` work well.
 - **Uncertain about your UI:** default to the plaintext fenced code block — it's the safer fallback and works for every agent.
 
 The deciding factor is technical URL support, not a presentational choice. This principle ("agents don't know their UI capabilities but do know their system identity, so use identity as a proxy") applies beyond links.
@@ -753,8 +753,9 @@ export const MCP_PARAM_DESCRIPTIONS = {
     "Optional ISO 8601 date or datetime (e.g. '2024-03-15' or '2024-03-15T14:30:00Z') — when the human " +
     "originally made this taste/judgment call, if it predates this check. Use it to backfill decisions " +
     "discovered in dated artifacts (git history, ADRs, old docs): set it to the artifact's timestamp so " +
-    "the recipe carries the original judgment date instead of today's. Must not be in the future. " +
-    "Omit for contemporaneous judgments.",
+    "the recipe carries the original judgment date instead of today's. Worked example: a framework choice " +
+    "found in an ADR dated 2024-03-15 is checked today with decided_at='2024-03-15'. Must not be in the " +
+    "future. Omit for contemporaneous judgments.",
 
   responseFormat:
     "Response format. 'markdown' (default): a readable report — each exemplar line carries its full " +

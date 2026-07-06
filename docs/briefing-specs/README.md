@@ -6,7 +6,7 @@ Gherkin-style behavioral specs for Soup.net's agent-facing copy — the briefing
 
 ## The regression rule (once wired)
 
-A PR that touches briefing copy (`packages/domain/src/recipe-guide-content.ts`, the briefing composer, MCP tool descriptions) must **declare which scenarios it intends to change** — name the files/scenarios in the PR description — **re-run the suite, and show every undeclared scenario still holding.** Update the declared scenarios in the same PR. This is the over-correction guard: past briefing edits have been tuned for the issue in front of them with unnoticed consequences for other goals, and a plain text-diff would flag every intended change too (noise, not signal) — declaring intent up front is what turns the diff into something reviewable. Full rationale: [docs/rough-notes/2026-06-10/briefing-regression-testing.md](../rough-notes/2026-06-10/briefing-regression-testing.md) §The problem.
+A PR that touches briefing copy (`packages/domain/src/recipe-guide-content.ts`, the briefing composer, MCP tool descriptions) must **declare which scenarios it intends to change** — name the files/scenarios in the PR description — **re-run the suite, and show every undeclared scenario still holding.** Update the declared scenarios in the same PR. This is the over-correction guard: past briefing edits have been tuned for the issue in front of them with unnoticed consequences for other goals, and a plain text-diff would flag every intended change too (noise, not signal) — declaring intent up front is what turns the diff into something reviewable. Full rationale: [docs/rough-notes/2026-06-10/briefing-regression-testing.md](../rough-notes/2026-06-10/briefing-regression-testing.md) §The problem. Each PR's declaration is appended to [declared-intent-log.md](declared-intent-log.md) (and mirrored in the commit message body).
 
 **`@unreleased`** tags a scenario for a capability that doesn't exist yet (see the four files below). These are forward-looking specs for behaviors scoped in the 2026-07-05 work-tree plan — they exist now so the PR that ships the capability can declare and move exactly that scenario, instead of writing the spec and the feature in the same diff. Drop the tag in the same PR that implements the capability.
 
@@ -31,5 +31,5 @@ A PR that touches briefing copy (`packages/domain/src/recipe-guide-content.ts`, 
 | `advanced-workflows.feature` | Decision archaeology, agent fleets, interface fluidity |
 | `frontmatter-recipe-lookup.feature` | `@unreleased` — resolving a doc's `soupnet_recipes` frontmatter ids before editing (WT-3) |
 | `known-recipes-dedup.feature` | `@unreleased` — `known_recipes` trims repeats in rendering only, never in the logged trace (WT-4) |
-| `feedback-loop.feature` | `@unreleased` — feedback chained on the next check, or via `log_feedback` standalone (WT-4) |
+| `feedback-loop.feature` | Feedback chained on the next check, via `log_feedback` standalone, or via `POST /feedback` for web/REST agents (shipped 2026-07-05) |
 | `subagent-purpose-briefing.feature` | `@unreleased` — `purpose`-scoped `get_briefing` for sub-agents, alongside the standard fleet check-instructions (WT-3) |
