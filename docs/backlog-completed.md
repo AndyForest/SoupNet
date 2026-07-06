@@ -196,6 +196,19 @@ All five trees implemented, merged, and verified (test:ci green; Layer 4b live M
 
 Survey-discovered bugs from the plan's batch section, all fixed in the batch: dashboard daily-key scope copy; MCP pagination-without-param contradiction; briefing trace-link template (via SPA redirect); known_recipes dangling reference (shipped as the feature); api.md historical flag.
 
+### 2026-07-05 — FF-2: new-user journey polish fast-follow (frontend + small backend label passthrough)
+
+From the 2026-07-05 qualitative-eval findings (New defects #5-8 + papercuts). Frontend-only except one backend param (`label` on `POST /keys/daily` — the schema/column already existed for scoped keys):
+
+- **Register-default entry points**: `LoginPage` now defaults to the Register tab when mounted at `/auth/register` (checks `location.pathname` on init) instead of always opening on Sign In — the "Create Free Account" CTAs already linked to `/auth/register`; the form just didn't honor it.
+- **Check-log grouping**: new pure `lib/group-checks.ts` (`groupChecksByTrace`, tested) collapses repeated opens/refreshes/JSON-fetches of the same check URL into one row with an "×N" badge on `CheckLogPage`. Server-side logging (and F29 rate limiting) untouched — display-only fix.
+- **Key labeling**: (a) root-caused the "one copy action mints two keys" report — `DashboardPage`'s zero-checks state rendered *two* independent "mint a daily key + copy briefing" actions at once (the onboarding `AgentTypePicker` card and the "For Your Agents" sidebar section); the sidebar section now collapses to a pointer while onboarding is active, since both did the identical thing. (b) `POST /keys/daily` gained an optional `label` param (`api-key.service.ts` `generateDailyKey` — previously hardcoded `NULL`); `CopyBriefingButton` and the dashboard's "Open recipe check page" action now stamp meaningful labels ("Dashboard briefing — <date>", "Connect page briefing — <date>", "Dashboard check page — <date>"). (c) `ApiKeyBadge` no longer glues "(unlabeled)" to the key-hash prefix — unlabeled keys now show "No label set" with the hash kept as a de-emphasized secondary detail.
+- **Env-aware Connect-to-AI URL**: new `lib/localize-connect-docs.ts` (tested) substitutes the hardcoded `https://mcp.soup.net` host in `docs/connectors/index.md` with the deployment's own `API_BASE` at render time — a no-op on the hosted deployment (API_BASE already equals that host in production), correct for self-hosters and local dev. `AgentTypePicker`'s own hardcoded MCP URL fixed the same way.
+- **Papercuts**: `AppShell`'s mobile bottom nav relabeled from the sidebar's duplicate `aria-label="Main navigation"` to `"Mobile navigation"`. Recipe Map's tiny-corpus copy clarified via new `lib/map-scope-label.ts` (tested) — "0 clusters" reads as "not enough yet to cluster" instead of looking broken, and "Copy agent briefing (0)" uses total recipe count (and stays enabled) once there's at least one recipe, since the briefing fetch never actually depended on client-side clustering. Verified as already-fine, no change needed: copy-success feedback (every copy action already flips its button to "Copied!"); TanStack/React-Query devtools (already gated behind `import.meta.env.DEV`, so absent from `vite build` production output).
+- **Explicitly skipped, reported not fixed**: verify-email auto-sign-in (`POST /auth/verify` returns no session/token — needs a backend change out of this batch's scope); zero-result check reassurance copy (backend `/check` copy, owned by the parallel FF-1 tree).
+
+Recipe checks (soupnet-oss): `f19fd64c` (check-log grouping display-vs-log split), `cf8973f7` (default key-label wording), `289b3347` (Recipe Map tiny-corpus copy) — all confirmed against corpus precedent, no contradictions, proceeded.
+
 ## Legal and compliance
 
 ### 2026-05-12 — Public-ready trim pass on legal pages

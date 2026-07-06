@@ -33,6 +33,13 @@ interface PendingInvite {
   expiresAt: string;
 }
 
+// Meaningful label for keys minted from the dashboard, so the API Keys list
+// and trace attribution show something more useful than "(unlabeled)"
+// (2026-07-05 journey-eval defect #7b).
+function dashboardKeyLabel(): string {
+  return `Dashboard briefing — ${new Date().toISOString().slice(0, 10)}`;
+}
+
 function timeAgo(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime();
   const hours = Math.floor(diff / (1000 * 60 * 60));
@@ -49,6 +56,9 @@ export function DashboardPage() {
   const navigate = useNavigate();
   const tracesQuery = useTraces(10);
   const traceCountQuery = useTraceCount();
+  // The zero-checks onboarding moment — see the "For Your Agents" section
+  // below for why this also gates that section's briefing button.
+  const isZeroChecks = !tracesQuery.isLoading && tracesQuery.data !== undefined && tracesQuery.data.length === 0;
   const [selectedGroupId, setSelectedGroupId] = useState<string>("");
   const [dailyOpened, setDailyOpened] = useState(false);
   const groupSelectRef = useRef<HTMLSelectElement>(null);
@@ -125,10 +135,12 @@ export function DashboardPage() {
 
   const dailyGoMutation = useMutation({
     mutationFn: async () => {
-      const body = effectiveGroupId ? { writeRecipeBookId: effectiveGroupId } : undefined;
+      const body: Record<string, string> = { label: `Dashboard check page — ${new Date().toISOString().slice(0, 10)}` };
+      if (effectiveGroupId) body["writeRecipeBookId"] = effectiveGroupId;
       const res = await authFetch("/keys/daily", {
         method: "POST",
-        ...(body ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
       });
       const json = (await res.json()) as { ok: boolean; data?: { searchUrl: string } };
       if (!json.ok || !json.data) throw new Error("Failed to generate key");
@@ -249,7 +261,7 @@ export function DashboardPage() {
 
           {/* Zero-checks onboarding — the moment after signup. Disappears
               forever once the first recipe check is logged. */}
-          {!tracesQuery.isLoading && tracesQuery.data && tracesQuery.data.length === 0 && (
+          {isZeroChecks && (
             <div className="card" style={{ padding: "var(--space-lg) var(--space-xl)" }}>
               <h3 style={{ fontSize: "1.05rem", marginBottom: "var(--space-xs)" }}>
                 Connect your first AI agent
@@ -264,6 +276,7 @@ export function DashboardPage() {
                 briefingSlot={
                   <CopyBriefingButton
                     writeRecipeBookId={effectiveGroupId || undefined}
+                    label={dashboardKeyLabel()}
                     style={{ width: "100%" }}
                   />
                 }
@@ -360,34 +373,58 @@ export function DashboardPage() {
             </div>
           )}
 
-          {/* For Your Agents */}
+          {/* For Your Agents.
+              Root-cause note (2026-07-05 journey-eval defect #7a): a
+              zero-checks user previously saw TWO independent "mint a daily
+              key" actions on this one page at once — this section's own
+              CopyBriefingButton *and* the zero-checks onboarding card above
+              (which renders its own CopyBriefingButton inside
+              AgentTypePicker once a card is picked). Both do the same thing
+              (POST /keys/daily then copy the briefing), so a new user
+              working through "connect my agent" would naturally use
+              whichever one they saw first, then the other — minting two
+              unlabeled keys for one perceived action. Once the onboarding
+              card is showing, it's the sole entry point for this action;
+              this section collapses to a pointer instead of duplicating it.
+              The redundant mint disappears the same moment the onboarding
+              card does, once the first check lands. */}
           <section>
             <h2 style={{ fontSize: "1.05rem", marginBottom: "var(--space-md)" }}>For Your Agents</h2>
-            <p className="text-xs" style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-xs)" }}>
-              {/* Scope label mirrors the actual POST /keys/daily resolution
-                  (daily_read set, falling back to all) — see lib/daily-scope.ts. */}
-              Generates a 24-hour key: reads {describeDailyReadScope(groups)}, writes to <strong>{selectedGroup?.name ?? "your recipe book"}</strong>.
-            </p>
-            <p className="text-xs" style={{ marginBottom: "var(--space-md)" }}>
-              <Link to="/app/recipe-books" style={{ color: "var(--color-primary)" }}>
-                Change which books are included →
-              </Link>
-            </p>
-            <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-sm)" }}>
-              <CopyBriefingButton
-                writeRecipeBookId={effectiveGroupId || undefined}
-                style={{ width: "100%" }}
-              />
-              <button
-                className="btn-secondary"
-                onClick={() => dailyGoMutation.mutate()}
-                disabled={dailyGoMutation.isPending}
-                style={{ width: "100%", justifyContent: "center", fontSize: "0.85rem" }}
-              >
-                <Icon name="external-link" size={14} />
-                {dailyOpened ? "Opened!" : dailyGoMutation.isPending ? "Opening..." : "Open recipe check page"}
-              </button>
-            </div>
+            {isZeroChecks ? (
+              <p className="text-xs" style={{ color: "var(--color-on-surface-variant)" }}>
+                Pick your agent type above ↑ to connect your first agent — the
+                briefing button lives there until your first check lands.
+              </p>
+            ) : (
+              <>
+                <p className="text-xs" style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-xs)" }}>
+                  {/* Scope label mirrors the actual POST /keys/daily resolution
+                      (daily_read set, falling back to all) — see lib/daily-scope.ts. */}
+                  Generates a 24-hour key: reads {describeDailyReadScope(groups)}, writes to <strong>{selectedGroup?.name ?? "your recipe book"}</strong>.
+                </p>
+                <p className="text-xs" style={{ marginBottom: "var(--space-md)" }}>
+                  <Link to="/app/recipe-books" style={{ color: "var(--color-primary)" }}>
+                    Change which books are included →
+                  </Link>
+                </p>
+                <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-sm)" }}>
+                  <CopyBriefingButton
+                    writeRecipeBookId={effectiveGroupId || undefined}
+                    label={dashboardKeyLabel()}
+                    style={{ width: "100%" }}
+                  />
+                  <button
+                    className="btn-secondary"
+                    onClick={() => dailyGoMutation.mutate()}
+                    disabled={dailyGoMutation.isPending}
+                    style={{ width: "100%", justifyContent: "center", fontSize: "0.85rem" }}
+                  >
+                    <Icon name="external-link" size={14} />
+                    {dailyOpened ? "Opened!" : dailyGoMutation.isPending ? "Opening..." : "Open recipe check page"}
+                  </button>
+                </div>
+              </>
+            )}
             <p className="text-xs" style={{ color: "var(--color-on-surface-variant)", marginTop: "var(--space-sm)" }}>
               For granular key control, <Link to="/app/keys" style={{ color: "var(--color-primary)" }}>manage API keys</Link>.
             </p>

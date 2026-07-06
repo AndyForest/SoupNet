@@ -247,7 +247,11 @@ export function AppShell() {
 
       {/* Bottom bar (mobile) */}
       <div className={styles.bottomBar}>
-        <nav className={styles.bottomNav} aria-label="Main navigation">
+        {/* Distinct label from the desktop sidebar nav above — the two were
+            both "Main navigation" (2026-07-05 journey-eval papercut),
+            indistinguishable to assistive tech and test selectors even
+            though only one is ever visible at a given viewport width. */}
+        <nav className={styles.bottomNav} aria-label="Mobile navigation">
           {mobilePrimaryItems.map((item) => {
             const isActive = isNavItemActive(matchRoute, item.to);
             return (

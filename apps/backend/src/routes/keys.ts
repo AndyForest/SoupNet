@@ -35,12 +35,15 @@ const keys = new Hono<AppEnv>();
 keys.use("/*", requireAuth, requireVerifiedEmail);
 
 // POST /keys/daily
-// Optional body: { writeGroupId?: string } — scopes write to a single group
-// (explicit override). Without writeGroupId, the user's configured
-// daily_read / daily_write group_members flags determine the defaults. New
-// groups default to excluded from both; existing memberships were
-// grandfathered to included by migration 0016. See design-thinking.md
-// §Configurable defaults for the "daily agent link" buttons.
+// Optional body: { writeGroupId?: string, label?: string } — writeGroupId
+// scopes write to a single group (explicit override); label is a short
+// human-facing name (e.g. "Dashboard briefing — 2026-07-05") so the trace
+// attribution and API Keys list show something more useful than
+// "(unlabeled)". Without writeGroupId, the user's configured daily_read /
+// daily_write group_members flags determine the defaults. New groups
+// default to excluded from both; existing memberships were grandfathered to
+// included by migration 0016. See design-thinking.md §Configurable defaults
+// for the "daily agent link" buttons.
 keys.post("/daily", keyGenRateLimit, async (c) => {
   const user = c.get("user");
   const db = getDb();
@@ -101,7 +104,14 @@ keys.post("/daily", keyGenRateLimit, async (c) => {
   // get grandfathered state.
   const readGroupIds = configuredReadGroupIds.length > 0 ? configuredReadGroupIds : allGroupIds;
 
-  const result = await generateDailyKey(db, user.id, readGroupIds, writeGroupIds, defaultWriteGroupId);
+  // Optional label (schema already supports it for scoped keys — see
+  // POST /keys/scoped below). Trimmed and capped to match scopedKeySchema's
+  // max(100). Silently ignored if not a string rather than 400ing — the
+  // label is a nicety, not a contract callers need to get exactly right.
+  const rawLabel = body["label"];
+  const label = typeof rawLabel === "string" && rawLabel.trim() ? rawLabel.trim().slice(0, 100) : undefined;
+
+  const result = await generateDailyKey(db, user.id, readGroupIds, writeGroupIds, defaultWriteGroupId, label);
   return c.json({ ok: true, data: toWireKey(result) });
 });
 

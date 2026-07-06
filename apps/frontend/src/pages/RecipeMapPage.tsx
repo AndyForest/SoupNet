@@ -8,6 +8,7 @@ import { Icon } from "../components/Icon.js";
 import { authFetch } from "../auth.js";
 import { useClipboard } from "../hooks/useClipboard.js";
 import { CUSTOM_BRIEFING_STORAGE_KEY, type CustomBriefingHandoff } from "./ApiKeysPage.js";
+import { describeMapScope, mapBriefingCount } from "../lib/map-scope-label.js";
 
 // ── Color palette for clusters ───────────────────────────────────────────────
 
@@ -468,7 +469,7 @@ export function RecipeMapPage() {
           <h1 style={{ margin: 0 }}>Recipe Map</h1>
           {meta && (
             <span className="text-xs" style={{ color: "var(--color-on-surface-variant)" }}>
-              {meta.totalTraces} recipes · {meta.k} clusters
+              {describeMapScope(meta.totalTraces, meta.k)}
               {strategy ? ` · ${strategy}` : ""}
               {drillStack.length > 0 ? ` · depth ${drillStack.length}` : ""}
             </span>
@@ -477,7 +478,7 @@ export function RecipeMapPage() {
         <div style={{ display: "flex", gap: "var(--space-sm)", alignItems: "center", flexWrap: "wrap" }}>
           <button
             onClick={() => void handleCopyBriefing()}
-            disabled={briefingPending || clusters.length === 0}
+            disabled={briefingPending || !hasData}
             title={!selectedGroupId ? "Focus a recipe book first for best results" : undefined}
             style={{ fontSize: "0.78rem", whiteSpace: "nowrap" }}
           >
@@ -485,7 +486,7 @@ export function RecipeMapPage() {
               ? "Copied!"
               : briefingPending
                 ? "Generating..."
-                : `Copy agent briefing (${clusters.length})`}
+                : `Copy agent briefing (${mapBriefingCount(meta?.totalTraces ?? 0, clusters.length)})`}
           </button>
           {drillStack.length > 0 && (
             <button className="btn-secondary" onClick={handleDrillOut} style={{ fontSize: "0.85rem" }}>

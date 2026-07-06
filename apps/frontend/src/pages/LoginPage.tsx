@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate, Link } from "@tanstack/react-router";
+import { useNavigate, useLocation, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { setToken, setEmailVerified } from "../auth.js";
 import soupnetLogo from "../assets/soupnet-logo.png";
@@ -49,10 +49,18 @@ async function registerRequest(body: {
 
 export function LoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [isRegister, setIsRegister] = useState(false);
+  // This component is mounted at both /auth/login and /auth/register (see
+  // routeTree.ts) so a single form can share all its state/validation logic.
+  // Register-intent entry points ("Create Free Account" CTAs, /info/connect's
+  // "create a free account" link) route to /auth/register — default the form
+  // to the Register tab when that's the path we landed on, rather than always
+  // starting on Sign In and making the user find the small "Register" toggle
+  // link. (2026-07-05 journey-eval defect #5.)
+  const [isRegister, setIsRegister] = useState(() => location.pathname.startsWith("/auth/register"));
   const [tosAccepted, setTosAccepted] = useState(false);
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);

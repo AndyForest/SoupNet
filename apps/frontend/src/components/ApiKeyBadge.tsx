@@ -34,9 +34,18 @@ export function ApiKeyBadge({
       }}
     >
       <span style={{ color: "var(--color-outline-variant)" }}>{description}</span>
-      <span style={{ fontFamily: "var(--font-mono, monospace)" }}>
-        {apiKey.label || "(unlabeled)"}
-        <span style={{ color: "var(--color-outline-variant)", marginLeft: "0.5em" }}>
+      <span>
+        {/* Honest fallback: "(unlabeled)" glued to a hash prefix read as one
+            confusing token in the field (2026-07-05 journey-eval defect
+            #7c). A labeled key gets its label in the normal weight; an
+            unlabeled one gets a plain-language note instead of a symbol,
+            with the id kept as a secondary, de-emphasized detail either way. */}
+        {apiKey.label ? (
+          <span style={{ fontFamily: "var(--font-mono, monospace)" }}>{apiKey.label}</span>
+        ) : (
+          <em>No label set</em>
+        )}
+        <span style={{ color: "var(--color-outline-variant)", marginLeft: "0.5em", fontFamily: "var(--font-mono, monospace)" }}>
           {shortId}…
         </span>
       </span>

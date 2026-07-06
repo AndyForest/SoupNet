@@ -282,9 +282,15 @@ A minutes-old check displayed as tomorrow's date (2026-07-06 shown on 2026-07-05
 
 The briefing's feedback blurb teaches `log_feedback`/`feedback` (MCP-only vocabulary); `POST /feedback` exists but no web-agent-facing copy documents it. Also add one line answering "is an ignored/contradicted result worth logging?" (a cold agent's verbatim question). Fold into the regression-gated briefing pass alongside: a dry-run honesty sentence (every submission logs; probe against /docs, not /check), a `decided_at` worked example, URL-encoding example, and single-turn guidance for divergent-checks vs annotate-output.
 
-### `[IMPL]` New-user journey polish batch (frontend)
+**FF-2 (New-user journey polish batch, frontend) shipped 2026-07-05** — see backlog-completed.md for the full rundown (register-default entry, check-log grouping, key-labeling incl. the double-mint root cause, env-aware Connect-to-AI URL, aria-label + Recipe Map tiny-corpus copy papercuts). Two items explicitly out of that batch's scope, still open:
 
-From the 2026-07-05 walkthrough (full ranking in the findings doc): "Create Free Account" lands on the Sign In form; check log shows one check N times (each open/refresh/JSON fetch logs an event — group or dedupe the display); key labeling (one copy action minted two unlabeled "daily" keys; trace attribution shows "(unlabeled)<hash>"); /info/connect hardcodes the hosted MCP URL (make it env-aware for self-hosters); papercuts: no copy toast, verify-email doesn't auto-sign-in, zero-result check lacks new-account reassurance, Recipe Map empty state, TanStack devtools button visible, sidebar+bottom-bar share aria-label "Main navigation".
+### `[IMPL]` Verify-email auto-sign-in
+
+`POST /auth/verify` returns `{ id, email, waitlisted }` only — no session/token — so the frontend can't auto-sign-in a user straight from the verify link today (FF-2 checked this and skipped rather than fabricate a session client-side). Needs a backend decision: either have `/auth/verify` mint and return a JWT on success (mirroring the register→login split's security reasoning — worth checking whether auto-login-on-verify reopens anything F30-adjacent), or keep verify session-less and instead speed up the post-verify "Sign In" click (e.g. pre-fill the email on the login form via a query param).
+
+### `[IMPL]` Zero-result check reassurance copy
+
+Backend `/check` response copy for a new/thin recipe book returning zero results — owned by the parallel FF-1 tree (backend `/check` + `/mcp` surface), not this batch.
 
 ## Unsorted
 
