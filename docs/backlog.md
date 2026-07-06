@@ -11,6 +11,14 @@ When you complete an item, move it to `backlog-completed.md` with a date stamp. 
 
 ---
 
+## Infrastructure
+
+### `[IMPL]` LiteLLM router for per-user LLM quota tracking (deferred by design)
+
+Operator decision (2026-07-06, with the premium-LLM-features brief in `docs/planning/premium-llm-features.md`): the first server-side LLM features ship WITHOUT quota/rate tracking because the user base is the operator plus manually-assigned trusted users. When premium widens, deploy a LiteLLM router/proxy in front of the provider key for per-user quota, spend tracking, and model routing — rather than hand-rolling quota in the app. Until then, implementing agents must NOT build ad-hoc quota logic into LLM features.
+
+---
+
 ## Data portability
 
 ### `[IMPL]` Corpus import — the inverse of `/auth/me/export`
