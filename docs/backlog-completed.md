@@ -122,7 +122,14 @@ The `Step` component (`apps/frontend/src/pages/LandingPage.tsx`) gained optional
 
 ## Connector + OAuth
 
-### 2026-05-14 — claude.ai custom-connector foundation: OAuth 2.1 + MCP polish + self-serve deletion
+### 2026-07-06 — OAuth refresh: 1h expiry bug + dedicated `consumed_at` consumption marker (F38 follow-up)
+
+Both items done together as the backlog directed (`[IMPL]` "OAuth refresh blocked after access token expires (1h) — column overload" + `[DESIGN]` "Separate OAuth refresh consumption marker from `expires_at`"). This bug was the prime suspect for claude.ai connectors silently losing tool discovery an hour after connect: `refreshOAuthTokenBundle` gated rotation on `expires_at > NOW()`, but `expires_at` is the *access token's* 1h expiry, so any refresh after the access token's natural life returned `invalid_grant` despite a valid 30-day refresh window.
+
+- **Migration `0028_oauth_refresh_consumed_at`**: adds nullable `api_keys.consumed_at` (timestamptz) + a security-critical backfill stamping `consumed_at = to_timestamp(0)` on oauth rows whose `expires_at = to_timestamp(0)` — those are the OLD consumed markers, and without the backfill their still-in-window refresh tokens would become refreshable again under the new gate (token-family resurrection).
+- **New refresh gate**: atomic `UPDATE ... SET consumed_at = NOW(), expires_at = to_timestamp(0) WHERE ... consumed_at IS NULL AND expires_at > to_timestamp(0) AND refresh_token_expires_at > NOW() RETURNING` — the CAS predicate is a pure NULL check (preserves the 2026-06-29 property: no cross-transaction start-timestamp comparison). The `expires_at > to_timestamp(0)` term is a mixed-version deploy guard (rolling ECS task replacement: rows consumed by pre-0028 code after the backfill ran stay dead).
+- **Rotation policy (deliberate, recipe efeaab7a)**: the old ACCESS token dies when its bundle is rotated — the same UPDATE truncates `expires_at` to the epoch sentinel, so every liveness reader (validateKey, briefing scope, per-key rate limiter, key lists, admin stats) inherits the revocation through the existing `expires_at > NOW()` invariant. `validateKey` additionally gained an explicit `consumed_at IS NULL` guard (defense-in-depth, redundant today).
+- **Tests** (oauth-flow.test.ts, 15 → 20): refresh-after-access-expiry regression (verified to fail against pre-fix code), rotation stamps consumed_at + epoch and revokes old access, 10-round concurrent double-refresh (higher-iteration F38 variant, exactly-one-wins each round, loser gets invalid_grant), plain daily/scoped keys unaffected + consumed row rejected, legacy epoch-stamped row cannot be resurrected before OR after the 0028 backfill statement (run verbatim in-test).
 
 Eight commits in one session that take the connector flow from "Bearer-only, no claude.ai web support" to "ready for directory submission once non-code prep lands". Bullets in commit order:
 
