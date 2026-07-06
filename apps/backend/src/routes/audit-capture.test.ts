@@ -179,6 +179,11 @@ describe.skipIf(!BASE)("UVP Layer 1 server stamps", () => {
       }),
     });
     expect(callRes.status).toBe(200);
+    // The MCP handler returns 200 with an error text payload when the briefing
+    // fails — assert the briefing actually rendered so a transient compose
+    // failure surfaces its error text here instead of as a missing audit row.
+    const callBody = await callRes.text();
+    expect(callBody).toContain("Soup.net Agent Briefing");
 
     const sql = await auditSql();
     try {
