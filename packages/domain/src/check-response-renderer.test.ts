@@ -66,9 +66,31 @@ describe("renderCheckResponseMarkdown", () => {
     const lines = text.split("\n");
     const lineA = lines.find((l) => l.startsWith("#1 "));
     const lineB = lines.find((l) => l.startsWith("#2 "));
-    // Single line: rank, similarity, full UUID, date, cluster size, book — together.
-    expect(lineA).toBe(`#1 (87% similar) ${UUID_A} -- 2026-04-03 (represents 12 similar recipes) [SoupNet]`);
-    expect(lineB).toBe(`#2 (42% keyword) ${UUID_B} -- 2026-05-10`);
+    // Single line: rank, similarity, full UUID, timestamp, cluster size, book — together.
+    expect(lineA).toBe(`#1 (87% similar) ${UUID_A} -- 2026-04-03T12:34Z (represents 12 similar recipes) [SoupNet]`);
+    expect(lineB).toBe(`#2 (42% keyword) ${UUID_B} -- 2026-05-10T08:00Z`);
+  });
+
+  it("renders timestamps as explicit UTC, never a bare date slice (2026-07-05: a minutes-old check read as tomorrow)", () => {
+    // 2026-07-06T02:31Z is still 2026-07-05 for everyone west of UTC. The
+    // old date-only slice showed "2026-07-06" — a future-looking date. The
+    // explicit Z timestamp is convertible to the reader's local time.
+    const res = baseResponse();
+    res.data!.results![0]!.createdAt = "2026-07-06T02:31:07.000Z";
+    const text = renderCheckResponseMarkdown(res);
+    expect(text).toContain(`${UUID_A} -- 2026-07-06T02:31Z`);
+    expect(text).not.toMatch(/-- 2026-07-06 /); // no bare-date rendering
+    // Date objects (the web copy-back path) get the same treatment.
+    res.data!.results![0]!.createdAt = new Date("2026-07-06T02:31:07.000Z");
+    expect(renderCheckResponseMarkdown(res)).toContain(`${UUID_A} -- 2026-07-06T02:31Z`);
+  });
+
+  it("passes non-UTC date strings through unchanged rather than mislabeling them Z", () => {
+    const res = baseResponse();
+    res.data!.results![0]!.createdAt = "2026-07-05T22:31:07-04:00";
+    const text = renderCheckResponseMarkdown(res);
+    expect(text).toContain("2026-07-05T22:31:07-04:00");
+    expect(text).not.toContain("2026-07-05T22:31Z");
   });
 
   it("renders evidence with references (regression: old HTTP MCP formatter read evidenceFor and dropped all evidence)", () => {
@@ -122,6 +144,26 @@ describe("renderCheckResponseMarkdown", () => {
     expect(text).toContain("Related evidence from other recipes:");
     expect(text).toContain("  - Interpretation here (76% similar)");
     expect(text).toContain('Concept axes: "accessibility" (X) / "performance" (Y)');
+  });
+
+  it("carries the source recipe UUID on related-evidence entries with a lookup hint (2026-07-05: id-less entries forced re-checks)", () => {
+    const res = baseResponse();
+    res.data!.relatedEvidence = [
+      { evidenceId: "e1", recipeId: UUID_B, parentRecipe: "As a dev, I chose X.", evidence: "Interpretation here", similarity: 0.76 },
+    ];
+    const text = renderCheckResponseMarkdown(res);
+    expect(text).toContain(`    From recipe ${UUID_B}: "As a dev, I chose X."`);
+    expect(text).toContain("Fetch any full recipe by id: get_recipes (MCP) or GET /recipes?ids=<id>");
+  });
+
+  it("renders search-only responses with a no-logging header instead of a recipeId", () => {
+    const res = baseResponse();
+    delete res.data!.recipeId;
+    res.data!.searchOnly = true;
+    res.data!.filter = "postgres migrations";
+    const text = renderCheckResponseMarkdown(res);
+    expect(text.split("\n")[0]).toBe('Read-only search for "postgres migrations" — no recipe was logged.');
+    expect(text).not.toContain("Recipe checked as #");
   });
 
   it("renders file reference metadata including hash and region", () => {

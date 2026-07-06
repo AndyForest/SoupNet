@@ -15,6 +15,7 @@ import crypto from "node:crypto";
 import { sql } from "drizzle-orm";
 import type { Context, Next } from "hono";
 import { getDb } from "../db";
+import { parseLenientQuery } from "../lib/lenient-query";
 
 interface RateLimitEntry {
   timestamps: number[];
@@ -278,8 +279,22 @@ export async function extractCheckRequestKey(c: Context): Promise<string | null>
   if (method === "GET") {
     return c.req.query("key") ?? null;
   }
-  // POST: parseBody is cached per-request by Hono, so the route handler can
-  // call it again without re-parsing.
+  // POST urlencoded: read the RAW body text, not parseBody(). Hono caches
+  // whichever body view is consumed first — parseBody() here would make the
+  // route handler's later c.req.text() return a re-serialized multipart
+  // rendering of the parsed FormData (invalid escapes already replaced with
+  // U+FFFD), breaking the lenient windows-1252 decode in routes/check.ts.
+  // text() is cached too, so the handler's second read is free.
+  const contentType = c.req.header("content-type") ?? "";
+  if (contentType.includes("application/x-www-form-urlencoded")) {
+    try {
+      return parseLenientQuery(await c.req.text())("key") ?? null;
+    } catch {
+      return null;
+    }
+  }
+  // POST multipart: parseBody is cached per-request by Hono, so the route
+  // handler can call it again without re-parsing.
   try {
     const body = await c.req.parseBody();
     const k = body["key"];

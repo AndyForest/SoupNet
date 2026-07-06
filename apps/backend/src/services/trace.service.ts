@@ -38,6 +38,7 @@ import type { EvidenceSearchResult } from "./vector-search.service";
 import { scoreFormatAdherence } from "./format-adherence";
 import { runSearchPipeline } from "./search-pipeline";
 import { StageTimer } from "../lib/stage-timer";
+import { invalidKeyMessage } from "../lib/key-remediation";
 import { auditLog } from "@soupnet/db";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -71,6 +72,12 @@ export interface SubmitAndSearchParams {
   /** Comma-separated group slugs or IDs to restrict search scope.
    *  Resolved within the key's read groups. Defaults to all readable groups. */
   readGroups?: string | undefined;
+  /** Keyword terms (whitespace/comma separated) that narrow the candidate
+   *  set — every returned recipe must contain every term (case-insensitive
+   *  substring). This is the `filter` param when it accompanies a recipe;
+   *  filter WITHOUT a recipe goes through searchWithoutLogging instead,
+   *  where the filter text becomes the semantic query itself. */
+  keywordFilter?: string | undefined;
   /** ISO 8601 date/datetime — when the human originally made this judgment
    *  call, for backfilling decisions discovered in dated artifacts (git
    *  history, ADRs). Must not be in the future. Stored as traces.decided_at;
@@ -283,7 +290,7 @@ export async function submitAndSearch(
   const keyResult = await validateKey(db, params.key);
   if (!keyResult) {
     return {
-      error: "Invalid or expired API key.",
+      error: invalidKeyMessage(),
       results: [],
       totalResults: 0,
       currentPage: page,
@@ -513,6 +520,7 @@ export async function submitAndSearch(
     axes: params.axes,
     includeVectors: !!params.axes, // need vectors for concept-axis computation
     queryVectorStr: traceVectorStr ?? undefined,
+    keywordFilter: params.keywordFilter,
     timer,
   });
 
@@ -587,6 +595,124 @@ export async function submitAndSearch(
     traceId,
     traceText: params.traceText,
     formatWarning,
+    results: pipelineResult.results,
+    relatedEvidence: pipelineResult.relatedEvidence,
+    totalResults: pipelineResult.totalResults,
+    currentPage: pipelineResult.page,
+    totalPages: pipelineResult.totalPages,
+    searchMode: pipelineResult.searchMode === "corpus" ? undefined : pipelineResult.searchMode,
+    clustered: pipelineResult.clustered || undefined,
+    conceptAxes: pipelineResult.conceptAxes
+      ? {
+        axisA: pipelineResult.conceptAxes.axisA,
+        axisB: pipelineResult.conceptAxes.axisB,
+        positions: Object.fromEntries(pipelineResult.conceptAxes.positions),
+      }
+      : undefined,
+    serverTiming: timer.toServerTimingHeader(),
+  };
+}
+
+// ── Read-only search (the /check `filter` path) ─────────────────────────────
+
+export interface SearchOnlyParams {
+  key: string;
+  /** Keyword text — becomes the semantic query (the same runSearchPipeline
+   *  query slot the briefing's filter/purpose params use). */
+  filter: string;
+  sort?: string | undefined;
+  page?: number | undefined;
+  perPage?: number | undefined;
+  clusters?: number | undefined;
+  maxChars?: number | undefined;
+  axes?: string | undefined;
+  readGroups?: string | undefined;
+  surface?: string | undefined;
+}
+
+/**
+ * Read-only keyword search over the key's read scope — the sanctioned
+ * "just looking for something" path the docs have promised as
+ * `/check?filter=...` (alias `f`) since before it existed (implemented
+ * 2026-07-05, operator decision resolving the backlog [DECISION NEEDED]
+ * item). Contract:
+ *
+ *   - NO trace row is inserted — nothing enters the corpus.
+ *   - NO `recipe.checked` audit row is written, so the F29 per-key check
+ *     budget is untouched (its COUNT filters on action='recipe.checked').
+ *   - A lightweight `check.searched` audit row IS written so append-only
+ *     accounting still sees the usage (same rationale as briefing.issued).
+ *     Abuse control for the read path itself is the route-level in-memory
+ *     per-credential limiter (mirroring the /recipes lookup decision) —
+ *     deliberately NOT the audit-log-backed counter.
+ */
+export async function searchWithoutLogging(
+  params: SearchOnlyParams,
+): Promise<SubmitAndSearchResult> {
+  const db = getDb();
+  const page = params.page ?? 1;
+  const perPage = params.perPage ?? 20;
+
+  const keyResult = await validateKey(db, params.key);
+  if (!keyResult) {
+    return {
+      error: invalidKeyMessage(),
+      results: [],
+      totalResults: 0,
+      currentPage: page,
+      totalPages: 0,
+    };
+  }
+
+  // Resolve read scope exactly as submitAndSearch does.
+  let effectiveReadGroupIds = keyResult.readGroupIds;
+  if (params.readGroups) {
+    const slugs = params.readGroups.split(",").map((s) => s.trim()).filter(Boolean);
+    const resolved: string[] = [];
+    for (const slug of slugs) {
+      const id = await resolveGroupSlug(db, slug, keyResult.readGroupIds);
+      if (id) resolved.push(id);
+    }
+    if (resolved.length > 0) effectiveReadGroupIds = resolved;
+  }
+
+  const timer = new StageTimer();
+  const pipelineResult = await runSearchPipeline({
+    db,
+    groupIds: effectiveReadGroupIds,
+    query: params.filter,
+    k: params.clusters,
+    maxChars: params.maxChars,
+    sort: params.sort,
+    page,
+    perPage,
+    axes: params.axes,
+    includeVectors: !!params.axes,
+    timer,
+  });
+
+  try {
+    await db.insert(auditLog).values({
+      actorUserId: keyResult.userId,
+      apiKeyId: keyResult.keyId,
+      action: "check.searched",
+      targetType: "search",
+      metadata: {
+        apiKeyId: keyResult.keyId,
+        filter: params.filter,
+        resultCount: pipelineResult.totalResults,
+        searchMode: pipelineResult.searchMode,
+        surface: params.surface ?? "web",
+      },
+    });
+  } catch (err) {
+    // Non-blocking — accounting must not fail the read.
+    console.error("[trace.service] check.searched audit write failed:", err);
+  }
+
+  return {
+    // No traceId — nothing was logged. Routes key their "search-only"
+    // rendering off this absence.
     results: pipelineResult.results,
     relatedEvidence: pipelineResult.relatedEvidence,
     totalResults: pipelineResult.totalResults,

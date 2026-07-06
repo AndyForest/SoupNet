@@ -1,8 +1,9 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import type { Next } from "hono";
 import type { SubmitAndSearchResult } from "../services/trace.service";
-import { submitAndSearch } from "../services/trace.service";
+import { submitAndSearch, searchWithoutLogging } from "../services/trace.service";
 import { enrichResults, clusterEvidenceInResults } from "../services/result-enricher";
 import type { EnrichedResult, EnrichedEvidence, EnrichedReference } from "../services/result-enricher";
 import { getDb } from "../db";
@@ -10,13 +11,39 @@ import { sql } from "drizzle-orm";
 import { validateKey } from "../services/api-key.service";
 import { HTML_ACCEPT_TYPES, renderCheckResponseMarkdown, fenceCheckResponseMarkdown } from "@soupnet/domain";
 import type { CheckResponseJson } from "@soupnet/domain";
-import { rateLimit, perKeyRateLimit, extractCheckRequestKey } from "../middleware/rate-limit";
+import { rateLimit, perKeyRateLimit, extractCheckRequestKey, getClientIp, hashApiKey } from "../middleware/rate-limit";
+import { parseLenientQuery, rawQueryOfUrl } from "../lib/lenient-query";
+import { invalidKeyMessage, keysPageUrl } from "../lib/key-remediation";
 
 // Rate limit check/search:
 //   - per-IP: 1000 per hour (defense-in-depth, catches NAT'd attackers)
 //   - per-key: 200/hour and 1000/day (queried from audit_log; F29).
 const checkRateLimit = rateLimit({ max: 1000, windowMs: 60 * 60 * 1000 });
 const checkPerKeyRateLimit = perKeyRateLimit({ keyExtractor: extractCheckRequestKey });
+
+// Search-only requests (filter with no recipe) write no recipe.checked
+// audit rows, so the F29 audit-backed counter never sees them by design.
+// They get their own in-memory per-credential cap instead — 600/hour keyed
+// by the hashed key, mirroring the /recipes lookup decision (WT-3,
+// 2026-07-05): reads are cheap, legitimate use should never hit the
+// throttle first, and an in-memory reset on restart only widens a window
+// the per-IP limiter still bounds. GET only — the documented filter surface
+// is the query param.
+const searchOnlyRateLimit = rateLimit({
+  max: 600,
+  windowMs: 60 * 60 * 1000,
+  keyFn: (c) => {
+    const k = c.req.query("key");
+    return k ? `key:${hashApiKey(k)}` : `ip:${getClientIp(c)}`;
+  },
+});
+const searchOnlyGate = async (c: Context, next: Next) => {
+  const q = (n: string) => c.req.query(n);
+  const isSearchOnly =
+    !!(q("filter") ?? q("f")) && !(q("trace") ?? q("recipe")) && !!q("key");
+  if (isSearchOnly) return searchOnlyRateLimit(c, next);
+  return next();
+};
 
 // F28: cap multipart bodies at 21 MiB — slight slack over the 20 MiB
 // MAX_UPLOAD_BYTES enforced inside storeFile() — so attacker-controlled
@@ -82,6 +109,7 @@ export const CHECK_PARAMS = [
   { field: "ea",         wire: "ea",                 aliases: [],              roundTrip: "carry" },
   { field: "group",      wire: "recipe_book",        aliases: ["group"],       roundTrip: "carry" },
   { field: "readGroups", wire: "read_recipe_books",  aliases: ["read_groups"], roundTrip: "carry" },
+  { field: "filter",     wire: "filter",             aliases: ["f"],           roundTrip: "carry" },
   { field: "axes",       wire: "axes",               aliases: [],              roundTrip: "carry" },
   { field: "decidedAt",  wire: "decided_at",         aliases: ["decided"],     roundTrip: "carry" },
   { field: "agentId",    wire: "agent_id",           aliases: [],              roundTrip: "carry" },
@@ -226,15 +254,22 @@ function buildJsonResponse(
     response["formatWarning"] = result.formatWarning;
   }
 
-  // Related evidence from other recipes (evidence discovery pipeline)
+  // Related evidence from other recipes (evidence discovery pipeline).
+  // recipeId per entry (2026-07-05): without it agents burned full
+  // re-checks recovering recipes they'd already half-seen — GET /recipes
+  // (or the get_recipes MCP tool) turns that into a cheap lookup.
   if (result.relatedEvidence && result.relatedEvidence.length > 0) {
-    (response["data"] as Record<string, unknown>)["relatedEvidence"] = result.relatedEvidence.map((e) => ({
+    const data = response["data"] as Record<string, unknown>;
+    data["relatedEvidence"] = result.relatedEvidence.map((e) => ({
       evidenceId: e.evidenceId,
+      recipeId: e.parentTraceId,
       parentRecipe: e.parentTraceText,
       evidence: e.evidenceContent,
       similarity: e.semanticScore,
       strategy: "contextual_evidence",
     }));
+    data["relatedEvidenceHint"] =
+      "Each entry carries the source recipe's UUID as recipeId — fetch the full recipe with GET /recipes?ids=<recipeId> (same API key) instead of re-checking.";
   }
 
   // Concept-axis positions (TCAV-style projection)
@@ -243,6 +278,32 @@ function buildJsonResponse(
     (response["data"] as Record<string, unknown>)["conceptAxes"] = result.conceptAxes;
   }
 
+  return response;
+}
+
+/**
+ * JSON shape for the read-only `filter` search path — same result mapping
+ * as a check, minus everything that implies a logged trace (recipeId,
+ * checkedRecipe), plus an explicit searchOnly marker and notice.
+ */
+function buildSearchOnlyJsonResponse(
+  result: SubmitAndSearchResult,
+  enriched: EnrichedResult[],
+  page: number,
+  filter: string,
+  knownRecipeIds?: ReadonlySet<string>,
+) {
+  const response = buildJsonResponse(result, enriched, page, knownRecipeIds);
+  if (response["ok"] !== true) return response;
+  const data = response["data"] as Record<string, unknown>;
+  delete data["recipeId"];
+  delete data["checkedRecipe"];
+  response["data"] = {
+    searchOnly: true,
+    filter,
+    notice: "Read-only search — no recipe was logged.",
+    ...data,
+  };
   return response;
 }
 
@@ -359,6 +420,9 @@ function renderPage(
   nonce?: string,
 ): string {
   const hasSearch = !!(params.trace && params.ef && params.key);
+  // A result with no traceId is the read-only `filter` search — nothing was
+  // logged, so no "checked as #" confirmation and no re-check affordances.
+  const isSearchOnly = !!(result && !result.error && !result.traceId);
   const isCompact = params.compact !== "false";
 
   // Build Next Steps block — shown whenever a check completed successfully,
@@ -369,7 +433,14 @@ function renderPage(
   // the JSON response + an optional path to add a file attachment, without
   // having to re-submit the form manually.
   let nextStepsHtml = "";
-  if (result && !result.error && hasSearch) {
+  if (result && !result.error && isSearchOnly) {
+    nextStepsHtml = `
+  <section id="search-only-notice" style="background:#f0efe3;padding:0.75rem 1rem;border-radius:4px;margin:0.5rem 0">
+    <p style="margin:0.25rem 0"><strong>Read-only search${params.filter ? ` for &ldquo;${esc(params.filter)}&rdquo;` : ""}</strong> &mdash; no recipe was logged.</p>
+    <p style="font-size:0.85em;color:#555;margin:0.25rem 0">To log a genuine taste/judgment call instead, submit a recipe with evidence below or add <code>recipe=</code> and <code>evidence=</code> params (keeping <code>filter=</code> narrows that check's results by keyword).</p>
+  </section>`;
+  }
+  if (result && !result.error && hasSearch && result.traceId) {
     const jsonQs = buildQs(params, { format: "json" });
     const hiddenCarryFields = renderHiddenCarryFields(params);
 
@@ -415,7 +486,7 @@ function renderPage(
 
   // Build results HTML
   let resultsHtml = "";
-  if (result && !result.error && hasSearch && enriched) {
+  if (result && !result.error && (hasSearch || isSearchOnly) && enriched) {
     const knownIdsForHtml = parseKnownRecipes(params.knownRecipes);
     const resultItems = enriched
       .map((r) => {
@@ -436,18 +507,31 @@ function renderPage(
     </article>`;
         }
 
-        // Cluster drill-down: search using the exemplar's text to find all its cluster members
+        // Cluster drill-down: search using the exemplar's text to find all its cluster members.
+        // In search-only mode the drill link stays search-only (filter as the
+        // semantic query) — a read-only page must not mint links that log.
         let clusterHtml = "";
         if (r.clusterSize && r.clusterSize > 1) {
-          const drillQs = buildQs({
-            ...params,
-            trace: r.claimText,
-            ef: r.evidence[0]?.content || params.ef || "",
-            clusters: undefined,
-            maxChars: undefined,
-            expand: undefined,
-            compact: undefined,
-          } as PageParams, { expand: "true" });
+          const drillQs = isSearchOnly
+            ? buildQs({
+              ...params,
+              filter: r.claimText,
+              trace: null,
+              ef: null,
+              clusters: undefined,
+              maxChars: undefined,
+              expand: undefined,
+              compact: undefined,
+            } as PageParams, { expand: "true" })
+            : buildQs({
+              ...params,
+              trace: r.claimText,
+              ef: r.evidence[0]?.content || params.ef || "",
+              clusters: undefined,
+              maxChars: undefined,
+              expand: undefined,
+              compact: undefined,
+            } as PageParams, { expand: "true" });
           clusterHtml = `\n      <a class="cluster-size" href="/check${drillQs}">Explore ${r.clusterSize} similar recipes in this cluster</a>`;
         }
 
@@ -523,10 +607,11 @@ function renderPage(
       ${result.relatedEvidence.map((e) => `
       <li>
         <p>${esc(e.evidenceContent)}</p>
-        <p><small>From recipe: <em>${esc(e.parentTraceText.slice(0, 120))}${e.parentTraceText.length > 120 ? "..." : ""}</em>
+        <p><small>From recipe <code>${esc(e.parentTraceId)}</code>: <em>${esc(e.parentTraceText.slice(0, 120))}${e.parentTraceText.length > 120 ? "..." : ""}</em>
         (${Math.round(e.semanticScore * 100)}% similar)</small></p>
       </li>`).join("\n")}
     </ul>
+    <p><small>Fetch any full recipe by id: <code>GET /recipes?ids=&lt;id&gt;</code> with the same API key (Bearer), or the <code>get_recipes</code> MCP tool.</small></p>
   </section>`;
     }
 
@@ -561,7 +646,7 @@ function renderPage(
   </section>`
     : "";
 
-  if (hasSearch) {
+  if (hasSearch || isSearchOnly) {
     // Minimal: just links for returning agents
     instructionsHtml = `
   <p><small><a href="${guideUrl}">Recipe check guide</a> | <a href="${mcpSetupUrl}">MCP setup</a> | <a href="${bootstrapUrl}">Bootstrap</a> &mdash; <code>?format=json</code> for structured data</small></p>`;
@@ -680,6 +765,46 @@ function renderPage(
 </html>`;
 }
 
+// ── Invalid-key state (key-death UX, 2026-07-05) ────────────────────────────
+//
+// A keyed-but-invalid request must never fall through to the anonymous page
+// (the 2026-07-05 evals' #1 finding: yesterday's briefing link silently
+// became a documentation page and agents abandoned the tool). The no-key
+// anonymous page is untouched — it's a legitimate zero-setup surface.
+//
+// Anti-enumeration: validateKey collapses "expired" and "never existed" to
+// the same null, and this page renders identically for both. It also never
+// echoes the presented key.
+
+function renderInvalidKeyPage(): string {
+  const frontendBase = process.env["FRONTEND_URL"] ?? "https://soup.net";
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Soup.net &mdash; API key invalid or expired</title>
+  <link rel="stylesheet" href="/check-style.css">
+</head>
+<body>
+  <header>
+    <h1>Soup.net &mdash; API key invalid or expired</h1>
+  </header>
+
+  <section id="invalid-key" style="background:#fff3cd;border:1px solid #ffc107;padding:0.75rem 1rem;border-radius:4px;margin:0.5rem 0">
+    <p><strong>The API key on this request is invalid or expired.</strong> (The two cases are deliberately indistinguishable.)</p>
+    <p>How to recover:</p>
+    <ul>
+      <li>Your human can sign in at <a href="${esc(frontendBase)}/app/keys">${esc(frontendBase)}/app/keys</a> and mint a new key.</li>
+      <li>Daily keys expire every 24 hours &mdash; a briefing URL from yesterday carries yesterday&rsquo;s key. Copying a fresh briefing refreshes the key too.</li>
+      <li>The new key works immediately on this page: <code>/check?key=NEW_KEY</code> (add <code>&amp;format=json</code> for structured data). No MCP reconnect needed.</li>
+    </ul>
+    <p><small>If you&rsquo;re an AI agent seeing this mid-task: tell your human the Soup.net key needs re-minting rather than continuing without recipe checks.</small></p>
+  </section>
+</body>
+</html>`;
+}
+
 // ── Shared handler logic ────────────────────────────────────────────────────
 
 async function handleCheck(
@@ -687,6 +812,29 @@ async function handleCheck(
   params: PageParams,
 ) {
   const jsonMode = wantsJson(c, params);
+
+  // Key-death gate: a present-but-invalid key gets an explicit 401 state on
+  // both content types — never the anonymous fallback page. Runs before any
+  // service work so nothing downstream sees a dead key.
+  if (params.key) {
+    const keyCheck = await validateKey(getDb(), params.key);
+    if (!keyCheck) {
+      if (jsonMode) {
+        return c.json(
+          {
+            ok: false,
+            error: invalidKeyMessage(),
+            remediation: {
+              keysUrl: keysPageUrl(),
+              note: "Sign in and mint a new key; a fresh key works on /check immediately with no MCP reconnect. Invalid and expired keys are deliberately indistinguishable.",
+            },
+          },
+          401,
+        );
+      }
+      return c.html(renderInvalidKeyPage(), 401);
+    }
+  }
 
   // For HTML responses, default to clustered results unless explicitly expanded
   // or the caller already specified clustering params.
@@ -722,6 +870,7 @@ async function handleCheck(
   const surface = c.req.header("x-soupnet-surface") === "mcp-stdio" ? "mcp-stdio" : "web";
 
   let result: SubmitAndSearchResult | undefined;
+  let searchOnly = false;
   if (params.trace && params.ef && params.key) {
     result = await submitAndSearch({
       surface,
@@ -748,6 +897,35 @@ async function handleCheck(
       readGroups: params.readGroups,
       decidedAt: params.decidedAt,
       agentId: params.agentId,
+      // filter alongside a recipe narrows the candidate set by keyword;
+      // the check itself logs normally.
+      keywordFilter: params.filter,
+    });
+  } else if (params.key && params.filter && !params.trace) {
+    // The sanctioned no-logging path: filter (alias f) with no recipe runs a
+    // read-only keyword search over the key's read scope. No trace, no
+    // recipe.checked audit row — searchWithoutLogging writes a check.searched
+    // accounting row instead. Implemented 2026-07-05 (operator decision
+    // resolving the backlog [DECISION NEEDED] item).
+    searchOnly = true;
+    result = await searchWithoutLogging({
+      surface,
+      key: params.key,
+      filter: params.filter,
+      sort: params.sort,
+      page: params.page ? parseInt(params.page, 10) : undefined,
+      clusters: params.clusters
+        ? parseInt(params.clusters, 10)
+        : useDefaultJsonClustering
+          ? JSON_DEFAULT_CLUSTERS
+          : undefined,
+      maxChars: params.maxChars
+        ? parseInt(params.maxChars, 10)
+        : useDefaultHtmlClustering
+          ? HTML_DEFAULT_MAX_CHARS
+          : undefined,
+      axes: params.axes,
+      readGroups: params.readGroups,
     });
   }
 
@@ -761,10 +939,25 @@ async function handleCheck(
   // JSON response path
   if (jsonMode) {
     if (!result) {
-      const hint = !params.key
-        ? "No API key provided. Generate one at " + (process.env["FRONTEND_URL"] ?? "https://soup.net") + "/app/keys"
-        : "Missing required parameters: key, trace, ef";
-      return c.json({ ok: false, error: hint }, 400);
+      if (!params.key) {
+        return c.json({
+          ok: false,
+          error: "No API key provided. Generate one at " + keysPageUrl(),
+        }, 400);
+      }
+      // Accurate per-request diff in modern vocabulary (2026-07-05 eval
+      // finding: the old static "key, trace, ef" list named params the
+      // caller had already provided, in legacy names, and mis-taught agents
+      // that the documented modern names don't work).
+      const missing: string[] = [];
+      if (!params.trace) missing.push("recipe (alias: trace)");
+      if (!params.ef) missing.push("evidence (alias: ef)");
+      return c.json({
+        ok: false,
+        error:
+          `Missing required parameter${missing.length > 1 ? "s" : ""}: ${missing.join(", ")}. ` +
+          "To check a recipe, provide both. Just looking for something? Use filter=<keywords> (alias f) for a read-only search that logs nothing.",
+      }, 400);
     }
     if (result.error) {
       return c.json({ ok: false, error: result.error }, 400);
@@ -773,7 +966,10 @@ async function handleCheck(
     let enriched = await enrichResults(db, result.results);
     enriched = await clusterEvidenceInResults(db, enriched);
     const page = params.page ? parseInt(params.page, 10) : 1;
-    return c.json(buildJsonResponse(result, enriched, page, parseKnownRecipes(params.knownRecipes)));
+    const known = parseKnownRecipes(params.knownRecipes);
+    return c.json(searchOnly
+      ? buildSearchOnlyJsonResponse(result, enriched, page, params.filter ?? "", known)
+      : buildJsonResponse(result, enriched, page, known));
   }
 
   // HTML response path — always enrich + cluster evidence
@@ -818,24 +1014,42 @@ async function handleCheck(
 
 // ── Route handlers ───────────────────────────────────────────────────────────
 
-// GET /check — display form or process check via query params
-check.get("/", checkRateLimit, checkPerKeyRateLimit, async (c) => {
-  const params = readParams((name) => c.req.query(name));
+// GET /check — display form or process check via query params.
+// Params are read from the RAW query string via the lenient decoder rather
+// than c.req.query(): Hono returns the raw percent-encoded text when
+// decodeURIComponent throws, which is how windows-1252 escapes (%97 for an
+// em-dash) ended up stored literally. See lib/lenient-query.ts.
+check.get("/", checkRateLimit, checkPerKeyRateLimit, searchOnlyGate, async (c) => {
+  const params = readParams(parseLenientQuery(rawQueryOfUrl(c.req.url)));
   return handleCheck(c, params);
 });
 
-// POST /check — form body (url-encoded or multipart for image uploads)
+// POST /check — form body (url-encoded or multipart for image uploads).
+// Body values win; URL query params fill the gaps — so POST /check?format=json
+// with body params returns JSON exactly like GET does (2026-07-05 parity fix).
 check.post("/", checkBodyLimit, checkRateLimit, checkPerKeyRateLimit, async (c) => {
-  const formData = await c.req.parseBody();
+  const queryGet = parseLenientQuery(rawQueryOfUrl(c.req.url));
+  const contentType = c.req.header("content-type") ?? "";
 
-  // Extract image file if present (multipart/form-data)
-  const rawImage = formData["image"];
-  const imageFile = rawImage instanceof File && rawImage.size > 0 ? rawImage : undefined;
+  let bodyGet: (name: string) => string | undefined;
+  let imageFile: File | undefined;
+  if (contentType.includes("application/x-www-form-urlencoded")) {
+    // Same lenient decoding as GET for urlencoded bodies — Request.formData()
+    // replaces invalid-UTF-8 escapes (%97) with U+FFFD instead of decoding
+    // them as windows-1252. Hono caches the raw body, so the rate-limit
+    // middleware's earlier parseBody() doesn't consume it.
+    bodyGet = parseLenientQuery(await c.req.text());
+  } else {
+    const formData = await c.req.parseBody();
+    const rawImage = formData["image"];
+    imageFile = rawImage instanceof File && rawImage.size > 0 ? rawImage : undefined;
+    bodyGet = (name) => {
+      const v = formData[name];
+      return typeof v === "string" ? v : undefined;
+    };
+  }
 
-  const params = readParams((name) => {
-    const v = formData[name];
-    return typeof v === "string" ? v : undefined;
-  });
+  const params = readParams((name) => bodyGet(name) ?? queryGet(name));
   params.imageFile = imageFile;
 
   return handleCheck(c, params);

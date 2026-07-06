@@ -37,6 +37,11 @@ export interface HybridSearchParams {
    *  the vector (e.g. the sync write path just cached the identical text).
    *  See docs/rough-notes/2026-07-01/recipe-check-latency-findings.md. */
   queryVectorStr?: string | undefined;
+  /** Keyword narrowing (the /check `filter` param when it accompanies a
+   *  recipe): whitespace/comma-separated terms, ANDed as case-insensitive
+   *  substring matches on the recipe text. Applied inside the SQL predicates
+   *  so the exact count, ANN top-k, and exhaustive fallback all agree. */
+  keywordFilter?: string | undefined;
 }
 
 export interface HybridSearchResult {
@@ -122,6 +127,22 @@ export async function hybridSearch(
       PRODUCTION_SEARCH_STRATEGY_IDS.map((s) => sql`${s}`),
       sql`, `,
     );
+    // Keyword narrowing terms (filter param alongside a recipe): each term
+    // must appear in the recipe text (case-insensitive). Terms are capped to
+    // keep the predicate bounded; ILIKE wildcards in user terms are escaped.
+    const keywordTerms = (params.keywordFilter ?? "")
+      .split(/[\s,]+/)
+      .map((t) => t.trim())
+      .filter(Boolean)
+      .slice(0, 8);
+    const escapeLike = (t: string) => t.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+    const keywordPredicate = keywordTerms.length > 0
+      ? sql.join(
+        keywordTerms.map((t) => sql`AND tr.claim_text ILIKE ${"%" + escapeLike(t) + "%"}`),
+        sql` `,
+      )
+      : sql``;
+
     const searchPredicates = sql`
         ev.status = 'complete'
         AND ev.vector IS NOT NULL
@@ -129,12 +150,14 @@ export async function hybridSearch(
         AND ecs.strategy_id IN (${strategyIdsSql})
         AND es.source_type = 'trace'
         AND es.group_id IN (${groupIdsSql})
-        ${excludeTraceId ? sql`AND es.source_id != ${excludeTraceId}::uuid` : sql``}`;
+        ${excludeTraceId ? sql`AND es.source_id != ${excludeTraceId}::uuid` : sql``}
+        ${keywordPredicate}`;
     const searchJoins = sql`
       FROM claimnet.embedding_vectors ev
       JOIN claimnet.embedding_chunks ec ON ec.id = ev.embedding_chunk_id
       JOIN claimnet.embedding_chunk_strategies ecs ON ecs.id = ec.chunk_strategy_id
-      JOIN claimnet.embedding_sources es ON es.id = ec.embedding_source_id`;
+      JOIN claimnet.embedding_sources es ON es.id = ec.embedding_source_id
+      ${keywordTerms.length > 0 ? sql`JOIN claimnet.traces tr ON tr.id = es.source_id` : sql``}`;
 
     // ── 1. Exact result count (no distance computations) ─────────────────
     const countRows = await db.execute(sql`
