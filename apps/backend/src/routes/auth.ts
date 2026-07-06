@@ -427,6 +427,7 @@ auth.get("/me/export", requireAuth, requireVerifiedEmail, async (c) => {
     SELECT id, user_id AS "userId", group_id AS "groupId", api_key_id AS "apiKeyId",
            claim_text AS "claimText", claim_text_hash AS "claimTextHash",
            format_adherence_score AS "formatAdherenceScore",
+           decided_at AS "decidedAt",
            created_at AS "createdAt", updated_at AS "updatedAt"
     FROM claimnet.traces WHERE user_id = ${user.id}::uuid
     ORDER BY created_at
@@ -494,6 +495,13 @@ auth.get("/me/export", requireAuth, requireVerifiedEmail, async (c) => {
 
   const payload = {
     exportedAt: new Date().toISOString(),
+    // schemaVersion stays 1 across purely additive, nullable field additions
+    // (e.g. traces.decidedAt, added 2026-07-06). Old readers ignore unknown keys;
+    // new readers feature-detect the field by presence. The integer is reserved
+    // for BREAKING changes (removed/renamed/retyped fields) so the corpus-import
+    // "schemaVersion gate with explicit migration path" (docs/backlog.md) can use
+    // it as a real compatibility signal rather than an every-field change counter.
+    // Judgment checked on Soup.net: recipe 197d9f07-c9d1-4137-8112-2ad8263a3c66.
     schemaVersion: 1,
     user: profile ?? null,
     organizations,

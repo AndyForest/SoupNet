@@ -613,6 +613,58 @@ describe.skipIf(!BASE)("data export", () => {
       expect(key["keyPrefix"]).toBeTruthy();
     }
   });
+
+  it("GET /auth/me/export carries traces.decidedAt — round-trips a backfilled date and null", async () => {
+    // decided_at (the human's original judgment date, added 2026-06-10 for
+    // decision archaeology) must survive the export so it can be replayed
+    // faithfully — the export is the intended corpus-import/restore format.
+    // /check is API-key-authed, so mint a daily key for this user first.
+    const keyRes = await fetch(`${BASE}/keys/daily`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${exportToken}` },
+    });
+    const apiKey = ((await keyRes.json()) as { data?: { key?: string } }).data?.key;
+    expect(apiKey).toBeTruthy();
+
+    const ef = `Export-fidelity evidence.\n> "verbatim decided-at quote"\n-- export integration test, 2026-07-06`;
+    const mkTrace = async (recipeText: string, decidedAt?: string): Promise<string> => {
+      const params = new URLSearchParams({ key: apiKey!, trace: recipeText, ef, format: "json" });
+      if (decidedAt) params.set("decided_at", decidedAt);
+      const res = await fetch(`${BASE}/check?${params.toString()}`, {
+        headers: { Accept: "application/json" },
+      });
+      const body = (await res.json()) as { ok: boolean; data?: { recipeId?: string } };
+      const id = body.data?.recipeId;
+      if (!id) throw new Error(`Trace creation failed: ${JSON.stringify(body)}`);
+      return id;
+    };
+
+    const decidedIso = "2024-03-15T14:30:00.000Z";
+    const withDecided = await mkTrace(
+      `As a decision archaeologist working on export fidelity ${exportUid}, I chose to backfill decided_at so that replay is faithful.`,
+      "2024-03-15T14:30:00Z",
+    );
+    const withoutDecided = await mkTrace(
+      `As a decision archaeologist working on export fidelity ${exportUid}, I prefer contemporaneous logging so that created_at is the judgment date.`,
+    );
+
+    const res = await fetch(`${BASE}/auth/me/export`, {
+      headers: { Authorization: `Bearer ${exportToken}` },
+    });
+    const body = (await res.json()) as { traces: Array<Record<string, unknown>> };
+    const traceA = body.traces.find((t) => t["id"] === withDecided);
+    const traceB = body.traces.find((t) => t["id"] === withoutDecided);
+    expect(traceA).toBeDefined();
+    expect(traceB).toBeDefined();
+
+    // Backfilled decision: decidedAt round-trips as the original judgment date.
+    expect(new Date(traceA!["decidedAt"] as string).toISOString()).toBe(decidedIso);
+
+    // Contemporaneous decision: the field is present but null (created_at
+    // carries the date) — asserts both that the key exists and that a missing
+    // decided_at exports as null rather than being silently dropped.
+    expect(traceB!["decidedAt"]).toBeNull();
+  });
 });
 
 /**
