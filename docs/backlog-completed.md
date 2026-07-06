@@ -182,6 +182,20 @@ User/agent-facing rename landed in commit `bd59f23`: frontend UI, REST routes (`
 
 ---
 
+## 2026-07-05 next-improvements batch
+
+### 2026-07-05 — Five parallel work trees shipped (plan: docs/rough-notes/2026-07-05/next-improvements-worktree-plan.md)
+
+All five trees implemented, merged, and verified (test:ci green; Layer 4b live MCP verification; qualitative evals in docs/rough-notes/2026-07-05/qualitative-eval-findings.md):
+
+- **WT-1** — rule-of-7 sidebar regrouping (Learn group incl. landing page reachability), mobile bottom bar reduced to 5 items + More sheet, bottom-bar min-width overflow root-cause fix, distinct Admin icon. (Absorbed the "Side-nav regrouping (rule of 7) + landing reachability" [DESIGN] item.)
+- **WT-2** — dashboard zero-checks onboarding with 4-card agent-type picker (permanent home spliced atop /info/connect), briefing-scope truth-in-labeling (dashboard now renders the actual daily_read book list instead of the false "reads all recipe books" claim).
+- **WT-3** — `get_recipes` MCP tool + `GET /recipes` REST (key-scope ACL, uniform not_found_or_unreadable markers, IDOR-tested), `recipe_ids` + `purpose` params on all three briefing surfaces, `/traces/:id` SPA redirect fixing the briefing's trace-link template.
+- **WT-4** — `response_format` flag on check_recipe (markdown default with inline UUIDs+similarities, structuredContent on request), shared markdown renderer + web /check fenced copy-back (absorbed the "Markdown response option for web /check" [DESIGN] item), agent-facing pagination removed (incl. the actions.nextPage contradiction), server-side feedback ingestion (migration 0027: check_feedback + trace_reactions + check_feedback_stars, user-FK cascades), chained `feedback` param + `log_feedback` tool + POST /feedback, trace-detail feedback lineage + still_true/stale/wrong reactions + stars, `known_recipes` rendering-only stubs, UVP Layer-1 server stamps (resultSimilarities, surface, oauthClientId, briefing.issued funnel event).
+- **WT-5** — four `@unreleased` briefing-spec .feature files for the new capabilities (the eight core spec files already existed from 2026-06-10 — regression phase 1 was already done), api.md historical banner.
+
+Survey-discovered bugs from the plan's batch section, all fixed in the batch: dashboard daily-key scope copy; MCP pagination-without-param contradiction; briefing trace-link template (via SPA redirect); known_recipes dangling reference (shipped as the feature); api.md historical flag.
+
 ## Legal and compliance
 
 ### 2026-05-12 — Public-ready trim pass on legal pages
