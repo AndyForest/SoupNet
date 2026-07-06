@@ -189,6 +189,12 @@ User/agent-facing rename landed in commit `bd59f23`: frontend UI, REST routes (`
 
 ---
 
+## 2026-07-06 — connector-readiness arc (directory prep)
+
+### 2026-07-06 — OAuth briefings render zero credentials
+
+The briefing's "Your API key" section and every ?key= URL now branch on key_type='oauth': OAuth-connected agents get a truthful connection note (1h auto-refreshing token, nothing to copy or protect) and keyless pointers instead of pasteable-key setup sections; non-OAuth briefings verified byte-identical. Closes "Reconcile the briefing's API-key-in-URL assumptions for OAuth-connected agents". Same arc, same day: tool/param descriptions trimmed to affordances (tools/list 18KB → 11.6KB, budget-guarded); WWW-Authenticate challenge on the /mcp 401; GET/DELETE → 405 in stateless mode + [mcp-req] observability; OAuth refresh consumed_at fix (migration 0028); shared consent-screen picker; connector display-name warning (domain-like names silently block tools on claude.ai — operator-discovered root cause of the conversation-time tool-discovery failure).
+
 ## 2026-07-05 next-improvements batch
 
 ### 2026-07-05 — Fast-follow round (FF-1/FF-2/FF-3), same-day defect fixes from the batch's qualitative evals
