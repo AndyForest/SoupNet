@@ -23,6 +23,7 @@ import { uploadsRoutes } from "./routes/uploads";
 import { oauthRoutes, oauthWellKnownRoutes } from "./routes/oauth";
 import { feedbackRoutes } from "./routes/feedback";
 import { startEmbeddingWorker } from "./embedding-worker";
+import { isLoopbackOrigin } from "./lib/local-origin";
 import type { AppEnv } from "./types";
 
 const app = new Hono<AppEnv>();
@@ -34,10 +35,17 @@ const app = new Hono<AppEnv>();
 const frontendUrl = process.env["FRONTEND_URL"] ?? "http://localhost:5273";
 const backendUrl = process.env["BACKEND_URL"] ?? "http://localhost:3101";
 const allowedOrigins = new Set([frontendUrl, backendUrl]);
+// Loopback origins reflect on any port so local dev survives origin drift
+// (Vite auto-bumping 5273→5274, 127.0.0.1 vs localhost, IPv6 loopback) —
+// the same rule the MCP router's Origin validation has always used. Safe
+// with credentials because auth is header-borne (JWT/API key), never
+// cookies: a page on another local origin cannot read this origin's
+// localStorage and its requests carry no ambient credentials.
 app.use(
   "/*",
   cors({
-    origin: (origin) => (allowedOrigins.has(origin) ? origin : frontendUrl),
+    origin: (origin) =>
+      allowedOrigins.has(origin) || isLoopbackOrigin(origin) ? origin : frontendUrl,
     credentials: true,
     allowHeaders: ["Content-Type", "Authorization"],
     allowMethods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
