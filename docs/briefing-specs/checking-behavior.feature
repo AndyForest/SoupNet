@@ -37,6 +37,15 @@ Feature: Checking behavior — genuine hypotheses, autonomous timing
     When the agent makes trivial autonomous choices (variable names, comment phrasing, intermediate paths)
     Then it does not check recipes for them
 
+  @unreleased
+  Scenario: Probing the system does not log junk recipes
+    # Guards: briefing intro honesty note — every submission logs a real trace;
+    # the filter (alias f) param is the sanctioned no-logging keyword lookup.
+    # @unreleased until the /check filter implementation lands (FF-1).
+    When the agent wants to test the check mechanics or only look something up by keyword
+    Then it exercises the docs pages or the check page's filter (alias f) parameter
+    And it does not submit a recipe it does not genuinely believe
+
   Scenario: Assumption surfacing attributes the hypothesis honestly
     # Guards: Scenario B; FOR_AI_AGENTS two modes of checking
     Given the user's environment shows a consistent unstated pattern (e.g. dark themes in every tool)

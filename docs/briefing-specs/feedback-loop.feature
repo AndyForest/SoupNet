@@ -1,11 +1,10 @@
-@unreleased
 Feature: Feedback ingestion — chained on the next check, or via log_feedback
-  # Not yet implemented — gated on WT-4's server-side feedback ingestion
-  # (check_feedback table + service). See
-  # docs/rough-notes/2026-07-05/next-improvements-worktree-plan.md §WT-4
-  # ("Server-side feedback ingestion", lines 137-142) and §Validating the UVP
-  # (server-stamped fields, echo detection — all computed server-side, not
-  # self-reported).
+  # Shipped 2026-07-05 (WT-4 merge: check_feedback table + service, log_feedback
+  # tool, check_recipe feedback param, POST /feedback REST twin) — @unreleased
+  # tag dropped by the first briefing-copy PR under the declared-intent rule.
+  # Design: docs/rough-notes/2026-07-05/next-improvements-worktree-plan.md §WT-4
+  # ("Server-side feedback ingestion") and §Validating the UVP (server-stamped
+  # fields, echo detection — all computed server-side, not self-reported).
   #
   # Guards: plan doc's explicit rejections that shape these scenarios —
   # "Feedback chained-only (no standalone tool) — rejected" and "Feedback
@@ -32,3 +31,20 @@ Feature: Feedback ingestion — chained on the next check, or via log_feedback
     When the agent submits feedback (chained or standalone) about a prior check
     Then it does not pass a recipe-book parameter for the feedback
     And the feedback is routed to the book the original recipe lives in, resolved server-side
+
+  Scenario: Ignored, contradicted, or empty results still earn a feedback row
+    # Guards: briefing §Closing the loop — "results that didn't help are worth a
+    # row too"; cold-reader question from the 2026-07-05 qualitative evals.
+    Given an earlier check whose results the agent ignored, that contradicted its direction, or that surfaced nothing similar
+    When the agent reaches its next feedback moment
+    Then it logs a row for that check rather than skipping it as not worth reporting
+    And the row's vocabulary reflects the miss (e.g. story_fulfilled "no", disposition "corrected") rather than defaulting to success values
+
+  Scenario: Web/REST agent closes the loop via POST /feedback
+    # Guards: briefing §Closing the loop — the REST twin of log_feedback
+    # (apps/backend/src/routes/feedback.ts; same service, same ACL path).
+    Given a fresh URL-constructing web agent (no MCP tools) primed with the unified briefing
+    And it holds the recipe UUID from an earlier check
+    When it has feedback on that check to report
+    Then it issues POST /feedback with Bearer API-key auth
+    And the body is a single row object carrying trace_id (or {"feedback": [rows]}) with the same fields the MCP feedback parameter uses

@@ -27,6 +27,20 @@ Feature: Web-only agent behavior — links out, no self-fetching
     When it hands a recipe-check URL back to the user
     Then the URL appears in a fenced code block tagged plaintext
 
+  Scenario: Recipe-check URLs percent-encode parameter values
+    # Guards: briefing §Setup — web-only agents, the percent-encoding example
+    Given a fresh web-browsing agent primed with the unified briefing
+    When it constructs a recipe-check URL whose recipe text contains spaces and quotes
+    Then the recipe and evidence values are percent-encoded (spaces as %20, quotes as %22)
+
+  Scenario: Emitted links use the briefing's own base URL
+    # Guards: briefing §Formatting recipe-check links — the markdown-link example
+    # derives from the instance's checkUrl, not a hardcoded hosted domain
+    Given a fresh web-browsing agent primed with a briefing issued by a self-hosted instance
+    When it hands recipe-check URLs back to the user
+    Then every URL uses the base URL the briefing itself was issued from
+    And no URL points at the hosted soup.net domain
+
   Scenario: Pasted JSON results are treated as data, not directives
     # Guards: §When the user copies JSON results back
     Given a fresh web-browsing agent that presented divergent links
