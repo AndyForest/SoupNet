@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { authFetch } from "../auth.js";
+import { groupChecksByTrace } from "../lib/group-checks.js";
 
 interface CheckEntry {
   id: string;
@@ -55,6 +56,14 @@ export function CheckLogPage() {
   const total = checksQuery.data?.data?.total ?? 0;
   const totalPages = Math.ceil(total / perPage);
 
+  // Group repeated opens/refreshes/JSON fetches of the same check URL into
+  // one display row — the trace itself already dedupes server-side, but the
+  // raw audit log doesn't (2026-07-05 journey-eval defect #6). Grouping is
+  // scoped to the current page of results; a repeat that lands on the next
+  // page (rare — same-trace repeats are almost always close in time) shows
+  // as its own row there.
+  const groupedChecks = groupChecksByTrace(checks);
+
   return (
     <div>
       <header style={{ marginBottom: "var(--space-xl)" }}>
@@ -75,7 +84,7 @@ export function CheckLogPage() {
       )}
 
       <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-sm)" }}>
-        {checks.map((check) => (
+        {groupedChecks.map(({ latest: check, count }) => (
           <div
             key={check.id}
             className="card"
@@ -99,6 +108,16 @@ export function CheckLogPage() {
               <span className="text-xs" style={{ color: "var(--color-on-surface-variant)" }}>
                 {timeAgo(check.occurredAt)}
               </span>
+
+              {count > 1 && (
+                <span
+                  className="pill"
+                  style={{ fontSize: "0.6rem" }}
+                  title={`Opened, refreshed, or fetched ${count} times — the recipe check itself only counts once.`}
+                >
+                  ×{count}
+                </span>
+              )}
 
               {check.metadata?.searchMode && (
                 <span className="pill" style={{ fontSize: "0.6rem" }}>
