@@ -600,7 +600,7 @@ function createMcpServer(backendUrl: string): McpServer {
 
   // ── get_briefing tool ─────────────────────────────────────────────────────
   //
-  // Returns the same unified briefing produced by GET /keys/briefing — the
+  // Returns the same unified briefing produced by POST /keys/briefing — the
   // recipe-check format, the user's recipe books, and a clustered sample
   // of recipes from their corpus. Replaces the old get_recipe_guide tool;
   // the static guide content lives inside the briefing.

@@ -5,6 +5,7 @@ import { authFetch } from "../auth.js";
 import { Icon } from "../components/Icon.js";
 import { RecipeBookScopePicker } from "../components/RecipeBookScopePicker.js";
 import { useClipboard } from "../hooks/useClipboard.js";
+import { substituteBriefingKey } from "../lib/briefing-key.js";
 
 // sessionStorage key for the ephemeral custom-briefing handoff. The raw API
 // key never goes into the URL — RecipeMapPage reads this once on mount, then
@@ -156,12 +157,17 @@ export function ApiKeysPage() {
   // Fetch the unified briefing text for a given raw key. Invoked inside
   // copyAsync so the ClipboardItem Promise preserves iOS Safari's gesture
   // context across the fetch await (plain onSuccess copies silently no-op
-  // on iPhone).
+  // on iPhone). POST body keeps the raw key out of the request URL; the
+  // response carries only the YOUR_API_KEY placeholder, substituted here.
   async function fetchBriefingText(rawKey: string): Promise<string> {
-    const res = await authFetch(`/keys/briefing?key=${encodeURIComponent(rawKey)}`);
+    const res = await authFetch("/keys/briefing", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: rawKey }),
+    });
     const json = (await res.json()) as { ok: boolean; data?: { text: string } };
     if (!json.ok || !json.data) throw new Error("Failed to get briefing");
-    return json.data.text;
+    return substituteBriefingKey(json.data.text, rawKey);
   }
 
   async function handleCopyBriefing(keyId: string, rawKey: string) {

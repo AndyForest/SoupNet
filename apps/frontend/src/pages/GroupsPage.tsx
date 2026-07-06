@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useSearch } from "@tanstack/react-router";
 import { authFetch } from "../auth.js";
 import { copyToClipboard, useClipboard } from "../hooks/useClipboard.js";
+import { substituteBriefingKey } from "../lib/briefing-key.js";
 import { Icon } from "../components/Icon.js";
 
 // Internal type — represents a recipe book row from the backend. Named "Group"
@@ -789,7 +790,9 @@ function AgentConnectBox({ group, justJoined }: { group: Group; justJoined: bool
 
   // Mint a 24h key scoped to this group, then fetch the unified briefing.
   // Invoked inside copyAsync so the ClipboardItem Promise keeps iOS Safari's
-  // gesture context alive across both awaits.
+  // gesture context alive across both awaits. POST body keeps the raw key
+  // out of the request URL; the response text carries only the YOUR_API_KEY
+  // placeholder, substituted client-side at copy time.
   async function fetchBriefingText(): Promise<string> {
     const keyRes = await authFetch("/keys/daily", {
       method: "POST",
@@ -798,12 +801,14 @@ function AgentConnectBox({ group, justJoined }: { group: Group; justJoined: bool
     });
     const keyJson = (await keyRes.json()) as { ok: boolean; data?: { key: string } };
     if (!keyJson.ok || !keyJson.data) throw new Error("Failed to generate key");
-    const briefRes = await authFetch(
-      `/keys/briefing?key=${encodeURIComponent(keyJson.data.key)}`,
-    );
+    const briefRes = await authFetch("/keys/briefing", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: keyJson.data.key }),
+    });
     const briefJson = (await briefRes.json()) as { ok: boolean; data?: { text: string } };
     if (!briefJson.ok || !briefJson.data) throw new Error("Failed to get briefing");
-    return briefJson.data.text;
+    return substituteBriefingKey(briefJson.data.text, keyJson.data.key);
   }
 
   async function handleCopyBriefing() {

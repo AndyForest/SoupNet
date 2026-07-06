@@ -9,6 +9,7 @@ import { authFetch } from "../auth.js";
 import { useClipboard } from "../hooks/useClipboard.js";
 import { CUSTOM_BRIEFING_STORAGE_KEY, type CustomBriefingHandoff } from "./ApiKeysPage.js";
 import { describeMapScope, mapBriefingCount } from "../lib/map-scope-label.js";
+import { substituteBriefingKey } from "../lib/briefing-key.js";
 
 // ── Color palette for clusters ───────────────────────────────────────────────
 
@@ -177,24 +178,28 @@ export function RecipeMapPage() {
 
     // 2. Fetch unified briefing with map refinement params. The backend
     //    re-runs clustering with these inputs and composes the
-    //    `## Context from <books>` section. No client-side post-processing.
-    const params = new URLSearchParams();
-    params.set("key", briefingKey);
-    params.set("k", String(k));
-    if (committed.mode === "concept" && committed.axes) params.set("axes", committed.axes);
-    if (committed.filter) params.set("filter", committed.filter);
-    if (strategy) params.set("strategy", strategy);
+    //    `## Context from <books>` section. POST body keeps the raw key out
+    //    of the request URL; the response text carries only the YOUR_API_KEY
+    //    placeholder, substituted client-side below.
+    const briefingBody: Record<string, string> = { key: briefingKey, k: String(k) };
+    if (committed.mode === "concept" && committed.axes) briefingBody["axes"] = committed.axes;
+    if (committed.filter) briefingBody["filter"] = committed.filter;
+    if (strategy) briefingBody["strategy"] = strategy;
     if (selectedGroupId) {
       const targetSlug = (groupsQuery.data ?? []).find(g => g.id === selectedGroupId)?.slug;
-      if (targetSlug) params.set("recipe_book", targetSlug);
+      if (targetSlug) briefingBody["recipe_book"] = targetSlug;
     }
 
-    const briefRes = await authFetch(`/keys/briefing?${params.toString()}`);
+    const briefRes = await authFetch("/keys/briefing", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(briefingBody),
+    });
     const briefJson = (await briefRes.json()) as { ok: boolean; data?: { text: string } };
     if (!briefJson.ok || !briefJson.data) throw new Error("Failed to get briefing");
 
     void queryClient.invalidateQueries({ queryKey: ["keys"] });
-    return briefJson.data.text;
+    return substituteBriefingKey(briefJson.data.text, briefingKey);
   }
 
   async function handleCopyBriefing() {

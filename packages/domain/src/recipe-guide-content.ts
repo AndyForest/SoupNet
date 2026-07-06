@@ -375,12 +375,23 @@ export interface BriefingMapContext {
   purpose?: string;
 }
 
+/**
+ * The literal every briefing renders where an API key belongs. The template
+ * NEVER receives a raw key (BriefingBuildInput has no key input), so a raw
+ * credential physically cannot appear in composed output — every consumer of
+ * the briefing already holds the key it authenticated with, and echoing it
+ * back was redundant (and leaked OAuth access tokens / transited minted keys
+ * through URLs). The one consumer that wants an inline key — the human
+ * copy-briefing flow in the dashboard — substitutes this placeholder
+ * client-side at copy time (see the frontend's substituteBriefingKey helper,
+ * which must use this exact literal).
+ */
+export const BRIEFING_KEY_PLACEHOLDER = "YOUR_API_KEY";
+
 export interface BriefingBuildInput {
   user: BriefingUser;
-  apiKey: string;
   backendUrl: string;
   frontendUrl: string;
-  checkUrl: string;
   groups: BriefingGroup[];
   /** Pre-rendered exemplars section (e.g. `## Context from foo\n…`). Omit to skip the section. */
   exemplarsSection?: string;
@@ -392,21 +403,22 @@ export interface BriefingBuildInput {
   requestedRecipesSection?: string;
   /** True when the caller authenticated with an OAuth access token
    *  (api_keys.key_type = 'oauth'). OAuth access tokens expire within the
-   *  hour and the client refreshes them automatically, so the briefing must
-   *  render NO raw credential and NO key-embedded URLs — every section that
-   *  exists to hand a pasteable key to a human or a config file swaps to a
-   *  short truthful note instead. Callers should also pass a keyless
-   *  `checkUrl` and an empty `apiKey` so the credential physically can't
-   *  appear (defense in depth; the template branch is the primary guard). */
+   *  hour and the client refreshes them automatically, so a pasteable-key
+   *  placeholder would mislead — every section that exists to hand a
+   *  pasteable key to a human or a config file swaps to a short truthful
+   *  note instead (no placeholder, no key-embedded URLs). */
   oauthConnection?: boolean;
 }
 
 export const BRIEFING = {
   title: "Soup.net agent briefing",
-  build: ({ user, apiKey, backendUrl, frontendUrl, checkUrl, groups, exemplarsSection, purpose, requestedRecipesSection, oauthConnection }: BriefingBuildInput) => {
-    // Build the guide URL from the check URL so callers don't have to thread
-    // a second value through. Handles both /check? and /check/? patterns.
-    const guideUrl = checkUrl.replace(/\/check\/?(\?)/, "/docs/recipe-check-guide$1");
+  build: ({ user, backendUrl, frontendUrl, groups, exemplarsSection, purpose, requestedRecipesSection, oauthConnection }: BriefingBuildInput) => {
+    // Placeholder mode is the only non-OAuth mode: every key interpolation
+    // renders the literal placeholder, never a raw credential (see
+    // BRIEFING_KEY_PLACEHOLDER's doc comment for the invariant).
+    const apiKey = BRIEFING_KEY_PLACEHOLDER;
+    const checkUrl = `${backendUrl}/check?key=${BRIEFING_KEY_PLACEHOLDER}`;
+    const guideUrl = `${backendUrl}/docs/recipe-check-guide?key=${BRIEFING_KEY_PLACEHOLDER}`;
 
     const corpusContext = buildCorpusContextSection({
       user,
@@ -424,16 +436,25 @@ export const BRIEFING = {
       ? `\n\n${requestedRecipesSection.trim()}`
       : "";
 
-    // ── Credential-bearing sections ─────────────────────────────────────────
+    // ── Key-bearing sections ────────────────────────────────────────────────
     // These four sections exist to hand a pasteable key to a human or a
-    // config file. An OAuth connection (api_keys.key_type = 'oauth') has no
-    // pasteable key — the access token expires within the hour
+    // config file. In placeholder mode (every non-OAuth composition) they
+    // render the literal placeholder — the reader either already holds the
+    // real key (it's the Bearer token the briefing was fetched with) or
+    // received a copy where the dashboard substituted the real key at copy
+    // time. An OAuth connection (api_keys.key_type = 'oauth') has no
+    // pasteable key at all — the access token expires within the hour
     // (ACCESS_TOKEN_TTL_SECONDS in oauth.service.ts) and the client refreshes
-    // it automatically — so rendering it as "your API key" is false and
-    // alarming (a claude.ai agent warned its user about a "leaked key",
-    // 2026-07-06). In OAuth mode each section swaps to a short truthful note;
-    // headings stay stable so in-document cross-references (the divergent-
+    // it automatically — so there each section swaps to a short truthful
+    // note instead (a claude.ai agent once warned its user about a "leaked
+    // key" when the raw token rendered here, 2026-07-06). Headings stay
+    // stable across modes so in-document cross-references (the divergent-
     // checks section points at the link-formatting section) keep resolving.
+    //
+    // Copy constraint: outside the "## Your API key" value line, never write
+    // the placeholder literal into prose — the dashboard's copy-time
+    // replaceAll would substitute a raw key into the sentence and mangle it.
+    // Say "the placeholder" instead.
 
     const keySection = oauthConnection
       ? `## Your connection
@@ -441,7 +462,7 @@ You're connected via OAuth. Access is a short-lived token (1-hour expiry) that y
       : `## Your API key
 ${apiKey}
 
-The key is also embedded in every URL below as \`?key=...\` or \`&key=...\`. Some agents miss it inside URLs, so it is stated plainly here too.`;
+If the line above shows a placeholder, the real value is the API key you already hold — the same Bearer token this briefing was fetched with. Substitute it wherever the placeholder appears in the URLs and configs below. If a real key appears above instead, it was filled in for you and every URL and config below already carries it.`;
 
     const mcpSetupSection = oauthConnection
       ? `## Setup — MCP-capable agents
