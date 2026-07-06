@@ -82,6 +82,11 @@ export interface SubmitAndSearchParams {
    *  lineages are joinable later. No dedup or behavior change — phase-2
    *  auto-stubbing is gated on recall evals (see the worktree plan). */
   agentId?: string | undefined;
+  /** Server-known connection surface (UVP Layer 1): "mcp-http" (set by the
+   *  /mcp route), "mcp-stdio" (the stdio proxy self-identifies via the
+   *  X-SoupNet-Surface header on /check), or "web" (default for /check).
+   *  OAuth client identity is derived from the key itself, not this field. */
+  surface?: string | undefined;
 }
 
 export interface SearchResultItem {
@@ -286,7 +291,7 @@ export async function submitAndSearch(
     };
   }
 
-  const { keyId, userId, readGroupIds, writeGroupIds, defaultWriteGroupId } = keyResult;
+  const { keyId, userId, readGroupIds, writeGroupIds, defaultWriteGroupId, keyType, oauthClientId } = keyResult;
 
   // Resolve write target group (slug or ID, within key's write groups)
   let groupId: string;
@@ -530,6 +535,15 @@ export async function submitAndSearch(
       resultCount: pipelineResult.totalResults,
       clustered: pipelineResult.clustered,
       resultTraceIds: pipelineResult.results.map((r) => r.id),
+      // UVP Layer 1 server stamps (2026-07-05): what the agent actually saw.
+      // resultSimilarities is index-parallel to resultTraceIds — together
+      // they erase the retyped-topSimilarity gap in self-reported feedback.
+      resultSimilarities: pipelineResult.results.map((r) => r.semanticScore ?? null),
+      // Connection surface: mcp-http | mcp-stdio | web (server-known).
+      surface: params.surface ?? "web",
+      // OAuth client identity — segmentable cross-vendor column the day a
+      // connector check arrives. Null for daily/scoped keys.
+      ...(keyType === "oauth" && oauthClientId ? { oauthClientId } : {}),
     };
     if (params.agentId) {
       // Self-minted agent identity — capture only (no behavior; see

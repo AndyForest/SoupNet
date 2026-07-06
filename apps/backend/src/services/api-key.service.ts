@@ -75,6 +75,11 @@ interface ValidateKeyResult {
   readGroupIds: string[];
   writeGroupIds: string[];
   defaultWriteGroupId: string;
+  /** 'daily' | 'scoped' | 'oauth' — lets callers stamp the connection
+   *  surface (UVP Layer 1: OAuth client identity is server-known). */
+  keyType: string;
+  /** oauth_clients.client_id for key_type='oauth'; null otherwise. */
+  oauthClientId: string | null;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -208,7 +213,7 @@ export async function validateKey(
   // should not normally fire — but we enforce it here too in case a user is
   // unverified after the fact (e.g. invitation flow, F31).
   const rows = await db.execute(sql`
-    SELECT k.id, k.user_id, k.read_group_ids, k.write_group_ids, k.default_write_group_id, k.expires_at
+    SELECT k.id, k.user_id, k.read_group_ids, k.write_group_ids, k.default_write_group_id, k.expires_at, k.key_type, k.oauth_client_id
     FROM claimnet.api_keys k
     JOIN claimnet.users u ON u.id = k.user_id
     WHERE k.key = ${hashedKey}
@@ -232,6 +237,8 @@ export async function validateKey(
     readGroupIds: row["read_group_ids"] as string[],
     writeGroupIds: row["write_group_ids"] as string[],
     defaultWriteGroupId: row["default_write_group_id"] as string,
+    keyType: row["key_type"] as string,
+    oauthClientId: (row["oauth_client_id"] as string | null) ?? null,
   };
 }
 

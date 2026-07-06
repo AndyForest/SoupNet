@@ -716,9 +716,15 @@ async function handleCheck(
     }
   }
 
+  // Connection surface (UVP Layer 1): the stdio MCP proxy self-identifies
+  // via this header; anything else through /check is "web". The /mcp route
+  // stamps "mcp-http" itself without touching this path.
+  const surface = c.req.header("x-soupnet-surface") === "mcp-stdio" ? "mcp-stdio" : "web";
+
   let result: SubmitAndSearchResult | undefined;
   if (params.trace && params.ef && params.key) {
     result = await submitAndSearch({
+      surface,
       key: params.key,
       traceText: params.trace,
       evidenceFor: params.ef,

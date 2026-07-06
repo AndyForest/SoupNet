@@ -510,6 +510,7 @@ function createMcpServer(backendUrl: string): McpServer {
           image,
           region: regionMeta,
           agentId: agent_id ?? undefined,
+          surface: "mcp-http",
         });
 
         if (result.error) {
@@ -611,6 +612,7 @@ function createMcpServer(backendUrl: string): McpServer {
           rawKey: apiKey,
           backendUrl,
           frontendUrl,
+          surface: "mcp-http",
         });
 
         if (!result.ok) {

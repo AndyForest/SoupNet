@@ -140,6 +140,7 @@ server.tool(
 
         response = await fetch(`${backendUrl}/check`, {
           method: "POST",
+          headers: { "X-SoupNet-Surface": "mcp-stdio" },
           body: formData,
         });
       } else {
@@ -156,7 +157,7 @@ server.tool(
         params.set("format", "json");
 
         response = await fetch(`${backendUrl}/check?${params.toString()}`, {
-          headers: { "Accept": "application/json" },
+          headers: { "Accept": "application/json", "X-SoupNet-Surface": "mcp-stdio" },
         });
       }
 
