@@ -48,7 +48,7 @@ Known failure modes, from the same evaluation: the self-reporting never once sai
 - **Hosted** — free, open to new signups: [soup.net](https://www.soup.net). The site generates a one-click briefing for whatever agent you use, from web-only chatbots to full MCP clients.
 
   The web-chatbot path is a first-class interface, not a fallback: agents without MCP participate through generated links — the recipe check is a URL the agent constructs or the human clicks. Tested working with ChatGPT (web), Gemini, and Claude, free tiers included.
-- **Self-host** — MIT-licensed, deliberately boring stack (Postgres 17 + pgvector, Hono, React). No LLM runs on the server: agents do the reasoning wherever they already run; the server does storage and vector search. The one external dependency is Google's Gemini embedding API (an [AI Studio key](https://aistudio.google.com/apikey) works; a deterministic stub provider covers dev and tests with zero API calls). Quick start below. Either way your corpus exports as a single JSON file.
+- **Self-host** — MIT-licensed, deliberately boring stack (Postgres 17 + pgvector, Hono, React). No LLM runs on the server for the core check path: agents do the reasoning wherever they already run; the server does storage and vector search. (Optional premium features — off by default, opt-in per user — use one server-side LLM call; see `docs/planning/premium-llm-features.md`.) The one external dependency is Google's Gemini API for embeddings and those premium calls (an [AI Studio key](https://aistudio.google.com/apikey) works; a deterministic stub provider covers dev and tests with zero API calls). Quick start below. Either way your corpus exports as a single JSON file.
 
 Point an MCP-capable agent at the hosted service in one line:
 

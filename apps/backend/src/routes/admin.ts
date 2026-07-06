@@ -12,6 +12,7 @@ import {
 } from "../services/system-settings.service";
 import { QUEUE_DESCRIPTIONS, getQueueDescription } from "@soupnet/domain";
 import { approveWaitlistedUser, promoteTopWaitlisted } from "../services/waitlist.service";
+import { setUserPremium } from "../services/user-premium.service";
 import { sendWaitlistApprovedEmail } from "../services/email.service";
 import { normalizeEmail } from "../lib/normalize-email";
 import { rateLimit } from "../middleware/rate-limit";
@@ -183,6 +184,7 @@ admin.post("/invite", inviteRateLimit, async (c) => {
 //   role?         — exact match (e.g. "tenant", "system")
 //   hasKeys?      — "yes" | "no" (at least one active, non-expired key)
 //   suspended?    — "yes" | "no"
+//   premium?      — "yes" | "no"
 //   sortBy?       — createdAt | lastLoginAt | email  (default createdAt)
 //   sortDir?      — asc | desc  (default desc)
 //   limit?        — default 50, max 200
@@ -214,6 +216,9 @@ admin.get("/users", async (c) => {
   if (role) where.push(sql`u.role = ${role}`);
   if (suspended === "yes") where.push(sql`u.suspended_at IS NOT NULL`);
   if (suspended === "no") where.push(sql`u.suspended_at IS NULL`);
+  const premium = c.req.query("premium");
+  if (premium === "yes") where.push(sql`u.premium_at IS NOT NULL`);
+  if (premium === "no") where.push(sql`u.premium_at IS NULL`);
   const waitlisted = c.req.query("waitlisted");
   if (waitlisted === "yes") where.push(sql`u.waitlisted_at IS NOT NULL`);
   if (waitlisted === "no") where.push(sql`u.waitlisted_at IS NULL`);
@@ -241,6 +246,7 @@ admin.get("/users", async (c) => {
       u.suspended_at       AS "suspendedAt",
       u.suspended_reason   AS "suspendedReason",
       u.waitlisted_at      AS "waitlistedAt",
+      u.premium_at         AS "premiumAt",
       u.signup_reason      AS "signupReason",
       u.last_login_at      AS "lastLoginAt",
       u.created_at         AS "createdAt",
@@ -734,6 +740,31 @@ admin.post("/waitlist/:userId/approve", async (c) => {
     return c.json({ ok: false, error: "User not found or not waitlisted" }, 404);
   }
   return c.json({ ok: true, data: { email, approvedAt: new Date().toISOString() } });
+});
+
+// PUT /admin/users/:userId/premium — assign or revoke the premium attribute.
+// Premium gates the server-side LLM features (retrieval synthesis); it's
+// admin-assigned only (no self-serve, no billing) at the current scale of the
+// operator plus trusted individuals. The business logic + audit write live in
+// setUserPremium (services/user-premium.service.ts), matching PUT
+// /admin/settings delegating to the settings service.
+const setPremiumSchema = z.object({ premium: z.boolean() });
+
+admin.put("/users/:userId/premium", async (c) => {
+  const userId = c.req.param("userId");
+  const actor = c.get("user");
+
+  const body = await c.req.json().catch(() => null);
+  const parsed = setPremiumSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ ok: false, error: "Invalid input", details: parsed.error.issues }, 400);
+  }
+
+  const found = await setUserPremium(getDb(), userId, parsed.data.premium, actor.id);
+  if (!found) {
+    return c.json({ ok: false, error: "User not found" }, 404);
+  }
+  return c.json({ ok: true, data: { userId, premium: parsed.data.premium } });
 });
 
 // GET /admin/emails — the outgoing email log (light CRM + abuse/security

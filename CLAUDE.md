@@ -70,6 +70,15 @@ The shared backlog at [docs/backlog.md](docs/backlog.md) tracks all pending work
 
 This is how multiple AI agents coordinate across sessions without explicit communication — through the backlog as a shared artifact.
 
+### Parallel sessions in worktrees
+
+Concurrent implementation sessions isolate in git worktrees under `.claude/worktrees/` (own branch each; integration happens as a deliberate merge). Three things make worktree sessions trustworthy:
+
+- **Complete the install before trusting typecheck.** Worktrees nest inside the repo, so Node resolves anything missing from the worktree's `node_modules` by walking up into the main checkout's — version drift there surfaces as phantom type errors on untouched code (2026-07-06: a missing nested `@types/node@22` made tsc resolve the main checkout's v25 and fail `apps/mcp-server`). `npm ci` in the worktree gives typecheck results you can believe.
+- **Migration numbers collide on purpose.** Two in-flight sessions that both run `drizzle-kit generate` mint the same next number; the worktree turns that into a visible merge conflict instead of a silent interleave. Whichever branch merges second regenerates its migration on top of main — renumber via drizzle-kit, don't hand-edit `meta/_journal.json`.
+- **Verify against a throwaway DB, not the shared dev stack.** Migrations apply at backend startup, so pointing a worktree backend at the shared dev database stamps its journal before merge order is settled. Boot the worktree backend on a spare port against a throwaway database created inside the already-running postgres (soup.net recipe `9d3afbed`).
+- **One `test:ci` per machine at a time.** Every checkout's CI-mirror stack binds host port 5534, so concurrent gates from parallel sessions fail at container startup (`Bind for 0.0.0.0:5534 failed: port is already allocated`). Before launching the gate, check `docker ps` for a `*-postgres-ci-1` container and wait it out. Parameterizing the port is in the backlog.
+
 ## Pre-Commit Workflow
 
 `.github/workflows/ci.yml` is the source of truth for what "passing" means. `npm run test:ci` (wrapping `scripts/test-ci-local.mjs`) reproduces that environment locally — fresh isolated postgres on port 5534, same env vars, same build + typecheck + lint + test sequence — and is the single canonical gate you run before committing. Typecheck runs after a workspace-wide clear of `*.tsbuildinfo` so incremental cache can't false-pass the way CI's clean checkout would catch.
@@ -83,6 +92,8 @@ npm run test:ci
 If it fails, fix before committing. Do not skip. Do not invent per-workspace variants — CI uses the root-level scripts (which pass `--if-present`), so agent-invented commands like `npm run typecheck --workspaces` hit missing-script errors CI doesn't. During tight iteration you can run `npx vitest run path/to.test.ts` against the dev Docker backend for faster feedback, but the gate before commit is always `npm run test:ci`.
 
 After tests pass, check `docs/testing-plan.md` Layer 4 for manual browser verification — tell the human what URLs to check and what to look for. **If backend code changed, run `docker compose up --build -d` before handing off to the human** — `test:ci` uses its own isolated stack (`docker-compose.ci.yml` on port 5534) and does NOT rebuild the dev containers the human tests against. Commit only after gates pass and human confirms.
+
+**Branch + draft-PR flow (standard since 2026-07-06, now that the repo is public):** build features on a branch — worktrees for parallel sessions — and commit logical units as gates pass. The push to the shared remote is the operator's personal checkpoint, even for PR branches: finish by handing back the exact `git push -u origin <branch>` command, and once the operator has pushed, open a draft PR (`gh pr create --draft`) for their review. Main only moves by reviewed merge; agents never merge PRs. (Soup.net recipes `985afff8`, `12d95bfd`.)
 
 **MCP testing:** When modifying MCP routes, tools, session handling, or auth, test via the `soupnet-local` MCP server in `.mcp.json` (points to `http://localhost:3101/mcp`). Call `list_my_recipe_books` or `check_recipe` through the local MCP to verify. For session changes, test recovery by running `docker compose restart backend` then calling any tool — it should work without `/mcp` reconnect. See `docs/testing-plan.md` Layer 4b for details.
 
@@ -158,6 +169,8 @@ The only anti-pattern is checking a recipe you don't genuinely believe — that 
 **Historical decisions:** when you discover a past decision in git history, ADRs, or other dated artifacts, check it with `decided_at` set to the artifact's timestamp so the recipe carries the original judgment date instead of today's. See design-thinking.md §Decision Archaeology for the voice rules (role = the original decision-maker's functional role; evidence quotes the artifact verbatim with hash/date citation).
 
 **Sub-agents check too:** when you spawn sub-agents for judgment-laden work (discovery sweeps, design exploration, reviews), include recipe-check instructions in their prompts — which recipe book is in scope, the when-to-check moments above, and the voice rules (or tell them to call `get_briefing`). Have them report which checks they made and which judgment calls they proceeded on versus escalated to you; check your decisions on the escalations. The human observes the whole fleet through the check log. See design-thinking.md §Agent Fleets.
+
+**Close the loop with feedback:** when a prior check's results shape (or fail to shape) a decision, log a feedback row about that check — mid-flow, attach it to your next `check_recipe` via its `feedback` parameter (fewer calls, natural trail); at session end or when no follow-up check exists, use the `log_feedback` tool or `POST /feedback`. Ignored, contradicted, and nothing-found results are as valuable as confirmations: they're the calibration future agents lack, and they show the human which recipes earned their keep. Include feedback instructions in sub-agent briefs alongside the recipe-check instructions.
 
 **Interface:** Use the `check_recipe` MCP tool, or the `/check` web endpoint with `format=json`. Call `get_briefing` before your first check — it returns the recipe format, your recipe books, and a clustered sample of recipes from the user's corpus.
 

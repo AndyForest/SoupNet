@@ -825,6 +825,10 @@ export const MCP_PARAM_DESCRIPTIONS = {
     "check plus the fields in this schema (log_feedback documents their meaning). Rows validate " +
     "independently — a rejected row never blocks the check.",
 
+  synthesize:
+    "Premium opt-in: distil results into one short preference profile (newest wins, ids cited). " +
+    "Ineligible callers get a one-line hint, never an error.",
+
   /** get_recipes — the id list (WT-3 retrieval API). */
   recipeIds:
     "Recipe ids (UUIDs, comma- or whitespace-separated, up to 20). Each resolves independently; " +

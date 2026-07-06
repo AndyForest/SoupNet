@@ -7,4 +7,5 @@ export * from "./embedding-strategies";
 export * from "./stub-embeddings";
 export * from "./queue-descriptions";
 export * from "./user-preferences";
+export * from "./synthesis";
 export * from "./feedback";

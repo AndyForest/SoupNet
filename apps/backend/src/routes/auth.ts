@@ -366,12 +366,17 @@ auth.get("/me", requireAuth, async (c) => {
 
   const db = getDb();
   const rows = await db.execute(sql`
-    SELECT email_verified_at AS "emailVerifiedAt"
+    SELECT email_verified_at AS "emailVerifiedAt",
+           premium_at AS "premiumAt"
     FROM claimnet.users WHERE id = ${user.id}::uuid
   `);
-  const emailVerifiedAt = (rows as unknown as Array<{ emailVerifiedAt: string | null }>)[0]?.emailVerifiedAt;
+  const row = (rows as unknown as Array<{ emailVerifiedAt: string | null; premiumAt: string | null }>)[0];
 
-  return c.json({ ok: true, data: { user: { ...user, emailVerified: !!emailVerifiedAt } } });
+  // premium ⇔ premium_at IS NOT NULL (admin-assigned; see premium-llm-features.md).
+  return c.json({
+    ok: true,
+    data: { user: { ...user, emailVerified: !!row?.emailVerifiedAt, premium: !!row?.premiumAt } },
+  });
 });
 
 // GET /auth/me/export — download all user-authored data as JSON.

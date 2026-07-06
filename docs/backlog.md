@@ -13,6 +13,10 @@ When you complete an item, move it to `backlog-completed.md` with a date stamp. 
 
 ## Infrastructure
 
+### `[IMPL]` Parameterize the CI-mirror postgres port for parallel sessions
+
+`scripts/test-ci-local.mjs` + `docker-compose.ci.yml` hardcode host port 5534, so two sessions on one machine cannot run `npm run test:ci` concurrently — observed 2026-07-06 when the premium-llm worktree's gate failed at container startup (`Bind for 0.0.0.0:5534 failed`) while the main checkout's suite held the port. A `TESTCI_PGPORT` env (default 5534) threaded through the compose port mapping and the script's connection env would let parallel worktree sessions gate independently. Leave `.github/workflows/ci.yml` untouched — the collision is a local-parallelism problem only.
+
 ### `[IMPL]` LiteLLM router for per-user LLM quota tracking (deferred by design)
 
 Operator decision (2026-07-06, with the premium-LLM-features brief in `docs/planning/premium-llm-features.md`): the first server-side LLM features ship WITHOUT quota/rate tracking because the user base is the operator plus manually-assigned trusted users. When premium widens, deploy a LiteLLM router/proxy in front of the provider key for per-user quota, spend tracking, and model routing — rather than hand-rolling quota in the app. Until then, implementing agents must NOT build ad-hoc quota logic into LLM features.
@@ -40,6 +44,10 @@ Traces checked before the 2026-05-31 folding fix that hit the blank-line-fragmen
 ---
 
 ## Agent briefing
+
+### `[IMPL]` Client-side scribe — session-distillation skill + briefing section
+
+From the premium-LLM brief (`docs/planning/premium-llm-features.md` §Feature 2, operator-approved 2026-07-06): the scribe (distilling a session into evidence-backed recipes) stays **client-side** — the client's LLM already has the session in context (no transcript upload, no privacy expansion, no server cost), matching the stigmergy story. Deliverables: (a) a published Claude Code skill / SessionEnd hook that runs the scribe prompt with the client's own model and submits via `check_recipe`; (b) an equivalent instructions section in the agent briefing for Codex/other MCP clients — briefing copy, so it waits for the regression-spec gate like other briefing edits; adherence measurable with the behavioral-specs harness. Benchmark validation: 39,528 recipes at 0.58% verbatim-quote failure (trace `2093a9e0`). The server-side variant ("transcript import" — user uploads a conversation export, server scribes it into a chosen book) is design-stage only, a companion to the corpus-import item under Data portability.
 
 ### `[IMPL]` Briefing regression testing — behavioral specs (design done; build phases 1–2)
 
@@ -281,7 +289,7 @@ Found 2026-06-11 while investigating "the settings page isn't in the admin nav":
 
 ### `[IMPL]` Audit-log event coverage beyond recipe.checked (F9 follow-up)
 
-`claimnet.audit_log` only records `recipe.checked`. The F9 finding (2026-04-09 audit) calls for auth events (login success/fail, register, verify), API-key lifecycle (create/revoke), and admin actions (settings changes, invites, waitlist notify). Now that the email log covers the outbound-email surface (2026-06-11), audit_log is the remaining gap for security sweeps. Design note: keep writes through `writeAudit`, one event type per action, and mind that F29 per-key rate limiting queries this table — schema changes must keep that path fast.
+`claimnet.audit_log` only records `recipe.checked` plus a few point additions (`check.searched`, `group.description_updated`, and — since 2026-07-06 — `user.premium_set` from the admin premium toggle, a partial advance on the admin-actions gap). The F9 finding (2026-04-09 audit) calls for auth events (login success/fail, register, verify), API-key lifecycle (create/revoke), and admin actions (settings changes, invites, waitlist notify). Now that the email log covers the outbound-email surface (2026-06-11), audit_log is the remaining gap for security sweeps. Design note: keep writes through `writeAudit`, one event type per action, and mind that F29 per-key rate limiting queries this table — schema changes must keep that path fast.
 
 ### `[IMPL]` Waitlist: notify when a spot opens
 

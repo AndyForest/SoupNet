@@ -204,6 +204,13 @@
       "when": 1783354943480,
       "tag": "0028_oauth_refresh_consumed_at",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1783362990839,
+      "tag": "0029_user_premium",
+      "breakpoints": true
     }
   ]
 }

@@ -31,10 +31,26 @@ export const briefingPreferencesSchema = z.object({
 
 export type BriefingPreferences = z.infer<typeof briefingPreferencesSchema>;
 
+// ── Feature opt-ins ─────────────────────────────────────────────────────────
+
+export const featurePreferencesSchema = z.object({
+  /**
+   * Opt-in for premium retrieval synthesis: when a premium user's agent calls
+   * check_recipe with synthesize=true, the server distills the returned
+   * exemplars into a short "current preference profile" via one LLM call.
+   * Enforcement is `premium && synthesize` server-side — the flag alone does
+   * nothing for a non-premium user (see docs/planning/premium-llm-features.md).
+   */
+  synthesize: z.boolean().optional(),
+}).strict();
+
+export type FeaturePreferences = z.infer<typeof featurePreferencesSchema>;
+
 // ── Root schema ─────────────────────────────────────────────────────────────
 
 export const userPreferencesSchema = z.object({
   briefing: briefingPreferencesSchema.optional(),
+  features: featurePreferencesSchema.optional(),
 }).strict();
 
 export type UserPreferences = z.infer<typeof userPreferencesSchema>;
@@ -46,14 +62,22 @@ export interface ResolvedBriefingPreferences {
   subClusterCount: number;
 }
 
+export interface ResolvedFeaturePreferences {
+  synthesize: boolean;
+}
+
 export interface ResolvedUserPreferences {
   briefing: ResolvedBriefingPreferences;
+  features: ResolvedFeaturePreferences;
 }
 
 export const DEFAULT_USER_PREFERENCES: ResolvedUserPreferences = {
   briefing: {
     clusterCount: 5,
     subClusterCount: 1,
+  },
+  features: {
+    synthesize: false,
   },
 };
 
@@ -70,6 +94,9 @@ export function mergeUserPreferences(stored: unknown): ResolvedUserPreferences {
     briefing: {
       clusterCount: sparse.briefing?.clusterCount ?? DEFAULT_USER_PREFERENCES.briefing.clusterCount,
       subClusterCount: sparse.briefing?.subClusterCount ?? DEFAULT_USER_PREFERENCES.briefing.subClusterCount,
+    },
+    features: {
+      synthesize: sparse.features?.synthesize ?? DEFAULT_USER_PREFERENCES.features.synthesize,
     },
   };
 }
@@ -89,6 +116,9 @@ export function applyPreferencesPatch(
   const next: UserPreferences = { ...base };
   if (patch.briefing) {
     next.briefing = { ...(base.briefing ?? {}), ...patch.briefing };
+  }
+  if (patch.features) {
+    next.features = { ...(base.features ?? {}), ...patch.features };
   }
   return next;
 }

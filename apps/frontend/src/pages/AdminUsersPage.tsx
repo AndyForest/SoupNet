@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { authFetch } from "../auth.js";
 import {
   AdminLayout,
@@ -26,6 +26,7 @@ interface AdminUser {
   suspendedAt: string | null;
   suspendedReason: string | null;
   waitlistedAt: string | null;
+  premiumAt: string | null;
   signupReason: string | null;
   lastLoginAt: string | null;
   createdAt: string;
@@ -72,10 +73,12 @@ function userStatus(u: AdminUser): { status: AdminStatus; label: string } {
 
 export function AdminUsersPage() {
   const { gate, isAdmin } = useAdminGate();
+  const queryClient = useQueryClient();
 
   const [q, setQ] = useState("");
   const [verified, setVerified] = useState("");
   const [suspended, setSuspended] = useState("");
+  const [premium, setPremium] = useState("");
   const [hasKeys, setHasKeys] = useState("");
   const [sortBy, setSortBy] = useState("createdAt");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
@@ -85,6 +88,7 @@ export function AdminUsersPage() {
   if (q) params.set("q", q);
   if (verified) params.set("verified", verified);
   if (suspended) params.set("suspended", suspended);
+  if (premium) params.set("premium", premium);
   if (hasKeys) params.set("hasKeys", hasKeys);
   params.set("sortBy", sortBy);
   params.set("sortDir", sortDir);
@@ -111,6 +115,24 @@ export function AdminUsersPage() {
       return json.data;
     },
     enabled: isAdmin,
+  });
+
+  // Assign / revoke premium. Mirrors the Signups page Approve mutation:
+  // authFetch → invalidate the users list so the row reflects the new state.
+  const premiumMutation = useMutation({
+    mutationFn: async ({ userId, premium: next }: { userId: string; premium: boolean }) => {
+      const res = await authFetch(`/admin/users/${userId}/premium`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ premium: next }),
+      });
+      const json = (await res.json()) as { ok: boolean; error?: string };
+      if (!json.ok) throw new Error(json.error ?? "Failed to update premium");
+      return json;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["admin", "users"] });
+    },
   });
 
   if (gate) return gate;
@@ -148,6 +170,32 @@ export function AdminUsersPage() {
           {u.role}
         </span>
       ),
+    },
+    {
+      key: "premium",
+      header: "Premium",
+      render: (u) => {
+        const isPremium = u.premiumAt !== null;
+        return (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-sm)" }}>
+            <AdminStatusDot
+              status={isPremium ? "healthy" : "idle"}
+              label={isPremium ? "Premium" : "—"}
+            />
+            <button
+              className="btn-secondary"
+              disabled={premiumMutation.isPending}
+              title={isPremium
+                ? "Revoke premium — disables server-side LLM features for this user"
+                : "Grant premium — unlocks the opt-in server-side LLM features"}
+              onClick={() => premiumMutation.mutate({ userId: u.id, premium: !isPremium })}
+              style={{ fontSize: "0.7rem", padding: "0.15rem 0.5rem" }}
+            >
+              {isPremium ? "Revoke" : "Grant"}
+            </button>
+          </span>
+        );
+      },
     },
     {
       key: "createdAt",
@@ -267,6 +315,17 @@ export function AdminUsersPage() {
               { value: "", label: "Any" },
               { value: "no", label: "Active" },
               { value: "yes", label: "Suspended" },
+            ]}
+          />
+        </AdminField>
+        <AdminField label="Premium">
+          <AdminSelect
+            value={premium}
+            onChange={(v) => resetOffset(() => setPremium(v))}
+            options={[
+              { value: "", label: "Any" },
+              { value: "yes", label: "Premium" },
+              { value: "no", label: "Standard" },
             ]}
           />
         </AdminField>

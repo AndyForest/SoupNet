@@ -73,6 +73,12 @@ export const users = claimnetSchema.table(
     // register form — collected for every signup, waitlisted or not.
     signupReason: text("signup_reason"),
 
+    // Premium — gates server-side LLM features (e.g. retrieval synthesis).
+    // Admin-assigned only; no self-serve, no billing. Premium ⇔ this IS NOT
+    // NULL. Mirrors the suspended_at/waitlisted_at nullable-timestamp pattern.
+    // See docs/planning/premium-llm-features.md.
+    premiumAt: timestamp("premium_at", { withTimezone: true }),
+
     // User-level preferences (briefing cluster count, etc). Sparse JSONB —
     // stored object may contain only the keys the user has overridden; the
     // domain layer merges with defaults before use. Shape is validated by

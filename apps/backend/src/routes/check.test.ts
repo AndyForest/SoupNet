@@ -11,7 +11,9 @@ interface CheckResponse {
   error?: string;
   data?: {
     recipeId?: string;
-    results?: Array<{ evidence?: unknown[] }>;
+    results?: Array<{ id?: string; evidence?: unknown[] }>;
+    synthesis?: string;
+    synthesisNotice?: string;
   };
 }
 
@@ -19,10 +21,12 @@ const BASE = process.env["BACKEND_URL"] ?? "";
 const uid = Date.now();
 
 let apiKey = "";
+let token = "";
+let checkEmail = "";
 
 describe.skipIf(!BASE)("/check routes integration", () => {
   beforeAll(async () => {
-    const checkEmail = `test-check-${uid}@test.local`;
+    checkEmail = `test-check-${uid}@test.local`;
     const checkPassword = "check-test-password-123";
 
     // Register a test user. F30: /auth/register no longer auto-logs-in.
@@ -51,7 +55,7 @@ describe.skipIf(!BASE)("/check routes integration", () => {
       body: JSON.stringify({ email: checkEmail, password: checkPassword }),
     });
     const loginBody = (await loginRes.json()) as { data?: { token?: string } };
-    const token = loginBody.data?.token;
+    token = loginBody.data?.token ?? "";
     if (!token) throw new Error("Failed to log in test user");
 
     // Generate a daily API key
@@ -272,6 +276,90 @@ describe.skipIf(!BASE)("/check routes integration", () => {
     expect(body1.ok).toBe(true);
     expect(body2.ok).toBe(true);
     expect(body1.data?.recipeId).toBe(body2.data?.recipeId);
+  });
+
+  // ── Premium synthesis (synthesize param) ────────────────────────────────
+  // WP2: the server-side synthesis path. Gate is premiumAt IS NOT NULL AND the
+  // features.synthesize preference flag. CI runs SYNTHESIS_PROVIDER=stub, so an
+  // eligible caller gets the deterministic stub profile that cites every
+  // returned recipe id verbatim. These tests mutate the shared user's premium
+  // flag, so they run after the plain-check assertions above and before F28.
+
+  const synthTrace = (n: string) =>
+    `As a preference-profiling engineer working on synthesis coverage ${uid}-${n}, I prefer deterministic stub synthesis so that eligibility assertions are stable.`;
+  const synthEf = `Determinism keeps the synthesis gate testable.\n> "Same input, same profile"\n-- Synthesis test plan`;
+
+  it("no synthesize param → response carries neither synthesis nor a notice", async () => {
+    const params = new URLSearchParams({ key: apiKey, trace: synthTrace("plain"), ef: synthEf, format: "json" });
+    const res = await fetch(`${BASE}/check?${params.toString()}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as CheckResponse;
+    expect(body.ok).toBe(true);
+    expect(body.data?.synthesis).toBeUndefined();
+    expect(body.data?.synthesisNotice).toBeUndefined();
+  });
+
+  it("synthesize=true from a non-premium user → normal response + a one-line notice, no synthesis", async () => {
+    const params = new URLSearchParams({ key: apiKey, trace: synthTrace("nonpremium"), ef: synthEf, format: "json", synthesize: "true" });
+    const res = await fetch(`${BASE}/check?${params.toString()}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as CheckResponse;
+    expect(body.ok).toBe(true);
+    // Response is otherwise normal — a recipe was still logged.
+    expect(body.data?.recipeId).toBeDefined();
+    expect(body.data?.synthesis).toBeUndefined();
+    expect(body.data?.synthesisNotice).toBeDefined();
+    expect(body.data?.synthesisNotice).toMatch(/premium/i);
+  });
+
+  it("premium user with the flag OFF → notice, no synthesis", async () => {
+    const postgres = (await import("postgres")).default;
+    const sql = postgres({
+      host: process.env["PGHOST"] ?? "localhost",
+      port: Number(process.env["PGPORT"] ?? 5633),
+      user: process.env["PGUSER"] ?? "claimnet",
+      password: process.env["PGPASSWORD"] ?? "claimnet",
+      database: process.env["PGDATABASE"] ?? "claimnet",
+    });
+    try {
+      // Grant premium but leave the opt-in flag off (default).
+      await sql`UPDATE claimnet.users SET premium_at = now() WHERE email = ${checkEmail}`;
+    } finally {
+      await sql.end();
+    }
+
+    const params = new URLSearchParams({ key: apiKey, trace: synthTrace("flagoff"), ef: synthEf, format: "json", synthesize: "true" });
+    const res = await fetch(`${BASE}/check?${params.toString()}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as CheckResponse;
+    expect(body.ok).toBe(true);
+    expect(body.data?.synthesis).toBeUndefined();
+    expect(body.data?.synthesisNotice).toBeDefined();
+  });
+
+  it("premium user with the flag ON → synthesis present, citing returned recipe ids (stub provider)", { timeout: 15_000 }, async () => {
+    // premium_at was set in the previous test; flip the opt-in flag on via the
+    // JWT-auth preferences endpoint (exercises the real merge path).
+    const patchRes = await fetch(`${BASE}/me/preferences`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ features: { synthesize: true } }),
+    });
+    expect(patchRes.status).toBe(200);
+
+    const params = new URLSearchParams({ key: apiKey, trace: synthTrace("flagon"), ef: synthEf, format: "json", synthesize: "true" });
+    const res = await fetch(`${BASE}/check?${params.toString()}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as CheckResponse;
+    expect(body.ok).toBe(true);
+    expect(body.data?.synthesisNotice).toBeUndefined();
+    expect(typeof body.data?.synthesis).toBe("string");
+    // The stub cites every returned recipe id verbatim — assert the top result's
+    // id appears in the profile when the corpus returned any exemplars.
+    const results = body.data?.results ?? [];
+    if (results.length > 0 && results[0]?.id) {
+      expect(body.data?.synthesis).toContain(results[0]!.id!);
+    }
   });
 
   // F28: framework-level body size cap. A 22 MiB POST should be rejected

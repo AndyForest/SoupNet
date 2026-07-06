@@ -151,6 +151,18 @@ async function start() {
     );
   }
 
+  // Log the synthesis provider too — the premium `synthesize` feature's one
+  // LLM call runs through it. Same lazy-import reason as above.
+  const { getSynthesisProviderId } = await import("./lib/synthesis/provider");
+  const synthesisProviderId = getSynthesisProviderId();
+  console.warn(`[backend] Synthesis provider: ${synthesisProviderId}`);
+  if (synthesisProviderId === "stub") {
+    console.warn(
+      "[backend] WARNING: stub synthesis is deterministic but not a real profile. " +
+        "Set SYNTHESIS_PROVIDER=gemini for real LLM synthesis.",
+    );
+  }
+
   // Boot the embedding worker (pg-boss consumers) in-process.
   // Gated by EMBEDDING_WORKER_ENABLED (default true). See ADR-0020.
   const stopWorker = await startEmbeddingWorker(getDb());

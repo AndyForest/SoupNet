@@ -6,8 +6,11 @@ import type { SubmitAndSearchResult } from "../services/trace.service";
 import { submitAndSearch, searchWithoutLogging } from "../services/trace.service";
 import { enrichResults, clusterEvidenceInResults } from "../services/result-enricher";
 import type { EnrichedResult, EnrichedEvidence, EnrichedReference } from "../services/result-enricher";
+import { maybeSynthesize, SYNTHESIS_INELIGIBLE_NOTICE } from "../services/synthesis.service";
+import type { SynthesisResult } from "../services/synthesis.service";
 import { getDb } from "../db";
 import { sql } from "drizzle-orm";
+import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { validateKey } from "../services/api-key.service";
 import { HTML_ACCEPT_TYPES, renderCheckResponseMarkdown, fenceCheckResponseMarkdown } from "@soupnet/domain";
 import type { CheckResponseJson } from "@soupnet/domain";
@@ -115,6 +118,12 @@ export const CHECK_PARAMS = [
   { field: "agentId",    wire: "agent_id",           aliases: [],              roundTrip: "carry" },
   { field: "knownRecipes", wire: "known_recipes",    aliases: [],              roundTrip: "carry" },
   { field: "sort",       wire: "sort",               aliases: [],              roundTrip: "carry" },
+  // Premium opt-in behavior flag — carries like the other intent-preserving
+  // params (agent_id, decided_at) so an opted-in caller keeps synthesis on
+  // across the page's re-check form and Copy-URL round-trips, rather than
+  // silently losing it on the second submission (the class of bug the
+  // CHECK_PARAMS header records). See docs/planning/premium-llm-features.md.
+  { field: "synthesize", wire: "synthesize",         aliases: [],              roundTrip: "carry" },
   { field: "clusters",   wire: "clusters",           aliases: [],              roundTrip: "carry-unless-expand" },
   { field: "maxChars",   wire: "max_chars",          aliases: [],              roundTrip: "carry-unless-expand" },
   { field: "page",       wire: "page",               aliases: [],              roundTrip: "override-only" },
@@ -189,6 +198,7 @@ function buildJsonResponse(
   enriched: EnrichedResult[],
   page: number,
   knownRecipeIds?: ReadonlySet<string>,
+  synthesis?: SynthesisResult,
 ) {
   if (result.error) {
     return { ok: false, error: result.error };
@@ -254,6 +264,16 @@ function buildJsonResponse(
     response["formatWarning"] = result.formatWarning;
   }
 
+  // Premium synthesis: exactly one of the profile or the one-line notice, when
+  // a caller passed synthesize (mutually exclusive by construction upstream).
+  // The shared markdown renderer picks these up for the copy-back and MCP
+  // default format for free. See docs/planning/premium-llm-features.md.
+  if (synthesis?.synthesis) {
+    (response["data"] as Record<string, unknown>)["synthesis"] = synthesis.synthesis;
+  } else if (synthesis?.synthesisNotice) {
+    (response["data"] as Record<string, unknown>)["synthesisNotice"] = synthesis.synthesisNotice;
+  }
+
   // Related evidence from other recipes (evidence discovery pipeline).
   // recipeId per entry (2026-07-05): without it agents burned full
   // re-checks recovering recipes they'd already half-seen — GET /recipes
@@ -305,6 +325,39 @@ function buildSearchOnlyJsonResponse(
     ...data,
   };
   return response;
+}
+
+// ── Premium synthesis ─────────────────────────────────────────────────────────
+
+/**
+ * Resolve the premium synthesis result for a completed check — only when the
+ * caller opted in via synthesize=true and the request logged a recipe (never
+ * the search-only path, per the brief's scope). The userId comes from a
+ * dedicated validateKey lookup performed only on this branch, so non-synthesize
+ * requests never pay for it and the audited api-key seam stays untouched
+ * (recipe 5c33168b). Returns undefined when synthesis wasn't requested — the
+ * response then stays byte-identical to today.
+ */
+async function resolveSynthesis(
+  db: PostgresJsDatabase,
+  params: PageParams,
+  result: SubmitAndSearchResult,
+  enriched: EnrichedResult[],
+  searchOnly: boolean,
+): Promise<SynthesisResult | undefined> {
+  if (searchOnly || params.synthesize !== "true") return undefined;
+  const keyResult = params.key ? await validateKey(db, params.key) : null;
+  // A completed check implies a valid key; the null branch is defensive and
+  // degrades to the ineligible notice rather than surfacing an error.
+  if (!keyResult) return { synthesisNotice: SYNTHESIS_INELIGIBLE_NOTICE };
+  return maybeSynthesize({
+    db,
+    userId: keyResult.userId,
+    requested: true,
+    checkedRecipe: result.traceText ?? params.trace ?? "",
+    results: enriched,
+    relatedEvidence: result.relatedEvidence,
+  });
 }
 
 // ── Query string builder ─────────────────────────────────────────────────────
@@ -418,6 +471,7 @@ function renderPage(
   enriched?: EnrichedResult[],
   keyGroups?: KeyGroup[],
   nonce?: string,
+  synthesisResult?: SynthesisResult,
 ): string {
   const hasSearch = !!(params.trace && params.ef && params.key);
   // A result with no traceId is the read-only `filter` search — nothing was
@@ -454,7 +508,7 @@ function renderPage(
     const knownIds = parseKnownRecipes(params.knownRecipes);
     const markdownFenced = fenceCheckResponseMarkdown(
       renderCheckResponseMarkdown(
-        buildJsonResponse(result, enriched ?? [], page, knownIds) as unknown as CheckResponseJson,
+        buildJsonResponse(result, enriched ?? [], page, knownIds, synthesisResult) as unknown as CheckResponseJson,
         { knownRecipeIds: [...knownIds] },
       ),
     );
@@ -967,9 +1021,10 @@ async function handleCheck(
     enriched = await clusterEvidenceInResults(db, enriched);
     const page = params.page ? parseInt(params.page, 10) : 1;
     const known = parseKnownRecipes(params.knownRecipes);
+    const synthesis = await resolveSynthesis(db, params, result, enriched, searchOnly);
     return c.json(searchOnly
       ? buildSearchOnlyJsonResponse(result, enriched, page, params.filter ?? "", known)
-      : buildJsonResponse(result, enriched, page, known));
+      : buildJsonResponse(result, enriched, page, known, synthesis));
   }
 
   // HTML response path — always enrich + cluster evidence
@@ -978,6 +1033,13 @@ async function handleCheck(
     const db = getDb();
     enriched = await enrichResults(db, result.results);
     enriched = await clusterEvidenceInResults(db, enriched);
+  }
+
+  // Premium synthesis for the markdown copy-back block (same computation the
+  // JSON path runs). Only fires when synthesize=true and a recipe was logged.
+  let synthesisResult: SynthesisResult | undefined;
+  if (result && !result.error && enriched) {
+    synthesisResult = await resolveSynthesis(getDb(), params, result, enriched, searchOnly);
   }
 
   // Look up key's groups for the form dropdown (if key is provided)
@@ -1008,7 +1070,7 @@ async function handleCheck(
   }
 
   const nonce = c.get("cspNonce" as never) as string | undefined;
-  const html = renderPage(params, result, enriched, keyGroups, nonce);
+  const html = renderPage(params, result, enriched, keyGroups, nonce, synthesisResult);
   return c.html(html, result?.error ? 400 : 200);
 }
 

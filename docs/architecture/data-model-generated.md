@@ -1,6 +1,6 @@
 # ClaimNet Data Model — Generated Reference
 
-> **Auto-generated** from Drizzle migration snapshot `0028_snapshot.json`.
+> **Auto-generated** from Drizzle migration snapshot `0029_snapshot.json`.
 > Do not edit by hand. Regenerate with: `npx tsx scripts/generate-data-model-docs.ts`
 >
 > Generated: 2026-07-06
@@ -320,6 +320,7 @@ erDiagram
         text suspended_reason
         timestamptz waitlisted_at
         text signup_reason
+        timestamptz premium_at
         jsonb preferences
         timestamptz created_at
         timestamptz updated_at
@@ -401,6 +402,7 @@ These are created by raw SQL in migration files and are not captured in the snap
 | `suspended_reason` | `text` | YES |  |  |
 | `waitlisted_at` | `timestamptz` | YES |  |  |
 | `signup_reason` | `text` | YES |  |  |
+| `premium_at` | `timestamptz` | YES |  |  |
 | `preferences` | `jsonb` | NO | `'{}'::jsonb` |  |
 | `created_at` | `timestamptz` | NO | `now()` |  |
 | `updated_at` | `timestamptz` | NO | `now()` |  |

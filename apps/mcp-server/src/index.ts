@@ -62,6 +62,7 @@ server.tool(
     response_format: z.enum(["markdown", "structured"]).optional().describe(MCP_PARAM_DESCRIPTIONS.responseFormat),
     known_recipes: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.knownRecipes),
     agent_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.agentId),
+    synthesize: z.boolean().optional().describe(MCP_PARAM_DESCRIPTIONS.synthesize),
     feedback: z.array(z.object({
       trace_id: z.string().optional(),
       kind: z.string().optional(),
@@ -91,7 +92,7 @@ server.tool(
     idempotentHint: false,
     openWorldHint: true,
   },
-  async ({ recipe, supporting_evidence, clusters, max_chars, decided_at, response_format, known_recipes, agent_id, feedback, file }) => {
+  async ({ recipe, supporting_evidence, clusters, max_chars, decided_at, response_format, known_recipes, agent_id, synthesize, feedback, file }) => {
     if (!apiKey) {
       return {
         content: [{ type: "text" as const, text: "Error: SOUPNET_API_KEY not configured. Get a key from your Soup.net dashboard." }],
@@ -136,8 +137,12 @@ server.tool(
         if (decided_at) formData.set("decided_at", decided_at);
         if (agent_id) formData.set("agent_id", agent_id);
         if (known_recipes) formData.set("known_recipes", known_recipes);
+        if (synthesize) formData.set("synthesize", "true");
         formData.set("format", "json");
-        formData.set("image", new Blob([fileBuffer], { type: mimeType }), fileName);
+        // Wrap in a fresh Uint8Array so the BlobPart type is Uint8Array<ArrayBuffer>
+        // rather than Node's Buffer<ArrayBufferLike> (which TS rejects as a
+        // BlobPart under lib.dom's SharedArrayBuffer-excluding signature).
+        formData.set("image", new Blob([new Uint8Array(fileBuffer)], { type: mimeType }), fileName);
 
         response = await fetch(`${backendUrl}/check`, {
           method: "POST",
@@ -155,6 +160,7 @@ server.tool(
         if (decided_at) params.set("decided_at", decided_at);
         if (agent_id) params.set("agent_id", agent_id);
         if (known_recipes) params.set("known_recipes", known_recipes);
+        if (synthesize) params.set("synthesize", "true");
         params.set("format", "json");
 
         response = await fetch(`${backendUrl}/check?${params.toString()}`, {

@@ -47,7 +47,7 @@ interface ApiResponse {
   error?: string;
   data?: {
     token?: string;
-    user?: { id: string; email: string; role: string };
+    user?: { id: string; email: string; role: string; emailVerified?: boolean; premium?: boolean };
   };
 }
 
@@ -193,6 +193,9 @@ describe.skipIf(!BASE)("/auth routes integration", () => {
     expect(body.ok).toBe(true);
     expect(body.data?.user?.email).toBe(testEmail);
     expect(body.data?.user?.id).toBeDefined();
+    // premium is exposed as a derived boolean (premium_at IS NOT NULL); a
+    // freshly-registered user is never premium.
+    expect(body.data?.user?.premium).toBe(false);
   });
 
   it("GET /auth/me without token", async () => {
