@@ -228,25 +228,13 @@ The layout cache + read-time 768-dim MRL truncation shipped (see backlog-complet
 
 Source detail: `docs/rough-notes/2026-06-10/scenario-mining-batch-1.md` (7 scenario candidates + 22-question operator interview batch, awaiting answers), the two `transcript-mining-report-*.md` files (self-audits from live sessions), and the SoupNet-evals ground-truth run record.
 
-### `[DECISION NEEDED]` `/check` `filter` param is documented but not implemented
-
-CLAUDE.md, `mcp.ts` (~line 793), and design-thinking.md all point agents at a `filter` (alias `f`) query param on `/check` as the sanctioned non-logging alternative to check-as-search — but `CHECK_PARAMS` doesn't implement it. Decide: implement `filter` on `/check`, or repoint the docs at the working read path (`GET /briefing?filter=...`). Until decided, the documented escape hatch doesn't exist, which pushes agents toward the cardinal anti-pattern.
-
 ### `[IMPL]` Missing case-study file referenced by design-thinking.md
 
 `docs/case-studies/chatgpt-divergent-design-checks.md` is linked from design-thinking.md §Divergent Recipe Checks but doesn't exist. Recover from the original transcript if it survives (it's the divergent-checks origin story — prime scenario source material), or fix the link.
 
-### `[IMPL]` Evidence stored with `%97` encoding artifact
-
-Ground-truth run logged evidence containing `%97` where an em-dash belongs (windows-1252-style percent-encoding artifact) via a GET `/check` submission. Find whether the decode bug is client-side guidance or server-side parsing; add a test with non-ASCII evidence through the GET path. **Re-confirmed 2026-07-01:** a curl GET with standard UTF-8 `--data-urlencode` em-dashes was stored as `%97` (visible in the test-project latency-bench traces, e.g. the "embeds the same query text twice per request %97 once in hybridSearch" evidence) — so the bug is server-side decoding, not client guidance.
-
 ### `[IMPL]` `/briefing` returns `exemplarCount: 0` for a book with one fresh trace
 
 Observed seconds after a successful check with sync embedding enabled. Exemplar selection may require k>1 traces or an async pipeline step. Investigate; a briefing that omits a book's only recipe undercuts the copy-paste priming flow for new/small books.
-
-### `[IMPL]` Expired/invalid API key error should carry remediation
-
-`get_briefing` on a dead key returns just "Invalid or expired API key" — a live session then accumulated hours of silent check debt (transcript report, landing-page session). Errors are agent-facing copy: include remediation ("mint a new key at /app/keys; the web `/check?format=json` path accepts the new key without an MCP reconnect"). The companion briefing/KB "check-debt ledger" protocol belongs to the reasoning-window emphasis pass above.
 
 ### `[IMPL]` Decision archaeology pass on our own design docs
 
@@ -256,33 +244,7 @@ The check-log-mock rejection (landing session) was predicted verbatim by documen
 
 ## Next-improvements batch (2026-07-05 work-tree plan)
 
-**Shipped 2026-07-05** — all five trees implemented, merged, and verified; see backlog-completed.md and [docs/rough-notes/2026-07-05/qualitative-eval-findings.md](rough-notes/2026-07-05/qualitative-eval-findings.md). Remaining follow-ups from the batch's qualitative evals (naive multi-model agents, paste-briefing cold-start, new-user journey, screenshot pass):
-
-### `[IMPL]` Key-death UX — /check silently serves the anonymous page for dead keys
-
-The single most repeated failure across every eval track. An expired/invalid key on `/check` returns HTTP 200 with the generic anonymous page — no error, no remediation — so yesterday's 24-hour briefing link silently becomes a documentation page (every web-chatbot user's day-2 experience). Companion to the existing "Expired/invalid API key error should carry remediation" item below (MCP side): the fix needs both an explicit invalid-key state on /check and remediation copy in the MCP auth error (mint a new key at /app/keys; web /check accepts a fresh key without MCP reconnect). Three fresh field confirmations 2026-07-05.
-
-### `[IMPL]` /check missing-params 400 is a static legacy-vocabulary list
-
-The error always prints "Missing required parameters: key, trace, ef" — even when `key` was provided, and never naming the documented `recipe`/`evidence` aliases. It actively mis-taught two of three cold agents (they concluded modern names don't work and switched to trace/ef). Fix: accurate per-request diff naming modern params with their aliases.
-
-### `[IMPL]` POST /check ignores format=json
-
-GET honors `format=json`; POST returns HTML regardless. A curl agent following the briefing's URL shapes hits this on form-style submissions. Three-surface parity gap.
-
-### `[IMPL]` relatedEvidence entries need recipe ids (get_recipes synergy)
-
-Related-evidence snippets truncate mid-sentence and carry no recipe id, so agents burn full checks re-finding recipes they already partially saw. Now that `get_recipes` exists, put ids on relatedEvidence entries (prose + JSON + structuredContent) so lookup replaces re-checking.
-
-### `[IMPL]` Check-result dates render in UTC as future dates
-
-A minutes-old check displayed as tomorrow's date (2026-07-06 shown on 2026-07-05 local). Find the render path that prints the raw UTC date and make it timezone-consistent.
-
-### `[IMPL]` Feedback copy parity for web agents
-
-The briefing's feedback blurb teaches `log_feedback`/`feedback` (MCP-only vocabulary); `POST /feedback` exists but no web-agent-facing copy documents it. Also add one line answering "is an ignored/contradicted result worth logging?" (a cold agent's verbatim question). Fold into the regression-gated briefing pass alongside: a dry-run honesty sentence (every submission logs; probe against /docs, not /check), a `decided_at` worked example, URL-encoding example, and single-turn guidance for divergent-checks vs annotate-output.
-
-**FF-2 (New-user journey polish batch, frontend) shipped 2026-07-05** — see backlog-completed.md for the full rundown (register-default entry, check-log grouping, key-labeling incl. the double-mint root cause, env-aware Connect-to-AI URL, aria-label + Recipe Map tiny-corpus copy papercuts). Two items explicitly out of that batch's scope, still open:
+**Shipped 2026-07-05** — all five trees implemented, merged, and verified; see backlog-completed.md and [docs/rough-notes/2026-07-05/qualitative-eval-findings.md](rough-notes/2026-07-05/qualitative-eval-findings.md). Fast-follow round shipped 2026-07-05 (FF-1 check-surface hardening, FF-2 journey polish, FF-3 briefing copy under declared-intent — see backlog-completed.md). Remaining follow-ups:
 
 ### `[IMPL]` Verify-email auto-sign-in
 
