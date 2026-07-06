@@ -59,6 +59,9 @@ export interface CheckResultItem {
 
 export interface CheckRelatedEvidence {
   evidenceId?: string;
+  /** UUID of the recipe the evidence belongs to — lets agents fetch the
+   *  full recipe via get_recipes / GET /recipes instead of re-checking. */
+  recipeId?: string;
   parentRecipe?: string;
   evidence?: string;
   similarity?: number;
@@ -67,6 +70,10 @@ export interface CheckRelatedEvidence {
 export interface CheckResponseData {
   recipeId?: string;
   checkedRecipe?: string;
+  /** True for the /check `filter` read-only search path — no trace logged. */
+  searchOnly?: boolean;
+  /** The keyword filter text of a search-only response. */
+  filter?: string;
   searchMode?: string;
   clustered?: boolean;
   results?: CheckResultItem[];
@@ -114,7 +121,16 @@ function similarityLabel(score: CheckResultItem["score"]): string {
 function dateLabel(createdAt: CheckResultItem["createdAt"]): string {
   if (!createdAt) return "";
   const iso = createdAt instanceof Date ? createdAt.toISOString() : String(createdAt);
-  return iso.split("T")[0] ?? iso;
+  // Explicit UTC timestamp at minute precision ("2026-07-06T02:31Z") rather
+  // than a bare date slice: a minutes-old check sliced to its UTC date reads
+  // as *tomorrow* for readers west of UTC (2026-07-05 eval finding), and a
+  // bare date gives downstream agents nothing to convert to the user's local
+  // time. Only stamp Z when the source really is UTC (Date, or a Z-suffixed
+  // ISO string); anything else passes through untouched.
+  const isUtc = createdAt instanceof Date || /Z$/i.test(iso);
+  const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/.exec(iso);
+  if (isUtc && m) return `${m[1]}T${m[2]}Z`;
+  return iso;
 }
 
 function renderReference(ref: CheckResultReference): string {
@@ -182,7 +198,9 @@ export function renderCheckResponseMarkdown(
   const data = response.data;
   const known = new Set(opts.knownRecipeIds ?? []);
 
-  let text = `Recipe checked as #${data.recipeId ?? "?"}\nSearch mode: ${data.searchMode ?? "semantic"}\n`;
+  let text = data.searchOnly
+    ? `Read-only search${data.filter ? ` for "${data.filter}"` : ""} — no recipe was logged.\nSearch mode: ${data.searchMode ?? "semantic"}\n`
+    : `Recipe checked as #${data.recipeId ?? "?"}\nSearch mode: ${data.searchMode ?? "semantic"}\n`;
 
   const warning = data.formatWarning ?? response.formatWarning;
   if (warning) {
@@ -211,8 +229,12 @@ export function renderCheckResponseMarkdown(
     for (const e of related) {
       const pct = e.similarity !== undefined ? ` (${Math.round(e.similarity * 100)}% similar)` : "";
       text += `  - ${e.evidence ?? ""}${pct}\n`;
-      text += `    From: "${(e.parentRecipe ?? "").slice(0, 100)}"\n`;
+      // Recipe id inline (2026-07-05 eval: entries without ids forced agents
+      // to burn full re-checks recovering text they'd already half-seen).
+      const from = e.recipeId ? `From recipe ${e.recipeId}` : "From";
+      text += `    ${from}: "${(e.parentRecipe ?? "").slice(0, 100)}"\n`;
     }
+    text += `  Fetch any full recipe by id: get_recipes (MCP) or GET /recipes?ids=<id> (same API key).\n`;
   }
 
   if (data.conceptAxes) {
