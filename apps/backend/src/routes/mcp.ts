@@ -180,6 +180,11 @@ mcpRouter.use("/*", async (c, next) => {
   if (!origin) return next();
   const allowlist = getAllowedOrigins();
   if (!isAllowedOrigin(origin, allowlist)) {
+    // Log the rejection — this branch short-circuits the chain, so the
+    // request-level [mcp-req] logger below never sees it. Without this line a
+    // client failing Origin validation is invisible in CloudWatch (2026-07-06
+    // claude.ai tool-discovery investigation).
+    console.log(`[mcp-req] ${c.req.method} status=403 forbidden_origin=${origin}`);
     return c.json({ error: "forbidden_origin", origin }, 403);
   }
   return next();
@@ -1095,7 +1100,45 @@ export function buildMcpJsonResponse(
 
 // ── Route handler ───────────────────────────────────────────────────────────
 
+// Request-level observability (2026-07-06, claude.ai tool-discovery
+// investigation): one structured line per /mcp request so CloudWatch can
+// distinguish the settings-time path from the conversation-runtime path
+// (method, status, whether an Origin was sent, client UA family). The 403
+// forbidden_origin branch above this router returns without logging, so this
+// middleware is deliberately mounted on the route (post-Origin-check requests)
+// and the Origin middleware gets its own log line below.
+mcpRouter.use("/*", async (c, next) => {
+  await next();
+  const ua = (c.req.header("user-agent") ?? "").slice(0, 60);
+  console.log(
+    `[mcp-req] ${c.req.method} status=${c.res.status} origin=${c.req.header("origin") ?? "-"} ua="${ua}"`,
+  );
+});
+
 mcpRouter.all("/", mcpBodyLimit, mcpRateLimit, mcpPerBearerBackstop, mcpPerKeyRateLimit, async (c) => {
+  // Streamable HTTP spec: a server that does not offer server-initiated
+  // messages at this endpoint MUST return 405 for GET. In stateless mode
+  // (ADR-0021) every request gets a fresh transport, so a standalone GET SSE
+  // stream can never carry anything — but the SDK still opens one and holds
+  // it silently forever, which stalls clients (observed 2026-07-06: claude.ai
+  // settings could list tools via POST while conversation-time discovery hung;
+  // a bare GET probe confirmed 200 + empty stream with no bytes). DELETE
+  // (session teardown) is equally meaningless without sessions.
+  if (c.req.method === "GET" || c.req.method === "DELETE") {
+    c.header("Allow", "POST, OPTIONS");
+    return c.json(
+      {
+        jsonrpc: "2.0",
+        error: {
+          code: -32000,
+          message:
+            "This server runs in stateless mode: no server-initiated messages (GET) or sessions (DELETE). Use POST.",
+        },
+      },
+      405,
+    );
+  }
+
   // Extract and validate API key from Bearer token
   const authHeader = c.req.header("Authorization");
   if (!authHeader?.startsWith("Bearer ")) {
