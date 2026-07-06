@@ -8,7 +8,8 @@ import type { EnrichedResult, EnrichedEvidence, EnrichedReference } from "../ser
 import { getDb } from "../db";
 import { sql } from "drizzle-orm";
 import { validateKey } from "../services/api-key.service";
-import { HTML_ACCEPT_TYPES } from "@soupnet/domain";
+import { HTML_ACCEPT_TYPES, renderCheckResponseMarkdown, fenceCheckResponseMarkdown } from "@soupnet/domain";
+import type { CheckResponseJson } from "@soupnet/domain";
 import { rateLimit, perKeyRateLimit, extractCheckRequestKey } from "../middleware/rate-limit";
 
 // Rate limit check/search:
@@ -83,6 +84,8 @@ export const CHECK_PARAMS = [
   { field: "readGroups", wire: "read_recipe_books",  aliases: ["read_groups"], roundTrip: "carry" },
   { field: "axes",       wire: "axes",               aliases: [],              roundTrip: "carry" },
   { field: "decidedAt",  wire: "decided_at",         aliases: ["decided"],     roundTrip: "carry" },
+  { field: "agentId",    wire: "agent_id",           aliases: [],              roundTrip: "carry" },
+  { field: "knownRecipes", wire: "known_recipes",    aliases: [],              roundTrip: "carry" },
   { field: "sort",       wire: "sort",               aliases: [],              roundTrip: "carry" },
   { field: "clusters",   wire: "clusters",           aliases: [],              roundTrip: "carry-unless-expand" },
   { field: "maxChars",   wire: "max_chars",          aliases: [],              roundTrip: "carry-unless-expand" },
@@ -136,6 +139,12 @@ const HTML_DEFAULT_MAX_CHARS = 3000;
 // max_chars overrides this when specified.
 const JSON_DEFAULT_CLUSTERS = 3;
 
+/** Parse the known_recipes wire param (comma-separated recipe UUIDs) into a
+ *  set. Rendering-only dedup — see the stub branches below. */
+function parseKnownRecipes(value: string | undefined): Set<string> {
+  return new Set((value ?? "").split(",").map((s) => s.trim()).filter(Boolean));
+}
+
 // ── Content negotiation ─────────────────────────────────────────────────────
 
 function wantsJson(c: Context, params: PageParams): boolean {
@@ -151,11 +160,13 @@ function buildJsonResponse(
   result: SubmitAndSearchResult,
   enriched: EnrichedResult[],
   page: number,
+  knownRecipeIds?: ReadonlySet<string>,
 ) {
   if (result.error) {
     return { ok: false, error: result.error };
   }
 
+  const KNOWN_GIST_CHARS = 80;
   const response: Record<string, unknown> = {
     ok: true,
     data: {
@@ -164,6 +175,18 @@ function buildJsonResponse(
       searchMode: result.searchMode ?? "semantic",
       clustered: result.clustered ?? false,
       results: enriched.map((r) => {
+        // known_recipes stub (rendering only — logging and cluster math are
+        // untouched upstream; the stub keeps its cluster slot).
+        if (knownRecipeIds?.has(r.id)) {
+          return {
+            id: r.id,
+            known: true,
+            recipe: r.claimText.slice(0, KNOWN_GIST_CHARS) + (r.claimText.length > KNOWN_GIST_CHARS ? "…" : ""),
+            createdAt: r.createdAt,
+            score: { combined: r.combinedScore, semantic: r.semanticScore },
+            ...(r.clusterSize ? { clusterSize: r.clusterSize } : {}),
+          };
+        }
         const item: Record<string, unknown> = {
           id: r.id,
           recipe: r.claimText,
@@ -349,13 +372,35 @@ function renderPage(
   if (result && !result.error && hasSearch) {
     const jsonQs = buildQs(params, { format: "json" });
     const hiddenCarryFields = renderHiddenCarryFields(params);
+
+    // Markdown copy-back (2026-07-05, absorbs the backlog "Markdown response
+    // option for web /check page" item): the same renderer that serves the
+    // MCP default format, fenced so a paste into a chat UI renders as an
+    // attachment-like card. Readable by the human on the way back to their
+    // agent — the 2026-05-27 demo showed raw JSON alienates even technical
+    // users. format=json stays unchanged for API integrators.
+    const page = params.page ? parseInt(params.page, 10) : 1;
+    const knownIds = parseKnownRecipes(params.knownRecipes);
+    const markdownFenced = fenceCheckResponseMarkdown(
+      renderCheckResponseMarkdown(
+        buildJsonResponse(result, enriched ?? [], page, knownIds) as unknown as CheckResponseJson,
+        { knownRecipeIds: [...knownIds] },
+      ),
+    );
+
     nextStepsHtml = `
   <section id="next-steps" style="background:#f0efe3;padding:0.75rem 1rem;border-radius:4px;margin:0.5rem 0">
     <p style="margin:0.25rem 0"><strong>Your recipe was checked as #${esc(result.traceId)}</strong>
-    <button id="copy-json-btn" style="font-size:0.85em;padding:3px 10px;margin-left:1em;cursor:pointer">Copy results for AI agent</button></p>
+    <button id="copy-md-btn" style="font-size:0.85em;padding:3px 10px;margin-left:1em;cursor:pointer">Copy results for AI agent</button>
+    <button id="copy-json-btn" style="font-size:0.85em;padding:3px 10px;margin-left:0.5em;cursor:pointer">Copy as JSON</button></p>
     <script nonce="${nonce ?? ""}">
-    document.getElementById('copy-json-btn').addEventListener('click',function(){var btn=this;btn.textContent='Fetching...';var url='/check${jsonQs.replace(/'/g, "\\'")}';try{var blob=fetch(url).then(function(r){return r.text()}).then(function(t){return new Blob([t],{type:'text/plain'})});navigator.clipboard.write([new ClipboardItem({'text/plain':blob})]).then(function(){btn.textContent='Copied!';setTimeout(function(){btn.textContent='Copy results for AI agent'},2000)}).catch(function(e){fetch(url).then(function(r){return r.text()}).then(function(j){var ta=document.createElement('textarea');ta.value=j;ta.style.position='fixed';ta.style.left='-9999px';document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);btn.textContent='Copied!';setTimeout(function(){btn.textContent='Copy results for AI agent'},2000)}).catch(function(e2){console.error(e2);btn.textContent='Copy failed: '+e2.message})})}catch(e){console.error(e);btn.textContent='Copy failed: '+e.message}});
+    document.getElementById('copy-md-btn').addEventListener('click',function(){var btn=this;var txt=document.getElementById('md-result').textContent;function ok(){btn.textContent='Copied!';setTimeout(function(){btn.textContent='Copy results for AI agent'},2000)}try{navigator.clipboard.writeText(txt).then(ok).catch(function(){var ta=document.createElement('textarea');ta.value=txt;ta.style.position='fixed';ta.style.left='-9999px';document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);ok()})}catch(e){console.error(e);btn.textContent='Copy failed: '+e.message}});
+    document.getElementById('copy-json-btn').addEventListener('click',function(){var btn=this;btn.textContent='Fetching...';var url='/check${jsonQs.replace(/'/g, "\\'")}';try{var blob=fetch(url).then(function(r){return r.text()}).then(function(t){return new Blob([t],{type:'text/plain'})});navigator.clipboard.write([new ClipboardItem({'text/plain':blob})]).then(function(){btn.textContent='Copied!';setTimeout(function(){btn.textContent='Copy as JSON'},2000)}).catch(function(e){fetch(url).then(function(r){return r.text()}).then(function(j){var ta=document.createElement('textarea');ta.value=j;ta.style.position='fixed';ta.style.left='-9999px';document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);btn.textContent='Copied!';setTimeout(function(){btn.textContent='Copy as JSON'},2000)}).catch(function(e2){console.error(e2);btn.textContent='Copy failed: '+e2.message})})}catch(e){console.error(e);btn.textContent='Copy failed: '+e.message}});
     </script>
+    <details style="margin-top:0.5rem">
+      <summary style="cursor:pointer;font-size:0.9em">Results as markdown &mdash; readable report to paste into any AI chat</summary>
+      <pre id="md-result" style="white-space:pre-wrap;font-size:0.8em;background:#faf9f2;border:1px solid #ddd;border-radius:4px;padding:0.5rem;max-height:24rem;overflow:auto">${esc(markdownFenced)}</pre>
+    </details>
     <details style="margin-top:0.5rem">
       <summary style="cursor:pointer;font-size:0.9em">Add a file attachment &mdash; image, video, audio, or PDF as reference evidence</summary>
       <form method="post" action="/check" enctype="multipart/form-data" style="margin-top:0.5rem">
@@ -371,6 +416,7 @@ function renderPage(
   // Build results HTML
   let resultsHtml = "";
   if (result && !result.error && hasSearch && enriched) {
+    const knownIdsForHtml = parseKnownRecipes(params.knownRecipes);
     const resultItems = enriched
       .map((r) => {
         let scoreDetail: string;
@@ -378,6 +424,16 @@ function renderPage(
           scoreDetail = `${Math.round(r.semanticScore * 100)}% similar`;
         } else {
           scoreDetail = `Score: ${r.combinedScore.toFixed(4)}`;
+        }
+
+        // known_recipes stub — one line: id + gist + similarity. Rendering
+        // only; the result still occupies its cluster slot.
+        if (knownIdsForHtml.has(r.id)) {
+          const gist = esc(r.claimText.slice(0, 80)) + (r.claimText.length > 80 ? "&hellip;" : "");
+          return `
+    <article class="result">
+      <p><small><code>${esc(r.id)}</code> [known to you] ${esc(scoreDetail)}${r.clusterSize ? ` &mdash; represents ${r.clusterSize} similar recipes` : ""} &mdash; ${gist}</small></p>
+    </article>`;
         }
 
         // Cluster drill-down: search using the exemplar's text to find all its cluster members
@@ -660,9 +716,15 @@ async function handleCheck(
     }
   }
 
+  // Connection surface (UVP Layer 1): the stdio MCP proxy self-identifies
+  // via this header; anything else through /check is "web". The /mcp route
+  // stamps "mcp-http" itself without touching this path.
+  const surface = c.req.header("x-soupnet-surface") === "mcp-stdio" ? "mcp-stdio" : "web";
+
   let result: SubmitAndSearchResult | undefined;
   if (params.trace && params.ef && params.key) {
     result = await submitAndSearch({
+      surface,
       key: params.key,
       traceText: params.trace,
       evidenceFor: params.ef,
@@ -685,6 +747,7 @@ async function handleCheck(
       targetGroup: params.group,
       readGroups: params.readGroups,
       decidedAt: params.decidedAt,
+      agentId: params.agentId,
     });
   }
 
@@ -710,7 +773,7 @@ async function handleCheck(
     let enriched = await enrichResults(db, result.results);
     enriched = await clusterEvidenceInResults(db, enriched);
     const page = params.page ? parseInt(params.page, 10) : 1;
-    return c.json(buildJsonResponse(result, enriched, page));
+    return c.json(buildJsonResponse(result, enriched, page, parseKnownRecipes(params.knownRecipes)));
   }
 
   // HTML response path — always enrich + cluster evidence

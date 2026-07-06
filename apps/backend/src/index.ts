@@ -20,6 +20,7 @@ import { traceRoutes } from "./routes/traces";
 import { mcpRoutes } from "./routes/mcp";
 import { uploadsRoutes } from "./routes/uploads";
 import { oauthRoutes, oauthWellKnownRoutes } from "./routes/oauth";
+import { feedbackRoutes } from "./routes/feedback";
 import { startEmbeddingWorker } from "./embedding-worker";
 import type { AppEnv } from "./types";
 
@@ -112,6 +113,7 @@ app.route("/docs", docsRoutes);
 app.route("/traces", traceRoutes);
 app.route("/mcp", mcpRoutes);
 app.route("/uploads", uploadsRoutes);
+app.route("/feedback", feedbackRoutes);
 app.route("/oauth", oauthRoutes);
 app.route("/.well-known", oauthWellKnownRoutes);
 

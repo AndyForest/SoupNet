@@ -38,6 +38,10 @@ Migrations `0022_waitlist`, `0023_waitlist_crm_invite_semantics`. Tests: `waitli
 
 ## Recipe checks
 
+### 2026-07-05 — Markdown response option for web `/check` page (absorbed into WT-4 response formats)
+
+The 2026-05-27 demo finding (JSON copy-back alienates even technical users) resolved as part of the WT-4 check-loop tree: a shared markdown renderer now lives in `@soupnet/domain` (`renderCheckResponseMarkdown`) and serves three surfaces — the HTTP MCP `check_recipe` default response (`response_format: "markdown" | "structured"`, markdown default, one format per response per operator review 2026-07-05), the stdio MCP mirror, and the web `/check` HTML result page, which renders the result as a fenced ` ```markdown ` block with a "Copy results for AI agent" button (the JSON copy button stays as "Copy as JSON"; `format=json` endpoint behavior unchanged). Every exemplar line carries its full recipe UUID + similarity inline so the check → feedback join works in the default format. Same pass removed agent-facing pagination text ("Page X of Y") and the `actions.nextPage` hint that advertised a `page` param the tool doesn't accept — replaced with a narrowing hint (read_recipe_books / axes / clusters). Also fixed en passant: the old HTTP MCP formatter read `evidenceFor` while the builder emits `evidence`, so HTTP MCP text responses had silently omitted all evidence.
+
 ### 2026-07-02 — Recipe Map: layout cache + read-time 768-dim MRL truncation
 
 `/traces/map` took 59s on prod (0.25 vCPU task doing k-means over 1,316 × 3,072-dim vectors + parsing ~80MB of vector text). Two-part fix, verified on the imported real corpus:

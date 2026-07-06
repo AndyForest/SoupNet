@@ -24,7 +24,9 @@ import {
   MCP_PARAM_DESCRIPTIONS,
   MCP_TOOL_DESCRIPTIONS,
   buildCheckRecipeToolDescription,
+  renderCheckResponseMarkdown,
 } from "@soupnet/domain";
+import type { CheckResponseJson } from "@soupnet/domain";
 import { composeBriefing, composeCorpusContext } from "../services/briefing";
 import { rateLimit, perKeyRateLimit, extractMcpBearerKey, getClientIp, hashApiKey } from "../middleware/rate-limit";
 import type { SubmitAndSearchResult, ImageAttachment } from "../services/trace.service";
@@ -44,6 +46,8 @@ import { sql } from "drizzle-orm";
 import type { AppEnv } from "../types";
 import { writeAudit } from "../services/audit-log.service";
 import { ClientSafeError, publicErrorMessage } from "../lib/client-safe-error";
+import type { RawFeedbackRow } from "../services/feedback.service";
+import { ingestFeedback, summarizeFeedbackResults } from "../services/feedback.service";
 
 // F47 (security-audit-2026-06-11): tool catch-alls surface only deliberate
 // ClientSafeError messages (validation, size caps, MIME — written for the
@@ -304,6 +308,26 @@ function imageFromBase64(base64: string, filename: string, mimeTypeHint?: string
 
 // ── MCP server factory ──────────────────────────────────────────────────────
 
+// Loose zod shape for feedback rows — presence-level only. Strict enum/uuid
+// validation happens per-row in the feedback service so one bad row gets a
+// marker instead of a zod error killing the whole call (the ride-along
+// surface must never take down the check it rides on).
+const feedbackRowSchema = z.object({
+  trace_id: z.string().optional(),
+  kind: z.string().optional(),
+  impact: z.string().optional(),
+  disposition: z.string().optional(),
+  story_fulfilled: z.string().optional(),
+  story: z.string().optional(),
+  note: z.string().optional(),
+  agent_id: z.string().optional(),
+  top_similarity: z.number().optional(),
+  model: z.string().optional(),
+  harness: z.string().optional(),
+  harness_version: z.string().optional(),
+  related_trace_ids: z.array(z.string()).optional(),
+});
+
 function createMcpServer(backendUrl: string): McpServer {
   const server = new McpServer({
     name: "soupnet",
@@ -324,6 +348,16 @@ function createMcpServer(backendUrl: string): McpServer {
       clusters: z.number().optional().describe(MCP_PARAM_DESCRIPTIONS.clusters),
       max_chars: z.number().optional().describe(MCP_PARAM_DESCRIPTIONS.maxChars),
       decided_at: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.decidedAt),
+      // No SDK-level outputSchema is declared for this tool: the SDK (1.29.0)
+      // requires structuredContent on EVERY non-error response once an
+      // outputSchema exists, which would force prose+JSON into one payload —
+      // exactly what the one-format-per-response rule (operator review
+      // 2026-07-05) rejects. structuredContent without outputSchema is
+      // spec-legal; the shape is documented in the param description.
+      response_format: z.enum(["markdown", "structured"]).optional().describe(MCP_PARAM_DESCRIPTIONS.responseFormat),
+      known_recipes: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.knownRecipes),
+      agent_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.agentId),
+      feedback: z.array(feedbackRowSchema).optional().describe(MCP_PARAM_DESCRIPTIONS.feedbackParam),
       axes: z.string().optional().describe(
         "Two concept terms for semantic projection (comma-separated, e.g., 'accessibility, dark mode'). " +
         "Each result gets x/y positions showing its similarity to each concept (0-1). " +
@@ -384,7 +418,7 @@ function createMcpServer(backendUrl: string): McpServer {
       idempotentHint: false,
       openWorldHint: true,
     },
-    async ({ recipe, supporting_evidence, clusters, max_chars, decided_at, axes, recipe_book, read_recipe_books, file_url, file_base64, file_name, file_mime_type, region }, extra) => {
+    async ({ recipe, supporting_evidence, clusters, max_chars, decided_at, axes, recipe_book, read_recipe_books, file_url, file_base64, file_name, file_mime_type, region, response_format, known_recipes, agent_id, feedback }, extra) => {
       // Get API key from auth info (passed by the transport middleware)
       const apiKey = (extra.authInfo as Record<string, unknown> | undefined)?.["token"] as string | undefined;
       if (!apiKey) {
@@ -475,6 +509,8 @@ function createMcpServer(backendUrl: string): McpServer {
           decidedAt: decided_at ?? undefined,
           image,
           region: regionMeta,
+          agentId: agent_id ?? undefined,
+          surface: "mcp-http",
         });
 
         if (result.error) {
@@ -487,10 +523,58 @@ function createMcpServer(backendUrl: string): McpServer {
         let enriched = await enrichResults(db, result.results);
         enriched = await clusterEvidenceInResults(db, enriched);
 
-        // Build the JSON shape that formatCheckResponse expects
-        const jsonResponse = buildMcpJsonResponse(result, enriched, 1);
-        const text = formatCheckResponse(jsonResponse);
-        console.warn(`[mcp] check_recipe: success — ${result.results.length} results`);
+        // known_recipes dedup, phase 1 (rendering only): ids the agent
+        // declared it already holds render as one-line stubs. Trace logging,
+        // idempotency, and cluster math upstream are untouched — stubs still
+        // occupy their cluster slots.
+        const knownRecipeIds = new Set(
+          (known_recipes ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+        );
+
+        const jsonResponse = buildMcpJsonResponse(result, enriched, 1, knownRecipeIds);
+        console.warn(`[mcp] check_recipe: success — ${result.results.length} results (${response_format ?? "markdown"})`);
+
+        // Ride-along feedback about PRIOR checks. Processed only after the
+        // check itself succeeded; per-row markers, never a request-killing
+        // error. The check-level agent_id becomes each row's default.
+        let feedbackSummary = "";
+        let feedbackResults: unknown;
+        if (feedback && feedback.length > 0) {
+          const keyResult = await validateKey(db, apiKey);
+          if (keyResult) {
+            const rows: RawFeedbackRow[] = feedback.map((row) => ({
+              ...(agent_id ? { agent_id } : {}),
+              ...row,
+            }));
+            const results = await ingestFeedback({
+              db,
+              apiKeyId: keyResult.keyId,
+              readGroupIds: keyResult.readGroupIds,
+              rows,
+            });
+            feedbackSummary = summarizeFeedbackResults(results);
+            feedbackResults = results;
+          }
+        }
+
+        // One format per response (operator review 2026-07-05): markdown is
+        // the default readable report (ids + similarities inline); structured
+        // returns the JSON as structuredContent with a one-line text stub.
+        // Never both.
+        if (response_format === "structured") {
+          const data = jsonResponse["data"] as Record<string, unknown>;
+          if (feedbackResults !== undefined) data["feedbackResults"] = feedbackResults;
+          const stub = `Recipe checked as #${String(data["recipeId"])}. ${String(data["totalResults"])} similar recipe(s) — see structuredContent.`;
+          return {
+            content: [{ type: "text" as const, text: stub }],
+            structuredContent: data,
+          };
+        }
+
+        let text = renderCheckResponseMarkdown(jsonResponse as unknown as CheckResponseJson, {
+          knownRecipeIds: [...knownRecipeIds],
+        });
+        if (feedbackSummary) text += `\n\n${feedbackSummary}`;
         return { content: [{ type: "text" as const, text }] };
       } catch (err) {
         return { content: [{ type: "text" as const, text: toolErrorText(err, "check_recipe") }] };
@@ -528,6 +612,7 @@ function createMcpServer(backendUrl: string): McpServer {
           rawKey: apiKey,
           backendUrl,
           frontendUrl,
+          surface: "mcp-http",
         });
 
         if (!result.ok) {
@@ -736,6 +821,75 @@ function createMcpServer(backendUrl: string): McpServer {
     },
   );
 
+  // ── log_feedback tool ──────────────────────────────────────────────────
+  //
+  // Standalone surface for feedback rows (end-of-session, outcome/operational
+  // kinds with no next check to ride on). Flat single-row params — tool-
+  // calling LLMs fill named fields more reliably than nested arrays; batching
+  // lives on check_recipe's feedback param. Same service, same validation and
+  // ACL path as the ride-along and REST POST /feedback.
+
+  server.tool(
+    "log_feedback",
+    MCP_TOOL_DESCRIPTIONS.logFeedback,
+    {
+      trace_id: z.string().describe(
+        "Full recipe UUID of the prior check this feedback is about — every check response carries it inline."
+      ),
+      kind: z.string().describe("check-feedback | operational | outcome"),
+      impact: z.string().describe("none | new | subtle | big | operational"),
+      disposition: z.string().describe("proceeded | corrected | asked-human | charted-new | deferred"),
+      story_fulfilled: z.string().describe("yes | partial | no | unknown"),
+      story: z.string().describe(
+        "The user story behind the check — why it was made (e.g. 'As an AI sub-agent working on X, I wanted Y so that Z')."
+      ),
+      note: z.string().optional().describe("What you did with the result — how it changed (or confirmed) your approach."),
+      agent_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.agentId),
+      top_similarity: z.number().optional().describe("Top similarity the check returned (0-1), as you saw it."),
+      model: z.string().optional().describe("Your model id (e.g. 'claude-fable-5')."),
+      harness: z.string().optional().describe("Your harness (e.g. 'claude-code', 'codex')."),
+      harness_version: z.string().optional().describe("Harness version, if known."),
+      related_trace_ids: z.array(z.string()).optional().describe(
+        "Lineage links — recipe UUIDs in the same arc (e.g. the recipe that changed the action and the trace that logged the new decision)."
+      ),
+    },
+    {
+      title: "Log feedback",
+      // Appends a feedback row — not read-only, not destructive, not
+      // idempotent (each call logs a new row).
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+    async (args, extra) => {
+      const apiKey = (extra.authInfo as Record<string, unknown> | undefined)?.["token"] as string | undefined;
+      if (!apiKey) {
+        return { content: [{ type: "text" as const, text: "Error: No API key in auth context." }] };
+      }
+      try {
+        const db = getDb();
+        const keyResult = await validateKey(db, apiKey);
+        if (!keyResult) {
+          return { content: [{ type: "text" as const, text: "Error: Invalid or expired API key." }] };
+        }
+        const results = await ingestFeedback({
+          db,
+          apiKeyId: keyResult.keyId,
+          readGroupIds: keyResult.readGroupIds,
+          rows: [args as RawFeedbackRow],
+        });
+        const r = results[0];
+        if (r?.ok) {
+          return { content: [{ type: "text" as const, text: `Feedback recorded for check ${r.traceId} (feedback id ${r.feedbackId}).` }] };
+        }
+        return { content: [{ type: "text" as const, text: `Feedback rejected: ${r?.error ?? "unknown error"}` }] };
+      } catch (err) {
+        return { content: [{ type: "text" as const, text: toolErrorText(err, "log_feedback") }] };
+      }
+    },
+  );
+
   // elicit_divergent_check was removed 2026-04-18: in stateless mode the
   // SSE server→client channel needed for elicitation/create isn't available,
   // and even when sessions existed the only major MCP client that surfaced
@@ -748,18 +902,33 @@ function createMcpServer(backendUrl: string): McpServer {
 }
 
 // ── Build JSON response from service results (mirrors check.ts buildJsonResponse) ──
+// Exported for unit tests (actions hints, structured-mode payload shape).
 
-function buildMcpJsonResponse(
+export function buildMcpJsonResponse(
   result: SubmitAndSearchResult,
   enriched: EnrichedResult[],
   page: number,
+  knownRecipeIds?: ReadonlySet<string>,
 ): Record<string, unknown> {
+  const KNOWN_GIST_CHARS = 80;
   const data: Record<string, unknown> = {
     recipeId: result.traceId,
     checkedRecipe: result.traceText,
     searchMode: result.searchMode ?? "lexical",
     clustered: result.clustered ?? false,
     results: enriched.map((r) => {
+      // known_recipes stub (rendering only): id + gist + similarity, no
+      // evidence body. clusterSize stays so the cluster slot remains visible.
+      if (knownRecipeIds?.has(r.id)) {
+        return {
+          id: r.id,
+          known: true,
+          recipe: r.claimText.slice(0, KNOWN_GIST_CHARS) + (r.claimText.length > KNOWN_GIST_CHARS ? "…" : ""),
+          createdAt: r.createdAt,
+          score: { combined: r.combinedScore, semantic: r.semanticScore },
+          ...(r.clusterSize ? { clusterSize: r.clusterSize } : {}),
+        };
+      }
       const item: Record<string, unknown> = {
         id: r.id,
         recipe: r.claimText,
@@ -787,9 +956,12 @@ function buildMcpJsonResponse(
       };
       if (r.clusterSize) {
         item["clusterSize"] = r.clusterSize;
-        // Drill-down hint: agent can re-check with the exemplar text to explore this cluster
+        // Drill-down hint: agent can re-check with the exemplar text to
+        // explore this cluster. Phrased around params the tool actually
+        // accepts (clusters) — the old expand=true wording advertised a web
+        // /check param this tool doesn't have.
         item["drillDown"] = {
-          hint: `This exemplar represents ${r.clusterSize} similar recipes. To explore them, re-check with this recipe text and expand=true or a higher cluster count.`,
+          hint: `This exemplar represents ${r.clusterSize} similar recipes. To explore them, re-check with this recipe text and a higher clusters value.`,
           exemplarText: r.claimText,
         };
       }
@@ -821,113 +993,29 @@ function buildMcpJsonResponse(
     data["conceptAxes"] = result.conceptAxes;
   }
 
-  // Available actions — what the agent can do next
+  // Available actions — what the agent can do next. Only params this tool
+  // actually accepts (pagination cleanup, 2026-07-05: the old nextPage hint
+  // advertised a page param the tool doesn't take, and the expand/sort/filter
+  // hints advertised web-/check params with no MCP equivalent — field data
+  // showed zero agents paging anyway).
   const actions: Record<string, unknown> = {};
   if (result.clustered && enriched.some((r) => r.clusterSize && r.clusterSize > 1)) {
-    actions["expandClusters"] = "Re-check with expand=true to see all results without clustering.";
     actions["moreClusters"] = "Re-check with a higher clusters value (e.g., clusters=10) for finer granularity.";
   }
   if (result.totalPages > page) {
-    actions["nextPage"] = `Results are paginated. Request page=${page + 1} for more.`;
+    actions["narrow"] = "More recipes exist beyond these exemplars. Narrow with read_recipe_books=<slugs>, project with axes=\"concept A, concept B\", or raise clusters.";
   }
-  actions["sortByRecent"] = "Add sort=recent to order results by date instead of relevance.";
-  actions["filterByKeyword"] = "Add filter=keyword to narrow results. Use comma-separated terms for concept-axis projection.";
   data["actions"] = actions;
 
   return { ok: true, data };
 }
 
-// ── Simple check response formatter (subset of stdio MCP's formatter) ───────
-
-function formatCheckResponse(response: Record<string, unknown>): string {
-  if (!response["ok"] || !response["data"]) {
-    return `Error: ${(response["error"] as string) ?? "Unknown error"}`;
-  }
-
-  const data = response["data"] as Record<string, unknown>;
-  let text = `Recipe checked as #${data["recipeId"]}\nSearch mode: ${data["searchMode"]}\n`;
-
-  // Format warning
-  if (data["formatWarning"]) {
-    text += `Format suggestion: ${data["formatWarning"]}\n`;
-  }
-
-  const results = (data["results"] as Array<Record<string, unknown>>) ?? [];
-  if (results.length === 0) {
-    text += "\nNo similar recipes found.";
-    return text;
-  }
-
-  text += `${data["totalResults"]} similar recipe(s) found`;
-  if (data["clustered"]) {
-    text += ` (clustered to ${results.length} exemplars)`;
-  }
-  text += ":\n";
-
-  for (let i = 0; i < results.length; i++) {
-    const r = results[i]!;
-    const score = r["score"] as Record<string, unknown>;
-    const pct = score["semantic"] !== null
-      ? `${Math.round(Number(score["semantic"]) * 100)}%`
-      : `${Number(score["combined"]).toFixed(2)}`;
-    text += `\n#${i + 1} (${pct} similar) -- ${String(r["createdAt"]).split("T")[0]}`;
-    if (r["clusterSize"]) text += ` (represents ${r["clusterSize"]} similar recipes)`;
-    const group = r["group"] as Record<string, unknown> | undefined;
-    if (group) text += ` [${group["name"]}]`;
-    text += `\nRecipe: ${r["recipe"]}\n`;
-
-    // Evidence for this recipe
-    const evidenceFor = (r["evidenceFor"] as Array<Record<string, unknown>>) ?? [];
-    if (evidenceFor.length > 0) {
-      for (const ev of evidenceFor) {
-        text += `  Supporting: ${ev["interpretation"]}`;
-        if (ev["clusterSize"]) text += ` (${ev["clusterSize"]} similar entries)`;
-        text += "\n";
-        const refs = (ev["references"] as Array<Record<string, unknown>>) ?? [];
-        for (const ref of refs) {
-          if (ref["quote"]) text += `    > "${ref["quote"]}"\n`;
-          if (ref["source"]) text += `    -- ${ref["source"]}\n`;
-          if (ref["fileUrl"]) {
-            const filename = (ref["originalFilename"] as string) || (ref["fileUrl"] as string);
-            const mime = ref["fileMimeType"] ? ` (${ref["fileMimeType"] as string})` : "";
-            text += `    [file: ${filename}${mime}]\n`;
-            const hash = ref["fileHash"] as string | undefined;
-            if (hash) text += `    [sha256: ${hash}]\n`;
-            const rm = ref["regionMeta"] as { image_box?: { x0: number; y0: number; x1: number; y1: number } } | undefined;
-            const box = rm?.image_box;
-            if (box) {
-              const pct = (n: number) => `${Math.round(n * 100)}%`;
-              text += `    [region x ${pct(box.x0)}–${pct(box.x1)}, y ${pct(box.y0)}–${pct(box.y1)}]\n`;
-            }
-          }
-        }
-      }
-    }
-  }
-
-  // Related evidence from other recipes
-  const related = (data["relatedEvidence"] as Array<Record<string, unknown>>) ?? [];
-  if (related.length > 0) {
-    text += "\nRelated evidence from other recipes:\n";
-    for (const e of related) {
-      text += `  - ${e["evidence"]} (${Math.round(Number(e["similarity"]) * 100)}% similar)\n`;
-      text += `    From: "${String(e["parentRecipe"]).slice(0, 100)}"\n`;
-    }
-  }
-
-  // Concept axes
-  const axes = data["conceptAxes"] as Record<string, unknown> | undefined;
-  if (axes) {
-    text += `\nConcept axes: "${axes["axisA"]}" (X) / "${axes["axisB"]}" (Y)\n`;
-  }
-
-  // Pagination info
-  if (Number(data["totalPages"]) > 1) {
-    text += `\nPage ${data["page"]} of ${data["totalPages"]}`;
-  }
-
-  return text;
-}
+// The flattened-text formatter that used to live here (formatCheckResponse)
+// moved to @soupnet/domain renderCheckResponseMarkdown — one renderer shared
+// by the HTTP MCP default response, the stdio mirror, and the web /check
+// copy-back block. The move also fixed a latent bug: the old formatter read
+// r["evidenceFor"] while buildMcpJsonResponse emits r["evidence"], so HTTP
+// MCP text responses silently omitted all evidence.
 
 // ── Route handler ───────────────────────────────────────────────────────────
 

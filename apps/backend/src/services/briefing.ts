@@ -27,6 +27,7 @@ import type {
   BriefingUser,
 } from "@soupnet/domain";
 import { fetchBriefingExemplars } from "./briefing-exemplars";
+import { writeAudit } from "./audit-log.service";
 
 export interface BriefingOptions {
   /** Override cluster count. Falls back to user preference, then default 5. */
@@ -49,6 +50,11 @@ export interface BriefingComposeInput {
   backendUrl: string;
   frontendUrl: string;
   options?: BriefingOptions;
+  /** Connection surface for the briefing.issued audit event (UVP Layer 1 —
+   *  makes the briefing→first-check funnel computable per surface).
+   *  e.g. "mcp-http". Omitted → recorded as null (REST /briefing, dashboard
+   *  copy buttons — callers can adopt the field incrementally). */
+  surface?: string | undefined;
 }
 
 export interface BriefingComposeSuccess {
@@ -72,6 +78,9 @@ interface ResolvedScope {
   exemplarGroupIds: string[];
   k: number;
   options: BriefingOptions;
+  /** api_keys.id + owning user — for the briefing.issued audit stamp. */
+  keyId: string;
+  userId: string;
 }
 
 /** Compose the full unified briefing markdown. */
@@ -80,6 +89,23 @@ export async function composeBriefing(input: BriefingComposeInput): Promise<Brie
   if ("error" in scope) return scope.error;
 
   const { exemplarsSection, exemplarCount } = await renderExemplars(input.db, scope);
+
+  // UVP Layer 1: briefing.issued makes the survivorship denominator visible —
+  // get_briefing calls with zero subsequent checks are the null cohort no
+  // local log could see. Awaited like the recipe.checked audit write —
+  // writeAudit swallows failures so it can never fail the briefing, and an
+  // awaited insert is deterministic for consumers reading the funnel. F29's
+  // limiter filters on action = 'recipe.checked', so these rows add no load
+  // to its indexed COUNT.
+  await writeAudit(input.db, {
+    actorUserId: scope.userId,
+    action: "briefing.issued",
+    targetType: "api_key",
+    targetId: scope.keyId,
+    apiKeyId: scope.keyId,
+    metadata: { surface: input.surface ?? null, exemplarCount },
+  });
+
   const checkUrl = `${input.backendUrl}/check?key=${encodeURIComponent(input.rawKey)}`;
   const text = BRIEFING.build({
     user: scope.user,
@@ -113,6 +139,7 @@ export async function composeCorpusContext(input: BriefingComposeInput): Promise
 // ── Internals ───────────────────────────────────────────────────────────────
 
 interface KeyRow {
+  id: string;
   user_id: string;
   read_group_ids: string[];
   write_group_ids: string[];
@@ -147,7 +174,7 @@ async function resolveScope(
   const hashedKey = crypto.createHash("sha256").update(rawKey).digest("hex");
   const userScopeClause = userId ? sql`AND user_id = ${userId}::uuid` : sql``;
   const keyRows = await db.execute(sql`
-    SELECT user_id, read_group_ids, write_group_ids, default_write_group_id
+    SELECT id, user_id, read_group_ids, write_group_ids, default_write_group_id
     FROM claimnet.api_keys
     WHERE key = ${hashedKey}
       AND expires_at > NOW()
@@ -240,7 +267,7 @@ async function resolveScope(
 
   const k = opts.k ?? prefs.briefing.clusterCount;
 
-  return { user, groups, scopeLabel, exemplarGroupIds, k, options: opts };
+  return { user, groups, scopeLabel, exemplarGroupIds, k, options: opts, keyId: keyRow.id, userId: keyRow.user_id };
 }
 
 async function renderExemplars(

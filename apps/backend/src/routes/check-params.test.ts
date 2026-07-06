@@ -6,6 +6,7 @@ const empty: PageParams = {
   ea: undefined, sort: undefined, page: undefined, format: undefined,
   clusters: undefined, maxChars: undefined, expand: undefined, compact: undefined,
   axes: undefined, group: undefined, readGroups: undefined, decidedAt: undefined,
+  agentId: undefined, knownRecipes: undefined,
   imageFile: undefined,
 };
 

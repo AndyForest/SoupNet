@@ -21,134 +21,18 @@ import {
   MCP_PARAM_DESCRIPTIONS,
   MCP_TOOL_DESCRIPTIONS,
   buildCheckRecipeToolDescription,
+  renderCheckResponseMarkdown,
 } from "@soupnet/domain";
+import type { CheckResponseJson } from "@soupnet/domain";
 
 const backendUrl = process.env["SOUPNET_BACKEND_URL"] ?? "http://localhost:3101";
 const apiKey = process.env["SOUPNET_API_KEY"] ?? "";
 
-// ── Types for the JSON API response ─────────────────────────────────────────
-
-interface CheckReference {
-  quote: string;
-  source: string;
-  fileUrl?: string;
-  fileMimeType?: string;
-}
-
-interface CheckEvidence {
-  interpretation: string;
-  references: CheckReference[];
-}
-
-interface RelatedEvidence {
-  evidenceId: string;
-  parentRecipe: string;
-  evidence: string;
-  similarity: number;
-  strategy: string;
-}
-
-interface CheckResultItem {
-  id: string;
-  recipe: string;
-  createdAt: string;
-  score: { combined: number; semantic: number | null; lexical: number | null };
-  clusterSize?: number;
-  evidence: CheckEvidence[];
-}
-
-interface CheckResponse {
-  ok: boolean;
-  error?: string;
-  formatWarning?: string;
-  data?: {
-    recipeId: string;
-    searchMode: string;
-    clustered?: boolean;
-    results: CheckResultItem[];
-    relatedEvidence?: RelatedEvidence[];
-    totalResults: number;
-    page: number;
-    totalPages: number;
-  };
-}
-
-// ── Formatting helpers ──────────────────────────────────────────────────────
-
-function formatEvidence(label: string, items: CheckEvidence[]): string {
-  if (items.length === 0) return "";
-  const entries = items
-    .map((e) => {
-      let text = `  - ${e.interpretation}`;
-      for (const ref of e.references) {
-        if (ref.quote) text += `\n    > "${ref.quote}"`;
-        if (ref.source) text += `\n    -- ${ref.source}`;
-        if (ref.fileUrl) text += `\n    [file: ${ref.fileUrl}]`;
-      }
-      return text;
-    })
-    .join("\n");
-  return `${label}:\n${entries}`;
-}
-
-function formatRelatedEvidence(items: RelatedEvidence[]): string {
-  if (items.length === 0) return "";
-  const entries = items
-    .map((e, i) => {
-      const pct = Math.round(e.similarity * 100);
-      return `  ${i + 1}. ${e.evidence}\n     From recipe: "${e.parentRecipe.slice(0, 100)}${e.parentRecipe.length > 100 ? "..." : ""}"\n     (${pct}% similar, strategy: ${e.strategy})`;
-    })
-    .join("\n");
-  return `\nRelated evidence from other recipes:\n${entries}`;
-}
-
-function formatResults(response: CheckResponse): string {
-  if (!response.ok || !response.data) {
-    return `Error: ${response.error ?? "Unknown error"}`;
-  }
-
-  const { data } = response;
-  let text = `Recipe checked as #${data.recipeId}\nSearch mode: ${data.searchMode}\n`;
-
-  if (response.formatWarning) {
-    text += `\nFormat suggestion: ${response.formatWarning}\n`;
-  }
-
-  if (data.results.length === 0) {
-    text += "\nNo similar recipes found.";
-    return text;
-  }
-
-  text += `${data.totalResults} similar recipe(s) found`;
-  if (data.clustered) {
-    text += ` (clustered to ${data.results.length} exemplars)`;
-  }
-  text += ":\n";
-
-  for (let i = 0; i < data.results.length; i++) {
-    const r = data.results[i]!;
-    const pct = r.score.semantic !== null ? `${Math.round(r.score.semantic * 100)}%` : r.score.lexical !== null ? `${Math.round(r.score.lexical * 100)}% keyword` : `${r.score.combined.toFixed(2)}`;
-    text += `\n#${i + 1} (${pct} similar) -- ${r.createdAt.split("T")[0]}`;
-    if (r.clusterSize) {
-      text += ` (represents ${r.clusterSize} similar recipes)`;
-    }
-    text += `\nRecipe: ${r.recipe}`;
-    const ev = formatEvidence("Evidence", r.evidence);
-    if (ev) text += `\n${ev}`;
-    text += "\n";
-  }
-
-  // Related evidence from other recipes (evidence discovery pipeline)
-  if (data.relatedEvidence && data.relatedEvidence.length > 0) {
-    text += formatRelatedEvidence(data.relatedEvidence);
-  }
-
-  if (data.totalPages > 1) {
-    text += `\nPage ${data.page} of ${data.totalPages}`;
-  }
-
-  return text;
-}
+// The local formatting helpers that used to live here (formatResults etc.)
+// were replaced by @soupnet/domain renderCheckResponseMarkdown — the same
+// renderer the HTTP MCP route and the web /check copy-back block use, so the
+// two MCP surfaces can't drift. Pagination text is gone with them: agents
+// can't page (no page param), so the renderer emits a narrowing hint instead.
 
 // ── MCP Server ─────────────────────────────────────────────────────────────────
 
@@ -171,6 +55,27 @@ server.tool(
     clusters: z.number().optional().describe(MCP_PARAM_DESCRIPTIONS.clusters),
     max_chars: z.number().optional().describe(MCP_PARAM_DESCRIPTIONS.maxChars),
     decided_at: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.decidedAt),
+    // No SDK-level outputSchema — see the HTTP MCP route (routes/mcp.ts):
+    // declaring one would force structuredContent onto every response,
+    // violating the one-format-per-response rule.
+    response_format: z.enum(["markdown", "structured"]).optional().describe(MCP_PARAM_DESCRIPTIONS.responseFormat),
+    known_recipes: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.knownRecipes),
+    agent_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.agentId),
+    feedback: z.array(z.object({
+      trace_id: z.string().optional(),
+      kind: z.string().optional(),
+      impact: z.string().optional(),
+      disposition: z.string().optional(),
+      story_fulfilled: z.string().optional(),
+      story: z.string().optional(),
+      note: z.string().optional(),
+      agent_id: z.string().optional(),
+      top_similarity: z.number().optional(),
+      model: z.string().optional(),
+      harness: z.string().optional(),
+      harness_version: z.string().optional(),
+      related_trace_ids: z.array(z.string()).optional(),
+    })).optional().describe(MCP_PARAM_DESCRIPTIONS.feedbackParam),
     file: z.string().optional().describe(
       "Optional file to attach as reference evidence (multimodal embedding). " +
       "Local file path (e.g., 'docs/screenshot.png') or URL. " +
@@ -185,7 +90,7 @@ server.tool(
     idempotentHint: false,
     openWorldHint: true,
   },
-  async ({ recipe, supporting_evidence, clusters, max_chars, decided_at, file }) => {
+  async ({ recipe, supporting_evidence, clusters, max_chars, decided_at, response_format, known_recipes, agent_id, feedback, file }) => {
     if (!apiKey) {
       return {
         content: [{ type: "text" as const, text: "Error: SOUPNET_API_KEY not configured. Get a key from your Soup.net dashboard." }],
@@ -228,11 +133,14 @@ server.tool(
         if (clusters) formData.set("clusters", String(clusters));
         if (max_chars) formData.set("max_chars", String(max_chars));
         if (decided_at) formData.set("decided_at", decided_at);
+        if (agent_id) formData.set("agent_id", agent_id);
+        if (known_recipes) formData.set("known_recipes", known_recipes);
         formData.set("format", "json");
         formData.set("image", new Blob([fileBuffer], { type: mimeType }), fileName);
 
         response = await fetch(`${backendUrl}/check`, {
           method: "POST",
+          headers: { "X-SoupNet-Surface": "mcp-stdio" },
           body: formData,
         });
       } else {
@@ -244,15 +152,64 @@ server.tool(
         if (clusters) params.set("clusters", String(clusters));
         if (max_chars) params.set("max_chars", String(max_chars));
         if (decided_at) params.set("decided_at", decided_at);
+        if (agent_id) params.set("agent_id", agent_id);
+        if (known_recipes) params.set("known_recipes", known_recipes);
         params.set("format", "json");
 
         response = await fetch(`${backendUrl}/check?${params.toString()}`, {
-          headers: { "Accept": "application/json" },
+          headers: { "Accept": "application/json", "X-SoupNet-Surface": "mcp-stdio" },
         });
       }
 
-      const data = (await response.json()) as CheckResponse;
-      const text = formatResults(data);
+      const json = (await response.json()) as CheckResponseJson;
+
+      // Ride-along feedback about PRIOR checks: the web /check endpoint this
+      // proxy talks to doesn't carry feedback, so forward rows to the REST
+      // /feedback surface (same server-side service and validation path).
+      // Failures become marker text — never a request-killing error.
+      let feedbackSummary = "";
+      if (feedback && feedback.length > 0) {
+        try {
+          const rows = feedback.map((row) => ({ ...(agent_id ? { agent_id } : {}), ...row }));
+          const fbRes = await fetch(`${backendUrl}/feedback`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+            body: JSON.stringify({ feedback: rows }),
+          });
+          const fbJson = (await fbRes.json()) as {
+            ok: boolean;
+            error?: string;
+            data?: { recorded: number; results: Array<{ index: number; ok: boolean; traceId: string; error?: string }> };
+          };
+          if (fbJson.data) {
+            const lines = [`Feedback: ${fbJson.data.recorded}/${feedback.length} row(s) recorded.`];
+            for (const r of fbJson.data.results) {
+              if (!r.ok) lines.push(`  - row ${r.index + 1} (${r.traceId || "no trace_id"}): ${r.error}`);
+            }
+            feedbackSummary = lines.join("\n");
+          } else {
+            feedbackSummary = `Feedback: not recorded — ${fbJson.error ?? "unknown error"}`;
+          }
+        } catch (err) {
+          feedbackSummary = `Feedback: not recorded — ${err instanceof Error ? err.message : String(err)}`;
+        }
+      }
+
+      // One format per response: structured returns the backend's JSON data
+      // as structuredContent with a one-line stub; markdown (default) is the
+      // shared readable report. Never both.
+      if (response_format === "structured" && json.ok && json.data) {
+        const stub = `Recipe checked as #${json.data.recipeId ?? "?"}. ${json.data.totalResults ?? 0} similar recipe(s) — see structuredContent.${feedbackSummary ? `\n${feedbackSummary}` : ""}`;
+        return {
+          content: [{ type: "text" as const, text: stub }],
+          structuredContent: json.data as unknown as Record<string, unknown>,
+        };
+      }
+
+      let text = renderCheckResponseMarkdown(json, {
+        knownRecipeIds: (known_recipes ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+      });
+      if (feedbackSummary) text += `\n\n${feedbackSummary}`;
 
       return {
         content: [{ type: "text" as const, text }],
@@ -271,6 +228,73 @@ server.tool(
 // unusable wall of text (Claude Code). The divergent-check pattern lives on
 // as natural-language conversation — present 2-4 framings to the user, then
 // call check_recipe with the chosen one. See briefings.
+
+// ── log_feedback tool ──────────────────────────────────────────────────────────
+//
+// Mirror of the backend HTTP MCP log_feedback tool — proxies to the REST
+// POST /feedback surface (same server-side service, validation, and ACL
+// path). Flat single-row params; batching lives on check_recipe's feedback
+// param.
+
+server.tool(
+  "log_feedback",
+  MCP_TOOL_DESCRIPTIONS.logFeedback,
+  {
+    trace_id: z.string().describe(
+      "Full recipe UUID of the prior check this feedback is about — every check response carries it inline."
+    ),
+    kind: z.string().describe("check-feedback | operational | outcome"),
+    impact: z.string().describe("none | new | subtle | big | operational"),
+    disposition: z.string().describe("proceeded | corrected | asked-human | charted-new | deferred"),
+    story_fulfilled: z.string().describe("yes | partial | no | unknown"),
+    story: z.string().describe(
+      "The user story behind the check — why it was made (e.g. 'As an AI sub-agent working on X, I wanted Y so that Z')."
+    ),
+    note: z.string().optional().describe("What you did with the result — how it changed (or confirmed) your approach."),
+    agent_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.agentId),
+    top_similarity: z.number().optional().describe("Top similarity the check returned (0-1), as you saw it."),
+    model: z.string().optional().describe("Your model id (e.g. 'claude-fable-5')."),
+    harness: z.string().optional().describe("Your harness (e.g. 'claude-code', 'codex')."),
+    harness_version: z.string().optional().describe("Harness version, if known."),
+    related_trace_ids: z.array(z.string()).optional().describe(
+      "Lineage links — recipe UUIDs in the same arc (e.g. the recipe that changed the action and the trace that logged the new decision)."
+    ),
+  },
+  {
+    title: "Log feedback",
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: false,
+  },
+  async (args) => {
+    if (!apiKey) {
+      return {
+        content: [{ type: "text" as const, text: "Error: SOUPNET_API_KEY not configured. Get a key from your Soup.net dashboard." }],
+      };
+    }
+    try {
+      const res = await fetch(`${backendUrl}/feedback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify(args),
+      });
+      const json = (await res.json()) as {
+        ok: boolean;
+        error?: string;
+        data?: { recorded: number; results: Array<{ ok: boolean; traceId: string; feedbackId?: string; error?: string }> };
+      };
+      const r = json.data?.results?.[0];
+      if (r?.ok) {
+        return { content: [{ type: "text" as const, text: `Feedback recorded for check ${r.traceId} (feedback id ${r.feedbackId}).` }] };
+      }
+      return { content: [{ type: "text" as const, text: `Feedback rejected: ${r?.error ?? json.error ?? "unknown error"}` }] };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { content: [{ type: "text" as const, text: `Error logging feedback: ${message}` }] };
+    }
+  },
+);
 
 // ── get_briefing tool ──────────────────────────────────────────────────────────
 //

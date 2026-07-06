@@ -1,0 +1,155 @@
+/**
+ * check_feedback — agent-reported feedback about prior recipe checks, plus
+ * the human ground-truth tables (trace reactions, feedback stars) from the
+ * UVP measurement architecture (WT-4 / §Validating the UVP, 2026-07-05).
+ *
+ * check_feedback wire format starts from the field-proven local JSONL schema
+ * v1 (kind / impact / disposition / story_fulfilled enums — see
+ * @soupnet/domain feedback.ts for the closed vocabulary), extended with
+ * server-stamped columns. Server-derivable context (recipe book, user) is
+ * NOT denormalized here — it comes by join through trace_id; the trace
+ * already carries group_id and user_id.
+ *
+ * Enum columns are text + service-level strict validation (matches the
+ * codebase pattern for users.role / api_keys.key_type — no pg enum types).
+ *
+ * Rate limiting: feedback writes get their own per-key budget counted on
+ * THIS table via the (api_key_id, created_at DESC) index — deliberately not
+ * audit_log, which is F29's rate-limit hot path and must stay fast.
+ *
+ * FKs cascade on trace/feedback deletion so trace-delete cleanup doesn't
+ * need to know about these tables.
+ */
+
+import {
+  uuid,
+  text,
+  real,
+  timestamp,
+  index,
+  unique,
+} from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { claimnetSchema, traces } from "./traces";
+import { users } from "./users";
+
+export const checkFeedback = claimnetSchema.table(
+  "check_feedback",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+
+    /** The check (trace) this feedback is about. */
+    traceId: uuid("trace_id")
+      .notNull()
+      .references(() => traces.id, { onDelete: "cascade" }),
+
+    /** The key that submitted the feedback (not necessarily the key that
+     *  made the original check). No FK — matches trace_evidence.api_key_id. */
+    apiKeyId: uuid("api_key_id").notNull(),
+
+    /** Free-text self-reported agent identity (e.g. "a-wt4-checkloop").
+     *  Capture only — no dedup behavior until the phase-2 recall evals pass. */
+    agentId: text("agent_id"),
+
+    // ── Schema v1 enums (see @soupnet/domain FEEDBACK_* for vocabulary) ──
+    kind: text("kind").notNull(),               // check-feedback | operational | outcome
+    impact: text("impact").notNull(),           // none | new | subtle | big | operational
+    disposition: text("disposition").notNull(), // proceeded | corrected | asked-human | charted-new | deferred
+    storyFulfilled: text("story_fulfilled").notNull(), // yes | partial | no | unknown
+
+    /** The agent's user story for the check — why it checked. */
+    story: text("story").notNull(),
+    /** What the agent did with the result. */
+    note: text("note"),
+
+    /** Top similarity the check returned, as the agent saw it (0-1).
+     *  Self-reported; the server-observed value lives in the recipe.checked
+     *  audit metadata. */
+    topSimilarity: real("top_similarity"),
+
+    // Self-reported client identity (refinement over the server-known
+    // connection surface).
+    model: text("model"),
+    harness: text("harness"),
+    harnessVersion: text("harness_version"),
+
+    /** Lineage links — traces involved in a correction/reversal arc
+     *  (§Validating the UVP Layer 2). */
+    relatedTraceIds: uuid("related_trace_ids").array(),
+
+    /** Server-stamped — the true ingestion time (v1's append-time ambiguity
+     *  fix). */
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("check_feedback_trace_id_idx").on(t.traceId),
+    // Drives the per-key feedback budget COUNT (mirrors F29's shape on its
+    // own table, keeping audit_log's indexed path untouched).
+    index("check_feedback_api_key_id_created_at_idx").on(t.apiKeyId, t.createdAt.desc()),
+  ],
+);
+
+export type CheckFeedback = typeof checkFeedback.$inferSelect;
+export type NewCheckFeedback = typeof checkFeedback.$inferInsert;
+
+// ── Human reactions (UVP Layer 3) ───────────────────────────────────────────
+
+/** One reaction per user per recipe: still_true | stale | wrong. Upserted —
+ *  the latest click wins. The calibration signal for self-graded confirms
+ *  and the explicit input for future stigmergic decay. */
+export const traceReactions = claimnetSchema.table(
+  "trace_reactions",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+
+    traceId: uuid("trace_id")
+      .notNull()
+      .references(() => traces.id, { onDelete: "cascade" }),
+    // FK cascade (matches invitations.inviter_id): account deletion must
+    // also remove the user's reactions on OTHER users' shared-book traces —
+    // the trace FK only covers reactions on their own (deleted) traces, and
+    // auth.ts's explicit deletion list doesn't touch this table.
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+
+    reaction: text("reaction").notNull(), // still_true | stale | wrong
+
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("trace_reactions_trace_id_idx").on(t.traceId),
+    unique("trace_reactions_trace_user_unique").on(t.traceId, t.userId),
+  ],
+);
+
+export type TraceReactionRow = typeof traceReactions.$inferSelect;
+export type NewTraceReactionRow = typeof traceReactions.$inferInsert;
+
+/** "This one mattered" star on a feedback row — row existence is the star;
+ *  unstar deletes. Starred checks are the human-endorsed narrative seeds. */
+export const checkFeedbackStars = claimnetSchema.table(
+  "check_feedback_stars",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+
+    feedbackId: uuid("feedback_id")
+      .notNull()
+      .references(() => checkFeedback.id, { onDelete: "cascade" }),
+    // FK cascade — same rationale as trace_reactions.user_id: stars on
+    // feedback attached to other users' traces must not outlive the account.
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("check_feedback_stars_feedback_id_idx").on(t.feedbackId),
+    unique("check_feedback_stars_feedback_user_unique").on(t.feedbackId, t.userId),
+  ],
+);
+
+export type CheckFeedbackStar = typeof checkFeedbackStars.$inferSelect;
+export type NewCheckFeedbackStar = typeof checkFeedbackStars.$inferInsert;

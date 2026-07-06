@@ -1,10 +1,10 @@
 # ClaimNet Data Model — Generated Reference
 
-> **Auto-generated** from Drizzle migration snapshot `0024_snapshot.json`.
+> **Auto-generated** from Drizzle migration snapshot `0027_snapshot.json`.
 > Do not edit by hand. Regenerate with: `npx tsx scripts/generate-data-model-docs.ts`
 >
-> Generated: 2026-06-11
-> Tables: 24 | Schema: `claimnet`
+> Generated: 2026-07-06
+> Tables: 27 | Schema: `claimnet`
 
 For design rationale, conventions, and context, see [data-model.md](data-model.md).
 
@@ -54,6 +54,32 @@ erDiagram
         uuid target_id
         jsonb metadata
         timestamptz occurred_at
+    }
+
+    check_feedback {
+        uuid id PK
+        uuid trace_id FK
+        uuid api_key_id
+        text agent_id
+        text kind
+        text impact
+        text disposition
+        text story_fulfilled
+        text story
+        text note
+        real top_similarity
+        text model
+        text harness
+        text harness_version
+        uuid[] related_trace_ids
+        timestamptz created_at
+    }
+
+    check_feedback_stars {
+        uuid id PK
+        uuid feedback_id FK
+        uuid user_id FK
+        timestamptz created_at
     }
 
     email_log {
@@ -234,6 +260,15 @@ erDiagram
         timestamptz created_at
     }
 
+    trace_reactions {
+        uuid id PK
+        uuid trace_id FK
+        uuid user_id FK
+        text reaction
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
     trace_references {
         uuid id PK
         uuid trace_id FK
@@ -298,6 +333,9 @@ erDiagram
         timestamptz created_at
     }
 
+    check_feedback }o--|| traces : "trace_id"
+    check_feedback_stars }o--|| check_feedback : "feedback_id"
+    check_feedback_stars }o--|| users : "user_id"
     embedding_chunk_strategies }o--|| embedding_sources : "embedding_source_id"
     embedding_chunks }o--|| embedding_sources : "embedding_source_id"
     embedding_chunks }o--|| embedding_chunk_strategies : "chunk_strategy_id"
@@ -313,6 +351,8 @@ erDiagram
     reference_source_cache }o--|| references : "reference_id"
     trace_evidence }o--|| traces : "trace_id"
     trace_evidence }o--|| evidence : "evidence_id"
+    trace_reactions }o--|| traces : "trace_id"
+    trace_reactions }o--|| users : "user_id"
     trace_references }o--|| traces : "trace_id"
     trace_references }o--|| references : "reference_id"
     traces }o..|| users : "user_id"

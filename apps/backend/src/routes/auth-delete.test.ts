@@ -129,4 +129,127 @@ describe.skipIf(!BASE)("DELETE /auth/me — self-serve account deletion", () => 
     });
     expect(afterBriefing.status).toBeGreaterThanOrEqual(400);
   });
+
+  // Regression (2026-07-05 integrator migration review of 0027): the auth.ts
+  // deletion transaction's explicit table list doesn't cover trace_reactions
+  // / check_feedback_stars, and the trace FK only cascades reactions on the
+  // user's OWN traces. Without a users-FK cascade, a deleted user's
+  // reactions/stars on OTHER users' shared-book traces would survive as
+  // orphaned personal data. The user_id → users.id ON DELETE CASCADE FKs are
+  // what this test pins down.
+  it("cascades the deleted user's reactions and stars on ANOTHER user's shared-book trace", { timeout: 30_000 }, async () => {
+    const userA = await provisionUser("react-owner");
+    const userB = await provisionUser("react-deleter");
+
+    // A checks a recipe (in A's default book) and logs feedback on it.
+    const keyRes = await fetch(`${BASE}/keys/daily`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${userA.token}` },
+    });
+    const keyBody = (await keyRes.json()) as { data?: { key?: string } };
+    const keyA = keyBody.data?.key ?? "";
+    expect(keyA).toBeTruthy();
+
+    const checkParams = new URLSearchParams({
+      key: keyA,
+      trace: `As a developer working on shared books, I chose reaction cascades so that deleted accounts leave no orphaned reactions. (${Date.now()})`,
+      ef: `Interpretation.\n> "quote"\n-- auth-delete test`,
+      format: "json",
+    });
+    const checkRes = await fetch(`${BASE}/check?${checkParams.toString()}`, { headers: { Accept: "application/json" } });
+    const checkJson = (await checkRes.json()) as { data?: { recipeId?: string } };
+    const traceId = checkJson.data?.recipeId ?? "";
+    expect(traceId).toBeTruthy();
+
+    const fbRes = await fetch(`${BASE}/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${keyA}` },
+      body: JSON.stringify({
+        trace_id: traceId,
+        kind: "check-feedback",
+        impact: "subtle",
+        disposition: "proceeded",
+        story_fulfilled: "yes",
+        story: "As a developer working on deletion tests, I wanted a feedback row so that B can star it.",
+      }),
+    });
+    const fbJson = (await fbRes.json()) as { data?: { results?: Array<{ feedbackId?: string }> } };
+    const feedbackId = fbJson.data?.results?.[0]?.feedbackId ?? "";
+    expect(feedbackId).toBeTruthy();
+
+    // Make the book shared: add B as a member of the trace's group (fixture
+    // via SQL — the invite flow isn't what's under test here).
+    const postgres = (await import("postgres")).default;
+    const sql = postgres({
+      host: process.env["PGHOST"] ?? "localhost",
+      port: Number(process.env["PGPORT"] ?? 5633),
+      user: process.env["PGUSER"] ?? "claimnet",
+      password: process.env["PGPASSWORD"] ?? "claimnet",
+      database: process.env["PGDATABASE"] ?? "claimnet",
+    });
+    try {
+      const traceRows: Array<{ group_id: string }> = await sql`
+        SELECT group_id FROM claimnet.traces WHERE id = ${traceId}::uuid
+      `;
+      const groupId = traceRows[0]?.group_id;
+      expect(groupId).toBeTruthy();
+      await sql`
+        INSERT INTO claimnet.group_members (group_id, user_id, role)
+        VALUES (${groupId!}::uuid, ${userB.userId}::uuid, 'member')
+      `;
+
+      // B reacts to A's trace and stars A's feedback row (JWT surfaces).
+      const reactRes = await fetch(`${BASE}/traces/${traceId}/reaction`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${userB.token}` },
+        body: JSON.stringify({ reaction: "still_true" }),
+      });
+      expect(reactRes.status).toBe(200);
+      const starRes = await fetch(`${BASE}/traces/feedback/${feedbackId}/star`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${userB.token}` },
+      });
+      expect(starRes.status).toBe(200);
+
+      // Sanity: B's rows exist before deletion.
+      const beforeReactions: Array<{ n: number }> = await sql`
+        SELECT COUNT(*)::int AS n FROM claimnet.trace_reactions WHERE user_id = ${userB.userId}::uuid
+      `;
+      const beforeStars: Array<{ n: number }> = await sql`
+        SELECT COUNT(*)::int AS n FROM claimnet.check_feedback_stars WHERE user_id = ${userB.userId}::uuid
+      `;
+      expect(beforeReactions[0]?.n).toBe(1);
+      expect(beforeStars[0]?.n).toBe(1);
+
+      // B deletes their account.
+      const delRes = await fetch(`${BASE}/auth/me`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${userB.token}` },
+        body: JSON.stringify({ password: userB.password }),
+      });
+      expect(delRes.status).toBe(200);
+
+      // B's cross-user reaction and star are gone (users-FK cascade)…
+      const afterReactions: Array<{ n: number }> = await sql`
+        SELECT COUNT(*)::int AS n FROM claimnet.trace_reactions WHERE user_id = ${userB.userId}::uuid
+      `;
+      const afterStars: Array<{ n: number }> = await sql`
+        SELECT COUNT(*)::int AS n FROM claimnet.check_feedback_stars WHERE user_id = ${userB.userId}::uuid
+      `;
+      expect(afterReactions[0]?.n).toBe(0);
+      expect(afterStars[0]?.n).toBe(0);
+
+      // …while A's trace and A's feedback row survive.
+      const traceStill: Array<{ n: number }> = await sql`
+        SELECT COUNT(*)::int AS n FROM claimnet.traces WHERE id = ${traceId}::uuid
+      `;
+      const feedbackStill: Array<{ n: number }> = await sql`
+        SELECT COUNT(*)::int AS n FROM claimnet.check_feedback WHERE id = ${feedbackId}::uuid
+      `;
+      expect(traceStill[0]?.n).toBe(1);
+      expect(feedbackStill[0]?.n).toBe(1);
+    } finally {
+      await sql.end();
+    }
+  });
 });

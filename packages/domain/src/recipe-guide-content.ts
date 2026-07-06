@@ -476,6 +476,9 @@ The returned \`file_url\` is opaque (a GET against it returns 404) and only reso
 
 Evidence entries follow this shape: your interpretation, then \`> "direct quote"\`, then \`-- source citation\`, separated by blank lines.
 
+## Closing the loop — feedback
+Stateless sessions lose what happened after a check — whether the surfaced recipes confirmed, corrected, or redirected your work. If your tools include \`log_feedback\` (or \`check_recipe\`'s optional \`feedback\` parameter), you can close that loop: after a check shapes a decision, log a short feedback row about the PRIOR check, joined by the recipe UUID the check response reported. A row carries kind (check-feedback | operational | outcome), impact (none | new | subtle | big | operational), disposition (proceeded | corrected | asked-human | charted-new | deferred), story_fulfilled (yes | partial | no | unknown), the story behind the check, and a note on what you did with the result. Feedback renders on the recipe's detail page, so the human sees which recipes earned their keep — and null results seed value too: "nothing similar found" tells the corpus where it's thin. Mid-flow, attach rows to your next check (fewer calls); use standalone \`log_feedback\` for end-of-session rows.
+
 ## Annotating creative output
 ${WORKFLOW_ANNOTATION}
 
@@ -674,6 +677,19 @@ export const MCP_TOOL_DESCRIPTIONS = {
     "Get the Soup.net briefing — recipe-check format, your recipe books, and a clustered sample of recipes from this user's corpus. " +
     "Call this before your first check to learn the format and prime your context with the shape of the user's taste.",
 
+  /** Shared by HTTP and stdio MCP. Descriptive, issue → approach → benefit —
+   *  consistent with the corpus's descriptive-not-prescriptive briefing taste. */
+  logFeedback:
+    "Log feedback about a PRIOR recipe check — what the check surfaced, what you did with it, how it " +
+    "turned out. Stateless sessions lose this by default; a feedback row ties the check to its outcome, " +
+    "so the human can see which recipes earned their keep and future agents inherit a calibrated trail. " +
+    "One call logs one row, joined to the check by its recipe UUID (every check response carries ids " +
+    "inline). Null results seed value too — 'nothing similar found' feedback tells the corpus where " +
+    "it's thin. Mid-flow, you can instead attach feedback rows to your next check_recipe call via its " +
+    "feedback parameter (fewer calls); this standalone tool fits end-of-session rows and outcome/" +
+    "operational kinds that have no next check to ride on. The referenced check must be readable by " +
+    "your key.",
+
   /** HTTP-only today; stdio may grow this tool later. */
   listMyRecipeBooks:
     "Refresh your Soup.net corpus context — returns the user's identity, recipe books (with descriptions, access levels, and other members of shared books), and a clustered sample of recipes from the corpus. " +
@@ -712,6 +728,35 @@ export const MCP_PARAM_DESCRIPTIONS = {
     "discovered in dated artifacts (git history, ADRs, old docs): set it to the artifact's timestamp so " +
     "the recipe carries the original judgment date instead of today's. Must not be in the future. " +
     "Omit for contemporaneous judgments.",
+
+  responseFormat:
+    "Response format. 'markdown' (default): a readable report — each exemplar line carries its full " +
+    "recipe UUID and similarity inline, so you can cite trace ids in later feedback without re-fetching. " +
+    "'structured': the same data as MCP structuredContent (JSON with recipeId, per-result id/recipe/" +
+    "createdAt/group/score/evidence, relatedEvidence, totalResults) plus a one-line text stub — useful " +
+    "when you parse results programmatically. Each response carries exactly one format, never both.",
+
+  agentId:
+    "Optional free-text agent identity you mint for yourself (e.g. 'a-refactor-sweep-2026-07'). " +
+    "Stamped on the check's audit record and usable on feedback rows, so lineages of checks from the " +
+    "same agent thread are joinable later. Capture only — it does not change search or logging behavior.",
+
+  knownRecipes:
+    "Optional comma-separated recipe UUIDs you already hold in context (from earlier checks, a " +
+    "briefing, or frontmatter). Matching results come back as one-line stubs — id, a short gist, and " +
+    "similarity — instead of full bodies, saving your context for recipes you haven't seen. Rendering " +
+    "only: stubs still occupy their cluster slots, and trace logging is unchanged. You stay " +
+    "authoritative about your own context — declare only ids whose content you actually still hold.",
+
+  feedbackParam:
+    "Optional feedback rows about PRIOR checks, riding along with this check (saves a round trip " +
+    "mid-flow). Each row carries its own trace_id — the recipe UUID a previous check response " +
+    "reported — plus kind (check-feedback | operational | outcome), impact (none | new | subtle | big " +
+    "| operational), disposition (proceeded | corrected | asked-human | charted-new | deferred), " +
+    "story_fulfilled (yes | partial | no | unknown), story (why you checked), and optional note / " +
+    "top_similarity / model / harness / related_trace_ids (lineage links for correction arcs). Rows " +
+    "are validated independently: a rejected row gets a marker in the response, the rest still land, " +
+    "and the check itself is never blocked by its feedback.",
 } as const;
 
 /** Compose the full check_recipe tool description, optionally with the file-attachment sentence. */
