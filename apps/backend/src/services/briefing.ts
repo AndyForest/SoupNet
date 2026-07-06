@@ -28,6 +28,11 @@ import type {
 } from "@soupnet/domain";
 import { fetchBriefingExemplars } from "./briefing-exemplars";
 import { writeAudit } from "./audit-log.service";
+import {
+  RECIPE_LOOKUP_MAX_IDS,
+  lookupRecipes,
+  renderRecipeEntries,
+} from "./recipe-lookup.service";
 
 export interface BriefingOptions {
   /** Override cluster count. Falls back to user preference, then default 5. */
@@ -40,6 +45,12 @@ export interface BriefingOptions {
   vectorStrategy?: string | undefined;
   /** Optional recipe-book slug or UUID to narrow the exemplar scope. */
   recipeBookIdOrSlug?: string | undefined;
+  /** Free-text task purpose (WT-3) — biases within-cluster exemplar choice
+   *  and is echoed back as a one-line acknowledgment in the briefing. */
+  purpose?: string | undefined;
+  /** Recipe ids (WT-3) to render in a "Requested recipes" section — same
+   *  lookup service and ACL/marker semantics as GET /recipes. */
+  recipeIds?: string[] | undefined;
 }
 
 export interface BriefingComposeInput {
@@ -76,6 +87,10 @@ interface ResolvedScope {
   groups: BriefingGroup[];
   scopeLabel: string;
   exemplarGroupIds: string[];
+  /** The key's full read scope — used by the requested-recipes lookup, which
+   *  is deliberately NOT narrowed by recipeBookIdOrSlug (an explicitly
+   *  requested id should resolve from any book the key can read). */
+  readGroupIds: string[];
   k: number;
   options: BriefingOptions;
   /** api_keys.id + owning user — for the briefing.issued audit stamp. */
@@ -107,6 +122,23 @@ export async function composeBriefing(input: BriefingComposeInput): Promise<Brie
   });
 
   const checkUrl = `${input.backendUrl}/check?key=${encodeURIComponent(input.rawKey)}`;
+
+  // Requested recipes (WT-3): render exactly the ids the caller named, with
+  // the same ACL and marker semantics as GET /recipes / the get_recipes tool.
+  let requestedRecipesSection: string | undefined;
+  const recipeIds = scope.options.recipeIds ?? [];
+  if (recipeIds.length > 0) {
+    const entries = await lookupRecipes(input.db, recipeIds, scope.readGroupIds);
+    const truncated = recipeIds.length > RECIPE_LOOKUP_MAX_IDS
+      ? `\n\n(${recipeIds.length - RECIPE_LOOKUP_MAX_IDS} id(s) beyond the ${RECIPE_LOOKUP_MAX_IDS}-id cap were ignored — fetch them with the get_recipes tool or GET /recipes.)`
+      : "";
+    requestedRecipesSection = `## Requested recipes
+
+The recipes you asked for by id. Entries marked not_found_or_unreadable either don't exist or aren't readable by this API key — the two cases are deliberately indistinguishable. For mid-session lookups, use the get_recipes tool (MCP) or GET /recipes?ids=... (REST) instead of re-fetching this briefing.
+
+${renderRecipeEntries(entries)}${truncated}`;
+  }
+
   const text = BRIEFING.build({
     user: scope.user,
     apiKey: input.rawKey,
@@ -115,6 +147,8 @@ export async function composeBriefing(input: BriefingComposeInput): Promise<Brie
     checkUrl,
     groups: scope.groups,
     ...(exemplarsSection ? { exemplarsSection } : {}),
+    ...(scope.options.purpose ? { purpose: scope.options.purpose } : {}),
+    ...(requestedRecipesSection ? { requestedRecipesSection } : {}),
   });
 
   return { ok: true, text, groups: scope.groups, exemplarCount };
@@ -267,7 +301,17 @@ async function resolveScope(
 
   const k = opts.k ?? prefs.briefing.clusterCount;
 
-  return { user, groups, scopeLabel, exemplarGroupIds, k, options: opts, keyId: keyRow.id, userId: keyRow.user_id };
+  return {
+    user,
+    groups,
+    scopeLabel,
+    exemplarGroupIds,
+    readGroupIds: keyRow.read_group_ids,
+    k,
+    options: opts,
+    keyId: keyRow.id,
+    userId: keyRow.user_id,
+  };
 }
 
 async function renderExemplars(
@@ -279,6 +323,7 @@ async function renderExemplars(
     ...(scope.options.axes !== undefined ? { axes: scope.options.axes } : {}),
     ...(scope.options.filter !== undefined ? { filter: scope.options.filter } : {}),
     ...(scope.options.vectorStrategy !== undefined ? { vectorStrategy: scope.options.vectorStrategy } : {}),
+    ...(scope.options.purpose !== undefined ? { purpose: scope.options.purpose } : {}),
   });
 
   // Trim undefined fields off mapContext before passing to the formatter so
@@ -290,6 +335,7 @@ async function renderExemplars(
     ...(mapContext.axes !== undefined ? { axes: mapContext.axes } : {}),
     ...(mapContext.filter !== undefined ? { filter: mapContext.filter } : {}),
     ...(mapContext.strategy !== undefined ? { strategy: mapContext.strategy } : {}),
+    ...(mapContext.purpose !== undefined ? { purpose: mapContext.purpose } : {}),
   };
   const exemplarsSection = buildExemplarsSection(scope.scopeLabel, formatterContext, exemplars);
   return { exemplarsSection, exemplarCount: exemplars.length };

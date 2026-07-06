@@ -36,3 +36,27 @@ describe("MCP tool descriptions — recipe-book rename", () => {
     expect(mcpSource).toContain("read_recipe_books: z.string()");
   });
 });
+
+// WT-3 (2026-07-05): retrieval API. Same layer-1 source-level guard as above —
+// if these registrations disappear, the recipe-lookup surface silently drops
+// off the HTTP MCP while the stdio mirror keeps advertising it.
+describe("MCP tool registrations — WT-3 retrieval API", () => {
+  it("registers the get_recipes tool", () => {
+    expect(mcpSource).toContain('"get_recipes"');
+    expect(mcpSource).toContain("recipe_ids: z.string()");
+  });
+
+  it("get_briefing accepts purpose and recipe_ids params", () => {
+    expect(mcpSource).toContain("purpose: z.string().optional()");
+    expect(mcpSource).toContain("recipe_ids: z.string().optional()");
+  });
+
+  it("the stdio mirror registers get_recipes too", () => {
+    const stdioSource = readFileSync(
+      join(here, "..", "..", "..", "mcp-server", "src", "index.ts"),
+      "utf-8",
+    );
+    expect(stdioSource).toContain('"get_recipes"');
+    expect(stdioSource).toContain("purpose: z.string().optional()");
+  });
+});

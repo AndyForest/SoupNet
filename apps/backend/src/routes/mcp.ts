@@ -37,6 +37,12 @@ import { enrichResults, clusterEvidenceInResults } from "../services/result-enri
 import { getDb } from "../db";
 import { validateKey } from "../services/api-key.service";
 import {
+  RECIPE_LOOKUP_MAX_IDS,
+  lookupRecipes,
+  parseRecipeIds,
+  renderRecipeEntries,
+} from "../services/recipe-lookup.service";
+import {
   parseOwnHostnameUpload,
   getOwnHostname,
   resolveUpload,
@@ -592,14 +598,17 @@ function createMcpServer(backendUrl: string): McpServer {
   server.tool(
     "get_briefing",
     MCP_TOOL_DESCRIPTIONS.getBriefing,
-    {},
+    {
+      purpose: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.briefingPurpose),
+      recipe_ids: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.briefingRecipeIds),
+    },
     {
       title: "Get briefing",
       readOnlyHint: true,
       idempotentHint: true,
       openWorldHint: false,
     },
-    async (_params, extra) => {
+    async ({ purpose, recipe_ids }, extra) => {
       const apiKey = (extra.authInfo as Record<string, unknown> | undefined)?.["token"] as string | undefined;
       if (!apiKey) {
         return { content: [{ type: "text" as const, text: "Error: No API key in auth context." }] };
@@ -607,12 +616,17 @@ function createMcpServer(backendUrl: string): McpServer {
 
       try {
         const frontendUrl = process.env["FRONTEND_URL"] ?? "http://localhost:5273";
+        const recipeIds = recipe_ids ? parseRecipeIds(recipe_ids) : [];
         const result = await composeBriefing({
           db: getDb(),
           rawKey: apiKey,
           backendUrl,
           frontendUrl,
           surface: "mcp-http",
+          options: {
+            purpose: purpose ?? undefined,
+            ...(recipeIds.length > 0 ? { recipeIds } : {}),
+          },
         });
 
         if (!result.ok) {
@@ -625,6 +639,62 @@ function createMcpServer(backendUrl: string): McpServer {
         return { content: [{ type: "text" as const, text: result.text }] };
       } catch (err) {
         return { content: [{ type: "text" as const, text: toolErrorText(err, "get_briefing") }] };
+      }
+    },
+  );
+
+  // ── get_recipes tool ──────────────────────────────────────────────────────
+  //
+  // Recipe lookup by id (WT-3) — the tool twin of GET /recipes. Same service,
+  // same ACL (the key's read_group_ids), same uniform not_found_or_unreadable
+  // marker for ids that don't resolve (anti-enumeration; see
+  // services/recipe-lookup.service.ts header).
+  //
+  // Rate limiting: rides the /mcp per-bearer backstop (600/h across all MCP
+  // methods, F43) plus the per-IP limiter — no embedding calls, so no
+  // dedicated durable budget needed (same WT-3 decision as GET /recipes).
+
+  server.tool(
+    "get_recipes",
+    MCP_TOOL_DESCRIPTIONS.getRecipes,
+    {
+      recipe_ids: z.string().describe(MCP_PARAM_DESCRIPTIONS.recipeIds),
+    },
+    {
+      title: "Get recipes by id",
+      readOnlyHint: true,
+      idempotentHint: true,
+      // openWorldHint: true — a previously unreadable id can become readable
+      // (book shared, key rescoped) between calls.
+      openWorldHint: true,
+    },
+    async ({ recipe_ids }, extra) => {
+      const apiKey = (extra.authInfo as Record<string, unknown> | undefined)?.["token"] as string | undefined;
+      if (!apiKey) {
+        return { content: [{ type: "text" as const, text: "Error: No API key in auth context." }] };
+      }
+
+      try {
+        const db = getDb();
+        const keyResult = await validateKey(db, apiKey);
+        if (!keyResult) {
+          return { content: [{ type: "text" as const, text: "Error: Invalid or expired API key." }] };
+        }
+
+        const ids = parseRecipeIds(recipe_ids);
+        if (ids.length === 0) {
+          return { content: [{ type: "text" as const, text: "Error: recipe_ids is required — pass one or more recipe UUIDs, comma- or whitespace-separated." }] };
+        }
+        if (ids.length > RECIPE_LOOKUP_MAX_IDS) {
+          return { content: [{ type: "text" as const, text: `Error: too many ids (${ids.length}; max ${RECIPE_LOOKUP_MAX_IDS} per call). Split into multiple calls.` }] };
+        }
+
+        const entries = await lookupRecipes(db, ids, keyResult.readGroupIds);
+        const found = entries.filter((e) => e.status === "ok").length;
+        const text = `Requested recipes — ${found} of ${entries.length} resolved. Entries marked not_found_or_unreadable either don't exist or aren't readable by this API key (deliberately indistinguishable).\n\n${renderRecipeEntries(entries)}`;
+        return { content: [{ type: "text" as const, text }] };
+      } catch (err) {
+        return { content: [{ type: "text" as const, text: toolErrorText(err, "get_recipes") }] };
       }
     },
   );

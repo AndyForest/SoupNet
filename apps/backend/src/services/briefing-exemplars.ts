@@ -13,7 +13,8 @@
  */
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { runSearchPipeline, MAP_VECTOR_DIMS } from "./search-pipeline";
+import { runSearchPipeline, cosineSimilarity, MAP_VECTOR_DIMS } from "./search-pipeline";
+import { embedQuery } from "../lib/embeddings/provider";
 import type { BriefingExemplar } from "@soupnet/domain";
 
 export interface ExemplarFetchOptions {
@@ -21,6 +22,14 @@ export interface ExemplarFetchOptions {
   axes?: string | undefined;
   filter?: string | undefined;
   vectorStrategy?: string | undefined;
+  /** Free-text task purpose (WT-3). Biases WITHIN-cluster exemplar choice:
+   *  the cluster structure stays corpus-wide (same k-means as without
+   *  purpose), but each cluster's exemplar becomes the member most similar
+   *  to the purpose embedding instead of the centroid-nearest member —
+   *  tailored exemplars, stable map of the corpus. Independent of `filter`
+   *  (which narrows the pool via the semantic-query slot). Degrades
+   *  gracefully to centroid exemplars when embedding is unavailable. */
+  purpose?: string | undefined;
 }
 
 export interface ExemplarFetchResult {
@@ -32,6 +41,7 @@ export interface ExemplarFetchResult {
     axes?: string | undefined;
     filter?: string | undefined;
     strategy?: string | undefined;
+    purpose?: string | undefined;
   };
 }
 
@@ -46,6 +56,7 @@ export async function fetchBriefingExemplars(
     axes: options.axes,
     filter: options.filter,
     strategy: options.vectorStrategy,
+    purpose: options.purpose,
   };
 
   if (groupIds.length === 0) {
@@ -57,12 +68,15 @@ export async function fetchBriefingExemplars(
   // roundtrip and to keep this composable from the MCP tool handler too.
   // vectorDims: whole-corpus k-means at the MRL-truncated 768 dims (stored
   // vectors untouched) — same read-time optimization as the map route.
+  // includeVectors only when a purpose is set: the purpose pass below needs
+  // per-member vectors to re-pick exemplars (they're already fetched for
+  // clustering; this just keeps them on the result).
   const result = await runSearchPipeline({
     db,
     groupIds,
     query: options.filter,
     k: options.k,
-    includeVectors: false,
+    includeVectors: Boolean(options.purpose),
     axes: options.axes,
     perPage: 10000,
     vectorStrategy: options.vectorStrategy,
@@ -74,13 +88,46 @@ export async function fetchBriefingExemplars(
     return { exemplars: [], mapContext };
   }
 
+  // Purpose-biased exemplar choice (WT-3): keep the cluster structure exactly
+  // as k-means produced it, but within each cluster prefer the member most
+  // similar to the purpose embedding over the centroid-nearest exemplar.
+  // Falls back per-cluster (and wholesale, when the embedding provider is
+  // unavailable) to the default exemplar — the briefing must never fail
+  // because of the purpose param.
+  let purposeVector: number[] | null = null;
+  if (options.purpose && options.purpose.trim().length > 0) {
+    try {
+      purposeVector = await embedQuery(options.purpose.trim(), "SEMANTIC_SIMILARITY");
+    } catch (err) {
+      console.error("[briefing-exemplars] purpose embedding failed (non-blocking):", err);
+    }
+  }
+
   // Each cluster's exemplar maps to result.results[clusterIdx]. SearchResultItem
   // is typed as having `createdAt: Date` but the raw db.execute path actually
   // returns it as a string (postgres-js, no coercion); handled by
   // formatLoggedDate below.
   const exemplarRows = clusters.map((cluster, clusterIdx) => {
-    const exemplar = result.results[clusterIdx];
+    let exemplar = result.results[clusterIdx];
     if (!exemplar) return null;
+
+    if (purposeVector && result.vectors && result.allResults) {
+      let bestScore = -Infinity;
+      for (const memberIdx of cluster.memberIndices) {
+        const member = result.allResults[memberIdx];
+        if (!member) continue;
+        const vec = result.vectors.get(member.id);
+        if (!vec) continue;
+        // Trace vector first: its (possibly MRL-truncated) length bounds the
+        // cosine loop, implicitly truncating the full-dim purpose embedding.
+        const score = cosineSimilarity(vec, purposeVector);
+        if (score > bestScore) {
+          bestScore = score;
+          exemplar = member;
+        }
+      }
+    }
+
     return {
       traceId: exemplar.id,
       claimText: exemplar.claimText,

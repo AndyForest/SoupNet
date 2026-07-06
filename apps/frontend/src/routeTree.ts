@@ -121,6 +121,28 @@ const claudeConnectorLegacyRoute = createRoute({
   },
 });
 
+// ── Bare trace links: /traces/:id → /app/traces/:id ────────────────────────
+//
+// Agent briefings instruct agents to mint trace links as
+// `${frontendUrl}/traces/<recipeId>` (packages/domain recipe-guide-content.ts
+// §Annotating creative output), but the trace detail page lives at
+// /app/traces/$traceId — so every minted link rendered a blank shell until
+// this redirect existed (verified against prod 2026-07-05). Redirecting
+// (rather than rewriting the briefing template) keeps the links agents have
+// already placed in users' documents working; /app's requireAuth guard then
+// routes logged-out users through login. Same pattern as the legacy
+// /app/groups redirects above.
+
+const bareTraceRedirectRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/traces/$traceId",
+  beforeLoad: ({ params }) => {
+    const p = params as { traceId: string };
+    throw redirect({ to: "/app/traces/$traceId", params: { traceId: p.traceId } });
+  },
+  component: TraceDetailPage,
+});
+
 // ── OAuth consent (public — handles its own login redirect): /oauth/authorize ──
 
 const oauthAuthorizeRoute = createRoute({
@@ -332,6 +354,7 @@ export const routeTree = rootRoute.addChildren([
     connectRoute,
     claudeConnectorLegacyRoute,
   ]),
+  bareTraceRedirectRoute,
   oauthAuthorizeRoute,
   authRoute.addChildren([
     loginRoute,

@@ -8,7 +8,8 @@
  *
  * Tools:
  *   - check_recipe   → POST /check (or GET ?key=...&format=json)
- *   - get_briefing   → GET /briefing
+ *   - get_briefing   → GET /briefing (optional purpose + recipe_ids params)
+ *   - get_recipes    → GET /recipes?ids=... (recipe lookup by id, WT-3)
  *
  * Auth: SOUPNET_API_KEY env var. The same daily or scoped key shown on the
  * dashboard.
@@ -306,14 +307,17 @@ server.tool(
 server.tool(
   "get_briefing",
   MCP_TOOL_DESCRIPTIONS.getBriefing,
-  {},
+  {
+    purpose: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.briefingPurpose),
+    recipe_ids: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.briefingRecipeIds),
+  },
   {
     title: "Get briefing",
     readOnlyHint: true,
     idempotentHint: true,
     openWorldHint: false,
   },
-  async () => {
+  async ({ purpose, recipe_ids }) => {
     if (!apiKey) {
       return {
         content: [{ type: "text" as const, text: "Error: SOUPNET_API_KEY not configured. Get a key from your Soup.net dashboard." }],
@@ -321,7 +325,11 @@ server.tool(
     }
 
     try {
-      const res = await fetch(`${backendUrl}/briefing`, {
+      const params = new URLSearchParams();
+      if (purpose) params.set("purpose", purpose);
+      if (recipe_ids) params.set("recipe_ids", recipe_ids);
+      const qs = params.toString();
+      const res = await fetch(`${backendUrl}/briefing${qs ? `?${qs}` : ""}`, {
         headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
       });
       const json = (await res.json()) as { ok: boolean; error?: string; data?: { text: string } };
@@ -332,6 +340,100 @@ server.tool(
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return { content: [{ type: "text" as const, text: `Error fetching briefing: ${message}` }] };
+    }
+  },
+);
+
+// ── get_recipes tool ───────────────────────────────────────────────────────
+//
+// Recipe lookup by id (WT-3). Thin proxy to GET /recipes?ids=... — the
+// backend enforces the key's read scope and returns a uniform
+// not_found_or_unreadable marker for ids that don't resolve.
+
+interface LookupReference {
+  quote: string | null;
+  source: string | null;
+  fileUrl?: string;
+  fileMimeType?: string;
+  originalFilename?: string;
+}
+
+interface LookupEntry {
+  id: string;
+  status: "ok" | "not_found_or_unreadable";
+  recipe?: string;
+  recipeBook?: { slug: string; name: string } | null;
+  author?: { email: string; displayName: string | null } | null;
+  createdAt?: string;
+  decidedAt?: string | null;
+  evidence?: Array<{ interpretation: string; references: LookupReference[] }>;
+}
+
+function formatLookupEntries(entries: LookupEntry[]): string {
+  return entries.map((entry) => {
+    if (entry.status !== "ok") {
+      return `### ${entry.id}\nStatus: not_found_or_unreadable — this id does not exist or is not readable by this API key (the two cases are deliberately indistinguishable).`;
+    }
+    const meta = [
+      `### ${entry.id}`,
+      ...(entry.recipeBook ? [`Recipe book: ${entry.recipeBook.slug} (${entry.recipeBook.name})`] : []),
+      ...(entry.author ? [`Author: ${entry.author.displayName ? `${entry.author.displayName} <${entry.author.email}>` : entry.author.email}`] : []),
+      ...(entry.createdAt ? [`Logged: ${entry.createdAt.slice(0, 10)}`] : []),
+      ...(entry.decidedAt ? [`Decided: ${entry.decidedAt.slice(0, 10)}`] : []),
+    ].join("\n");
+    let text = `${meta}\n\n${entry.recipe ?? ""}`;
+    if (entry.evidence && entry.evidence.length > 0) {
+      const blocks = entry.evidence.map((ev) => {
+        const lines = [`- ${ev.interpretation}`];
+        for (const ref of ev.references) {
+          if (ref.quote) lines.push(`  > "${ref.quote}"`);
+          if (ref.source) lines.push(`  -- ${ref.source}`);
+          if (ref.fileUrl) lines.push(`  [file: ${ref.originalFilename ?? ref.fileUrl}${ref.fileMimeType ? ` (${ref.fileMimeType})` : ""}]`);
+        }
+        return lines.join("\n");
+      });
+      text += `\n\nEvidence:\n${blocks.join("\n\n")}`;
+    }
+    return text;
+  }).join("\n\n");
+}
+
+server.tool(
+  "get_recipes",
+  MCP_TOOL_DESCRIPTIONS.getRecipes,
+  {
+    recipe_ids: z.string().describe(MCP_PARAM_DESCRIPTIONS.recipeIds),
+  },
+  {
+    title: "Get recipes by id",
+    readOnlyHint: true,
+    idempotentHint: true,
+    openWorldHint: true,
+  },
+  async ({ recipe_ids }) => {
+    if (!apiKey) {
+      return {
+        content: [{ type: "text" as const, text: "Error: SOUPNET_API_KEY not configured. Get a key from your Soup.net dashboard." }],
+      };
+    }
+
+    try {
+      const params = new URLSearchParams();
+      params.set("ids", recipe_ids);
+      const res = await fetch(`${backendUrl}/recipes?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+      });
+      const json = (await res.json()) as { ok: boolean; error?: string; data?: { recipes: LookupEntry[] } };
+      if (!json.ok || !json.data) {
+        return { content: [{ type: "text" as const, text: `Error: ${json.error ?? "recipe lookup failed"}` }] };
+      }
+      const entries = json.data.recipes;
+      const found = entries.filter((e) => e.status === "ok").length;
+      const text = `Requested recipes — ${found} of ${entries.length} resolved. Entries marked not_found_or_unreadable either don't exist or aren't readable by this API key (deliberately indistinguishable).\n\n${formatLookupEntries(entries)}`;
+      return { content: [{ type: "text" as const, text }] };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { content: [{ type: "text" as const, text: `Error looking up recipes: ${message}` }] };
     }
   },
 );

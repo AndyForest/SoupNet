@@ -185,3 +185,4 @@ docs/planning/temp/
 apps/mcp-server/.bundle/
 .claude/settings.local.json
 .vscode/mcp.json
+.claude/worktrees/
