@@ -72,6 +72,7 @@ const ARCHETYPES: Archetype[] = [
     blurb: "Chat AIs that accept custom connectors — you sign in through Soup.net, no keys to paste.",
     steps: [
       <>In your AI's settings, add a custom connector with this URL: {mcpUrl}</>,
+      <>Name it without a domain — "Soup Recipe Checks" works; a domain-like name (e.g. with ".net") can silently block the tools from conversations.</>,
       <>Choose OAuth, sign in to Soup.net when redirected, and pick which recipe books to share.</>,
       <>Ask the AI to "recipe check Soup.net" on your next judgment call — or copy the agent briefing into the chat for a running start.</>,
     ],

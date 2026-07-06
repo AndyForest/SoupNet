@@ -72,7 +72,15 @@ Constraints honored from the corpus: "taste and judgment" always paired; avoid t
 5. **Icon decision** (⚑ above), then **submit via admin settings portal**, filling the copy above, and complete the seven acknowledgments.
 6. After submission: track status in the submissions dashboard; escalation contact is mcp-review@anthropic.com.
 
-## BLOCKER (2026-07-06 evening): claude.ai conversation runtime never surfaces the tools
+## RESOLVED (2026-07-06, late): the blocker was the connector's display name
+
+Root cause found by the operator: a custom connector whose **display name contains a domain-like string** ("Soup.net Recipe Checks") gets its tools silently blocked from every conversation — platform safety filters appear to suppress tool injection client-side, producing exactly the forensics signature (successful connect-time tools/list, zero conversation-time server traffic, Settings unaffected). Renaming the connector to "Soup Recipe Checks" fixed it instantly: all six tools load, briefing works end-to-end. Setup instructions now carry a concise naming warning (/info/connect + the archetype picker). The escalation draft is repurposed as a bug report to Anthropic — the failure is silent, gives the server operator nothing, and will bite other connector developers.
+
+**Directory-name implication ⚑:** our drafted listing name is "Soup.net" — if the same filter applies to directory connectors, the listing would ship this exact silent failure to every install. Until Anthropic confirms otherwise, recommend listing as **"SoupNet"** (no dot, no domain shape; slug stays `soupnet`) or "Soup Recipe Checks". Also add the naming caveat to the reviewer test-account instructions (reviewers adding the custom connector pre-approval must use a domain-free name).
+
+The blocker analysis below is retained for the record; its server-side hypotheses were all investigated, fixed where real, and refuted for this failure.
+
+## Superseded blocker analysis (2026-07-06 evening): claude.ai conversation runtime never surfaces the tools
 
 Server-side forensics (private-repo briefing, same date) isolated the E2E failure to the platform: claude.ai's backend ingests our full tools/list successfully on every connect (8 deliveries across 3 connects, zero errors), Settings lists all six tools, but the conversation runtime's tool registry is never populated — both tool-access modes, both models, fresh chats, and the runtime never re-queries the server. All server-side hypotheses (silent GET stream, Origin 403s, OAuth 1h refresh) were investigated, fixed where real, and refuted as this cause. Discrimination plan before escalating to mcp-review@anthropic.com: (1) control-test a third-party public MCP server as a custom connector on the same account; (2) `MCP_TOOL_PROFILE=lean` env flag (shipped, default-off) serves a 3-tool 2.8KB list to test content-dependence. Escalation draft lives beside the forensics briefing in the private repo. **Submission is blocked until conversations can actually use the tools — a reviewer would hit exactly this.**
 

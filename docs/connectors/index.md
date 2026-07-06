@@ -28,9 +28,10 @@ The fastest setup. The AI redirects you to Soup.net, you sign in, you pick which
 ### Claude (claude.ai)
 
 1. In Claude, open **Settings → Connectors** and click **Add custom connector**.
-2. Paste this URL: `https://mcp.soup.net/mcp`
-3. Claude redirects you to Soup.net. Sign in.
-4. Choose which recipe books Claude can read and write, then confirm.
+2. Name it without a domain — "Soup Recipe Checks" works; "Soup.net" does not. A domain-like name can trip the platform's safety filters and silently block the tools from every conversation (connector shows connected, tools never appear; verified 2026-07-06).
+3. Paste this URL: `https://mcp.soup.net/mcp`
+4. Claude redirects you to Soup.net. Sign in.
+5. Choose which recipe books Claude can read and write, then confirm.
 
 ### ChatGPT (Developer Mode)
 
