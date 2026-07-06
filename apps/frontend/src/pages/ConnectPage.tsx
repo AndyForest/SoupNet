@@ -2,7 +2,8 @@ import { Link } from "@tanstack/react-router";
 import { MarkdownContent } from "../components/LegalPage.js";
 import { AgentTypePicker } from "../components/AgentTypePicker.js";
 import { CopyBriefingButton } from "../components/CopyBriefingButton.js";
-import { isLoggedIn } from "../auth.js";
+import { isLoggedIn, API_BASE } from "../auth.js";
+import { localizeConnectDocs } from "../lib/localize-connect-docs.js";
 // Source of truth: docs/connectors/index.md. Vite's ?raw query inlines
 // the file content as a string at build time. Editing the .md file is
 // the only way to change the live page prose.
@@ -17,16 +18,17 @@ const PICKER_MARKER = "<!-- agent-type-picker";
 const COMMENT_CLOSE = "-->";
 
 export function ConnectPage() {
-  const markerIndex = connectContent.indexOf(PICKER_MARKER);
+  const localizedContent = localizeConnectDocs(connectContent, API_BASE);
+  const markerIndex = localizedContent.indexOf(PICKER_MARKER);
   const closeIndex = markerIndex >= 0
-    ? connectContent.indexOf(COMMENT_CLOSE, markerIndex)
+    ? localizedContent.indexOf(COMMENT_CLOSE, markerIndex)
     : -1;
   // If the marker ever disappears from the .md, degrade to prose-then-picker
   // rather than losing either. The marker comment itself is stripped so no
   // raw HTML reaches react-markdown.
   const hasMarker = markerIndex >= 0 && closeIndex >= 0;
-  const before = hasMarker ? connectContent.slice(0, markerIndex) : connectContent;
-  const after = hasMarker ? connectContent.slice(closeIndex + COMMENT_CLOSE.length) : "";
+  const before = hasMarker ? localizedContent.slice(0, markerIndex) : localizedContent;
+  const after = hasMarker ? localizedContent.slice(closeIndex + COMMENT_CLOSE.length) : "";
 
   return (
     <div style={{

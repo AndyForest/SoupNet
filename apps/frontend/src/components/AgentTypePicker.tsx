@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import { Icon } from "./Icon.js";
+import { API_BASE } from "../auth.js";
 
 /**
  * Agent-type picker — the four archetypes of AI a user might connect,
@@ -26,7 +27,13 @@ interface Archetype {
   steps: ReactNode[];
 }
 
-const mcpUrl = <code style={{ fontSize: "0.85em" }}>https://mcp.soup.net/mcp</code>;
+// This deployment's own MCP endpoint (API_BASE already resolves to the
+// hosted `https://mcp.soup.net` in production or the self-hoster's own
+// backend origin otherwise — see auth.ts and lib/localize-connect-docs.ts,
+// which applies the same substitution to the /info/connect markdown).
+// Keeps this card honest for self-hosted instances instead of always
+// pointing at the cloud service (2026-07-05 journey-eval defect #8).
+const mcpUrl = <code style={{ fontSize: "0.85em" }}>{API_BASE}/mcp</code>;
 
 const keysLink = (label: string) => (
   <Link to="/app/keys" style={{ color: "var(--color-primary)" }}>{label}</Link>
