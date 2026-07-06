@@ -259,6 +259,12 @@ Backend `/check` response copy for a new/thin recipe book returning zero results
 
 ## Unsorted
 
+### `[IMPL]` Parameterize the local CI-gate port/project so parallel sessions can gate concurrently
+
+Found 2026-07-06: two Claude sessions running `npm run test:ci` simultaneously collide — the harness hardcodes host port 5534 and a fixed compose project, so the second run fails with "Bind for 0.0.0.0:5534: port is already allocated" (observed against the premium-llm session's gate). Fix in `scripts/test-ci-local.mjs` + `docker-compose.ci.yml`: derive the host port and compose project name from an env override (e.g. `CI_PG_PORT`, default 5534) or a session-unique suffix, and pass the resolved port through to the backend's `PGPORT`. Local-only change — GitHub CI runs in isolated runners, so the ci.yml mirror rule isn't implicated as long as env parity for the app under test is preserved. Until fixed: sessions serialize gates by watching for `*-postgres-ci-1` containers.
+
+
+
 ### `[IMPL]` Fresh security audit (last general audit 2026-04-09; surface has grown)
 
 ~~Security audit documents missing from the repo~~ — resolved 2026-06-11: the audits live in the **private deployment repo's** `docs/security/` (confirmed by the observability survey). CLAUDE.md and `docs/workflows/security.md` now say so. Remaining work: the last general audit was 2026-04-09 and the route surface has grown substantially since (OAuth 2.1, /uploads, remote MCP, waitlist, email log, invite-status) — now that production is live behind real SES, run a fresh audit-agent scan. The operator runs this after the 2026-06-11 batch is committed, before push.
