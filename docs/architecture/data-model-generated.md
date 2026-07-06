@@ -1,6 +1,6 @@
 # ClaimNet Data Model — Generated Reference
 
-> **Auto-generated** from Drizzle migration snapshot `0027_snapshot.json`.
+> **Auto-generated** from Drizzle migration snapshot `0028_snapshot.json`.
 > Do not edit by hand. Regenerate with: `npx tsx scripts/generate-data-model-docs.ts`
 >
 > Generated: 2026-07-06
@@ -39,6 +39,7 @@ erDiagram
         text refresh_token_hash
         timestamptz refresh_token_expires_at
         text oauth_client_id
+        timestamptz consumed_at
         timestamptz expires_at
         timestamptz last_used_at
         timestamptz created_at
@@ -621,6 +622,7 @@ These are created by raw SQL in migration files and are not captured in the snap
 | `refresh_token_hash` | `text` | YES |  |  |
 | `refresh_token_expires_at` | `timestamptz` | YES |  |  |
 | `oauth_client_id` | `text` | YES |  |  |
+| `consumed_at` | `timestamptz` | YES |  |  |
 | `expires_at` | `timestamptz` | NO |  |  |
 | `last_used_at` | `timestamptz` | YES |  |  |
 | `created_at` | `timestamptz` | NO | `now()` |  |
