@@ -111,7 +111,7 @@ flowchart TB
 
 Worth knowing for navigation:
 
-- **No LLM on the server** (design rule §6). Gemini is the only third-party AI call, and it's only for embeddings.
+- **No LLM on the server for the core check path** (design rule §6). Gemini is the only third-party AI call — embeddings everywhere, plus one text-generation call on the opt-in premium synthesis path (`docs/planning/premium-llm-features.md`).
 - **No business logic in routes** (design rule §1) — routes parse, authenticate, delegate to `services/`, and return. The dense node in this diagram is `search-pipeline`, which is also the most-tested file in the backend.
 - **`@soupnet/contracts` is reached transitively** through `@soupnet/domain`, not imported directly by backend code. Newer routes (`/check`, `/traces`, `/uploads`, `/auth`) validate inline rather than via the contracts package — pre-pivot legacy is being consolidated; see `backlog.md`.
 
@@ -320,5 +320,5 @@ Every recipe check is simultaneously a search and a contribution: the agent's re
 3. Embeddings never block primary writes — the sync path pre-resolves the two search-critical `SEMANTIC_SIMILARITY` vectors in parallel outside the transaction; async pg-boss consumers fill in everything else (evidence, experimental strategies).
 4. Multimodal embeddings are sync-only (ADR-0019) — the async job shape doesn't carry file bytes, and diverging the two paths would corrupt the content-hashed vector cache.
 5. Agents are first-class — `/check` is designed for agent consumption; the SPA is a second-class citizen that happens to use the same backend.
-6. No LLM on the server — the server indexes, searches, and ranks; remote agents do the reasoning.
+6. No LLM on the server for the core check path — the server indexes, searches, and ranks; remote agents do the reasoning. Deliberate scoped exception: premium-gated, per-user opt-in features (retrieval synthesis) make one server-side LLM call; default behavior stays LLM-free (`docs/planning/premium-llm-features.md`).
 7. System doesn't judge stance — the LLM author asserts stance at recipe write time. Search-time surfaces (related evidence, the map) are neutral: cosine over gemini-embedding-2-preview encodes topic, not stance, so the LLM consumer interprets stance against current context (ADR-0015).

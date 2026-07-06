@@ -181,7 +181,7 @@ This layer is the manual precursor of Layer 6 — its quiz questions and rubric 
 These are tests — they belong in this plan — but they differ from layers 1–3 in every operational property:
 
 - **Not in the CI path.** LLM runs are nondeterministic and cost money; `test:ci` stays deterministic. This layer runs nightly/manually, and (once wired) is mandatory before briefing-touching commits via the declared-intent regression rule.
-- **The runner is an AI coding agent following a runbook** — orchestrating fresh sub-agent contexts as test personas and separate sub-agents as judges. No LLM API calls are added to this codebase.
+- **The runner is an AI coding agent following a runbook** — orchestrating fresh sub-agent contexts as test personas and separate sub-agents as judges. This layer adds no LLM API calls to this codebase. (The codebase itself now carries one server-side LLM call — the premium synthesis path — but it is stubbed in CI via `SYNTHESIS_PROVIDER=stub`, same pattern as embeddings; `test:ci` stays deterministic.)
 - **Execution artifacts and outcome data live in a separate eval repo** (committed baseline matrices as JSON/markdown — not gitignored, not the product DB). The specs themselves (`.feature` files, the scenario corpus) stay in this repo, next to the briefing copy they pin, so a briefing PR updates its declared scenarios in the same diff.
 
 ### Future: Claude Agentic Browser Testing
