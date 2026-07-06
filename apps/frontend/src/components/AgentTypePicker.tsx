@@ -71,7 +71,7 @@ const ARCHETYPES: Archetype[] = [
     examples: "claude.ai, ChatGPT (Developer Mode), Le Chat, Perplexity",
     blurb: "Chat AIs that accept custom connectors — you sign in through Soup.net, no keys to paste.",
     steps: [
-      <>In your AI's settings, add a custom connector with the URL {mcpUrl}.</>,
+      <>In your AI's settings, add a custom connector with this URL: {mcpUrl}</>,
       <>Choose OAuth, sign in to Soup.net when redirected, and pick which recipe books to share.</>,
       <>Ask the AI to "recipe check Soup.net" on your next judgment call — or copy the agent briefing into the chat for a running start.</>,
     ],

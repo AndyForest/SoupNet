@@ -3,6 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { authFetch, isLoggedIn, API_BASE } from "../auth.js";
 import { isRegisteredRedirectUri } from "../lib/oauth-redirect.js";
+import { RecipeBookScopePicker } from "../components/RecipeBookScopePicker.js";
 
 /**
  * OAuth 2.1 consent screen. Lands here when an OAuth client (claude.ai's
@@ -177,27 +178,6 @@ export function OAuthAuthorizePage() {
     }
   }
 
-  function toggleRead(id: string) {
-    setReadIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
-    // Write scope must be a subset of read scope.
-    setWriteIds((prev) => prev.filter((x) => x === id || readIds.includes(x)));
-  }
-
-  function toggleWrite(id: string) {
-    setWriteIds((prev) => {
-      const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id];
-      // If write gets added, read must include it too.
-      if (next.includes(id) && !readIds.includes(id)) {
-        setReadIds((r) => [...r, id]);
-      }
-      return next;
-    });
-    if (defaultWriteId === id && writeIds.includes(id)) {
-      // Removing default-write — reset it.
-      setDefaultWriteId("");
-    }
-  }
-
   // ── Render ──────────────────────────────────────────────────────────────
 
   if (paramError) {
@@ -300,52 +280,18 @@ export function OAuthAuthorizePage() {
       {books.length === 0 ? (
         <p>You don't have any recipe books yet. <Link to="/app/recipe-books">Create one</Link> first, then return here.</p>
       ) : (
-        <table style={tableStyle}>
-          <thead>
-            <tr>
-              <th style={thStyle}>Recipe book</th>
-              <th style={thStyle}>Read</th>
-              <th style={thStyle}>Write</th>
-              <th style={thStyle}>Default write</th>
-            </tr>
-          </thead>
-          <tbody>
-            {books.map((b) => (
-              <tr key={b.id}>
-                <td style={tdStyle}>
-                  <strong>{b.name}</strong>
-                  {b.description ? <div style={{ color: "var(--color-on-surface-variant)", fontSize: "0.85em" }}>{b.description}</div> : null}
-                </td>
-                <td style={tdCenterStyle}>
-                  <input
-                    type="checkbox"
-                    checked={readIds.includes(b.id)}
-                    onChange={() => toggleRead(b.id)}
-                    aria-label={`Read access to ${b.name}`}
-                  />
-                </td>
-                <td style={tdCenterStyle}>
-                  <input
-                    type="checkbox"
-                    checked={writeIds.includes(b.id)}
-                    onChange={() => toggleWrite(b.id)}
-                    aria-label={`Write access to ${b.name}`}
-                  />
-                </td>
-                <td style={tdCenterStyle}>
-                  <input
-                    type="radio"
-                    name="default-write"
-                    checked={defaultWriteId === b.id}
-                    disabled={!writeIds.includes(b.id)}
-                    onChange={() => setDefaultWriteId(b.id)}
-                    aria-label={`Default write to ${b.name}`}
-                  />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="card" style={{ marginTop: "var(--space-md)" }}>
+          <RecipeBookScopePicker
+            books={books}
+            readIds={readIds}
+            writeIds={writeIds}
+            defaultWriteId={defaultWriteId}
+            setReadIds={setReadIds}
+            setWriteIds={setWriteIds}
+            setDefaultWriteId={setDefaultWriteId}
+            enforceWriteImpliesRead
+          />
+        </div>
       )}
 
       {submitError ? (
@@ -366,6 +312,19 @@ export function OAuthAuthorizePage() {
         </button>
       </div>
 
+      {/* Operator-flagged: Authorize could stay disabled with no explanation
+          why. State the specific missing selection so the user knows what to
+          fix instead of guessing. */}
+      {!canSubmit && !grantMutation.isPending && (
+        <p className="text-xs" style={{ marginTop: "var(--space-sm)", color: "var(--color-on-surface-variant)" }}>
+          {readIds.length === 0
+            ? "Select at least one recipe book to share to enable Authorize."
+            : writeIds.length === 0
+              ? "Select at least one recipe book to write to enable Authorize."
+              : "Choose a default recipe book for writes to enable Authorize."}
+        </p>
+      )}
+
       <p style={{ marginTop: "var(--space-xl)", fontSize: "0.85em", color: "var(--color-on-surface-variant)" }}>
         You can revoke this access at any time from your <Link to="/app/keys">Keys</Link> page.
       </p>
@@ -384,10 +343,6 @@ const containerStyle: React.CSSProperties = {
 };
 const h1Style: React.CSSProperties = { fontSize: "1.75rem", marginBottom: "var(--space-md)" };
 const h2Style: React.CSSProperties = { fontSize: "1.15rem", marginTop: "var(--space-xl)", marginBottom: "var(--space-sm)" };
-const tableStyle: React.CSSProperties = { width: "100%", borderCollapse: "collapse", marginTop: "var(--space-md)" };
-const thStyle: React.CSSProperties = { textAlign: "left", padding: "var(--space-sm)", borderBottom: "1px solid var(--color-outline-variant, #e0e0e0)", fontWeight: 600 };
-const tdStyle: React.CSSProperties = { padding: "var(--space-sm)", borderBottom: "1px solid var(--color-outline-variant, #f0f0f0)" };
-const tdCenterStyle: React.CSSProperties = { ...tdStyle, textAlign: "center" };
 const primaryButtonStyle: React.CSSProperties = {
   background: "var(--color-primary)",
   color: "var(--color-on-primary, white)",
