@@ -72,6 +72,10 @@ Constraints honored from the corpus: "taste and judgment" always paired; avoid t
 5. **Icon decision** (⚑ above), then **submit via admin settings portal**, filling the copy above, and complete the seven acknowledgments.
 6. After submission: track status in the submissions dashboard; escalation contact is mcp-review@anthropic.com.
 
+## BLOCKER (2026-07-06 evening): claude.ai conversation runtime never surfaces the tools
+
+Server-side forensics (private-repo briefing, same date) isolated the E2E failure to the platform: claude.ai's backend ingests our full tools/list successfully on every connect (8 deliveries across 3 connects, zero errors), Settings lists all six tools, but the conversation runtime's tool registry is never populated — both tool-access modes, both models, fresh chats, and the runtime never re-queries the server. All server-side hypotheses (silent GET stream, Origin 403s, OAuth 1h refresh) were investigated, fixed where real, and refuted as this cause. Discrimination plan before escalating to mcp-review@anthropic.com: (1) control-test a third-party public MCP server as a custom connector on the same account; (2) `MCP_TOOL_PROFILE=lean` env flag (shipped, default-off) serves a 3-tool 2.8KB list to test content-dependence. Escalation draft lives beside the forensics briefing in the private repo. **Submission is blocked until conversations can actually use the tools — a reviewer would hit exactly this.**
+
 ## Risk notes for review
 
 - **OAuth refresh-after-expiry bug** (backlog: "OAuth refresh blocked after access token expires (1h)") — a client refreshing after the access token's natural expiry gets `invalid_grant`. claude.ai tends to refresh proactively, which is why the E2E flow works, but a reviewer who authorizes, waits >1h idle, and returns could hit it. It's the known column-overload fix (consumed_at) routed through the security workflow. ⚑ Decide: fix before submitting (safest) or accept the risk of a review-timing flake.
