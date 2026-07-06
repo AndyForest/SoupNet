@@ -62,10 +62,7 @@ server.tool(
     response_format: z.enum(["markdown", "structured"]).optional().describe(MCP_PARAM_DESCRIPTIONS.responseFormat),
     known_recipes: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.knownRecipes),
     agent_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.agentId),
-    synthesize: z.boolean().optional().describe(
-      "Premium opt-in: distil the returned recipes into one short 'current preference profile' paragraph (newest judgment wins on conflicts, recipe ids cited inline). " +
-      "Non-premium callers get the normal response plus a one-line hint that synthesis is a premium feature — never an error."
-    ),
+    synthesize: z.boolean().optional().describe(MCP_PARAM_DESCRIPTIONS.synthesize),
     feedback: z.array(z.object({
       trace_id: z.string().optional(),
       kind: z.string().optional(),

@@ -1,6 +1,6 @@
 {
-  "id": "d79a0748-84f3-4ae6-9b45-1fe731554929",
-  "prevId": "28c1e9e4-b701-45cb-bbf9-255fd56844c0",
+  "id": "ac88e02d-df25-4cf9-9c94-14230c1f770d",
+  "prevId": "d79a0748-84f3-4ae6-9b45-1fe731554929",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -263,6 +263,12 @@
         "signup_reason": {
           "name": "signup_reason",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "premium_at": {
+          "name": "premium_at",
+          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },

@@ -51,6 +51,15 @@ export const apiKeys = claimnetSchema.table(
     refreshTokenExpiresAt: timestamp("refresh_token_expires_at", { withTimezone: true }),
     oauthClientId: text("oauth_client_id"),
 
+    // consumedAt — OAuth refresh-rotation consumption marker (F38 follow-up,
+    // migration 0028). NULL = live; non-NULL = this row's refresh token was
+    // rotated away (or the row was revoked), so the whole bundle is dead.
+    // The compare-and-swap gate in refreshOAuthTokenBundle is
+    // `consumed_at IS NULL` — a pure NULL check, never a comparison of two
+    // transactions' start timestamps (the flaw behind the original F38 race).
+    // Always NULL for 'daily' and 'scoped' keys.
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
 

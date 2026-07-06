@@ -182,6 +182,11 @@ mcpRouter.use("/*", async (c, next) => {
   if (!origin) return next();
   const allowlist = getAllowedOrigins();
   if (!isAllowedOrigin(origin, allowlist)) {
+    // Log the rejection — this branch short-circuits the chain, so the
+    // request-level [mcp-req] logger below never sees it. Without this line a
+    // client failing Origin validation is invisible in CloudWatch (2026-07-06
+    // claude.ai tool-discovery investigation).
+    console.log(`[mcp-req] ${c.req.method} status=403 forbidden_origin=${origin}`);
     return c.json({ error: "forbidden_origin", origin }, 403);
   }
   return next();
@@ -346,7 +351,19 @@ function createMcpServer(backendUrl: string): McpServer {
       "Call get_briefing before your first check to learn the format and get a sample of the user's corpus.",
   });
 
+  // MCP_TOOL_PROFILE=lean — diagnostic bisect instrument (2026-07-06,
+  // claude.ai conversation-runtime tool-registry investigation, see
+  // claimNet docs/briefings/mcp-connector-forensics-2026-07-06.md): the
+  // platform ingests our full 18KB tools/list at connect time but never
+  // surfaces the tools to conversations. Lean mode registers only the three
+  // read-only tools with one-line descriptions and minimal schemas, cutting
+  // list size ~80% and dropping the nested feedback array schema — if lean
+  // surfaces where full doesn't, the failure is content-dependent and we
+  // bisect. Unset (default) is byte-identical to the pre-flag server.
+  const lean = process.env["MCP_TOOL_PROFILE"] === "lean";
+
   // ── check_recipe tool ───────────────────────────────────────────────────
+  if (!lean)
 
   server.tool(
     "check_recipe",
@@ -366,43 +383,32 @@ function createMcpServer(backendUrl: string): McpServer {
       response_format: z.enum(["markdown", "structured"]).optional().describe(MCP_PARAM_DESCRIPTIONS.responseFormat),
       known_recipes: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.knownRecipes),
       agent_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.agentId),
-      synthesize: z.boolean().optional().describe(
-        "Premium opt-in: distil the returned recipes into one short 'current preference profile' paragraph (newest judgment wins on conflicts, recipe ids cited inline). " +
-        "Non-premium callers get the normal response plus a one-line hint that synthesis is a premium feature — never an error."
-      ),
+      synthesize: z.boolean().optional().describe(MCP_PARAM_DESCRIPTIONS.synthesize),
       feedback: z.array(feedbackRowSchema).optional().describe(MCP_PARAM_DESCRIPTIONS.feedbackParam),
       axes: z.string().optional().describe(
-        "Two concept terms for semantic projection (comma-separated, e.g., 'accessibility, dark mode'). " +
-        "Each result gets x/y positions showing its similarity to each concept (0-1). " +
-        "Based on Semantic Projection (Grand et al., 2022)."
+        "Two comma-separated concept terms; each result gets x/y similarity positions (0-1) against them (semantic projection)."
       ),
       recipe_book: z.string().optional().describe(
-        "Recipe book slug or ID to write this recipe to. Must be in your key's write recipe books. " +
-        "Defaults to your key's default recipe book (most private). Use list_my_recipe_books to see what's available."
+        "Recipe book slug or id to write to. Must be in your key's write scope; defaults to your key's default book. " +
+        "list_my_recipe_books shows what's available."
       ),
       read_recipe_books: z.string().optional().describe(
-        "Comma-separated recipe-book slugs to restrict search scope. " +
-        "Default: all readable recipe books. Use to focus search on a specific project context."
+        "Comma-separated recipe-book slugs to restrict result scope. Default: all readable books."
       ),
       file_url: z.string().optional().describe(
-        "Optional: public URL to fetch as reference evidence (image, PDF, audio, or video). " +
-        "The server fetches the URL on your behalf. http/https only; private/internal hostnames are rejected. " +
-        "MIME type inferred from Content-Type (or URL extension as fallback). " +
-        "For private local files (screenshots, generated artifacts) that have no public URL, " +
-        "POST the file to the /uploads endpoint first using your same Bearer token, then pass the returned file_url here. " +
-        "Mutually exclusive with file_base64."
+        "Public URL the server fetches as reference evidence (image, PDF, audio, video); http(s) only, " +
+        "private hostnames rejected. For local files, POST to /uploads with your Bearer token first and " +
+        "pass the returned URL. Mutually exclusive with file_base64."
       ),
       file_base64: z.string().optional().describe(
-        "Optional: base64-encoded file bytes (image, PDF, audio, or video). Accepts raw base64 or 'data:...;base64,' data-URL form. " +
-        "Requires file_name (for extension-based MIME inference) or file_mime_type (explicit). " +
-        "Mutually exclusive with file_url."
+        "Base64 file bytes (raw or data-URL form). Requires file_name or file_mime_type. Mutually exclusive with file_url."
       ),
       file_name: z.string().optional().describe(
-        "Optional filename hint for base64 uploads. Extension is used to infer MIME type when file_mime_type isn't given."
+        "Filename hint for base64 uploads; the extension infers the MIME type."
       ),
       file_mime_type: z.string().optional().describe(
-        "Optional explicit MIME type (e.g., 'image/png'). Must be one of the supported media types: " +
-        "image/png, image/jpeg, image/webp, video/mp4, video/quicktime, audio/mpeg, audio/wav, audio/flac, audio/ogg, application/pdf."
+        "Explicit MIME type, one of: image/png, image/jpeg, image/webp, video/mp4, video/quicktime, " +
+        "audio/mpeg, audio/wav, audio/flac, audio/ogg, application/pdf."
       ),
       region: z.object({
         image_box: z.object({
@@ -411,14 +417,14 @@ function createMcpServer(backendUrl: string): McpServer {
           x1: z.number().min(0).max(1),
           y1: z.number().min(0).max(1),
         }).optional().describe(
-          "Normalized region of interest box on the attached image. All values are fractions in [0, 1] with top-left origin (y grows downward). " +
-          "Must satisfy x0 < x1 and y0 < y1. When set, the embedding pipeline crops to ROI+padding, blurs the padding, and appends a text hint describing the ROI — so the resulting embedding weights the marked region heavily. " +
-          "The original image is stored unmodified; ROI processing is applied at embed time and can be re-done later with a different visual-cue technique (see ADR-0019). " +
-          "Image MIME types only; ignored (with a warning logged) for video/audio/PDF."
+          // Depth (padding/blur mechanics, re-embedding, ADR-0019) lives in the
+          // briefing's multimodal section — this is the affordance + constraints.
+          "Region-of-interest box on the attached image: fractions in [0,1], top-left origin, x0<x1 and " +
+          "y0<y1. The embedding weights the marked region heavily; the original image is stored unmodified. Images only."
         ),
         // Future: time_range for video/audio; page_range for PDF.
       }).optional().describe(
-        "Optional region-of-interest metadata for the attached file. Currently supports image_box; video and PDF region types planned."
+        "Region-of-interest metadata for the attached file (image_box for images)."
       ),
     },
     {
@@ -623,7 +629,7 @@ function createMcpServer(backendUrl: string): McpServer {
 
   server.tool(
     "get_briefing",
-    MCP_TOOL_DESCRIPTIONS.getBriefing,
+    lean ? "Get the Soup.net briefing: recipe format, this user's recipe books, and sample recipes." : MCP_TOOL_DESCRIPTIONS.getBriefing,
     {
       purpose: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.briefingPurpose),
       recipe_ids: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.briefingRecipeIds),
@@ -682,7 +688,7 @@ function createMcpServer(backendUrl: string): McpServer {
 
   server.tool(
     "get_recipes",
-    MCP_TOOL_DESCRIPTIONS.getRecipes,
+    lean ? "Fetch specific Soup.net recipes by id (comma-separated UUIDs, up to 20)." : MCP_TOOL_DESCRIPTIONS.getRecipes,
     {
       recipe_ids: z.string().describe(MCP_PARAM_DESCRIPTIONS.recipeIds),
     },
@@ -739,7 +745,7 @@ function createMcpServer(backendUrl: string): McpServer {
 
   server.tool(
     "list_my_recipe_books",
-    MCP_TOOL_DESCRIPTIONS.listMyRecipeBooks,
+    lean ? "List this user's Soup.net recipe books with a sample of recipes." : MCP_TOOL_DESCRIPTIONS.listMyRecipeBooks,
     {},
     {
       title: "List my recipe books",
@@ -791,24 +797,18 @@ function createMcpServer(backendUrl: string): McpServer {
   // requirement makes API-key delegation honest — a read-only key can't
   // mutate recipe-book metadata even if the underlying user is an owner.
 
+  if (!lean)
   server.tool(
     "update_recipe_book_description",
-    "Update the description of a recipe book your API key has write access to. " +
-    "Agents should recipe-check the proposed description first (e.g., 'As a " +
-    "[role] working on [project], I want [recipe book] to be described as " +
-    "[proposed description] so that agents writing here understand [context]'). " +
-    "The description shapes how every future agent reads and writes to this " +
-    "recipe book, so a small change can have outsized effect — check before " +
-    "committing. Authorization: your api key's user must be an owner or admin " +
-    "of the recipe book, AND the recipe book must be in your key's write " +
-    "recipe books (a read-only key cannot mutate recipe-book metadata).",
+    "Update a recipe book's description. It shapes how every future agent reads and writes there, " +
+    "so recipe-check the proposed text before committing. Requires the key's user to be an owner or " +
+    "admin AND the book to be in the key's write scope.",
     {
       recipe_book_id_or_slug: z.string().describe(
-        "The recipe book's UUID or slug. Use list_my_recipe_books to find the slug or ID."
+        "The recipe book's UUID or slug (list_my_recipe_books shows both)."
       ),
       description: z.string().min(1).max(2000).describe(
-        "The new description text. Max 2000 chars. Pass an empty string only " +
-        "if you genuinely intend to clear the description."
+        "The new description text (max 2000 chars)."
       ),
     },
     {
@@ -925,6 +925,7 @@ function createMcpServer(backendUrl: string): McpServer {
   // lives on check_recipe's feedback param. Same service, same validation and
   // ACL path as the ride-along and REST POST /feedback.
 
+  if (!lean)
   server.tool(
     "log_feedback",
     MCP_TOOL_DESCRIPTIONS.logFeedback,
@@ -1130,7 +1131,45 @@ export function buildMcpJsonResponse(
 
 // ── Route handler ───────────────────────────────────────────────────────────
 
+// Request-level observability (2026-07-06, claude.ai tool-discovery
+// investigation): one structured line per /mcp request so CloudWatch can
+// distinguish the settings-time path from the conversation-runtime path
+// (method, status, whether an Origin was sent, client UA family). The 403
+// forbidden_origin branch above this router returns without logging, so this
+// middleware is deliberately mounted on the route (post-Origin-check requests)
+// and the Origin middleware gets its own log line below.
+mcpRouter.use("/*", async (c, next) => {
+  await next();
+  const ua = (c.req.header("user-agent") ?? "").slice(0, 60);
+  console.log(
+    `[mcp-req] ${c.req.method} status=${c.res.status} origin=${c.req.header("origin") ?? "-"} ua="${ua}"`,
+  );
+});
+
 mcpRouter.all("/", mcpBodyLimit, mcpRateLimit, mcpPerBearerBackstop, mcpPerKeyRateLimit, async (c) => {
+  // Streamable HTTP spec: a server that does not offer server-initiated
+  // messages at this endpoint MUST return 405 for GET. In stateless mode
+  // (ADR-0021) every request gets a fresh transport, so a standalone GET SSE
+  // stream can never carry anything — but the SDK still opens one and holds
+  // it silently forever, which stalls clients (observed 2026-07-06: claude.ai
+  // settings could list tools via POST while conversation-time discovery hung;
+  // a bare GET probe confirmed 200 + empty stream with no bytes). DELETE
+  // (session teardown) is equally meaningless without sessions.
+  if (c.req.method === "GET" || c.req.method === "DELETE") {
+    c.header("Allow", "POST, OPTIONS");
+    return c.json(
+      {
+        jsonrpc: "2.0",
+        error: {
+          code: -32000,
+          message:
+            "This server runs in stateless mode: no server-initiated messages (GET) or sessions (DELETE). Use POST.",
+        },
+      },
+      405,
+    );
+  }
+
   // Extract and validate API key from Bearer token
   const authHeader = c.req.header("Authorization");
   if (!authHeader?.startsWith("Bearer ")) {

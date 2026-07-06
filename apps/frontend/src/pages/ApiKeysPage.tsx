@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { authFetch } from "../auth.js";
 import { Icon } from "../components/Icon.js";
+import { RecipeBookScopePicker } from "../components/RecipeBookScopePicker.js";
 import { useClipboard } from "../hooks/useClipboard.js";
 
 // sessionStorage key for the ephemeral custom-briefing handoff. The raw API
@@ -149,10 +150,6 @@ export function ApiKeysPage() {
     setShowForm(true);
   }
 
-  function toggleGroupId(list: string[], setList: (v: string[]) => void, id: string) {
-    setList(list.includes(id) ? list.filter((g) => g !== id) : [...list, id]);
-  }
-
   const { copy: copyText, copyAsync, copied } = useClipboard();
   const [briefingPending, setBriefingPending] = useState<string | null>(null);
 
@@ -266,142 +263,17 @@ export function ApiKeysPage() {
                 />
               </div>
 
-              {groups.length > 1 && (() => {
-                const allReadSelected = groups.every((g) => readGroupIds.includes(g.id));
-                const allWriteSelected = groups.every((g) => writeGroupIds.includes(g.id));
-                // Grid columns: group info | Read | Write | Default
-                const gridCols = "minmax(0, 1fr) 70px 70px 70px";
-                return (
-                  <div>
-                    <label style={{ marginBottom: "var(--space-xs)", display: "block" }}>Recipe book permissions</label>
-
-                    {/* Column header with select-all toggles */}
-                    <div style={{
-                      display: "grid",
-                      gridTemplateColumns: gridCols,
-                      gap: "var(--space-sm)",
-                      alignItems: "center",
-                      padding: "0 var(--space-md) var(--space-xs)",
-                      fontSize: "0.75rem",
-                      color: "var(--color-on-surface-variant)",
-                    }}>
-                      <span></span>
-                      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "2px" }}>
-                        <span>Read</span>
-                        <button
-                          type="button"
-                          className="btn-ghost"
-                          style={{ fontSize: "0.7rem", padding: "1px 6px" }}
-                          onClick={() => {
-                            setReadGroupIds(allReadSelected ? [] : groups.map((g) => g.id));
-                          }}
-                        >
-                          {allReadSelected ? "none" : "all"}
-                        </button>
-                      </div>
-                      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "2px" }}>
-                        <span>Write</span>
-                        <button
-                          type="button"
-                          className="btn-ghost"
-                          style={{ fontSize: "0.7rem", padding: "1px 6px" }}
-                          onClick={() => {
-                            if (allWriteSelected) {
-                              setWriteGroupIds([]);
-                              setDefaultWriteGroupId("");
-                            } else {
-                              const allIds = groups.map((g) => g.id);
-                              setWriteGroupIds(allIds);
-                              if (!defaultWriteGroupId || !allIds.includes(defaultWriteGroupId)) {
-                                setDefaultWriteGroupId(allIds[0] ?? "");
-                              }
-                            }
-                          }}
-                        >
-                          {allWriteSelected ? "none" : "all"}
-                        </button>
-                      </div>
-                      <span style={{ textAlign: "center" }}>Default</span>
-                    </div>
-
-                    <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-xs)" }}>
-                      {groups.map((g) => {
-                        const hasRead = readGroupIds.includes(g.id);
-                        const hasWrite = writeGroupIds.includes(g.id);
-                        const isDefault = defaultWriteGroupId === g.id;
-                        return (
-                          <div
-                            key={g.id}
-                            style={{
-                              display: "grid",
-                              gridTemplateColumns: gridCols,
-                              gap: "var(--space-sm)",
-                              alignItems: "center",
-                              padding: "var(--space-sm) var(--space-md)",
-                              background: hasRead || hasWrite ? "var(--color-surface-container)" : "var(--color-surface-container-low)",
-                              borderRadius: "var(--radius-sm)",
-                              border: isDefault ? "1px solid var(--color-primary)" : "1px solid var(--color-border)",
-                            }}
-                          >
-                            <div style={{ minWidth: 0 }}>
-                              <span style={{ fontSize: "0.85rem", fontWeight: 500 }}>{g.name}</span>
-                              {g.description && (
-                                <p className="text-xs" style={{ color: "var(--color-on-surface-variant)", margin: "2px 0 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                  {g.description}
-                                </p>
-                              )}
-                            </div>
-                            <label style={{ display: "flex", justifyContent: "center", fontSize: "0.8rem", cursor: "pointer" }}>
-                              <input type="checkbox" checked={hasRead} onChange={() => toggleGroupId(readGroupIds, setReadGroupIds, g.id)} />
-                            </label>
-                            <label style={{ display: "flex", justifyContent: "center", fontSize: "0.8rem", cursor: "pointer" }}>
-                              <input
-                                type="checkbox"
-                                checked={hasWrite}
-                                onChange={() => {
-                                  toggleGroupId(writeGroupIds, setWriteGroupIds, g.id);
-                                  if (hasWrite) {
-                                    // Just UN-checked this group. If it was the default, move default to
-                                    // whatever write group remains (empty = no default).
-                                    if (defaultWriteGroupId === g.id) {
-                                      const remaining = writeGroupIds.filter((id) => id !== g.id);
-                                      setDefaultWriteGroupId(remaining[0] ?? "");
-                                    }
-                                  } else {
-                                    // Just CHECKED this group. If there's no default yet (e.g. the user
-                                    // cleared everything via the `none` toggle), adopt this one so the
-                                    // default radio reappears immediately — bug Andy flagged 2026-04-17.
-                                    if (!defaultWriteGroupId) {
-                                      setDefaultWriteGroupId(g.id);
-                                    }
-                                  }
-                                }}
-                              />
-                            </label>
-                            <div style={{ display: "flex", justifyContent: "center" }}>
-                              {hasWrite ? (
-                                <label style={{ display: "flex", alignItems: "center", cursor: "pointer", color: isDefault ? "var(--color-primary)" : "inherit" }}>
-                                  <input
-                                    type="radio"
-                                    name="defaultWriteGroup"
-                                    checked={isDefault}
-                                    onChange={() => setDefaultWriteGroupId(g.id)}
-                                  />
-                                </label>
-                              ) : (
-                                <span style={{ fontSize: "0.75rem", color: "var(--color-outline-variant)" }}>—</span>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <p className="text-xs" style={{ color: "var(--color-on-surface-variant)", marginTop: "var(--space-xs)" }}>
-                      Default write recipe book is where recipes go unless the agent specifies otherwise.
-                    </p>
-                  </div>
-                );
-              })()}
+              {groups.length > 1 && (
+                <RecipeBookScopePicker
+                  books={groups}
+                  readIds={readGroupIds}
+                  writeIds={writeGroupIds}
+                  defaultWriteId={defaultWriteGroupId}
+                  setReadIds={setReadGroupIds}
+                  setWriteIds={setWriteGroupIds}
+                  setDefaultWriteId={setDefaultWriteGroupId}
+                />
+              )}
 
               <div style={{ display: "flex", gap: "var(--space-sm)" }}>
                 <button onClick={() => scopedKeyMutation.mutate()} disabled={scopedKeyMutation.isPending}>

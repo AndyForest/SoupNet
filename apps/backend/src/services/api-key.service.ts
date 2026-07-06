@@ -213,12 +213,20 @@ export async function validateKey(
   // Key creation is gated by requireVerifiedEmail middleware, so this branch
   // should not normally fire — but we enforce it here too in case a user is
   // unverified after the fact (e.g. invitation flow, F31).
+  //
+  // consumed_at IS NULL: the OAuth refresh-rotation consumption marker
+  // (migration 0028; F38 follow-up). Rotation also truncates the consumed
+  // row's expires_at to the epoch sentinel, so this guard is redundant today —
+  // it enforces "consumed ⇒ invalid" independently of that stamp, keeping the
+  // old access token dead even if the expires_at truncation is ever refactored
+  // away. Always NULL for 'daily'/'scoped' keys (no behavior change for them).
   const rows = await db.execute(sql`
     SELECT k.id, k.user_id, k.read_group_ids, k.write_group_ids, k.default_write_group_id, k.expires_at, k.key_type, k.oauth_client_id
     FROM claimnet.api_keys k
     JOIN claimnet.users u ON u.id = k.user_id
     WHERE k.key = ${hashedKey}
       AND k.expires_at > NOW()
+      AND k.consumed_at IS NULL
       AND u.email_verified_at IS NOT NULL
     LIMIT 1
   `);

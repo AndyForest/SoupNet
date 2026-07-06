@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { MCP_TOOL_DESCRIPTIONS, MCP_PARAM_DESCRIPTIONS } from "@soupnet/domain";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const mcpRoutePath = join(here, "mcp.ts");
@@ -76,5 +77,25 @@ describe("MCP tool registrations — WP2 premium synthesize", () => {
       "utf-8",
     );
     expect(stdioSource).toContain("synthesize: z.boolean().optional()");
+  });
+});
+
+// Description budget (2026-07-06): tool/param descriptions are affordances;
+// teaching lives in the briefing. The pre-trim tools/list was ~18KB and spent
+// ~4.4k tokens of every connected conversation. These caps keep depth from
+// creeping back into schema — when a description wants to grow past them,
+// the growth belongs in BRIEFING/docs with a one-line pointer here.
+describe("MCP tool description budget", () => {
+  const all = { ...MCP_TOOL_DESCRIPTIONS, ...MCP_PARAM_DESCRIPTIONS };
+
+  it("keeps every shared description affordance-sized (≤ 420 chars)", () => {
+    for (const [name, text] of Object.entries(all)) {
+      expect(text.length, `${name} is ${text.length} chars`).toBeLessThanOrEqual(420);
+    }
+  });
+
+  it("keeps the shared-copy total under 4,000 chars", () => {
+    const total = Object.values(all).reduce((n, s) => n + s.length, 0);
+    expect(total).toBeLessThanOrEqual(4000);
   });
 });

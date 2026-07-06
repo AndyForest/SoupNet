@@ -207,10 +207,15 @@ export async function verifyClientCredentials(
 // Retention reasoning:
 // - codes: 5-minute TTL; anything past expiry + 1 day is dead weight (consumed
 //   codes expire on the same clock, so one predicate covers both).
-// - oauth api_keys: expires_at gates BOTH bearer validation and the refresh
-//   path (see refreshOAuthTokenBundle's WHERE), so 30 days past expires_at the
-//   row is unusable for anything. audit_log.api_key_id has no FK — deleting
-//   key rows never deletes audit history (which the F29 limiter reads).
+// - oauth api_keys: 30 days past expires_at the row is unusable for anything —
+//   the access token is long dead, and the refresh window has passed too
+//   (refresh_token_expires_at = issuance + 30d ≈ expires_at − 1h + 30d, so it
+//   is always earlier than this sweep's cutoff). Consumed rows are stamped
+//   expires_at = epoch at rotation, so they're swept on the first pass after
+//   consumption; deleting them keeps replay at invalid_grant (no row) — same
+//   response as when the row existed. audit_log.api_key_id has no FK —
+//   deleting key rows never deletes audit history (which the F29 limiter
+//   reads).
 // - clients: only never-authenticated registrations (last_used_at IS NULL)
 //   with nothing minted are swept. Dormant-but-real clients are kept so a
 //   long-idle connector doesn't silently need re-registration.
@@ -396,8 +401,9 @@ export async function redeemAuthCode(
 // An OAuth access token IS a Soup.net scoped API key (cn_s_... prefix) — same
 // Bearer validation path, same recipe-book scope fields. The refresh_token is
 // a separate opaque value stored as refresh_token_hash on the same api_keys
-// row. Refresh rotation issues a new row and revokes the old one (expires_at
-// set to NOW); the old refresh token is single-use by construction.
+// row. Refresh rotation issues a new row and consumes the old one (consumed_at
+// stamped, expires_at truncated to the epoch sentinel); the old refresh token
+// is single-use by construction.
 
 export const ACCESS_TOKEN_TTL_SECONDS = 60 * 60; // 1 hour
 export const REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
@@ -470,7 +476,6 @@ interface RefreshableKeyRow {
   read_group_ids: string[];
   write_group_ids: string[];
   default_write_group_id: string;
-  refresh_token_expires_at: Date;
 }
 
 export class RefreshTokenError extends Error {
@@ -489,6 +494,24 @@ export class RefreshTokenError extends Error {
  * in a transaction so a mint failure rolls the revocation back and the
  * caller's refresh token survives (the availability property the old
  * mint-first ordering bought, without the race).
+ *
+ * Consumption is marked on the dedicated consumed_at column (migration 0028).
+ * The compare-and-swap predicate is `consumed_at IS NULL` — a pure NULL
+ * check. Cross-transaction safety: NOW() is the transaction-START timestamp
+ * and lock-acquisition order is independent of timestamp order, so any
+ * predicate that compares a value one transaction WROTE against another
+ * transaction's NOW() can race (the original F38 bug: SET expires_at = NOW()
+ * ... WHERE expires_at > NOW()). Under READ COMMITTED the blocked UPDATE
+ * re-evaluates the predicate after the winner commits: consumed_at IS NULL is
+ * then false, it matches zero rows, and the loser gets invalid_grant. The
+ * refresh_token_expires_at > NOW() term is safe because no transaction writes
+ * that column — it's only ever the caller's own clock against a constant.
+ *
+ * The gate deliberately does NOT require expires_at > NOW(): expires_at is
+ * the ACCESS token's 1h expiry, and gating refresh on it was the bug that
+ * broke every refresh attempted after the access token's natural life
+ * (claude.ai connectors silently losing tools after 1h). Refresh now works
+ * for the full refresh_token_expires_at (30d) window.
  */
 export async function refreshOAuthTokenBundle(
   db: PostgresJsDatabase,
@@ -497,41 +520,42 @@ export async function refreshOAuthTokenBundle(
   const refreshTokenHash = hashOpaque(params.refreshToken);
 
   return db.transaction(async (tx) => {
-    // Atomically consume by stamping the row with an immutable past sentinel
-    // (epoch). expires_at < NOW() then kills the old access token (validation
-    // checks expires_at > NOW) AND excludes the row from every concurrent
-    // refresh via this same WHERE clause — so N simultaneous refreshes mint
-    // exactly one new family (F38).
-    //
-    // We must NOT mark consumption with NOW(): NOW() is the transaction-START
-    // timestamp, and lock-acquisition order is independent of timestamp order.
-    // A txn that started earlier (smaller NOW()) but acquired the row lock
-    // later would, after the winner commits expires_at=winner.NOW(), re-check
-    // expires_at > self.NOW() as winner.NOW() > self.NOW() == true, match the
-    // row, and mint a SECOND family. A fixed past constant removes the cross-
-    // transaction NOW() comparison entirely. Under READ COMMITTED the blocked
-    // UPDATE re-evaluates the predicate after the winner commits, matches zero
-    // rows, and the caller gets invalid_grant.
+    // SET stamps two columns in one atomic consumption:
+    //   consumed_at = NOW()      — the CAS marker (and a useful audit time;
+    //                              safe here because nothing compares it).
+    //   expires_at = epoch       — deliberate policy + compatibility:
+    //     policy: the old ACCESS token dies the moment its bundle is rotated
+    //       (OAuth 2.1 leaves this open; revoking limits a stolen access
+    //       token's life to the rotation cadence). Every liveness reader —
+    //       validateKey, briefing scope resolution, the per-key rate limiter,
+    //       key lists, admin stats — checks expires_at > NOW(), so all of
+    //       them inherit the revocation without needing a consumed_at guard.
+    //     compatibility: pre-0028 code marked consumption by writing exactly
+    //       this sentinel and re-checking expires_at > NOW(). Writing it here,
+    //       and excluding epoch-stamped rows via `expires_at > to_timestamp(0)`
+    //       below, keeps a mixed-version window (rolling ECS task replacement,
+    //       or any row an old task consumes after the 0028 backfill ran)
+    //       race-free in both directions: rows consumed by either version are
+    //       dead for both versions.
     const rows = await tx.execute(sql`
       UPDATE claimnet.api_keys
-      SET expires_at = to_timestamp(0)
+      SET consumed_at = NOW(), expires_at = to_timestamp(0)
       WHERE refresh_token_hash = ${refreshTokenHash}
         AND key_type = 'oauth'
-        AND expires_at > NOW()
+        AND consumed_at IS NULL
+        AND expires_at > to_timestamp(0)
+        AND refresh_token_expires_at > NOW()
       RETURNING id, user_id, oauth_client_id, read_group_ids, write_group_ids,
-                default_write_group_id, refresh_token_expires_at
+                default_write_group_id
     `);
     const row = (rows as unknown as Array<RefreshableKeyRow & { id: string }>)[0];
-    if (!row) throw new RefreshTokenError("invalid_grant", "refresh token is invalid or revoked");
+    if (!row) throw new RefreshTokenError("invalid_grant", "refresh token is invalid, expired, or revoked");
 
     // Throwing past this point rolls the consumption back — a mismatched
-    // client_id or an expired refresh window must not burn the legitimate
-    // client's token (same observable behavior as before F38).
+    // client_id must not burn the legitimate client's token (same observable
+    // behavior as before F38).
     if (row.oauth_client_id !== params.clientId) {
       throw new RefreshTokenError("invalid_grant", "client_id does not match the refresh token");
-    }
-    if (new Date(row.refresh_token_expires_at).getTime() <= Date.now()) {
-      throw new RefreshTokenError("invalid_grant", "refresh token has expired");
     }
 
     return mintOAuthTokenBundle(tx, {

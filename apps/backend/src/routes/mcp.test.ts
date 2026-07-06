@@ -67,6 +67,21 @@ describe.skipIf(!BASE)("/mcp stateless behavior", () => {
     expect(challenge).toContain("/.well-known/oauth-protected-resource");
   });
 
+  it("returns 405 for GET and DELETE (stateless: no SSE stream, no sessions)", async () => {
+    // Streamable HTTP spec: servers not offering server-initiated messages
+    // MUST 405 the standalone GET. Before this fix the SDK opened an SSE
+    // stream that never sent a byte, silently stalling clients that wait on
+    // it (2026-07-06 claude.ai conversation-time tool-discovery failure).
+    for (const method of ["GET", "DELETE"] as const) {
+      const res = await fetch(`${BASE}/mcp`, {
+        method,
+        headers: { Accept: "text/event-stream, application/json", Authorization: `Bearer ${apiKey}` },
+      });
+      expect(res.status).toBe(405);
+      expect(res.headers.get("allow")).toContain("POST");
+    }
+  });
+
   it("accepts initialize without any session header (stateless)", async () => {
     const res = await fetch(`${BASE}/mcp`, {
       method: "POST",

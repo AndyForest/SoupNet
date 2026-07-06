@@ -481,7 +481,9 @@ ${checkUrl}&recipe=URL_ENCODED_RECIPE&evidence=URL_ENCODED_EVIDENCE&recipe_book=
 Human-readable parameter names (\`recipe\`, \`evidence\`, \`recipe_book\`) and the combined "recipe text, blank line, evidence" format are both accepted. The legacy \`&group=SLUG\` parameter is still accepted for backwards compatibility. Percent-encode the recipe and evidence values (spaces %20, quotes %22) — for example: \`recipe=As%20a%20designer%2C%20I%20prefer%20%22bold%22%20posters\`.
 
 ## How to check
-\`check_recipe\` accepts: \`recipe\` (the claim), \`supporting_evidence\` (warrant + data), and \`recipe_book\` (slug). Optional: \`axes\` (concept projection), \`clusters\`/\`max_chars\` (response size), and reference file attachments (images, PDF, audio, video) — see your tool schema for the exact file-input params. HTTP MCP also accepts an optional \`region.image_box\` with normalized \`{x0, y0, x1, y1}\` coordinates (0-1) to mark a specific area of an attached image — the embedding pipeline crops to that region, blurs the padding, and weights the marked area heavily.
+\`check_recipe\` accepts: \`recipe\` (the claim), \`supporting_evidence\` (warrant + data), and \`recipe_book\` (slug). Optional: \`axes\` (concept projection), \`clusters\`/\`max_chars\` (response size), and reference file attachments (images, PDF, audio, video) — see your tool schema for the exact file-input params. HTTP MCP also accepts an optional \`region.image_box\` with normalized \`{x0, y0, x1, y1}\` coordinates (0-1) to mark a specific area of an attached image — the embedding pipeline crops to that region plus padding, blurs the padding, and weights the marked area heavily; the original image is stored unmodified, so the region treatment can be redone later.
+
+Further optional params live in your tool schema, each doing what its one-line description says: \`known_recipes\` (declare ids you already hold — repeats come back as stubs, saving your context), \`decided_at\` (backfill the original date of a historical decision), \`response_format\` (markdown report or structured JSON), \`agent_id\` (mint your own id so your checks form a joinable lineage), and \`feedback\` (close the loop on earlier checks while making this one).
 
 For local files that have no public URL (screenshots, generated artifacts, anything on your disk), \`file_base64\` will blow your context window on anything bigger than a thumbnail. Instead, POST the file to the \`/uploads\` REST endpoint first using your same Bearer token, then pass the returned URL as \`file_url\`. The MCP server detects own-hostname URLs and resolves them internally — no second HTTP fetch, no public exposure. Example:
 
@@ -671,143 +673,117 @@ export const TIPS = [
 // across both surfaces and live here. Surface-specific params (axes,
 // recipe_book, file_url, region, etc.) stay inline in the MCP files.
 
+// Sizing rule (2026-07-06): tool and param descriptions are AFFORDANCES —
+// what the tool does, when to reach for it, and hard constraints. Teaching
+// (voice rules, worked examples, mechanism explainers) lives in the briefing,
+// which get_briefing serves once per session; duplicating it here shipped a
+// ~18KB tools/list that spent ~4.4k tokens of every connected conversation
+// and drifted from the canonical copy. Guard test caps the budget
+// (mcp-tool-descriptions.test.ts). Depth belongs in BRIEFING/docs, not here.
+
 export const MCP_TOOL_DESCRIPTIONS = {
   /** Shared lead — identical across HTTP and stdio MCP. */
   checkRecipeLead:
-    "Check a recipe against Soup.net — returns similar recipes with evidence. " +
-    "As a side effect, your recipe is logged so future checks get smarter (stigmergy). " +
-    "Check freely and often: before starting tasks (broad discovery), when facing judgment " +
-    "calls, and after completing meaningful work. " +
-    "Write from the HUMAN USER's perspective: 'As a [role] working on [goal], I [prefer/chose] so that [reason]'. " +
-    "Only check genuine hypotheses with evidence — not questions or fabricated queries. " +
-    "Results are clustered to 3 exemplars by default. Use clusters=5+ for discovery checks, " +
-    "or max_chars to auto-cluster to a character budget (e.g., 2000 for tight context).",
+    "Check a recipe against Soup.net — returns similar recipes with evidence, and logs your recipe " +
+    "so future checks get smarter (stigmergy). Check freely: before starting a task, at judgment " +
+    "calls, and after meaningful work. A recipe is the HUMAN USER's genuine position, never a " +
+    "fabricated query.",
 
   /** HTTP-only — file attachment via file_url or file_base64. */
   checkRecipeFileAttachment:
-    "Attach a reference file (image, PDF, audio, video) via file_url (server fetches the URL) " +
-    "or file_base64 (inline bytes) for multimodal evidence.",
+    "Attach a reference file (image, PDF, audio, video) via file_url or file_base64 for multimodal evidence.",
 
   /** Shared trailer — identical across HTTP and stdio MCP. */
-  checkRecipeTrailer: "Call get_briefing first if unsure about the format.",
+  checkRecipeTrailer:
+    "get_briefing teaches the format, voice rules, and this user's recipe books — call it before your first check.",
 
   /** Identical across both MCP surfaces. */
   getBriefing:
-    "Get the Soup.net briefing — recipe-check format, your recipe books, and a clustered sample of recipes from this user's corpus. " +
-    "Call this before your first check to learn the format and prime your context with the shape of the user's taste.",
+    "Get the Soup.net briefing — the recipe-check format and voice rules, this user's recipe books, " +
+    "and a clustered sample of their corpus. Call once before your first check.",
 
-  /** Shared by HTTP and stdio MCP. Descriptive, issue → approach → benefit —
-   *  consistent with the corpus's descriptive-not-prescriptive briefing taste. */
+  /** Shared by HTTP and stdio MCP. */
   logFeedback:
-    "Log feedback about a PRIOR recipe check — what the check surfaced, what you did with it, how it " +
-    "turned out. Stateless sessions lose this by default; a feedback row ties the check to its outcome, " +
-    "so the human can see which recipes earned their keep and future agents inherit a calibrated trail. " +
-    "One call logs one row, joined to the check by its recipe UUID (every check response carries ids " +
-    "inline). Null results seed value too — 'nothing similar found' feedback tells the corpus where " +
-    "it's thin. Mid-flow, you can instead attach feedback rows to your next check_recipe call via its " +
-    "feedback parameter (fewer calls); this standalone tool fits end-of-session rows and outcome/" +
-    "operational kinds that have no next check to ride on. The referenced check must be readable by " +
-    "your key.",
+    "Log feedback on a PRIOR recipe check: what it surfaced and what you did with it (kind " +
+    "'check-feedback'), an operational finding ('operational'), or a session wrap-up ('outcome'). " +
+    "Joined to the check by its recipe UUID — check responses carry ids inline. Null results are " +
+    "worth a row too. Mid-flow, prefer the feedback param on your next check_recipe; this tool fits " +
+    "end-of-session rows.",
 
   /** Identical across both MCP surfaces (WT-3 retrieval API). */
   getRecipes:
-    "Fetch specific recipes by id — returns each recipe's full text, evidence, references, recipe book, author, and dates. " +
-    "Use this when you already hold recipe ids (from document frontmatter like `soupnet_recipes:`, a prior check's results, or another agent's notes) " +
-    "and need the content without running a semantic search. Batch call: up to 20 ids per request. " +
-    "Ids that don't resolve return a not_found_or_unreadable marker instead of content — the id may not exist or may not be readable by your API key; " +
-    "the two cases are deliberately indistinguishable. One bad id never fails the rest of the batch.",
+    "Fetch recipes by id (up to 20 per call) — full text, evidence, references, book, and dates. " +
+    "Use when you already hold ids (frontmatter, prior check results) instead of re-checking. " +
+    "Unresolvable ids return a not_found_or_unreadable marker without failing the batch.",
 
   /** HTTP-only today; stdio may grow this tool later. */
   listMyRecipeBooks:
-    "Refresh your Soup.net corpus context — returns the user's identity, recipe books (with descriptions, access levels, and other members of shared books), and a clustered sample of recipes from the corpus. " +
-    "Call this when the conversation moves into a new area of the user's work, or periodically during long sessions on shared recipe books to pick up new recipes from collaborators. " +
-    "Same shape as the recipe-books section of the get_briefing output, without the boilerplate.",
+    "Refresh corpus context — the user's identity, recipe books (descriptions, access, members), and " +
+    "a clustered recipe sample. Call when the conversation moves into a new area of the user's work. " +
+    "Same as the briefing's recipe-books section without the boilerplate.",
 } as const;
 
 export const MCP_PARAM_DESCRIPTIONS = {
-  /** Recipe param — the role/voice guidance that mirrors ROLE_PATTERNS. */
+  /** Recipe param — the one-line voice rule; ROLE_PATTERNS in the briefing teaches it with examples. */
   recipe:
-    "Recipe (trace) — the human user's voice in a transferable role, not yours. " +
-    "Format: 'As a [role] working on [goal], I [prefer/chose] so that [reason]'. " +
-    "Pick a role that transfers across users and projects (e.g., 'front-end React developer'), " +
-    "not the user's name and not the project name when the recipe-book description already implies it. " +
-    "Common voice mistakes: 'As an AI agent…' (your voice instead of the user's), " +
-    "'As Andy…' (collapses role into a specific person), " +
-    "'As a Soup.net developer…' when written to the soup-net-development recipe book (duplicates context the recipe-book description already provides; replace with the functional equivalent like 'front-end React developer', not nothing). " +
-    "Every recipe needs context — role and goal scope the judgment.",
+    "The claim, in the HUMAN USER's voice with a transferable role: 'As a [role] working on [goal], " +
+    "I [prefer/chose] so that [reason]'. Use the user's functional role — not your voice, not their " +
+    "name, not project proper nouns the recipe book already implies. The briefing teaches the voice " +
+    "rules with examples.",
 
   supportingEvidence:
     "Supporting evidence for your recipe. Each entry: interpretation text, then '> direct quote', " +
     "then '-- source citation'. Separate entries with blank lines.",
 
   clusters:
-    "Number of result clusters (reduces results to k representative exemplars). " +
-    "Defaults to 3. Use 5+ for discovery checks to surface more diverse viewpoints. " +
-    "Each exemplar includes cluster size. Overridden by max_chars if specified.",
+    "Result cluster count (default 3). Use 5+ for discovery checks to surface diverse viewpoints. " +
+    "Overridden by max_chars.",
 
   maxChars:
-    "Target response size in characters -- auto-clusters to fit. " +
-    "Recommended: 2000 for tight context, 5000 for detailed responses.",
+    "Target response size in characters — auto-clusters to fit. 2000 for tight context, 5000 for detail.",
 
   decidedAt:
-    "Optional ISO 8601 date or datetime (e.g. '2024-03-15' or '2024-03-15T14:30:00Z') — when the human " +
-    "originally made this taste/judgment call, if it predates this check. Use it to backfill decisions " +
-    "discovered in dated artifacts (git history, ADRs, old docs): set it to the artifact's timestamp so " +
-    "the recipe carries the original judgment date instead of today's. Worked example: a framework choice " +
-    "found in an ADR dated 2024-03-15 is checked today with decided_at='2024-03-15'. Must not be in the " +
-    "future. Omit for contemporaneous judgments.",
+    "ISO 8601 date/datetime of when the human originally made this call, for backfilling decisions " +
+    "found in dated artifacts (an ADR dated 2024-03-15 → decided_at='2024-03-15'). Not in the future; " +
+    "omit for contemporaneous judgments.",
 
   responseFormat:
-    "Response format. 'markdown' (default): a readable report — each exemplar line carries its full " +
-    "recipe UUID and similarity inline, so you can cite trace ids in later feedback without re-fetching. " +
-    "'structured': the same data as MCP structuredContent (JSON with recipeId, per-result id/recipe/" +
-    "createdAt/group/score/evidence, relatedEvidence, totalResults) plus a one-line text stub — useful " +
-    "when you parse results programmatically. Each response carries exactly one format, never both.",
+    "'markdown' (default): readable report with recipe UUIDs and similarity inline. 'structured': the " +
+    "same data as structuredContent JSON plus a one-line text stub. One format per response, never both.",
 
   agentId:
-    "Optional free-text agent identity you mint for yourself (e.g. 'a-refactor-sweep-2026-07'). " +
-    "Stamped on the check's audit record and usable on feedback rows, so lineages of checks from the " +
-    "same agent thread are joinable later. Capture only — it does not change search or logging behavior.",
+    "Free-text agent id you mint for yourself (e.g. 'a-refactor-2026-07'), stamped on audit records " +
+    "so check lineages are joinable. Capture only.",
 
   knownRecipes:
-    "Optional comma-separated recipe UUIDs you already hold in context (from earlier checks, a " +
-    "briefing, or frontmatter). Matching results come back as one-line stubs — id, a short gist, and " +
-    "similarity — instead of full bodies, saving your context for recipes you haven't seen. Rendering " +
-    "only: stubs still occupy their cluster slots, and trace logging is unchanged. You stay " +
-    "authoritative about your own context — declare only ids whose content you actually still hold.",
+    "Comma-separated recipe UUIDs you still hold in context; matching results render as one-line " +
+    "stubs instead of full bodies. Rendering only — logging and clustering are unchanged.",
 
   feedbackParam:
-    "Optional feedback rows about PRIOR checks, riding along with this check (saves a round trip " +
-    "mid-flow). Each row carries its own trace_id — the recipe UUID a previous check response " +
-    "reported — plus kind (check-feedback | operational | outcome), impact (none | new | subtle | big " +
-    "| operational), disposition (proceeded | corrected | asked-human | charted-new | deferred), " +
-    "story_fulfilled (yes | partial | no | unknown), story (why you checked), and optional note / " +
-    "top_similarity / model / harness / related_trace_ids (lineage links for correction arcs). Rows " +
-    "are validated independently: a rejected row gets a marker in the response, the rest still land, " +
-    "and the check itself is never blocked by its feedback.",
+    "Feedback rows about PRIOR checks, riding along with this one. Each row: trace_id of the earlier " +
+    "check plus the fields in this schema (log_feedback documents their meaning). Rows validate " +
+    "independently — a rejected row never blocks the check.",
+
+  synthesize:
+    "Premium opt-in: distil results into one short preference profile (newest wins, ids cited). " +
+    "Ineligible callers get a one-line hint, never an error.",
 
   /** get_recipes — the id list (WT-3 retrieval API). */
   recipeIds:
-    "Recipe ids (UUIDs), comma- or whitespace-separated. Up to 20 per call. " +
-    "Each id resolves independently: readable ids return full content; unknown, unreadable, or malformed ids " +
-    "return a not_found_or_unreadable marker entry (the cases are deliberately indistinguishable, and never fail the batch).",
+    "Recipe ids (UUIDs, comma- or whitespace-separated, up to 20). Each resolves independently; " +
+    "unresolvable ids return a not_found_or_unreadable marker without failing the batch.",
 
   /** get_briefing recipe_ids — same lookup, phrased for the onboarding call. */
   briefingRecipeIds:
-    "Optional recipe ids (UUIDs, comma- or whitespace-separated, up to 20) to render in a 'Requested recipes' " +
-    "section at the end of the briefing — full text, evidence, and references for exactly those recipes. " +
-    "Use when your task brief names specific recipes (e.g. a document's `soupnet_recipes:` frontmatter) so one " +
-    "briefing call returns identity, format, and the named recipes together. Ids that don't resolve appear as " +
-    "not_found_or_unreadable markers. For mid-session lookups, prefer the standalone get_recipes tool — it skips " +
-    "the briefing boilerplate.",
+    "Recipe ids (up to 20) to render in a 'Requested recipes' section at the end of the briefing — " +
+    "use when a task brief names recipes (e.g. soupnet_recipes frontmatter). For mid-session lookups, " +
+    "prefer get_recipes.",
 
   /** get_briefing purpose — biases exemplar selection. */
   briefingPurpose:
-    "Optional free-text description of the task this briefing is for (e.g. 'adding rate limiting to a new REST endpoint'). " +
-    "Biases which exemplar recipes illustrate the corpus: the cluster structure stays corpus-wide (the briefing still maps " +
-    "the whole shape of accumulated taste), but within each cluster the recipe most semantically similar to your purpose is " +
-    "chosen as that cluster's exemplar — tailored examples, stable map. It does not filter or reorder the corpus, and it is " +
-    "independent of the keyword filter param. The briefing echoes the purpose back so you can confirm it was applied.",
+    "Free-text description of the task this briefing is for. Within each cluster, the exemplar most " +
+    "semantically similar to your purpose is chosen — tailored examples, stable corpus map. Echoed " +
+    "back so you can confirm it applied.",
 } as const;
 
 /** Compose the full check_recipe tool description, optionally with the file-attachment sentence. */
