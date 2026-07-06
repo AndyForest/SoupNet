@@ -117,6 +117,7 @@ export async function generateDailyKey(
   readGroupIds: string[],
   writeGroupIds?: string[],
   defaultWriteGroup?: string,
+  label?: string,
 ): Promise<GenerateKeyResult> {
   const rawKey = generateRawKey("cn_d_");
   const hashedKey = hashKey(rawKey);
@@ -135,7 +136,7 @@ export async function generateDailyKey(
       ${sql`ARRAY[${sql.join(readGroupIds.map((g) => sql`${g}::uuid`), sql`,`)}]`},
       ${sql`ARRAY[${sql.join(effectiveWriteGroupIds.map((g) => sql`${g}::uuid`), sql`,`)}]`},
       ${effectiveDefaultWrite}::uuid,
-      NULL,
+      ${label ?? null},
       'daily',
       ${expiresAt.toISOString()}::timestamptz,
       NOW()

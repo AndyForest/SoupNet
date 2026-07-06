@@ -185,3 +185,84 @@ describe.skipIf(!BASE)("/keys briefing — F33 lookup-by-hashed-key", () => {
     expect(cross.status).toBe(404);
   });
 });
+
+// 2026-07-05 journey-eval defect #7b: POST /keys/daily previously hardcoded
+// label to NULL, so every dashboard-minted key showed as "(unlabeled)" in
+// the trace attribution and the API Keys list. The api_keys schema already
+// carries a label column (used by /keys/scoped) — this just threads it
+// through the daily-key path too.
+describe.skipIf(!BASE)("/keys/daily — label passthrough", () => {
+  it("stores and returns a caller-supplied label", async () => {
+    const email = `keys-label-${uid}@test.local`;
+    const password = "label-test-password-123";
+    const reg = await fetch(`${BASE}/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password, tosAccepted: true }),
+    });
+    const regBody = (await reg.json()) as { data?: { verificationToken?: string } };
+    await fetch(`${BASE}/auth/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: regBody.data?.verificationToken }),
+    });
+    const login = await fetch(`${BASE}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    const loginBody = (await login.json()) as { data?: { token?: string } };
+    const token = loginBody.data?.token ?? "";
+    expect(token).toBeTruthy();
+
+    const mintRes = await fetch(`${BASE}/keys/daily`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ label: "Dashboard briefing — test" }),
+    });
+    expect(mintRes.status).toBe(200);
+
+    const listRes = await fetch(`${BASE}/keys`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const listBody = (await listRes.json()) as { ok: boolean; data: Array<{ label: string | null; keyType: string }> };
+    const dailyKeys = listBody.data.filter((k) => k.keyType === "daily");
+    expect(dailyKeys.some((k) => k.label === "Dashboard briefing — test")).toBe(true);
+  });
+
+  it("omitting a label still mints a key (label stays null, unchanged behavior)", async () => {
+    const email = `keys-nolabel-${uid}@test.local`;
+    const password = "nolabel-test-password-123";
+    const reg = await fetch(`${BASE}/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password, tosAccepted: true }),
+    });
+    const regBody = (await reg.json()) as { data?: { verificationToken?: string } };
+    await fetch(`${BASE}/auth/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: regBody.data?.verificationToken }),
+    });
+    const login = await fetch(`${BASE}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    const loginBody = (await login.json()) as { data?: { token?: string } };
+    const token = loginBody.data?.token ?? "";
+
+    const mintRes = await fetch(`${BASE}/keys/daily`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(mintRes.status).toBe(200);
+
+    const listRes = await fetch(`${BASE}/keys`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const listBody = (await listRes.json()) as { ok: boolean; data: Array<{ label: string | null; keyType: string }> };
+    const dailyKeys = listBody.data.filter((k) => k.keyType === "daily");
+    expect(dailyKeys.some((k) => k.label === null)).toBe(true);
+  });
+});

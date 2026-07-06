@@ -12,6 +12,14 @@ interface CopyBriefingButtonProps {
    * every other Copy-briefing button).
    */
   writeRecipeBookId?: string | undefined;
+  /**
+   * Human-facing label stamped on the minted daily key (e.g. "Dashboard
+   * briefing — 2026-07-05"). Shows up in the API Keys list and the trace
+   * attribution instead of "(unlabeled)" (2026-07-05 journey-eval defect
+   * #7b). Optional — omitted entirely for callers that don't have a
+   * meaningful context to name (the label column already tolerates null).
+   */
+  label?: string | undefined;
   style?: React.CSSProperties;
 }
 
@@ -25,17 +33,20 @@ interface CopyBriefingButtonProps {
  * Safari's user-gesture context alive across both awaits — a copy after a
  * plain awaited fetch would silently no-op on iPhone.
  */
-export function CopyBriefingButton({ writeRecipeBookId, style }: CopyBriefingButtonProps) {
+export function CopyBriefingButton({ writeRecipeBookId, label, style }: CopyBriefingButtonProps) {
   const queryClient = useQueryClient();
   const { copyAsync, copied } = useClipboard(2500);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function fetchBriefingText(): Promise<string> {
-    const body = writeRecipeBookId ? { writeRecipeBookId } : undefined;
+    const body: Record<string, string> = {};
+    if (writeRecipeBookId) body["writeRecipeBookId"] = writeRecipeBookId;
+    if (label) body["label"] = label;
+    const hasBody = Object.keys(body).length > 0;
     const keyRes = await authFetch("/keys/daily", {
       method: "POST",
-      ...(body ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}),
+      ...(hasBody ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}),
     });
     const keyJson = (await keyRes.json()) as {
       ok: boolean;

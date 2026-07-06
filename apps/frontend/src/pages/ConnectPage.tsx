@@ -46,7 +46,10 @@ export function ConnectPage() {
         <AgentTypePicker
           briefingSlot={
             isLoggedIn() ? (
-              <CopyBriefingButton style={{ width: "100%" }} />
+              <CopyBriefingButton
+                label={`Connect page briefing — ${new Date().toISOString().slice(0, 10)}`}
+                style={{ width: "100%" }}
+              />
             ) : (
               <p className="text-sm" style={{ margin: 0, color: "var(--color-on-surface-variant)" }}>
                 <Link to="/auth/login" style={{ color: "var(--color-primary)" }}>Sign in</Link>{" "}
