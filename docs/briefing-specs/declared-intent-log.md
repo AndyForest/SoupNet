@@ -2,6 +2,32 @@
 
 Every PR that touches briefing copy (`packages/domain/src/recipe-guide-content.ts`, the briefing composer, MCP tool descriptions) appends an entry here **before** merging: the date, each edit, the scenarios it intends to move, and the rationale for why every other scenario holds. See [README.md](README.md) §The regression rule. Newest entry first.
 
+## 2026-07-06 — OAuth connections: credential-free briefing branch
+
+Backlog item "Reconcile the briefing's API-key-in-URL assumptions for OAuth-connected agents". Live failure (2026-07-06, claude.ai connector): the briefing rendered the raw 1-hour OAuth access token in "## Your API key" and embedded it as `?key=` in every setup URL; the connected agent warned the user about a "leaked key" that wasn't one.
+
+### Edits
+
+When the briefing is composed for an OAuth access token (`api_keys.key_type = 'oauth'`, threaded from `resolveScope` through `BRIEFING.build`'s new `oauthConnection` input), the four credential-bearing sections swap to short truthful notes; every other section is shared verbatim between the two branches:
+
+1. **"## Your API key" → "## Your connection"** — connected via OAuth, 1-hour token (verified: `ACCESS_TOKEN_TTL_SECONDS` in oauth.service.ts) the client refreshes automatically, nothing to copy, paste, protect, or rotate.
+2. **"## Setup — MCP-capable agents"** — one already-connected line (the tools are live in this session) plus the `/info/connect` pointer for connecting other clients (canonical-doc rule, recipe 12b00466).
+3. **"## Setup — web-only agents"** — keyless note: the key-in-URL flow doesn't apply to this connection; the human can mint a pasteable key and copy a key-carrying briefing at the frontend.
+4. **"## Formatting recipe-check links"** — heading kept (the divergent-checks section cross-references it) with a not-applicable note and dashboard pointer instead of the key-embedded markdown-link example.
+
+Defense in depth: for OAuth keys the composer also passes a keyless `checkUrl` and an empty `apiKey`, so the token physically cannot render even if a future template edit misses the branch. Non-OAuth briefings are **byte-identical** to before (verified against the HEAD render, 20,417 bytes with fixed inputs; pinned by `packages/domain/src/recipe-guide-content.test.ts` plus two integration tests in `oauth-flow.test.ts`).
+
+### Scenarios intended to move
+
+None — no existing scenario's persona is an OAuth-connected agent.
+
+### Scenarios watched, with rationale for holding
+
+- **`web-only-agents.feature` (all scenarios)** — the web-setup section and key-embedded URL examples disappear for OAuth connections only. Every persona in that file is a web-browsing agent primed with a pasted key-carrying briefing; an OAuth connection is by definition an MCP tool-calling session, so the pasteable-key population those scenarios describe always receives the unchanged legacy sections.
+- **`divergent-checks.feature`** — untouched copy; the "see the link-formatting guidance below" cross-reference still resolves in both branches because the section heading is kept in OAuth mode.
+- **`comprehension-quiz.feature`, `recipe-voice`, `evidence-integrity`, `checking-behavior`, `recipe-book-routing`, `advanced-workflows`, `feedback-loop`** and the `@unreleased` files — principles, format, when-to-check, how-to-check, feedback, annotation, and corpus-context copy are shared verbatim between the branches (single template with four swapped section variables), so no fed copy changed for any non-OAuth reader.
+- Suite re-run: the agent-run harness is not yet wired (README §regression rule "once wired"); per README, the .feature files double as the manual checklist until then.
+
 ## 2026-07-05 — FF-3: feedback parity, dry-run honesty, encoding/decided_at examples, hostname derivation
 
 Six copy edits from the 2026-07-05 qualitative-eval findings (§Briefing copy gaps surfaced by cold readers) and the backlog item "Feedback copy parity for web agents". First entry under the declared-intent rule.

@@ -435,6 +435,50 @@ describe.skipIf(!BASE)("OAuth 2.1 end-to-end flow", () => {
     expect(deadRes.status).toBeGreaterThanOrEqual(400);
   });
 
+  // Briefing OAuth branch (backlog: "Reconcile the briefing's API-key-in-URL
+  // assumptions for OAuth-connected agents"): an OAuth access token expires
+  // within the hour and is refreshed automatically by the client, so the
+  // briefing must render NO raw credential and NO key-embedded URL — a
+  // claude.ai agent warned its user about a "leaked key" when the raw token
+  // rendered in the "## Your API key" section (2026-07-06).
+  it("briefing composed for an OAuth access token contains no raw credential and no key-embedded URL", async () => {
+    const bundle = await mintBundle();
+
+    const res = await fetch(`${BASE}/briefing`, {
+      headers: { Authorization: `Bearer ${bundle.access}` },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; data?: { text?: string } };
+    const text = body.data?.text ?? "";
+    expect(text).toBeTruthy();
+
+    expect(text).not.toContain(bundle.access);
+    expect(text).not.toContain("?key=");
+    expect(text).not.toContain("&key=");
+    expect(text).toContain("## Your connection");
+    expect(text).not.toContain("## Your API key");
+    expect(text).toContain("You're already connected");
+  });
+
+  it("briefing composed for a plain daily key still states the pasteable key and embeds it in URLs", async () => {
+    const keyRes = await postJson("/keys/daily", { label: `oauth-brief-plain-${uid}` }, userToken);
+    expect(keyRes.status).toBe(200);
+    const keyBody = (await keyRes.json()) as { ok: boolean; data?: { key?: string } };
+    const plainKey = keyBody.data?.key ?? "";
+    expect(plainKey).toBeTruthy();
+
+    const res = await fetch(`${BASE}/briefing`, {
+      headers: { Authorization: `Bearer ${plainKey}` },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; data?: { text?: string } };
+    const text = body.data?.text ?? "";
+    expect(text).toContain("## Your API key");
+    expect(text).toContain(plainKey);
+    expect(text).toContain(`?key=${plainKey}`);
+    expect(text).not.toContain("## Your connection");
+  });
+
   // Migration 0028 backfill: rows consumed under the OLD marker scheme carry
   // expires_at = to_timestamp(0) with consumed_at NULL. Without protection,
   // the new refresh gate (which ignores expires_at > NOW()) would resurrect

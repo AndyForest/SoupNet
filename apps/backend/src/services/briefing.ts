@@ -96,6 +96,9 @@ interface ResolvedScope {
   /** api_keys.id + owning user — for the briefing.issued audit stamp. */
   keyId: string;
   userId: string;
+  /** api_keys.key_type — 'daily' | 'scoped' | 'oauth'. OAuth access tokens
+   *  must never be rendered as pasteable credentials in the briefing. */
+  keyType: string;
 }
 
 /** Compose the full unified briefing markdown. */
@@ -121,7 +124,16 @@ export async function composeBriefing(input: BriefingComposeInput): Promise<Brie
     metadata: { surface: input.surface ?? null, exemplarCount },
   });
 
-  const checkUrl = `${input.backendUrl}/check?key=${encodeURIComponent(input.rawKey)}`;
+  // OAuth access tokens (key_type = 'oauth') expire within the hour and are
+  // refreshed automatically by the connecting client — they are not pasteable
+  // credentials. The briefing template renders credential-free sections when
+  // oauthConnection is set; passing a keyless checkUrl and an empty apiKey on
+  // top of that means the raw token physically cannot appear in the output
+  // even if a future template edit misses the branch (defense in depth).
+  const isOAuth = scope.keyType === "oauth";
+  const checkUrl = isOAuth
+    ? `${input.backendUrl}/check`
+    : `${input.backendUrl}/check?key=${encodeURIComponent(input.rawKey)}`;
 
   // Requested recipes (WT-3): render exactly the ids the caller named, with
   // the same ACL and marker semantics as GET /recipes / the get_recipes tool.
@@ -141,11 +153,12 @@ ${renderRecipeEntries(entries)}${truncated}`;
 
   const text = BRIEFING.build({
     user: scope.user,
-    apiKey: input.rawKey,
+    apiKey: isOAuth ? "" : input.rawKey,
     backendUrl: input.backendUrl,
     frontendUrl: input.frontendUrl,
     checkUrl,
     groups: scope.groups,
+    ...(isOAuth ? { oauthConnection: true } : {}),
     ...(exemplarsSection ? { exemplarsSection } : {}),
     ...(scope.options.purpose ? { purpose: scope.options.purpose } : {}),
     ...(requestedRecipesSection ? { requestedRecipesSection } : {}),
@@ -178,6 +191,7 @@ interface KeyRow {
   read_group_ids: string[];
   write_group_ids: string[];
   default_write_group_id: string;
+  key_type: string;
 }
 
 interface GroupRow {
@@ -208,7 +222,7 @@ async function resolveScope(
   const hashedKey = crypto.createHash("sha256").update(rawKey).digest("hex");
   const userScopeClause = userId ? sql`AND user_id = ${userId}::uuid` : sql``;
   const keyRows = await db.execute(sql`
-    SELECT id, user_id, read_group_ids, write_group_ids, default_write_group_id
+    SELECT id, user_id, read_group_ids, write_group_ids, default_write_group_id, key_type
     FROM claimnet.api_keys
     WHERE key = ${hashedKey}
       AND expires_at > NOW()
@@ -311,6 +325,7 @@ async function resolveScope(
     options: opts,
     keyId: keyRow.id,
     userId: keyRow.user_id,
+    keyType: keyRow.key_type,
   };
 }
 
