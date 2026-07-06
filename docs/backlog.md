@@ -259,6 +259,10 @@ Backend `/check` response copy for a new/thin recipe book returning zero results
 
 ## Unsorted
 
+### `[IMPL]` Audit the /docs pages' ?key= prefill under the no-raw-keys-outside-JWT invariant
+
+The 2026-07-06 placeholder-mode change established the invariant (CI-enforced for briefing surfaces): raw API keys never appear in responses not gated by human-only JWT auth, and no longer transit request URLs on the briefing path. The /docs pages (`/docs/mcp-setup?key=`, `/docs/recipe-check-guide?key=`) and the `/check?key=` page itself are the same class — a raw key in a URL echoed into rendered HTML. The web key-in-URL flow is load-bearing by design (web-only agents), so this is an audit-and-decide, not a mechanical port: which echoes are essential to that flow, which can go placeholder, and whether the key-in-URL design itself gets revisited. Note: briefings now link to `/docs/mcp-setup?key=YOUR_API_KEY`, so post-substitution artifacts exercise the prefill path with a real key.
+
 ### `[IMPL]` Parameterize the local CI-gate port/project so parallel sessions can gate concurrently
 
 Found 2026-07-06: two Claude sessions running `npm run test:ci` simultaneously collide — the harness hardcodes host port 5534 and a fixed compose project, so the second run fails with "Bind for 0.0.0.0:5534: port is already allocated" (observed against the premium-llm session's gate). Fix in `scripts/test-ci-local.mjs` + `docker-compose.ci.yml`: derive the host port and compose project name from an env override (e.g. `CI_PG_PORT`, default 5534) or a session-unique suffix, and pass the resolved port through to the backend's `PGPORT`. Local-only change — GitHub CI runs in isolated runners, so the ci.yml mirror rule isn't implicated as long as env parity for the app under test is preserved. Until fixed: sessions serialize gates by watching for `*-postgres-ci-1` containers.
