@@ -52,6 +52,7 @@ import { sql } from "drizzle-orm";
 import type { AppEnv } from "../types";
 import { writeAudit } from "../services/audit-log.service";
 import { ClientSafeError, publicErrorMessage } from "../lib/client-safe-error";
+import { invalidKeyMessage } from "../lib/key-remediation";
 import type { RawFeedbackRow } from "../services/feedback.service";
 import { ingestFeedback, summarizeFeedbackResults } from "../services/feedback.service";
 
@@ -450,7 +451,7 @@ function createMcpServer(backendUrl: string): McpServer {
             // Validate the api key first so we know which key owns the upload.
             const keyResult = await validateKey(getDb(), apiKey);
             if (!keyResult) {
-              return { content: [{ type: "text" as const, text: "Error: Invalid or expired API key." }] };
+              return { content: [{ type: "text" as const, text: `Error: ${invalidKeyMessage()}` }] };
             }
             try {
               const resolved = await resolveUpload(getDb(), keyResult.keyId, file_url);
@@ -631,7 +632,7 @@ function createMcpServer(backendUrl: string): McpServer {
 
         if (!result.ok) {
           if (result.code === "key_not_found") {
-            return { content: [{ type: "text" as const, text: "Error: Invalid or expired API key." }] };
+            return { content: [{ type: "text" as const, text: `Error: ${invalidKeyMessage()}` }] };
           }
           return { content: [{ type: "text" as const, text: "Error: Briefing unavailable." }] };
         }
@@ -678,7 +679,7 @@ function createMcpServer(backendUrl: string): McpServer {
         const db = getDb();
         const keyResult = await validateKey(db, apiKey);
         if (!keyResult) {
-          return { content: [{ type: "text" as const, text: "Error: Invalid or expired API key." }] };
+          return { content: [{ type: "text" as const, text: `Error: ${invalidKeyMessage()}` }] };
         }
 
         const ids = parseRecipeIds(recipe_ids);
@@ -739,7 +740,7 @@ function createMcpServer(backendUrl: string): McpServer {
 
         if (!result.ok) {
           if (result.code === "key_not_found") {
-            return { content: [{ type: "text" as const, text: "Error: Invalid or expired API key." }] };
+            return { content: [{ type: "text" as const, text: `Error: ${invalidKeyMessage()}` }] };
           }
           return { content: [{ type: "text" as const, text: "Error: Corpus context unavailable." }] };
         }
@@ -804,7 +805,7 @@ function createMcpServer(backendUrl: string): McpServer {
         const db = getDb();
         const keyResult = await validateKey(db, apiKey);
         if (!keyResult) {
-          return { content: [{ type: "text" as const, text: "Error: Invalid or expired API key." }] };
+          return { content: [{ type: "text" as const, text: `Error: ${invalidKeyMessage()}` }] };
         }
 
         const { userId, writeGroupIds } = keyResult;
@@ -941,7 +942,7 @@ function createMcpServer(backendUrl: string): McpServer {
         const db = getDb();
         const keyResult = await validateKey(db, apiKey);
         if (!keyResult) {
-          return { content: [{ type: "text" as const, text: "Error: Invalid or expired API key." }] };
+          return { content: [{ type: "text" as const, text: `Error: ${invalidKeyMessage()}` }] };
         }
         const results = await ingestFeedback({
           db,
@@ -1047,15 +1048,20 @@ export function buildMcpJsonResponse(
     data["formatWarning"] = result.formatWarning;
   }
 
-  // Related evidence (full fields)
+  // Related evidence (full fields). recipeId per entry (2026-07-05):
+  // without it agents burned full re-checks recovering recipes they'd
+  // already half-seen — get_recipes turns that into a cheap lookup.
   if (result.relatedEvidence && result.relatedEvidence.length > 0) {
     data["relatedEvidence"] = result.relatedEvidence.map((e) => ({
       evidenceId: e.evidenceId,
+      recipeId: e.parentTraceId,
       parentRecipe: e.parentTraceText,
       evidence: e.evidenceContent,
       similarity: e.semanticScore,
       strategy: "contextual_evidence",
     }));
+    data["relatedEvidenceHint"] =
+      "Each entry carries the source recipe's UUID as recipeId — fetch the full recipe with the get_recipes tool instead of re-checking.";
   }
 
   // Concept axes (semantic projection)

@@ -37,6 +37,36 @@ function makeEnriched(id: string, clusterSize?: number): EnrichedResult {
   };
 }
 
+describe("buildMcpJsonResponse related evidence", () => {
+  it("carries the source recipe UUID on each entry plus a lookup hint (2026-07-05: id-less entries forced re-checks)", () => {
+    const response = buildMcpJsonResponse(
+      makeResult({
+        relatedEvidence: [
+          {
+            evidenceId: "e1",
+            parentTraceId: "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+            parentTraceText: "As a dev, I chose X.",
+            evidenceContent: "Interpretation here",
+            semanticScore: 0.76,
+          },
+        ],
+      }),
+      [makeEnriched("a")],
+      1,
+    );
+    const data = response["data"] as Record<string, unknown>;
+    const related = data["relatedEvidence"] as Array<Record<string, unknown>>;
+    expect(related[0]!["recipeId"]).toBe("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    expect(String(data["relatedEvidenceHint"])).toContain("get_recipes");
+  });
+
+  it("omits the hint when there is no related evidence", () => {
+    const response = buildMcpJsonResponse(makeResult(), [makeEnriched("a")], 1);
+    const data = response["data"] as Record<string, unknown>;
+    expect(data["relatedEvidenceHint"]).toBeUndefined();
+  });
+});
+
 describe("buildMcpJsonResponse actions hints", () => {
   it("never emits a nextPage hint (the tool accepts no page param)", () => {
     const response = buildMcpJsonResponse(makeResult(), [makeEnriched("a", 5)], 1);

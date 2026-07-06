@@ -6,7 +6,7 @@ const empty: PageParams = {
   ea: undefined, sort: undefined, page: undefined, format: undefined,
   clusters: undefined, maxChars: undefined, expand: undefined, compact: undefined,
   axes: undefined, group: undefined, readGroups: undefined, decidedAt: undefined,
-  agentId: undefined, knownRecipes: undefined,
+  agentId: undefined, knownRecipes: undefined, filter: undefined,
   imageFile: undefined,
 };
 
@@ -101,12 +101,14 @@ describe("readParams", () => {
       group: "old-name",
       read_groups: "a,b",
       decided: "2024-03-15",
+      f: "keyword narrowing",
     }));
     expect(p.trace).toBe("Hello");
     expect(p.ef).toBe("World");
     expect(p.group).toBe("old-name");
     expect(p.readGroups).toBe("a,b");
     expect(p.decidedAt).toBe("2024-03-15");
+    expect(p.filter).toBe("keyword narrowing");
   });
 
   it("wire name wins when both wire and alias are set", () => {
