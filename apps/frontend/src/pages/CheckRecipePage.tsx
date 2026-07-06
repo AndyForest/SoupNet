@@ -164,6 +164,7 @@ export function CheckRecipePage() {
       <div
         style={{
           display: "flex",
+          flexWrap: "wrap",
           alignItems: "center",
           gap: "var(--space-md)",
           marginBottom: "var(--space-xl)",
@@ -181,7 +182,7 @@ export function CheckRecipePage() {
           className="btn-secondary"
           onClick={() => agentLinkMutation.mutate()}
           disabled={agentLinkMutation.isPending}
-          style={{ whiteSpace: "nowrap", flexShrink: 0 }}
+          style={{ flexShrink: 0 }}
         >
           <Icon name="external-link" size={16} />
           {agentLinkOpened ? "Opened!" : agentLinkMutation.isPending ? "Generating..." : "Go to daily recipe check link for agents"}

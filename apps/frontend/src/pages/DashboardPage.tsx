@@ -236,7 +236,7 @@ export function DashboardPage() {
       </div>
 
       {/* Two-column: recent traces + quick actions */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: "var(--space-xl)", alignItems: "start" }}>
+      <div className="grid-main-sidebar" style={{ gap: "var(--space-xl)", alignItems: "start" }}>
         {/* Recipe check log */}
         <section>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "var(--space-md)" }}>

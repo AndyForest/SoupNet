@@ -266,6 +266,19 @@ label {
   }
 }
 
+/* ── Main + sidebar column layout ───────────────────────────────── */
+/* Wide screens: content column with a fixed 300px sidebar. Below 900px,
+   stack — a fixed sidebar column forces horizontal scroll on phones. */
+.grid-main-sidebar {
+  display: grid;
+  grid-template-columns: 1fr;
+}
+@media (min-width: 900px) {
+  .grid-main-sidebar {
+    grid-template-columns: minmax(0, 1fr) 300px;
+  }
+}
+
 /* ── Landing-page walkthrough step ─────────────────────────────── */
 /* Inner layout for the numbered Step component: text + illustration
    share a column under the marker. On wide screens the illustration
