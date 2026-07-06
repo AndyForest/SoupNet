@@ -1,5 +1,5 @@
 {
-  "id": "e2a22e7f-edd2-4559-a0a8-6de618a8e449",
+  "id": "28c1e9e4-b701-45cb-bbf9-255fd56844c0",
   "prevId": "7cc5b32f-f987-4737-bc2a-9b1961850780",
   "version": "7",
   "dialect": "postgresql",
@@ -2807,6 +2807,20 @@
           ],
           "onDelete": "cascade",
           "onUpdate": "no action"
+        },
+        "check_feedback_stars_user_id_users_id_fk": {
+          "name": "check_feedback_stars_user_id_users_id_fk",
+          "tableFrom": "check_feedback_stars",
+          "tableTo": "users",
+          "schemaTo": "claimnet",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -2893,6 +2907,20 @@
           "schemaTo": "claimnet",
           "columnsFrom": [
             "trace_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "trace_reactions_user_id_users_id_fk": {
+          "name": "trace_reactions_user_id_users_id_fk",
+          "tableFrom": "trace_reactions",
+          "tableTo": "users",
+          "schemaTo": "claimnet",
+          "columnsFrom": [
+            "user_id"
           ],
           "columnsTo": [
             "id"

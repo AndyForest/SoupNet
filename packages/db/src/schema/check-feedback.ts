@@ -31,6 +31,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { claimnetSchema, traces } from "./traces";
+import { users } from "./users";
 
 export const checkFeedback = claimnetSchema.table(
   "check_feedback",
@@ -104,7 +105,13 @@ export const traceReactions = claimnetSchema.table(
     traceId: uuid("trace_id")
       .notNull()
       .references(() => traces.id, { onDelete: "cascade" }),
-    userId: uuid("user_id").notNull(), // ref -> users.id (no FK; matches traces.user_id)
+    // FK cascade (matches invitations.inviter_id): account deletion must
+    // also remove the user's reactions on OTHER users' shared-book traces —
+    // the trace FK only covers reactions on their own (deleted) traces, and
+    // auth.ts's explicit deletion list doesn't touch this table.
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
 
     reaction: text("reaction").notNull(), // still_true | stale | wrong
 
@@ -130,7 +137,11 @@ export const checkFeedbackStars = claimnetSchema.table(
     feedbackId: uuid("feedback_id")
       .notNull()
       .references(() => checkFeedback.id, { onDelete: "cascade" }),
-    userId: uuid("user_id").notNull(), // ref -> users.id (no FK)
+    // FK cascade — same rationale as trace_reactions.user_id: stars on
+    // feedback attached to other users' traces must not outlive the account.
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
 
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },

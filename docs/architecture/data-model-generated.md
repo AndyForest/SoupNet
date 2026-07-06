@@ -3,7 +3,7 @@
 > **Auto-generated** from Drizzle migration snapshot `0027_snapshot.json`.
 > Do not edit by hand. Regenerate with: `npx tsx scripts/generate-data-model-docs.ts`
 >
-> Generated: 2026-07-05
+> Generated: 2026-07-06
 > Tables: 27 | Schema: `claimnet`
 
 For design rationale, conventions, and context, see [data-model.md](data-model.md).
@@ -78,7 +78,7 @@ erDiagram
     check_feedback_stars {
         uuid id PK
         uuid feedback_id FK
-        uuid user_id
+        uuid user_id FK
         timestamptz created_at
     }
 
@@ -263,7 +263,7 @@ erDiagram
     trace_reactions {
         uuid id PK
         uuid trace_id FK
-        uuid user_id
+        uuid user_id FK
         text reaction
         timestamptz created_at
         timestamptz updated_at
@@ -335,6 +335,7 @@ erDiagram
 
     check_feedback }o--|| traces : "trace_id"
     check_feedback_stars }o--|| check_feedback : "feedback_id"
+    check_feedback_stars }o--|| users : "user_id"
     embedding_chunk_strategies }o--|| embedding_sources : "embedding_source_id"
     embedding_chunks }o--|| embedding_sources : "embedding_source_id"
     embedding_chunks }o--|| embedding_chunk_strategies : "chunk_strategy_id"
@@ -351,6 +352,7 @@ erDiagram
     trace_evidence }o--|| traces : "trace_id"
     trace_evidence }o--|| evidence : "evidence_id"
     trace_reactions }o--|| traces : "trace_id"
+    trace_reactions }o--|| users : "user_id"
     trace_references }o--|| traces : "trace_id"
     trace_references }o--|| references : "reference_id"
     traces }o..|| users : "user_id"

@@ -92,10 +92,12 @@ export async function composeBriefing(input: BriefingComposeInput): Promise<Brie
 
   // UVP Layer 1: briefing.issued makes the survivorship denominator visible —
   // get_briefing calls with zero subsequent checks are the null cohort no
-  // local log could see. Fire-and-forget (writeAudit swallows failures);
-  // never blocks the briefing. F29's limiter filters on action =
-  // 'recipe.checked', so these rows add no load to its indexed COUNT.
-  void writeAudit(input.db, {
+  // local log could see. Awaited like the recipe.checked audit write —
+  // writeAudit swallows failures so it can never fail the briefing, and an
+  // awaited insert is deterministic for consumers reading the funnel. F29's
+  // limiter filters on action = 'recipe.checked', so these rows add no load
+  // to its indexed COUNT.
+  await writeAudit(input.db, {
     actorUserId: scope.userId,
     action: "briefing.issued",
     targetType: "api_key",
