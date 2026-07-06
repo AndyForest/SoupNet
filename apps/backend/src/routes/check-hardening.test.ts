@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, afterAll } from "vitest";
 
 /**
  * Layer 3 integration tests for the 2026-07-05 check-surface hardening
