@@ -349,7 +349,19 @@ function createMcpServer(backendUrl: string): McpServer {
       "Call get_briefing before your first check to learn the format and get a sample of the user's corpus.",
   });
 
+  // MCP_TOOL_PROFILE=lean — diagnostic bisect instrument (2026-07-06,
+  // claude.ai conversation-runtime tool-registry investigation, see
+  // claimNet docs/briefings/mcp-connector-forensics-2026-07-06.md): the
+  // platform ingests our full 18KB tools/list at connect time but never
+  // surfaces the tools to conversations. Lean mode registers only the three
+  // read-only tools with one-line descriptions and minimal schemas, cutting
+  // list size ~80% and dropping the nested feedback array schema — if lean
+  // surfaces where full doesn't, the failure is content-dependent and we
+  // bisect. Unset (default) is byte-identical to the pre-flag server.
+  const lean = process.env["MCP_TOOL_PROFILE"] === "lean";
+
   // ── check_recipe tool ───────────────────────────────────────────────────
+  if (!lean)
 
   server.tool(
     "check_recipe",
@@ -603,7 +615,7 @@ function createMcpServer(backendUrl: string): McpServer {
 
   server.tool(
     "get_briefing",
-    MCP_TOOL_DESCRIPTIONS.getBriefing,
+    lean ? "Get the Soup.net briefing: recipe format, this user's recipe books, and sample recipes." : MCP_TOOL_DESCRIPTIONS.getBriefing,
     {
       purpose: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.briefingPurpose),
       recipe_ids: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.briefingRecipeIds),
@@ -662,7 +674,7 @@ function createMcpServer(backendUrl: string): McpServer {
 
   server.tool(
     "get_recipes",
-    MCP_TOOL_DESCRIPTIONS.getRecipes,
+    lean ? "Fetch specific Soup.net recipes by id (comma-separated UUIDs, up to 20)." : MCP_TOOL_DESCRIPTIONS.getRecipes,
     {
       recipe_ids: z.string().describe(MCP_PARAM_DESCRIPTIONS.recipeIds),
     },
@@ -719,7 +731,7 @@ function createMcpServer(backendUrl: string): McpServer {
 
   server.tool(
     "list_my_recipe_books",
-    MCP_TOOL_DESCRIPTIONS.listMyRecipeBooks,
+    lean ? "List this user's Soup.net recipe books with a sample of recipes." : MCP_TOOL_DESCRIPTIONS.listMyRecipeBooks,
     {},
     {
       title: "List my recipe books",
@@ -771,6 +783,7 @@ function createMcpServer(backendUrl: string): McpServer {
   // requirement makes API-key delegation honest — a read-only key can't
   // mutate recipe-book metadata even if the underlying user is an owner.
 
+  if (!lean)
   server.tool(
     "update_recipe_book_description",
     "Update the description of a recipe book your API key has write access to. " +
@@ -905,6 +918,7 @@ function createMcpServer(backendUrl: string): McpServer {
   // lives on check_recipe's feedback param. Same service, same validation and
   // ACL path as the ride-along and REST POST /feedback.
 
+  if (!lean)
   server.tool(
     "log_feedback",
     MCP_TOOL_DESCRIPTIONS.logFeedback,
