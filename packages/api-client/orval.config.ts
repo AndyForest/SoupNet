@@ -31,6 +31,9 @@ export default defineConfig({
   },
   // MSW mock handlers: disabled pending @orval/msw integration fix.
   // TODO: Re-enable once MSW custom generator API is confirmed for orval v7.
+  // The @orval/msw dependency was removed 2026-07-06 (unused, and v6 carries an
+  // unpatched code-injection advisory with no v6 fix). To re-enable, re-add
+  // @orval/msw at a version matching the installed orval major.
   // See backlog.md for details.
   // "claimnet-msw": { ... }
 });
