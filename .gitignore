@@ -176,6 +176,11 @@ docs/planning/temp/
 # Local TLS certificates (if using mkcert for future HTTPS)
 /certs/
 
+# Rough notes live in the private repo, not here (see docs/rough-notes/README.md).
+# Ignore stray notes but keep the pointer README tracked.
+docs/rough-notes/*
+!docs/rough-notes/README.md
+
 # MCP config (contains API keys)
 .mcp.json
 .codex/config.toml
