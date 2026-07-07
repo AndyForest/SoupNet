@@ -28,6 +28,22 @@ For scale (⚠ different answering model than the published table; directional o
 
 **The run doubled as a load test of the 2026-07 MCP surfaces.** 40,233 `check_recipe` calls at 10-way concurrency: p50 248 ms, p95 363 ms — matching the README's claimed 0.15–0.36 s warm-check range — with zero tool errors across `check_recipe`, `get_recipes` (p50 9 ms), and `log_feedback` (705 structured feedback rows ingested).
 
-**Honest scope**: one benchmark, synthetic personas, MCQ recognition rather than agentic production, one model family, one run (no significance test yet on the type-2 delta). Known follow-ups and raw artifacts: `SoupNet-evals/evals/perma-ab/` (runbook, findings log, `baselines/run-full1/`). Agentic benchmarks (π-Bench, SWE-Lancer) are scouted next.
+**Honest scope**: one benchmark, synthetic personas, MCQ recognition rather than agentic production, one model family, one run (no significance test yet on the type-2 delta). Known follow-ups and raw artifacts: `SoupNet-evals/evals/perma-ab/` (runbook, findings log, `baselines/run-full1/`).
+
+## Agentic benchmarks (in progress)
+
+PERMA tests *recognition* — pick the preference-aligned answer given retrieved memory. Two harder benchmarks test whether an agent *acting* on real work benefits from Soup.net. Both have passed their ground-truth gates (arms wired, judges audited); neither has a scored delta yet — reported here so the record is public as it develops, not to claim a result.
+
+- **π-Bench** (proactive personal-assistant agents, 20-session episodes): the audited finding that matters is *mechanistic* — with Soup.net registered as an agent-callable tool and the usual briefing, the assistant **chose to consult its judgment memory unprompted**, with correctly-voiced recipes and no awareness it was being tested. That is the product's core claim (an agent checking at the judgment moment) observed in an independent harness. Whether it lifts the benchmark's Proactivity score is the next phase (5 personas × repeats).
+- **SWE-Lancer** (real freelance software tasks against one production codebase): tests whether repo-specific judgment accumulated across tasks improves an agent's decisions. Ground-truth pilot passed on mechanics; the accuracy delta at pilot scale is inside the noise floor, so no claim — a larger run is the gate for any number.
+
+## What the benchmark work found about the product itself
+
+The most useful outputs so far were product findings, not scores:
+
+- **Self-pollution / read-only checks.** An agent that both reads and appends to the same corpus can, over many runs, retrieve its own recent queries instead of durable judgment. Quantified here (accuracy fell monotonically across repeated runs until fixed) and remediated by isolating appends. Motivates a read-only retrieval mode and same-agent-trace downranking — both now in design.
+- **Server ordering is load-bearing.** Clients that re-sort retrieval results (e.g. newest-first) *degraded* accuracy sharply; recency belongs in server-side ranking (the feedback-driven decay/reinforcement design), not client reordering.
+- **Stub-vs-body is a documentation hazard.** Two independent integrations mistakenly fed the model a one-line result *stub* instead of recipe bodies — a sign the agent-facing docs should make the distinction unmissable.
+- **Free reproduction.** The content-addressed embedding cache lets a full corpus rebuild into fresh books at zero embedding cost (39,528 recipes in 18 min), which is the workflow third parties will use to reproduce these results once corpus import ships.
 
 **Reproduce it**: the full 40,822-trace recipe corpus is archived as a scrubbed `/auth/me/export` snapshot — [`corpus-export.json.gz`, 20 MB](https://github.com/AndyForest/SoupNet-evals/blob/main/evals/perma-ab/baselines/run-full1/corpus-export.json.gz) — alongside the runbook that rebuilds it from scratch. Loading an export into a fresh instance needs the corpus-import feature (see `docs/backlog.md`, Data portability); until that lands, reproduction means re-running the runbook's ingest stage (~$35 of LLM calls).
