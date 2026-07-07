@@ -429,12 +429,21 @@ function createMcpServer(backendUrl: string): McpServer {
     },
     {
       title: "Recipe check",
-      // Logs a trace as a side effect — not read-only — but the trace is append-only
-      // and non-destructive (no overwrite, no delete). Corpus is open-world: results
-      // pull from a corpus that other agents may have written to between calls.
+      // Writes as a side effect — not read-only — but non-destructive (no
+      // overwrite, no delete; destructiveHint:false is the "safe to call" signal).
+      // idempotentHint:true is content-scoped: the trace is deduped by
+      // sha256(claim_text) under a unique (api_key_id, group_id, claim_text_hash)
+      // constraint with ON CONFLICT DO NOTHING, so re-firing an identical recipe
+      // (same key + group) returns the SAME trace id and mutates nothing — no new
+      // row, no bumped timestamp. This documents double-fire/preview/retry safety.
+      // The one thing that still appends per call is the recipe.checked audit row
+      // (rate-budget accounting), which is bookkeeping about the call, not domain
+      // state. Open-world: results pull from a corpus other agents write to between
+      // calls, and idempotentHint concerns only identical-argument re-fires, so it
+      // never suppresses distinct checks (stigmergy is unaffected).
       readOnlyHint: false,
       destructiveHint: false,
-      idempotentHint: false,
+      idempotentHint: true,
       openWorldHint: true,
     },
     async ({ recipe, supporting_evidence, clusters, max_chars, decided_at, axes, recipe_book, read_recipe_books, file_url, file_base64, file_name, file_mime_type, region, response_format, known_recipes, agent_id, synthesize, feedback }, extra) => {
