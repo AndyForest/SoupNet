@@ -1,49 +1,92 @@
 # Benchmark results
 
-**Purpose of this doc**: the controlled-benchmark complement to the README's observational field data — what happens when Soup.net is dropped into a published agent-memory benchmark as a swappable backend, with proper control arms. Headline numbers and honest caveats live here; the full methodology, runbooks, per-row results, and audit records live in the eval repo ([SoupNet-evals](https://github.com/AndyForest/SoupNet-evals), `evals/perma-ab/`), which is the source of truth. Nearby docs: the README's *Field data* section covers real-usage observation; this doc covers controlled comparison.
+**Purpose of this doc**: the controlled-benchmark complement to the README's observational *Field data*. It reports what happens when Soup.net is dropped into a *published, third-party* agent-memory benchmark as a swappable backend, against proper control arms — with the methodology stated in enough detail to reimplement, and the limitations stated plainly.
 
-## PERMA, run full1 (2026-07-06)
+**On trusting a vendor's own benchmark.** These numbers are produced by the people who build Soup.net, on a benchmark we chose. That is the standard credibility problem for every agent-memory result (Mem0, Zep, MemOS and others all publish self-run numbers, and independent audits have found some of them inflated). We can't remove that conflict, only constrain it: the benchmark and its judge are third-party code we did not write; the answering-model arm reproduces a *published* number as a calibration check; per-task results are recorded so any row can be re-derived; **negative and null results are reported alongside the positives** (they are half of what follows); and the model, prompts, and task split are specified below. Judge the methodology, not the headline.
 
-[PERMA](https://arxiv.org/abs/2603.23231) benchmarks personalized memory agents: 10 synthetic personas whose preferences emerge and evolve across ~9,600 dialogue sessions, with 705 multiple-choice tasks scored on whether the assistant's answer honors the persona's accumulated preferences. It ships a pluggable memory-backend harness already used to compare Mem0, MemOS, Memobase, Supermemory and others — Soup.net was added as one more backend, with two control arms.
+---
 
-**Setup in one paragraph.** Ingestion ran Soup.net's designed usage pattern, not a message pipe: an LLM scribe distilled each session into evidence-backed recipes (verbatim-quote validation; 39,528 recipes from 9,643 sessions at a 0.58% quote-failure rate, `decided_at` backfilled to session dates). Retrieval formed a preference hypothesis per task and recipe-checked it. All models (answering agent, judges, scribe) pinned to Gemini 2.5 Flash — chosen because PERMA publishes a standalone row for it, making the naive-context arm a reproduction of a published number (reproduced: 0.829 on the comparable slice vs published 0.87, within tolerance). Every judge verdict in the pilot was hand-audited before scaling.
+## PERMA
 
-**Results** (MCQ accuracy; clean single-domain, non-interactive):
+[PERMA](https://arxiv.org/abs/2603.23231) (arXiv 2603.23231) is a personalized-memory benchmark: 10 synthetic personas whose preferences emerge and evolve across ~9,600 timestamped dialogue sessions, with 705 multiple-choice questions scored on whether the assistant's answer honors that persona's accumulated preferences. Questions are typed by how much memory they require: **Type 1** ("zero-memory" — the harness forces an empty context, a floor shared by all systems), **Type 2** (single prior event), **Type 3** (integrate across many events). PERMA ships a pluggable memory-backend harness already used to compare Mem0, MemOS, Memobase, Supermemory, LightMem and others; we added Soup.net as one more backend plus two controls. We ran the **clean single-domain, non-interactive** split.
+
+### The three arms
+
+| Arm | What it does | Context/task |
+|---|---|---|
+| **No memory** | PERMA's forced-empty Type-1 condition — the floor | 0 |
+| **Naive full-context** | Paste the persona's entire prior transcript into the prompt | ~25.6k tokens |
+| **Soup.net** | Ingest each session as evidence-backed recipes; retrieve per question (see Methodology) | ~1.1k tokens |
+
+Naive full-context is the hard baseline: [CL-Bench](https://arxiv.org/abs/2606.05661) (arXiv 2606.05661) showed most dedicated memory systems fail to beat simply pasting the history.
+
+### Results (MCQ accuracy)
 
 | | Type 1 (no memory) | Type 2 (single-event) | Type 3 (cross-event) | Context tokens/task |
 |---|---|---|---|---|
-| No memory (harness floor) | 0.411 | — | — | 0 |
+| No memory (floor) | 0.411 | — | — | 0 |
 | Naive full-context | 0.411 | 0.837 | 0.827 | 25,635 |
 | **Soup.net** | 0.411 | **0.823** | **0.766** | **1,104** |
 
-Three claims, deliberately kept separate:
+Three claims, kept separate because they are not equally strong:
 
-1. **Against no memory, the recipe corpus is decisive**: +41 points on single-event tasks, +36 on cross-event.
-2. **Against naive full-context** (pasting the entire ~26k-token history — the bar [CL-Bench](https://arxiv.org/abs/2606.05661) showed most memory systems fail): **parity on single-event tasks at 23× less context** (0.823 vs 0.837, within noise at n=141). Full context also isn't available in Soup.net's actual arena — cross-session, cross-agent, cross-vendor — so matching its accuracy at 4% of the tokens is the operative result.
-3. **A real deficit on cross-event integration** (0.766 vs 0.827, n=423): tasks whose answers integrate many events favor having everything in context over top-k retrieval. The retrieval synthesis premium feature (`docs/planning/premium-llm-features.md`) is the designed response; its **first controlled test was negative** (type-3 0.697 vs 0.775 baseline on the frozen corpus — the synthesized profile as currently prompted/injected displaces rather than sharpens the specific evidence). The feature works mechanically; the synthesis prompt and injection format are now iterating against this benchmark before any performance claim is made for it.
+1. **Against no memory, decisive** — +41 points (Type 2), +36 (Type 3). The corpus does real work.
+2. **Parity with naive full-context on single-event tasks, at ~4% of the context** — 0.823 vs 0.837 (n=141; the 1.4-point gap is inside the run-to-run noise floor measured below). Full context is also *unavailable* in Soup.net's actual setting — memory that must survive across sessions, agents and vendors — so matching its accuracy at 1.1k vs 25.6k tokens is the operative result.
+3. **A real deficit on cross-event integration** — 0.766 vs 0.827 (Type 3, n=423). Questions whose answer must synthesize many events favor having everything in context over top-k retrieval. This is a genuine limitation, not noise; the work to address it is described below and has not yet succeeded.
 
-**The ablation campaign that followed found something better than a tuning win.** A first round of ablations (wider retrieval, multi-hypothesis retrieval, result reordering) produced large degradations that all turned out to share one cause: **corpus self-pollution** — each run's hypothesis checks append task-shaped traces that later runs then retrieve in place of real recipes (verified directly: a third of retrieval slots occupied by prior runs' hypotheses after five runs; accuracy fell 0.706 → 0.538 monotonically with cumulative runs, regardless of configuration). This is the field evaluation's "batched checks retrieve the agent's own fresh traces" failure mode, quantified at benchmark scale. Remediation validated the architecture twice over: the corpus was rebuilt into fresh books from the export archive in 18 minutes at **zero embedding cost** (the vector cache is content-addressed across books and users), and re-running on the frozen corpus with hypothesis appends isolated to scratch books **replicated the original results** (0.696 vs 0.706, all slices within the measured ±0.05–0.08 run-to-run noise floor). On that clean footing, divergent multi-hypothesis retrieval showed no effect beyond noise. Product consequences now in design: a read-only retrieval mode for MCP checks, same-agent-trace downranking, and feedback-driven reinforcement/decay — plus one export-completeness bug found (`decided_at` missing from `/auth/me/export`).
+**Calibration against the published table.** The naive-context arm is our reproduction of a number PERMA publishes for this answering model (Gemini 2.5 Flash standalone): we get 0.829 on the comparable Type-2/3 slice against a published 0.87 — within tolerance, so the harness is wired correctly. (The all-types aggregate is not comparable to the paper's, because the released code forces Type-1 context empty in every arm; we report per-type throughout for this reason.)
 
-For scale (⚠ different answering model than the published table; directional only): Soup.net's 0.706 overall lands above Mem0 (0.686), Supermemory (0.655), and Lightmem (0.657) on their benchmark, below MemOS (0.811).
+**Cross-system context** (⚠ *directional only* — our answering model differs from the one in PERMA's published memory-system table, so this is not apples-to-apples): Soup.net's 0.706 all-types average sits above the published Mem0 (0.686), Supermemory (0.655) and LightMem (0.657), and below MemOS (0.811). Treat as a sanity check that we are in the right range, not as a ranking.
 
-**The run doubled as a load test of the 2026-07 MCP surfaces.** 40,233 `check_recipe` calls at 10-way concurrency: p50 248 ms, p95 363 ms — matching the README's claimed 0.15–0.36 s warm-check range — with zero tool errors across `check_recipe`, `get_recipes` (p50 9 ms), and `log_feedback` (705 structured feedback rows ingested).
+---
 
-**Honest scope**: one benchmark, synthetic personas, MCQ recognition rather than agentic production, one model family, one run (no significance test yet on the type-2 delta). Known follow-ups and raw artifacts: `SoupNet-evals/evals/perma-ab/` (runbook, findings log, `baselines/run-full1/`).
+## Methodology (enough to reimplement)
 
-## Agentic benchmarks (in progress)
+- **Benchmark**: PERMA at its public commit, `clean` single-domain `overall` split, 705 tasks × 10 personas, non-interactive MCQ. Dataset is public (arXiv 2603.23231; the authors host it on Hugging Face). The harness is the authors' own; Soup.net is a backend plugged into it.
+- **Ingestion (the "scribe")**: Soup.net stores judgment calls, not messages, so each dialogue session is distilled by an LLM into 0–N recipes in the canonical form *"As a [role] working on [goal], I prefer [X] so that [reason]"* with a **verbatim supporting quote validated as a substring of the session** (failed quotes are dropped, never fabricated — 0.58% drop rate over 39,528 recipes). Each recipe's judgment date is backfilled to the session date. This distillation is extra work the message-store baselines don't do; its token cost is reported, not hidden.
+- **Retrieval**: for each question, an LLM forms a preference *hypothesis* (not the question verbatim) and issues one `check_recipe` semantic search scoped to that persona's book; the returned recipes become the answering context. Retrieval is read-only against a frozen corpus (see self-pollution, below).
+- **Models**: answering agent, hypothesis-former, scribe, and both PERMA judges all pinned to **Gemini 2.5 Flash**, routed through a local proxy so the pin is uniform and every call is logged. Gemini 2.5 Flash was chosen specifically because PERMA publishes a standalone row for it (enabling the calibration check above). Judge and answering models are the *same* — a limitation noted below.
+- **Judging**: PERMA's own MCQ grader and memory-score rubric, unmodified. Before scaling, every judge verdict on a 5-task-per-arm smoke was hand-checked against the transcript (5/5 agreed); the scribe's quote fidelity was audited on a sample; only then did the full run proceed.
+- **Scale/cost**: one full run ≈ 40k `check_recipe` calls + judge/answer calls; corpus ingest ≈ $35 of LLM calls; a full arm ≈ 705 tasks. Self-hosting Soup.net needs only Postgres + pgvector and a Gemini embedding key (see the repo README).
 
-PERMA tests *recognition* — pick the preference-aligned answer given retrieved memory. Two harder benchmarks test whether an agent *acting* on real work benefits from Soup.net. Both have passed their ground-truth gates (arms wired, judges audited); neither has a scored delta yet — reported here so the record is public as it develops, not to claim a result.
+---
 
-- **π-Bench** (proactive personal-assistant agents, 20-session episodes): the audited finding that matters is *mechanistic* — with Soup.net registered as an agent-callable tool and the usual briefing, the assistant **chose to consult its judgment memory unprompted**, with correctly-voiced recipes and no awareness it was being tested. That is the product's core claim (an agent checking at the judgment moment) observed in an independent harness. Whether it lifts the benchmark's Proactivity score is the next phase (5 personas × repeats).
-- **SWE-Lancer** (real freelance software tasks against one production codebase): tests whether repo-specific judgment accumulated across tasks improves an agent's decisions. Ground-truth pilot passed on mechanics; the accuracy delta at pilot scale is inside the noise floor, so no claim — a larger run is the gate for any number.
+## The finding that mattered more than the scores: self-pollution
 
-## What the benchmark work found about the product itself
+An initial round of tuning ablations (wider retrieval, multi-hypothesis retrieval, result reordering) all produced large, confusing degradations. The cause was singular and is a **product finding, not a tuning detail**: `check_recipe`'s search has an append side-effect (the searching agent's hypothesis becomes a trace), so an agent that reads *and* writes the same corpus will, over repeated runs, retrieve its own recent task-shaped queries in place of durable recipes. We measured it directly — after five runs, about a third of retrieval slots were occupied by prior runs' own hypotheses, and accuracy fell monotonically 0.706 → 0.538 regardless of the tuning knob. This is the same failure the README's *Field data* section flags qualitatively ("batched checks retrieve the agent's own fresh traces"), here quantified.
 
-The most useful outputs so far were product findings, not scores:
+Remediation, and what it demonstrated:
 
-- **Self-pollution / read-only checks.** An agent that both reads and appends to the same corpus can, over many runs, retrieve its own recent queries instead of durable judgment. Quantified here (accuracy fell monotonically across repeated runs until fixed) and remediated by isolating appends. Motivates a read-only retrieval mode and same-agent-trace downranking — both now in design.
-- **Server ordering is load-bearing.** Clients that re-sort retrieval results (e.g. newest-first) *degraded* accuracy sharply; recency belongs in server-side ranking (the feedback-driven decay/reinforcement design), not client reordering.
-- **Stub-vs-body is a documentation hazard.** Two independent integrations mistakenly fed the model a one-line result *stub* instead of recipe bodies — a sign the agent-facing docs should make the distinction unmissable.
-- **Free reproduction.** The content-addressed embedding cache lets a full corpus rebuild into fresh books at zero embedding cost (39,528 recipes in 18 min), which is the workflow third parties will use to reproduce these results once corpus import ships.
+- **Isolate appends.** Hypothesis writes go to a scratch book; reads scope only to the frozen corpus. This restored the baseline.
+- **Free reproduction.** The corpus was rebuilt into fresh books in 18 minutes at **zero embedding cost**, because the embedding cache is content-addressed across books and users — identical recipe text is never re-embedded. This is the mechanism that would let a third party reproduce the corpus cheaply.
+- **Replication.** Re-running the baseline config on the independently-rebuilt corpus reproduced the original within noise (0.696 vs 0.706, all slices inside a measured ±0.05–0.08 run-to-run noise floor). The noise floor itself was measured from Type-1 rows, which receive byte-identical inputs across runs yet still varied by ~0.08 — which is why **no single-run slice delta in this doc is claimed as significant** without repeat runs.
 
-**Reproduce it**: the full 40,822-trace recipe corpus is archived as a scrubbed `/auth/me/export` snapshot — [`corpus-export.json.gz`, 20 MB](https://github.com/AndyForest/SoupNet-evals/blob/main/evals/perma-ab/baselines/run-full1/corpus-export.json.gz) — alongside the runbook that rebuilds it from scratch. Loading an export into a fresh instance needs the corpus-import feature (see `docs/backlog.md`, Data portability); until that lands, reproduction means re-running the runbook's ingest stage (~$35 of LLM calls).
+On that clean footing, two attempts to *close* the Type-3 gap both failed honestly: divergent multi-hypothesis retrieval showed no effect beyond noise, and a server-side "synthesize the corpus into a profile" feature *degraded* Type-3 (0.697 vs 0.775) because the compressed profile displaced the specific evidence the model needed. That feature ships gated and opt-in; its prompt/injection design is being iterated against this benchmark before any performance claim is attached to it.
+
+Product changes this campaign put into design: a read-only retrieval mode for MCP checks, same-agent-trace downranking, and feedback-driven ranking (reinforcement/decay). One bug found: `decided_at` is missing from the data-export format.
+
+---
+
+## Agentic benchmarks (in progress — no scored deltas yet)
+
+PERMA tests *recognition* (pick the right answer given retrieved memory). Two harder benchmarks test an agent *doing work*. Both have passed ground-truth gates (arms wired, judges hand-audited); **neither has a settled delta** — reported here for transparency as the work develops.
+
+- **π-Bench** (proactive personal-assistant agents, 20-session episodes; arXiv 2605.14678): the audited, *mechanistic* result is the interesting one — with Soup.net registered as an agent-callable tool and the standard briefing, the assistant **chose to consult its judgment memory unprompted**, wrote correctly-formed recipes, and showed no awareness it was under test. That is the product's core claim (an agent checking at the judgment moment) observed in an independent harness. Whether it raises the benchmark's Proactivity *score* is the next phase.
+- **SWE-Lancer** (real freelance software tasks against one production codebase; arXiv 2502.12115): tests whether repo-specific judgment accumulated across tasks improves an agent's hiring-manager decisions. At a 20-task pilot: no-memory 0.45, naive-carryover 0.45, Soup.net 0.55 — the 2-task lead is **inside the noise floor at n=20, so no accuracy claim**. The *settled* result is again efficiency: Soup.net matched-or-beat the naive-carryover arm at ~100× less injected context (~440 vs ~47k tokens; the carryover arm overflowed its context budget and began dropping older transcripts with no accuracy gain). A larger run with repeats is the gate for any accuracy statement.
+
+---
+
+## Limitations (what a careful reviewer should hold against this)
+
+- **Single runs, thin error bars.** Most cells here are one run. The measured noise floor is ±0.05–0.08 per slice, so the Type-2 "parity" and any sub-noise delta are *consistent with* — not proof of — the claim. Repeat runs (N≥3) are queued and not yet done.
+- **One weak-ish model, one family.** Everything is Gemini 2.5 Flash, chosen for its published calibration row. Results may not transfer to frontier models or other families. Not yet tested.
+- **Judge = answering model.** The MCQ judge and the answering agent are the same model. PERMA's MCQ grading is close to mechanical letter-matching (low risk), but the memory-score rubric is not, and we have not cross-checked it with an independent grader.
+- **Synthetic, recognition, one split.** PERMA personas are synthetic; the task is multiple-choice recognition, not open production; we ran only the clean single-domain split (noise and multi-domain variants exist and were not run). The agentic benchmarks address the "real work" gap but have no deltas yet.
+- **We built the integration.** The scribe/retrieval adapter is ours; a different integration could score differently. We report the scribe's added token cost so it isn't a hidden advantage, but the design is a choice a reviewer should scrutinize.
+- **Self-run, as discussed up top.** The mitigations are real (third-party benchmark + judge, published-number calibration, per-task records, negatives reported) but they are mitigations, not independence. An outside replication would be worth more than anything here.
+
+---
+
+## Reproducing this
+
+Everything needed to *reimplement* is public: PERMA (benchmark + dataset, arXiv 2603.23231), Soup.net itself (MIT — Postgres + pgvector + a Gemini embedding key; see the repo README), and the Methodology section above (scribe format, retrieval shape, model pins, split). The eval harness and the frozen recipe corpus that produced these exact numbers are not yet publicly hosted; a corpus-import path (the inverse of `/auth/me/export`) is on the roadmap so a reader can load the exact corpus and reproduce cheaply via the content-addressed cache described above. Until then, reproduction means re-running the ingest against a local instance (~$35 of LLM calls). If you reproduce — or contradict — these results from an independent setup, that data is more valuable than ours; we'd want to hear about it.
