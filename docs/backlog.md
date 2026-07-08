@@ -21,6 +21,10 @@ When you complete an item, move it to `backlog-completed.md` with a date stamp. 
 
 Operator decision (2026-07-06, with the premium-LLM-features brief in `docs/planning/premium-llm-features.md`): the first server-side LLM features ship WITHOUT quota/rate tracking because the user base is the operator plus manually-assigned trusted users. When premium widens, deploy a LiteLLM router/proxy in front of the provider key for per-user quota, spend tracking, and model routing — rather than hand-rolling quota in the app. Until then, implementing agents must NOT build ad-hoc quota logic into LLM features.
 
+### `[IMPL]` Local / self-hosted embedding providers (keyless on-ramp)
+
+Full build brief in `docs/planning/local-embedding-provider.md` (operator-approved 2026-07-08). Adds two `EMBEDDINGS_PROVIDER` values behind the existing seam so the three keyless personas (headless CI, self-hosters, tire-kickers) get working vector search without a Gemini key: `local` (in-process `@huggingface/transformers`, default `bge-small-en-v1.5`, for CI + tire-kickers) and `openai-compatible` (HTTP `/v1/embeddings` to llama.cpp / LM Studio / Ollama / TEI, for self-hosters wanting a SOTA model). Key design: zero-pad 384-dim vectors into the existing `halfvec(3072)` column (provably lossless for cosine) so Phase 1 needs no schema migration; the real work is decoupling the hardcoded `model_id` into `getEmbeddingModelId()` + a fail-safe `model_id` search filter. Runtime moves to `node:24-slim` for native `onnxruntime-node`. Includes writing a new ADR (coordinate the number — 0022 is reserved for the OAuth connector flow).
+
 ---
 
 ## Data portability
