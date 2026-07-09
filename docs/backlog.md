@@ -330,24 +330,6 @@ The schema deliberately left FKs loose during development (operator, 2026-07-09:
 
 ## Corpus curation and sharing
 
-### `[IMPL]` Move a misfiled recipe to a different recipe book — DECIDED 2026-07-09, in progress
-
-Operator request (2026-07-09, from trace `5d72ace5-4647-4f8e-8aef-65308370def1`): agents pick the recipe book at check time, and they sometimes pick wrong. Today the only correction is `DELETE /traces/:id` — the "cleanup hatch," scoped by design to *malformed* recipes (recipe `faabbf76`, design-thinking.md §Correcting the record) — which throws away a correct recipe to fix a filing mistake. Give the human a **Change recipe book** control on the trace detail page and the recipe-book traces list, backed by a new `PATCH /traces/:id`.
-
-**Decisions taken (all recipe-checked):**
-- **Human-only surface** (`aaad8fdf`, `4b97ba86`). No MCP tool, no API-key path. Agent-facing surfaces stay append-only and idempotent so an uncertain agent asks the human instead of proceeding on a thin assumption it expects to correct later — and often won't. Extending to agents is a *future* question, not an oversight.
-- **The move writes a human-origin `check_feedback` row** (`465df879`), not just an audit event. Migration: `api_key_id` becomes nullable, add `actor_user_id`, add `CHECK ((api_key_id IS NULL) <> (actor_user_id IS NULL))`. Human rows carry `NULL api_key_id` and so never enter the F29 per-key rate-limit budget.
-- **Destination gate is an explicit role allowlist** — `role IN ('owner','admin','member')` via a single `canWriteToBook(role)` domain function — *not* a "membership row exists" check. See the read-only-sharing item: a future `viewer` role must fail closed. Source gate copies `DELETE /traces/:id` (trace owner / source-book owner-admin / system).
-- **The move is a declassification step** (`2738f7a9`). The pre-filled correction note names only the *destination* book, never the source (moving private → shared is the common direction, and the source book's name leaks). The human may de-select individual evidence entries before they cross the boundary.
-
-**Implementation landmines (verified in code):**
-- **`group_id` is denormalized into `embedding_sources`** (`packages/db/src/schema/vectors.ts:100`) and *that* column is what scopes vector search (`vector-search.service.ts:153` for traces, `:374` for evidence) — `traces.group_id` is never consulted by search. A move must update both, in one transaction, for the trace's own source rows **and every evidence source row belonging to it**. Miss it and the recipe stays searchable in the old book and is invisible in the new one, silently. No re-embedding needed: vectors are content-derived.
-- **`traces_api_key_group_claim_unique (api_key_id, group_id, claim_text_hash)`** (`traces.ts:57`) — `group_id` is part of the idempotency key. Moving into a book where the same agent already checked the same claim raises a Postgres `23505`. Return **409**, don't 500.
-- **`trace_evidence` is N:N.** Evidence is trace-private in practice today, but guard the evidence-source update against rows also linked to another trace.
-- **The Recipe Map cache goes stale** — see the corpus-version item below. This feature creates that bug; the per-book fingerprint fix ships with it.
-- `check_feedback` / `trace_reactions` carry no `group_id` (deliberately — context comes by join through `trace_id`), so they follow the move for free.
-- Audit: `trace.moved` via `writeAudit`. Contributes one event to the F9 audit-coverage item; does not depend on it.
-
 ### `[DECISION NEEDED]` Read-only recipe-book sharing (corpus bootstrapping)
 
 Operator idea, undecided (2026-07-09). Share a recipe book read-only with other users so their agents draw on your accumulated context while writing their own recipes into their own books. Motivating case, in the operator's words: *"I've made a lot of great recipes about sub-agent delegation decisions. I could share those with others to bootstrap their own corpus, and their agents can have my read-only context as they make their own decisions as recipe checks in their own recipe books."* Not approved — captured so in-flight work doesn't foreclose it.
@@ -377,7 +359,9 @@ The map's layout cache derives a corpus-version key from `count(*)` and `max(cre
 
 **This was initially reported (2026-07-09) as a live staleness bug introduced by the move feature. It is not — corrected the same day.** The cacheable path is corpus mode, which selects through `fetchCorpusTraces` on `traces.group_id` (`search-pipeline.ts:219`), and `CorpusTrace` is `{id, claimText, createdAt}` — no book identity reaches a rendered node. The union therefore renders identically before and after an internal move, so the stale key serves a correct layout. A single-book map invalidates regardless, because that book's own count changes. The claim was made before checking whether the cached layout depended on what the fingerprint couldn't see.
 
-The move-recipe work ships the per-book fingerprint anyway (`GROUP BY group_id`, combined in stable order, plus `max(updated_at)`) as cheap insurance: it becomes load-bearing the moment the map colors or groups nodes by book, or a trace's claim text becomes editable in place. Both are plausible; neither exists today.
+~~The move-recipe work ships the per-book fingerprint (`GROUP BY group_id`, combined in stable order, plus `max(updated_at)`) as cheap insurance~~ — done 2026-07-09. It becomes load-bearing the moment the map colors or groups nodes by book, or a trace's claim text becomes editable in place. Both are plausible; neither exists today.
+
+Still open: the structural piece. `traces.updated_at` is `defaultNow()` with no `ON UPDATE` trigger, so its freshness remains code discipline (the move sets it explicitly). A `moddatetime` trigger, or a `groups.corpus_version bigint` bumped by trigger, would make it a database guarantee.
 
 The structural version, deferred here: **the database maintains no mutation timestamp and no version counter.** `traces.updated_at` is `defaultNow()` with no `ON UPDATE` trigger, so its freshness is code discipline — the third instance of that failure mode in this backlog (see also the email-canonicalization item and the account-deletion list above). Options: a `moddatetime` trigger making `updated_at` a database guarantee; or a `groups.corpus_version bigint` bumped by an `AFTER INSERT/UPDATE/DELETE` trigger on `traces`, giving an O(1) monotonic version instead of a statistical proxy — at the cost of row contention on `groups` under concurrent checks into one book (small at current volume; measure before adopting).
 
@@ -405,7 +389,7 @@ Recorded so it isn't re-proposed. The `trace.moved` audit row already reconstruc
 
 ### `[IMPL]` Extract a `useRecipeBooks()` hook
 
-Four frontend pages (`GroupsPage`, `DashboardPage`, `ApiKeysPage`, `RecipeMapPage`) each fetch `authFetch("/recipe-books")` inline with locally-declared response types. The move-recipe work adds the hook and uses it in the move modal only; migrating the existing four is a separate mechanical pass. Related to the `packages/api-client` wiring item — if that pipeline is revived, this hook is one of the hand-written shapes it would replace.
+Four frontend pages (`GroupsPage`, `DashboardPage`, `ApiKeysPage`, `RecipeMapPage`) each fetch `authFetch("/recipe-books")` inline with locally-declared response types. ~~The move-recipe work adds the hook (`apps/frontend/src/hooks/useRecipeBooks.ts`) and uses it in the move modal~~ — done 2026-07-09. Migrating the existing four is the remaining mechanical pass. Related to the `packages/api-client` wiring item — if that pipeline is revived, this hook is one of the hand-written shapes it would replace.
 
 ### `[IMPL]` `log_feedback` / `feedback` param should accept short trace-id prefixes
 

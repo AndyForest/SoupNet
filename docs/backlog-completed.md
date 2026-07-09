@@ -4,6 +4,24 @@ Items moved here from `backlog.md` when finished. Date-stamped so we can see wha
 
 ---
 
+## 2026-07-09 — re-file a misfiled recipe
+
+### `[IMPL]` Move a recipe to a different recipe book — implemented, on `feat/move-recipe-between-books` pending review
+
+`PATCH /traces/:id` plus a Move control on the trace detail page. Human-only: no MCP tool, no API-key path. Agent-facing surfaces stay append-only and idempotent so an uncertain agent asks the human rather than proceeding on a thin assumption it means to correct later, and often won't (recipes `aaad8fdf`, `4b97ba86`).
+
+Shipped:
+- `packages/domain/src/trace-move.ts` — `canWriteToBook()` / `authorizeTraceMove()`, pure, 22 unit tests. The destination gate is an explicit role allowlist, not a membership-row existence check, so a future `viewer` role fails closed.
+- `apps/backend/src/services/trace-move.service.ts` — one transaction updating `traces.group_id` **and** `embedding_sources.group_id` for the trace's own source rows and every evidence row beneath it. Search scopes by the latter (`vector-search.service.ts:153`, `:374`); updating only the trace row leaves the recipe searchable in the old book and invisible in the new one, silently.
+- Duplicate handling: `group_id` is part of `traces_api_key_group_claim_unique`, so moving onto an identical recipe from the same agent is a 409. Drizzle wraps driver errors, so the `23505` sits on `err.cause`.
+- Migration 0030 — `check_feedback.api_key_id` nullable, `actor_user_id` added, `CHECK ((api_key_id IS NULL) <> (actor_user_id IS NULL))`. The move writes a first-class human-origin feedback row, not just an audit event (recipe `465df879`). Boot-safe: no `NOT VALID` needed, since the new FK column is all-NULL and existing rows satisfy the CHECK.
+- Declassification (recipe `2738f7a9`): the correction note names only the **destination** book, and the human may de-select evidence entries, which are redacted — hard-deleted with any reference they were the last link to — rather than hidden.
+- `trace.moved` audit event; `canMove` on the trace payload; `useRecipeBooks()` + `MoveTraceModal`; human-origin feedback rows render distinctly instead of as unlabelled agents.
+
+Integration tests (`apps/backend/src/routes/trace-move.test.ts`, 12) assert against **query-mode** `/traces/map`, which routes through the `embedding_sources` predicate — corpus mode reads `traces.group_id` and would agree with a broken move. Verified by sabotage: removing the `embedding_sources` update fails that one test and no other.
+
+---
+
 ## Launch readiness
 
 ### 2026-06-11 — SES configuration-set header (bounce/complaint pipeline, app side)
