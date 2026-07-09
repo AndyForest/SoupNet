@@ -1,9 +1,9 @@
 # ClaimNet Data Model — Generated Reference
 
-> **Auto-generated** from Drizzle migration snapshot `0029_snapshot.json`.
+> **Auto-generated** from Drizzle migration snapshot `0030_snapshot.json`.
 > Do not edit by hand. Regenerate with: `npx tsx scripts/generate-data-model-docs.ts`
 >
-> Schema as of migration `0029_user_premium` (2026-07-06).
+> Schema as of migration `0030_move_recipe_human_feedback` (2026-07-09).
 > Tables: 27 | Schema: `claimnet`
 
 For design rationale, conventions, and context, see [data-model.md](data-model.md).
@@ -62,6 +62,7 @@ erDiagram
         uuid id PK
         uuid trace_id FK
         uuid api_key_id
+        uuid actor_user_id FK
         text agent_id
         text kind
         text impact
@@ -337,6 +338,7 @@ erDiagram
     }
 
     check_feedback }o--|| traces : "trace_id"
+    check_feedback }o--|| users : "actor_user_id"
     check_feedback_stars }o--|| check_feedback : "feedback_id"
     check_feedback_stars }o--|| users : "user_id"
     embedding_chunk_strategies }o--|| embedding_sources : "embedding_source_id"
@@ -633,7 +635,8 @@ These are created by raw SQL in migration files and are not captured in the snap
 |---|---|---|---|---|
 | `id` | `uuid` | NO | `gen_random_uuid()` | PK |
 | `trace_id` | `uuid` | NO |  |  |
-| `api_key_id` | `uuid` | NO |  |  |
+| `api_key_id` | `uuid` | YES |  |  |
+| `actor_user_id` | `uuid` | YES |  |  |
 | `agent_id` | `text` | YES |  |  |
 | `kind` | `text` | NO |  |  |
 | `impact` | `text` | NO |  |  |
@@ -650,6 +653,7 @@ These are created by raw SQL in migration files and are not captured in the snap
 
 **Foreign keys:**
 - `trace_id` → `traces.id`
+- `actor_user_id` → `users.id`
 
 **Indexes:**
 - `check_feedback_trace_id_idx`: `(trace_id)`

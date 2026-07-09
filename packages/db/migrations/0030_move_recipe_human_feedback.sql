@@ -1,0 +1,4 @@
+ALTER TABLE "claimnet"."check_feedback" ALTER COLUMN "api_key_id" DROP NOT NULL;--> statement-breakpoint
+ALTER TABLE "claimnet"."check_feedback" ADD COLUMN "actor_user_id" uuid;--> statement-breakpoint
+ALTER TABLE "claimnet"."check_feedback" ADD CONSTRAINT "check_feedback_actor_user_id_users_id_fk" FOREIGN KEY ("actor_user_id") REFERENCES "claimnet"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "claimnet"."check_feedback" ADD CONSTRAINT "check_feedback_one_actor" CHECK (("claimnet"."check_feedback"."api_key_id" IS NULL) <> ("claimnet"."check_feedback"."actor_user_id" IS NULL));
