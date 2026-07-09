@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsup src/index.ts --format esm --no-splitting --out-dir dist",
+    "build": "tsup src/index.ts --format esm --no-splitting --out-dir dist --external @huggingface/transformers --external onnxruntime-node",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint -c ../../eslint.config.js src/"
@@ -31,5 +31,8 @@
     "@types/nodemailer": "^7.0.11",
     "tsup": "^8.0.0",
     "tsx": "^4.0.0"
+  },
+  "optionalDependencies": {
+    "@huggingface/transformers": "^3.0.0"
   }
 }

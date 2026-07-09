@@ -132,6 +132,41 @@ jobs:
       - name: Test
         run: npx vitest run
 
+  # ── Local embedding smoke (real model, keyless) ──────────────────────────────
+  # The `quality` job runs the STUB provider, which can't verify semantic ranking
+  # (stub vectors are near-orthogonal between distinct texts). This job runs the
+  # real `local` provider (bge-small via ONNX, no API key) and asserts a paraphrase
+  # outranks an unrelated sentence — the retrieval-quality coverage stub can't give.
+  # Independent of `quality`; deliberately NOT a deploy gate — a local-provider
+  # regression shouldn't block the hosted (gemini) deploy. No postgres needed; the
+  # test calls the model directly. (HF-model caching could be added later via a
+  # pinned actions/cache; the ~23 MB download per run is cheap for now.)
+  local-embeddings-smoke:
+    name: Local embeddings smoke (real model)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Upgrade npm to the engines-required version
+        run: npm install -g npm@11.10.0
+
+      # Full install (NOT --omit=optional) so @huggingface/transformers +
+      # onnxruntime-node (glibc prebuilt) are present for real local inference.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run local embedding smoke test
+        env:
+          EMBEDDINGS_PROVIDER: local
+        run: npx vitest run apps/backend/src/lib/embeddings/local-client.smoke.test.ts
+
   # ── Build + Deploy (push to main only) ───────────────────────────────────
 
   deploy:

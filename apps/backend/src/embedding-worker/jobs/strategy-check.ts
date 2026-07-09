@@ -16,10 +16,10 @@ import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { buildStrategyText } from "@soupnet/domain";
 import type { EvidenceEntry } from "@soupnet/domain";
+import { getEmbeddingModelId } from "../../lib/embeddings/provider";
 import { QUEUES } from "../queues";
 import type { VectorCheckItem } from "../queues";
 
-const MODEL_ID = "gemini-embedding-2-preview";
 // SEMANTIC_SIMILARITY only — RETRIEVAL_DOCUMENT generation dropped 2026-07-01
 // (model ignores task_type; see enqueue.ts KNOWN BUG note for the re-add path).
 const TASK_TYPES = ["SEMANTIC_SIMILARITY"] as const;
@@ -32,6 +32,7 @@ export async function handleStrategyCheck(
   db: PostgresJsDatabase,
 ): Promise<void> {
   const { strategyId } = job.data;
+  const modelId = getEmbeddingModelId();
 
   // ── Step 1: Find traces missing chunk_text for this strategy ────────
   const missingTraceRows = await db.execute(sql`
@@ -108,7 +109,7 @@ export async function handleStrategyCheck(
         await db.execute(sql`
           INSERT INTO claimnet.embedding_vectors
             (embedding_chunk_id, model_id, task_type, status, vector)
-          VALUES (${chunkId}::uuid, ${MODEL_ID}, ${taskType}, 'pending', NULL)
+          VALUES (${chunkId}::uuid, ${modelId}, ${taskType}, 'pending', NULL)
         `);
       }
 

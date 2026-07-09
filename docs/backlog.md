@@ -21,6 +21,16 @@ When you complete an item, move it to `backlog-completed.md` with a date stamp. 
 
 Operator decision (2026-07-06, with the premium-LLM-features brief in `docs/planning/premium-llm-features.md`): the first server-side LLM features ship WITHOUT quota/rate tracking because the user base is the operator plus manually-assigned trusted users. When premium widens, deploy a LiteLLM router/proxy in front of the provider key for per-user quota, spend tracking, and model routing — rather than hand-rolling quota in the app. Until then, implementing agents must NOT build ad-hoc quota logic into LLM features.
 
+### `[IMPL]` Local / self-hosted embedding providers (keyless on-ramp)
+
+Full build brief in `docs/planning/local-embedding-provider.md` (operator-approved 2026-07-08). Adds two `EMBEDDINGS_PROVIDER` values behind the existing seam so the three keyless personas (headless CI, self-hosters, tire-kickers) get working vector search without a Gemini key: `local` (in-process `@huggingface/transformers`, default `bge-small-en-v1.5`, for CI + tire-kickers) and `openai-compatible` (HTTP `/v1/embeddings` to llama.cpp / LM Studio / Ollama / TEI, for self-hosters wanting a SOTA model). Key design: zero-pad 384-dim vectors into the existing `halfvec(3072)` column (provably lossless for cosine) so Phase 1 needs no schema migration; the real work is decoupling the hardcoded `model_id` into `getEmbeddingModelId()` + a fail-safe `model_id` search filter. Runtime moves to `node:24-slim` for native `onnxruntime-node`. ~~Includes writing a new ADR (coordinate the number — 0022 is reserved for the OAuth connector flow).~~
+
+Status (2026-07-08): ~~ADR written — [`docs/adr/0023-local-embedding-providers.md`](adr/0023-local-embedding-providers.md) (0022 left reserved for OAuth; used 0023). Records the two providers, the zero-pad-into-`halfvec(3072)` isometry + buffer-cache exit criterion, `model_id` decoupling, and the one-provider-per-deployment assumption; extends ADR-0005, supersedes nothing.~~ ~~Human-facing docs updated — `CLAUDE.md` embeddings bullet + README "Local / offline embeddings" section (llama.cpp / LM Studio / Ollama / TEI on-ramp, pointing to the ADR + planning doc).~~ Code slice landed in the working tree (other sessions, under review, not yet committed): provider seam branches + `local-client.ts` / `openai-client.ts`, `fitTo3072` (`dims.ts`) + tests, `getEmbeddingModelId()` + fail-safe `model_id` search filter, `node:24-slim` Dockerfile switch, and `.env.example` / `docker-compose.yml` wiring. Before moving this item to `backlog-completed.md`: run the full gate (`npm run test:ci`), verify the acceptance sketch end-to-end (planning doc §Acceptance), and confirm the CI-mirror sync (`.github/workflows/ci.yml` ↔ `scripts/test-ci-local.mjs`).
+
+### ~~`[DECISION NEEDED]` Trim the hosted (gemini) Docker image after local-embeddings~~ (resolved 2026-07-08)
+
+~~The local-embeddings implementation ships one provider-agnostic image, so the hosted gemini image grew ~150–320 MB for code it never runs.~~ **Resolved:** the Dockerfile now gates the optional-dep install and model bake behind `ARG EMBEDDINGS_LOCAL` (default `false`). The hosted deploy (`docker build`, no build-args) builds **lean** — `npm ci --omit=optional`, no bake — and gemini works with the package absent (dynamic import gated on provider + tsup `--external`). Self-hosters get the local-capable variant automatically via `docker compose` (which sets `EMBEDDINGS_LOCAL=true`). The slim base (vs Alpine) is retained — its ~50 MB is negligible next to the ML deps it enables, and it avoids musl/native-addon churn. The `local` semantic-similarity smoke test that was also scoped here is now built as the `local-embeddings-smoke` CI job (`local-client.smoke.test.ts`, real bge-small, not a deploy gate).
+
 ---
 
 ## Data portability
@@ -268,6 +278,10 @@ The check-log-mock rejection (landing session) was predicted verbatim by documen
 Backend `/check` response copy for a new/thin recipe book returning zero results — owned by the parallel FF-1 tree (backend `/check` + `/mcp` surface), not this batch.
 
 ## Unsorted
+
+### `[IMPL]` `log_feedback` / `feedback` param should accept short trace-id prefixes
+
+Surfaced 2026-07-08 during the local-embeddings implementation (a multi-agent run that logged feedback as it worked). Planning docs and briefings routinely cite recipes by their 8-char short id (e.g. `18912fbd`), but `log_feedback` (and `check_recipe`'s `feedback` param) require the full trace UUID and reject a short id. Three independent agents hit this and had to either resolve the full UUID via `get_recipes` first or log an equivalent row against a different resolvable trace — friction that loses feedback signal (one agent gave up on a warranted row rather than fabricate a UUID). Accept an unambiguous short-id prefix (resolve server-side; 409/400 on ambiguous or unknown), matching how the corpus surfaces ids to agents in the first place. Low effort, removes a recurring papercut in the exact close-the-loop flow the feedback feature exists to encourage.
 
 ### `[IMPL]` Audit the /docs pages' ?key= prefill under the no-raw-keys-outside-JWT invariant
 

@@ -25,7 +25,7 @@ import type { EvidenceSearchResult } from "./vector-search.service";
 import type { SearchResultItem } from "./trace.service";
 import { clusterResults } from "./clustering.service";
 import type { ClusterResult } from "./clustering.service";
-import { embedQuery } from "../lib/embeddings/provider";
+import { embedQuery, getEmbeddingModelId } from "../lib/embeddings/provider";
 import { StageTimer } from "../lib/stage-timer";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -175,7 +175,7 @@ export async function fetchTraceVectors(
     JOIN claimnet.embedding_chunk_strategies ecs ON ecs.id = ec.chunk_strategy_id
     LEFT JOIN claimnet.vector_cache vc ON vc.content_hash = ec.chunk_hash
       AND vc.task_type = 'SEMANTIC_SIMILARITY'
-      AND vc.model_id = 'gemini-embedding-2-preview'
+      AND vc.model_id = ${getEmbeddingModelId()}
     LEFT JOIN claimnet.embedding_vectors ev ON ev.embedding_chunk_id = ec.id
       AND ev.task_type = 'SEMANTIC_SIMILARITY'
       AND ev.status = 'complete'

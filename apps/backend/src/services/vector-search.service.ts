@@ -21,7 +21,7 @@
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { PRODUCTION_SEARCH_STRATEGY_IDS } from "@soupnet/domain";
-import { embedQuery } from "../lib/embeddings/provider";
+import { embedQuery, getEmbeddingModelId } from "../lib/embeddings/provider";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -147,6 +147,7 @@ export async function hybridSearch(
         ev.status = 'complete'
         AND ev.vector IS NOT NULL
         AND ev.task_type = 'SEMANTIC_SIMILARITY'
+        AND ev.model_id = ${getEmbeddingModelId()}
         AND ecs.strategy_id IN (${strategyIdsSql})
         AND es.source_type = 'trace'
         AND es.group_id IN (${groupIdsSql})
@@ -368,6 +369,7 @@ export async function evidenceSearch(
     WHERE ev.status = 'complete'
       AND ev.vector IS NOT NULL
       AND ev.task_type = 'SEMANTIC_SIMILARITY'
+      AND ev.model_id = ${getEmbeddingModelId()}
       AND es.source_type = 'evidence'
       AND es.group_id IN (${groupIdsSql})
       ${params.excludeTraceId ? sql`AND te.trace_id != ${params.excludeTraceId}::uuid` : sql``}

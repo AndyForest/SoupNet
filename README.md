@@ -48,7 +48,7 @@ Known failure modes, from the same evaluation: the self-reporting never once sai
 - **Hosted** — free, open to new signups: [soup.net](https://www.soup.net). The site generates a one-click briefing for whatever agent you use, from web-only chatbots to full MCP clients.
 
   The web-chatbot path is a first-class interface, not a fallback: agents without MCP participate through generated links — the recipe check is a URL the agent constructs or the human clicks. Tested working with ChatGPT (web), Gemini, and Claude, free tiers included.
-- **Self-host** — MIT-licensed, deliberately boring stack (Postgres 17 + pgvector, Hono, React). No LLM runs on the server for the core check path: agents do the reasoning wherever they already run; the server does storage and vector search. (Optional premium features — off by default, opt-in per user — use one server-side LLM call; see `docs/planning/premium-llm-features.md`.) The one external dependency is Google's Gemini API for embeddings and those premium calls (an [AI Studio key](https://aistudio.google.com/apikey) works; a deterministic stub provider covers dev and tests with zero API calls). Quick start below. Either way your corpus exports as a single JSON file.
+- **Self-host** — MIT-licensed, deliberately boring stack (Postgres 17 + pgvector, Hono, React). No LLM runs on the server for the core check path: agents do the reasoning wherever they already run; the server does storage and vector search. (Optional premium features — off by default, opt-in per user — use one server-side LLM call; see `docs/planning/premium-llm-features.md`.) Embeddings default to Google's Gemini API (an [AI Studio key](https://aistudio.google.com/apikey) works; a deterministic stub provider covers dev and tests with zero API calls), but self-hosters can run them **fully locally with no key** — in-process on CPU, or against any local `/v1/embeddings` server ([Local / offline embeddings](#local--offline-embeddings) below). Gemini is then needed only for the optional premium features. Quick start below. Either way your corpus exports as a single JSON file.
 
 Point an MCP-capable agent at the hosted service in one line:
 
@@ -87,6 +87,28 @@ Open `http://localhost:5273` — log in, generate a recipe check link, and start
 ---
 
 Mailpit Web UI for local dev: http://localhost:8625
+
+---
+
+## Local / offline embeddings
+
+Semantic search needs an embedding provider, selected process-wide by `EMBEDDINGS_PROVIDER`. The default (`gemini`) calls Google; `stub` returns deterministic fake vectors for dev/tests. Two more providers let a self-hoster run real semantic search with **no external API and no key**:
+
+- **`local`** — an in-process CPU model via `@huggingface/transformers` (default `bge-small-en-v1.5`). Set `EMBEDDINGS_PROVIDER=local` and go — the model (~23 MB) downloads once. Lowest friction; good for tire-kicking and CI.
+- **`openai-compatible`** — points at any local OpenAI-style `/v1/embeddings` server, so you can serve a stronger model through tooling you already run:
+
+  ```bash
+  EMBEDDINGS_PROVIDER=openai-compatible
+  EMBEDDINGS_BASE_URL=http://localhost:8080/v1   # llama.cpp: llama-server -m <model>.gguf --embedding --pooling mean
+  EMBEDDINGS_MODEL=<the id the server reports>
+  # EMBEDDINGS_API_KEY=...                        # optional bearer, if your server requires one
+  ```
+
+  LM Studio (`http://localhost:1234/v1`), Ollama (`ollama pull nomic-embed-text` → `http://localhost:11434/v1`), and Hugging Face TEI work identically — any `/v1/embeddings` endpoint. If Soup.net runs in its own container, `localhost` means the container: use `host.docker.internal` or the host IP.
+
+**Two caveats.** One embedding provider per deployment — vectors from different models live in different semantic spaces and are never mixed, so switching provider or model means re-embedding the corpus (search fail-safes to empty results until you do). And a model's native dimension must be ≤ 3072 (or MRL-capable). Under the hood, sub-3072 vectors are zero-padded into the existing `halfvec(3072)` column, which is provably lossless for cosine — the design, the math, and the exit criterion are in **[ADR-0023](docs/adr/0023-local-embedding-providers.md)** and **[`docs/planning/local-embedding-provider.md`](docs/planning/local-embedding-provider.md)**.
+
+---
 
 ## Repo layout
 

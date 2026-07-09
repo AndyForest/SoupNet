@@ -19,10 +19,8 @@
 import crypto from "node:crypto";
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { embedQuery, embedMultimodal } from "./provider";
+import { embedQuery, embedMultimodal, getEmbeddingModelId } from "./provider";
 import type { ContentPart } from "../gemini-client";
-
-const MODEL_ID = "gemini-embedding-2-preview";
 
 // KNOWN BUG (2026-03-29): gemini-embedding-2-preview ignores task_type — all types produce
 // identical vectors (cosine similarity 1.0). RETRIEVAL_DOCUMENT generation was therefore
@@ -54,12 +52,13 @@ export async function getOrCreateCachedVector(
   taskType: string,
   multimodalParts?: ContentPart[],
 ): Promise<string | null> {
+  const modelId = getEmbeddingModelId();
   // Check cache first
   const cached = await db.execute(sql`
     SELECT vector::text AS vector_str
     FROM claimnet.vector_cache
     WHERE content_hash = ${contentHash}
-      AND model_id = ${MODEL_ID}
+      AND model_id = ${modelId}
       AND task_type = ${taskType}
     LIMIT 1
   `);
@@ -80,7 +79,7 @@ export async function getOrCreateCachedVector(
   // Write to cache at full float32 precision (ON CONFLICT = another request cached it first)
   await db.execute(sql`
     INSERT INTO claimnet.vector_cache (content_hash, model_id, task_type, vector)
-    VALUES (${contentHash}, ${MODEL_ID}, ${taskType}, ${vectorStr}::vector(3072))
+    VALUES (${contentHash}, ${modelId}, ${taskType}, ${vectorStr}::vector(3072))
     ON CONFLICT (content_hash, model_id, task_type) DO NOTHING
   `);
 
@@ -144,6 +143,7 @@ export async function enqueueEmbedding(
     );
   }
 
+  const modelId = getEmbeddingModelId();
   const category = params.fileBuffer ? "multimodal" : params.artifactCategory;
 
   // Insert the embedding source (sourceText is null for image-only)
@@ -208,7 +208,7 @@ export async function enqueueEmbedding(
         INSERT INTO claimnet.embedding_vectors
           (embedding_chunk_id, model_id, task_type, status, vector)
         VALUES
-          (${chunkRow.id}::uuid, ${MODEL_ID}, ${taskType}, 'pending', NULL)
+          (${chunkRow.id}::uuid, ${modelId}, ${taskType}, 'pending', NULL)
       `);
     }
     return;
@@ -227,7 +227,7 @@ export async function enqueueEmbedding(
         INSERT INTO claimnet.embedding_vectors
           (embedding_chunk_id, model_id, task_type, status, vector)
         VALUES
-          (${chunkRow.id}::uuid, ${MODEL_ID}, ${taskType}, 'complete', ${vectorStr}::vector(3072)::halfvec(3072))
+          (${chunkRow.id}::uuid, ${modelId}, ${taskType}, 'complete', ${vectorStr}::vector(3072)::halfvec(3072))
       `);
     } else {
       // Gemini unavailable — insert pending stub for worker
@@ -235,7 +235,7 @@ export async function enqueueEmbedding(
         INSERT INTO claimnet.embedding_vectors
           (embedding_chunk_id, model_id, task_type, status, vector)
         VALUES
-          (${chunkRow.id}::uuid, ${MODEL_ID}, ${taskType}, 'pending', NULL)
+          (${chunkRow.id}::uuid, ${modelId}, ${taskType}, 'pending', NULL)
       `);
     }
   }

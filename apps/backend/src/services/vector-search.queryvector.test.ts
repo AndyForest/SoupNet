@@ -21,6 +21,11 @@ vi.mock("../lib/embeddings/provider", () => ({
   embedMultimodal: vi.fn(async () => new Array(3072).fill(0.01) as number[]),
   batchEmbed: vi.fn(async () => []),
   getEmbeddingProviderId: () => "stub" as const,
+  // The search services now filter on model_id (fail-safe across providers), so
+  // the mock must supply it too — else getEmbeddingModelId() is undefined at the
+  // query call site. Any stable string works; these tests assert embed-call
+  // counts against NO_SUCH_GROUP, not result rows.
+  getEmbeddingModelId: () => "stub-embeddings",
 }));
 
 const BASE = process.env["BACKEND_URL"] ?? "";

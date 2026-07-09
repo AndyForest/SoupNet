@@ -62,6 +62,13 @@ interface ApiResponse {
 
 let token = "";
 let apiKey = "";
+// The model_id the running backend actually writes/filters on. Since model_id
+// became provider-derived (getEmbeddingModelId), the stub CI provider no longer
+// writes 'gemini-embedding-2-preview' — it writes 'stub-embeddings'. We seed the
+// fixtures (real Gemini vectors) under THIS id so the sync check path's cache
+// lookup hits them and the search filter matches, exactly as before the model-id
+// decoupling. Resolved from the same env the backend reads (EMBEDDINGS_PROVIDER).
+let seedModelId = "";
 
 // Load vector fixtures
 function loadFixtures(): FixtureLine[] {
@@ -79,8 +86,10 @@ describe.skipIf(!BASE)("vector search integration (seeded vectors)", () => {
     // available (the describe.skipIf above guards execution).
     const dbMod = await import("../db");
     const drizzleMod = await import("drizzle-orm");
+    const providerMod = await import("../lib/embeddings/provider");
     getDb = dbMod.getDb;
     sql = drizzleMod.sql;
+    seedModelId = providerMod.getEmbeddingModelId();
 
     // Register a test user
     const email = `test-vecsearch-${uid}@test.local`;
@@ -136,7 +145,7 @@ describe.skipIf(!BASE)("vector search integration (seeded vectors)", () => {
         INSERT INTO claimnet.vector_cache (content_hash, model_id, task_type, vector)
         VALUES (
           ${fixture.content_hash},
-          ${fixture.model_id},
+          ${seedModelId},
           ${fixture.task_type},
           ${fixture.vector}::vector(3072)
         )
@@ -247,7 +256,7 @@ describe.skipIf(!BASE)("vector search integration (seeded vectors)", () => {
       SELECT 1
       FROM claimnet.vector_cache
       WHERE content_hash = ${fixture.content_hash}
-        AND model_id = ${fixture.model_id}
+        AND model_id = ${seedModelId}
         AND task_type = ${fixture.task_type}
       LIMIT 1
     `);
@@ -271,7 +280,7 @@ describe.skipIf(!BASE)("vector search integration (seeded vectors)", () => {
       JOIN claimnet.embedding_chunks ec ON ec.id = ev.embedding_chunk_id
       WHERE ec.chunk_hash = ${fixture.content_hash}
         AND ev.task_type = ${fixture.task_type}
-        AND ev.model_id = ${fixture.model_id}
+        AND ev.model_id = ${seedModelId}
         AND ev.status = 'complete'
         AND ev.vector IS NOT NULL
       ORDER BY ev.updated_at DESC
@@ -308,7 +317,7 @@ describe.skipIf(!BASE)("vector search integration (seeded vectors)", () => {
     const stubbed = stubEmbeddingVector(
       fixture.source_text,
       fixture.task_type,
-      fixture.model_id,
+      seedModelId,
     );
 
     // L2 distance between two unit-norm vectors is in [0, 2]:

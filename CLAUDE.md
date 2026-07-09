@@ -205,7 +205,8 @@ Copy `.env.example` to `.env`. Key variables (see `.env.example` for the full li
 - `JWT_SECRET` — 64-char hex for JWT signing (`openssl rand -hex 32`). Backend refuses to start with the default placeholder.
 - `DEV_USERNAME` / `DEV_PASSWORD` — auto-creates a system user on first startup (dev only; gated by `ALLOW_AUTO_SETUP` in production-tagged envs).
 - `TEST_USERNAME` / `TEST_PASSWORD` — auto-created alongside the dev user; integration tests reuse instead of spinning up throwaway accounts.
-- `GEMINI_API_KEY` — required in production. Locally, set `EMBEDDINGS_PROVIDER=stub` for deterministic fake vectors (tests exercise the full cache path without burning quota). See testing-plan.md.
+- `GEMINI_API_KEY` — required in production when `EMBEDDINGS_PROVIDER=gemini` (the default). Locally, set `EMBEDDINGS_PROVIDER=stub` for deterministic fake vectors (tests exercise the full cache path without burning quota). See testing-plan.md.
+- `EMBEDDINGS_PROVIDER` — `gemini` (default) | `stub` | `local` | `openai-compatible`. `local` runs an in-process CPU model (`@huggingface/transformers`, default `bge-small-en-v1.5`) with no key or external service; `openai-compatible` points `EMBEDDINGS_BASE_URL` + `EMBEDDINGS_MODEL` at any `/v1/embeddings` server (llama.cpp `llama-server`, LM Studio, Ollama, TEI) — the keyless self-hoster / offline path. One provider per deployment; switching requires re-embedding. See ADR-0023 and `docs/planning/local-embedding-provider.md`.
 - `EMBEDDING_WORKER_ENABLED` (default `true`) — boots the pg-boss consumers in-process. Set `false` to run HTTP-only. Feature-flag escape hatch for the ADR-0020 unified embedding service.
 - `WORKER_CONCURRENCY` (default `5`) — pg-boss batch size.
 - `SMTP_*` — Mailpit locally (auto-wired by docker-compose); configure for any SMTP server in production (e.g., AWS SES, Postmark, SendGrid).
