@@ -279,6 +279,10 @@ Backend `/check` response copy for a new/thin recipe book returning zero results
 
 ## Unsorted
 
+### `[IMPL]` `log_feedback` / `feedback` param should accept short trace-id prefixes
+
+Surfaced 2026-07-08 during the local-embeddings implementation (a multi-agent run that logged feedback as it worked). Planning docs and briefings routinely cite recipes by their 8-char short id (e.g. `18912fbd`), but `log_feedback` (and `check_recipe`'s `feedback` param) require the full trace UUID and reject a short id. Three independent agents hit this and had to either resolve the full UUID via `get_recipes` first or log an equivalent row against a different resolvable trace — friction that loses feedback signal (one agent gave up on a warranted row rather than fabricate a UUID). Accept an unambiguous short-id prefix (resolve server-side; 409/400 on ambiguous or unknown), matching how the corpus surfaces ids to agents in the first place. Low effort, removes a recurring papercut in the exact close-the-loop flow the feedback feature exists to encourage.
+
 ### `[IMPL]` Audit the /docs pages' ?key= prefill under the no-raw-keys-outside-JWT invariant
 
 The 2026-07-06 placeholder-mode change established the invariant (CI-enforced for briefing surfaces): raw API keys never appear in responses not gated by human-only JWT auth, and no longer transit request URLs on the briefing path. The /docs pages (`/docs/mcp-setup?key=`, `/docs/recipe-check-guide?key=`) and the `/check?key=` page itself are the same class — a raw key in a URL echoed into rendered HTML. The web key-in-URL flow is load-bearing by design (web-only agents), so this is an audit-and-decide, not a mechanical port: which echoes are essential to that flow, which can go placeholder, and whether the key-in-URL design itself gets revisited. Note: briefings now link to `/docs/mcp-setup?key=YOUR_API_KEY`, so post-substitution artifacts exercise the prefill path with a real key.
