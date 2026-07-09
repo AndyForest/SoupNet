@@ -20,6 +20,12 @@ services:
     build:
       context: .
       dockerfile: apps/backend/Dockerfile
+      args:
+        # Build the LOCAL-capable image (installs @huggingface/transformers +
+        # onnxruntime-node, bakes the default model) so self-hosters using
+        # `docker compose` can run EMBEDDINGS_PROVIDER=local out of the box. The
+        # hosted deploy builds via `docker build` with no args → lean image.
+        EMBEDDINGS_LOCAL: "true"
     restart: unless-stopped
     depends_on:
       postgres:

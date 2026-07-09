@@ -1,14 +1,19 @@
 # Debian "slim" (glibc), not Alpine (musl): the optional `local` embedding
 # provider loads onnxruntime-node, whose prebuilt native addon is glibc-only —
 # it has no musl build, so it neither installs nor loads on Alpine. node_modules
-# is built once in `deps`/`builder` and copied wholesale into `runner` (see the
-# COPY below), so every stage must be glibc for the native binary to be present
-# and loadable at runtime. This is ONE provider-agnostic image: gemini/stub
-# deployments also carry @huggingface/transformers + onnxruntime-node and the
-# baked model (they just never load them via the dynamic-import gate) — the cost
-# is a larger image, not runtime overhead. Trimming the hosted gemini image is a
-# deferred decision (see docs/backlog.md). See docs/adr/0023-local-embedding-providers.md
-# and docs/planning/local-embedding-provider.md §5.
+# is built once in `deps`/`builder` and copied wholesale into `runner`, so every
+# stage must be glibc for the native binary to be present and loadable.
+#
+# ARG EMBEDDINGS_LOCAL (default false) selects the image variant:
+#   false (default) — LEAN. Removes @huggingface/* + onnxruntime-* (~150-320 MB)
+#                     from node_modules after install and skips the model bake.
+#                     gemini never imports them (dynamic import gated on provider;
+#                     tsup marks the package external), so the hosted deploy —
+#                     which runs `docker build` with NO build-args — is lean.
+#   true            — LOCAL-capable. Installs the optional deps and bakes the
+#                     default model for offline use. Self-hosters get this via
+#                     `docker compose` (sets the arg) or --build-arg EMBEDDINGS_LOCAL=true.
+# See docs/adr/0023-local-embedding-providers.md and docs/planning/local-embedding-provider.md §5.
 FROM node:24-slim AS base
 WORKDIR /app
 
@@ -21,10 +26,20 @@ COPY packages/domain/package.json packages/domain/
 COPY packages/db/package.json packages/db/
 COPY apps/backend/package.json apps/backend/
 COPY apps/mcp-server/package.json apps/mcp-server/
-# Optional deps are included by default: onnxruntime-node's glibc prebuilt
-# installs cleanly here (Debian), so the `local` provider's native addon ends up
-# in node_modules. gemini/stub don't import it (dynamic import gated on provider).
+# Full install so the build toolchain's own platform-native optional deps
+# (@esbuild/*, @rollup/*, …) are present — `--omit=optional` would strip those
+# too and break the tsup builds below. The LEAN default then removes ONLY the
+# local-embedding ML subtree (@huggingface/* + onnxruntime-*, ~150-320 MB) before
+# it is copied into the runner, so gemini/stub images stay small. That's safe:
+# the `local` dynamic import is gated on the provider (never reached under
+# gemini/stub) and tsup marks the package external, so the build never needs it.
+# EMBEDDINGS_LOCAL=true keeps the subtree for the local-capable variant.
+ARG EMBEDDINGS_LOCAL=false
 RUN npm ci --workspace=apps/backend --workspace=apps/mcp-server --include-workspace-root
+RUN if [ "$EMBEDDINGS_LOCAL" != "true" ]; then \
+      rm -rf node_modules/@huggingface node_modules/onnxruntime-node \
+             node_modules/onnxruntime-web node_modules/onnxruntime-common; \
+    fi
 
 # Build
 FROM deps AS builder
@@ -61,10 +76,11 @@ COPY --from=builder /app/packages packages
 WORKDIR /app/apps/backend
 EXPOSE 3001
 
-# ── Local-embedding model bake (offline-capable images) ──────────────────────
-# Pre-download the default `local` provider model into HF_HOME at build time so
-# the image runs the `local` provider with no network access to the HF hub. The
-# offline flags below are set AFTER the bake so this RUN can still fetch weights.
+# ── Local-embedding model bake (LOCAL-capable images only) ───────────────────
+# For EMBEDDINGS_LOCAL=true, pre-download the default `local` model into HF_HOME
+# at build time so the image runs the `local` provider with no network access to
+# the HF hub. Skipped for the lean default (no optional deps installed, nothing
+# to bake). The offline flags below are set AFTER the bake so this RUN can fetch.
 #
 # HF_MODEL must match the model id the `local` provider resolves at runtime
 # (apps/backend/src/lib/embeddings/local-client.ts default) AND the dtype it
@@ -73,12 +89,18 @@ EXPOSE 3001
 # users who swap EMBEDDINGS_MODEL without rebuilding should instead mount an
 # HF_HOME volume and unset the offline flags (see .env.example / docker-compose).
 ENV HF_HOME=/app/apps/backend/.hf-cache
+ARG EMBEDDINGS_LOCAL=false
 ARG HF_MODEL=Xenova/bge-small-en-v1.5
-RUN mkdir -p "$HF_HOME" \
-    && HF_MODEL="$HF_MODEL" node -e "import('@huggingface/transformers').then(({ pipeline }) => pipeline('feature-extraction', process.env.HF_MODEL)).then(() => console.log('baked local embedding model:', process.env.HF_MODEL)).catch((err) => { console.error(err); process.exit(1); })" \
-    && chown -R node:node "$HF_HOME"
-# Runtime: never reach out to the HF hub — weights are baked above. Unset both
-# (and mount an HF_HOME volume) if running a model that wasn't baked in.
+RUN if [ "$EMBEDDINGS_LOCAL" = "true" ]; then \
+      mkdir -p "$HF_HOME" \
+      && HF_MODEL="$HF_MODEL" node -e "import('@huggingface/transformers').then(({ pipeline }) => pipeline('feature-extraction', process.env.HF_MODEL)).then(() => console.log('baked local embedding model:', process.env.HF_MODEL)).catch((err) => { console.error(err); process.exit(1); })" \
+      && chown -R node:node "$HF_HOME"; \
+    else \
+      echo "Lean image (EMBEDDINGS_LOCAL=false): skipping local-model bake"; \
+    fi
+# Runtime: never reach out to the HF hub — weights are baked above (local variant).
+# Inert for the lean/gemini image. Unset both (and mount an HF_HOME volume) to run
+# a model that wasn't baked in.
 ENV HF_HUB_OFFLINE=1 \
     TRANSFORMERS_OFFLINE=1
 
