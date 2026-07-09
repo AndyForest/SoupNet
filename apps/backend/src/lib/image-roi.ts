@@ -14,7 +14,7 @@
  * new requests after a cue change.
  */
 
-import sharp from "sharp";
+import sharp, { type FormatEnum } from "sharp";
 
 /**
  * Normalized region-of-interest box. All coordinates are fractions in [0, 1]
@@ -142,7 +142,7 @@ export async function applyVisualCue(
   // original position within the crop. Result: ROI sharp, padding blurred.
   const composed = await sharp(blurredCrop)
     .composite([{ input: sharpRoi, left: roiInCropX, top: roiInCropY }])
-    .toFormat(format as keyof sharp.FormatEnum)
+    .toFormat(format as keyof FormatEnum)
     .toBuffer();
 
   return {
