@@ -118,11 +118,9 @@ sequenceDiagram
         S->>Q: Enqueue embedding job (trace + contextual evidence)
     end
 
-    Note over S: Search pipeline begins
+    Note over S: Search pipeline begins (pure semantic pgvector)
     S->>G: Embed recipe text (RETRIEVAL_QUERY)
-    S->>DB: Lexical search (tsvector, ts_rank_cd)
-    S->>DB: Semantic search (pgvector HNSW, cosine)
-    S->>S: RRF merge (k=60)
+    S->>DB: Semantic search (pgvector HNSW, halfvec cosine)
     S->>S: Cluster results (K-Means++ if needed)
 
     opt Concept axes requested
@@ -134,6 +132,8 @@ sequenceDiagram
     S->>DB: Audit log entry
     S-->>A: Results (HTML / JSON / MCP text)
 ```
+
+**Pure semantic search (simplified 2026-04-11):** Retrieval is pgvector cosine over gemini-embedding-2-preview only. The earlier hybrid path (tsvector lexical search + reciprocal-rank-fusion merge) was removed; the `traces.tsv` column remains in the schema but is no longer queried. See the header of `vector-search.service.ts`.
 
 **Three surfaces, same pipeline:**
 - **MCP** (`check_recipe` tool): Bearer API key in auth context, text response
@@ -451,4 +451,4 @@ flowchart TB
 
 ---
 
-*Last updated: 2026-04-04.*
+*Last updated: 2026-07-09 (corrected the recipe-check flow to pure semantic search; the prior lexical-tsvector + RRF path is dead).*

@@ -86,10 +86,16 @@ const migrationsMetaDir = join(
 
 const journalPath = join(migrationsMetaDir, "_journal.json");
 const journal = JSON.parse(readFileSync(journalPath, "utf-8")) as {
-  entries: { idx: number; tag: string }[];
+  entries: { idx: number; tag: string; when: number }[];
 };
-const latestIdx = Math.max(...journal.entries.map((e) => e.idx));
+const latestEntry = journal.entries.reduce((a, b) => (b.idx > a.idx ? b : a));
+const latestIdx = latestEntry.idx;
 const snapshotPath = join(migrationsMetaDir, `${String(latestIdx).padStart(4, "0")}_snapshot.json`);
+// Deterministic "as of" date: the latest migration's own timestamp, NOT
+// wall-clock. Wall-clock would make this doc differ from its committed copy
+// every day, breaking the regenerate-and-diff drift check (npm run
+// check:data-model) even when the schema is unchanged.
+const latestMigrationDate = new Date(latestEntry.when).toISOString().split("T")[0];
 
 const snapshot: Snapshot = JSON.parse(readFileSync(snapshotPath, "utf-8"));
 const tables = Object.values(snapshot.tables).sort((a, b) =>
@@ -111,12 +117,33 @@ function mermaidType(type: string): string {
     .replace(/ /g, "_");
 }
 
-// Logical table groups for the ER diagram
+// Logical table groups for the ToC index and column-table sections.
+//
+// This map is the ONE hand-maintained input to this generator: it assigns
+// every table to a category. When you add a table to the schema, add it here
+// too. If you don't, generation FAILS LOUDLY (see the coverage guard below)
+// rather than silently dropping the table from the index and the per-table
+// column sections — a drift that shipped once (header claimed 27 tables while
+// the index listed 20). Fail-loud makes that drift structurally impossible to
+// ship; recipe 9d43fe77.
 const tableGroups: Record<string, string[]> = {
   "Identity & Access": ["users", "organizations", "groups", "group_members"],
-  "Core Content": ["traces", "evidence", "references"],
+  "Core Content": ["traces", "evidence", "references", "uploads"],
   "Linking": ["trace_evidence", "trace_references", "evidence_references"],
-  "Auth & Admin": ["api_keys", "invitations", "system_settings", "audit_log"],
+  "Feedback & Reactions": [
+    "check_feedback",
+    "check_feedback_stars",
+    "trace_reactions",
+  ],
+  "Auth & Admin": [
+    "api_keys",
+    "oauth_clients",
+    "oauth_authorization_codes",
+    "invitations",
+    "system_settings",
+    "audit_log",
+    "email_log",
+  ],
   "Embedding Pipeline": [
     "embedding_sources",
     "embedding_chunk_strategies",
@@ -125,6 +152,50 @@ const tableGroups: Record<string, string[]> = {
   ],
   "Caching": ["reference_source_cache", "vector_cache"],
 };
+
+// ── Coverage guard: every snapshot table must be categorized ────────────────
+//
+// Fail loudly if the snapshot contains a table absent from tableGroups, or if
+// tableGroups names a table that no longer exists in the snapshot. Either way
+// the doc would be wrong (a dropped table, or a broken ToC anchor), so refuse
+// to write it and tell the developer exactly what to fix.
+{
+  const snapshotNames = new Set(tables.map((t) => t.name));
+  const categorizedNames = new Set(Object.values(tableGroups).flat());
+
+  const uncategorized = [...snapshotNames]
+    .filter((name) => !categorizedNames.has(name))
+    .sort();
+  const stale = [...categorizedNames]
+    .filter((name) => !snapshotNames.has(name))
+    .sort();
+
+  if (uncategorized.length > 0 || stale.length > 0) {
+    const lines = [
+      "data-model doc generation FAILED: tableGroups is out of sync with the Drizzle snapshot.",
+      "",
+      `Edit the tableGroups map in scripts/generate-data-model-docs.ts (snapshot: ${snapshotPath
+        .split(/[\\/]/)
+        .pop()}).`,
+    ];
+    if (uncategorized.length > 0) {
+      lines.push(
+        "",
+        `  Uncategorized (in snapshot, missing from tableGroups): ${uncategorized.join(", ")}`,
+        "    → add each to the most fitting category so it appears in the index and gets a column table."
+      );
+    }
+    if (stale.length > 0) {
+      lines.push(
+        "",
+        `  Stale (in tableGroups, no longer in snapshot): ${stale.join(", ")}`,
+        "    → remove each; it would produce a broken ToC anchor and an empty section."
+      );
+    }
+    console.error(`\n${lines.join("\n")}\n`);
+    process.exit(1);
+  }
+}
 
 // ── Generate Mermaid ER diagram ─────────────────────────────────────────────
 
@@ -266,7 +337,7 @@ function generate(): string {
   sections.push("> **Auto-generated** from Drizzle migration snapshot `" + snapshotPath.split(/[\\/]/).pop() + "`.");
   sections.push("> Do not edit by hand. Regenerate with: `npx tsx scripts/generate-data-model-docs.ts`");
   sections.push(">");
-  sections.push(`> Generated: ${new Date().toISOString().split("T")[0]}`);
+  sections.push(`> Schema as of migration \`${latestEntry.tag}\` (${latestMigrationDate}).`);
   sections.push(`> Tables: ${tables.length} | Schema: \`claimnet\``);
   sections.push("");
   sections.push("For design rationale, conventions, and context, see [data-model.md](data-model.md).");
@@ -324,12 +395,12 @@ function generate(): string {
 // ── Write output ────────────────────────────────────────────────────────────
 
 const output = generate();
-const outPath = join(
-  projectRoot,
-  "docs",
-  "architecture",
-  "data-model-generated.md"
-);
+// DATA_MODEL_OUT lets the drift check (scripts/check-data-model-docs.mjs)
+// redirect output to a temp file so it can diff against the committed copy
+// without mutating it. Unset in normal use → writes the canonical doc.
+const outPath =
+  process.env.DATA_MODEL_OUT ??
+  join(projectRoot, "docs", "architecture", "data-model-generated.md");
 writeFileSync(outPath, output, "utf-8");
 console.log(`Wrote ${outPath}`);
 console.log(`  ${tables.length} tables, ${Object.values(snapshot.tables).reduce((sum, t) => sum + Object.keys(t.columns).length, 0)} columns`);

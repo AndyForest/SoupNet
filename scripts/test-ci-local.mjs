@@ -136,6 +136,12 @@ async function main() {
     console.log("\n=== Lint ===");
     run("npm run lint --workspaces --if-present");
 
+    // 4b. Data-model doc drift — mirrors the "Check data-model doc is up to
+    //     date" step in .github/workflows/ci.yml. Fails if the generated
+    //     reference is stale vs the latest Drizzle snapshot. Static (no DB).
+    console.log("\n=== Data-model doc drift check ===");
+    run("npm run check:data-model");
+
     // 5. Start backend
     console.log("\n=== Starting backend on port", CI_PORT, "===");
     backendProcess = spawn("node", ["apps/backend/dist/index.js"], {

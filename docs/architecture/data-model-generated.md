@@ -3,7 +3,7 @@
 > **Auto-generated** from Drizzle migration snapshot `0029_snapshot.json`.
 > Do not edit by hand. Regenerate with: `npx tsx scripts/generate-data-model-docs.ts`
 >
-> Generated: 2026-07-06
+> Schema as of migration `0029_user_premium` (2026-07-06).
 > Tables: 27 | Schema: `claimnet`
 
 For design rationale, conventions, and context, see [data-model.md](data-model.md).
@@ -11,9 +11,10 @@ For design rationale, conventions, and context, see [data-model.md](data-model.m
 ## Tables
 
 **Identity & Access:** [`users`](#claimnetusers) · [`organizations`](#claimnetorganizations) · [`groups`](#claimnetgroups) · [`group_members`](#claimnetgroup_members)
-**Core Content:** [`traces`](#claimnettraces) · [`evidence`](#claimnetevidence) · [`references`](#claimnetreferences)
+**Core Content:** [`traces`](#claimnettraces) · [`evidence`](#claimnetevidence) · [`references`](#claimnetreferences) · [`uploads`](#claimnetuploads)
 **Linking:** [`trace_evidence`](#claimnettrace_evidence) · [`trace_references`](#claimnettrace_references) · [`evidence_references`](#claimnetevidence_references)
-**Auth & Admin:** [`api_keys`](#claimnetapi_keys) · [`invitations`](#claimnetinvitations) · [`system_settings`](#claimnetsystem_settings) · [`audit_log`](#claimnetaudit_log)
+**Feedback & Reactions:** [`check_feedback`](#claimnetcheck_feedback) · [`check_feedback_stars`](#claimnetcheck_feedback_stars) · [`trace_reactions`](#claimnettrace_reactions)
+**Auth & Admin:** [`api_keys`](#claimnetapi_keys) · [`oauth_clients`](#claimnetoauth_clients) · [`oauth_authorization_codes`](#claimnetoauth_authorization_codes) · [`invitations`](#claimnetinvitations) · [`system_settings`](#claimnetsystem_settings) · [`audit_log`](#claimnetaudit_log) · [`email_log`](#claimnetemail_log)
 **Embedding Pipeline:** [`embedding_sources`](#claimnetembedding_sources) · [`embedding_chunk_strategies`](#claimnetembedding_chunk_strategies) · [`embedding_chunks`](#claimnetembedding_chunks) · [`embedding_vectors`](#claimnetembedding_vectors)
 **Caching:** [`reference_source_cache`](#claimnetreference_source_cache) · [`vector_cache`](#claimnetvector_cache)
 
@@ -542,6 +543,24 @@ These are created by raw SQL in migration files and are not captured in the snap
 
 ---
 
+### `claimnet.uploads`
+
+| Column | Type | Nullable | Default | PK |
+|---|---|---|---|---|
+| `id` | `uuid` | NO | `gen_random_uuid()` | PK |
+| `api_key_id` | `uuid` | NO |  |  |
+| `content_hash` | `text` | NO |  |  |
+| `mime_type` | `text` | NO |  |  |
+| `size_bytes` | `integer` | NO |  |  |
+| `original_filename` | `text` | YES |  |  |
+| `created_at` | `timestamptz` | NO | `now()` |  |
+
+**Indexes:**
+- `uploads_api_key_id_idx`: `(api_key_id)`
+- `uploads_content_hash_idx`: `(content_hash)`
+
+---
+
 
 ## Linking
 
@@ -606,6 +625,83 @@ These are created by raw SQL in migration files and are not captured in the snap
 ---
 
 
+## Feedback & Reactions
+
+### `claimnet.check_feedback`
+
+| Column | Type | Nullable | Default | PK |
+|---|---|---|---|---|
+| `id` | `uuid` | NO | `gen_random_uuid()` | PK |
+| `trace_id` | `uuid` | NO |  |  |
+| `api_key_id` | `uuid` | NO |  |  |
+| `agent_id` | `text` | YES |  |  |
+| `kind` | `text` | NO |  |  |
+| `impact` | `text` | NO |  |  |
+| `disposition` | `text` | NO |  |  |
+| `story_fulfilled` | `text` | NO |  |  |
+| `story` | `text` | NO |  |  |
+| `note` | `text` | YES |  |  |
+| `top_similarity` | `real` | YES |  |  |
+| `model` | `text` | YES |  |  |
+| `harness` | `text` | YES |  |  |
+| `harness_version` | `text` | YES |  |  |
+| `related_trace_ids` | `uuid[]` | YES |  |  |
+| `created_at` | `timestamptz` | NO | `now()` |  |
+
+**Foreign keys:**
+- `trace_id` → `traces.id`
+
+**Indexes:**
+- `check_feedback_trace_id_idx`: `(trace_id)`
+- `check_feedback_api_key_id_created_at_idx`: `(api_key_id, created_at)`
+
+---
+
+### `claimnet.check_feedback_stars`
+
+| Column | Type | Nullable | Default | PK |
+|---|---|---|---|---|
+| `id` | `uuid` | NO | `gen_random_uuid()` | PK |
+| `feedback_id` | `uuid` | NO |  |  |
+| `user_id` | `uuid` | NO |  |  |
+| `created_at` | `timestamptz` | NO | `now()` |  |
+
+**Foreign keys:**
+- `feedback_id` → `check_feedback.id`
+- `user_id` → `users.id`
+
+**Unique constraints:**
+- `check_feedback_stars_feedback_user_unique`: `(feedback_id, user_id)`
+
+**Indexes:**
+- `check_feedback_stars_feedback_id_idx`: `(feedback_id)`
+
+---
+
+### `claimnet.trace_reactions`
+
+| Column | Type | Nullable | Default | PK |
+|---|---|---|---|---|
+| `id` | `uuid` | NO | `gen_random_uuid()` | PK |
+| `trace_id` | `uuid` | NO |  |  |
+| `user_id` | `uuid` | NO |  |  |
+| `reaction` | `text` | NO |  |  |
+| `created_at` | `timestamptz` | NO | `now()` |  |
+| `updated_at` | `timestamptz` | NO | `now()` |  |
+
+**Foreign keys:**
+- `trace_id` → `traces.id`
+- `user_id` → `users.id`
+
+**Unique constraints:**
+- `trace_reactions_trace_user_unique`: `(trace_id, user_id)`
+
+**Indexes:**
+- `trace_reactions_trace_id_idx`: `(trace_id)`
+
+---
+
+
 ## Auth & Admin
 
 ### `claimnet.api_keys`
@@ -636,6 +732,49 @@ These are created by raw SQL in migration files and are not captured in the snap
 - `api_keys_user_id_idx`: `(user_id)`
 - `api_keys_expires_at_idx`: `(expires_at)`
 - `api_keys_refresh_token_hash_idx`: `(refresh_token_hash)`
+
+---
+
+### `claimnet.oauth_clients`
+
+| Column | Type | Nullable | Default | PK |
+|---|---|---|---|---|
+| `id` | `uuid` | NO | `gen_random_uuid()` | PK |
+| `client_id` | `text` | NO |  |  |
+| `client_secret_hash` | `text` | NO |  |  |
+| `client_name` | `text` | YES |  |  |
+| `redirect_uris` | `text[]` | NO |  |  |
+| `created_at` | `timestamptz` | NO | `now()` |  |
+| `last_used_at` | `timestamptz` | YES |  |  |
+
+**Unique constraints:**
+- `oauth_clients_client_id_unique`: `(client_id)`
+
+---
+
+### `claimnet.oauth_authorization_codes`
+
+| Column | Type | Nullable | Default | PK |
+|---|---|---|---|---|
+| `id` | `uuid` | NO | `gen_random_uuid()` | PK |
+| `code_hash` | `text` | NO |  |  |
+| `client_id` | `text` | NO |  |  |
+| `user_id` | `uuid` | NO |  |  |
+| `redirect_uri` | `text` | NO |  |  |
+| `code_challenge` | `text` | NO |  |  |
+| `code_challenge_method` | `text` | NO |  |  |
+| `scope_read_group_ids` | `uuid[]` | NO |  |  |
+| `scope_write_group_ids` | `uuid[]` | NO |  |  |
+| `scope_default_write_group_id` | `uuid` | NO |  |  |
+| `consumed_at` | `timestamptz` | YES |  |  |
+| `expires_at` | `timestamptz` | NO |  |  |
+| `created_at` | `timestamptz` | NO | `now()` |  |
+
+**Unique constraints:**
+- `oauth_authorization_codes_code_hash_unique`: `(code_hash)`
+
+**Indexes:**
+- `oauth_authorization_codes_expires_at_idx`: `(expires_at)`
 
 ---
 
@@ -700,6 +839,24 @@ These are created by raw SQL in migration files and are not captured in the snap
 - `audit_log_target_id_idx`: `(target_id)`
 - `audit_log_occurred_at_idx`: `(occurred_at)`
 - `audit_log_api_key_id_occurred_at_idx`: `(api_key_id, occurred_at)`
+
+---
+
+### `claimnet.email_log`
+
+| Column | Type | Nullable | Default | PK |
+|---|---|---|---|---|
+| `id` | `uuid` | NO | `gen_random_uuid()` | PK |
+| `to_email` | `text` | NO |  |  |
+| `kind` | `text` | NO |  |  |
+| `subject` | `text` | NO |  |  |
+| `status` | `text` | NO |  |  |
+| `error` | `text` | YES |  |  |
+| `created_at` | `timestamptz` | NO | `now()` |  |
+
+**Indexes:**
+- `email_log_created_at_idx`: `(created_at)`
+- `email_log_to_email_idx`: `(to_email)`
 
 ---
 

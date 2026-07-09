@@ -24,6 +24,7 @@
     "generate:openapi": "npm run generate --workspace=packages/contracts",
     "generate:api-client": "npm run generate --workspace=packages/api-client",
     "generate:data-model": "npx tsx scripts/generate-data-model-docs.ts",
+    "check:data-model": "node scripts/check-data-model-docs.mjs",
     "db:generate": "npm run db:generate --workspace=packages/db",
     "screenshot": "node scripts/screenshot.mjs",
     "clean": "find . -name 'node_modules' -not -path '*/.git/*' -prune -exec rm -rf {} + && find . -name 'dist' -not -path '*/.git/*' -prune -exec rm -rf {} +"

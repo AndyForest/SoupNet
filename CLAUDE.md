@@ -43,8 +43,15 @@ npm run dev:frontend                    # Vite dev server on :5273
 #      will fail):
 #        cd packages/db && npx drizzle-kit generate --name <descriptive_name> && cd -
 #        npm run generate:data-model      # regenerate the data-model doc
-#   4. Review the generated SQL in packages/db/migrations/ before committing.
+#   4. If you added a NEW table, add it to the `tableGroups` map in
+#      scripts/generate-data-model-docs.ts, or the generator fails loudly
+#      (it refuses to drop an uncategorized table from the doc silently).
+#   5. Review the generated SQL in packages/db/migrations/ before committing.
+#   6. npm run check:data-model — fails if the generated doc is stale vs the
+#      schema (also enforced in CI + test:ci). Commit schema + migration + the
+#      regenerated doc together.
 # Migrations apply automatically at backend startup (apps/backend/src/db.ts).
+# Full schema-authoring walkthrough: docs/workflows/schema-changes.md
 
 # Quality gates — canonical pre-commit gate is test:ci (see Pre-Commit Workflow)
 npm run test:ci                  # fresh isolated DB, mirrors CI exactly
