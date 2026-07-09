@@ -43,9 +43,21 @@ services:
       ALLOW_AUTO_SETUP: "true"  # Docker dev env — allow auto-setup despite NODE_ENV=production
       DISABLE_RATE_LIMIT: "true"  # Dev env — tests make many rapid requests (matches CI)
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      # Embedding provider — "gemini" (real API) or "stub" (deterministic fake
-      # vectors for tests, no quota cost).
+      # Embedding provider — "gemini" (real API), "stub" (deterministic fake
+      # vectors for tests, no quota cost), "local" (in-process CPU model, no key),
+      # or "openai-compatible" (any /v1/embeddings endpoint).
       EMBEDDINGS_PROVIDER: ${EMBEDDINGS_PROVIDER:-gemini}
+      # Model id — "local" model (default baked in the image) or the model id the
+      # openai-compatible endpoint reports. Empty falls back to the provider default.
+      EMBEDDINGS_MODEL: ${EMBEDDINGS_MODEL:-}
+      # openai-compatible only: base URL of the /v1/embeddings endpoint (e.g.
+      # llama.cpp http://host.docker.internal:8080/v1) and an optional bearer key.
+      # Note: localhost inside this container is the container, not the host —
+      # use host.docker.internal (Docker Desktop) or the host IP for a harness on
+      # the host. To swap a baked "local" model without rebuilding, mount an
+      # HF_HOME volume here and unset HF_HUB_OFFLINE/TRANSFORMERS_OFFLINE.
+      EMBEDDINGS_BASE_URL: ${EMBEDDINGS_BASE_URL:-}
+      EMBEDDINGS_API_KEY: ${EMBEDDINGS_API_KEY:-}
       # Synthesis provider for the premium `synthesize` feature — "gemini"
       # (real LLM call via SYNTHESIS_MODEL) or "stub" (deterministic profile,
       # no LLM call). Reuses GEMINI_API_KEY.

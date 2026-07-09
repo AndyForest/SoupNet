@@ -141,13 +141,34 @@ async function start() {
   // Log the chosen embedding provider so it's obvious which mode is running.
   // Imported lazily so the env var lookup happens after auto-setup, in case
   // the env is mutated by tests at startup.
-  const { getEmbeddingProviderId } = await import("./lib/embeddings/provider");
+  const { getEmbeddingProviderId, embeddingModel, embeddingBaseUrl } = await import(
+    "./lib/embeddings/provider"
+  );
   const providerId = getEmbeddingProviderId();
   console.warn(`[backend] Embedding provider: ${providerId}`);
   if (providerId === "stub") {
     console.warn(
       "[backend] WARNING: stub embeddings are deterministic but not semantically meaningful. " +
         "Set EMBEDDINGS_PROVIDER=gemini for real vectors.",
+    );
+  } else if (providerId === "local") {
+    // Warm the in-process ONNX model so the ~0.5-2s load happens now, not on the
+    // first real check. Non-fatal: warmup() already swallows its own errors, but
+    // wrap defensively so a boot-time model-load hiccup can never crash startup —
+    // the first real embedQuery retries (and degrades to lexical if it truly fails).
+    console.warn(`[backend] Local embedding model: ${embeddingModel()}`);
+    try {
+      const { warmup } = await import("./lib/embeddings/local-client");
+      await warmup();
+    } catch (err) {
+      console.warn("[backend] Local embedding warmup failed (first embed will retry):", err);
+    }
+  } else if (providerId === "openai-compatible") {
+    // Resolve config now so a missing EMBEDDINGS_BASE_URL / EMBEDDINGS_MODEL fails
+    // fast at boot with a clear message instead of silently degrading to lexical
+    // on every request.
+    console.warn(
+      `[backend] OpenAI-compatible embedding endpoint: ${embeddingBaseUrl()} (model: ${embeddingModel()})`,
     );
   }
 
