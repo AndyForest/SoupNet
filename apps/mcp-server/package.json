@@ -23,7 +23,7 @@
   "devDependencies": {
     "@soupnet/config": "*",
     "@types/node": "^22.0.0",
-    "tsx": "^4.0.0",
+    "tsx": "^4.22.4",
     "typescript": "^5.7.0"
   }
 }
