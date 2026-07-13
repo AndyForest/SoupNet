@@ -4,6 +4,69 @@ Items moved here from `backlog.md` when finished. Date-stamped so we can see wha
 
 ---
 
+## 2026-07-12 — user-data batch (corpus import, deletion cascade, gate parallelism, short-ids)
+
+Four concurrent worktree trees, orchestrated; all gates green (`test:ci` per branch, serial). Branches pending operator push + draft PRs: `chore/testci-port-param` (f0bc843), `fix/account-deletion-cascade` (2ccf123), `feat/feedback-short-ids` (eee9496), `feat/corpus-import` (b2abc51+ba6c54d). Declared merge order: that order, PR #28 independent; the only overlap is `trace-delete.service.ts` (trivial).
+
+**Corpus import** — `POST /import` (own route module, JWT + verified email, human-only). Upsert-on-trace-id idempotency, `api_key_id = NULL`, timestamps incl. `decided_at` preserved exactly, existing-wins with per-row conflict report (`overwrite=true` replaces owned content only), lazy book creation, 64 MiB cap with incremental body guard, 20k traces in 6.5 s. Zero provider calls on the write path — trace embeddings via the worker sweep (now provider-aware: previously hard-gated on `GEMINI_API_KEY`, stranding keyless deployments), evidence via pending stubs with byte-identical text reconstruction for cache hits. Audit row `corpus.imported`.
+
+**Account-deletion cascade** — `deleteUserCascade` (`user-delete.service.ts`) routes `DELETE /auth/me` and the waitlist purge through `deleteTraceCascade` per trace + one final identity-teardown transaction, users row last (crash means a retryable account, no invisible partial state). Now covered: evidence, references, all four embedding tables, `reference_source_cache`, cross-user `check_feedback` by key (deleted before `api_keys`). Preserved by design: `vector_cache`, `audit_log`. False `auth.ts` comment corrected. Waitlist purge never actually had the gap (unverified accounts hold no keys) but was unified anyway. Bonus fix: `reference_source_cache`'s NO ACTION FK would have blocked reference deletion once that table gains a writer. Repair script for historical orphans ships with it (see Unsorted for the operator run).
+
+**CI-gate parallelism** — `TESTCI_PGPORT` (default 5534) drives compose interpolation, project name `soupnet-ci-<port>`, and backend port 3098+offset (`TESTCI_BACKEND_PORT` override); container names keep the `*-postgres-ci-1` detection suffix. Self-tested: full gate green on 5544 with a concurrent default-port stack up alongside. `.github/workflows/ci.yml` untouched (local-parallelism only). The item was listed twice (Infrastructure + Unsorted); both moved here.
+
+**Feedback short-id prefixes** — 8+ char hex prefixes resolve on `log_feedback` / `feedback` param / `POST /feedback`, within the caller's read scope (uniform `not_found_or_unreadable` marker byte-identical for out-of-scope vs nonexistent — no existence oracle), ambiguity rejected naming the readable candidates, pkey range scan not `id::text LIKE`. Success echoes the resolved full UUID. `related_trace_ids` stays full-UUID (capture-only). Bonus fix: uppercase full UUIDs were falsely rejected.
+
+### Moved items (verbatim):
+
+### `[IMPL]` Parameterize the CI-mirror postgres port for parallel sessions
+
+`scripts/test-ci-local.mjs` + `docker-compose.ci.yml` hardcode host port 5534, so two sessions on one machine cannot run `npm run test:ci` concurrently — observed 2026-07-06 when the premium-llm worktree's gate failed at container startup (`Bind for 0.0.0.0:5534 failed`) while the main checkout's suite held the port. A `TESTCI_PGPORT` env (default 5534) threaded through the compose port mapping and the script's connection env would let parallel worktree sessions gate independently. Leave `.github/workflows/ci.yml` untouched — the collision is a local-parallelism problem only.
+
+
+### `[IMPL]` Parameterize the local CI-gate port/project so parallel sessions can gate concurrently
+
+Found 2026-07-06: two Claude sessions running `npm run test:ci` simultaneously collide — the harness hardcodes host port 5534 and a fixed compose project, so the second run fails with "Bind for 0.0.0.0:5534: port is already allocated" (observed against the premium-llm session's gate). Fix in `scripts/test-ci-local.mjs` + `docker-compose.ci.yml`: derive the host port and compose project name from an env override (e.g. `CI_PG_PORT`, default 5534) or a session-unique suffix, and pass the resolved port through to the backend's `PGPORT`. Local-only change — GitHub CI runs in isolated runners, so the ci.yml mirror rule isn't implicated as long as env parity for the app under test is preserved. Until fixed: sessions serialize gates by watching for `*-postgres-ci-1` containers.
+
+
+
+
+### `[IMPL]` Corpus import — the inverse of `/auth/me/export`
+
+Operator request (2026-07-06, benchmark session): the export function already produces a complete single-JSON corpus (traces, evidence, references, groups; schemaVersion-stamped), and the PERMA benchmark run archived a 40,822-trace corpus that way (`SoupNet-evals/evals/perma-ab/baselines/run-full1/corpus-export.json.gz`, 20 MB gz) — but there is no way to load an export into an instance. An import endpoint/CLI would let (a) anyone reproduce the published benchmark results (`docs/benchmarks.md`) without re-spending ~$35 of scribe LLM calls, (b) users migrate between hosted and self-hosted, (c) operators treat the export as a restore format. Design points: idempotency (re-import must not duplicate — trace ids are UUIDs, upsert on id); ownership remap (imported rows belong to the importing user; group slugs may collide → suffix or map); **embeddings** — the export carries no vectors, so import must enqueue re-embedding (~$1/40k recipes via Gemini); consider an optional `vector_cache` sidecar in export/import to make reproduction zero-API-cost; `schemaVersion` gate with explicit migration path; and the prompt-injection posture of imported content (imported traces are third-party text entering briefings — same review consideration as shared books). Benchmark reproduction is the first concrete consumer.
+
+Update (2026-07-06): `traces.decided_at` (the human's original judgment date, for decision archaeology) was missing from the export — traces carried `claimText`/`createdAt` but not the judgment date, breaking faithful replay from an export alone. Now included as `decidedAt` (nullable; `schemaVersion` stays 1 since the field is additive). Import design must map it: on upsert, restore `decided_at` as-stored (null = contemporaneous), and keep it distinct from `created_at` (the insertion time), so a re-imported corpus preserves the original decision dates rather than stamping import time.
+
+
+### `[IMPL]` **Account deletion leaks user PII** — `DELETE /auth/me` skips `deleteTraceCascade`
+
+Found 2026-07-09 while scoping FK constraints. **`DELETE /auth/me` (`apps/backend/src/routes/auth.ts:544-702`) hand-rolls a deletion list that removes `traces`, link rows, `api_keys`, `uploads`, `oauth_authorization_codes`, owned orgs/groups/memberships, and the `users` row — but never deletes the `evidence`, `references`, or embedding rows those traces spawned.** Those tables hold the user's words in cleartext:
+
+- `evidence.content` — the user's interpretations, verbatim.
+- `references.quote` / `.source` / `.file_url` / `.original_filename`.
+- `embedding_sources.source_text` (`vectors.ts:104`) — **full recipe + evidence text in plaintext**, plus `group_id`.
+- `embedding_chunks.chunk_text` — plaintext.
+- `reference_source_cache` — fetched page bodies.
+- `check_feedback.story` / `.note` — the user's words, on *other* users' traces (its FK cascades on `trace_id`, not on the author).
+
+**The comment at `auth.ts:534-540` is factually wrong** and should be corrected in the same change: it lumps `embedding_sources` in with `vector_cache` as "content-hashed and unlinked from identity." That is true of `vector_cache` (`content_hash` + `model_id` + `task_type` + `vector` only — genuinely PII-free, correctly FK-free, keep it). It is false of `embedding_sources`. The privacy policy's §2.4 reasoning leans on that comment.
+
+**The correct cascade already exists and is not called.** `deleteTraceCascade` (`apps/backend/src/services/trace-delete.service.ts:30`) removes link rows, prunes orphaned evidence/references, and walks the full embedding chain via `deleteEmbeddingChainForSource` (`:101`), preserving only `vector_cache`. It is used by `DELETE /traces/:id` and nowhere else. **Fix: route account deletion through it** (loop the user's trace ids), rather than adding FKs first. Fold in a `deleteUserCascade` service so account deletion, the waitlist purge (`waitlist.service.ts:127`), and any future admin-delete share one audited teardown instead of three hand-rolled DELETE lists that will drift again.
+
+Note this is not a hypothetical drift: `check-feedback.ts:108-111` and `:142-144` added FK cascades on `trace_reactions.user_id` and `check_feedback_stars.user_id` *specifically because* "auth.ts's explicit deletion list doesn't touch this table." Someone predicted the drift and defended locally. Nobody generalized it.
+
+Every already-deleted account has left orphans behind — factor a data-repair pass into the fix. Tag: touches the privacy-policy verification item under Legal and compliance.
+
+**Priority and disclosure (operator, 2026-07-09).** Sequenced behind the in-flight move-recipe work rather than fixed immediately: the gap requires database access to exploit, is a data-retention defect rather than a live attack vector, and the user base is currently the operator plus manually-invited users. This repo is public, so this item is stated plainly rather than hidden — but the trigger is explicit: **if any user requests account deletion, this jumps the queue and is fixed before their deletion is executed**, because running the current path would silently fail to honour the request. The operator checks the users table regularly for pending deletion requests. Until then, do not layer FK constraints on top of the broken path (see the FK item below — orphans from prior deletions will fail a validating `ADD CONSTRAINT` at boot).
+
+
+### `[IMPL]` `log_feedback` / `feedback` param should accept short trace-id prefixes
+
+Surfaced 2026-07-08 during the local-embeddings implementation (a multi-agent run that logged feedback as it worked). Planning docs and briefings routinely cite recipes by their 8-char short id (e.g. `18912fbd`), but `log_feedback` (and `check_recipe`'s `feedback` param) require the full trace UUID and reject a short id. Three independent agents hit this and had to either resolve the full UUID via `get_recipes` first or log an equivalent row against a different resolvable trace — friction that loses feedback signal (one agent gave up on a warranted row rather than fabricate a UUID). Accept an unambiguous short-id prefix (resolve server-side; 409/400 on ambiguous or unknown), matching how the corpus surfaces ids to agents in the first place. Low effort, removes a recurring papercut in the exact close-the-loop flow the feedback feature exists to encourage.
+
+
+---
+
+
 ## 2026-07-09 — re-file a misfiled recipe
 
 ### `[IMPL]` Move a recipe to a different recipe book — implemented, on `feat/move-recipe-between-books` pending review

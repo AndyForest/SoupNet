@@ -58,7 +58,7 @@ claude mcp add --transport http soupnet https://mcp.soup.net/mcp --header "Autho
 
 ## Learn more
 
-- [`docs/benchmarks.md`](docs/benchmarks.md) — controlled benchmark results (PERMA three-arm A/B), the complement to the field data above
+- [`docs/benchmarks.md`](docs/benchmarks.md) — controlled benchmark results across PERMA, SWE-Lancer, and π-Bench (abstract + per-benchmark detail pages), the complement to the field data above
 - [`docs/design-thinking.md`](docs/design-thinking.md) — product vision, user archetypes, recipe-check scenarios
 - [`docs/architecture/overview.md`](docs/architecture/overview.md) — system topology, three agent surfaces, data model at a glance
 - [`docs/planning/pivot-search-as-logging.md`](docs/planning/pivot-search-as-logging.md) — the search-as-logging pivot (decision history)
