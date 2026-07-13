@@ -286,7 +286,7 @@ Backend `/check` response copy for a new/thin recipe book returning zero results
 
 The schema deliberately left FKs loose during development (operator, 2026-07-09: *"I left it loose during development to make it easier to make changes without accidentally cascade-deleting on a rollback or something"*). Note the stated in-code reason for `traces`' missing FKs — "to break the circular dependency" (`traces.ts:25-26`) — is a **TypeScript import-cycle problem, not a database one**; the constraint can be added in raw migration SQL regardless.
 
-**Migration hazard, read first:** migrations run at backend startup (`apps/backend/src/db.ts`), and a Drizzle-default `ADD CONSTRAINT ... FOREIGN KEY` validates existing rows immediately. **Orphans exist from pre-fix account deletions** (the leak itself was fixed 2026-07-12 on `fix/account-deletion-cascade`; `scripts/repair-orphaned-user-data.mjs` finds and removes historical orphans — the operator must run it against prod, dry-run first, before any FK constraint lands), so until that repair run completes, a naive constraint addition crash-loops the backend on boot. Safe shape: (1) add `NOT VALID` by hand-editing the generated migration — Drizzle won't emit it; (2) repair orphans out-of-band; (3) `VALIDATE CONSTRAINT` in a later migration, which takes only `SHARE UPDATE EXCLUSIVE` and can't wedge the app.
+**Migration hazard, read first:** migrations run at backend startup (`apps/backend/src/db.ts`), and a Drizzle-default `ADD CONSTRAINT ... FOREIGN KEY` validates existing rows immediately. Deletion-era orphans do NOT exist (operator confirmed 2026-07-13: no account has ever been deleted, and the leaky path itself was fixed 2026-07-12 on `fix/account-deletion-cascade`) — but that clears only one orphan class. Dangling `traces.api_key_id` references from key deletion/rotation are still expected, so run the per-constraint detection SELECTs below (and `scripts/repair-orphaned-user-data.mjs --dry-run` as a free sanity check) before any validating `ADD CONSTRAINT` — a naive addition still crash-loops the backend on boot if any orphan class survives. Safe shape: (1) add `NOT VALID` by hand-editing the generated migration — Drizzle won't emit it; (2) repair orphans out-of-band; (3) `VALIDATE CONSTRAINT` in a later migration, which takes only `SHARE UPDATE EXCLUSIVE` and can't wedge the app.
 
 **Recommended:**
 - `api_keys.user_id` → `users.id` **CASCADE**. Keys are meaningless without their user.
@@ -369,9 +369,9 @@ Recorded so it isn't re-proposed. The `trace.moved` audit row already reconstruc
 
 ## Unsorted
 
-### `[IMPL]` **Operator: run `scripts/repair-orphaned-user-data.mjs` against prod**
+### ~~`[IMPL]` Operator: run `scripts/repair-orphaned-user-data.mjs` against prod~~ (resolved 2026-07-13 — unnecessary)
 
-The 2026-07-12 account-deletion fix stops the leak going forward; historical orphans from pre-fix deletions remain in prod. Run the script dry-run (default), review counts, then `--apply`. It iterates to a fixed point and has a 1-hour age guard. **The FK-constraints item is blocked on this run** — orphans fail a validating `ADD CONSTRAINT` at boot. Note: `check_feedback` rows whose `api_key_id` was orphaned by pre-fix deletions are permanently unattributable and the script cannot find them; PR #28's `actor_user_id` is the forward fix for human rows.
+~~The 2026-07-12 account-deletion fix stops the leak going forward; historical orphans from pre-fix deletions remain in prod.~~ **Operator confirmed 2026-07-13: no account has ever been deleted**, so no deletion-era orphans exist and the repair run is unnecessary. The script stays in the repo as the recovery tool if a leaky deletion path ever reappears, and its dry-run mode doubles as a free sanity check before the FK-constraints work.
 
 ### `[IMPL]` Qualitative-eval findings, 2026-07-12 preview round (two naive agents, merged batch stack)
 
