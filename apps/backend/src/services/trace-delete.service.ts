@@ -33,6 +33,19 @@ export async function deleteTraceCascade(
   const { db, traceId } = opts;
 
   return db.transaction(async (tx) => {
+    // Lock the trace row for the whole cascade, BEFORE the chain-delete.
+    // embedding_sources.source_id is polymorphic (no FK), so the worker's
+    // strategy backfill can otherwise insert fresh embedding rows for this
+    // trace between our chain-delete and the trace-row delete — rows the
+    // cascade would never remove (the CI-exposed sweep/delete race,
+    // 2026-07-13). The backfill inserts via INSERT..SELECT FROM traces FOR
+    // UPDATE (strategy-check.ts), so it either completes before we take this
+    // lock (its rows are then swept by our chain-delete below) or blocks
+    // until we commit and sees the trace gone.
+    await tx.execute(sql`
+      SELECT id FROM claimnet.traces WHERE id = ${traceId}::uuid FOR UPDATE
+    `);
+
     const evidenceIdRows = await tx.execute(sql`
       SELECT evidence_id AS "id" FROM claimnet.trace_evidence
       WHERE trace_id = ${traceId}::uuid

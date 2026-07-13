@@ -78,10 +78,26 @@ export async function handleStrategyCheck(
 
       const contentHash = crypto.createHash("sha256").update(sourceText).digest("hex");
 
+      // Guarded single-statement insert: the trace may have been deleted
+      // between the discovery query above and this point, and
+      // embedding_sources.source_id has no FK (polymorphic) to catch it —
+      // a plain VALUES insert here would orphan PII-bearing rows that
+      // deleteTraceCascade already swept (the CI-exposed sweep/delete race,
+      // 2026-07-13). Selecting FROM traces FOR UPDATE makes existence-check
+      // and insert atomic, and serializes with the cascade's up-front trace
+      // lock: a mid-cascade trace blocks us, then yields zero rows. Reading
+      // group_id from the locked row (not the stale discovery read) also
+      // lands the backfill in the right book if the trace was re-filed
+      // between discovery and insert. Downstream chunk/vector inserts are
+      // FK-protected; if the cascade wins between statements they fail
+      // loudly and the next sweep cycle skips the vanished trace.
       const sourceRows = await db.execute(sql`
         INSERT INTO claimnet.embedding_sources
           (source_type, source_id, group_id, source_text, artifact_category)
-        VALUES ('trace', ${trace.trace_id}::uuid, ${trace.group_id}::uuid, ${sourceText}, 'text')
+        SELECT 'trace', t.id, t.group_id, ${sourceText}, 'text'
+        FROM claimnet.traces t
+        WHERE t.id = ${trace.trace_id}::uuid
+        FOR UPDATE
         RETURNING id
       `);
       const sourceId = (sourceRows as unknown as Array<{ id: string }>)[0]?.id;
