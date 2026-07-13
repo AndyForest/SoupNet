@@ -14,6 +14,22 @@
  * the same uniform marker — the write path must not be an existence oracle
  * (same anti-enumeration posture as uploads resolution / F30 register).
  *
+ * Short-id prefixes (2026-07-12): trace_id also accepts an unambiguous
+ * UUID prefix of ≥ 8 hex chars — the short-id form check responses and
+ * briefings print (e.g. `18912fbd`). Resolution happens strictly WITHIN
+ * the key's readable scope (the ACL group filter is in the resolution
+ * query), so a prefix over someone else's trace behaves exactly like an
+ * unknown id: uniform marker, no existence oracle. An ambiguous prefix
+ * (≥ 2 readable matches, detected with LIMIT 2) is rejected with an
+ * actionable error naming the readable candidates — safe to name because
+ * both are already within the caller's read scope. related_trace_ids
+ * stays full-UUID-only: it's a capture-only lineage field, stored
+ * unresolved and never ACL-checked, so prefix resolution there would turn
+ * capture into validation (deliberate v1 scoping, backlog 2026-07-08).
+ * The prefix lookup uses a pkey range scan (id >= lo AND id <= hi bounds
+ * computed from the hex prefix) rather than `id::text LIKE`, which would
+ * force a full scan past the uuid index.
+ *
  * Rate limit: feedback writes get their own per-key budget, counted on
  * check_feedback via its (api_key_id, created_at DESC) index — mirrors
  * F29's audit-log-count shape WITHOUT adding load to F29's indexed
@@ -77,7 +93,9 @@ export interface FeedbackRowResult {
   /** Position in the submitted batch (0-based). */
   index: number;
   ok: boolean;
-  /** Echo of the submitted trace_id (as received) so markers are matchable. */
+  /** On success: the RESOLVED full trace UUID (a submitted short-id prefix
+   *  is expanded). On rejection: the submitted trace_id (lowercased if it
+   *  validated) so markers are matchable. */
   traceId: string;
   /** Present on success. */
   feedbackId?: string;
@@ -89,9 +107,53 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const MAX_TEXT_LEN = 4000;
 const MAX_RELATED_IDS = 20;
 
+/** Minimum accepted trace_id prefix length — the 8-char short id check
+ *  responses print. Shorter fragments aren't a citation format any surface
+ *  emits, so accepting them would only serve probing or typos. */
+export const MIN_TRACE_ID_PREFIX = 8;
+
+/** Canonical UUID text shape — hex everywhere except hyphens at 8/13/18/23. */
+const UUID_TEMPLATE = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx";
+
 /** Uniform ACL marker — same text for unknown and unauthorized ids. */
 export const TRACE_NOT_READABLE =
   "trace_id not found or not readable with this key";
+
+// ── Short-id prefixes (pure helpers — Layer 1 tested) ────────────────────────
+
+/**
+ * True iff `value` is a proper prefix of a canonical UUID string, at least
+ * MIN_TRACE_ID_PREFIX chars long (full 36-char UUIDs are handled by UUID_RE,
+ * not here). Case-insensitive; hyphens must sit at the canonical positions.
+ */
+export function isTraceIdPrefix(value: string): boolean {
+  if (value.length < MIN_TRACE_ID_PREFIX || value.length >= UUID_TEMPLATE.length) {
+    return false;
+  }
+  for (let i = 0; i < value.length; i++) {
+    if (UUID_TEMPLATE[i] === "-") {
+      if (value[i] !== "-") return false;
+    } else if (!/[0-9a-f]/i.test(value[i]!)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Inclusive UUID range [lo, hi] covering every UUID that starts with the
+ * given prefix: hex digits padded with 0s (lo) and fs (hi) to 32, formatted
+ * canonically. Lets the resolver use a pkey range scan instead of
+ * `id::text LIKE`, which cannot use the uuid index.
+ */
+export function uuidPrefixRange(prefix: string): { lo: string; hi: string } {
+  const hex = prefix.toLowerCase().replace(/-/g, "");
+  const lo = hex.padEnd(32, "0");
+  const hi = hex.padEnd(32, "f");
+  const fmt = (h: string) =>
+    `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+  return { lo: fmt(lo), hi: fmt(hi) };
+}
 
 // ── Validation (pure — Layer 1 tested) ──────────────────────────────────────
 
@@ -111,9 +173,15 @@ function optionalString(value: unknown, field: string, out: { error?: string }):
 export function validateFeedbackRow(
   raw: RawFeedbackRow,
 ): { ok: true; row: ValidatedFeedbackRow } | { ok: false; error: string } {
-  const traceId = typeof raw.trace_id === "string" ? raw.trace_id.trim() : "";
-  if (!UUID_RE.test(traceId)) {
-    return { ok: false, error: "trace_id must be the full recipe UUID from a prior check response" };
+  // Full UUID or an unambiguous short-id prefix (≥ MIN_TRACE_ID_PREFIX hex
+  // chars — the form check responses print). Normalized to lowercase so the
+  // resolved-set membership checks below compare canonically.
+  const traceId = typeof raw.trace_id === "string" ? raw.trace_id.trim().toLowerCase() : "";
+  if (!UUID_RE.test(traceId) && !isTraceIdPrefix(traceId)) {
+    return {
+      ok: false,
+      error: `trace_id must be the full recipe UUID from a prior check response, or an unambiguous prefix of at least ${MIN_TRACE_ID_PREFIX} characters (the short id check responses print)`,
+    };
   }
 
   const enums: Array<{ field: string; value: unknown; allowed: readonly string[] }> = [
@@ -239,17 +307,55 @@ export async function ingestFeedback(
   }
 
   // Validate all rows first, collecting the trace ids that need ACL checks.
+  // Full UUIDs go to the batch ACL query; short-id prefixes go to the
+  // scope-filtered prefix resolver below.
   const validated: Array<{ index: number; row: ValidatedFeedbackRow } | { index: number; error: string; traceId: string }> = [];
   const idsToCheck = new Set<string>();
+  const prefixesToResolve = new Set<string>();
   rows.forEach((raw, index) => {
     const v = validateFeedbackRow(raw);
     if (v.ok) {
       validated.push({ index, row: v.row });
-      idsToCheck.add(v.row.traceId);
+      if (UUID_RE.test(v.row.traceId)) {
+        idsToCheck.add(v.row.traceId);
+      } else {
+        prefixesToResolve.add(v.row.traceId);
+      }
     } else {
       validated.push({ index, error: v.error, traceId: typeof raw.trace_id === "string" ? raw.trace_id : "" });
     }
   });
+
+  // Resolve short-id prefixes strictly WITHIN the key's readable scope: the
+  // group filter is in the query, so an out-of-scope trace can never
+  // influence the outcome — a prefix over someone else's trace is
+  // indistinguishable from an unknown one (uniform marker, no existence
+  // oracle). Pkey range scan (see uuidPrefixRange); LIMIT 2 detects
+  // ambiguity without counting.
+  type PrefixResolution =
+    | { kind: "resolved"; id: string }
+    | { kind: "ambiguous"; candidates: [string, string] }
+    | { kind: "none" };
+  const prefixResolutions = new Map<string, PrefixResolution>();
+  if (readGroupIds.length > 0) {
+    for (const prefix of prefixesToResolve) {
+      const { lo, hi } = uuidPrefixRange(prefix);
+      const matchRows = await db.execute(sql`
+        SELECT id FROM claimnet.traces
+        WHERE id >= ${lo}::uuid AND id <= ${hi}::uuid
+          AND group_id IN (${sql.join(readGroupIds.map((id) => sql`${id}::uuid`), sql`, `)})
+        LIMIT 2
+      `);
+      const matches = (matchRows as unknown as Array<{ id: string }>).map((r) => r.id);
+      if (matches.length === 1) {
+        prefixResolutions.set(prefix, { kind: "resolved", id: matches[0]! });
+      } else if (matches.length >= 2) {
+        prefixResolutions.set(prefix, { kind: "ambiguous", candidates: [matches[0]!, matches[1]!] });
+      } else {
+        prefixResolutions.set(prefix, { kind: "none" });
+      }
+    }
+  }
 
   // ACL: batch-resolve which of the referenced traces are readable by this
   // key. Unknown and unreadable collapse into the same absent-set → uniform
@@ -272,14 +378,37 @@ export async function ingestFeedback(
       continue;
     }
     const { row, index } = entry;
-    if (!readable.has(row.traceId)) {
+    let effectiveTraceId = row.traceId;
+    if (!UUID_RE.test(row.traceId)) {
+      // Short-id prefix — consume the scope-filtered resolution.
+      const resolution = prefixResolutions.get(row.traceId);
+      if (resolution?.kind === "ambiguous") {
+        // Naming the candidates is safe: both are within the caller's read
+        // scope (the resolution query filtered on it).
+        results.push({
+          index,
+          ok: false,
+          traceId: row.traceId,
+          error: `trace_id prefix "${row.traceId}" is ambiguous — it matches at least ${resolution.candidates[0]} and ${resolution.candidates[1]} among the recipes readable by this key. Add more characters or use the full UUID.`,
+        });
+        continue;
+      }
+      if (resolution?.kind !== "resolved") {
+        // No readable match (or empty read scope) — same uniform marker as
+        // an unknown full UUID.
+        results.push({ index, ok: false, traceId: row.traceId, error: TRACE_NOT_READABLE });
+        continue;
+      }
+      // Readability was enforced inside the resolution query itself.
+      effectiveTraceId = resolution.id;
+    } else if (!readable.has(row.traceId)) {
       results.push({ index, ok: false, traceId: row.traceId, error: TRACE_NOT_READABLE });
       continue;
     }
     const inserted = await params.db
       .insert(checkFeedback)
       .values({
-        traceId: row.traceId,
+        traceId: effectiveTraceId,
         apiKeyId,
         agentId: row.agentId,
         kind: row.kind,
@@ -297,9 +426,11 @@ export async function ingestFeedback(
       .returning({ id: checkFeedback.id });
     const feedbackId = inserted[0]?.id;
     if (feedbackId) {
-      results.push({ index, ok: true, traceId: row.traceId, feedbackId });
+      // On success the RESOLVED full UUID is echoed (not the submitted
+      // prefix) so the caller learns the canonical id for future rows.
+      results.push({ index, ok: true, traceId: effectiveTraceId, feedbackId });
     } else {
-      results.push({ index, ok: false, traceId: row.traceId, error: "insert failed" });
+      results.push({ index, ok: false, traceId: effectiveTraceId, error: "insert failed" });
     }
   }
 

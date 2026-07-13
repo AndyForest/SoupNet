@@ -1,7 +1,12 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import {
   validateFeedbackRow,
   summarizeFeedbackResults,
+  ingestFeedback,
+  isTraceIdPrefix,
+  uuidPrefixRange,
+  MIN_TRACE_ID_PREFIX,
   TRACE_NOT_READABLE,
 } from "./feedback.service";
 import type { RawFeedbackRow, FeedbackRowResult } from "./feedback.service";
@@ -58,6 +63,31 @@ describe("validateFeedbackRow", () => {
     }
   });
 
+  it("accepts an 8-char short-id prefix and normalizes it to lowercase", () => {
+    const v = validateFeedbackRow(validRow({ trace_id: "7676E323" }));
+    expect(v.ok).toBe(true);
+    if (v.ok) expect(v.row.traceId).toBe("7676e323");
+  });
+
+  it("accepts a longer partial UUID with canonical hyphens", () => {
+    const v = validateFeedbackRow(validRow({ trace_id: "7676e323-e4a8" }));
+    expect(v.ok).toBe(true);
+    if (v.ok) expect(v.row.traceId).toBe("7676e323-e4a8");
+  });
+
+  it("rejects prefixes shorter than the minimum, with an actionable message", () => {
+    const v = validateFeedbackRow(validRow({ trace_id: "7676e32" }));
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.error).toContain(`at least ${MIN_TRACE_ID_PREFIX} characters`);
+  });
+
+  it("rejects non-hex and mis-hyphenated prefixes", () => {
+    for (const bad of ["7676e32z", "7676e323e4a8" + "-", "7676e323_e4a8"]) {
+      const v = validateFeedbackRow(validRow({ trace_id: bad }));
+      expect(v.ok).toBe(false);
+    }
+  });
+
   it("rejects bad enum values with a message listing the vocabulary", () => {
     const cases: Array<{ field: keyof RawFeedbackRow; vocabPart: string }> = [
       { field: "kind", vocabPart: "check-feedback | operational | outcome" },
@@ -100,6 +130,124 @@ describe("validateFeedbackRow", () => {
     const v = validateFeedbackRow(validRow({ note: "x".repeat(5000) }));
     expect(v.ok).toBe(false);
     if (!v.ok) expect(v.error).toContain("note too long");
+  });
+});
+
+describe("isTraceIdPrefix", () => {
+  it("accepts canonical prefixes from 8 chars up to 35 chars", () => {
+    expect(isTraceIdPrefix("7676e323")).toBe(true);
+    expect(isTraceIdPrefix("7676e323-")).toBe(true);
+    expect(isTraceIdPrefix(TRACE_ID.slice(0, 35))).toBe(true);
+  });
+
+  it("rejects full UUIDs (handled by the UUID path), short fragments, and non-canonical shapes", () => {
+    expect(isTraceIdPrefix(TRACE_ID)).toBe(false); // full 36-char UUID
+    expect(isTraceIdPrefix("7676e32")).toBe(false); // 7 chars
+    expect(isTraceIdPrefix("7676e323e4a8")).toBe(false); // hyphen missing at position 8
+    expect(isTraceIdPrefix("7676e32g")).toBe(false); // non-hex
+  });
+});
+
+describe("uuidPrefixRange", () => {
+  it("pads an 8-char prefix into an inclusive canonical UUID range", () => {
+    const { lo, hi } = uuidPrefixRange("7676e323");
+    expect(lo).toBe("7676e323-0000-0000-0000-000000000000");
+    expect(hi).toBe("7676e323-ffff-ffff-ffff-ffffffffffff");
+  });
+
+  it("handles hyphenated prefixes and uppercase input", () => {
+    const { lo, hi } = uuidPrefixRange("7676E323-E4A8");
+    expect(lo).toBe("7676e323-e4a8-0000-0000-000000000000");
+    expect(hi).toBe("7676e323-e4a8-ffff-ffff-ffffffffffff");
+  });
+});
+
+describe("ingestFeedback short-id prefix resolution (stubbed db)", () => {
+  // The ambiguity branch cannot be forced through the API with random UUIDs
+  // (an 8-char collision needs a birthday-scale corpus), so it's covered
+  // here deterministically with a stubbed db. The happy/none paths get both
+  // this unit coverage and the Layer 3 integration tests in
+  // routes/feedback.test.ts.
+  const GROUP = "11111111-1111-1111-1111-111111111111";
+  const T1 = "7676e323-e4a8-493e-b705-febfac26081a";
+  const T2 = "7676e323-0000-4000-8000-000000000000";
+
+  beforeEach(() => {
+    vi.stubEnv("DISABLE_RATE_LIMIT", "true");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  function stubDb(executeResults: Array<Array<{ id: string }>>) {
+    let call = 0;
+    return {
+      execute: async () => executeResults[call++] ?? [],
+      insert: () => ({
+        values: () => ({
+          returning: async () => [{ id: "fb-00000000" }],
+        }),
+      }),
+    } as unknown as PostgresJsDatabase;
+  }
+
+  it("resolves an unambiguous prefix and echoes the full UUID on success", async () => {
+    const results = await ingestFeedback({
+      db: stubDb([[{ id: T1 }]]),
+      apiKeyId: "22222222-2222-2222-2222-222222222222",
+      readGroupIds: [GROUP],
+      rows: [validRow({ trace_id: T1.slice(0, 8) })],
+    });
+    expect(results[0]?.ok).toBe(true);
+    expect(results[0]?.traceId).toBe(T1);
+    expect(results[0]?.feedbackId).toBe("fb-00000000");
+  });
+
+  it("rejects an ambiguous prefix with an error naming the readable candidates", async () => {
+    const results = await ingestFeedback({
+      db: stubDb([[{ id: T1 }, { id: T2 }]]),
+      apiKeyId: "22222222-2222-2222-2222-222222222222",
+      readGroupIds: [GROUP],
+      rows: [validRow({ trace_id: "7676e323" })],
+    });
+    expect(results[0]?.ok).toBe(false);
+    expect(results[0]?.error).toContain("ambiguous");
+    expect(results[0]?.error).toContain(T1);
+    expect(results[0]?.error).toContain(T2);
+    expect(results[0]?.error).toContain("full UUID");
+  });
+
+  it("gives a zero-match prefix the same uniform marker as an unknown full UUID", async () => {
+    const results = await ingestFeedback({
+      db: stubDb([[], []]),
+      apiKeyId: "22222222-2222-2222-2222-222222222222",
+      readGroupIds: [GROUP],
+      rows: [validRow({ trace_id: "ffffffff" }), validRow({ trace_id: T2 })],
+    });
+    expect(results[0]?.ok).toBe(false);
+    expect(results[1]?.ok).toBe(false);
+    // Anti-enumeration: identical marker text for both shapes.
+    expect(results[0]?.error).toBe(TRACE_NOT_READABLE);
+    expect(results[1]?.error).toBe(TRACE_NOT_READABLE);
+  });
+
+  it("never resolves a prefix when the key has no read scope", async () => {
+    let executed = 0;
+    const db = {
+      execute: async () => {
+        executed++;
+        return [{ id: T1 }];
+      },
+    } as unknown as PostgresJsDatabase;
+    const results = await ingestFeedback({
+      db,
+      apiKeyId: "22222222-2222-2222-2222-222222222222",
+      readGroupIds: [],
+      rows: [validRow({ trace_id: T1.slice(0, 8) })],
+    });
+    expect(executed).toBe(0); // no resolution query without a read scope
+    expect(results[0]?.ok).toBe(false);
+    expect(results[0]?.error).toBe(TRACE_NOT_READABLE);
   });
 });
 
