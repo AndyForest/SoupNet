@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useParams, useNavigate } from "@tanstack/react-router";
 import {
   useDeleteTrace,
+  useMoveTrace,
   useTraceDetail,
   useTraceFeedback,
   useSetTraceReaction,
@@ -12,6 +13,7 @@ import { Icon } from "../components/Icon.js";
 import { UserBadge } from "../components/UserBadge.js";
 import { ApiKeyBadge } from "../components/ApiKeyBadge.js";
 import { DeleteTraceConfirmModal } from "../components/DeleteTraceConfirmModal.js";
+import { MoveTraceModal } from "../components/MoveTraceModal.js";
 
 export function TraceDetailPage() {
   const { traceId } = useParams({ strict: false }) as { traceId: string };
@@ -20,7 +22,9 @@ export function TraceDetailPage() {
   const { data: feedbackData } = useTraceFeedback(traceId);
   const setReaction = useSetTraceReaction(traceId);
   const deleteTrace = useDeleteTrace();
+  const moveTrace = useMoveTrace();
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [moveOpen, setMoveOpen] = useState(false);
 
   if (isLoading) {
     return <p style={{ color: "var(--color-on-surface-variant)" }}>Loading trace...</p>;
@@ -77,6 +81,18 @@ export function TraceDetailPage() {
             >
               Recipe book: {trace.groupName} →
             </a>
+          )}
+          {/* Beside the book it lives in, not in the Danger zone — a move is a
+              correction, not a destructive act. Agents pick the book at check
+              time and sometimes pick wrong. */}
+          {trace.canMove && (
+            <button
+              className="btn-ghost"
+              onClick={() => setMoveOpen(true)}
+              style={{ fontSize: "0.75rem", padding: "2px 8px" }}
+            >
+              Move…
+            </button>
           )}
           <a
             href={`/map?query=${encodeURIComponent(trace.claimText)}`}
@@ -149,10 +165,11 @@ export function TraceDetailPage() {
       {feedbackData && feedbackData.feedback.length > 0 && (
         <section style={{ marginBottom: "var(--space-2xl)" }}>
           <h2 style={{ fontSize: "1.15rem", marginBottom: "var(--space-xs)" }}>
-            Agent feedback ({feedbackData.feedback.length})
+            Feedback ({feedbackData.feedback.length})
           </h2>
           <p className="text-xs" style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-md)" }}>
-            What agents did after checking this recipe — the check-to-outcome lineage. Star the rows that mattered.
+            What agents did after checking this recipe — the check-to-outcome lineage — plus any corrections
+            a human made to it. Star the rows that mattered.
           </p>
           <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-md)" }}>
             {feedbackData.feedback.map((row) => (
@@ -177,6 +194,25 @@ export function TraceDetailPage() {
             Delete this trace
           </button>
         </section>
+      )}
+
+      {moveOpen && (
+        <MoveTraceModal
+          currentGroupId={trace.groupId}
+          evidence={trace.evidence}
+          onCancel={() => setMoveOpen(false)}
+          onConfirm={async ({ groupId, story, dropEvidenceIds }) => {
+            await moveTrace.mutateAsync({
+              traceId,
+              groupId,
+              ...(story ? { story } : {}),
+              ...(dropEvidenceIds.length ? { dropEvidenceIds } : {}),
+            });
+            setMoveOpen(false);
+          }}
+          pending={moveTrace.isPending}
+          error={moveTrace.error instanceof Error ? moveTrace.error.message : null}
+        />
       )}
 
       {confirmOpen && (
@@ -221,6 +257,8 @@ function FeedbackChip({ label, value, accent }: { label: string; value: string; 
 function FeedbackCard({ row, traceId }: { row: TraceFeedbackRow; traceId: string }) {
   const setStar = useSetFeedbackStar(traceId);
   const createdAt = new Date(row.createdAt);
+  // Human-origin rows (a re-filing correction) carry actorUserId and no api key.
+  const byHuman = !!row.actorUserId;
   const agentBits = [row.agentId, row.model, row.harness && `${row.harness}${row.harnessVersion ? ` ${row.harnessVersion}` : ""}`]
     .filter(Boolean)
     .join(" · ");
@@ -230,9 +268,10 @@ function FeedbackCard({ row, traceId }: { row: TraceFeedbackRow; traceId: string
       background: "var(--color-surface-container-lowest)",
       borderRadius: "var(--radius-lg)",
       padding: "var(--space-lg)",
-      borderLeft: "3px solid var(--color-primary)",
+      borderLeft: `3px solid ${byHuman ? "var(--color-success)" : "var(--color-primary)"}`,
     }}>
       <div style={{ display: "flex", gap: "var(--space-xs)", flexWrap: "wrap", alignItems: "center" }}>
+        {byHuman && <FeedbackChip label="by" value="human" accent />}
         <FeedbackChip label="impact" value={row.impact} accent={row.impact === "big" || row.impact === "new"} />
         <FeedbackChip label="disposition" value={row.disposition} />
         <FeedbackChip label="kind" value={row.kind} />
@@ -280,6 +319,7 @@ function FeedbackCard({ row, traceId }: { row: TraceFeedbackRow; traceId: string
       )}
 
       <p className="text-xs" style={{ color: "var(--color-outline-variant)", marginTop: "var(--space-sm)" }}>
+        {byHuman && row.actorEmail ? `${row.actorEmail} · ` : ""}
         {agentBits ? `${agentBits} · ` : ""}
         {row.apiKeyLabel ? `key: ${row.apiKeyLabel} · ` : ""}
         {createdAt.toLocaleString()}

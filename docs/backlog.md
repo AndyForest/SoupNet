@@ -277,7 +277,119 @@ The check-log-mock rejection (landing session) was predicted verbatim by documen
 
 Backend `/check` response copy for a new/thin recipe book returning zero results — owned by the parallel FF-1 tree (backend `/check` + `/mcp` surface), not this batch.
 
+## Data integrity and deletion
+
+### `[IMPL]` **Account deletion leaks user PII** — `DELETE /auth/me` skips `deleteTraceCascade`
+
+Found 2026-07-09 while scoping FK constraints. **`DELETE /auth/me` (`apps/backend/src/routes/auth.ts:544-702`) hand-rolls a deletion list that removes `traces`, link rows, `api_keys`, `uploads`, `oauth_authorization_codes`, owned orgs/groups/memberships, and the `users` row — but never deletes the `evidence`, `references`, or embedding rows those traces spawned.** Those tables hold the user's words in cleartext:
+
+- `evidence.content` — the user's interpretations, verbatim.
+- `references.quote` / `.source` / `.file_url` / `.original_filename`.
+- `embedding_sources.source_text` (`vectors.ts:104`) — **full recipe + evidence text in plaintext**, plus `group_id`.
+- `embedding_chunks.chunk_text` — plaintext.
+- `reference_source_cache` — fetched page bodies.
+- `check_feedback.story` / `.note` — the user's words, on *other* users' traces (its FK cascades on `trace_id`, not on the author).
+
+**The comment at `auth.ts:534-540` is factually wrong** and should be corrected in the same change: it lumps `embedding_sources` in with `vector_cache` as "content-hashed and unlinked from identity." That is true of `vector_cache` (`content_hash` + `model_id` + `task_type` + `vector` only — genuinely PII-free, correctly FK-free, keep it). It is false of `embedding_sources`. The privacy policy's §2.4 reasoning leans on that comment.
+
+**The correct cascade already exists and is not called.** `deleteTraceCascade` (`apps/backend/src/services/trace-delete.service.ts:30`) removes link rows, prunes orphaned evidence/references, and walks the full embedding chain via `deleteEmbeddingChainForSource` (`:101`), preserving only `vector_cache`. It is used by `DELETE /traces/:id` and nowhere else. **Fix: route account deletion through it** (loop the user's trace ids), rather than adding FKs first. Fold in a `deleteUserCascade` service so account deletion, the waitlist purge (`waitlist.service.ts:127`), and any future admin-delete share one audited teardown instead of three hand-rolled DELETE lists that will drift again.
+
+Note this is not a hypothetical drift: `check-feedback.ts:108-111` and `:142-144` added FK cascades on `trace_reactions.user_id` and `check_feedback_stars.user_id` *specifically because* "auth.ts's explicit deletion list doesn't touch this table." Someone predicted the drift and defended locally. Nobody generalized it.
+
+Every already-deleted account has left orphans behind — factor a data-repair pass into the fix. Tag: touches the privacy-policy verification item under Legal and compliance.
+
+**Priority and disclosure (operator, 2026-07-09).** Sequenced behind the in-flight move-recipe work rather than fixed immediately: the gap requires database access to exploit, is a data-retention defect rather than a live attack vector, and the user base is currently the operator plus manually-invited users. This repo is public, so this item is stated plainly rather than hidden — but the trigger is explicit: **if any user requests account deletion, this jumps the queue and is fixed before their deletion is executed**, because running the current path would silently fail to honour the request. The operator checks the users table regularly for pending deletion requests. Until then, do not layer FK constraints on top of the broken path (see the FK item below — orphans from prior deletions will fail a validating `ADD CONSTRAINT` at boot).
+
+### `[DESIGN]` Foreign-key constraints — which, why, and which not
+
+The schema deliberately left FKs loose during development (operator, 2026-07-09: *"I left it loose during development to make it easier to make changes without accidentally cascade-deleting on a rollback or something"*). Note the stated in-code reason for `traces`' missing FKs — "to break the circular dependency" (`traces.ts:25-26`) — is a **TypeScript import-cycle problem, not a database one**; the constraint can be added in raw migration SQL regardless.
+
+**Migration hazard, read first:** migrations run at backend startup (`apps/backend/src/db.ts`), and a Drizzle-default `ADD CONSTRAINT ... FOREIGN KEY` validates existing rows immediately. Given the deletion leak above, **orphans exist**, so a naive constraint addition crash-loops the backend on boot. Safe shape: (1) add `NOT VALID` by hand-editing the generated migration — Drizzle won't emit it; (2) repair orphans out-of-band; (3) `VALIDATE CONSTRAINT` in a later migration, which takes only `SHARE UPDATE EXCLUSIVE` and can't wedge the app.
+
+**Recommended:**
+- `api_keys.user_id` → `users.id` **CASCADE**. Keys are meaningless without their user.
+- `uploads.api_key_id` → `api_keys.id` **CASCADE**. `uploads.ts:11-14` already *states* this invariant ("when the key is revoked, every upload becomes unreachable — by design"); today it's aspirational. Chains under the above.
+- `traces.user_id` → `users.id` and `traces.group_id` → `groups.id`, both **RESTRICT**. These would have caught the orphaning — but must *block* a raw delete rather than cascade, forcing the app through `deleteTraceCascade` so the embedding chain is cleaned.
+
+**Recommended with care:**
+- `traces.api_key_id` → `api_keys.id` **SET NULL** (column already nullable). Keys rotate daily and are deleted while traces live forever, so this FK fires constantly and permanently loses the which-key-wrote-this provenance. If that provenance matters, skip the FK and keep the soft pointer.
+- Embedding-chain internal FKs: upgrade the existing `NO ACTION` FKs to **CASCADE** so `deleteEmbeddingChainForSource` can delete only `embedding_sources`. Validate it doesn't deadlock against an in-flight vectoring batch.
+- `check_feedback.api_key_id` / `trace_evidence.api_key_id` / `trace_references.api_key_id` → **SET NULL**, which requires dropping their `NOT NULL`. Provenance columns, not ownership. Reasonable to skip.
+
+**NOT recommended (recorded so they aren't re-proposed):**
+- **`groups` → `traces` CASCADE.** In a shared book `traces.user_id` spans multiple users; a cascade would delete collaborators' recipes when one owner deletes the book, *and* bypass `deleteTraceCascade`, orphaning everyone's embeddings — the bug above, multiplied. Keep books RESTRICT; require an application-level teardown. (There is no "delete recipe book" route today; `groups.ts:488` only removes members.)
+- **`embedding_sources.source_id` FK.** The column is polymorphic (`source_type ∈ trace|evidence|reference`). A single FK is impossible. Three nullable columns + CHECK gives real integrity but forces every query on the hottest read path (`vector-search.service.ts`) to branch across three columns; table-per-type multiplies the pipeline. Leave it FK-free and service-enforced; fix the leak in code instead.
+- **`audit_log.*` FKs.** Append-only forensics whose rows deliberately outlive the actor. CASCADE erases the trail; RESTRICT blocks account deletion. Both defeat the table. It's also F29's rate-limit hot path — an FK check on every insert taxes it. The right-to-erasure tension is real and resolves as a retention/anonymization policy (null `actor_user_id`, redact `metadata.filter`), not an FK. Feeds the audit-log retention item under Legal and compliance.
+- **`vector_cache` FKs.** No parent to reference; the cross-user cache sharing is the table's entire purpose. Correct as-is.
+
+**Non-FK constraints worth encoding:** the text-enum columns (`check_feedback.kind`/`impact`/`disposition`/`story_fulfilled`, `users.role`, `api_keys.key_type`, `group_members.role`, `embedding_*.status`) are all "text + service-level validation" by explicit choice, with the invariant named only in comments. `CHECK (col IN (...))` is cheap and encodes them. Also: `traces.claim_text_hash` is nullable "for pre-existing data" but the idempotency unique constraint depends on it — NULL hashes silently opt out of dedup. Backfill, then tighten to `NOT NULL`.
+
+**Also flagged:** `check.searched` audit rows store the user's raw search `filter` text in `metadata` (`trace.service.ts:700-704`), retained indefinitely. Free text the user typed. Include in the audit-log retention pass.
+
+---
+
+## Corpus curation and sharing
+
+### `[DECISION NEEDED]` Read-only recipe-book sharing (corpus bootstrapping)
+
+Operator idea, undecided (2026-07-09). Share a recipe book read-only with other users so their agents draw on your accumulated context while writing their own recipes into their own books. Motivating case, in the operator's words: *"I've made a lot of great recipes about sub-agent delegation decisions. I could share those with others to bootstrap their own corpus, and their agents can have my read-only context as they make their own decisions as recipe checks in their own recipe books."* Not approved — captured so in-flight work doesn't foreclose it.
+
+**What the move-recipe work does now to keep this cheap later:**
+- The destination-write check is an explicit role allowlist behind `canWriteToBook(role)`, never "a `group_members` row exists." A `viewer` role added later fails closed instead of silently gaining write rights.
+- `trace-move.service.ts` is shaped so a future `copyTraceToBook` (fork) drops in beside it.
+
+**What still needs deciding before it can ship:**
+- **A `viewer` role on `group_members`** (item below). The asymmetry that makes this overdue: `api_keys` already splits read from write (`read_group_ids` / `write_group_ids`), and `group_members` even carries `daily_read` / `daily_write` flags (`groups.ts:72-73`) — but `group_members.role` is only `owner|admin|member`, all read+write. The split exists at the key layer and the daily-default layer, never at the membership layer.
+- **Read-authorization needs its own predicate**, distinct from write. `/traces/:id`, `/traces`, and the map all authorize by joining `group_members` with no role test.
+- **Feedback-row visibility.** Human-origin `check_feedback` rows (the re-filing notes) render on the trace detail page. A read-only subscriber would read the owner's correction notes — the same leak the declassification rule (`2738f7a9`) closes for evidence. Add a `visibility` column *before* rows accumulate; retrofitting after is expensive.
+- **Prompt injection.** A shared book puts a stranger's recipe text into your agent's briefing. Same posture question as the corpus-import item (Data portability) and the agent-first KB item (Agent briefing) — solve once, in one place, not three times.
+- **Account deletion.** `DELETE /auth/me` 409s on owned shared organizations with other members. Read-only subscribers widen what "shared" means; the guard must count subscribers, not just members. (Also: fix the PII leak above first — sharing multiplies its blast radius.)
+
+### `[DESIGN]` Fork / copy a recipe into another recipe book
+
+The actual bootstrap primitive behind read-only sharing: a reader who finds a useful recipe wants to build on it, not just read it. `copyTraceToBook` = the move transaction plus a new trace id, a `user_id` remap to the copier, `api_key_id = NULL`, copied (not relinked) evidence, and a re-embed enqueue. Two existing choices make it nearly free: `vector_cache` is content-hash-keyed and PII-free, so a forked recipe re-embeds at zero API cost, and `traces_api_key_group_claim_unique` already permits the same claim text in two books. Shares the ownership-remap problem with the corpus-import item — decide remap once for both. Not scheduled; no consumer until read-only sharing lands.
+
+### `[DECISION NEEDED]` A `viewer` (read-only) role on `group_members`
+
+`groups.ts:8-12` documents exactly three roles — `owner`, `admin`, `member` — and states `member` "can read/write traces within the group." Read-only sharing needs a fourth that reads but cannot write (or a `can_write boolean`, which composes better with the existing `daily_read`/`daily_write` machinery). Blocking dependency for read-only book sharing; harmless to defer until that's decided. Whoever adds it must audit every `group_members` join for role-blind authorization — there are several.
+
+### `[IMPL]` Corpus-version key for the Recipe Map cache (hardening, not a live bug)
+
+The map's layout cache derives a corpus-version key from `count(*)` and `max(created_at)` **aggregated across the union of the requested books** (`apps/backend/src/routes/traces.ts`). Aggregating over the union destroys per-book information: a trace moving *between* two books inside the union leaves both statistics unchanged.
+
+**This was initially reported (2026-07-09) as a live staleness bug introduced by the move feature. It is not — corrected the same day.** The cacheable path is corpus mode, which selects through `fetchCorpusTraces` on `traces.group_id` (`search-pipeline.ts:219`), and `CorpusTrace` is `{id, claimText, createdAt}` — no book identity reaches a rendered node. The union therefore renders identically before and after an internal move, so the stale key serves a correct layout. A single-book map invalidates regardless, because that book's own count changes. The claim was made before checking whether the cached layout depended on what the fingerprint couldn't see.
+
+~~The move-recipe work ships the per-book fingerprint (`GROUP BY group_id`, combined in stable order, plus `max(updated_at)`) as cheap insurance~~ — done 2026-07-09. It becomes load-bearing the moment the map colors or groups nodes by book, or a trace's claim text becomes editable in place. Both are plausible; neither exists today.
+
+Still open: the structural piece. `traces.updated_at` is `defaultNow()` with no `ON UPDATE` trigger, so its freshness remains code discipline (the move sets it explicitly). A `moddatetime` trigger, or a `groups.corpus_version bigint` bumped by trigger, would make it a database guarantee.
+
+The structural version, deferred here: **the database maintains no mutation timestamp and no version counter.** `traces.updated_at` is `defaultNow()` with no `ON UPDATE` trigger, so its freshness is code discipline — the third instance of that failure mode in this backlog (see also the email-canonicalization item and the account-deletion list above). Options: a `moddatetime` trigger making `updated_at` a database guarantee; or a `groups.corpus_version bigint` bumped by an `AFTER INSERT/UPDATE/DELETE` trigger on `traces`, giving an O(1) monotonic version instead of a statistical proxy — at the cost of row contention on `groups` under concurrent checks into one book (small at current volume; measure before adopting).
+
+### `[IMPL]` Guarantee `embedding_sources.group_id` agrees with its trace's `group_id`
+
+`embedding_sources.group_id` (`packages/db/src/schema/vectors.ts:100`) is an unenforced cache of the owning trace's `group_id`, and it — not `traces.group_id` — is what scopes every vector search (`vector-search.service.ts:153` for traces, `:374` for evidence). Nothing ties the two together: no FK, no trigger, no test. This is the landmine the move-recipe feature had to route around, and it will cause the next bug in this area. Either drop the column and join through `traces` (costs a join in the hot search predicate — presumably why it was denormalized), or keep it and add a CI drift query asserting the two agree for every trace and evidence source. Recommendation: keep, add the drift check, and document the column as a cache rather than a fact.
+
+### `[DESIGN]` JWT-aware rendering on dual-use surfaces (consumer detection framework)
+
+Operator direction, undecided (2026-07-09), arising from the move-recipe surface question. Surfaces should be classified by **consumer**, not protocol (recipe `668014c7`): the React SPA is human-only, `POST /mcp` is agent-only, and `/check` is **dual-use** — a web-only agent constructs a URL and hands it to the human to click, so both land on the same page. Andy: *"agents do not have access to the JWT token, but humans looking in the browser do. So we could consider checking if the JWT is also present and valid, and if so, then web UI for the human. That's the first time we'd do this, so we'd want a good framework for that for future ideas too."*
+
+If built, `/check` (and other agent-page surfaces) would branch on credentials: API key only → the token-lean agent rendering that exists today; API key **plus** a valid JWT → a richer human UI, which could carry human-only affordances such as the move-recipe control. This closes a gap Andy named on 2026-03-31 and that is still open: *"The /check endpoint serves both humans and agents today but optimizes for neither. Humans need rich evidence visualization; agents need minimal tokens."* (recipe `0fe5774e`).
+
+The framework already has a sibling worth reusing rather than reinventing: recipe `f1543441` established the structural invariant that raw API keys never appear outside human-only JWT auth, with the browser substituting the key it holds and **CI enforcing the property**. The same "JWT presence is the human boundary, machine-checked" shape applies here. Also related: the `/docs` `?key=` prefill audit item under Unsorted — same class of surface, same question.
+
+Not blocking the move feature. Andy: *"The human can always move the recipe through their normal web ui on www.soup.net after all."* Defer unless a second dual-use consumer shows up, which is when the framework pays for itself rather than being speculative.
+
+### Not recommended: an "undo move" affordance
+
+Recorded so it isn't re-proposed. The `trace.moved` audit row already reconstructs the prior state, and a second move *is* the undo. An undo surface adds a mutation path and a fresh authorization question for no capability the user lacks.
+
+---
+
 ## Unsorted
+
+### `[IMPL]` Extract a `useRecipeBooks()` hook
+
+Four frontend pages (`GroupsPage`, `DashboardPage`, `ApiKeysPage`, `RecipeMapPage`) each fetch `authFetch("/recipe-books")` inline with locally-declared response types. ~~The move-recipe work adds the hook (`apps/frontend/src/hooks/useRecipeBooks.ts`) and uses it in the move modal~~ — done 2026-07-09. Migrating the existing four is the remaining mechanical pass. Related to the `packages/api-client` wiring item — if that pipeline is revived, this hook is one of the hand-written shapes it would replace.
 
 ### `[IMPL]` `log_feedback` / `feedback` param should accept short trace-id prefixes
 

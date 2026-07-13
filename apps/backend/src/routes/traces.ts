@@ -10,8 +10,15 @@ import {
   setCachedMapLayout,
 } from "../services/map-layout-cache";
 import { deleteTraceCascade } from "../services/trace-delete.service";
+import {
+  moveTraceToBook,
+  TraceMoveNotFoundError,
+  TraceMoveSameBookError,
+  TraceMoveDuplicateError,
+  TraceMoveEvidenceNotFoundError,
+} from "../services/trace-move.service";
 import { writeAudit } from "../services/audit-log.service";
-import { TRACE_REACTIONS, vocab } from "@soupnet/domain";
+import { TRACE_REACTIONS, vocab, authorizeTraceMove } from "@soupnet/domain";
 
 const traces = new Hono<AppEnv>();
 
@@ -101,19 +108,51 @@ traces.get("/map", async (c) => {
   const cacheable = !query && !axes && !traceIds;
   let cacheKey: string | undefined;
   if (cacheable) {
+    // Fingerprint PER BOOK, then combine, rather than aggregating count(*) and
+    // max(created_at) across the union first.
+    //
+    // This is hardening, not a bug fix — the aggregate form is correct TODAY.
+    // An aggregated key cannot see a trace moving between two books inside the
+    // union (one count falls, the other rises), but the layout it caches also
+    // cannot: the cacheable path is corpus mode, which selects through
+    // fetchCorpusTraces on traces.group_id, and CorpusTrace carries only
+    // {id, claimText, createdAt} — no book identity reaches a node. So the union
+    // really does render identically before and after such a move, and a
+    // single-book map invalidates anyway because that book's count changes.
+    //
+    // It stops being correct the moment the map colors or groups nodes by book,
+    // or a trace's text becomes editable in place. Per-book counts see the move;
+    // max(updated_at) sees an in-place edit that no insert-time statistic can.
+    // Both are one GROUP BY away, so pay for them now rather than debug it later.
     const versionRows = await db.execute(sql`
-      SELECT count(*)::int AS n, COALESCE(max(created_at)::text, '') AS newest
+      SELECT
+        group_id AS "groupId",
+        count(*)::int AS n,
+        COALESCE(max(created_at)::text, '') AS newest,
+        COALESCE(max(updated_at)::text, '') AS touched
       FROM claimnet.traces
       WHERE group_id IN (${sql.join(groupIds.map((g) => sql`${g}::uuid`), sql`, `)})
+      GROUP BY group_id
     `);
-    const version = (versionRows as unknown as Array<{ n: number; newest: string }>)[0];
+    const perBook = new Map(
+      (versionRows as unknown as Array<{
+        groupId: string; n: number; newest: string; touched: string;
+      }>).map((r) => [r.groupId, `${r.n}:${r.newest}:${r.touched}`]),
+    );
+    // Stable order, and books with zero traces contribute an explicit empty
+    // marker so adding the first trace to one changes the key.
+    const corpusVersion = [...groupIds]
+      .sort()
+      .map((g) => `${g}=${perBook.get(g) ?? "0::"}`)
+      .join("|");
+
     cacheKey = mapLayoutCacheKey({
       groupIds,
       k: expand ? undefined : k,
       maxChars,
       expand,
       strategy,
-      corpusVersion: `${version?.n ?? 0}:${version?.newest ?? ""}`,
+      corpusVersion,
     });
     const cached = getCachedMapLayout(cacheKey);
     if (cached !== undefined) {
@@ -398,10 +437,15 @@ traces.get("/:id/feedback", async (c) => {
       cf.related_trace_ids AS "relatedTraceIds",
       cf.created_at AS "createdAt",
       ak.label AS "apiKeyLabel",
+      -- Human-origin rows (a re-filing correction) carry actor_user_id and a
+      -- NULL api_key_id. Without this, they'd render as an unlabelled agent.
+      cf.actor_user_id AS "actorUserId",
+      au.email AS "actorEmail",
       COALESCE(sc.star_count, 0)::int AS "starCount",
       (my.id IS NOT NULL) AS "starredByMe"
     FROM claimnet.check_feedback cf
     LEFT JOIN claimnet.api_keys ak ON ak.id = cf.api_key_id
+    LEFT JOIN claimnet.users au ON au.id = cf.actor_user_id
     LEFT JOIN LATERAL (
       SELECT COUNT(*) AS star_count
       FROM claimnet.check_feedback_stars s
@@ -577,6 +621,10 @@ traces.get("/:id", async (c) => {
   const isGroupAdmin = viewerGroupRole === "owner" || viewerGroupRole === "admin";
   const isSystem = user.role === "system";
   const canDelete = isTraceOwner || isGroupAdmin || isSystem;
+  // Source gate only. Whether a given DESTINATION book will accept the recipe
+  // is decided at move time against that book's membership — the UI can't know
+  // it here, and asking would leak which books the trace could be moved into.
+  const canMove = canDelete;
 
   // Get evidence. The trace_evidence.stance column is preserved for legacy
   // rows but no longer surfaced — the LLM author's stance assertion at write
@@ -635,11 +683,137 @@ traces.get("/:id", async (c) => {
     data: {
       ...tracePayload,
       canDelete,
+      canMove,
       evidence: evidenceRows,
       references: referenceRows,
       evidenceReferences: evidenceRefRows,
     },
   });
+});
+
+// PATCH /traces/:id — re-file a trace into a different recipe book.
+//
+// The complement of DELETE: deletion is the cleanup hatch for MALFORMED
+// recipes (design-thinking.md §"Correcting the record"), so a correct recipe
+// in the wrong book had no affordance until now — the only fix was to destroy
+// it and check it again.
+//
+// Human-only, deliberately (recipes aaad8fdf, 4b97ba86). Agent-facing surfaces
+// stay append-only and idempotent so an uncertain agent asks the human instead
+// of proceeding on a thin assumption it means to correct later.
+//
+// Two ACL gates, unlike delete's one: authority to take a recipe OUT of a book
+// says nothing about authority to put it INTO another.
+traces.patch("/:id", async (c) => {
+  const user = c.get("user");
+  const traceId = c.req.param("id");
+  const db = getDb();
+
+  const body = await c.req
+    .json<{ groupId?: string; story?: string; dropEvidenceIds?: string[] }>()
+    .catch(() => ({}) as Record<string, never>);
+
+  const destGroupId = typeof body.groupId === "string" ? body.groupId.trim() : "";
+  if (!destGroupId) {
+    return c.json({ ok: false, error: "groupId is required" }, 400);
+  }
+
+  const dropEvidenceIds = Array.isArray(body.dropEvidenceIds)
+    ? body.dropEvidenceIds.filter((id): id is string => typeof id === "string")
+    : [];
+
+  // Source side: does the trace exist, and may this user move it out?
+  const accessRows = await db.execute(sql`
+    SELECT
+      t.user_id AS "userId",
+      t.group_id AS "groupId",
+      t.claim_text AS "claimText",
+      gm.role AS "sourceRole"
+    FROM claimnet.traces t
+    LEFT JOIN claimnet.group_members gm
+      ON gm.group_id = t.group_id AND gm.user_id = ${user.id}::uuid
+    WHERE t.id = ${traceId}::uuid
+  `);
+  const access = (accessRows as unknown as Array<{
+    userId: string; groupId: string; claimText: string; sourceRole: string | null;
+  }>)[0];
+
+  if (!access) return c.json({ ok: false, error: "Trace not found" }, 404);
+
+  // Destination side: the user's role there, and the book's name for the
+  // feedback row. A destination the user can't see resolves to no role, which
+  // authorizeTraceMove rejects — so this never confirms a book's existence.
+  const destRows = await db.execute(sql`
+    SELECT g.name AS "name", gm.role AS "role"
+    FROM claimnet.groups g
+    LEFT JOIN claimnet.group_members gm
+      ON gm.group_id = g.id AND gm.user_id = ${user.id}::uuid
+    WHERE g.id = ${destGroupId}::uuid
+  `);
+  const dest = (destRows as unknown as Array<{ name: string; role: string | null }>)[0];
+
+  const authz = authorizeTraceMove({
+    isTraceOwner: access.userId === user.id,
+    sourceRole: access.sourceRole,
+    destRole: dest?.role ?? null,
+    isSystem: user.role === "system",
+  });
+
+  if (!authz.allowed) {
+    return c.json({ ok: false, error: "Forbidden", reason: authz.reason }, 403);
+  }
+  // A system user may move into a book they aren't a member of, but the book
+  // still has to exist.
+  if (!dest) return c.json({ ok: false, error: "Recipe book not found" }, 404);
+
+  try {
+    const result = await moveTraceToBook({
+      db,
+      traceId,
+      destGroupId,
+      destBookName: dest.name,
+      actorUserId: user.id,
+      dropEvidenceIds,
+      story: body.story,
+    });
+
+    await writeAudit(db, {
+      actorUserId: user.id,
+      action: "trace.moved",
+      targetType: "trace",
+      targetId: traceId,
+      metadata: {
+        fromGroupId: result.fromGroupId,
+        toGroupId: result.toGroupId,
+        traceUserId: access.userId,
+        claimText: access.claimText,
+        actorRelation: authz.actorRelation,
+        evidenceRedacted: result.evidenceRedacted,
+        referencesRedacted: result.referencesRedacted,
+      },
+    });
+
+    return c.json({ ok: true, data: result });
+  } catch (err) {
+    if (err instanceof TraceMoveNotFoundError) {
+      return c.json({ ok: false, error: "Trace not found" }, 404);
+    }
+    if (err instanceof TraceMoveSameBookError) {
+      return c.json({ ok: false, error: "Trace is already in that recipe book" }, 400);
+    }
+    if (err instanceof TraceMoveEvidenceNotFoundError) {
+      return c.json({ ok: false, error: "Unknown evidence entry" }, 400);
+    }
+    if (err instanceof TraceMoveDuplicateError) {
+      // group_id is part of traces_api_key_group_claim_unique, so the identical
+      // recipe from the same agent already lives in the destination.
+      return c.json(
+        { ok: false, error: "That recipe already exists in the destination recipe book" },
+        409,
+      );
+    }
+    throw err;
+  }
 });
 
 // DELETE /traces/:id — hard-delete a trace + linkage. The vector_cache is

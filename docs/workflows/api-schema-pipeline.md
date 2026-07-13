@@ -42,13 +42,15 @@ All three generators are plain `npx tsx` or `npx orval` scripts — no build ste
 
 **Source:** Drizzle migration snapshot JSON (`packages/db/migrations/meta/NNNN_snapshot.json`).
 
-**Output:** `docs/architecture/data-model-generated.md` — Mermaid ER diagram, column tables, indexes, constraints for all 20 tables.
+**Output:** `docs/architecture/data-model-generated.md` — Mermaid ER diagram, column tables, indexes, constraints for every table in the schema.
 
 **Companion:** `docs/architecture/data-model.md` — hand-written design rationale (Toulmin model, FK vs UUID-ref conventions, embedding pipeline design, etc.).
 
 **Trigger:** Automatically runs after `npm run db:generate` in `packages/db`. Can also be run standalone: `npm run generate:data-model`.
 
 **Script:** `scripts/generate-data-model-docs.ts` — reads the latest snapshot JSON (finds it via `_journal.json`), outputs markdown with Mermaid.
+
+**Drift guard:** `npm run check:data-model` regenerates to a temp file and diffs against the committed doc, failing if they differ (a schema change landed without regenerating). It runs in CI and in `npm run test:ci`. The generator also **fails loudly** if a snapshot table isn't assigned to a category in its `tableGroups` map — so a new table can't silently vanish from the doc. Schema-authoring walkthrough: [schema-changes.md](schema-changes.md).
 
 ---
 

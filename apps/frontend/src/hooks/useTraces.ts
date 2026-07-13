@@ -54,6 +54,7 @@ interface RawTraceDetail extends Trace {
   userEmail: string | null;
   groupName?: string | null;
   canDelete: boolean;
+  canMove: boolean;
   evidence: RawEvidence[];
   references: RawReference[];
   evidenceReferences: EvidenceRefLink[];
@@ -70,6 +71,9 @@ export interface GroupedReference {
 }
 
 export interface GroupedEvidence {
+  /** Needed so a move can de-select individual entries before they cross into
+   *  a more widely shared recipe book. */
+  id: string;
   content: string;
   references: GroupedReference[];
 }
@@ -82,6 +86,9 @@ export interface TraceDetail extends Trace {
   userEmail: string | null;
   groupName?: string | null;
   canDelete: boolean;
+  /** Source-side gate only. Whether a given destination book will accept the
+   *  recipe is decided server-side at move time. */
+  canMove: boolean;
   evidence: GroupedEvidence[];
 }
 
@@ -149,6 +156,7 @@ export function useTraceDetail(traceId: string) {
       }
 
       const evidence: GroupedEvidence[] = raw.evidence.map((e) => ({
+        id: e.id,
         content: e.content,
         references: (linksByEvidence.get(e.id) ?? [])
           .map((refId) => refMap.get(refId))
@@ -191,6 +199,9 @@ export interface TraceFeedbackRow {
   relatedTraceIds: string[] | null;
   createdAt: string;
   apiKeyLabel: string | null;
+  /** Set on human-origin rows (a re-filing correction); apiKeyLabel is null. */
+  actorUserId: string | null;
+  actorEmail: string | null;
   starCount: number;
   starredByMe: boolean;
 }
@@ -256,6 +267,51 @@ export function useSetFeedbackStar(traceId: string) {
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["trace-feedback", traceId] });
+    },
+  });
+}
+
+/**
+ * Re-file a recipe into another recipe book.
+ *
+ * `dropEvidenceIds` REDACTS those entries — they are hard-deleted server-side,
+ * not hidden — because moving a recipe from a private book into a shared one is
+ * a declassification step, and hidden-but-present evidence would leave the leak
+ * open while looking closed.
+ */
+export function useMoveTrace() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (params: {
+      traceId: string;
+      groupId: string;
+      story?: string;
+      dropEvidenceIds?: string[];
+    }) => {
+      const res = await authFetch(`/traces/${params.traceId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          groupId: params.groupId,
+          ...(params.story ? { story: params.story } : {}),
+          ...(params.dropEvidenceIds?.length
+            ? { dropEvidenceIds: params.dropEvidenceIds }
+            : {}),
+        }),
+      });
+      if (!res.ok) {
+        const json = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(json.error ?? `Move failed (HTTP ${res.status})`);
+      }
+      return res.json() as Promise<{ ok: true; data: { toGroupId: string } }>;
+    },
+    onSuccess: (_data, params) => {
+      void queryClient.invalidateQueries({ queryKey: ["trace", params.traceId] });
+      void queryClient.invalidateQueries({ queryKey: ["trace-feedback", params.traceId] });
+      void queryClient.invalidateQueries({ queryKey: ["traces"] });
+      void queryClient.invalidateQueries({ queryKey: ["traces-count"] });
+      void queryClient.invalidateQueries({ queryKey: ["group-traces"] });
+      void queryClient.invalidateQueries({ queryKey: ["traces-map"] });
     },
   });
 }

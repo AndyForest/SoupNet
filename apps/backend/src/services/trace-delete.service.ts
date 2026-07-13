@@ -98,7 +98,12 @@ export async function deleteTraceCascade(
   });
 }
 
-async function deleteEmbeddingChainForSource(
+/**
+ * Remove the four-table embedding chain (sources → strategies → chunks →
+ * vectors) for one polymorphic source. Exported for trace-move.service.ts,
+ * which redacts de-selected evidence on the same terms a delete would.
+ */
+export async function deleteEmbeddingChainForSource(
   tx: PostgresJsDatabase,
   sourceType: "trace" | "evidence" | "reference",
   sourceId: string,
