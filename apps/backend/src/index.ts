@@ -18,6 +18,7 @@ import { invitationRoutes } from "./routes/invitations";
 import { adminRoutes } from "./routes/admin";
 import { docsRoutes } from "./routes/docs";
 import { traceRoutes } from "./routes/traces";
+import { importRoutes } from "./routes/import";
 import { mcpRoutes } from "./routes/mcp";
 import { uploadsRoutes } from "./routes/uploads";
 import { oauthRoutes, oauthWellKnownRoutes } from "./routes/oauth";
@@ -122,6 +123,8 @@ app.route("/invitations", invitationRoutes);
 app.route("/admin", adminRoutes);
 app.route("/docs", docsRoutes);
 app.route("/traces", traceRoutes);
+// Corpus import — the inverse of GET /auth/me/export (docs/planning/corpus-import.md).
+app.route("/import", importRoutes);
 app.route("/mcp", mcpRoutes);
 app.route("/uploads", uploadsRoutes);
 app.route("/feedback", feedbackRoutes);

@@ -21,6 +21,7 @@ import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { sendWaitlistApprovedEmail } from "./email.service";
 import { writeAudit } from "./audit-log.service";
+import { deleteUserCascade } from "./user-delete.service";
 
 export const WAITLIST_UNVERIFIED_PURGE_DAYS = 30;
 
@@ -119,44 +120,26 @@ export async function promoteTopWaitlisted(
 
 /**
  * Delete waitlisted accounts that never verified their email within the
- * purge window. These accounts have never held a JWT or an API key, so the
- * only rows to cascade are the personal org scaffolding registerUser
- * created. Runs opportunistically from the register handler's waitlist
- * branch — no scheduler.
+ * purge window. These accounts have never held a JWT or an API key, so in
+ * practice only the personal org scaffolding registerUser created exists —
+ * but the teardown routes through deleteUserCascade (the single audited
+ * account-teardown path) rather than a hand-rolled list, so it stays
+ * complete if waitlisted accounts ever gain content. Each user is its own
+ * cascade (not one wrapping transaction): purge is idempotent — a failure
+ * partway leaves the remaining stale accounts for the next opportunistic
+ * run. Runs from the register handler's waitlist branch — no scheduler.
  */
 export async function purgeStaleWaitlistedUsers(db: PostgresJsDatabase): Promise<number> {
-  return db.transaction(async (tx) => {
-    const stale = await tx.execute(sql`
-      SELECT id FROM claimnet.users
-      WHERE waitlisted_at IS NOT NULL
-        AND email_verified_at IS NULL
-        AND created_at < now() - make_interval(days => ${WAITLIST_UNVERIFIED_PURGE_DAYS})
-    `);
-    const ids = (stale as unknown as Array<{ id: string }>).map((r) => r.id);
-    if (ids.length === 0) return 0;
+  const stale = await db.execute(sql`
+    SELECT id FROM claimnet.users
+    WHERE waitlisted_at IS NOT NULL
+      AND email_verified_at IS NULL
+      AND created_at < now() - make_interval(days => ${WAITLIST_UNVERIFIED_PURGE_DAYS})
+  `);
+  const ids = (stale as unknown as Array<{ id: string }>).map((r) => r.id);
 
-    // Never-signed-in accounts own only their personal org + default book
-    // + their own membership. Tear those down bottom-up, then the user.
-    for (const id of ids) {
-      await tx.execute(sql`
-        DELETE FROM claimnet.group_members
-        WHERE group_id IN (
-          SELECT g.id FROM claimnet.groups g
-          WHERE g.organization_id IN (
-            SELECT id FROM claimnet.organizations WHERE owner_id = ${id}::uuid
-          )
-        )
-      `);
-      await tx.execute(sql`
-        DELETE FROM claimnet.groups
-        WHERE organization_id IN (
-          SELECT id FROM claimnet.organizations WHERE owner_id = ${id}::uuid
-        )
-      `);
-      await tx.execute(sql`DELETE FROM claimnet.organizations WHERE owner_id = ${id}::uuid`);
-      await tx.execute(sql`DELETE FROM claimnet.group_members WHERE user_id = ${id}::uuid`);
-      await tx.execute(sql`DELETE FROM claimnet.users WHERE id = ${id}::uuid`);
-    }
-    return ids.length;
-  });
+  for (const id of ids) {
+    await deleteUserCascade(db, id);
+  }
+  return ids.length;
 }
