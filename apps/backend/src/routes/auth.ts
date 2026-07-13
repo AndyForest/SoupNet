@@ -424,6 +424,13 @@ auth.get("/me/export", requireAuth, requireVerifiedEmail, async (c) => {
     ORDER BY created_at
   `);
 
+  // decided_at semantics (see docs/planning/corpus-import.md §v1.1): null means
+  // the decision was CONTEMPORANEOUS with the check (the common case); a
+  // populated value means it was backfilled to a historical date (decision
+  // archaeology). The null vs. populated distinction is information — export
+  // and import preserve it exactly. A consumer that needs "when was this
+  // decided" for filtering/ordering should coalesce: COALESCE(decided_at,
+  // created_at); the coalesce belongs in the consumer, not in the stored data.
   const traces = await db.execute(sql`
     SELECT id, user_id AS "userId", group_id AS "groupId", api_key_id AS "apiKeyId",
            claim_text AS "claimText", claim_text_hash AS "claimTextHash",
