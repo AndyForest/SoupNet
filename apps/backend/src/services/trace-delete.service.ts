@@ -33,6 +33,19 @@ export async function deleteTraceCascade(
   const { db, traceId } = opts;
 
   return db.transaction(async (tx) => {
+    // Lock the trace row for the whole cascade, BEFORE the chain-delete.
+    // embedding_sources.source_id is polymorphic (no FK), so the worker's
+    // strategy backfill can otherwise insert fresh embedding rows for this
+    // trace between our chain-delete and the trace-row delete — rows the
+    // cascade would never remove (the CI-exposed sweep/delete race,
+    // 2026-07-13). The backfill inserts via INSERT..SELECT FROM traces FOR
+    // UPDATE (strategy-check.ts), so it either completes before we take this
+    // lock (its rows are then swept by our chain-delete below) or blocks
+    // until we commit and sees the trace gone.
+    await tx.execute(sql`
+      SELECT id FROM claimnet.traces WHERE id = ${traceId}::uuid FOR UPDATE
+    `);
+
     const evidenceIdRows = await tx.execute(sql`
       SELECT evidence_id AS "id" FROM claimnet.trace_evidence
       WHERE trace_id = ${traceId}::uuid
@@ -107,8 +120,12 @@ export async function deleteTraceCascade(
 
 /**
  * Remove the four-table embedding chain (sources → strategies → chunks →
- * vectors) for one polymorphic source. Exported for trace-move.service.ts,
- * which redacts de-selected evidence on the same terms a delete would.
+ * vectors) for one polymorphic source. vector_cache is deliberately untouched
+ * (see header). Exported for two callers beyond this file:
+ * trace-move.service.ts, which redacts de-selected evidence on the same terms
+ * a delete would; and the corpus-import overwrite path (import.service.ts),
+ * which replaces a trace's claim text and must drop the stale embeddings so
+ * the worker sweep re-embeds the new text.
  */
 export async function deleteEmbeddingChainForSource(
   tx: PostgresJsDatabase,

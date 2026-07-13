@@ -16,6 +16,7 @@ import type PgBoss from "pg-boss";
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { ALL_STRATEGY_IDS } from "@soupnet/domain";
+import { getEmbeddingProviderId } from "../../lib/embeddings/provider";
 import { QUEUES } from "../queues";
 
 const STALE_PROCESSING_MINUTES = 10;
@@ -25,8 +26,14 @@ export async function handleStrategySweep(
   boss: PgBoss,
   db: PostgresJsDatabase,
 ): Promise<void> {
-  if (!process.env["GEMINI_API_KEY"]) {
-    return; // no API key, no point discovering work
+  // Only the gemini provider needs an API key to make discovery worthwhile.
+  // stub/local/openai-compatible are keyless — gating them on GEMINI_API_KEY
+  // (the pre-multi-provider behavior) left pending vectors undrained forever
+  // in keyless deployments, which corpus import (2026-07-12) depends on: it
+  // enqueues pending stubs / relies on this sweep's backfill for all imported
+  // rows. See ADR-0023 for the provider matrix.
+  if (getEmbeddingProviderId() === "gemini" && !process.env["GEMINI_API_KEY"]) {
+    return; // gemini without a key: discovery would only queue doomed API calls
   }
 
   // ── Stale processing recovery ──────────────────────────────────────
