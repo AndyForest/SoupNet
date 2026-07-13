@@ -23,17 +23,49 @@
  *   npm run test:ci
  *   node scripts/test-ci-local.mjs
  *   node scripts/test-ci-local.mjs -- --reporter verbose
+ *   TESTCI_PGPORT=5544 npm run test:ci   # parallel gate on its own stack
+ *
+ * Parallel gates: TESTCI_PGPORT (default 5534) picks the CI postgres host
+ * port, and everything else derives from it so one knob keeps the whole
+ * stack self-consistent — the compose project name becomes
+ * `soupnet-ci-<port>` (containers/networks/teardown stay per-gate, and the
+ * container name keeps the `*-postgres-ci-1` suffix that sessions grep in
+ * `docker ps` to detect a running gate), and the backend's host port shifts
+ * by the same offset from its 3098 base so two gates don't collide there
+ * either (override explicitly with TESTCI_BACKEND_PORT if the derived port
+ * is taken). Defaults preserve the historical single-gate behavior exactly.
  */
 
 import { execSync, spawn } from "node:child_process";
 import { readdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
-const CI_PORT = 3098;
-// CI postgres runs on 5534 to avoid colliding with dev on 5633
+function parsePort(name, raw, fallback) {
+  const port = raw === undefined || raw === "" ? fallback : Number(raw);
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+    throw new Error(
+      `${name} must be a port number in 1024-65535, got "${raw ?? port}"` +
+        (raw === undefined ? " (derived — set the env var explicitly)" : ""),
+    );
+  }
+  return port;
+}
+
+// CI postgres defaults to 5534 to avoid colliding with dev on 5633
+const PG_PORT = parsePort("TESTCI_PGPORT", process.env.TESTCI_PGPORT, 5534);
+const CI_PORT = parsePort(
+  "TESTCI_BACKEND_PORT",
+  process.env.TESTCI_BACKEND_PORT,
+  3098 + (PG_PORT - 5534),
+);
+const COMPOSE_PROJECT = `soupnet-ci-${PG_PORT}`;
+const COMPOSE = `docker compose -p ${COMPOSE_PROJECT} -f docker-compose.ci.yml`;
+// Compose interpolates ${TESTCI_PGPORT:-5534} in docker-compose.ci.yml; pass
+// the parsed value explicitly so up/down always see what we validated.
+const COMPOSE_ENV = { ...process.env, TESTCI_PGPORT: String(PG_PORT) };
 const CI_PG = {
   PGHOST: "localhost",
-  PGPORT: "5534",
+  PGPORT: String(PG_PORT),
   PGUSER: "claimnet",
   PGPASSWORD: "claimnet",
   PGDATABASE: "claimnet",
@@ -107,8 +139,8 @@ async function main() {
 
   try {
     // 1. Start fresh CI postgres
-    console.log("\n=== Starting CI postgres (port 5534) ===");
-    run("docker compose -f docker-compose.ci.yml up -d --wait");
+    console.log(`\n=== Starting CI postgres (project ${COMPOSE_PROJECT}, port ${PG_PORT}) ===`);
+    run(`${COMPOSE} up -d --wait`, { env: COMPOSE_ENV });
 
     // 2. Build
     console.log("\n=== Building packages + backend ===");
@@ -220,7 +252,7 @@ async function main() {
       backendProcess.kill();
     }
     try {
-      run("docker compose -f docker-compose.ci.yml down -v");
+      run(`${COMPOSE} down -v`, { env: COMPOSE_ENV });
     } catch { /* ignore cleanup errors */ }
   }
 }
