@@ -57,10 +57,15 @@ try {
     process.exit(1);
   }
 
-  const fresh = readFileSync(tmpOut, "utf-8");
+  // Compare newline-insensitively: on Windows checkouts git materializes the
+  // committed doc with CRLF (autocrlf) while the generator writes LF, so a
+  // byte comparison fails on every line of a freshly cloned, perfectly
+  // up-to-date doc. Content is what the check is for; line endings are git's.
+  const normalize = (s) => s.replace(/\r\n/g, "\n");
+  const fresh = normalize(readFileSync(tmpOut, "utf-8"));
   let committed;
   try {
-    committed = readFileSync(committedPath, "utf-8");
+    committed = normalize(readFileSync(committedPath, "utf-8"));
   } catch {
     committed = null;
   }
