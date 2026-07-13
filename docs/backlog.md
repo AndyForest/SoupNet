@@ -373,6 +373,18 @@ Recorded so it isn't re-proposed. The `trace.moved` audit row already reconstruc
 
 The 2026-07-12 account-deletion fix stops the leak going forward; historical orphans from pre-fix deletions remain in prod. Run the script dry-run (default), review counts, then `--apply`. It iterates to a fixed point and has a 1-hour age guard. **The FK-constraints item is blocked on this run** — orphans fail a validating `ADD CONSTRAINT` at boot. Note: `check_feedback` rows whose `api_key_id` was orphaned by pre-fix deletions are permanently unattributable and the script cannot find them; PR #28's `actor_user_id` is the forward fix for human rows.
 
+### `[IMPL]` Qualitative-eval findings, 2026-07-12 preview round (two naive agents, merged batch stack)
+
+Both journeys succeeded — zero hard blockers; short-id resolution and the import flow passed their naive evals outright. Remaining findings, worst first:
+
+- **Feedback is undiscoverable over the wire (soft blocker).** The `/check` page, `recipe-check-guide`, and check JSON response never mention that feedback exists or that `POST /feedback` is the endpoint — a web-only agent not told the concept exists can never close the loop. Fix is check-surface copy (FF-1 class), NOT briefing copy, so the regression-spec gate doesn't apply; add a one-line pointer to the check response + guide.
+- **Stale search description in the agent-facing guide (correction, trivial).** `recipe-check-guide` still says "Search: hybrid — full-text (tsvector) + … semantic vectors"; search has been pure semantic since 2026-04-11 (the same drift class fixed in data-flow.md on 2026-07-09). Also: raw cosine scores near zero read as "broken?" to a fresh agent — a one-line scale note would help.
+- **`POST /feedback` validates one error per request** — six sequential 400s to learn six required fields. Collect-all-errors in one response.
+- **Unknown fields on feedback rows are silently dropped** (the eval agent's `outcome` field vanished without complaint) and the success response doesn't echo the stored row. Either echo the row or reject unknown keys.
+- **Re-import response points nowhere** — an all-skipped re-import returns `book: null` with no pointer to which book already holds the rows. Report the book(s) containing the matched ids.
+- **`/check` claims "No API key provided" while a valid `Authorization: Bearer` header is present** — it only reads `?key=`. Pre-existing, not from this batch. Either accept Bearer or say "pass it as ?key= on this endpoint." Related: the `/docs` `?key=` prefill audit item.
+- Cosmetic: bare 404s on `GET /import` and `GET /docs` (a 405 / index line would self-document); import book auto-name uses server-UTC date (reads as "tomorrow" for western-hemisphere users); import response `notOwned`/`orphaned` count names are opaque until nonzero; `format=json` on `/check` is undocumented on the check page; recipe/trace/group vocabulary drift on the wire (`recipeId` vs `trace_id` vs `"group"` — schema rename deferred per ADR-0016, but the feedback error text could accept `recipe_id` as an alias or name the synonym).
+
 ### `[IMPL]` Extend short-id prefixes beyond feedback `trace_id` (demand-gated)
 
 The 2026-07-12 ship resolves short ids on `log_feedback` / `feedback` param / `POST /feedback` `trace_id` only. `related_trace_ids` stays full-UUID deliberately (capture-only lineage; resolving turns capture into validation). If agents hit the same friction on `known_recipes` / `recipe_ids` / `get_recipes`, extend with the same within-read-scope resolution. Only if demand appears.
