@@ -52,7 +52,20 @@ What you learn about the user today makes tomorrow's agents smarter. An agent co
 The primary interfaces are MCP tools and the web `/check` endpoint. The SPA dashboard is for humans to browse and understand what their agents have built — it's not the primary interaction surface. But it's essential: humans need to see, understand, and guide what their agents are doing.
 
 ### 7. Three-surface parity
-Every core feature works on all three agent surfaces: MCP tools (Claude Code, Claude Desktop, Antigravity), JSON API (`/check?format=json`), and HTML form (`/check` for web-browsing agents like ChatGPT). Feature parity is a hard requirement — no surface is second-class.
+Every core **agent-facing** feature works on all three agent surfaces: MCP tools (Claude Code, Claude Desktop, Antigravity), JSON API (`/check?format=json`), and HTML form (`/check` for web-browsing agents like ChatGPT). Feature parity is a hard requirement — no surface is second-class.
+
+Parity binds *within* the agent surfaces. It is not a rule that every feature must reach every surface, because the surfaces differ by **consumer**, not by protocol:
+
+- **Human-only** — the SPA dashboard at `soup.net`. JWT auth.
+- **Agent-only** — `POST /mcp`, and `/check?format=json`. API-key auth.
+- **Dual-use** — the `/check` HTML form, and the REST API beneath it. A web-based agent that cannot call MCP constructs a URL and hands it to the human to click, so both consumers land on the same page. The REST API is likewise both an agent surface and the backend for the SPA.
+
+So every new feature must first name its consumer. The discriminator available at request time is credentials: agents hold an API key, and only a human's browser additionally carries a valid JWT. (The same "JWT presence is the human boundary" property that makes raw API keys machine-checkably absent from non-JWT responses.)
+
+### 8. Agent surfaces stay append-only and idempotent
+Recipe checks are read-only searches with an append-only side effect. Agents get no update or delete affordance — not merely because destructive operations would make them hesitate to check freely (they would), but because **reversibility changes what an agent does at the moment of uncertainty**. An agent that can fix its mistake later will proceed on a thin assumption now, intending to correct it — and will often forget. Withholding the correction affordance forces the agent to ask the human instead, and getting it right the first time is worth more than an undo.
+
+Corrections are therefore human-only: deleting a malformed recipe, and re-filing a misfiled one. Both live on the SPA, behind JWT and verified email.
 
 ---
 
@@ -301,6 +314,12 @@ Based on [Semantic Projection (Grand et al., 2022)](https://www.nature.com/artic
 Temporal decay for recipe relevance is planned but not implemented. See [search-algorithms.md — Stigmergic Decay](architecture/search-algorithms.md#stigmergic-decay--temporal-weighting-of-recipes-research-needed).
 
 **The exception: malformed recipes.** Outdated-but-correct recipes are preserved (with decay) because they reflect a real prior judgment. *Malformed* recipes are different — agent-perspective phrasing ("As an AI agent…"), off-format claims, hallucinated evidence — and should be hard-deleted, not decayed. They never represented a real human judgment, so leaving them in the corpus pollutes vector neighborhoods and biases future searches without any countervailing temporal signal. The trace details page exposes a Delete affordance for the trace owner, the recipe book's owner/admin, and system role; the cascade prunes orphaned evidence/references but preserves the content-hash-keyed `vector_cache`. An audit-log entry captures the deletion. **Don't reach for delete to express disagreement** — log a fresh recipe with current taste; that's what temporal decay is for.
+
+**The other exception: misfiled recipes.** A correct recipe in the wrong recipe book is neither malformed nor outdated — it's mis-shelved, and deleting it to fix the shelf throws away real evidence and provenance. Agents choose the book at check time and sometimes choose wrong, so the trace details page also exposes a **Move** affordance (same permissions as Delete, plus write access to the destination book).
+
+Two things make a move different from a shelf-swap. First, the move records itself: it writes a human-origin feedback row against the original check, because a misfile is an agent misapplying a routing rule the corpus already holds recipes about, and that correction is calibration signal the next agent needs. Second, moving from a more private book into a more shared one is a **declassification** step. The correction note names only the destination — the source book's name is itself sensitive — and the human may de-select evidence entries before they cross the boundary. De-selected evidence is redacted (hard-deleted with any reference only it cites), not hidden; hidden-but-present evidence would leave the leak open while appearing closed.
+
+Moving is not available to agents, per §8. An agent that could re-file its own recipe after the fact would file it carelessly in the first place.
 
 ### Understanding recipe-book dynamics
 **User story:** *"I scope the Recipe Map to my project recipe book and see 30 recipes from three different collaborators. I switch to concept axes with 'logistics' and 'design' — the map shows that most recipes are about logistics (event planning, volunteer coordination) and there's a gap in design decisions. I mention this in our next meeting and we spend time discussing the design direction, which our agents then log."*

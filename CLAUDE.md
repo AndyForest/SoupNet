@@ -43,8 +43,15 @@ npm run dev:frontend                    # Vite dev server on :5273
 #      will fail):
 #        cd packages/db && npx drizzle-kit generate --name <descriptive_name> && cd -
 #        npm run generate:data-model      # regenerate the data-model doc
-#   4. Review the generated SQL in packages/db/migrations/ before committing.
+#   4. If you added a NEW table, add it to the `tableGroups` map in
+#      scripts/generate-data-model-docs.ts, or the generator fails loudly
+#      (it refuses to drop an uncategorized table from the doc silently).
+#   5. Review the generated SQL in packages/db/migrations/ before committing.
+#   6. npm run check:data-model — fails if the generated doc is stale vs the
+#      schema (also enforced in CI + test:ci). Commit schema + migration + the
+#      regenerated doc together.
 # Migrations apply automatically at backend startup (apps/backend/src/db.ts).
+# Full schema-authoring walkthrough: docs/workflows/schema-changes.md
 
 # Quality gates — canonical pre-commit gate is test:ci (see Pre-Commit Workflow)
 npm run test:ci                  # fresh isolated DB, mirrors CI exactly
@@ -145,7 +152,7 @@ Hono HTTP server. JWT for humans, API keys (Bearer) for agents — strictly sepa
 - `/admin` — system-role-only: organizations, settings (signup cap, embeddings toggle), invite (cap bypass), users list/detail, stats, audit-log, queues, workers/embeddings
 - `/docs` — agent-facing HTML guides: `recipe-check-guide`, `recipe-scenarios`, `mcp-setup`, `bootstrap`. Read-only; some pre-fill with `?key=` for copy-paste configs.
 - `/recipes` — recipe lookup by id (batch ≤20, API-key Bearer). Same read-scope ACL as `/check`; ids that don't resolve return uniform `not_found_or_unreadable` markers (anti-enumeration). REST twin of the MCP `get_recipes` tool.
-- `/traces` — list, map (k-means clustering + UMAP), traces-by-id (JWT)
+- `/traces` — list, map (k-means clustering + UMAP), traces-by-id (JWT). `PATCH /traces/:id` re-files a recipe into another recipe book, and `DELETE /traces/:id` hard-deletes a malformed one. Both are human-only by design: agent surfaces stay append-only and idempotent so an uncertain agent asks rather than proceeding on a thin assumption it means to correct later.
 - `/uploads` — multipart POST for multimodal evidence (images, PDFs, audio). GET always 404 — URLs are opaque capability tokens tied to the issuing api_key_id.
 - `/mcp` — remote MCP endpoint. Streamable HTTP transport, stateless mode per ADR-0021, Bearer-token auth with API key.
 - `/health`, `/health/ready` — liveness + DB readiness. Point a load balancer / health-check probe at `/health/ready` if the deployment uses a rotating database password (the `SELECT 1` lets the probe detect auth drift after rotation and trigger task replacement).

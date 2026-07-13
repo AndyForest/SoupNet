@@ -1,7 +1,16 @@
 /**
- * check_feedback — agent-reported feedback about prior recipe checks, plus
- * the human ground-truth tables (trace reactions, feedback stars) from the
- * UVP measurement architecture (WT-4 / §Validating the UVP, 2026-07-05).
+ * check_feedback — feedback about prior recipe checks, plus the human
+ * ground-truth tables (trace reactions, feedback stars) from the UVP
+ * measurement architecture (WT-4 / §Validating the UVP, 2026-07-05).
+ *
+ * Rows are agent-reported OR human-origin. Exactly one actor is present:
+ * `api_key_id` for an agent, `actor_user_id` for a signed-in human, enforced
+ * by the check_feedback_one_actor CHECK. Human rows arrived with the
+ * re-filing feature (2026-07-09, recipe 465df879): when a human corrects an
+ * agent's misfiling of a recipe, that correction is calibration signal — a
+ * misfile is an agent misapplying a routing rule the corpus already holds
+ * recipes about — so it belongs on the recipe's detail page where agents and
+ * humans read it, not only in the append-only audit log.
  *
  * check_feedback wire format starts from the field-proven local JSONL schema
  * v1 (kind / impact / disposition / story_fulfilled enums — see
@@ -15,7 +24,9 @@
  *
  * Rate limiting: feedback writes get their own per-key budget counted on
  * THIS table via the (api_key_id, created_at DESC) index — deliberately not
- * audit_log, which is F29's rate-limit hot path and must stay fast.
+ * audit_log, which is F29's rate-limit hot path and must stay fast. Human
+ * rows carry a NULL api_key_id and so never enter an agent's budget; they are
+ * reachable only behind JWT + verified email.
  *
  * FKs cascade on trace/feedback deletion so trace-delete cleanup doesn't
  * need to know about these tables.
@@ -28,6 +39,7 @@ import {
   timestamp,
   index,
   unique,
+  check,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { claimnetSchema, traces } from "./traces";
@@ -44,8 +56,17 @@ export const checkFeedback = claimnetSchema.table(
       .references(() => traces.id, { onDelete: "cascade" }),
 
     /** The key that submitted the feedback (not necessarily the key that
-     *  made the original check). No FK — matches trace_evidence.api_key_id. */
-    apiKeyId: uuid("api_key_id").notNull(),
+     *  made the original check). No FK — matches trace_evidence.api_key_id.
+     *  NULL when the row is human-origin; see actorUserId. */
+    apiKeyId: uuid("api_key_id"),
+
+    /** The signed-in human who submitted the feedback. NULL when the row is
+     *  agent-origin. Cascades on account deletion: a user's own words must
+     *  not outlive their account, and auth.ts's explicit deletion list has
+     *  already proven it won't be updated for new tables. */
+    actorUserId: uuid("actor_user_id").references(() => users.id, {
+      onDelete: "cascade",
+    }),
 
     /** Free-text self-reported agent identity (e.g. "a-wt4-checkloop").
      *  Capture only — no dedup behavior until the phase-2 recall evals pass. */
@@ -86,6 +107,13 @@ export const checkFeedback = claimnetSchema.table(
     // Drives the per-key feedback budget COUNT (mirrors F29's shape on its
     // own table, keeping audit_log's indexed path untouched).
     index("check_feedback_api_key_id_created_at_idx").on(t.apiKeyId, t.createdAt.desc()),
+    // Exactly one actor: an agent's key or a human's user id, never both and
+    // never neither. Structural, so a future write path can't produce an
+    // unattributed row by forgetting to set either column.
+    check(
+      "check_feedback_one_actor",
+      sql`(${t.apiKeyId} IS NULL) <> (${t.actorUserId} IS NULL)`,
+    ),
   ],
 );
 

@@ -91,6 +91,13 @@ jobs:
       - name: Lint
         run: npm run lint --workspaces --if-present
 
+      # Fails if docs/architecture/data-model-generated.md is stale relative to
+      # the latest Drizzle migration snapshot — i.e. a schema change landed
+      # without running `npm run generate:data-model`. Static (no DB needed).
+      # Mirrored in scripts/test-ci-local.mjs.
+      - name: Check data-model doc is up to date
+        run: npm run check:data-model
+
       - name: Start backend for integration tests
         run: |
           node apps/backend/dist/index.js &
