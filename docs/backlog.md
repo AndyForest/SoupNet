@@ -13,10 +13,6 @@ When you complete an item, move it to `backlog-completed.md` with a date stamp. 
 
 ## Infrastructure
 
-### `[IMPL]` Parameterize the CI-mirror postgres port for parallel sessions
-
-`scripts/test-ci-local.mjs` + `docker-compose.ci.yml` hardcode host port 5534, so two sessions on one machine cannot run `npm run test:ci` concurrently — observed 2026-07-06 when the premium-llm worktree's gate failed at container startup (`Bind for 0.0.0.0:5534 failed`) while the main checkout's suite held the port. A `TESTCI_PGPORT` env (default 5534) threaded through the compose port mapping and the script's connection env would let parallel worktree sessions gate independently. Leave `.github/workflows/ci.yml` untouched — the collision is a local-parallelism problem only.
-
 ### `[IMPL]` LiteLLM router for per-user LLM quota tracking (deferred by design)
 
 Operator decision (2026-07-06, with the premium-LLM-features brief in `docs/planning/premium-llm-features.md`): the first server-side LLM features ship WITHOUT quota/rate tracking because the user base is the operator plus manually-assigned trusted users. When premium widens, deploy a LiteLLM router/proxy in front of the provider key for per-user quota, spend tracking, and model routing — rather than hand-rolling quota in the app. Until then, implementing agents must NOT build ad-hoc quota logic into LLM features.
@@ -35,11 +31,17 @@ Status (2026-07-08): ~~ADR written — [`docs/adr/0023-local-embedding-providers
 
 ## Data portability
 
-### `[IMPL]` Corpus import — the inverse of `/auth/me/export`
+### `[IMPL]` Export omits `references.original_filename` and `region_meta`
 
-Operator request (2026-07-06, benchmark session): the export function already produces a complete single-JSON corpus (traces, evidence, references, groups; schemaVersion-stamped), and the PERMA benchmark run archived a 40,822-trace corpus that way (`SoupNet-evals/evals/perma-ab/baselines/run-full1/corpus-export.json.gz`, 20 MB gz) — but there is no way to load an export into an instance. An import endpoint/CLI would let (a) anyone reproduce the published benchmark results (`docs/benchmarks.md`) without re-spending ~$35 of scribe LLM calls, (b) users migrate between hosted and self-hosted, (c) operators treat the export as a restore format. Design points: idempotency (re-import must not duplicate — trace ids are UUIDs, upsert on id); ownership remap (imported rows belong to the importing user; group slugs may collide → suffix or map); **embeddings** — the export carries no vectors, so import must enqueue re-embedding (~$1/40k recipes via Gemini); consider an optional `vector_cache` sidecar in export/import to make reproduction zero-API-cost; `schemaVersion` gate with explicit migration path; and the prompt-injection posture of imported content (imported traces are third-party text entering briefings — same review consideration as shared books). Benchmark reproduction is the first concrete consumer.
+Found 2026-07-12 while implementing import: the columns were added to `references` after `/auth/me/export` was written, so exports silently drop them and a round-trip loses file-attachment metadata (the audit trail viewers use to verify a recipe against their source copy). Add both to the export (additive — `schemaVersion` stays 1); import already passes unknown keys through its additive-tolerance gate.
 
-Update (2026-07-06): `traces.decided_at` (the human's original judgment date, for decision archaeology) was missing from the export — traces carried `claimText`/`createdAt` but not the judgment date, breaking faithful replay from an export alone. Now included as `decidedAt` (nullable; `schemaVersion` stays 1 since the field is additive). Import design must map it: on upsert, restore `decided_at` as-stored (null = contemporaneous), and keep it distinct from `created_at` (the insertion time), so a re-imported corpus preserves the original decision dates rather than stamping import time.
+### `[IMPL]` Bulk-import embedding drain rate + import status visibility
+
+The worker sweep backfills ~200 traces/strategy/minute, so a 40k-trace import takes hours to full searchability. The import response reports `tracesPendingBackfill` and the admin workers page shows queue depth, but there is no per-import progress surface. Consider a bulk lane (batched import-side stubs for `full_document`) and/or a `GET /import/status`-style pending-vectors-per-book count. Follow-on from the 2026-07-12 corpus-import ship.
+
+### `[DESIGN]` Keys minted before an import don't see the new book
+
+API keys freeze their read scope at mint time, so a key created before an import cannot search the imported book — confusing exactly when a user imports then immediately asks their agent about it. Surface a "mint a fresh key" hint in the import response and/or dashboard. Found during 2026-07-12 import acceptance testing.
 
 ---
 
@@ -122,6 +124,7 @@ The privacy policy describes a few behaviors qualitatively that should still mat
 - Section 2.5 / 8: audit-log entries (incl. IP + user agent) "retained for a limited period, then deleted." **MISMATCH confirmed** — no `DELETE FROM claimnet.audit_log` exists anywhere; the table is append-only with no retention job. Same choice: build the sweep or fix the wording. Note F29 per-key rate limiting counts on audit_log, so a sweep must keep ≥24h.
 - Section 9: content security policy + rate limiting **verified in-repo** (headers in `apps/backend/src/index.ts`, `middleware/rate-limit.ts`). Encryption at rest + private-subnet database: infra-side, verify on the production stack (operator).
 - Section 6: AWS regions in the United States. Verify the live deployment matches (operator).
+- Update (2026-07-12): the deletion-completeness reasoning is now real — `deleteUserCascade` (`apps/backend/src/services/user-delete.service.ts`) removes evidence/references/embedding rows on account deletion, and the false "embedding_sources are content-hashed" comment in auth.ts is corrected. Still open from Section 2.3: uploaded **bytes on disk** are not swept on deletion — only DB rows delete (content-addressed files in file-store.ts have no reverse index today).
 
 ---
 
@@ -279,32 +282,11 @@ Backend `/check` response copy for a new/thin recipe book returning zero results
 
 ## Data integrity and deletion
 
-### `[IMPL]` **Account deletion leaks user PII** — `DELETE /auth/me` skips `deleteTraceCascade`
-
-Found 2026-07-09 while scoping FK constraints. **`DELETE /auth/me` (`apps/backend/src/routes/auth.ts:544-702`) hand-rolls a deletion list that removes `traces`, link rows, `api_keys`, `uploads`, `oauth_authorization_codes`, owned orgs/groups/memberships, and the `users` row — but never deletes the `evidence`, `references`, or embedding rows those traces spawned.** Those tables hold the user's words in cleartext:
-
-- `evidence.content` — the user's interpretations, verbatim.
-- `references.quote` / `.source` / `.file_url` / `.original_filename`.
-- `embedding_sources.source_text` (`vectors.ts:104`) — **full recipe + evidence text in plaintext**, plus `group_id`.
-- `embedding_chunks.chunk_text` — plaintext.
-- `reference_source_cache` — fetched page bodies.
-- `check_feedback.story` / `.note` — the user's words, on *other* users' traces (its FK cascades on `trace_id`, not on the author).
-
-**The comment at `auth.ts:534-540` is factually wrong** and should be corrected in the same change: it lumps `embedding_sources` in with `vector_cache` as "content-hashed and unlinked from identity." That is true of `vector_cache` (`content_hash` + `model_id` + `task_type` + `vector` only — genuinely PII-free, correctly FK-free, keep it). It is false of `embedding_sources`. The privacy policy's §2.4 reasoning leans on that comment.
-
-**The correct cascade already exists and is not called.** `deleteTraceCascade` (`apps/backend/src/services/trace-delete.service.ts:30`) removes link rows, prunes orphaned evidence/references, and walks the full embedding chain via `deleteEmbeddingChainForSource` (`:101`), preserving only `vector_cache`. It is used by `DELETE /traces/:id` and nowhere else. **Fix: route account deletion through it** (loop the user's trace ids), rather than adding FKs first. Fold in a `deleteUserCascade` service so account deletion, the waitlist purge (`waitlist.service.ts:127`), and any future admin-delete share one audited teardown instead of three hand-rolled DELETE lists that will drift again.
-
-Note this is not a hypothetical drift: `check-feedback.ts:108-111` and `:142-144` added FK cascades on `trace_reactions.user_id` and `check_feedback_stars.user_id` *specifically because* "auth.ts's explicit deletion list doesn't touch this table." Someone predicted the drift and defended locally. Nobody generalized it.
-
-Every already-deleted account has left orphans behind — factor a data-repair pass into the fix. Tag: touches the privacy-policy verification item under Legal and compliance.
-
-**Priority and disclosure (operator, 2026-07-09).** Sequenced behind the in-flight move-recipe work rather than fixed immediately: the gap requires database access to exploit, is a data-retention defect rather than a live attack vector, and the user base is currently the operator plus manually-invited users. This repo is public, so this item is stated plainly rather than hidden — but the trigger is explicit: **if any user requests account deletion, this jumps the queue and is fixed before their deletion is executed**, because running the current path would silently fail to honour the request. The operator checks the users table regularly for pending deletion requests. Until then, do not layer FK constraints on top of the broken path (see the FK item below — orphans from prior deletions will fail a validating `ADD CONSTRAINT` at boot).
-
 ### `[DESIGN]` Foreign-key constraints — which, why, and which not
 
 The schema deliberately left FKs loose during development (operator, 2026-07-09: *"I left it loose during development to make it easier to make changes without accidentally cascade-deleting on a rollback or something"*). Note the stated in-code reason for `traces`' missing FKs — "to break the circular dependency" (`traces.ts:25-26`) — is a **TypeScript import-cycle problem, not a database one**; the constraint can be added in raw migration SQL regardless.
 
-**Migration hazard, read first:** migrations run at backend startup (`apps/backend/src/db.ts`), and a Drizzle-default `ADD CONSTRAINT ... FOREIGN KEY` validates existing rows immediately. Given the deletion leak above, **orphans exist**, so a naive constraint addition crash-loops the backend on boot. Safe shape: (1) add `NOT VALID` by hand-editing the generated migration — Drizzle won't emit it; (2) repair orphans out-of-band; (3) `VALIDATE CONSTRAINT` in a later migration, which takes only `SHARE UPDATE EXCLUSIVE` and can't wedge the app.
+**Migration hazard, read first:** migrations run at backend startup (`apps/backend/src/db.ts`), and a Drizzle-default `ADD CONSTRAINT ... FOREIGN KEY` validates existing rows immediately. **Orphans exist from pre-fix account deletions** (the leak itself was fixed 2026-07-12 on `fix/account-deletion-cascade`; `scripts/repair-orphaned-user-data.mjs` finds and removes historical orphans — the operator must run it against prod, dry-run first, before any FK constraint lands), so until that repair run completes, a naive constraint addition crash-loops the backend on boot. Safe shape: (1) add `NOT VALID` by hand-editing the generated migration — Drizzle won't emit it; (2) repair orphans out-of-band; (3) `VALIDATE CONSTRAINT` in a later migration, which takes only `SHARE UPDATE EXCLUSIVE` and can't wedge the app.
 
 **Recommended:**
 - `api_keys.user_id` → `users.id` **CASCADE**. Keys are meaningless without their user.
@@ -387,23 +369,21 @@ Recorded so it isn't re-proposed. The `trace.moved` audit row already reconstruc
 
 ## Unsorted
 
+### `[IMPL]` **Operator: run `scripts/repair-orphaned-user-data.mjs` against prod**
+
+The 2026-07-12 account-deletion fix stops the leak going forward; historical orphans from pre-fix deletions remain in prod. Run the script dry-run (default), review counts, then `--apply`. It iterates to a fixed point and has a 1-hour age guard. **The FK-constraints item is blocked on this run** — orphans fail a validating `ADD CONSTRAINT` at boot. Note: `check_feedback` rows whose `api_key_id` was orphaned by pre-fix deletions are permanently unattributable and the script cannot find them; PR #28's `actor_user_id` is the forward fix for human rows.
+
+### `[IMPL]` Extend short-id prefixes beyond feedback `trace_id` (demand-gated)
+
+The 2026-07-12 ship resolves short ids on `log_feedback` / `feedback` param / `POST /feedback` `trace_id` only. `related_trace_ids` stays full-UUID deliberately (capture-only lineage; resolving turns capture into validation). If agents hit the same friction on `known_recipes` / `recipe_ids` / `get_recipes`, extend with the same within-read-scope resolution. Only if demand appears.
+
 ### `[IMPL]` Extract a `useRecipeBooks()` hook
 
 Four frontend pages (`GroupsPage`, `DashboardPage`, `ApiKeysPage`, `RecipeMapPage`) each fetch `authFetch("/recipe-books")` inline with locally-declared response types. ~~The move-recipe work adds the hook (`apps/frontend/src/hooks/useRecipeBooks.ts`) and uses it in the move modal~~ — done 2026-07-09. Migrating the existing four is the remaining mechanical pass. Related to the `packages/api-client` wiring item — if that pipeline is revived, this hook is one of the hand-written shapes it would replace.
 
-### `[IMPL]` `log_feedback` / `feedback` param should accept short trace-id prefixes
-
-Surfaced 2026-07-08 during the local-embeddings implementation (a multi-agent run that logged feedback as it worked). Planning docs and briefings routinely cite recipes by their 8-char short id (e.g. `18912fbd`), but `log_feedback` (and `check_recipe`'s `feedback` param) require the full trace UUID and reject a short id. Three independent agents hit this and had to either resolve the full UUID via `get_recipes` first or log an equivalent row against a different resolvable trace — friction that loses feedback signal (one agent gave up on a warranted row rather than fabricate a UUID). Accept an unambiguous short-id prefix (resolve server-side; 409/400 on ambiguous or unknown), matching how the corpus surfaces ids to agents in the first place. Low effort, removes a recurring papercut in the exact close-the-loop flow the feedback feature exists to encourage.
-
 ### `[IMPL]` Audit the /docs pages' ?key= prefill under the no-raw-keys-outside-JWT invariant
 
 The 2026-07-06 placeholder-mode change established the invariant (CI-enforced for briefing surfaces): raw API keys never appear in responses not gated by human-only JWT auth, and no longer transit request URLs on the briefing path. The /docs pages (`/docs/mcp-setup?key=`, `/docs/recipe-check-guide?key=`) and the `/check?key=` page itself are the same class — a raw key in a URL echoed into rendered HTML. The web key-in-URL flow is load-bearing by design (web-only agents), so this is an audit-and-decide, not a mechanical port: which echoes are essential to that flow, which can go placeholder, and whether the key-in-URL design itself gets revisited. Note: briefings now link to `/docs/mcp-setup?key=YOUR_API_KEY`, so post-substitution artifacts exercise the prefill path with a real key.
-
-### `[IMPL]` Parameterize the local CI-gate port/project so parallel sessions can gate concurrently
-
-Found 2026-07-06: two Claude sessions running `npm run test:ci` simultaneously collide — the harness hardcodes host port 5534 and a fixed compose project, so the second run fails with "Bind for 0.0.0.0:5534: port is already allocated" (observed against the premium-llm session's gate). Fix in `scripts/test-ci-local.mjs` + `docker-compose.ci.yml`: derive the host port and compose project name from an env override (e.g. `CI_PG_PORT`, default 5534) or a session-unique suffix, and pass the resolved port through to the backend's `PGPORT`. Local-only change — GitHub CI runs in isolated runners, so the ci.yml mirror rule isn't implicated as long as env parity for the app under test is preserved. Until fixed: sessions serialize gates by watching for `*-postgres-ci-1` containers.
-
-
 
 ### `[IMPL]` Fresh security audit (last general audit 2026-04-09; surface has grown)
 
