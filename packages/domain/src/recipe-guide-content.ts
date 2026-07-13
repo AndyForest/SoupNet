@@ -565,7 +565,7 @@ The returned \`file_url\` is opaque (a GET against it returns 404) and only reso
 Evidence entries follow this shape: your interpretation, then \`> "direct quote"\`, then \`-- source citation\`, separated by blank lines.
 
 ## Closing the loop — feedback
-Stateless sessions lose what happened after a check — whether the surfaced recipes confirmed, corrected, or redirected your work. If your tools include \`log_feedback\` (or \`check_recipe\`'s optional \`feedback\` parameter), you can close that loop: after a check shapes a decision, log a short feedback row about the PRIOR check, joined by the recipe UUID the check response reported. Without MCP tools, the same loop closes over REST: POST ${backendUrl}/feedback with your Bearer API key — the body is one row object (with trace_id) or {"feedback": [rows]}, same fields as below. A row carries kind (check-feedback | operational | outcome), impact (none | new | subtle | big | operational), disposition (proceeded | corrected | asked-human | charted-new | deferred), story_fulfilled (yes | partial | no | unknown), the story behind the check, and a note on what you did with the result. Feedback renders on the recipe's detail page, so the human sees which recipes earned their keep — and results that didn't help are worth a row too: "nothing similar found" tells the corpus where it's thin, and an ignored or contradicted result is exactly the calibration future agents lack. Mid-flow, attach rows to your next check (fewer calls); use standalone \`log_feedback\` or POST /feedback for end-of-session rows.
+Stateless sessions lose what happened after a check — whether the surfaced recipes confirmed, corrected, or redirected your work. If your tools include \`log_feedback\` (or \`check_recipe\`'s optional \`feedback\` parameter), you can close that loop: after a check shapes a decision, log a short feedback row about the PRIOR check, joined by the recipe id the check response reported (the full UUID, or an unambiguous short-id prefix of at least 8 characters). Without MCP tools, the same loop closes over REST: POST ${backendUrl}/feedback with your Bearer API key — the body is one row object (with trace_id) or {"feedback": [rows]}, same fields as below. A row carries kind (check-feedback | operational | outcome), impact (none | new | subtle | big | operational), disposition (proceeded | corrected | asked-human | charted-new | deferred), story_fulfilled (yes | partial | no | unknown), the story behind the check, and a note on what you did with the result. Feedback renders on the recipe's detail page, so the human sees which recipes earned their keep — and results that didn't help are worth a row too: "nothing similar found" tells the corpus where it's thin, and an ignored or contradicted result is exactly the calibration future agents lack. Mid-flow, attach rows to your next check (fewer calls); use standalone \`log_feedback\` or POST /feedback for end-of-session rows.
 
 ## Annotating creative output
 ${WORKFLOW_ANNOTATION}
@@ -767,8 +767,8 @@ export const MCP_TOOL_DESCRIPTIONS = {
   logFeedback:
     "Log feedback on a PRIOR recipe check: what it surfaced and what you did with it (kind " +
     "'check-feedback'), an operational finding ('operational'), or a session wrap-up ('outcome'). " +
-    "Joined to the check by its recipe UUID — check responses carry ids inline. Null results are " +
-    "worth a row too. Mid-flow, prefer the feedback param on your next check_recipe; this tool fits " +
+    "Joined to the check by its recipe id (full UUID or 8+ char short id). Null results are worth " +
+    "a row too. Mid-flow, prefer the feedback param on your next check_recipe; this tool fits " +
     "end-of-session rows.",
 
   /** Identical across both MCP surfaces (WT-3 retrieval API). */
@@ -822,8 +822,8 @@ export const MCP_PARAM_DESCRIPTIONS = {
 
   feedbackParam:
     "Feedback rows about PRIOR checks, riding along with this one. Each row: trace_id of the earlier " +
-    "check plus the fields in this schema (log_feedback documents their meaning). Rows validate " +
-    "independently — a rejected row never blocks the check.",
+    "check (full UUID or 8+ char short id) plus the fields in this schema (see log_feedback). Rows " +
+    "validate independently — a rejected row never blocks the check.",
 
   synthesize:
     "Premium opt-in: distil results into one short preference profile (newest wins, ids cited). " +

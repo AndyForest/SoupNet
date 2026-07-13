@@ -156,6 +156,55 @@ describe.skipIf(!BASE)("feedback ingestion surfaces", () => {
     expect(json.data.results[1]?.error).toContain("none | new | subtle | big | operational");
   });
 
+  it("resolves an 8-char short-id prefix and echoes the resolved full UUID", async () => {
+    const shortId = traceA.slice(0, 8);
+    const res = await fetch(`${BASE}/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${userA.apiKey}` },
+      body: JSON.stringify(feedbackRow(shortId, { note: "short-id integration row" })),
+    });
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { ok: boolean; data: { recorded: number; results: Array<{ ok: boolean; traceId: string; feedbackId?: string }> } };
+    expect(json.data.recorded).toBe(1);
+    expect(json.data.results[0]?.ok).toBe(true);
+    // The caller learns the canonical full UUID, not the prefix echo.
+    expect(json.data.results[0]?.traceId).toBe(traceA);
+    expect(json.data.results[0]?.feedbackId).toBeTruthy();
+  });
+
+  it("rejects a prefix shorter than 8 chars with an actionable validation error", async () => {
+    const res = await fetch(`${BASE}/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${userA.apiKey}` },
+      body: JSON.stringify(feedbackRow(traceA.slice(0, 5))),
+    });
+    expect(res.status).toBe(400);
+    const json = (await res.json()) as { data?: { results: Array<{ ok: boolean; error?: string }> } };
+    expect(json.data?.results[0]?.ok).toBe(false);
+    expect(json.data?.results[0]?.error).toContain("at least 8 characters");
+  });
+
+  it("SECURITY: a short-id prefix over another key's trace gets the same uniform marker as an unknown prefix", async () => {
+    const res = await fetch(`${BASE}/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${userA.apiKey}` },
+      body: JSON.stringify({ feedback: [
+        feedbackRow(traceB.slice(0, 8)), // exists, but unreadable by key A
+        feedbackRow("00000001"),         // almost surely nonexistent
+      ] }),
+    });
+    expect(res.status).toBe(400); // nothing recorded
+    const json = (await res.json()) as { data?: { recorded: number; results: Array<{ ok: boolean; error?: string }> } };
+    expect(json.data?.recorded).toBe(0);
+    const [unreadable, nonexistent] = json.data!.results;
+    expect(unreadable!.ok).toBe(false);
+    expect(nonexistent!.ok).toBe(false);
+    // Anti-enumeration: prefix resolution happens within read scope only, so
+    // the marker text is identical for both.
+    expect(unreadable!.error).toBe(nonexistent!.error);
+    expect(unreadable!.error).toContain("not found or not readable");
+  });
+
   it("rejects requests without a Bearer key", async () => {
     const res = await fetch(`${BASE}/feedback`, {
       method: "POST",
@@ -188,6 +237,58 @@ describe.skipIf(!BASE)("feedback ingestion surfaces", () => {
     expect(text).toContain("Feedback recorded for check");
     expect(text).toContain(traceA);
   });
+
+  it("MCP log_feedback accepts a short-id prefix and reports the resolved full UUID", async () => {
+    const callRes = await fetch(`${BASE}/mcp`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: ACCEPT_BOTH,
+        Authorization: `Bearer ${userA.apiKey}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "tools/call",
+        params: {
+          name: "log_feedback",
+          arguments: feedbackRow(traceA.slice(0, 8), { agent_id: "a-shortid-mcp-test" }),
+        },
+        id: 3,
+      }),
+    });
+    expect(callRes.status).toBe(200);
+    const text = await callRes.text();
+    expect(text).toContain("Feedback recorded for check");
+    expect(text).toContain(traceA); // resolved full UUID, not the prefix
+  });
+
+  it("MCP check_recipe ride-along feedback accepts a short-id prefix", async () => {
+    const callRes = await fetch(`${BASE}/mcp`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: ACCEPT_BOTH,
+        Authorization: `Bearer ${userA.apiKey}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "tools/call",
+        params: {
+          name: "check_recipe",
+          arguments: {
+            recipe: `As a developer working on the feedback loop, I chose short-id prefixes on feedback surfaces so that agents can cite recipes the way the corpus prints them. (${Date.now()})`,
+            supporting_evidence: `Test evidence.\n> "quote"\n-- test suite`,
+            agent_id: "a-shortid-ridealong-test",
+            feedback: [feedbackRow(traceA.slice(0, 8))],
+          },
+        },
+        id: 4,
+      }),
+    });
+    expect(callRes.status).toBe(200);
+    const text = await callRes.text();
+    expect(text).toContain("Feedback: 1/1 row(s) recorded.");
+  }, 30_000);
 
   it("MCP check_recipe ride-along feedback lands and bad rows get markers in the response", async () => {
     const callRes = await fetch(`${BASE}/mcp`, {

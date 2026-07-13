@@ -940,7 +940,7 @@ function createMcpServer(backendUrl: string): McpServer {
     MCP_TOOL_DESCRIPTIONS.logFeedback,
     {
       trace_id: z.string().describe(
-        "Full recipe UUID of the prior check this feedback is about — every check response carries it inline."
+        "Recipe id of the prior check — the full UUID from the check response, or an unambiguous short-id prefix (8+ chars, e.g. '18912fbd'). Ambiguous prefixes are rejected naming the candidates."
       ),
       kind: z.string().describe("check-feedback | operational | outcome"),
       impact: z.string().describe("none | new | subtle | big | operational"),
@@ -956,7 +956,7 @@ function createMcpServer(backendUrl: string): McpServer {
       harness: z.string().optional().describe("Your harness (e.g. 'claude-code', 'codex')."),
       harness_version: z.string().optional().describe("Harness version, if known."),
       related_trace_ids: z.array(z.string()).optional().describe(
-        "Lineage links — recipe UUIDs in the same arc (e.g. the recipe that changed the action and the trace that logged the new decision)."
+        "Lineage links — recipe UUIDs in the same arc (e.g. the recipe that changed the action and the trace that logged the new decision). Full UUIDs only — short-id prefixes are not resolved here."
       ),
     },
     {
