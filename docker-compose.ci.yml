@@ -1,11 +1,17 @@
-# CI-like test environment — fresh postgres on port 5534, no dev data.
+# CI-like test environment — fresh postgres on host port 5534 (default), no dev data.
 #
 # Usage:
 #   docker compose -f docker-compose.ci.yml up -d
 #   npm run test:ci     (or: BACKEND_URL=http://localhost:3098 npx vitest run)
 #   docker compose -f docker-compose.ci.yml down -v
 #
-# This spins up a clean postgres separate from your dev database (port 5533).
+# Parallel gates: the host port interpolates from TESTCI_PGPORT (default 5534)
+# so concurrent sessions on one machine can each run `npm run test:ci` against
+# their own stack — scripts/test-ci-local.mjs sets the env var and a matching
+# port-derived compose project name (soupnet-ci-<port>). See that script's
+# header for the full contract.
+#
+# This spins up a clean postgres separate from your dev database (port 5633).
 # Useful for:
 #   - Reproducing CI failures locally
 #   - Testing against an empty database (cold start)
@@ -20,7 +26,7 @@ services:
       POSTGRES_PASSWORD: claimnet
       POSTGRES_DB: claimnet
     ports:
-      - "5534:5432"
+      - "${TESTCI_PGPORT:-5534}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U claimnet"]
       interval: 3s
