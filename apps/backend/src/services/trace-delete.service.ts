@@ -98,7 +98,13 @@ export async function deleteTraceCascade(
   });
 }
 
-async function deleteEmbeddingChainForSource(
+/**
+ * Remove the four-table embedding pipeline rows for one source. Exported for
+ * the corpus-import overwrite path (import.service.ts), which replaces a
+ * trace's claim text and must drop the stale embeddings so the worker sweep
+ * re-embeds the new text. vector_cache is deliberately untouched (see header).
+ */
+export async function deleteEmbeddingChainForSource(
   tx: PostgresJsDatabase,
   sourceType: "trace" | "evidence" | "reference",
   sourceId: string,
