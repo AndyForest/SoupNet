@@ -120,13 +120,14 @@ interface ImportResponse {
   data?: {
     book: { id: string; name: string; slug: string; created: boolean } | null;
     counts: {
-      traces: { inserted: number; skippedIdentical: number; conflicted: number; overwritten: number; notOwned: number };
+      traces: { inserted: number; skippedIdentical: number; conflicted: number; overwritten: number; remapped: number };
       evidence: { inserted: number; skippedExisting: number; conflicted: number };
       references: { inserted: number; skippedExisting: number; conflicted: number };
       links: { inserted: number; skippedExisting: number; orphaned: number };
     };
     conflicts: Array<{ entity: string; id: string; fields: string[]; kept: string }>;
     conflictsTotal: number;
+    idMap: Array<{ entity: string; from: string; to: string }>;
     embeddings: { evidenceQueued: number; tracesPendingBackfill: number; note: string };
     originalBooks: Array<{ groupId: string; name: string | null; slug: string | null; mappedTo: string | null }>;
   };
@@ -223,8 +224,9 @@ describe.skipIf(!BASE)("POST /import", () => {
     expect(data.book!.created).toBe(true);
     rtBookId = data.book!.id;
     expect(data.counts.traces).toEqual({
-      inserted: 2, skippedIdentical: 0, conflicted: 0, overwritten: 0, notOwned: 0,
+      inserted: 2, skippedIdentical: 0, conflicted: 0, overwritten: 0, remapped: 0,
     });
+    expect(data.idMap).toEqual([]);
     expect(data.counts.evidence.inserted).toBe(1);
     expect(data.counts.references.inserted).toBe(1);
     expect(data.counts.links.inserted).toBe(3);
@@ -262,7 +264,7 @@ describe.skipIf(!BASE)("POST /import", () => {
     expect(status).toBe(200);
     const data = body.data!;
     expect(data.counts.traces).toEqual({
-      inserted: 0, skippedIdentical: 2, conflicted: 0, overwritten: 0, notOwned: 0,
+      inserted: 0, skippedIdentical: 2, conflicted: 0, overwritten: 0, remapped: 0,
     });
     expect(data.counts.evidence).toEqual({ inserted: 0, skippedExisting: 1, conflicted: 0 });
     expect(data.counts.references).toEqual({ inserted: 0, skippedExisting: 1, conflicted: 0 });
@@ -319,17 +321,71 @@ describe.skipIf(!BASE)("POST /import", () => {
     await postImport(tokenA, JSON.stringify(rt.file), "?overwrite=true");
   });
 
-  it("counts another user's ids as notOwned without touching or describing them", async () => {
+  it("mints fresh ids for another user's traces and remaps their links (v1.1)", async () => {
+    // A owns rt.traceIds. B imports the same file → mint-on-conflict: each
+    // colliding trace gets a new id and is inserted as B's own, with the
+    // trace_evidence / trace_references links repointed to the minted ids.
     const { status, body } = await postImport(tokenB, JSON.stringify(rt.file));
     expect(status).toBe(200);
     const data = body.data!;
-    expect(data.counts.traces.notOwned).toBe(2);
-    expect(data.counts.traces.inserted).toBe(0);
-    // No field-level detail for foreign rows.
+    expect(data.counts.traces.remapped).toBe(2);
+    expect(data.counts.traces.inserted).toBe(2);
+    expect(data.counts.traces.skippedIdentical).toBe(0);
+    expect(data.counts.traces.conflicted).toBe(0);
+    // No conflict detail — mint-on-conflict is not a reported collision.
     expect(data.conflicts.filter((c) => c.entity === "trace")).toHaveLength(0);
-    // B gains nothing.
+
+    // idMap carries the old→new mapping; the new ids are fresh, the old ids
+    // are A's originals.
+    expect(data.idMap).toHaveLength(2);
+    for (const m of data.idMap) {
+      expect(m.entity).toBe("trace");
+      expect(rt.traceIds).toContain(m.from);
+      expect(m.to).not.toBe(m.from);
+    }
+    const remapOf = new Map(data.idMap.map((m) => [m.from, m.to]));
+    const newT1 = remapOf.get(rt.traceIds[0]!)!;
+
+    // Shared rows are not duplicated: the evidence + reference already exist
+    // (A inserted them), so B skips them and links the minted trace to them.
+    expect(data.counts.evidence.skippedExisting).toBe(1);
+    expect(data.counts.references.skippedExisting).toBe(1);
+
+    // B now holds independently-owned copies under the minted ids — not A's ids.
     const exportedB = await exportAccount(tokenB);
     expect(exportedB.traces.some((t) => t.id === rt.traceIds[0])).toBe(false);
+    expect(exportedB.traces.some((t) => t.id === newT1)).toBe(true);
+    // The minted trace keeps the original claim text and is linked to the
+    // shared evidence + reference via the remapped links.
+    const bT1 = exportedB.traces.find((t) => t.id === newT1)!;
+    expect(bT1.claimText).toContain("preserve my original decision dates");
+    expect(exportedB.traceEvidence.some((l) => l.traceId === newT1 && l.evidenceId === rt.evidenceId)).toBe(true);
+    expect(exportedB.traceReferences.some((l) => l.traceId === newT1 && l.referenceId === rt.referenceId)).toBe(true);
+  });
+
+  it("accepts and mints ids for rows that arrive without a PK (v1.1)", async () => {
+    // A corpus row with no `id` is still importable content — the server mints
+    // a PK rather than rejecting (Andy 2026-07-13). Endpoints (traceId, etc.)
+    // stay required, so this file is a single self-contained trace.
+    const noId = {
+      schemaVersion: 1,
+      traces: [
+        {
+          // no id field
+          groupId: null,
+          claimText: `As a corpus author trimming an export by hand (${uid}), I prefer the importer to mint a PK so that a row without an id still lands.`,
+          claimTextHash: null,
+          formatAdherenceScore: 0.7,
+          decidedAt: null,
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      ],
+    };
+    const { status, body } = await postImport(tokenA, JSON.stringify(noId));
+    expect(status).toBe(200);
+    expect(body.data!.counts.traces.inserted).toBe(1);
+    expect(body.data!.counts.traces.remapped).toBe(0);
   });
 
   // ── Destination book targeting (design point 5) ──────────────────────────

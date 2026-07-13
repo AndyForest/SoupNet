@@ -136,6 +136,9 @@ importRoutes.post("/", async (c) => {
           schemaVersion: parsed.data.schemaVersion,
           counts: result.counts,
           conflictsTotal: result.conflictsTotal,
+          // Old→new remaps (v1.1 mint-on-conflict) so the mapping is
+          // reconstructable from the trail even if the response is lost.
+          idMap: result.idMap,
           overwrite: c.req.query("overwrite") === "true",
           originalBooks: result.originalBooks,
           embeddings: {
