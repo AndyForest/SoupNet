@@ -84,6 +84,13 @@ export async function deleteTraceCascade(
       if ((stillLinkedEvidence as unknown as unknown[]).length > 0) continue;
 
       await deleteEmbeddingChainForSource(tx, "reference", referenceId);
+      // Cached fetched content for the reference's URL holds third-party
+      // page text keyed to this reference; its FK (NO ACTION) would block
+      // the reference delete, and the cached content must not outlive the
+      // reference it was fetched for.
+      await tx.execute(sql`
+        DELETE FROM claimnet.reference_source_cache WHERE reference_id = ${referenceId}::uuid
+      `);
       await tx.execute(sql`
         DELETE FROM claimnet.references WHERE id = ${referenceId}::uuid
       `);
