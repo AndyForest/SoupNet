@@ -39,6 +39,7 @@ import { scoreFormatAdherence } from "./format-adherence";
 import { runSearchPipeline } from "./search-pipeline";
 import { StageTimer } from "../lib/stage-timer";
 import { invalidKeyMessage } from "../lib/key-remediation";
+import { resolveEchoSuppression } from "./system-settings.service";
 import { auditLog } from "@soupnet/db";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -94,6 +95,10 @@ export interface SubmitAndSearchParams {
    *  X-SoupNet-Surface header on /check), or "web" (default for /check).
    *  OAuth client identity is derived from the key itself, not this field. */
   surface?: string | undefined;
+  /** Per-request echo-suppression override ("on"/"off"), the A/B toggle. When
+   *  absent the global `echoSuppression` setting (default OFF) applies. See
+   *  docs/planning/echo-suppression.md. */
+  echoSuppress?: "on" | "off" | undefined;
 }
 
 export interface SearchResultItem {
@@ -503,6 +508,11 @@ export async function submitAndSearch(
     };
   }
 
+  // 5b. Resolve echo-suppression config (global default OFF; per-request
+  // override flips `enabled`). The reorder demotes THIS agent's own recent
+  // hypothesis-appends in the results — see docs/planning/echo-suppression.md.
+  const echoConfig = await resolveEchoSuppression(db, params.echoSuppress);
+
   // 6. Run unified search pipeline
   // See docs/architecture/search-algorithms.md for the full algorithm description.
   // The pre-resolved trace vector doubles as the query vector (identical text),
@@ -521,6 +531,7 @@ export async function submitAndSearch(
     includeVectors: !!params.axes, // need vectors for concept-axis computation
     queryVectorStr: traceVectorStr ?? undefined,
     keywordFilter: params.keywordFilter,
+    echo: { config: echoConfig, currentApiKeyId: keyId, now: new Date() },
     timer,
   });
 
