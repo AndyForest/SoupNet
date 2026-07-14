@@ -312,6 +312,26 @@ The schema deliberately left FKs loose during development (operator, 2026-07-09:
 
 ## Corpus curation and sharing
 
+### `[IMPL]` Echo-suppression ranking — flip default ON after the A/B, then add corroboration signals
+
+Shipped 2026-07-14, feature-flagged **default-OFF** (`docs/planning/echo-suppression.md`):
+`check_recipe` can demote the current agent's own recent hypothesis-appends so an echo
+falls below a cross-agent recipe of similar similarity (reorder only, no truncation,
+percentages intact). Per-request `echo_suppress=on|off` on `/check` is the A/B toggle;
+global default lives in `system_settings.echoSuppression`.
+
+Follow-ups:
+- **Flip the global default to ON** once the A/B shows polluted-corpus retrieval recovers
+  to within noise of the clean baseline. (Decision recipe-checked as soup.net `5cfee9bb`;
+  default-OFF-until-measured per the house "ranking changes arrive measured" rule.)
+- **Stronger curation-exemption signals** — v1 exempts only `decided_at` recipes. Add the
+  "independent of the reporting agent" signals: human `trace_reactions` (`still_true`) and
+  cross-agent `check_feedback` corroboration. Pairs with the R2 provenance-weighted
+  feedback-ranking work (same axis: real signal vs echo).
+- Consider a per-key toggle (needs a stable-key story — daily keys rotate) and/or an admin
+  UI for the setting (flip via `setSetting` for now). MCP `check_recipe` tool-arg exposure
+  is deliberately deferred to keep `tools/list` byte-stable.
+
 ### `[DECISION NEEDED]` Read-only recipe-book sharing (corpus bootstrapping)
 
 Operator idea, undecided (2026-07-09). Share a recipe book read-only with other users so their agents draw on your accumulated context while writing their own recipes into their own books. Motivating case, in the operator's words: *"I've made a lot of great recipes about sub-agent delegation decisions. I could share those with others to bootstrap their own corpus, and their agents can have my read-only context as they make their own decisions as recipe checks in their own recipe books."* Not approved — captured so in-flight work doesn't foreclose it.
