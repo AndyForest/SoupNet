@@ -110,3 +110,35 @@ Regression test: `apps/backend/src/services/import-cache-survival.test.ts` — c
 `traces.decided_at` is **null by design when the decision was contemporaneous** with the check (the agent logged it as it happened) and **populated only when a decision is backfilled** to its original historical date (decision archaeology). The null vs. populated distinction is *information*, not a gap — it tells a reader whether a judgment date was asserted or is simply "whenever it was logged." On a real corpus almost every trace is null (contemporaneous), and that is the expected, correct state — not something to "fill in."
 
 Import preserves `decided_at` exactly (v1 design point 4), including the null. **Consumers that need "when was this decided" filter or order on `COALESCE(decided_at, created_at)`** — the coalesce lives in the consumer, not in the stored data. (See the stigmergic-decay note in `docs/backlog.md`, which already weights on `COALESCE(decided_at, created_at)` for the same reason.)
+
+---
+
+> **Document convention (Andy, 2026-07-13):** unlike most docs in this repo, this file is a **timeline**, not a living spec — new rulings are appended with their date; earlier sections are the historical record and are not rewritten. Read bottom-up for current behavior.
+
+## v1.2 — isolation supersedes sharing: deterministic full-subgraph mint (2026-07-13, later the same day)
+
+v1.1 above shipped mint-on-conflict for **traces only**, with random UUIDs, and linked minted traces to the source owner's existing evidence/reference rows ("shared rows … never remapped"). Reviewing it, Andy stated the goal the design must serve:
+
+> "The purpose of this is to … empower benchmarking tools to import the exact same recipes into a brand new user's recipe book, and have no cross recipe book or cross user connections so that parallel benchmark runs are not cross contaminated, and can also each be easily deleted on their own."
+> — Andy, 2026-07-13
+
+Two consequences of the v1.1 design violated that goal, and one latent defect compounded it:
+
+1. **Shared rows are cross-user connections.** A minted trace linking to another user's evidence/reference rows is exactly the edge the goal forbids — and it broke clean per-run deletion: deleting one run left its book-scoped embedding rows behind whenever another run still linked the shared evidence (the orphan-check correctly preserves the shared row, but nothing removes the deleted run's scope rows for it).
+2. **Shared evidence was invisible to the importer's related-evidence search** — its embedding rows stay scoped to the source book, and import queued stubs only for inserted evidence.
+3. **Random minting was not idempotent.** Re-importing the same foreign file minted fresh ids every run — full duplicate copies — and nothing could catch it: imported traces carry `api_key_id = NULL`, which exempts them from the `(api_key_id, group_id, claim_text_hash)` uniqueness index (Postgres treats NULLs as distinct).
+
+### The v1.2 ruling
+
+Import produces a **fully independent subgraph per importer**, minted **deterministically**:
+
+- **Everything foreign is minted, not shared.** A row that belongs to (traces, by ownership) or is linked into (evidence/references, by linkage through another user's trace) someone else's graph gets the importer's own copy under `mintImportId(userId, originalId)` — RFC 4122 UUIDv5, `apps/backend/src/lib/deterministic-id.ts`. The namespace constant is **frozen**: changing it breaks re-import idempotency on every live instance (pinned-vector test guards it).
+- **Determinism = idempotency through the existing path.** A re-import derives the same minted ids, which now exist as the importer's own rows and flow down the ordinary same-owner upsert path: all skipped-identical, zero duplicates, `idMap` stable across runs. No new dedup machinery.
+- **Parallel isolation.** The importer id is part of the mint, so two runs importing one source corpus derive disjoint ids — no cross-contamination, and each run's `DELETE /auth/me` removes its whole subgraph with no shared residue.
+- **Links follow.** Every in-file reference to a minted id is rewritten within the import; a link with any remapped endpoint gets its own PK minted deterministically from the original link id (so link re-inserts self-collide and `onConflictDoNothing` keeps them idempotent).
+- **Minted evidence is inserted evidence**, so it receives pending embedding stubs scoped to the importer's book — the v1.1 related-evidence blind spot dissolves rather than needing a patch.
+- **Reuse only what touches nobody else.** Existing rows linked solely to the importer's own traces (or to nothing) are reused as before — same-owner backup/restore stays exact-id, the v1 idempotency criterion untouched.
+- `idMap` now carries `entity: "trace" | "evidence" | "reference"`; `remapped` appears in all three `counts` blocks and counts *remaps*, not inserts (on re-import the remapped rows land in skipped counts).
+- **PK-less rows stay random-minted** (v1.1 §1): a row that never had an id has no stable identity to be deterministic about, so they are not idempotent across re-imports — acceptable for the hand-trimmed one-off files that motivated accepting them.
+
+Tests: isolation subgraph (route), re-import idempotency + stable `idMap` (route), parallel-importer disjointness (route), deterministic-mint properties + frozen-namespace pin (`deterministic-id.test.ts`). Recipe: `c40fd228`.
