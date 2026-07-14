@@ -15,7 +15,19 @@
  *   - Missing top-level sections are treated as empty arrays, so a client
  *     that subsets an export (by book, date, …) before upload can simply
  *     delete sections. Present-but-wrong-type is a structural error.
+ *   - A missing/absent row `id` (PK) is MINTED here rather than rejected
+ *     (v1.1, Andy 2026-07-13: "it would be ok for the PK to be missing in
+ *     the data to be imported and still be fine to import"). Import is a
+ *     corpus export/import tool, not a DB backup/restore — a row without a
+ *     PK is still importable content. Only the row's OWN id is minted;
+ *     foreign-key endpoints (traceId/evidenceId/referenceId) stay required,
+ *     because a link with a missing endpoint has no row to point at. A
+ *     minted-id row cannot be cross-referenced within the same file (nothing
+ *     could carry the id it never had), so minting here needs no remap; the
+ *     ownership-conflict remap that DOES need one lives in import.service.ts.
  */
+
+import crypto from "node:crypto";
 
 // ── Output types ─────────────────────────────────────────────────────────────
 
@@ -116,6 +128,20 @@ function reqUuid(row: Record<string, unknown>, key: string): string {
   const v = row[key];
   if (typeof v !== "string" || !UUID_RE.test(v)) {
     throw new RowError(`${key} must be a UUID string, got ${JSON.stringify(v)}`);
+  }
+  return v.toLowerCase();
+}
+
+/**
+ * A row's own primary key: a UUID string, or minted when absent (undefined/
+ * null) — v1.1 accepts PK-less rows (see file header). A present-but-malformed
+ * id is still a hard error: garbage is a broken file, not a PK-less row.
+ */
+function idOrMint(row: Record<string, unknown>, key: string = "id"): string {
+  const v = row[key];
+  if (v === undefined || v === null) return crypto.randomUUID();
+  if (typeof v !== "string" || !UUID_RE.test(v)) {
+    throw new RowError(`${key} must be a UUID string (or absent, to be minted), got ${JSON.stringify(v)}`);
   }
   return v.toLowerCase();
 }
@@ -235,7 +261,7 @@ export function parseExportPayload(json: unknown): ParseExportResult {
   const errors: string[] = [];
 
   const traces = walkSection(json, "traces", errors, (row): ImportTraceRow => ({
-    id: reqUuid(row, "id"),
+    id: idOrMint(row),
     groupId: optUuid(row, "groupId"),
     claimText: reqString(row, "claimText"),
     claimTextHash: optString(row, "claimTextHash"),
@@ -246,14 +272,14 @@ export function parseExportPayload(json: unknown): ParseExportResult {
   }));
 
   const evidence = walkSection(json, "evidence", errors, (row): ImportEvidenceRow => ({
-    id: reqUuid(row, "id"),
+    id: idOrMint(row),
     content: reqString(row, "content", { allowEmpty: true }),
     createdAt: reqDate(row, "createdAt"),
     updatedAt: optDate(row, "updatedAt"),
   }));
 
   const references = walkSection(json, "references", errors, (row): ImportReferenceRow => ({
-    id: reqUuid(row, "id"),
+    id: idOrMint(row),
     quote: reqString(row, "quote", { allowEmpty: true }),
     source: reqString(row, "source", { allowEmpty: true }),
     fileUrl: optString(row, "fileUrl"),
@@ -268,7 +294,7 @@ export function parseExportPayload(json: unknown): ParseExportResult {
       throw new RowError(`stance must be "for" or "against", got ${JSON.stringify(stance)}`);
     }
     return {
-      id: reqUuid(row, "id"),
+      id: idOrMint(row),
       traceId: reqUuid(row, "traceId"),
       evidenceId: reqUuid(row, "evidenceId"),
       stance,
@@ -278,7 +304,7 @@ export function parseExportPayload(json: unknown): ParseExportResult {
   });
 
   const traceReferences = walkSection(json, "traceReferences", errors, (row): ImportTraceReferenceRow => ({
-    id: reqUuid(row, "id"),
+    id: idOrMint(row),
     traceId: reqUuid(row, "traceId"),
     referenceId: reqUuid(row, "referenceId"),
     apiKeyId: optUuid(row, "apiKeyId"),
@@ -286,7 +312,7 @@ export function parseExportPayload(json: unknown): ParseExportResult {
   }));
 
   const evidenceReferences = walkSection(json, "evidenceReferences", errors, (row): ImportEvidenceReferenceRow => ({
-    id: reqUuid(row, "id"),
+    id: idOrMint(row),
     evidenceId: reqUuid(row, "evidenceId"),
     referenceId: reqUuid(row, "referenceId"),
     createdAt: reqDate(row, "createdAt"),

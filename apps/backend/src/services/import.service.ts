@@ -28,9 +28,23 @@
  * opts into replacing TRACE content (claim text, decided_at, adherence score)
  * for traces the importer owns — book placement is not changed by overwrite,
  * and shared rows (evidence, references) are never overwritten because they
- * may be linked from other users' traces. Trace ids that exist but belong to
- * another user are never compared or touched; they are counted (notOwned)
- * without field detail.
+ * may be linked from other users' traces.
+ *
+ * Isolation → DETERMINISTIC MINT (v1.1, Andy 2026-07-13): import produces a
+ * fully independent subgraph per importer. Any row that exists here as (or
+ * linked into) ANOTHER user's graph — traces by ownership, evidence and
+ * references by being linked from a foreign trace — is minted the importer's
+ * own copy under mintImportId(userId, originalId), and every in-file
+ * reference to it is rewritten. No cross-user rows are ever shared or linked
+ * ("no cross recipe book or cross user connections so that parallel benchmark
+ * runs are not cross contaminated, and can also each be easily deleted on
+ * their own"). Because the mint is deterministic, a re-import computes the
+ * SAME minted ids and flows down the same-owner upsert path — idempotent —
+ * while different importers of one source corpus derive disjoint ids. The
+ * old→new mapping is returned in `idMap`. The SAME-owner path is unchanged —
+ * a re-import of your own corpus still upserts on the preserved ids
+ * (idempotency + citation stability), and rows that exist but are linked to
+ * nobody else's traces are reused, not copied.
  *
  * Prompt-injection posture (design point 3): everything in the file is stored
  * as data via parameterized inserts; nothing is interpreted, executed, or fed
@@ -41,6 +55,7 @@
 import crypto from "node:crypto";
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
+import { mintImportId } from "../lib/deterministic-id.js";
 
 import {
   traces as tracesTable,
@@ -80,6 +95,18 @@ export interface ImportConflict {
   kept: "existing" | "incoming";
 }
 
+/** Old→new id remap emitted when an incoming id belonged to (traces) or was
+ *  linked into (evidence, references) another user's graph and so was minted
+ *  the importer's own deterministic copy-id (v1.1 isolation). Consumers
+ *  holding the export's original ids (e.g. a citation index) use this to
+ *  follow the rows into the importer's corpus. Deterministic: the same
+ *  importer re-importing the same file derives the same mappings. */
+export interface ImportIdRemap {
+  entity: "trace" | "evidence" | "reference";
+  from: string;
+  to: string;
+}
+
 export interface ImportResult {
   book: { id: string; name: string; slug: string; created: boolean } | null;
   counts: {
@@ -88,15 +115,26 @@ export interface ImportResult {
       skippedIdentical: number;
       conflicted: number;
       overwritten: number;
-      notOwned: number;
+      /** Traces whose incoming id was owned by another user and so was minted
+       *  the importer's own deterministic id. On a FIRST import these are a
+       *  subset of `inserted`; on a re-import the same minted ids resolve to
+       *  the importer's existing rows and land in `skippedIdentical` /
+       *  `conflicted` instead — `remapped` counts remaps, not inserts. `idMap`
+       *  carries the old→new detail. */
+      remapped: number;
     };
-    evidence: { inserted: number; skippedExisting: number; conflicted: number };
-    references: { inserted: number; skippedExisting: number; conflicted: number };
+    evidence: { inserted: number; skippedExisting: number; conflicted: number; remapped: number };
+    references: { inserted: number; skippedExisting: number; conflicted: number; remapped: number };
     links: { inserted: number; skippedExisting: number; orphaned: number };
   };
   /** Per-row collision detail, capped at MAX_CONFLICT_DETAIL entries. */
   conflicts: ImportConflict[];
   conflictsTotal: number;
+  /** Old→new id mappings for mint-on-conflict remaps (v1.1). Empty when no
+   *  incoming id collided with another user's row. In-file cross-references
+   *  (trace_evidence / trace_references) are already remapped to the new ids
+   *  inside the import; this list is for external holders of the old ids. */
+  idMap: ImportIdRemap[];
   embeddings: {
     /** Evidence rows queued with pending vector stubs in this import. */
     evidenceQueued: number;
@@ -207,23 +245,59 @@ export async function importCorpus(
       }
     }
 
+    // ── 1a. Isolation remap: deterministic mint for foreign traces ────────
+    // A trace id owned by ANOTHER user gets the importer's own deterministic
+    // copy-id — mintImportId(userId, originalId) — instead of being skipped.
+    // Deterministic, so a re-import derives the SAME minted ids (idempotent
+    // through the ordinary same-owner path below) and parallel importers of
+    // one source corpus derive disjoint ids (no cross-contamination; each
+    // run's subgraph deletes cleanly on its own). Link views are built AFTER
+    // the evidence/reference remap in §2a, which needs the same treatment.
+    const traceIdRemap = new Map<string, string>();
+    for (const t of parsed.traces) {
+      const existing = existingTraces.get(t.id);
+      if (existing && existing.userId !== userId) {
+        traceIdRemap.set(t.id, mintImportId(userId, t.id));
+      }
+    }
+    // A minted id may itself already exist (this importer ran this file
+    // before). Fetch those rows into the classification map so the minted
+    // trace flows down the same-owner path (skipped-identical / conflicted)
+    // instead of colliding on insert.
+    for (const chunk of chunks([...traceIdRemap.values()])) {
+      const rows = await tx.execute(sql`
+        SELECT id, user_id AS "userId", group_id AS "groupId",
+               claim_text AS "claimText", decided_at AS "decidedAt"
+        FROM claimnet.traces
+        WHERE id IN (${sql.join(chunk.map((id) => sql`${id}::uuid`), sql`, `)})
+      `);
+      for (const r of rows as unknown as Array<ExistingTrace & { decidedAt: string | Date | null }>) {
+        existingTraces.set(r.id, {
+          ...r,
+          decidedAt: r.decidedAt === null ? null : new Date(r.decidedAt),
+        });
+      }
+    }
+    const remapTraceId = (id: string): string => traceIdRemap.get(id) ?? id;
+    const wTraces = traceIdRemap.size === 0
+      ? parsed.traces
+      : parsed.traces.map((t) => (traceIdRemap.has(t.id) ? { ...t, id: remapTraceId(t.id) } : t));
+
     const toInsert: ImportTraceRow[] = [];
     const toOverwrite: ImportTraceRow[] = [];
     let skippedIdentical = 0;
     let conflicted = 0;
-    let notOwned = 0;
 
-    for (const t of parsed.traces) {
+    for (const t of wTraces) {
       const existing = existingTraces.get(t.id);
       if (!existing) {
+        // New id (never-seen, or a just-minted remap) → insert as importer's.
         toInsert.push(t);
         continue;
       }
-      if (existing.userId !== userId) {
-        // Never compare or touch another user's row — count without detail.
-        notOwned++;
-        continue;
-      }
+      // existing.userId === userId is guaranteed here: any other-user id was
+      // remapped above to a fresh id that misses this lookup. Same-owner path
+      // is preserved exactly (v1 idempotency criterion stands).
       const fields: string[] = [];
       if (existing.claimText !== t.claimText) fields.push("claimText");
       if (!sameInstant(existing.decidedAt, t.decidedAt)) fields.push("decidedAt");
@@ -238,41 +312,112 @@ export async function importCorpus(
       }
     }
 
-    // ── 2. Classify evidence + references (shared rows: existing always wins) ──
+    // ── 2. Classify evidence + references ─────────────────────────────────
+    // Existing rows are reused ONLY when they aren't part of anyone else's
+    // graph. Evidence/references have no owner column; foreignness is being
+    // linked (through trace_evidence / trace_references / evidence_references)
+    // to a trace the importer doesn't own. Foreign-linked rows are minted the
+    // importer's own deterministic copies in §2a — sharing them would create
+    // exactly the cross-user edges the isolation ruling forbids, and would
+    // leave the importer's runs undeletable-in-isolation.
     const existingEvidence = new Map<string, { content: string }>();
-    for (const chunk of chunks(parsed.evidence)) {
-      const rows = await tx.execute(sql`
-        SELECT id, content FROM claimnet.evidence
-        WHERE id IN (${sql.join(chunk.map((e) => sql`${e.id}::uuid`), sql`, `)})
-      `);
-      for (const r of rows as unknown as Array<{ id: string; content: string }>) {
-        existingEvidence.set(r.id, { content: r.content });
+    const fetchEvidenceInto = async (ids: string[]): Promise<void> => {
+      for (const chunk of chunks(ids)) {
+        const rows = await tx.execute(sql`
+          SELECT id, content FROM claimnet.evidence
+          WHERE id IN (${sql.join(chunk.map((id) => sql`${id}::uuid`), sql`, `)})
+        `);
+        for (const r of rows as unknown as Array<{ id: string; content: string }>) {
+          existingEvidence.set(r.id, { content: r.content });
+        }
+      }
+    };
+    await fetchEvidenceInto(parsed.evidence.map((e) => e.id));
+
+    // ── 2a. Isolation remap for evidence: foreign-linked → mint ───────────
+    const evidenceIdRemap = new Map<string, string>();
+    {
+      const existingIdsList = parsed.evidence.map((e) => e.id).filter((id) => existingEvidence.has(id));
+      for (const chunk of chunks(existingIdsList)) {
+        const rows = await tx.execute(sql`
+          SELECT DISTINCT te.evidence_id AS "id"
+          FROM claimnet.trace_evidence te
+          JOIN claimnet.traces t ON t.id = te.trace_id
+          WHERE te.evidence_id IN (${sql.join(chunk.map((id) => sql`${id}::uuid`), sql`, `)})
+            AND t.user_id <> ${userId}::uuid
+        `);
+        for (const r of rows as unknown as Array<{ id: string }>) {
+          evidenceIdRemap.set(r.id, mintImportId(userId, r.id));
+        }
       }
     }
-    const evidenceToInsert = parsed.evidence.filter((e) => !existingEvidence.has(e.id));
+    // Minted evidence ids may exist from a prior run of this file — fetch them
+    // so re-imports classify as skipped-existing rather than colliding.
+    await fetchEvidenceInto([...evidenceIdRemap.values()]);
+    const remapEvidenceId = (id: string): string => evidenceIdRemap.get(id) ?? id;
+    const wEvidence = evidenceIdRemap.size === 0
+      ? parsed.evidence
+      : parsed.evidence.map((e) => (evidenceIdRemap.has(e.id) ? { ...e, id: remapEvidenceId(e.id) } : e));
+
+    const evidenceToInsert = wEvidence.filter((e) => !existingEvidence.has(e.id));
     let evidenceConflicted = 0;
-    for (const e of parsed.evidence) {
+    for (const e of wEvidence) {
       const ex = existingEvidence.get(e.id);
       if (ex && ex.content !== e.content) {
         evidenceConflicted++;
         addConflict({ entity: "evidence", id: e.id, fields: ["content"], kept: "existing" });
       }
     }
-    const evidenceSkipped = parsed.evidence.length - evidenceToInsert.length;
+    const evidenceSkipped = wEvidence.length - evidenceToInsert.length;
 
     const existingReferences = new Map<string, { quote: string; source: string; fileHash: string | null }>();
-    for (const chunk of chunks(parsed.references)) {
-      const rows = await tx.execute(sql`
-        SELECT id, quote, source, file_hash AS "fileHash" FROM claimnet.references
-        WHERE id IN (${sql.join(chunk.map((r) => sql`${r.id}::uuid`), sql`, `)})
-      `);
-      for (const r of rows as unknown as Array<{ id: string; quote: string; source: string; fileHash: string | null }>) {
-        existingReferences.set(r.id, r);
+    const fetchReferencesInto = async (ids: string[]): Promise<void> => {
+      for (const chunk of chunks(ids)) {
+        const rows = await tx.execute(sql`
+          SELECT id, quote, source, file_hash AS "fileHash" FROM claimnet.references
+          WHERE id IN (${sql.join(chunk.map((id) => sql`${id}::uuid`), sql`, `)})
+        `);
+        for (const r of rows as unknown as Array<{ id: string; quote: string; source: string; fileHash: string | null }>) {
+          existingReferences.set(r.id, r);
+        }
+      }
+    };
+    await fetchReferencesInto(parsed.references.map((r) => r.id));
+
+    // ── 2b. Isolation remap for references: foreign-linked → mint ─────────
+    // Foreign directly (trace_references to another user's trace) or through
+    // evidence (evidence_references → trace_evidence → another user's trace).
+    const referenceIdRemap = new Map<string, string>();
+    {
+      const existingIdsList = parsed.references.map((r) => r.id).filter((id) => existingReferences.has(id));
+      for (const chunk of chunks(existingIdsList)) {
+        const inList = sql.join(chunk.map((id) => sql`${id}::uuid`), sql`, `);
+        const rows = await tx.execute(sql`
+          SELECT DISTINCT tr.reference_id AS "id"
+          FROM claimnet.trace_references tr
+          JOIN claimnet.traces t ON t.id = tr.trace_id
+          WHERE tr.reference_id IN (${inList}) AND t.user_id <> ${userId}::uuid
+          UNION
+          SELECT DISTINCT er.reference_id AS "id"
+          FROM claimnet.evidence_references er
+          JOIN claimnet.trace_evidence te ON te.evidence_id = er.evidence_id
+          JOIN claimnet.traces t ON t.id = te.trace_id
+          WHERE er.reference_id IN (${inList}) AND t.user_id <> ${userId}::uuid
+        `);
+        for (const r of rows as unknown as Array<{ id: string }>) {
+          referenceIdRemap.set(r.id, mintImportId(userId, r.id));
+        }
       }
     }
-    const referencesToInsert = parsed.references.filter((r) => !existingReferences.has(r.id));
+    await fetchReferencesInto([...referenceIdRemap.values()]);
+    const remapReferenceId = (id: string): string => referenceIdRemap.get(id) ?? id;
+    const wReferences = referenceIdRemap.size === 0
+      ? parsed.references
+      : parsed.references.map((r) => (referenceIdRemap.has(r.id) ? { ...r, id: remapReferenceId(r.id) } : r));
+
+    const referencesToInsert = wReferences.filter((r) => !existingReferences.has(r.id));
     let referencesConflicted = 0;
-    for (const r of parsed.references) {
+    for (const r of wReferences) {
       const ex = existingReferences.get(r.id);
       if (!ex) continue;
       const fields: string[] = [];
@@ -284,7 +429,33 @@ export async function importCorpus(
         addConflict({ entity: "reference", id: r.id, fields, kept: "existing" });
       }
     }
-    const referencesSkipped = parsed.references.length - referencesToInsert.length;
+    const referencesSkipped = wReferences.length - referencesToInsert.length;
+
+    // ── 2c. Link working views ─────────────────────────────────────────────
+    // Every link endpoint follows its entity's remap. A link with ANY remapped
+    // endpoint is a genuinely new relationship in the importer's subgraph, so
+    // its own PK is minted too — deterministically, from the original link id,
+    // so a re-import's link insert collides with itself and onConflictDoNothing
+    // keeps it idempotent. (Keeping the old PK would collide with the source
+    // owner's link row and be silently dropped, orphaning the minted rows.)
+    const wTraceEvidence = parsed.traceEvidence.map((l) => {
+      const remapped = traceIdRemap.has(l.traceId) || evidenceIdRemap.has(l.evidenceId);
+      return remapped
+        ? { ...l, id: mintImportId(userId, l.id), traceId: remapTraceId(l.traceId), evidenceId: remapEvidenceId(l.evidenceId) }
+        : l;
+    });
+    const wTraceReferences = parsed.traceReferences.map((l) => {
+      const remapped = traceIdRemap.has(l.traceId) || referenceIdRemap.has(l.referenceId);
+      return remapped
+        ? { ...l, id: mintImportId(userId, l.id), traceId: remapTraceId(l.traceId), referenceId: remapReferenceId(l.referenceId) }
+        : l;
+    });
+    const wEvidenceReferences = parsed.evidenceReferences.map((l) => {
+      const remapped = evidenceIdRemap.has(l.evidenceId) || referenceIdRemap.has(l.referenceId);
+      return remapped
+        ? { ...l, id: mintImportId(userId, l.id), evidenceId: remapEvidenceId(l.evidenceId), referenceId: remapReferenceId(l.referenceId) }
+        : l;
+    });
 
     // ── 3. Resolve/create destination book (lazily for the new-book default) ──
     let dest = destination;
@@ -379,25 +550,25 @@ export async function importCorpus(
     // (inserted, skipped-identical, conflicted, or overwritten — all owned)
     // and its other endpoint exists (in the file, or already in the DB).
     const ownedTraceIds = new Set<string>();
-    for (const t of parsed.traces) {
+    for (const t of wTraces) {
       const existing = existingTraces.get(t.id);
       if (!existing || existing.userId === userId) ownedTraceIds.add(t.id);
     }
 
-    const fileEvidenceIds = new Set(parsed.evidence.map((e) => e.id));
-    const fileReferenceIds = new Set(parsed.references.map((r) => r.id));
+    const fileEvidenceIds = new Set(wEvidence.map((e) => e.id));
+    const fileReferenceIds = new Set(wReferences.map((r) => r.id));
 
     // Endpoints referenced by links but absent from the file — verify in DB.
     const unknownEvidenceIds = new Set<string>();
     const unknownReferenceIds = new Set<string>();
-    for (const l of parsed.traceEvidence) {
+    for (const l of wTraceEvidence) {
       if (!fileEvidenceIds.has(l.evidenceId)) unknownEvidenceIds.add(l.evidenceId);
     }
-    for (const l of parsed.evidenceReferences) {
+    for (const l of wEvidenceReferences) {
       if (!fileEvidenceIds.has(l.evidenceId)) unknownEvidenceIds.add(l.evidenceId);
       if (!fileReferenceIds.has(l.referenceId)) unknownReferenceIds.add(l.referenceId);
     }
-    for (const l of parsed.traceReferences) {
+    for (const l of wTraceReferences) {
       if (!fileReferenceIds.has(l.referenceId)) unknownReferenceIds.add(l.referenceId);
     }
     const dbEvidenceIds = await existingIds(tx, "evidence", [...unknownEvidenceIds]);
@@ -409,7 +580,7 @@ export async function importCorpus(
     let linksSkipped = 0;
     let linksOrphaned = 0;
 
-    const importableTE = parsed.traceEvidence.filter((l) => {
+    const importableTE = wTraceEvidence.filter((l) => {
       const ok = ownedTraceIds.has(l.traceId) && evidenceExists(l.evidenceId);
       if (!ok) linksOrphaned++;
       return ok;
@@ -433,7 +604,7 @@ export async function importCorpus(
       linksSkipped += chunk.length - rows.length;
     }
 
-    const importableTR = parsed.traceReferences.filter((l) => {
+    const importableTR = wTraceReferences.filter((l) => {
       const ok = ownedTraceIds.has(l.traceId) && referenceExists(l.referenceId);
       if (!ok) linksOrphaned++;
       return ok;
@@ -454,7 +625,7 @@ export async function importCorpus(
       linksSkipped += chunk.length - rows.length;
     }
 
-    const importableER = parsed.evidenceReferences.filter((l) => {
+    const importableER = wEvidenceReferences.filter((l) => {
       const ok = evidenceExists(l.evidenceId) && referenceExists(l.referenceId);
       if (!ok) linksOrphaned++;
       return ok;
@@ -482,7 +653,20 @@ export async function importCorpus(
     // previously-embedded evidence resolves from vector_cache.
     const evidenceQueued = await queueEvidenceStubs(tx, {
       insertedEvidenceIds: new Set(evidenceToInsert.map((e) => e.id)),
-      parsed,
+      // Working view: everything embeds against the minted ids so a remapped
+      // trace's evidence resolves its "Recipe context" from the rows actually
+      // inserted. Minted evidence IS inserted evidence, so isolation copies
+      // get their pending stubs (scoped to the importer's book) with no
+      // special casing.
+      parsed: {
+        ...parsed,
+        traces: wTraces,
+        evidence: wEvidence,
+        references: wReferences,
+        traceEvidence: wTraceEvidence,
+        traceReferences: wTraceReferences,
+        evidenceReferences: wEvidenceReferences,
+      },
       userId,
       existingTraces,
       destGroupId: dest?.id ?? null,
@@ -495,17 +679,24 @@ export async function importCorpus(
         skippedIdentical,
         conflicted,
         overwritten: toOverwrite.length,
-        notOwned,
+        remapped: traceIdRemap.size,
       },
+      idMap: [
+        ...[...traceIdRemap].map(([from, to]): ImportIdRemap => ({ entity: "trace", from, to })),
+        ...[...evidenceIdRemap].map(([from, to]): ImportIdRemap => ({ entity: "evidence", from, to })),
+        ...[...referenceIdRemap].map(([from, to]): ImportIdRemap => ({ entity: "reference", from, to })),
+      ],
       evidenceCounts: {
         inserted: insertedEvidence,
         skippedExisting: evidenceSkipped,
         conflicted: evidenceConflicted,
+        remapped: evidenceIdRemap.size,
       },
       referenceCounts: {
         inserted: insertedReferences,
         skippedExisting: referencesSkipped,
         conflicted: referencesConflicted,
+        remapped: referenceIdRemap.size,
       },
       linkCounts: { inserted: linksInserted, skippedExisting: linksSkipped, orphaned: linksOrphaned },
       evidenceQueued,
@@ -524,6 +715,7 @@ export async function importCorpus(
     },
     conflicts,
     conflictsTotal,
+    idMap: result.idMap,
     embeddings: {
       evidenceQueued: result.evidenceQueued,
       tracesPendingBackfill,

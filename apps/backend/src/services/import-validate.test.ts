@@ -114,6 +114,24 @@ describe("parseExportPayload — trace rows", () => {
     }
   });
 
+  it("mints a PK for a trace row that arrives without an id (v1.1)", () => {
+    const { id: _drop, ...noId } = minimalTrace();
+    const res = parseExportPayload({ schemaVersion: 1, traces: [noId] });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data.traces).toHaveLength(1);
+      const minted = res.data.traces[0]!.id;
+      expect(minted).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+      expect(minted).not.toBe(T1);
+    }
+  });
+
+  it("still rejects a present-but-malformed id (garbage is a broken file, not a PK-less row)", () => {
+    const res = parseExportPayload({ schemaVersion: 1, traces: [minimalTrace({ id: "not-a-uuid" })] });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toMatch(/traces\[0\]/);
+  });
+
   it("dedupes repeated ids within the file (first occurrence wins)", () => {
     const res = parseExportPayload({
       schemaVersion: 1,
@@ -155,6 +173,26 @@ describe("parseExportPayload — linked sections", () => {
       expect(res.data.evidenceReferences[0]!.referenceId).toBe(R1);
       expect(res.data.books[0]).toEqual({ groupId: T2, name: "Old Book", slug: "old-book", description: null });
     }
+  });
+
+  it("mints PKs for id-less evidence/reference/link rows but still requires their FK endpoints (v1.1)", () => {
+    const res = parseExportPayload({
+      schemaVersion: 1,
+      evidence: [{ content: "no id here", createdAt: NOW }],
+      traceEvidence: [{ traceId: T1, evidenceId: E1, stance: "for", createdAt: NOW }],
+    });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.data.evidence[0]!.id).toMatch(/^[0-9a-f-]{36}$/);
+      expect(res.data.traceEvidence[0]!.id).toMatch(/^[0-9a-f-]{36}$/);
+    }
+    // A missing FK endpoint is still a hard error (nothing for the link to point at).
+    const bad = parseExportPayload({
+      schemaVersion: 1,
+      traceEvidence: [{ evidenceId: E1, stance: "for", createdAt: NOW }],
+    });
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) expect(bad.error).toMatch(/traceId/);
   });
 
   it("allows empty-string evidence content and reference quote/source (export writes them)", () => {
