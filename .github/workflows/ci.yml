@@ -174,11 +174,87 @@ jobs:
           EMBEDDINGS_PROVIDER: local
         run: npx vitest run apps/backend/src/lib/embeddings/local-client.smoke.test.ts
 
+  # ── Golden-set ranking eval (real embeddings, thresholds gate) ────────────
+  # Layer B of the offline ranking-regression harness
+  # (docs/planning/check-recipe-ranking-system.md §3b, workflow in
+  # docs/workflows/ranking-tuning.md). Runs the golden datasets under
+  # eval/golden/ through the real search pipeline with the `local` embedding
+  # provider (bge-small via ONNX, keyless — the stub provider's near-orthogonal
+  # vectors can't verify semantic ranking) and fails on any thresholds.json
+  # breach. Unlike local-embeddings-smoke this IS a deploy gate: a ranking
+  # regression on the golden sets is a red build, not a judgment call.
+  # Mirrored in scripts/test-ci-local.mjs (SKIP_RANKING_EVAL=1 escape hatch).
+  ranking-eval:
+    name: Ranking eval (golden sets)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: claimnet
+          POSTGRES_PASSWORD: claimnet
+          POSTGRES_DB: claimnet
+        ports:
+          - 5535:5432
+        options: >-
+          --health-cmd "pg_isready -U claimnet"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      PGHOST: localhost
+      PGPORT: "5535"
+      PGUSER: claimnet
+      PGPASSWORD: claimnet
+      PGDATABASE: claimnet
+      JWT_SECRET: ci-test-secret-64-char-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      EMBEDDINGS_PROVIDER: local
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Upgrade npm to the engines-required version
+        run: npm install -g npm@11.10.0
+
+      # Full install (NOT --omit=optional) so @huggingface/transformers +
+      # onnxruntime-node are present for real local inference (same as
+      # local-embeddings-smoke).
+      - name: Install dependencies
+        run: npm ci
+
+      # Cache the ONNX model download (~23 MB) across runs. transformers.js
+      # caches inside the installed package dir; both candidate locations are
+      # listed so a library-version change can't silently drop the cache.
+      # Restore runs AFTER npm ci (which would wipe node_modules contents).
+      - name: Cache HF embedding model
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
+        with:
+          path: |
+            node_modules/@huggingface/transformers/.cache
+            node_modules/@huggingface/transformers/dist/.cache
+          key: hf-onnx-${{ runner.os }}-bge-small-en-v1.5
+
+      - name: Build packages
+        run: npm run build:packages
+
+      # The runner applies migrations itself (same drizzle migrator the
+      # backend uses at startup) — no backend process needed.
+      - name: Run golden-set ranking eval
+        run: npx tsx apps/backend/src/eval/ranking-eval.ts
+
   # ── Build + Deploy (push to main only) ───────────────────────────────────
 
   deploy:
     name: Build + Deploy
-    needs: quality
+    needs: [quality, ranking-eval]
     # Production deploy: manual trigger only (workflow_dispatch).
     # Dev/staging (future): auto-deploy on push to main.
     if: github.event_name == 'workflow_dispatch'

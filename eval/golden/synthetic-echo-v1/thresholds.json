@@ -1,0 +1,57 @@
+[
+  {
+    "metric": "guardrail.unaffectedTau.echo-on",
+    "min": 1,
+    "rationale": "Exact no-regression guardrail: on questions whose querying key authored no candidates, echo demotion must be a byte-stable no-op (Kendall tau = 1 exactly). Any value below 1 means demotion touched an unaffected query."
+  },
+  {
+    "metric": "guardrail.unaffectedTau.echo-on-mass",
+    "min": 1,
+    "rationale": "Same exact no-op guardrail for the demotion-adjusted-mass arm: with no demoted candidates every cluster's mass equals its raw similarity mass, so ordering must match baseline exactly."
+  },
+  {
+    "metric": "arms.clean.baseline.ndcgFull",
+    "min": 0.87,
+    "rationale": "Retrieval-quality floor on the clean corpus. Calibration run 2026-07-16 (local:bge-small-en-v1.5) measured 0.9237; 0.05 margin absorbs cross-platform ONNX float drift near ties without letting a real retrieval regression pass."
+  },
+  {
+    "metric": "arms.polluted.baseline.ndcgFull",
+    "min": 0.74,
+    "rationale": "Polluted-arm baseline canary — documents the pollution gap the harness exists to close (clean 0.9237 vs polluted 0.7883 on 2026-07-16). A drop below 0.74 means retrieval quality regressed beyond the known pollution cost."
+  },
+  {
+    "metric": "arms.polluted.baseline.echoShareTop3",
+    "min": 0.6,
+    "rationale": "Fixture-integrity tripwire, not a quality goal: with demotion OFF, echoes must still dominate the flat top-3 on affected questions (measured 0.8333 on 2026-07-16). If a corpus edit de-pollutes the dataset, the demotion metrics below would pass vacuously — this bound fails the run instead."
+  },
+  {
+    "metric": "arms.polluted.echo-on.echoShareTop3",
+    "max": 0.1,
+    "rationale": "The demotion mechanism's flat-stage effect: same-key session echoes must clear the top-3 on affected questions. Measured 0.0 on 2026-07-16 (from 0.8333 at baseline); 0.1 headroom tolerates one near-tie inversion across the 4 affected questions."
+  },
+  {
+    "metric": "arms.polluted.echo-on.genuineRecall5",
+    "min": 0.55,
+    "rationale": "Demotion must surface genuine cross-agent judgments, not merely bury echoes. Measured 0.6617 with echo-on (0.4867 at baseline) on 2026-07-16; floor set one near-tie below the measured value."
+  },
+  {
+    "metric": "arms.polluted.echo-on.ndcgFull",
+    "min": 0.77,
+    "rationale": "Echo demotion must not cost graded relevance overall. Measured 0.8171 on 2026-07-16 (above the 0.7883 baseline — demoting grade-1 echoes lifts grade-3 durables); 0.05 margin below measurement."
+  },
+  {
+    "metric": "arms.polluted.echo-on.topClusterEchoShare",
+    "max": 0.3,
+    "rationale": "Displayed-cluster echo exposure with demotion on (the downstream stage that absorbed the original fix). Measured 0.2019 on 2026-07-16, down from 0.5429 at baseline — demotion's reorder feeds k-means, restructuring clusters. Bound protects that end-to-end improvement."
+  },
+  {
+    "metric": "arms.polluted.echo-on-mass.topClusterEchoShare",
+    "max": 0.3,
+    "rationale": "The §3d lever must never leave MORE echo in the #1 displayed cluster than member-count ordering does. On this synthetic set the two orderings currently coincide (0.2019 on 2026-07-16 — demotion's cluster restructuring leaves mass nothing to flip; the lever's mechanism is proven by the Layer A waterfall test); its material effect is measured on the real polluted golden export."
+  },
+  {
+    "metric": "arms.polluted.echo-on.aspectCoverage",
+    "min": 0.55,
+    "rationale": "Diversity guardrail paired with the relevance metrics (utility x surprise ruling: never gate on relevance alone). Measured 0.6393 on 2026-07-16; floor one aspect-slot below measurement."
+  }
+]

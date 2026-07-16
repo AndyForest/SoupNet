@@ -241,6 +241,29 @@ async function main() {
       },
     });
 
+    // 7b. Golden-set ranking eval — mirrors ci.yml's `ranking-eval` job
+    //     (which runs it on its own postgres service; here it reuses this
+    //     gate's CI postgres after the tests, writing only its own throwaway
+    //     eval users/books). Real local embeddings (bge-small ONNX, keyless);
+    //     the runner applies its own migrations and exits non-zero on any
+    //     thresholds.json breach. SKIP_RANKING_EVAL=1 skips it during tight
+    //     iteration on non-ranking work — the push still faces the CI job.
+    if (process.env.SKIP_RANKING_EVAL === "1") {
+      console.log("\n=== Skipping ranking eval (SKIP_RANKING_EVAL=1) ===");
+    } else {
+      console.log("\n=== Golden-set ranking eval (EMBEDDINGS_PROVIDER=local) ===");
+      const evalEnv = {
+        ...process.env,
+        ...CI_PG,
+        EMBEDDINGS_PROVIDER: "local",
+        JWT_SECRET: "ci-test-secret-64-char-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      };
+      // db.ts prefers DATABASE_URL over PG* — a host .env value would point
+      // the eval's writes somewhere other than this gate's throwaway stack.
+      delete evalEnv.DATABASE_URL;
+      run("npx tsx apps/backend/src/eval/ranking-eval.ts", { env: evalEnv });
+    }
+
     console.log("\n=== CI tests passed! ===");
   } catch (err) {
     console.error("\n=== CI tests FAILED ===");

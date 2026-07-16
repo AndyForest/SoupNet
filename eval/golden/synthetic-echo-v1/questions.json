@@ -1,0 +1,168 @@
+[
+  {
+    "id": "q01-testing-discovery",
+    "query": "As a developer about to write tests for the notification service, I want my AI agent to surface the user's testing taste and conventions before I choose an approach.",
+    "echoKeys": ["agent-self"],
+    "graded": {
+      "00000000-0000-4000-8000-000100000001": 3,
+      "00000000-0000-4000-8000-000100000002": 2,
+      "00000000-0000-4000-8000-000100000003": 2,
+      "00000000-0000-4000-8000-000100000004": 2,
+      "00000000-0000-4000-8000-000100000005": 2,
+      "00000000-0000-4000-8000-000100000006": 3,
+      "00000000-0000-4000-8000-000100000007": 2,
+      "00000000-0000-4000-8000-000100000008": 2,
+      "00000000-0000-4000-8000-00e100000001": 1,
+      "00000000-0000-4000-8000-00e100000002": 1,
+      "00000000-0000-4000-8000-00e100000003": 1,
+      "00000000-0000-4000-8000-00e100000004": 1,
+      "00000000-0000-4000-8000-00e100000005": 1,
+      "00000000-0000-4000-8000-00e100000006": 1,
+      "00000000-0000-4000-8000-00e100000007": 1,
+      "00000000-0000-4000-8000-00e100000008": 1
+    },
+    "aspects": {
+      "00000000-0000-4000-8000-000100000001": "integration-vs-mock",
+      "00000000-0000-4000-8000-000100000002": "ci-parity",
+      "00000000-0000-4000-8000-000100000003": "determinism",
+      "00000000-0000-4000-8000-000100000004": "determinism",
+      "00000000-0000-4000-8000-000100000005": "flake-handling",
+      "00000000-0000-4000-8000-000100000006": "coverage-style",
+      "00000000-0000-4000-8000-000100000007": "assertion-style",
+      "00000000-0000-4000-8000-000100000008": "tooling"
+    }
+  },
+  {
+    "id": "q02-testing-judgment",
+    "query": "As a quality engineer deciding whether to mock the database layer or run tests against a real disposable instance, I want prior judgments about integration versus mocked testing surfaced with their reasons.",
+    "echoKeys": ["agent-self"],
+    "graded": {
+      "00000000-0000-4000-8000-000100000001": 3,
+      "00000000-0000-4000-8000-000100000002": 2,
+      "00000000-0000-4000-8000-000100000004": 2,
+      "00000000-0000-4000-8000-000200000004": 2,
+      "00000000-0000-4000-8000-000100000006": 1,
+      "00000000-0000-4000-8000-000100000007": 1,
+      "00000000-0000-4000-8000-00e100000001": 1,
+      "00000000-0000-4000-8000-00e100000005": 1,
+      "00000000-0000-4000-8000-00e100000006": 1
+    },
+    "aspects": {
+      "00000000-0000-4000-8000-000100000001": "integration-vs-mock",
+      "00000000-0000-4000-8000-000100000004": "determinism",
+      "00000000-0000-4000-8000-000200000004": "isolation",
+      "00000000-0000-4000-8000-000100000002": "ci-parity"
+    }
+  },
+  {
+    "id": "q03-migrations-discovery",
+    "query": "As a developer about to generate a migration adding a table for scheduled jobs, I want prior schema-change discipline and conventions surfaced before I run the generator.",
+    "echoKeys": ["agent-self"],
+    "graded": {
+      "00000000-0000-4000-8000-000200000001": 3,
+      "00000000-0000-4000-8000-000200000002": 2,
+      "00000000-0000-4000-8000-000200000003": 2,
+      "00000000-0000-4000-8000-000200000005": 1,
+      "00000000-0000-4000-8000-000200000006": 3,
+      "00000000-0000-4000-8000-000200000004": 1,
+      "00000000-0000-4000-8000-00e200000001": 1,
+      "00000000-0000-4000-8000-00e200000002": 1,
+      "00000000-0000-4000-8000-00e200000003": 1,
+      "00000000-0000-4000-8000-00e200000004": 1,
+      "00000000-0000-4000-8000-00e200000005": 1,
+      "00000000-0000-4000-8000-00e200000006": 1,
+      "00000000-0000-4000-8000-00e200000007": 1
+    },
+    "aspects": {
+      "00000000-0000-4000-8000-000200000001": "review-discipline",
+      "00000000-0000-4000-8000-000200000002": "deploy-coupling",
+      "00000000-0000-4000-8000-000200000003": "rollback-safety",
+      "00000000-0000-4000-8000-000200000005": "idempotency",
+      "00000000-0000-4000-8000-000200000006": "naming",
+      "00000000-0000-4000-8000-000200000004": "isolation"
+    }
+  },
+  {
+    "id": "q04-migrations-judgment",
+    "query": "As a database owner deciding between a destructive column rename and an additive copy-then-backfill migration, I want prior rollback and deploy-safety judgments surfaced.",
+    "echoKeys": ["agent-self"],
+    "graded": {
+      "00000000-0000-4000-8000-000200000003": 3,
+      "00000000-0000-4000-8000-000200000001": 2,
+      "00000000-0000-4000-8000-000200000002": 1,
+      "00000000-0000-4000-8000-000200000005": 1,
+      "00000000-0000-4000-8000-00e200000005": 1,
+      "00000000-0000-4000-8000-00e200000001": 1,
+      "00000000-0000-4000-8000-00e200000004": 1
+    },
+    "aspects": {
+      "00000000-0000-4000-8000-000200000003": "rollback-safety",
+      "00000000-0000-4000-8000-000200000001": "review-discipline",
+      "00000000-0000-4000-8000-000200000002": "deploy-coupling"
+    }
+  },
+  {
+    "id": "q05-api-batch",
+    "query": "As an API designer adding a batch lookup endpoint, I want prior error-handling and response-shape judgments surfaced before I define the contract.",
+    "graded": {
+      "00000000-0000-4000-8000-000300000001": 3,
+      "00000000-0000-4000-8000-000300000004": 3,
+      "00000000-0000-4000-8000-000300000002": 2,
+      "00000000-0000-4000-8000-000300000006": 2,
+      "00000000-0000-4000-8000-000300000003": 2,
+      "00000000-0000-4000-8000-000300000005": 1
+    }
+  },
+  {
+    "id": "q06-api-errors-guardrail",
+    "query": "As a backend developer deciding what detail to include in client-facing error messages, I want prior security and logging judgments surfaced.",
+    "unaffected": true,
+    "graded": {
+      "00000000-0000-4000-8000-000300000005": 3,
+      "00000000-0000-4000-8000-000300000001": 2,
+      "00000000-0000-4000-8000-000300000002": 2,
+      "00000000-0000-4000-8000-000300000003": 1
+    }
+  },
+  {
+    "id": "q07-docs-setup-guide",
+    "query": "As a maintainer writing the setup guide for new contributors, I want the user's documentation taste surfaced before I draft it.",
+    "graded": {
+      "00000000-0000-4000-8000-000400000001": 3,
+      "00000000-0000-4000-8000-000400000004": 2,
+      "00000000-0000-4000-8000-000400000003": 2,
+      "00000000-0000-4000-8000-000400000002": 1,
+      "00000000-0000-4000-8000-000400000005": 1
+    }
+  },
+  {
+    "id": "q08-docs-diagram-guardrail",
+    "query": "As a technical writer choosing between an ASCII diagram and an embedded diagram language for a pipeline overview, I want prior rendering and tooling judgments surfaced.",
+    "unaffected": true,
+    "graded": {
+      "00000000-0000-4000-8000-000400000003": 3,
+      "00000000-0000-4000-8000-000400000001": 1,
+      "00000000-0000-4000-8000-000400000004": 1
+    }
+  },
+  {
+    "id": "q09-frontend-dropdown",
+    "query": "As a frontend developer building a custom dropdown component, I want prior accessibility judgments surfaced before I choose between native and custom widgets.",
+    "graded": {
+      "00000000-0000-4000-8000-000500000001": 3,
+      "00000000-0000-4000-8000-000500000003": 2,
+      "00000000-0000-4000-8000-000500000004": 1,
+      "00000000-0000-4000-8000-000500000002": 1
+    }
+  },
+  {
+    "id": "q10-frontend-lazy-guardrail",
+    "query": "As a frontend developer deciding whether to lazy-load the settings screen, I want prior performance taste surfaced.",
+    "unaffected": true,
+    "graded": {
+      "00000000-0000-4000-8000-000500000002": 3,
+      "00000000-0000-4000-8000-000500000004": 2,
+      "00000000-0000-4000-8000-000500000001": 1
+    }
+  }
+]
