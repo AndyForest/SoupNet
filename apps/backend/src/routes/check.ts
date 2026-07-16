@@ -12,6 +12,7 @@ import { getDb } from "../db";
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { validateKey } from "../services/api-key.service";
+import { parseEchoSuppressOverride } from "../services/system-settings.service";
 import { HTML_ACCEPT_TYPES, renderCheckResponseMarkdown, fenceCheckResponseMarkdown } from "@soupnet/domain";
 import type { CheckResponseJson } from "@soupnet/domain";
 import { rateLimit, perKeyRateLimit, extractCheckRequestKey, getClientIp, hashApiKey } from "../middleware/rate-limit";
@@ -118,6 +119,10 @@ export const CHECK_PARAMS = [
   { field: "agentId",    wire: "agent_id",           aliases: [],              roundTrip: "carry" },
   { field: "knownRecipes", wire: "known_recipes",    aliases: [],              roundTrip: "carry" },
   { field: "sort",       wire: "sort",               aliases: [],              roundTrip: "carry" },
+  // Per-request echo-suppression A/B toggle (on|off). Carries forward like the
+  // other intent-preserving params so an arm keeps its setting across the
+  // re-check form and Copy-URL round-trips. See docs/planning/echo-suppression.md.
+  { field: "echoSuppress", wire: "echo_suppress",    aliases: [],              roundTrip: "carry" },
   // Premium opt-in behavior flag — carries like the other intent-preserving
   // params (agent_id, decided_at) so an opted-in caller keeps synthesis on
   // across the page's re-check form and Copy-URL round-trips, rather than
@@ -954,6 +959,7 @@ async function handleCheck(
       // filter alongside a recipe narrows the candidate set by keyword;
       // the check itself logs normally.
       keywordFilter: params.filter,
+      echoSuppress: parseEchoSuppressOverride(params.echoSuppress),
     });
   } else if (params.key && params.filter && !params.trace) {
     // The sanctioned no-logging path: filter (alias f) with no recipe runs a

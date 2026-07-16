@@ -20,7 +20,8 @@
 
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { PRODUCTION_SEARCH_STRATEGY_IDS } from "@soupnet/domain";
+import { PRODUCTION_SEARCH_STRATEGY_IDS, rankWithEchoSuppression } from "@soupnet/domain";
+import type { EchoSuppressionConfig, EchoRankCandidate } from "@soupnet/domain";
 import { embedQuery, getEmbeddingModelId } from "../lib/embeddings/provider";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -42,6 +43,20 @@ export interface HybridSearchParams {
    *  substring matches on the recipe text. Applied inside the SQL predicates
    *  so the exact count, ANN top-k, and exhaustive fallback all agree. */
   keywordFilter?: string | undefined;
+  /** Echo-suppression ranking context. When present AND config.enabled, the
+   *  deduped candidate set is reordered (before pagination) to demote the
+   *  current agent's own recent hypothesis-appends — reorder only, never
+   *  truncated, displayed similarity untouched. Absent / disabled ⇒ byte-stable
+   *  (no metadata query, no reorder). See docs/planning/echo-suppression.md. */
+  echo?: EchoContext | undefined;
+}
+
+export interface EchoContext {
+  config: EchoSuppressionConfig;
+  /** api_key making the current check (the authorship-match key). */
+  currentApiKeyId: string | null;
+  /** "now" for recency math. */
+  now: Date;
 }
 
 export interface HybridSearchResult {
@@ -240,6 +255,15 @@ export async function hybridSearch(
       }
     }
 
+    // ── Echo suppression (reorder-only, before pagination) ────────────────
+    // Demote the current agent's own recent hypothesis-appends so an echo can
+    // fall below a genuinely cross-agent recipe of similar similarity — and
+    // onto a later page rather than off the result set. Skipped entirely (no
+    // metadata query) when disabled, keeping the default path byte-stable.
+    if (params.echo?.config.enabled && params.echo.currentApiKeyId) {
+      sorted = await applyEchoSuppression(db, sorted, params.echo);
+    }
+
     // Apply pagination
     const paged = sorted.slice(offset, offset + limit);
 
@@ -293,6 +317,65 @@ export async function hybridSearch(
     console.error("[vector-search] Semantic search failed:", err);
     return { results: [], totalResults: 0, searchMode: "semantic" };
   }
+}
+
+// ── Echo suppression helper ──────────────────────────────────────────────────
+
+/**
+ * Reorder the deduped [traceId, semanticScore] candidate list to demote the
+ * current agent's own recent hypothesis-appends. Only the current key's OWN
+ * traces among the candidates are fetched (indexed by api_key_id) — every other
+ * candidate gets penalty 0 with no per-row work. The displayed semantic score
+ * is preserved; only the order changes, and nothing is dropped.
+ */
+async function applyEchoSuppression(
+  db: PostgresJsDatabase,
+  sorted: Array<[string, number]>,
+  echo: EchoContext,
+): Promise<Array<[string, number]>> {
+  const currentApiKeyId = echo.currentApiKeyId;
+  if (!currentApiKeyId || sorted.length === 0) return sorted;
+
+  const idsSql = sql.join(
+    sorted.map(([id]) => sql`${id}::uuid`),
+    sql`, `,
+  );
+  // Only the agent's own traces can be demoted — fetch just those.
+  const ownRows = await db.execute(sql`
+    SELECT id::text AS id, created_at, decided_at
+    FROM claimnet.traces
+    WHERE api_key_id = ${currentApiKeyId}::uuid
+      AND id IN (${idsSql})
+  `);
+
+  const own = new Map<string, { createdAt: Date; curated: boolean }>();
+  for (const row of ownRows as unknown as Record<string, unknown>[]) {
+    own.set(row["id"] as string, {
+      createdAt: new Date(row["created_at"] as string),
+      // decided_at set ⇒ deliberately-dated / curated decision ⇒ exempt.
+      curated: row["decided_at"] !== null && row["decided_at"] !== undefined,
+    });
+  }
+  // Nothing of the agent's own in the candidate set — order can't change.
+  if (own.size === 0) return sorted;
+
+  const candidates: EchoRankCandidate[] = sorted.map(([id, score]) => {
+    const mine = own.get(id);
+    return {
+      id,
+      semanticScore: score,
+      authorApiKeyId: mine ? currentApiKeyId : null,
+      createdAt: mine?.createdAt ?? echo.now,
+      curated: mine?.curated ?? false,
+    };
+  });
+
+  const ranked = rankWithEchoSuppression(
+    candidates,
+    { currentApiKeyId, now: echo.now },
+    echo.config,
+  );
+  return ranked.map((c) => [c.id, c.semanticScore] as [string, number]);
 }
 
 // ── Evidence search ─────────────────────────────────────────────────────────

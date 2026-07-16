@@ -21,7 +21,7 @@ import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 
 import { PRODUCTION_SEARCH_STRATEGY_IDS } from "@soupnet/domain";
 import { hybridSearch, evidenceSearch } from "./vector-search.service";
-import type { EvidenceSearchResult } from "./vector-search.service";
+import type { EvidenceSearchResult, EchoContext } from "./vector-search.service";
 import type { SearchResultItem } from "./trace.service";
 import { clusterResults } from "./clustering.service";
 import type { ClusterResult } from "./clustering.service";
@@ -72,6 +72,11 @@ export interface SearchPipelineParams {
   /** Optional per-request stage timer — the check path passes its own so
    *  pipeline stages land in the same Server-Timing header / log line. */
   timer?: StageTimer | undefined;
+  /** Echo-suppression ranking context — forwarded to hybridSearch. When
+   *  enabled, the current agent's own recent hypothesis-appends are demoted in
+   *  the trace-search ranking (reorder only). Absent / disabled ⇒ no effect.
+   *  Only meaningful in query mode. See docs/planning/echo-suppression.md. */
+  echo?: EchoContext | undefined;
   /** Read-time MRL truncation for fetched trace vectors (clustering, concept
    *  axes, response vectors). Stored vectors are NEVER modified — pgvector's
    *  subvector() slices the leading dims at query time. gemini embeddings are
@@ -281,6 +286,7 @@ export async function runSearchPipeline(
       excludeTraceId: params.excludeTraceId,
       queryVectorStr,
       keywordFilter: params.keywordFilter,
+      echo: params.echo,
     }));
 
     results = searchResponse.results.map((r) => ({
