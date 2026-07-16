@@ -1,6 +1,6 @@
 # check_recipe ranking — from point fixes to a tunable, regression-tested system
 
-**Status**: briefing, ready to implement (2026-07-16). **Executor**: the SoupNet implementation agent, with research sub-agents (spawn them early — §5). **Author**: the evals side, at Andy's direction — the regression/tuning capability is the heart of this brief, and the evals work is where the need was measured.
+**Status**: implemented 2026-07-16 (same-day) — §3a/§3b/§3c shipped, §3d lever shipped default-OFF pending golden-set measurement; research memos in [ranking-research/](ranking-research/); current state + remaining work tracked in [docs/backlog.md](../backlog.md) §Ranking. **Executor**: the SoupNet implementation agent, with research sub-agents (spawn them early — §5). **Author**: the evals side, at Andy's direction — the regression/tuning capability is the heart of this brief, and the evals work is where the need was measured.
 
 ## 1. Why a system, not another fix (measured evidence)
 

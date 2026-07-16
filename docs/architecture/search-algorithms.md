@@ -344,6 +344,47 @@ similar similarity — and onto a later page rather than off the result set.
   order untouched (byte-stable). Applies to the logging check path; the read-only
   `filter` path is left unchanged.
 
+### Ranking pipeline config — versioned, tunable, signal-complete (2026-07-16)
+
+The point-fix era ended with the measured lesson that demotion at one stage gets
+absorbed by untouched downstream stages (echo-at-top-rank fell 0.779 → 0.191 while
+end-to-end recovery was only ~15–17% — see
+[docs/planning/check-recipe-ranking-system.md](../planning/check-recipe-ranking-system.md)).
+The pipeline is now an explicit system:
+
+- **One config object** — `RankingConfig` (`packages/domain/src/ranking-config.ts`)
+  flows through `runSearchPipeline` (`SearchPipelineParams.ranking`). Layering:
+  versioned code defaults (`DEFAULT_RANKING`) ← the `echoSuppression` system
+  setting ← the per-request `echo_suppress` override
+  (`resolveRankingConfig`, system-settings.service.ts). Absent ⇒ defaults, which
+  are byte-identical to legacy behavior; the read-only surfaces (map, briefing
+  exemplars) pass nothing and stay untouched.
+- **Dated algorithm version** — `RANKING_ALGORITHM_VERSION`, minted only when a
+  shipped default changes, with a mandatory same-commit entry in
+  [ranking-changelog.md](ranking-changelog.md). Echoed as `data.ranking`
+  (`{version, echoSuppression, clusterOrdering, overrides}`) in `/check` JSON and
+  MCP structured responses (never the token-lean markdown), and as
+  `rankingVersion` in `recipe.checked` audit metadata.
+- **Per-candidate signals** — `CandidateSignals` (authorship api_key/user, raw
+  `created_at`, `decided_at`) hydrate on hybridSearch's existing trace-row load
+  (zero extra queries) and ride every `SearchResultItem` in query mode; the
+  expensive corroboration counts (human `still_true` reactions, cross-agent
+  fulfilled check-feedback) hydrate lazily inside the demotion query only when
+  their `exemption` flag is on. Any future recency/decay lever must decay from
+  `COALESCE(decided_at, created_at)` (operator ruling 2026-07-16).
+- **Cluster-ordering lever (§3d)** — `clusterOrdering: "demotion-adjusted-mass"`
+  sorts displayed clusters by the sum of members' demotion-adjusted ranking
+  scores (`similarity × (1 − echo penalty)`, reusing the penalties the demotion
+  stage actually applied) instead of raw `memberCount`, so a cluster of demoted
+  echoes sinks below a smaller durable cluster. Implemented via
+  `ClusterParams.memberWeights`; ordering only — membership, exemplars, displayed
+  percentages, and the `clusters[i] ↔ results[i]` index-parallel contract are
+  untouched. Ships default `"member-count"` pending the golden-set ruling.
+- **Stage names** (timer keys match): `query_embed` → `search` (retrieval +
+  scoring/demotion inside hybridSearch) → `vectors` → `cluster` (k-means +
+  cluster ordering) → `evidence` → axes. Regression harness and tuning workflow:
+  `npm run eval:ranking`, [docs/workflows/ranking-tuning.md](../workflows/ranking-tuning.md).
+
 ## format_adherence_score — IMPLEMENTED (heuristic, v1)
 
 Heuristic scoring in `apps/backend/src/services/format-adherence.ts`. Score 0.0–1.0.
