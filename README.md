@@ -61,6 +61,7 @@ claude mcp add --transport http soupnet https://mcp.soup.net/mcp --header "Autho
 - [`docs/benchmarks.md`](docs/benchmarks.md) — controlled benchmark results across PERMA, SWE-Lancer, and π-Bench (abstract + per-benchmark detail pages), the complement to the field data above
 - [`docs/design-thinking.md`](docs/design-thinking.md) — product vision, user archetypes, recipe-check scenarios
 - [`docs/architecture/overview.md`](docs/architecture/overview.md) — system topology, three agent surfaces, data model at a glance
+- [`docs/ranking/README.md`](docs/ranking/README.md) — the check_recipe ranking engine: why it exists, how it works, and how changes are measured before they ship
 - [`docs/planning/pivot-search-as-logging.md`](docs/planning/pivot-search-as-logging.md) — the search-as-logging pivot (decision history)
 - [`docs/engineering-principles.md`](docs/engineering-principles.md) — 13 principles that govern every design choice
 - [`docs/backlog.md`](docs/backlog.md) — current work queue; completed items in `docs/backlog-completed.md`
