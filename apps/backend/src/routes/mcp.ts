@@ -1077,6 +1077,9 @@ export function buildMcpJsonResponse(
     totalResults: result.totalResults,
     page,
     totalPages: result.totalPages,
+    // Which ranking served this response (mirrors check.ts) — structured
+    // metadata only; the default markdown format stays token-lean.
+    ...(result.ranking ? { ranking: result.ranking } : {}),
   };
 
   // Format warning

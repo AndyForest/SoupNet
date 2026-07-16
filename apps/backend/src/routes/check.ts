@@ -262,6 +262,10 @@ function buildJsonResponse(
       totalResults: result.totalResults,
       page,
       totalPages: result.totalPages,
+      // Which ranking served this response — dated algorithm version +
+      // effective switches (docs/architecture/ranking-changelog.md). JSON
+      // metadata only; the markdown surfaces stay token-lean.
+      ...(result.ranking ? { ranking: result.ranking } : {}),
     },
   };
 

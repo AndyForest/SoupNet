@@ -1,8 +1,12 @@
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { systemSettings } from "@soupnet/db";
-import { DEFAULT_ECHO_SUPPRESSION } from "@soupnet/domain";
-import type { EchoSuppressionConfig } from "@soupnet/domain";
+import {
+  DEFAULT_ECHO_SUPPRESSION,
+  DEFAULT_RANKING,
+  RANKING_ALGORITHM_VERSION,
+} from "@soupnet/domain";
+import type { EchoSuppressionConfig, RankingConfig } from "@soupnet/domain";
 
 export interface SystemSettingsMap {
   signupCap: number;
@@ -87,6 +91,38 @@ export async function resolveEchoSuppression(
   const merged: EchoSuppressionConfig = { ...DEFAULT_ECHO_SUPPRESSION, ...stored };
   if (override === "on") merged.enabled = true;
   return merged;
+}
+
+/** The resolved ranking configuration for one request, plus provenance. */
+export interface ResolvedRanking {
+  config: RankingConfig;
+  /** Dated algorithm version of the shipped code defaults —
+   *  RANKING_ALGORITHM_VERSION. Echoed in responses/audit so consumers can
+   *  report which ranking served them. */
+  version: string;
+  /** Ephemeral per-request overrides applied on top of defaults + settings
+   *  (e.g. "echo_suppress=on"). Echoed back, never persisted. */
+  overrides: string[];
+}
+
+/**
+ * Resolve the full ranking config for one check: versioned code defaults
+ * (DEFAULT_RANKING) ← the `echoSuppression` system setting ← the per-request
+ * `echo_suppress` override. Layering per recipe 8ee8e3ab — numeric knobs live
+ * in the versioned code defaults; the settings table carries operational
+ * switches; per-request overrides are ephemeral and echoed back.
+ */
+export async function resolveRankingConfig(
+  db: PostgresJsDatabase,
+  echoOverride?: "on" | "off" | undefined,
+): Promise<ResolvedRanking> {
+  const echo = await resolveEchoSuppression(db, echoOverride);
+  const config: RankingConfig = { ...DEFAULT_RANKING, echo };
+  return {
+    config,
+    version: RANKING_ALGORITHM_VERSION,
+    overrides: echoOverride ? [`echo_suppress=${echoOverride}`] : [],
+  };
 }
 
 /**

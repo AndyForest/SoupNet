@@ -39,7 +39,9 @@ import { scoreFormatAdherence } from "./format-adherence";
 import { runSearchPipeline } from "./search-pipeline";
 import { StageTimer } from "../lib/stage-timer";
 import { invalidKeyMessage } from "../lib/key-remediation";
-import { resolveEchoSuppression } from "./system-settings.service";
+import { resolveRankingConfig } from "./system-settings.service";
+import { DEFAULT_RANKING, RANKING_ALGORITHM_VERSION } from "@soupnet/domain";
+import type { CandidateSignals } from "@soupnet/domain";
 import { auditLog } from "@soupnet/db";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -108,6 +110,25 @@ export interface SearchResultItem {
   rank: number;
   semanticScore?: number | undefined;
   clusterSize?: number | undefined;
+  /** Per-candidate ranking signals (@soupnet/domain CandidateSignals) —
+   *  hydrated by hybridSearch in query mode; absent in corpus mode. Available
+   *  to every pipeline stage; NOT serialized into agent responses. */
+  signals?: CandidateSignals | undefined;
+}
+
+/** Which ranking served this response — version + effective switches.
+ *  Additive response metadata (brief §3c): consumers/experiments report the
+ *  ranking they ran against. */
+export interface RankingResponseInfo {
+  /** Dated algorithm version of the shipped defaults (ranking-changelog.md). */
+  version: string;
+  /** Whether echo demotion was active for this request. */
+  echoSuppression: "on" | "off";
+  /** Cluster display-ordering key in effect. */
+  clusterOrdering: string;
+  /** Ephemeral per-request overrides applied (e.g. "echo_suppress=on").
+   *  Omitted when none. */
+  overrides?: string[] | undefined;
 }
 
 export interface SubmitAndSearchResult {
@@ -133,6 +154,9 @@ export interface SubmitAndSearchResult {
   /** Server-Timing header value for the check's per-stage latencies.
    *  Routes attach it as a response header; never part of the JSON payload. */
   serverTiming?: string | undefined;
+  /** Which ranking served this response (JSON/structured payloads only —
+   *  kept out of the token-lean markdown surfaces). */
+  ranking?: RankingResponseInfo | undefined;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -508,10 +532,12 @@ export async function submitAndSearch(
     };
   }
 
-  // 5b. Resolve echo-suppression config (global default OFF; per-request
-  // override flips `enabled`). The reorder demotes THIS agent's own recent
-  // hypothesis-appends in the results — see docs/planning/echo-suppression.md.
-  const echoConfig = await resolveEchoSuppression(db, params.echoSuppress);
+  // 5b. Resolve the ranking config (versioned code defaults ← the global
+  // echoSuppression setting ← the per-request echo_suppress override). The
+  // echo reorder demotes THIS agent's own recent hypothesis-appends in the
+  // results — see docs/planning/echo-suppression.md and
+  // docs/planning/check-recipe-ranking-system.md.
+  const ranking = await resolveRankingConfig(db, params.echoSuppress);
 
   // 6. Run unified search pipeline
   // See docs/architecture/search-algorithms.md for the full algorithm description.
@@ -531,7 +557,13 @@ export async function submitAndSearch(
     includeVectors: !!params.axes, // need vectors for concept-axis computation
     queryVectorStr: traceVectorStr ?? undefined,
     keywordFilter: params.keywordFilter,
-    echo: { config: echoConfig, currentApiKeyId: keyId, now: new Date() },
+    echo: {
+      config: ranking.config.echo,
+      exemption: ranking.config.exemption,
+      currentApiKeyId: keyId,
+      now: new Date(),
+    },
+    ranking: ranking.config,
     timer,
   });
 
@@ -560,6 +592,10 @@ export async function submitAndSearch(
       resultSimilarities: pipelineResult.results.map((r) => r.semanticScore ?? null),
       // Connection surface: mcp-http | mcp-stdio | web (server-known).
       surface: params.surface ?? "web",
+      // Which ranking served the check — joins offline analysis to the
+      // algorithm version + effective demotion arm (brief §3c).
+      rankingVersion: ranking.version,
+      echoSuppression: ranking.config.echo.enabled,
       // OAuth client identity — segmentable cross-vendor column the day a
       // connector check arrives. Null for daily/scoped keys.
       ...(keyType === "oauth" && oauthClientId ? { oauthClientId } : {}),
@@ -621,6 +657,12 @@ export async function submitAndSearch(
       }
       : undefined,
     serverTiming: timer.toServerTimingHeader(),
+    ranking: {
+      version: ranking.version,
+      echoSuppression: ranking.config.echo.enabled ? "on" : "off",
+      clusterOrdering: ranking.config.clusterOrdering,
+      overrides: ranking.overrides.length > 0 ? ranking.overrides : undefined,
+    },
   };
 }
 
@@ -739,6 +781,14 @@ export async function searchWithoutLogging(
       }
       : undefined,
     serverTiming: timer.toServerTimingHeader(),
+    // The read-only filter path never demotes (echo suppression applies to
+    // the logging check path only) and uses legacy ordering — but it is still
+    // a ranked response, so it reports the algorithm version it ran under.
+    ranking: {
+      version: RANKING_ALGORITHM_VERSION,
+      echoSuppression: "off",
+      clusterOrdering: DEFAULT_RANKING.clusterOrdering,
+    },
   };
 }
 

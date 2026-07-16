@@ -20,8 +20,18 @@
 
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { PRODUCTION_SEARCH_STRATEGY_IDS, rankWithEchoSuppression } from "@soupnet/domain";
-import type { EchoSuppressionConfig, EchoRankCandidate } from "@soupnet/domain";
+import {
+  PRODUCTION_SEARCH_STRATEGY_IDS,
+  rankWithEchoSuppression,
+  echoDemotionPenalty,
+  isCurated,
+} from "@soupnet/domain";
+import type {
+  EchoSuppressionConfig,
+  EchoRankCandidate,
+  CurationExemptionConfig,
+  CandidateSignals,
+} from "@soupnet/domain";
 import { embedQuery, getEmbeddingModelId } from "../lib/embeddings/provider";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -53,6 +63,10 @@ export interface HybridSearchParams {
 
 export interface EchoContext {
   config: EchoSuppressionConfig;
+  /** What counts as curated (demotion-exempt). decided_at is the v1 signal;
+   *  the corroboration flags hydrate their per-candidate counts lazily inside
+   *  the own-rows demotion query when on. See RankingConfig (@soupnet/domain). */
+  exemption: CurationExemptionConfig;
   /** api_key making the current check (the authorship-match key). */
   currentApiKeyId: string | null;
   /** "now" for recency math. */
@@ -62,15 +76,25 @@ export interface EchoContext {
 export interface HybridSearchResult {
   id: string;
   claimText: string;
+  /** Display date — COALESCE(decided_at, created_at), the judgment date. */
   createdAt: Date;
   semanticScore: number | null;
   combinedScore: number;
+  /** Per-candidate ranking signals (raw append time, authorship, curation) —
+   *  hydrated from the same row load, available to every downstream stage.
+   *  See docs/planning/check-recipe-ranking-system.md §3a. */
+  signals: CandidateSignals;
 }
 
 export interface HybridSearchResponse {
   results: HybridSearchResult[];
   totalResults: number;
   searchMode: "semantic";
+  /** Echo-demotion penalty per trace id (only demoted candidates appear;
+   *  absent id ⇒ penalty 0). Present only when suppression ran. Downstream
+   *  stages (cluster ordering) reuse these instead of recomputing, so every
+   *  stage sees the same demotion decision. */
+  echoPenalties?: Map<string, number> | undefined;
 }
 
 // ── Main search function ─────────────────────────────────────────────────────
@@ -260,8 +284,11 @@ export async function hybridSearch(
     // fall below a genuinely cross-agent recipe of similar similarity — and
     // onto a later page rather than off the result set. Skipped entirely (no
     // metadata query) when disabled, keeping the default path byte-stable.
+    let echoPenalties: Map<string, number> | undefined;
     if (params.echo?.config.enabled && params.echo.currentApiKeyId) {
-      sorted = await applyEchoSuppression(db, sorted, params.echo);
+      const suppression = await applyEchoSuppression(db, sorted, params.echo);
+      sorted = suppression.sorted;
+      echoPenalties = suppression.penalties;
     }
 
     // Apply pagination
@@ -281,21 +308,30 @@ export async function hybridSearch(
 
     // created_at is coalesced with decided_at so the date agents see is the
     // judgment date — backfilled recipes (decision archaeology) read as old
-    // judgments, not fresh context. Raw created_at stays on the trace row.
+    // judgments, not fresh context. The raw append time, authorship, and
+    // curation columns ride the same row load as per-candidate ranking
+    // signals (zero extra queries) — available to every downstream stage.
     const traceRows = await db.execute(sql`
-      SELECT id, claim_text, COALESCE(decided_at, created_at) AS created_at
+      SELECT id, claim_text, COALESCE(decided_at, created_at) AS created_at,
+             created_at AS created_at_raw, decided_at, api_key_id, user_id
       FROM claimnet.traces
       WHERE id IN (${traceIdsSql})
     `);
 
     const traceMap = new Map<
       string,
-      { claimText: string; createdAt: Date }
+      { claimText: string; createdAt: Date; signals: CandidateSignals }
     >();
     for (const row of traceRows as unknown as Record<string, unknown>[]) {
       traceMap.set(row["id"] as string, {
         claimText: row["claim_text"] as string,
         createdAt: new Date(row["created_at"] as string),
+        signals: {
+          authorApiKeyId: (row["api_key_id"] as string | null) ?? null,
+          authorUserId: (row["user_id"] as string | null) ?? null,
+          createdAt: new Date(row["created_at_raw"] as string),
+          decidedAt: row["decided_at"] ? new Date(row["decided_at"] as string) : null,
+        },
       });
     }
 
@@ -309,10 +345,16 @@ export async function hybridSearch(
         createdAt: trace?.createdAt ?? new Date(),
         semanticScore: score,
         combinedScore: score,
+        signals: trace?.signals ?? {
+          authorApiKeyId: null,
+          authorUserId: null,
+          createdAt: trace?.createdAt ?? new Date(),
+          decidedAt: null,
+        },
       };
     });
 
-    return { results, totalResults, searchMode: "semantic" };
+    return { results, totalResults, searchMode: "semantic", echoPenalties };
   } catch (err) {
     console.error("[vector-search] Semantic search failed:", err);
     return { results: [], totalResults: 0, searchMode: "semantic" };
@@ -327,37 +369,73 @@ export async function hybridSearch(
  * traces among the candidates are fetched (indexed by api_key_id) — every other
  * candidate gets penalty 0 with no per-row work. The displayed semantic score
  * is preserved; only the order changes, and nothing is dropped.
+ *
+ * Curation exemption follows echo.exemption: decided_at is the always-cheap
+ * v1 signal; when a corroboration flag is on, the per-candidate count
+ * (human still_true reactions / cross-agent check-feedback) hydrates lazily
+ * as a subselect on the same own-rows query — the flags are default-OFF, so
+ * the shipped query shape is unchanged.
+ *
+ * Returns the reordered list plus the per-trace penalties actually applied,
+ * so downstream stages (cluster ordering) reuse the same demotion decision.
  */
 async function applyEchoSuppression(
   db: PostgresJsDatabase,
   sorted: Array<[string, number]>,
   echo: EchoContext,
-): Promise<Array<[string, number]>> {
+): Promise<{ sorted: Array<[string, number]>; penalties: Map<string, number> }> {
+  const penalties = new Map<string, number>();
   const currentApiKeyId = echo.currentApiKeyId;
-  if (!currentApiKeyId || sorted.length === 0) return sorted;
+  if (!currentApiKeyId || sorted.length === 0) return { sorted, penalties };
 
   const idsSql = sql.join(
     sorted.map(([id]) => sql`${id}::uuid`),
     sql`, `,
   );
+  // Lazy corroboration hydration — subselects exist only when their exemption
+  // flag is on. still_true is the only reaction with curation polarity
+  // (stale/wrong are decay signals); cross-agent feedback counts only rows
+  // from a DIFFERENT non-null key whose story was at least partially
+  // fulfilled ("a different key found the recipe useful") — human-origin rows
+  // (api_key_id IS NULL) signal through reactions, not here.
+  const reactionCountSql = echo.exemption.humanReaction
+    ? sql`, (SELECT count(*)::int FROM claimnet.trace_reactions r
+         WHERE r.trace_id = t.id AND r.reaction = 'still_true') AS reaction_count`
+    : sql``;
+  const crossFeedbackCountSql = echo.exemption.crossAgentFeedback
+    ? sql`, (SELECT count(*)::int FROM claimnet.check_feedback f
+         WHERE f.trace_id = t.id
+           AND f.api_key_id IS NOT NULL
+           AND f.api_key_id != ${currentApiKeyId}::uuid
+           AND f.story_fulfilled IN ('yes', 'partial')) AS cross_feedback_count`
+    : sql``;
+
   // Only the agent's own traces can be demoted — fetch just those.
   const ownRows = await db.execute(sql`
-    SELECT id::text AS id, created_at, decided_at
-    FROM claimnet.traces
-    WHERE api_key_id = ${currentApiKeyId}::uuid
-      AND id IN (${idsSql})
+    SELECT t.id::text AS id, t.created_at, t.decided_at
+      ${reactionCountSql}
+      ${crossFeedbackCountSql}
+    FROM claimnet.traces t
+    WHERE t.api_key_id = ${currentApiKeyId}::uuid
+      AND t.id IN (${idsSql})
   `);
 
   const own = new Map<string, { createdAt: Date; curated: boolean }>();
   for (const row of ownRows as unknown as Record<string, unknown>[]) {
     own.set(row["id"] as string, {
       createdAt: new Date(row["created_at"] as string),
-      // decided_at set ⇒ deliberately-dated / curated decision ⇒ exempt.
-      curated: row["decided_at"] !== null && row["decided_at"] !== undefined,
+      curated: isCurated(
+        {
+          decidedAt: row["decided_at"] ? new Date(row["decided_at"] as string) : null,
+          humanReactionCount: row["reaction_count"] as number | undefined,
+          crossAgentFeedbackCount: row["cross_feedback_count"] as number | undefined,
+        },
+        echo.exemption,
+      ),
     });
   }
   // Nothing of the agent's own in the candidate set — order can't change.
-  if (own.size === 0) return sorted;
+  if (own.size === 0) return { sorted, penalties };
 
   const candidates: EchoRankCandidate[] = sorted.map(([id, score]) => {
     const mine = own.get(id);
@@ -370,12 +448,17 @@ async function applyEchoSuppression(
     };
   });
 
-  const ranked = rankWithEchoSuppression(
-    candidates,
-    { currentApiKeyId, now: echo.now },
-    echo.config,
-  );
-  return ranked.map((c) => [c.id, c.semanticScore] as [string, number]);
+  const rankCtx = { currentApiKeyId, now: echo.now };
+  for (const c of candidates) {
+    const penalty = echoDemotionPenalty(c, rankCtx, echo.config);
+    if (penalty > 0) penalties.set(c.id, penalty);
+  }
+
+  const ranked = rankWithEchoSuppression(candidates, rankCtx, echo.config);
+  return {
+    sorted: ranked.map((c) => [c.id, c.semanticScore] as [string, number]),
+    penalties,
+  };
 }
 
 // ── Evidence search ─────────────────────────────────────────────────────────

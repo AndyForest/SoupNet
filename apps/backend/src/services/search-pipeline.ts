@@ -19,7 +19,8 @@
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 
-import { PRODUCTION_SEARCH_STRATEGY_IDS } from "@soupnet/domain";
+import { PRODUCTION_SEARCH_STRATEGY_IDS, DEFAULT_RANKING } from "@soupnet/domain";
+import type { RankingConfig } from "@soupnet/domain";
 import { hybridSearch, evidenceSearch } from "./vector-search.service";
 import type { EvidenceSearchResult, EchoContext } from "./vector-search.service";
 import type { SearchResultItem } from "./trace.service";
@@ -77,6 +78,15 @@ export interface SearchPipelineParams {
    *  the trace-search ranking (reorder only). Absent / disabled ⇒ no effect.
    *  Only meaningful in query mode. See docs/planning/echo-suppression.md. */
   echo?: EchoContext | undefined;
+  /** Ranking pipeline config (@soupnet/domain RankingConfig) — the single
+   *  config object every ranking stage reads. Absent ⇒ DEFAULT_RANKING
+   *  (byte-stable legacy behavior). The check path passes the resolved config
+   *  (code defaults ← system_settings ← per-request override); read-only
+   *  surfaces (map, briefing exemplars) omit it and keep legacy ordering.
+   *  Stage names, in pipeline order: query_embed → search (retrieval +
+   *  scoring/demotion inside hybridSearch) → vectors → cluster (k-means +
+   *  cluster ordering) → evidence → axes. Timer keys match. */
+  ranking?: RankingConfig | undefined;
   /** Read-time MRL truncation for fetched trace vectors (clustering, concept
    *  axes, response vectors). Stored vectors are NEVER modified — pgvector's
    *  subvector() slices the leading dims at query time. gemini embeddings are
@@ -262,7 +272,9 @@ export async function runSearchPipeline(
   let results: SearchResultItem[];
   let totalResults: number;
   let searchMode: "semantic" | "corpus";
+  let echoPenalties: Map<string, number> | undefined;
 
+  const ranking = params.ranking ?? DEFAULT_RANKING;
   const timer = params.timer ?? new StageTimer();
 
   // Resolve the query embedding once — trace search and evidence search share
@@ -295,10 +307,12 @@ export async function runSearchPipeline(
       createdAt: r.createdAt,
       rank: r.semanticScore ?? r.combinedScore,
       semanticScore: r.semanticScore ?? undefined,
+      signals: r.signals,
     }));
 
     totalResults = searchResponse.totalResults;
     searchMode = searchResponse.searchMode;
+    echoPenalties = searchResponse.echoPenalties;
   } else {
     // ── Corpus mode: fetch ALL traces in the requested (and pre-validated) groups.
     // Author-agnostic: shared-group traces from other members are in scope, which
@@ -348,11 +362,27 @@ export async function runSearchPipeline(
     }
 
     if (vectors.length > 1) {
+      // ── Cluster ordering (§3d lever) ──────────────────────────────────
+      // "demotion-adjusted-mass": clusters sort by the sum of their members'
+      // demotion-adjusted ranking scores (similarity × (1 − echo penalty))
+      // instead of raw memberCount, so a cluster of demoted echoes sinks
+      // below a smaller cluster of durable cross-agent recipes. The penalties
+      // are the ones the demotion stage actually applied — every stage sees
+      // the same decision. Default "member-count" ⇒ no weights ⇒ byte-stable.
+      const memberWeights =
+        ranking.clusterOrdering === "demotion-adjusted-mass" && searchMode === "semantic"
+          ? validIndices.map((i) => {
+            const r = results[i]!;
+            return r.rank * (1 - (echoPenalties?.get(r.id) ?? 0));
+          })
+          : undefined;
+
       const rawClusters = timer.timeSync("cluster", () => clusterResults({
         vectors,
         k: params.k,
         maxChars: params.maxChars,
         resultTexts: validIndices.map((i) => results[i]!.claimText),
+        memberWeights,
       }));
 
       // Build cluster assignments with member tracking

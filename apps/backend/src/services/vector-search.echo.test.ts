@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import crypto from "node:crypto";
-import { DEFAULT_ECHO_SUPPRESSION } from "@soupnet/domain";
+import { DEFAULT_ECHO_SUPPRESSION, DEFAULT_RANKING } from "@soupnet/domain";
 import type { EchoSuppressionConfig } from "@soupnet/domain";
 
 /**
@@ -163,7 +163,7 @@ describe.skipIf(!BASE)("echo suppression (hybridSearch, seeded vectors)", () => 
       limit: 10,
       offset: 0,
       queryVectorStr: toPgVec(Q),
-      echo: { config, currentApiKeyId: selfKeyId, now: new Date() },
+      echo: { config, exemption: DEFAULT_RANKING.exemption, currentApiKeyId: selfKeyId, now: new Date() },
     });
 
   // Only our three seeds share this run's unique claim prefix.

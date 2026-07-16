@@ -23,6 +23,8 @@
  * See: docs/architecture/embedding-test-results.md for verification plan
  */
 
+import { demotionAdjustedMass } from "@soupnet/domain";
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export interface ClusterResult {
@@ -41,6 +43,16 @@ export interface ClusterParams {
   k?: number | undefined; // explicit cluster count
   maxChars?: number | undefined; // auto-k from character budget
   resultTexts?: string[] | undefined; // for auto-k estimation
+  /** Per-vector display-ordering weights (index-parallel to `vectors`), e.g.
+   *  demotion-adjusted ranking scores. When provided, clusters sort by the
+   *  SUM of their members' weights (descending) instead of raw memberCount —
+   *  the "demotion-adjusted-mass" cluster ordering
+   *  (docs/planning/check-recipe-ranking-system.md §3d). Ordering only:
+   *  membership, exemplar selection, and centroids are unaffected, and the
+   *  clusters[i] ↔ exemplar[i] index-parallel contract that briefing-exemplars
+   *  and the map rely on is preserved. Absent ⇒ legacy memberCount ordering
+   *  (byte-stable). */
+  memberWeights?: number[] | undefined;
 }
 
 // Backward compatibility alias
@@ -174,14 +186,16 @@ export function clusterResults(params: ClusterParams): ClusterResult[] {
 
   // Edge case: one cluster per point
   if (k >= n) {
-    return vectors
-      .map((v, i) => ({
+    return sortClusters(
+      vectors.map((v, i) => ({
         exemplarIndex: i,
         memberCount: 1,
         avgSimilarity: 1,
         centroid: v.slice(),
-      }))
-      .sort((a, b) => b.memberCount - a.memberCount || a.exemplarIndex - b.exemplarIndex);
+      })),
+      params.memberWeights ? vectors.map((_, i) => [i]) : undefined,
+      params.memberWeights,
+    );
   }
 
   // Initialize centroids via spread sampling (K-Means++)
@@ -236,6 +250,7 @@ export function clusterResults(params: ClusterParams): ClusterResult[] {
 
   // Build results: find nearest exemplar to each centroid
   const results: ClusterResult[] = [];
+  const memberLists: number[][] = [];
   for (let c = 0; c < k; c++) {
     const members: number[] = [];
     for (let i = 0; i < n; i++) {
@@ -258,10 +273,40 @@ export function clusterResults(params: ClusterParams): ClusterResult[] {
       avgSimilarity: totalSim / members.length,
       centroid: centroid.slice(),
     });
+    memberLists.push(members);
   }
 
-  // Sort by memberCount descending
-  results.sort((a, b) => b.memberCount - a.memberCount || a.exemplarIndex - b.exemplarIndex);
+  return sortClusters(results, memberLists, params.memberWeights);
+}
 
-  return results;
+// ── Cluster display ordering ─────────────────────────────────────────────────
+
+/**
+ * Order clusters for display. Default: memberCount descending (legacy —
+ * byte-stable when memberWeights is absent). With memberWeights: sum of member
+ * weights descending ("demotion-adjusted-mass"), memberCount then
+ * exemplarIndex as stable tiebreaks. Reorder only — cluster contents are
+ * untouched.
+ */
+function sortClusters(
+  results: ClusterResult[],
+  memberLists: number[][] | undefined,
+  memberWeights: number[] | undefined,
+): ClusterResult[] {
+  if (!memberWeights || !memberLists) {
+    return results.sort(
+      (a, b) => b.memberCount - a.memberCount || a.exemplarIndex - b.exemplarIndex,
+    );
+  }
+  const mass = (members: number[]): number =>
+    demotionAdjustedMass(members.map((i) => memberWeights[i] ?? 0));
+  return results
+    .map((r, idx) => ({ r, mass: mass(memberLists[idx]!) }))
+    .sort(
+      (a, b) =>
+        b.mass - a.mass
+        || b.r.memberCount - a.r.memberCount
+        || a.r.exemplarIndex - b.r.exemplarIndex,
+    )
+    .map((x) => x.r);
 }
