@@ -310,6 +310,14 @@ The schema deliberately left FKs loose during development (operator, 2026-07-09:
 
 ---
 
+## Ranking (check_recipe)
+
+### `[IMPL]` check_recipe ranking — tunable, regression-tested system (briefing ready)
+
+Briefing: [docs/planning/check-recipe-ranking-system.md](planning/check-recipe-ranking-system.md) (2026-07-16, authored by the evals side at the operator's direction; lives on `feat/check-recipe-ranking-system`). Four deliverables, in order: (1) explicit pipeline stages with every ranking signal available at every stage; (2) the offline regression harness on golden datasets — the heart: one command, warm-cache ~$0, CI-gates ranking-path changes; (3) tunable parameters with a versioned tuning workflow (algorithm version surfaced in response metadata); (4) cluster-layer demotion integration as the first change shipped *through* the harness (displayed clusters currently order by raw `memberCount desc`, `clustering.service.ts:264` — self-similar echoes win it, which is why the merged echo-demotion recovered only ~15–17% end-to-end). Golden-dataset exports are delivered out-of-band by the evals side — coordinate through the operator. Likely sweeps into this stream (operator to confirm): the echo-suppression follow-ups below (the default-ON flip is exactly a golden-pair measurement; corroboration signals are the brief's §2/§3a signal work) and the decay-from-judgment-date note (Decision archaeology section) as a constraint on the future recency parameter. Blast-radius note for §3d: `briefing-exemplars.ts` consumes the same clustering service — cluster-ordering changes must either scope to the check path via the pipeline config or accept moving the briefing-exemplar surface, which has no regression gate until the behavioral-specs harness (Agent briefing section) exists.
+
+---
+
 ## Corpus curation and sharing
 
 ### `[IMPL]` Echo-suppression ranking — flip default ON after the A/B, then add corroboration signals
