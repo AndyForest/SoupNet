@@ -230,9 +230,7 @@ This file is the way concurrent AI sessions coordinate without explicit messagin
 
 `decided_at` shipped 2026-06-10 (column, `/check` + MCP param, coalesced judgment date in search results, trace-detail "Decided … · logged …" display). Remaining surfaces that still show only `created_at` and may want the judgment date: the traces list pages (`/app/traces`, recipe-book traces), the Recipe Map tooltips, and briefing exemplars. Low urgency — agents already see the coalesced date in check results, which is the surface that matters for alignment.
 
-### `[DESIGN]` Temporal decay should decay from the judgment date
-
-When stigmergic decay lands (search-algorithms.md §Stigmergic Decay), weight recipes by `COALESCE(decided_at, created_at)`, not raw `created_at`, so backfilled decisions (decision archaeology, design-thinking.md) decay as old judgments rather than fresh ones. Noted here so the decay implementation doesn't have to rediscover it.
+*(The former "temporal decay should decay from the judgment date" item was folded into the ranking-system stream — see the Ranking section — as a constraint on the future recency parameter: decay from `COALESCE(decided_at, created_at)`. Operator ruling 2026-07-16.)*
 
 ---
 
@@ -314,13 +312,9 @@ The schema deliberately left FKs loose during development (operator, 2026-07-09:
 
 ### `[IMPL]` check_recipe ranking — tunable, regression-tested system (briefing ready)
 
-Briefing: [docs/planning/check-recipe-ranking-system.md](planning/check-recipe-ranking-system.md) (2026-07-16, authored by the evals side at the operator's direction; lives on `feat/check-recipe-ranking-system`). Four deliverables, in order: (1) explicit pipeline stages with every ranking signal available at every stage; (2) the offline regression harness on golden datasets — the heart: one command, warm-cache ~$0, CI-gates ranking-path changes; (3) tunable parameters with a versioned tuning workflow (algorithm version surfaced in response metadata); (4) cluster-layer demotion integration as the first change shipped *through* the harness (displayed clusters currently order by raw `memberCount desc`, `clustering.service.ts:264` — self-similar echoes win it, which is why the merged echo-demotion recovered only ~15–17% end-to-end). Golden-dataset exports are delivered out-of-band by the evals side — coordinate through the operator. Likely sweeps into this stream (operator to confirm): the echo-suppression follow-ups below (the default-ON flip is exactly a golden-pair measurement; corroboration signals are the brief's §2/§3a signal work) and the decay-from-judgment-date note (Decision archaeology section) as a constraint on the future recency parameter. Blast-radius note for §3d: `briefing-exemplars.ts` consumes the same clustering service — cluster-ordering changes must either scope to the check path via the pipeline config or accept moving the briefing-exemplar surface, which has no regression gate until the behavioral-specs harness (Agent briefing section) exists.
+Briefing: [docs/planning/check-recipe-ranking-system.md](planning/check-recipe-ranking-system.md) (2026-07-16, authored by the evals side at the operator's direction; lives on `feat/check-recipe-ranking-system`). Four deliverables, in order: (1) explicit pipeline stages with every ranking signal available at every stage; (2) the offline regression harness on golden datasets — the heart: one command, warm-cache ~$0, CI-gates ranking-path changes; (3) tunable parameters with a versioned tuning workflow (algorithm version surfaced in response metadata); (4) cluster-layer demotion integration as the first change shipped *through* the harness (displayed clusters currently order by raw `memberCount desc`, `clustering.service.ts:264` — self-similar echoes win it, which is why the merged echo-demotion recovered only ~15–17% end-to-end). Golden-dataset exports are delivered out-of-band by the evals side — coordinate through the operator. **Folded in (operator ruling 2026-07-16):** the echo-suppression follow-ups (item below — the default-ON flip is exactly a golden-pair measurement; corroboration signals are the brief's §2/§3a signal work) and the former decay-from-judgment-date item (Decision archaeology section): when any recency/decay parameter lands in the tunable config, it decays from `COALESCE(decided_at, created_at)` so backfilled decisions (decision archaeology) decay as old judgments rather than fresh ones. Blast-radius note for §3d: `briefing-exemplars.ts` consumes the same clustering service — cluster-ordering changes must either scope to the check path via the pipeline config or accept moving the briefing-exemplar surface, which has no regression gate until the behavioral-specs harness (Agent briefing section) exists.
 
----
-
-## Corpus curation and sharing
-
-### `[IMPL]` Echo-suppression ranking — flip default ON after the A/B, then add corroboration signals
+### `[IMPL]` Echo-suppression ranking follow-ups (folded into the ranking-system stream, operator ruling 2026-07-16)
 
 Shipped 2026-07-14, feature-flagged **default-OFF** (`docs/planning/echo-suppression.md`):
 `check_recipe` can demote the current agent's own recent hypothesis-appends so an echo
@@ -328,17 +322,23 @@ falls below a cross-agent recipe of similar similarity (reorder only, no truncat
 percentages intact). Per-request `echo_suppress=on|off` on `/check` is the A/B toggle;
 global default lives in `system_settings.echoSuppression`.
 
-Follow-ups:
-- **Flip the global default to ON** once the A/B shows polluted-corpus retrieval recovers
-  to within noise of the clean baseline. (Decision recipe-checked as soup.net `5cfee9bb`;
-  default-OFF-until-measured per the house "ranking changes arrive measured" rule.)
+Follow-ups, now shipping through the ranking-system harness above:
+- **Flip the global default to ON** — the measurement is the harness's golden clean/polluted
+  pair: flip when polluted-corpus retrieval recovers to within noise of the clean baseline.
+  (Decision recipe-checked as soup.net `5cfee9bb`; default-OFF-until-measured per the house
+  "ranking changes arrive measured" rule.)
 - **Stronger curation-exemption signals** — v1 exempts only `decided_at` recipes. Add the
   "independent of the reporting agent" signals: human `trace_reactions` (`still_true`) and
-  cross-agent `check_feedback` corroboration. Pairs with the R2 provenance-weighted
-  feedback-ranking work (same axis: real signal vs echo).
+  cross-agent `check_feedback` corroboration, plumbed as per-stage signals in the brief's
+  §3a pipeline. Pairs with the R2 provenance-weighted feedback-ranking work (same axis:
+  real signal vs echo).
 - Consider a per-key toggle (needs a stable-key story — daily keys rotate) and/or an admin
   UI for the setting (flip via `setSetting` for now). MCP `check_recipe` tool-arg exposure
   is deliberately deferred to keep `tools/list` byte-stable.
+
+---
+
+## Corpus curation and sharing
 
 ### `[DECISION NEEDED]` Read-only recipe-book sharing (corpus bootstrapping)
 
