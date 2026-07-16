@@ -5,7 +5,7 @@
 > **Audience:** Engineers working on the codebase. Read this to understand what code does what and where to make changes.
 >
 > **Related docs (and how they differ):**
-> - [../ranking/README.md](../ranking/README.md) — **The ranking engine for newcomers**: why it exists, the journey from problem to measurement, the levers and hypotheses. Start there; come here for code-level detail.
+> - [ranking-engine.md](ranking-engine.md) — **The ranking engine for newcomers**: goals, the pipeline stage by stage with inputs/outputs, extension points, and the hypothesis register. Start there; come here for code-level detail.
 > - [research-foundations.md](research-foundations.md) — **Why** each algorithm works: formal math (LaTeX), research lineage, verification experiments. Same algorithms, deeper theory. Written for researchers.
 > - [search-strategies.md](search-strategies.md) — **What we considered:** general research notes, alternatives we evaluated, ideas for future exploration. Not necessarily implemented.
 > - [design-thinking.md](../design-thinking.md) — **Who and why:** user archetypes, product vision, design principles. No algorithm details.
