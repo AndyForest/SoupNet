@@ -32,6 +32,10 @@ import { shareAtK, kendallTau } from "../eval/metrics";
  *   4. Curation exemptions: decided_at (shipped ON) and the two corroboration
  *      flags (human still_true reaction, cross-key fulfilled check-feedback)
  *      exempt a candidate from demotion ONLY when their flag is on.
+ *   5. The clusterPool lever (P6, ranking-engine.md stage 3): "page" mode is
+ *      byte-identical to pre-lever behavior; "fixed" mode lets the clustered
+ *      summary reach diversity outside the page window (exemplars index the
+ *      pool) while flat pagination is untouched by the pool.
  *
  * Requires a running backend + postgres (skipped otherwise) — registration
  * goes over HTTP; seeding and pipeline calls hit the DB directly.
@@ -174,14 +178,21 @@ function arms(): { off: RankingConfig; on: RankingConfig; mass: RankingConfig } 
 }
 
 /** Drive the real pipeline: query mode + clustering, echo context built from
- *  the same RankingConfig every stage reads. */
-function runPipeline(agent: Agent, rc: RankingConfig, opts?: { k?: number; currentApiKeyId?: string }) {
+ *  the same RankingConfig every stage reads. `omitRanking` leaves the ranking
+ *  param entirely unset (the pre-lever caller shape) for byte-stability
+ *  comparisons. */
+function runPipeline(
+  agent: Agent,
+  rc: RankingConfig,
+  opts?: { k?: number; currentApiKeyId?: string; expand?: boolean; omitRanking?: boolean },
+) {
   return runSearchPipeline({
     db: getDb(),
     groupIds: [agent.groupId],
     query: "unused — queryVectorStr provided",
     queryVectorStr: Q,
     k: opts?.k,
+    expand: opts?.expand,
     perPage: 20,
     echo: {
       config: rc.echo,
@@ -189,7 +200,7 @@ function runPipeline(agent: Agent, rc: RankingConfig, opts?: { k?: number; curre
       currentApiKeyId: opts?.currentApiKeyId ?? agent.keyId,
       now: new Date(),
     },
-    ranking: rc,
+    ranking: opts?.omitRanking ? undefined : rc,
   });
 }
 
@@ -394,5 +405,106 @@ describe.skipIf(!BASE)("ranking regression — curation exemption flags", () => 
   it("echo off: pure relevance order regardless of corroboration rows", async () => {
     const { off } = arms();
     expect(await order(off)).toEqual([xd, xr, xf, xn, oc]);
+  });
+});
+
+// ── 5: clusterPool lever (P6) ────────────────────────────────────────────────
+
+describe.skipIf(!BASE)("ranking regression — cluster pool (P6)", () => {
+  let agent: Agent;
+  // 24 near-topic candidates (axis 1) fill ranks 1–24; a semantically DISTINCT
+  // topic (axis 2) sits only at ranks 25–27 — outside the perPage-20 window,
+  // inside a fixed pool. Sims are exact (hand-crafted vectors), echo off
+  // throughout: this block isolates the pool lever from demotion.
+  const commonIds: string[] = [];
+  const distinctIds: string[] = [];
+  const COMMON_SIMS = Array.from({ length: 24 }, (_, i) => 0.9 - i * 0.004); // 0.900…0.808
+  const DISTINCT_SIMS = [0.6, 0.59, 0.58];
+
+  const pageArm = (): RankingConfig => DEFAULT_RANKING; // clusterPool: page (legacy)
+  const fixedArm = (size: number): RankingConfig => ({
+    ...DEFAULT_RANKING,
+    clusterPool: { mode: "fixed", size, vectorDims: 768 },
+  });
+
+  beforeAll(async () => {
+    agent = await registerAgent("pool");
+    const crossKey = crypto.randomUUID();
+    for (let i = 0; i < COMMON_SIMS.length; i++) {
+      commonIds.push(await seedTrace(agent, `PC${i}`, {
+        sim: COMMON_SIMS[i]!, axis: 1, apiKeyId: crossKey, createdAtSql: "now() - interval '40 days'",
+      }));
+    }
+    for (let i = 0; i < DISTINCT_SIMS.length; i++) {
+      distinctIds.push(await seedTrace(agent, `PD${i}`, {
+        sim: DISTINCT_SIMS[i]!, axis: 2, apiKeyId: crossKey, createdAtSql: "now() - interval '40 days'",
+      }));
+    }
+  }, 120_000);
+
+  it("page mode: the distinct topic cannot reach an exemplar (outside the window)", async () => {
+    const r = await runPipeline(agent, pageArm(), { k: 2 });
+    expect(r.clustered).toBe(true);
+    // The clustering input is the page window — top 20 near-topic candidates.
+    expect(r.allResults!).toHaveLength(20);
+    expect(r.allResults!.every((t) => commonIds.includes(t.id))).toBe(true);
+    // So no exemplar can carry the distinct topic.
+    for (const t of r.results) {
+      expect(distinctIds).not.toContain(t.id);
+    }
+  });
+
+  it("fixed pool: a distinct-topic exemplar appears, and clusterSize/membership index the pool", async () => {
+    const r = await runPipeline(agent, fixedArm(30), { k: 2 }); // pool ⊇ all 27 seeds
+    expect(r.clustered).toBe(true);
+
+    // allResults IS the pool in fixed mode — all 27 seeds, ranked.
+    const pool = r.allResults!;
+    expect(pool).toHaveLength(27);
+    expect(pool.slice(24).map((t) => t.id)).toEqual(distinctIds); // ranks 25–27
+
+    // The distinct topic now wins an exemplar slot.
+    expect(r.results.some((t) => distinctIds.includes(t.id))).toBe(true);
+
+    // Membership/exemplar indices address the pool, and clusterSize counts
+    // pool members: the partition covers all 27, indices beyond the page
+    // window (≥20) included, and results[i] ↔ clusters[i] stays index-parallel.
+    expect(r.results).toHaveLength(r.clusters!.length);
+    const seen = new Set<number>();
+    for (let i = 0; i < r.clusters!.length; i++) {
+      const c = r.clusters![i]!;
+      expect(r.results[i]!.id).toBe(pool[c.exemplarIndex]!.id);
+      expect(r.results[i]!.clusterSize).toBe(c.memberCount);
+      expect(c.memberIndices).toHaveLength(c.memberCount);
+      for (const m of c.memberIndices) seen.add(m);
+    }
+    expect([...seen].sort((a, b) => a - b)).toEqual(pool.map((_, i) => i));
+    expect([...seen].some((i) => i >= 20)).toBe(true);
+  });
+
+  it("page mode is byte-identical to a run with no ranking param at all (pre-lever shape)", async () => {
+    const [withLever, preLever] = await Promise.all([
+      runPipeline(agent, pageArm(), { k: 2 }),
+      runPipeline(agent, pageArm(), { k: 2, omitRanking: true }),
+    ]);
+    expect(withLever.results.map((t) => t.id)).toEqual(preLever.results.map((t) => t.id));
+    expect(withLever.results.map((t) => t.clusterSize)).toEqual(preLever.results.map((t) => t.clusterSize));
+    expect(withLever.clusters).toEqual(preLever.clusters);
+    expect(withLever.allResults!.map((t) => t.id)).toEqual(preLever.allResults!.map((t) => t.id));
+  });
+
+  it("pool never leaks into pagination: flat results identical across pool arms", async () => {
+    const [flatPage, flatFixed] = await Promise.all([
+      runPipeline(agent, pageArm(), { expand: true }),
+      runPipeline(agent, fixedArm(30), { expand: true }),
+    ]);
+    // Same id order, same displayed scores, same count arithmetic — the pool
+    // shapes only the clustered summary (principle 2: nothing hidden from,
+    // and nothing added to, the flat surface).
+    expect(flatFixed.results.map((t) => t.id)).toEqual(flatPage.results.map((t) => t.id));
+    expect(flatFixed.results.map((t) => t.semanticScore)).toEqual(flatPage.results.map((t) => t.semanticScore));
+    expect(flatFixed.totalResults).toBe(flatPage.totalResults);
+    expect(flatFixed.totalPages).toBe(flatPage.totalPages);
+    expect(flatFixed.results).toHaveLength(20); // the page window, not the pool
   });
 });

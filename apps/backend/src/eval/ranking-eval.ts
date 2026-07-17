@@ -33,10 +33,17 @@
  *     the import service's deterministic mint isolates the arm and returns the
  *     id remap the metrics need.
  *
- * Ranking variants (§3d proving arms):
- *   - baseline:     DEFAULT_RANKING (echo off, member-count cluster order)
- *   - echo-on:      echo demotion enabled, member-count cluster order
- *   - echo-on-mass: echo demotion enabled + demotion-adjusted-mass cluster order
+ * Ranking variants (§3d + P6 proving arms):
+ *   - baseline:        DEFAULT_RANKING (echo off, member-count order, page pool)
+ *   - echo-on:         echo demotion enabled, member-count order, page pool
+ *   - echo-on-mass:    echo demotion + demotion-adjusted-mass cluster order
+ *   - echo-on-pool100: echo demotion + fixed:100 clustering pool @ 768 dims (P6)
+ *
+ * Two pipeline calls per question × arm × variant (2026-07-17 fidelity
+ * refactor): an expanded flat call for the whole-list metrics and a
+ * production-shaped clustered call (perPage 20) for the display metrics —
+ * the earlier single perPage:100 clustered call idealized production's
+ * 20-window and masked exactly the pool problem P6 names.
  */
 
 import crypto from "node:crypto";
@@ -103,7 +110,7 @@ interface ThresholdRule {
 }
 
 const MAX_GRADE = 3;
-const VARIANTS = ["baseline", "echo-on", "echo-on-mass"] as const;
+const VARIANTS = ["baseline", "echo-on", "echo-on-mass", "echo-on-pool100"] as const;
 type VariantName = (typeof VARIANTS)[number];
 
 function variantConfig(name: VariantName): RankingConfig {
@@ -117,6 +124,15 @@ function variantConfig(name: VariantName): RankingConfig {
         ...DEFAULT_RANKING,
         echo: { ...DEFAULT_RANKING.echo, enabled: true },
         clusterOrdering: "demotion-adjusted-mass",
+      };
+    case "echo-on-pool100":
+      // The P6 lever's measured candidate (candidate-pool-sizing memo):
+      // demotion on, clustered summary drawn from the top-100 pool at 768-dim
+      // pool vectors. Flat pagination is untouched by the pool by design.
+      return {
+        ...DEFAULT_RANKING,
+        echo: { ...DEFAULT_RANKING.echo, enabled: true },
+        clusterPool: { mode: "fixed", size: 100, vectorDims: 768 },
       };
   }
 }
@@ -163,29 +179,57 @@ async function measureQuestion(
   const currentApiKeyId = q.echoKeys?.[0]
     ? keyForLogicalAgent(q.echoKeys[0])
     : crypto.randomUUID();
+  const echo = {
+    config: rc.echo,
+    exemption: rc.exemption,
+    currentApiKeyId,
+    now: new Date(meta.referenceNow),
+  };
 
   const { runSearchPipeline } = await import("../services/search-pipeline");
-  const res = await runSearchPipeline({
+
+  // Two calls per question — production fidelity (2026-07-17 refactor). The
+  // previous single perPage:100 clustered call idealized production's
+  // 20-window and masked exactly the P6 pool problem.
+  //   (a) Expanded flat call: the whole-list ranking surface, for the flat
+  //       metrics (ndcg*, recall*, echoShare*, tau, Ser@L).
+  //   (b) Production-shaped clustered call (perPage 20, the caller's k): what
+  //       an agent actually sees, for the display metrics (exemplar/cluster
+  //       echo exposure, aspect coverage).
+  const flatRes = await runSearchPipeline({
+    db: arm.db,
+    groupIds: [arm.groupId],
+    query: q.query,
+    queryVectorStr: `[${queryVector.join(",")}]`,
+    expand: true,
+    perPage: 100, // whole corpus — no-cutoff retrieval, golden sets are small
+    includeVectors: true,
+    // Pin full dims so Ser@L's unexp() is computed in the same space for
+    // every variant (a fixed pool would otherwise MRL-truncate to its
+    // vectorDims and make the pool arm's Ser incomparable).
+    vectorDims: 3072,
+    echo,
+    ranking: rc,
+  });
+
+  const displayRes = await runSearchPipeline({
     db: arm.db,
     groupIds: [arm.groupId],
     query: q.query,
     queryVectorStr: `[${queryVector.join(",")}]`,
     k: q.clusters ?? meta.clusters ?? 3,
-    perPage: 100, // whole corpus — no-cutoff retrieval, golden sets are small
-    includeVectors: true,
-    echo: {
-      config: rc.echo,
-      exemption: rc.exemption,
-      currentApiKeyId,
-      now: new Date(meta.referenceNow),
-    },
+    perPage: 20, // production default — the window the clustered summary draws from in page mode
+    echo,
     ranking: rc,
   });
 
-  // Flat post-demotion order (allResults when clustered; results otherwise).
-  const flat = res.allResults ?? res.results;
+  // Flat post-demotion order — the whole-list ranking surface.
+  const flat = flatRes.results;
   const flatIds = flat.map((t) => t.id);
-  const exemplarIds = res.clustered ? res.results.map((t) => t.id) : [];
+  // Display surface: exemplars in cluster order; membership indexes the
+  // cluster input (the P6 pool in fixed mode, else the page window).
+  const clusterInput = displayRes.allResults ?? displayRes.results;
+  const exemplarIds = displayRes.clustered ? displayRes.results.map((t) => t.id) : [];
 
   // Grades are keyed on canonical fixture ids — remap into this arm's ids.
   const grade = new Map<string, number>();
@@ -213,7 +257,7 @@ async function measureQuestion(
   // flat post-demotion order — the ranking stage's output, position-discounted.
   const serItems: SerendipityItem[] = [];
   for (const t of flat) {
-    const vec = res.vectors?.get(t.id);
+    const vec = flatRes.vectors?.get(t.id);
     serItems.push({
       rel: gradeOf(t.id) / MAX_GRADE,
       unexp: vec ? 1 - cosine(vec, queryVector) : 0,
@@ -223,8 +267,8 @@ async function measureQuestion(
   const aspectMap = new Map(Object.entries(q.aspects ?? {}).map(([id, a]) => [arm.mapId(id), a]));
   const relevantIds = new Set([...grade.entries()].filter(([, g]) => g > 0).map(([id]) => id));
 
-  const topClusterIds = res.clustered
-    ? res.clusters![0]!.memberIndices.map((i) => flat[i]!.id)
+  const topClusterIds = displayRes.clustered
+    ? displayRes.clusters![0]!.memberIndices.map((i) => clusterInput[i]!.id)
     : [];
 
   return {
@@ -451,6 +495,7 @@ async function main(): Promise<void> {
     clean: new Map(),
   };
 
+  const loopStart = Date.now();
   for (const q of questions) {
     const queryVector = await embedQuery(q.query, "SEMANTIC_SIMILARITY");
     if (!queryVector) throw new Error(`Embedding provider returned null for question ${q.id}`);
@@ -465,6 +510,9 @@ async function main(): Promise<void> {
     }
     console.log(`  measured ${q.id} (${q.unaffected ? "guardrail" : "graded"})`);
   }
+  const loopMs = Date.now() - loopStart;
+  const pipelineCalls = questions.length * 2 * VARIANTS.length * 2; // q × arms × variants × (flat + display)
+  console.log(`measurement loop: ${(loopMs / 1000).toFixed(1)}s for ${pipelineCalls} pipeline calls`);
 
   // ── Aggregate ──────────────────────────────────────────────────────────────
   const affected = questions.filter((q) => (q.echoKeys?.length ?? 0) > 0 && !q.unaffected);
@@ -496,9 +544,10 @@ async function main(): Promise<void> {
   };
 
   // Guardrail: on unaffected questions, each echo variant's flat order must
-  // match baseline exactly (tau = 1 — the current key authored nothing there).
+  // match baseline exactly (tau = 1 — the current key authored nothing there,
+  // and the pool lever never touches the flat surface).
   const guardrail: Record<string, number> = {};
-  for (const variant of ["echo-on", "echo-on-mass"] as const) {
+  for (const variant of ["echo-on", "echo-on-mass", "echo-on-pool100"] as const) {
     guardrail[variant] = mean(
       unaffected.map((q) => {
         const per = results.polluted.get(q.id)!;
@@ -521,6 +570,8 @@ async function main(): Promise<void> {
     questionCount: questions.length,
     affectedQuestionCount: affected.length,
     unaffectedQuestionCount: unaffected.length,
+    measurementLoopMs: loopMs,
+    pipelineCalls,
     aggregates,
     perQuestion: Object.fromEntries(
       (["polluted", "clean"] as const).map((armName) => [
