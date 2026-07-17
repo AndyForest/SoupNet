@@ -81,6 +81,30 @@ export interface CurationExemptionConfig {
 }
 
 /**
+ * Clustering candidate pool — hypothesis P6 (ranking-engine.md stage 3).
+ *
+ *   - "page": legacy — the pool is the pagination window (per_page, default
+ *     20), an inherited default doing double duty. Byte-stable.
+ *   - "fixed": the pool is the top `size` candidates by adjusted rank,
+ *     decoupled from pagination. The clustered summary then draws from an
+ *     industry-standard diversity pool (retrieve-~100-then-refine practice;
+ *     Carrot2 names ~100 the clustering minimum) while flat pagination is
+ *     untouched. Pool selection shapes only the clustered summary — no score
+ *     floor hides anything from the flat surface (principle 2).
+ *
+ * size range: 20–400. ≤133 keeps the ANN top-k stream on the fast index plan
+ * (133 × ANN_DEDUPE_MARGIN 3 = 399 ≤ ANN_CANDIDATE_MAX 400); larger forces
+ * exhaustive scans per check. vectorDims: MRL truncation for pool clustering
+ * vectors (768 = the Recipe Map precedent, 4× cheaper than full 3,072; 0 =
+ * full dims). Sources: docs/planning/ranking-research/candidate-pool-sizing.md.
+ */
+export interface ClusterPoolConfig {
+  mode: "page" | "fixed";
+  size: number;
+  vectorDims: number;
+}
+
+/**
  * The pipeline config object. Every ranking lever is a named field with a
  * documented default and range; stages read from this object rather than
  * from scattered constants, so a new lever is a field + a stage read — no
@@ -96,6 +120,9 @@ export interface RankingConfig {
   exemption: CurationExemptionConfig;
   /** Cluster display ordering. */
   clusterOrdering: ClusterOrderingKey;
+  /** Clustering candidate pool (P6). Ships "page" (legacy); the measured
+   *  candidate is fixed:100 @ 768 dims. */
+  clusterPool: ClusterPoolConfig;
 }
 
 /** Shipped defaults — byte-identical to pre-refactor behavior. */
@@ -107,6 +134,7 @@ export const DEFAULT_RANKING: RankingConfig = {
     crossAgentFeedback: false,
   },
   clusterOrdering: "member-count",
+  clusterPool: { mode: "page", size: 100, vectorDims: 768 },
 };
 
 /**

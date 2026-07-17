@@ -288,6 +288,8 @@ export async function runSearchPipeline(
     // null → leave undefined; hybridSearch/evidenceSearch degrade gracefully.
   }
 
+  let poolItems: SearchResultItem[] | undefined;
+
   if (params.query) {
     // ── Query mode: semantic vector search ─────────────────────────────────
     const searchResponse = await timer.time("search", () => hybridSearch(db, {
@@ -299,16 +301,22 @@ export async function runSearchPipeline(
       queryVectorStr,
       keywordFilter: params.keywordFilter,
       echo: params.echo,
+      // P6 pool lever: cluster the top-N candidates instead of the page
+      // window. "page" mode ⇒ undefined ⇒ hybridSearch is byte-stable.
+      poolLimit: ranking.clusterPool.mode === "fixed" ? ranking.clusterPool.size : undefined,
     }));
 
-    results = searchResponse.results.map((r) => ({
+    const toItem = (r: (typeof searchResponse.results)[number]): SearchResultItem => ({
       id: r.id,
       claimText: r.claimText,
       createdAt: r.createdAt,
       rank: r.semanticScore ?? r.combinedScore,
       semanticScore: r.semanticScore ?? undefined,
       signals: r.signals,
-    }));
+    });
+
+    results = searchResponse.results.map(toItem);
+    poolItems = searchResponse.pool?.map(toItem);
 
     totalResults = searchResponse.totalResults;
     searchMode = searchResponse.searchMode;
@@ -335,26 +343,34 @@ export async function runSearchPipeline(
   }
 
   // ── Clustering (optional) ────────────────────────────────────────────────
+  // clusterInput is what the cluster stage summarizes: the P6 pool when the
+  // lever is on, else the page (legacy — byte-stable). Vectors, membership,
+  // weights, and exemplars all index into clusterInput.
   let clustered = false;
   let clusterAssignments: ClusterAssignment[] | undefined;
   let vectorMap: Map<string, number[]> | undefined;
   let preClusterResults: SearchResultItem[] | undefined;
 
-  const shouldCluster = !params.expand && (params.k || params.maxChars) && results.length > 1;
+  const clusterInput = poolItems && poolItems.length > 1 ? poolItems : results;
+  const shouldCluster = !params.expand && (params.k || params.maxChars) && clusterInput.length > 1;
   if (shouldCluster || params.includeVectors || params.axes) {
-    // Fetch vectors for all results (optionally filtered by strategy for experiments)
-    const resultIds = results.map((r) => r.id);
+    // Fetch vectors for the cluster input ∪ page (optionally filtered by
+    // strategy for experiments). Pool vectors are MRL-truncated per the
+    // lever's vectorDims unless the caller pinned dims explicitly.
+    const vecIds = [...new Set([...clusterInput, ...results].map((r) => r.id))];
+    const dims = params.vectorDims
+      ?? (poolItems && ranking.clusterPool.vectorDims > 0 ? ranking.clusterPool.vectorDims : undefined);
     vectorMap = await timer.time("vectors", () =>
-      fetchTraceVectors(db, resultIds, params.vectorStrategy, params.vectorDims));
+      fetchTraceVectors(db, vecIds, params.vectorStrategy, dims));
   }
 
   if (shouldCluster && vectorMap && vectorMap.size > 1) {
-    // Build vectors array matching results order
+    // Build vectors array matching clusterInput order
     const vectors: number[][] = [];
     const validIndices: number[] = [];
 
-    for (let i = 0; i < results.length; i++) {
-      const vec = vectorMap.get(results[i]!.id);
+    for (let i = 0; i < clusterInput.length; i++) {
+      const vec = vectorMap.get(clusterInput[i]!.id);
       if (vec) {
         vectors.push(vec);
         validIndices.push(i);
@@ -372,7 +388,7 @@ export async function runSearchPipeline(
       const memberWeights =
         ranking.clusterOrdering === "demotion-adjusted-mass" && searchMode === "semantic"
           ? validIndices.map((i) => {
-            const r = results[i]!;
+            const r = clusterInput[i]!;
             return r.rank * (1 - (echoPenalties?.get(r.id) ?? 0));
           })
           : undefined;
@@ -381,7 +397,7 @@ export async function runSearchPipeline(
         vectors,
         k: params.k,
         maxChars: params.maxChars,
-        resultTexts: validIndices.map((i) => results[i]!.claimText),
+        resultTexts: validIndices.map((i) => clusterInput[i]!.claimText),
         memberWeights,
       }));
 
@@ -400,12 +416,13 @@ export async function runSearchPipeline(
         clusterAssignments[clusterIdx]!.memberIndices.push(validIndices[vi]!);
       }
 
-      // Save pre-clustered results for member ID resolution (used by map endpoint)
-      preClusterResults = [...results];
+      // Save pre-clustered input for member ID resolution (used by map
+      // endpoint; = the P6 pool when the lever is on).
+      preClusterResults = [...clusterInput];
 
       // Replace results with exemplars (add clusterSize)
       results = clusterAssignments.map((c) => ({
-        ...results[validIndices[c.exemplarIndex]!]!,
+        ...clusterInput[validIndices[c.exemplarIndex]!]!,
         clusterSize: c.memberCount,
       }));
       clustered = true;

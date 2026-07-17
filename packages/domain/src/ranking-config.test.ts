@@ -21,6 +21,11 @@ describe("DEFAULT_RANKING", () => {
       crossAgentFeedback: false,
     });
     expect(DEFAULT_RANKING.clusterOrdering).toBe("member-count");
+    // "page" = the legacy pagination-window pool; the fixed:100 candidate is
+    // the measured alternative (candidate-pool-sizing memo, P6).
+    expect(DEFAULT_RANKING.clusterPool.mode).toBe("page");
+    expect(DEFAULT_RANKING.clusterPool.size).toBe(100);
+    expect(DEFAULT_RANKING.clusterPool.vectorDims).toBe(768);
   });
 
   it("has a dated version identifier", () => {

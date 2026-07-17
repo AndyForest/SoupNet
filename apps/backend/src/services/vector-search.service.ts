@@ -59,6 +59,12 @@ export interface HybridSearchParams {
    *  truncated, displayed similarity untouched. Absent / disabled ⇒ byte-stable
    *  (no metadata query, no reorder). See docs/planning/echo-suppression.md. */
   echo?: EchoContext | undefined;
+  /** Clustering-pool size (P6 lever). When set, the response additionally
+   *  carries `pool`: the top `poolLimit` candidates by adjusted rank,
+   *  pre-pagination, for the cluster stage to summarize. Pagination and the
+   *  paged `results` are unchanged — the pool only feeds the clustered
+   *  summary. Absent ⇒ no pool row load (byte-stable). */
+  poolLimit?: number | undefined;
 }
 
 export interface EchoContext {
@@ -95,6 +101,9 @@ export interface HybridSearchResponse {
    *  stages (cluster ordering) reuse these instead of recomputing, so every
    *  stage sees the same demotion decision. */
   echoPenalties?: Map<string, number> | undefined;
+  /** Clustering pool — the top `poolLimit` candidates by adjusted rank
+   *  (pre-pagination), only when HybridSearchParams.poolLimit was set. */
+  pool?: HybridSearchResult[] | undefined;
 }
 
 // ── Main search function ─────────────────────────────────────────────────────
@@ -294,8 +303,15 @@ export async function hybridSearch(
     // Apply pagination
     const paged = sorted.slice(offset, offset + limit);
 
-    // ── Load trace data ─────────────────────────────────────────────────
-    const traceIds = paged.map(([id]) => id);
+    // Clustering pool (P6): the top poolLimit candidates by adjusted rank,
+    // independent of the page window. Row data rides the same load below.
+    const poolPairs = params.poolLimit ? sorted.slice(0, params.poolLimit) : undefined;
+
+    // ── Load trace data (page ∪ pool, one query) ─────────────────────────
+    const traceIds = [...new Set([
+      ...paged.map(([id]) => id),
+      ...(poolPairs ?? []).map(([id]) => id),
+    ])];
 
     if (traceIds.length === 0) {
       return { results: [], totalResults: 0, searchMode: "semantic" };
@@ -337,7 +353,7 @@ export async function hybridSearch(
 
     // ── Build response ────────────────────────────────────────────────────
 
-    const results: HybridSearchResult[] = paged.map(([traceId, score]) => {
+    const toResult = ([traceId, score]: [string, number]): HybridSearchResult => {
       const trace = traceMap.get(traceId);
       return {
         id: traceId,
@@ -352,9 +368,12 @@ export async function hybridSearch(
           decidedAt: null,
         },
       };
-    });
+    };
 
-    return { results, totalResults, searchMode: "semantic", echoPenalties };
+    const results = paged.map(toResult);
+    const pool = poolPairs?.map(toResult);
+
+    return { results, totalResults, searchMode: "semantic", echoPenalties, pool };
   } catch (err) {
     console.error("[vector-search] Semantic search failed:", err);
     return { results: [], totalResults: 0, searchMode: "semantic" };

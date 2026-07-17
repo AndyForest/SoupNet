@@ -126,9 +126,16 @@ export interface RankingResponseInfo {
   echoSuppression: "on" | "off";
   /** Cluster display-ordering key in effect. */
   clusterOrdering: string;
+  /** Clustering-pool mode in effect: "page" (legacy) or "fixed:<size>". */
+  clusterPool: string;
   /** Ephemeral per-request overrides applied (e.g. "echo_suppress=on").
    *  Omitted when none. */
   overrides?: string[] | undefined;
+}
+
+/** Render a ClusterPoolConfig as the compact response form. */
+export function clusterPoolLabel(pool: { mode: string; size: number }): string {
+  return pool.mode === "fixed" ? `fixed:${pool.size}` : pool.mode;
 }
 
 export interface SubmitAndSearchResult {
@@ -661,6 +668,7 @@ export async function submitAndSearch(
       version: ranking.version,
       echoSuppression: ranking.config.echo.enabled ? "on" : "off",
       clusterOrdering: ranking.config.clusterOrdering,
+      clusterPool: clusterPoolLabel(ranking.config.clusterPool),
       overrides: ranking.overrides.length > 0 ? ranking.overrides : undefined,
     },
   };
@@ -788,6 +796,7 @@ export async function searchWithoutLogging(
       version: RANKING_ALGORITHM_VERSION,
       echoSuppression: "off",
       clusterOrdering: DEFAULT_RANKING.clusterOrdering,
+      clusterPool: clusterPoolLabel(DEFAULT_RANKING.clusterPool),
     },
   };
 }
