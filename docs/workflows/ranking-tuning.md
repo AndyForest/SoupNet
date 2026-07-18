@@ -6,8 +6,8 @@ How a `check_recipe` ranking change — a new default, a tuned weight, a new lev
 
 | Layer | What it proves | Where | Runs |
 |---|---|---|---|
-| A — mechanism regression | The §2 rulings as exact asserts (no truncation, percentages untouched, exemplar contract), the echo-exposure waterfall mechanics, guardrail no-ops, exemption flags | `apps/backend/src/services/ranking-regression.test.ts` (hand-crafted unit vectors, exact cosines) | inside `npm run test:ci` — every gate |
-| B — golden-set semantic eval | Graded retrieval quality, echo exposure, diversity, and utility × surprise on realistic corpora with a real embedding model | `apps/backend/src/eval/ranking-eval.ts` over `eval/golden/*` (fixture format: [eval/golden/README.md](../../eval/golden/README.md)) | `npm run eval:ranking`, CI `ranking-eval` job (deploy gate), inside `test:ci` (skip: `SKIP_RANKING_EVAL=1`) |
+| A — mechanism regression | The plan-v2 seams as exact asserts: pure-function ranking (different api_keys / session tokens change nothing about order or scores), sibling visibility, known-set stub rendering + exemplar backfill, and the clusterPool boundary modes (page/fixed/score-gap, no pagination leak) | `apps/backend/src/services/ranking-regression.test.ts` (hand-crafted unit vectors + the real deposit path) | inside `npm run test:ci` — every gate |
+| B — golden-set semantic eval | Graded retrieval quality, display diversity, utility × surprise, token efficiency of session stubs, and the sibling-visibility contract on realistic corpora with a real embedding model; the clean/polluted arm pair runs as a benchmark-HYGIENE scenario (plan v2 seam 3) | `apps/backend/src/eval/ranking-eval.ts` over `eval/golden/*` (fixture format: [eval/golden/README.md](../../eval/golden/README.md)) | `npm run eval:ranking`, CI `ranking-eval` job (deploy gate), inside `test:ci` (skip: `SKIP_RANKING_EVAL=1`) |
 
 Regeneration commands, one per metric family (all Layer B metrics come from the same deterministic run — one command regenerates every number in a report):
 
@@ -39,6 +39,6 @@ Fixture format and the out-of-band delivery path for real corpora: [eval/golden/
 
 ## Threshold philosophy
 
-- **Hard invariants are exact.** The unaffected-question tau guardrails sit at `min: 1` — demotion touching an unaffected query is a bug, not a regression to tolerate.
+- **Hard invariants are exact.** The unaffected-question tau guardrails and the siblingVisibility contract sit at `min: 1` — a pool boundary leaking into the flat order, or a known-set stub hiding sibling work, is a bug, not a regression to tolerate.
 - **Semantic metrics carry margins.** The eval runs a real ONNX model (`local:bge-small-en-v1.5`); each platform is deterministic, but low-order float differences across platforms can flip near-tie ranks, so calibrated bounds keep ~0.05 headroom below/above the measured value (ruling recipe `e65eadfe`).
 - **Every bound carries a rationale** naming what it protects and which run calibrated it — `thresholds.json` entries without one fail the run.

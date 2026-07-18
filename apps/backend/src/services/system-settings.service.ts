@@ -1,26 +1,15 @@
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { systemSettings } from "@soupnet/db";
-import {
-  DEFAULT_ECHO_SUPPRESSION,
-  DEFAULT_RANKING,
-  RANKING_ALGORITHM_VERSION,
-} from "@soupnet/domain";
-import type { EchoSuppressionConfig, RankingConfig } from "@soupnet/domain";
 
 export interface SystemSettingsMap {
   signupCap: number;
   embeddingsEnabled: boolean;
-  /** Same-agent/same-session retrieval echo demotion. Global default OFF —
-   *  see docs/planning/echo-suppression.md. Per-request `echo_suppress=on|off`
-   *  overrides `enabled` for a single check via resolveEchoSuppression(). */
-  echoSuppression: EchoSuppressionConfig;
 }
 
 const DEFAULTS: SystemSettingsMap = {
   signupCap: 0, // No self-signups until admin sets it
   embeddingsEnabled: true, // Gemini API calls enabled by default
-  echoSuppression: DEFAULT_ECHO_SUPPRESSION, // enabled: false
 };
 
 export async function getSetting<K extends keyof SystemSettingsMap>(
@@ -66,78 +55,6 @@ export async function getAllSettings(
     }
   }
   return result;
-}
-
-/**
- * Resolve the effective echo-suppression config for a single check: the global
- * `echoSuppression` setting (merged over the shipped defaults so a partial
- * stored value can't drop a field), with an optional per-request override of
- * `enabled` only.
- *
- *   override "off"  → enabled forced false (skips the global read entirely —
- *                     the A/B control arm and the byte-stable path).
- *   override "on"   → enabled forced true; weights/windows come from the global
- *                     setting (or defaults).
- *   override absent → global default (ships OFF).
- */
-export async function resolveEchoSuppression(
-  db: PostgresJsDatabase,
-  override?: "on" | "off" | undefined,
-): Promise<EchoSuppressionConfig> {
-  // Control arm / disabled: no need to read the setting at all.
-  if (override === "off") return { ...DEFAULT_ECHO_SUPPRESSION, enabled: false };
-
-  const stored = await getSetting(db, "echoSuppression");
-  const merged: EchoSuppressionConfig = { ...DEFAULT_ECHO_SUPPRESSION, ...stored };
-  if (override === "on") merged.enabled = true;
-  return merged;
-}
-
-/** The resolved ranking configuration for one request, plus provenance. */
-export interface ResolvedRanking {
-  config: RankingConfig;
-  /** Dated algorithm version of the shipped code defaults —
-   *  RANKING_ALGORITHM_VERSION. Echoed in responses/audit so consumers can
-   *  report which ranking served them. */
-  version: string;
-  /** Ephemeral per-request overrides applied on top of defaults + settings
-   *  (e.g. "echo_suppress=on"). Echoed back, never persisted. */
-  overrides: string[];
-}
-
-/**
- * Resolve the full ranking config for one check: versioned code defaults
- * (DEFAULT_RANKING) ← the `echoSuppression` system setting ← the per-request
- * `echo_suppress` override. Layering per recipe 8ee8e3ab — numeric knobs live
- * in the versioned code defaults; the settings table carries operational
- * switches; per-request overrides are ephemeral and echoed back.
- */
-export async function resolveRankingConfig(
-  db: PostgresJsDatabase,
-  echoOverride?: "on" | "off" | undefined,
-): Promise<ResolvedRanking> {
-  const echo = await resolveEchoSuppression(db, echoOverride);
-  const config: RankingConfig = { ...DEFAULT_RANKING, echo };
-  return {
-    config,
-    version: RANKING_ALGORITHM_VERSION,
-    overrides: echoOverride ? [`echo_suppress=${echoOverride}`] : [],
-  };
-}
-
-/**
- * Normalize the per-request `echo_suppress` query param to a tri-state.
- * Accepts on/true/1/yes and off/false/0/no (case-insensitive); anything else
- * (including absent) → undefined = "use the global default".
- */
-export function parseEchoSuppressOverride(
-  raw: string | undefined,
-): "on" | "off" | undefined {
-  if (raw === undefined) return undefined;
-  const v = raw.trim().toLowerCase();
-  if (v === "on" || v === "true" || v === "1" || v === "yes") return "on";
-  if (v === "off" || v === "false" || v === "0" || v === "no") return "off";
-  return undefined;
 }
 
 export async function getVerifiedUserCount(db: PostgresJsDatabase): Promise<number> {

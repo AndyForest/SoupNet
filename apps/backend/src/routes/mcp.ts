@@ -382,6 +382,7 @@ function createMcpServer(backendUrl: string): McpServer {
       // spec-legal; the shape is documented in the param description.
       response_format: z.enum(["markdown", "structured"]).optional().describe(MCP_PARAM_DESCRIPTIONS.responseFormat),
       known_recipes: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.knownRecipes),
+      session_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.sessionId),
       agent_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.agentId),
       synthesize: z.boolean().optional().describe(MCP_PARAM_DESCRIPTIONS.synthesize),
       feedback: z.array(feedbackRowSchema).optional().describe(MCP_PARAM_DESCRIPTIONS.feedbackParam),
@@ -446,7 +447,7 @@ function createMcpServer(backendUrl: string): McpServer {
       idempotentHint: true,
       openWorldHint: true,
     },
-    async ({ recipe, supporting_evidence, clusters, max_chars, decided_at, axes, recipe_book, read_recipe_books, file_url, file_base64, file_name, file_mime_type, region, response_format, known_recipes, agent_id, synthesize, feedback }, extra) => {
+    async ({ recipe, supporting_evidence, clusters, max_chars, decided_at, axes, recipe_book, read_recipe_books, file_url, file_base64, file_name, file_mime_type, region, response_format, known_recipes, session_id, agent_id, synthesize, feedback }, extra) => {
       // Get API key from auth info (passed by the transport middleware)
       const apiKey = (extra.authInfo as Record<string, unknown> | undefined)?.["token"] as string | undefined;
       if (!apiKey) {
@@ -522,6 +523,13 @@ function createMcpServer(backendUrl: string): McpServer {
         }
       }
 
+      // Known-set ids the agent declared (known_recipes). Parsed before the
+      // service call — the array joins the session's own deposits inside the
+      // service; the set drives route-side stub rendering below.
+      const knownRecipeIds = new Set(
+        (known_recipes ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+      );
+
       try {
         // Call the service directly — no HTTP roundtrip needed since we're in the same process
         console.warn(`[mcp] check_recipe: calling submitAndSearch directly${image ? ` (with ${image.mimeType} attachment${regionMeta ? " + ROI" : ""})` : ""}`);
@@ -539,6 +547,8 @@ function createMcpServer(backendUrl: string): McpServer {
           region: regionMeta,
           agentId: agent_id ?? undefined,
           surface: "mcp-http",
+          sessionId: session_id ?? undefined,
+          knownRecipeIds: knownRecipeIds.size > 0 ? [...knownRecipeIds] : undefined,
         });
 
         if (result.error) {
@@ -550,14 +560,6 @@ function createMcpServer(backendUrl: string): McpServer {
         const db = getDb();
         let enriched = await enrichResults(db, result.results);
         enriched = await clusterEvidenceInResults(db, enriched);
-
-        // known_recipes dedup, phase 1 (rendering only): ids the agent
-        // declared it already holds render as one-line stubs. Trace logging,
-        // idempotency, and cluster math upstream are untouched — stubs still
-        // occupy their cluster slots.
-        const knownRecipeIds = new Set(
-          (known_recipes ?? "").split(",").map((s) => s.trim()).filter(Boolean),
-        );
 
         // Premium synthesis (opt-in). Resolve the user via a dedicated
         // validateKey lookup only on this branch, mirroring the web /check
@@ -1017,20 +1019,22 @@ export function buildMcpJsonResponse(
   knownRecipeIds?: ReadonlySet<string>,
   synthesis?: SynthesisResult,
 ): Record<string, unknown> {
-  const KNOWN_GIST_CHARS = 80;
   const data: Record<string, unknown> = {
     recipeId: result.traceId,
     checkedRecipe: result.traceText,
     searchMode: result.searchMode ?? "lexical",
     clustered: result.clustered ?? false,
     results: enriched.map((r) => {
-      // known_recipes stub (rendering only): id + gist + similarity, no
-      // evidence body. clusterSize stays so the cluster slot remains visible.
-      if (knownRecipeIds?.has(r.id)) {
+      // Known-set stub (rendering only): the caller already holds this recipe
+      // — declared via known_recipes or flagged by the pipeline's session
+      // known-set. Id-only shape (no recipe gist — operator ruling: the gist
+      // is an ossification risk; use get_recipes for the body). No drillDown
+      // hint — there's no claim text to include. clusterSize stays so the
+      // cluster slot remains visible.
+      if (knownRecipeIds?.has(r.id) || r.known) {
         return {
           id: r.id,
           known: true,
-          recipe: r.claimText.slice(0, KNOWN_GIST_CHARS) + (r.claimText.length > KNOWN_GIST_CHARS ? "…" : ""),
           createdAt: r.createdAt,
           score: { combined: r.combinedScore, semantic: r.semanticScore },
           ...(r.clusterSize ? { clusterSize: r.clusterSize } : {}),
@@ -1072,11 +1076,21 @@ export function buildMcpJsonResponse(
           exemplarText: r.claimText,
         };
       }
+      // Budget backfill marker (seam 2): this item was promoted for display
+      // over known cluster exemplar(s) — "you already know these; this is
+      // the next in line". Id-only stubs, same shape as known results.
+      if (r.promotedOverKnownIds && r.promotedOverKnownIds.length > 0) {
+        item["knownStubs"] = r.promotedOverKnownIds.map((id) => ({ id, known: true }));
+      }
       return item;
     }),
     totalResults: result.totalResults,
     page,
     totalPages: result.totalPages,
+    // The session token in effect for this check — freshly minted when none
+    // was presented (self-healing). Callers pass it back as session_id so
+    // recipes this session already deposited render as id-only stubs.
+    ...(result.sessionId ? { sessionId: result.sessionId } : {}),
     // Which ranking served this response (mirrors check.ts) — structured
     // metadata only; the default markdown format stays token-lean.
     ...(result.ranking ? { ranking: result.ranking } : {}),

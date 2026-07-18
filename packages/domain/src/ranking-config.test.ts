@@ -3,28 +3,17 @@ import { describe, it, expect } from "vitest";
 import {
   DEFAULT_RANKING,
   RANKING_ALGORITHM_VERSION,
-  isCurated,
-  demotionAdjustedMass,
+  poolBoundary,
 } from "./ranking-config";
-import { DEFAULT_ECHO_SUPPRESSION } from "./ranking";
 
 describe("DEFAULT_RANKING", () => {
-  it("ships byte-identical to pre-refactor behavior", () => {
-    // Echo demotion OFF, v1 exemption (decided_at only), legacy cluster order.
-    // Changing any of these defaults is a versioned algorithm event: bump
-    // RANKING_ALGORITHM_VERSION and add a ranking-changelog.md entry.
-    expect(DEFAULT_RANKING.echo).toEqual(DEFAULT_ECHO_SUPPRESSION);
-    expect(DEFAULT_RANKING.echo.enabled).toBe(false);
-    expect(DEFAULT_RANKING.exemption).toEqual({
-      decidedAt: true,
-      humanReaction: false,
-      crossAgentFeedback: false,
-    });
-    expect(DEFAULT_RANKING.clusterOrdering).toBe("member-count");
-    // "page" = the legacy pagination-window pool; the fixed:100 candidate is
-    // the measured alternative (candidate-pool-sizing memo, P6).
+  it("ships byte-identical to legacy behavior", () => {
+    // "page" = the legacy pagination-window pool. Changing any default is a
+    // versioned algorithm event: bump RANKING_ALGORITHM_VERSION and add a
+    // ranking-changelog.md entry.
     expect(DEFAULT_RANKING.clusterPool.mode).toBe("page");
-    expect(DEFAULT_RANKING.clusterPool.size).toBe(100);
+    expect(DEFAULT_RANKING.clusterPool.size).toBe(133);
+    expect(DEFAULT_RANKING.clusterPool.minSize).toBe(20);
     expect(DEFAULT_RANKING.clusterPool.vectorDims).toBe(768);
   });
 
@@ -33,68 +22,45 @@ describe("DEFAULT_RANKING", () => {
   });
 });
 
-describe("isCurated", () => {
-  const base = {
-    decidedAt: null,
-    humanReactionCount: undefined,
-    crossAgentFeedbackCount: undefined,
-  };
-  const v1 = DEFAULT_RANKING.exemption;
-
-  it("v1: decided_at set ⇒ curated", () => {
-    expect(isCurated({ ...base, decidedAt: new Date("2026-01-01") }, v1)).toBe(true);
+describe("poolBoundary", () => {
+  const pool = (mode: "page" | "fixed" | "score-gap", size = 10, minSize = 3) => ({
+    mode,
+    size,
+    minSize,
+    vectorDims: 768,
   });
 
-  it("v1: no signals ⇒ not curated", () => {
-    expect(isCurated(base, v1)).toBe(false);
+  it("page mode: no pool (undefined)", () => {
+    expect(poolBoundary([0.9, 0.8], pool("page"))).toBeUndefined();
   });
 
-  it("v1: corroboration signals are ignored while their flags are off", () => {
-    expect(
-      isCurated(
-        { ...base, humanReactionCount: 3, crossAgentFeedbackCount: 2 },
-        v1,
-      ),
-    ).toBe(false);
+  it("fixed mode: size, clamped to the candidate count", () => {
+    expect(poolBoundary([0.9, 0.8, 0.7], pool("fixed", 2))).toBe(2);
+    expect(poolBoundary([0.9, 0.8], pool("fixed", 10))).toBe(2);
   });
 
-  it("humanReaction flag on: a single reaction exempts", () => {
-    const exemption = { ...v1, humanReaction: true };
-    expect(isCurated({ ...base, humanReactionCount: 1 }, exemption)).toBe(true);
-    expect(isCurated({ ...base, humanReactionCount: 0 }, exemption)).toBe(false);
+  it("score-gap: cuts at the largest adjacent drop within [minSize, size]", () => {
+    // Scores: tight head, cliff after index 4 (0.80 → 0.40), long tail.
+    const scores = [0.9, 0.88, 0.85, 0.82, 0.8, 0.4, 0.39, 0.38, 0.37, 0.36, 0.35];
+    expect(poolBoundary(scores, pool("score-gap", 10, 3))).toBe(5);
   });
 
-  it("crossAgentFeedback flag on: cross-agent feedback exempts", () => {
-    const exemption = { ...v1, crossAgentFeedback: true };
-    expect(isCurated({ ...base, crossAgentFeedbackCount: 1 }, exemption)).toBe(true);
-    expect(isCurated({ ...base, crossAgentFeedbackCount: 0 }, exemption)).toBe(false);
+  it("score-gap: ignores gaps before minSize", () => {
+    // Biggest drop is at index 1 (0.9 → 0.5), but minSize=3 forces the search
+    // to start at the 3rd candidate — the cut lands on the later 0.48 → 0.30.
+    const scores = [0.9, 0.5, 0.49, 0.48, 0.3, 0.29];
+    expect(poolBoundary(scores, pool("score-gap", 6, 3))).toBe(4);
   });
 
-  it("a flag that is on but not hydrated degrades to false, never throws", () => {
-    const exemption = { decidedAt: true, humanReaction: true, crossAgentFeedback: true };
-    expect(isCurated(base, exemption)).toBe(false);
+  it("score-gap: uniform scores cut at minSize (no boundary signal)", () => {
+    const scores = [0.5, 0.5, 0.5, 0.5, 0.5];
+    // Every gap is 0 — the first probe wins, so the cut is conservative
+    // (minSize). Whether uniform heads should instead take the max is a
+    // sweepable choice; conservative ships.
+    expect(poolBoundary(scores, pool("score-gap", 5, 2))).toBe(2);
   });
 
-  it("decidedAt flag off disables even the v1 signal", () => {
-    const exemption = { ...v1, decidedAt: false };
-    expect(isCurated({ ...base, decidedAt: new Date("2026-01-01") }, exemption)).toBe(false);
-  });
-});
-
-describe("demotionAdjustedMass", () => {
-  it("sums member weights", () => {
-    expect(demotionAdjustedMass([0.9, 0.5, 0.1])).toBeCloseTo(1.5);
-  });
-
-  it("empty cluster weighs 0", () => {
-    expect(demotionAdjustedMass([])).toBe(0);
-  });
-
-  it("undemoted members contribute their full similarity, demoted less", () => {
-    // Three echoes at 0.9 similarity demoted by 0.5 (mass 1.35) sink below
-    // two durable recipes at 0.8 (mass 1.6) — the §3d mechanism in one line.
-    expect(demotionAdjustedMass([0.45, 0.45, 0.45])).toBeLessThan(
-      demotionAdjustedMass([0.8, 0.8]),
-    );
+  it("score-gap: candidate count below minSize returns everything", () => {
+    expect(poolBoundary([0.9, 0.8], pool("score-gap", 10, 5))).toBe(2);
   });
 });

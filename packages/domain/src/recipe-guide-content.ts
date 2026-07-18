@@ -820,6 +820,11 @@ export const MCP_PARAM_DESCRIPTIONS = {
     "Comma-separated recipe UUIDs you still hold in context; matching results render as one-line " +
     "stubs instead of full bodies. Rendering only — logging and clustering are unchanged.",
 
+  sessionId:
+    "Pass the sessionId from your previous check response — recipes this session already deposited " +
+    "then render as id-only stubs (token efficiency only; ranking unchanged). A fresh one is " +
+    "returned when absent. Hand it to sub-agents to share your known-set, or don't to keep theirs fresh.",
+
   feedbackParam:
     "Feedback rows about PRIOR checks, riding along with this one. Each row: trace_id of the earlier " +
     "check (full UUID or 8+ char short id) plus the fields in this schema (see log_feedback). Rows " +

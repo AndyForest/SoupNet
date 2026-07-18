@@ -1,6 +1,6 @@
 # Ranking simplification — pure-function ranking, session-aware rendering, relevance-bounded pool
 
-**Status**: plan v2 for operator ruling (2026-07-17). Replaces v1 of this document and supersedes the echo-demotion direction entirely. Operator rulings this rests on: recipes `9067ca1b` (inputs-only ranking, rendering-layer novelty), `ebdc6ad7` (pollution is benchmark hygiene), `4d25aec9` (sub-agent cross-communication showstopper), `bb952d78` (window caps diversity).
+**Status**: implemented 2026-07-17 (operator approved same day; see [ranking-changelog.md](../architecture/ranking-changelog.md) for the retirement record and [ranking-simplification-evals-update.md](ranking-simplification-evals-update.md) for the evaluation-workstream handoff). Replaces v1 of this document and supersedes the echo-demotion direction entirely. Operator rulings this rests on: recipes `9067ca1b` (inputs-only ranking, rendering-layer novelty), `ebdc6ad7` (pollution is benchmark hygiene), `4d25aec9` (sub-agent cross-communication showstopper), `bb952d78` (window caps diversity).
 
 ## The contract (two clean seams)
 

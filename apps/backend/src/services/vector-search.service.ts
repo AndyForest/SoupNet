@@ -20,18 +20,8 @@
 
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import {
-  PRODUCTION_SEARCH_STRATEGY_IDS,
-  rankWithEchoSuppression,
-  echoDemotionPenalty,
-  isCurated,
-} from "@soupnet/domain";
-import type {
-  EchoSuppressionConfig,
-  EchoRankCandidate,
-  CurationExemptionConfig,
-  CandidateSignals,
-} from "@soupnet/domain";
+import { PRODUCTION_SEARCH_STRATEGY_IDS, poolBoundary } from "@soupnet/domain";
+import type { ClusterPoolConfig, CandidateSignals } from "@soupnet/domain";
 import { embedQuery, getEmbeddingModelId } from "../lib/embeddings/provider";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -53,30 +43,13 @@ export interface HybridSearchParams {
    *  substring matches on the recipe text. Applied inside the SQL predicates
    *  so the exact count, ANN top-k, and exhaustive fallback all agree. */
   keywordFilter?: string | undefined;
-  /** Echo-suppression ranking context. When present AND config.enabled, the
-   *  deduped candidate set is reordered (before pagination) to demote the
-   *  current agent's own recent hypothesis-appends — reorder only, never
-   *  truncated, displayed similarity untouched. Absent / disabled ⇒ byte-stable
-   *  (no metadata query, no reorder). See docs/planning/echo-suppression.md. */
-  echo?: EchoContext | undefined;
-  /** Clustering-pool size (P6 lever). When set, the response additionally
-   *  carries `pool`: the top `poolLimit` candidates by adjusted rank,
-   *  pre-pagination, for the cluster stage to summarize. Pagination and the
-   *  paged `results` are unchanged — the pool only feeds the clustered
-   *  summary. Absent ⇒ no pool row load (byte-stable). */
-  poolLimit?: number | undefined;
-}
-
-export interface EchoContext {
-  config: EchoSuppressionConfig;
-  /** What counts as curated (demotion-exempt). decided_at is the v1 signal;
-   *  the corroboration flags hydrate their per-candidate counts lazily inside
-   *  the own-rows demotion query when on. See RankingConfig (@soupnet/domain). */
-  exemption: CurationExemptionConfig;
-  /** api_key making the current check (the authorship-match key). */
-  currentApiKeyId: string | null;
-  /** "now" for recency math. */
-  now: Date;
+  /** Clustering-pool config (P6 lever). When set and not "page" mode, the
+   *  response additionally carries `pool`: the top candidates by rank down to
+   *  the pool boundary (fixed size or largest score gap), pre-pagination, for
+   *  the cluster stage to summarize. Pagination and the paged `results` are
+   *  unchanged — the pool only feeds the clustered summary. Absent / "page"
+   *  ⇒ no pool row load (byte-stable). */
+  pool?: ClusterPoolConfig | undefined;
 }
 
 export interface HybridSearchResult {
@@ -96,13 +69,8 @@ export interface HybridSearchResponse {
   results: HybridSearchResult[];
   totalResults: number;
   searchMode: "semantic";
-  /** Echo-demotion penalty per trace id (only demoted candidates appear;
-   *  absent id ⇒ penalty 0). Present only when suppression ran. Downstream
-   *  stages (cluster ordering) reuse these instead of recomputing, so every
-   *  stage sees the same demotion decision. */
-  echoPenalties?: Map<string, number> | undefined;
-  /** Clustering pool — the top `poolLimit` candidates by adjusted rank
-   *  (pre-pagination), only when HybridSearchParams.poolLimit was set. */
+  /** Clustering pool — the top candidates by rank down to the pool boundary
+   *  (pre-pagination), only when HybridSearchParams.pool was set (non-page). */
   pool?: HybridSearchResult[] | undefined;
 }
 
@@ -288,24 +256,16 @@ export async function hybridSearch(
       }
     }
 
-    // ── Echo suppression (reorder-only, before pagination) ────────────────
-    // Demote the current agent's own recent hypothesis-appends so an echo can
-    // fall below a genuinely cross-agent recipe of similar similarity — and
-    // onto a later page rather than off the result set. Skipped entirely (no
-    // metadata query) when disabled, keeping the default path byte-stable.
-    let echoPenalties: Map<string, number> | undefined;
-    if (params.echo?.config.enabled && params.echo.currentApiKeyId) {
-      const suppression = await applyEchoSuppression(db, sorted, params.echo);
-      sorted = suppression.sorted;
-      echoPenalties = suppression.penalties;
-    }
-
     // Apply pagination
     const paged = sorted.slice(offset, offset + limit);
 
-    // Clustering pool (P6): the top poolLimit candidates by adjusted rank,
+    // Clustering pool (P6): the top candidates by rank down to the pool
+    // boundary (fixed size, or the largest score gap for "score-gap" mode),
     // independent of the page window. Row data rides the same load below.
-    const poolPairs = params.poolLimit ? sorted.slice(0, params.poolLimit) : undefined;
+    const poolCut = params.pool
+      ? poolBoundary(sorted.map(([, score]) => score), params.pool)
+      : undefined;
+    const poolPairs = poolCut !== undefined ? sorted.slice(0, poolCut) : undefined;
 
     // ── Load trace data (page ∪ pool, one query) ─────────────────────────
     const traceIds = [...new Set([
@@ -324,12 +284,13 @@ export async function hybridSearch(
 
     // created_at is coalesced with decided_at so the date agents see is the
     // judgment date — backfilled recipes (decision archaeology) read as old
-    // judgments, not fresh context. The raw append time, authorship, and
-    // curation columns ride the same row load as per-candidate ranking
-    // signals (zero extra queries) — available to every downstream stage.
+    // judgments, not fresh context. The raw append time, judgment date, and
+    // session stamp ride the same row load as per-candidate signals (zero
+    // extra queries) — the session id drives known-set STUB RENDERING only,
+    // never ranking (plan v2 seam 2).
     const traceRows = await db.execute(sql`
       SELECT id, claim_text, COALESCE(decided_at, created_at) AS created_at,
-             created_at AS created_at_raw, decided_at, api_key_id, user_id
+             created_at AS created_at_raw, decided_at, session_id
       FROM claimnet.traces
       WHERE id IN (${traceIdsSql})
     `);
@@ -343,10 +304,9 @@ export async function hybridSearch(
         claimText: row["claim_text"] as string,
         createdAt: new Date(row["created_at"] as string),
         signals: {
-          authorApiKeyId: (row["api_key_id"] as string | null) ?? null,
-          authorUserId: (row["user_id"] as string | null) ?? null,
           createdAt: new Date(row["created_at_raw"] as string),
           decidedAt: row["decided_at"] ? new Date(row["decided_at"] as string) : null,
+          sessionId: (row["session_id"] as string | null) ?? null,
         },
       });
     }
@@ -362,10 +322,9 @@ export async function hybridSearch(
         semanticScore: score,
         combinedScore: score,
         signals: trace?.signals ?? {
-          authorApiKeyId: null,
-          authorUserId: null,
           createdAt: trace?.createdAt ?? new Date(),
           decidedAt: null,
+          sessionId: null,
         },
       };
     };
@@ -373,111 +332,11 @@ export async function hybridSearch(
     const results = paged.map(toResult);
     const pool = poolPairs?.map(toResult);
 
-    return { results, totalResults, searchMode: "semantic", echoPenalties, pool };
+    return { results, totalResults, searchMode: "semantic", pool };
   } catch (err) {
     console.error("[vector-search] Semantic search failed:", err);
     return { results: [], totalResults: 0, searchMode: "semantic" };
   }
-}
-
-// ── Echo suppression helper ──────────────────────────────────────────────────
-
-/**
- * Reorder the deduped [traceId, semanticScore] candidate list to demote the
- * current agent's own recent hypothesis-appends. Only the current key's OWN
- * traces among the candidates are fetched (indexed by api_key_id) — every other
- * candidate gets penalty 0 with no per-row work. The displayed semantic score
- * is preserved; only the order changes, and nothing is dropped.
- *
- * Curation exemption follows echo.exemption: decided_at is the always-cheap
- * v1 signal; when a corroboration flag is on, the per-candidate count
- * (human still_true reactions / cross-agent check-feedback) hydrates lazily
- * as a subselect on the same own-rows query — the flags are default-OFF, so
- * the shipped query shape is unchanged.
- *
- * Returns the reordered list plus the per-trace penalties actually applied,
- * so downstream stages (cluster ordering) reuse the same demotion decision.
- */
-async function applyEchoSuppression(
-  db: PostgresJsDatabase,
-  sorted: Array<[string, number]>,
-  echo: EchoContext,
-): Promise<{ sorted: Array<[string, number]>; penalties: Map<string, number> }> {
-  const penalties = new Map<string, number>();
-  const currentApiKeyId = echo.currentApiKeyId;
-  if (!currentApiKeyId || sorted.length === 0) return { sorted, penalties };
-
-  const idsSql = sql.join(
-    sorted.map(([id]) => sql`${id}::uuid`),
-    sql`, `,
-  );
-  // Lazy corroboration hydration — subselects exist only when their exemption
-  // flag is on. still_true is the only reaction with curation polarity
-  // (stale/wrong are decay signals); cross-agent feedback counts only rows
-  // from a DIFFERENT non-null key whose story was at least partially
-  // fulfilled ("a different key found the recipe useful") — human-origin rows
-  // (api_key_id IS NULL) signal through reactions, not here.
-  const reactionCountSql = echo.exemption.humanReaction
-    ? sql`, (SELECT count(*)::int FROM claimnet.trace_reactions r
-         WHERE r.trace_id = t.id AND r.reaction = 'still_true') AS reaction_count`
-    : sql``;
-  const crossFeedbackCountSql = echo.exemption.crossAgentFeedback
-    ? sql`, (SELECT count(*)::int FROM claimnet.check_feedback f
-         WHERE f.trace_id = t.id
-           AND f.api_key_id IS NOT NULL
-           AND f.api_key_id != ${currentApiKeyId}::uuid
-           AND f.story_fulfilled IN ('yes', 'partial')) AS cross_feedback_count`
-    : sql``;
-
-  // Only the agent's own traces can be demoted — fetch just those.
-  const ownRows = await db.execute(sql`
-    SELECT t.id::text AS id, t.created_at, t.decided_at
-      ${reactionCountSql}
-      ${crossFeedbackCountSql}
-    FROM claimnet.traces t
-    WHERE t.api_key_id = ${currentApiKeyId}::uuid
-      AND t.id IN (${idsSql})
-  `);
-
-  const own = new Map<string, { createdAt: Date; curated: boolean }>();
-  for (const row of ownRows as unknown as Record<string, unknown>[]) {
-    own.set(row["id"] as string, {
-      createdAt: new Date(row["created_at"] as string),
-      curated: isCurated(
-        {
-          decidedAt: row["decided_at"] ? new Date(row["decided_at"] as string) : null,
-          humanReactionCount: row["reaction_count"] as number | undefined,
-          crossAgentFeedbackCount: row["cross_feedback_count"] as number | undefined,
-        },
-        echo.exemption,
-      ),
-    });
-  }
-  // Nothing of the agent's own in the candidate set — order can't change.
-  if (own.size === 0) return { sorted, penalties };
-
-  const candidates: EchoRankCandidate[] = sorted.map(([id, score]) => {
-    const mine = own.get(id);
-    return {
-      id,
-      semanticScore: score,
-      authorApiKeyId: mine ? currentApiKeyId : null,
-      createdAt: mine?.createdAt ?? echo.now,
-      curated: mine?.curated ?? false,
-    };
-  });
-
-  const rankCtx = { currentApiKeyId, now: echo.now };
-  for (const c of candidates) {
-    const penalty = echoDemotionPenalty(c, rankCtx, echo.config);
-    if (penalty > 0) penalties.set(c.id, penalty);
-  }
-
-  const ranked = rankWithEchoSuppression(candidates, rankCtx, echo.config);
-  return {
-    sorted: ranked.map((c) => [c.id, c.semanticScore] as [string, number]),
-    penalties,
-  };
 }
 
 // ── Evidence search ─────────────────────────────────────────────────────────

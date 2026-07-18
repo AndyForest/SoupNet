@@ -68,6 +68,14 @@ export interface EnrichedResult {
   clusterSize?: number | undefined;
   group?: EnrichedGroup | undefined;
   evidence: EnrichedEvidence[];
+  /** Known-set rendering flag (seam 2), passed through from SearchResultItem:
+   *  the caller's session already holds this recipe — response builders
+   *  render an id-only stub at its true rank. */
+  known?: boolean | undefined;
+  /** Known ids this displayed item was promoted over (a known cluster
+   *  exemplar replaced for display by this next-nearest member) — builders
+   *  render them as id-only stubs alongside the full item. */
+  promotedOverKnownIds?: string[] | undefined;
 }
 
 // ── Main function ────────────────────────────────────────────────────────────
@@ -184,6 +192,8 @@ export async function enrichResults(
     clusterSize: r.clusterSize,
     group: traceGroupMap.get(r.id),
     evidence: traceEvidenceMap.get(r.id) ?? [],
+    known: r.known,
+    promotedOverKnownIds: r.promotedOverKnownIds,
   }));
 }
 

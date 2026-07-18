@@ -2,7 +2,6 @@
   {
     "id": "q01-testing-discovery",
     "query": "As a developer about to write tests for the notification service, I want my AI agent to surface the user's testing taste and conventions before I choose an approach.",
-    "echoKeys": ["agent-self"],
     "graded": {
       "00000000-0000-4000-8000-000100000001": 3,
       "00000000-0000-4000-8000-000100000002": 2,
@@ -30,12 +29,14 @@
       "00000000-0000-4000-8000-000100000006": "coverage-style",
       "00000000-0000-4000-8000-000100000007": "assertion-style",
       "00000000-0000-4000-8000-000100000008": "tooling"
-    }
+    },
+    "sessions": [
+      "lineage-self"
+    ]
   },
   {
     "id": "q02-testing-judgment",
     "query": "As a quality engineer deciding whether to mock the database layer or run tests against a real disposable instance, I want prior judgments about integration versus mocked testing surfaced with their reasons.",
-    "echoKeys": ["agent-self"],
     "graded": {
       "00000000-0000-4000-8000-000100000001": 3,
       "00000000-0000-4000-8000-000100000002": 2,
@@ -52,12 +53,14 @@
       "00000000-0000-4000-8000-000100000004": "determinism",
       "00000000-0000-4000-8000-000200000004": "isolation",
       "00000000-0000-4000-8000-000100000002": "ci-parity"
-    }
+    },
+    "sessions": [
+      "lineage-self"
+    ]
   },
   {
     "id": "q03-migrations-discovery",
     "query": "As a developer about to generate a migration adding a table for scheduled jobs, I want prior schema-change discipline and conventions surfaced before I run the generator.",
-    "echoKeys": ["agent-self"],
     "graded": {
       "00000000-0000-4000-8000-000200000001": 3,
       "00000000-0000-4000-8000-000200000002": 2,
@@ -80,12 +83,14 @@
       "00000000-0000-4000-8000-000200000005": "idempotency",
       "00000000-0000-4000-8000-000200000006": "naming",
       "00000000-0000-4000-8000-000200000004": "isolation"
-    }
+    },
+    "sessions": [
+      "lineage-self"
+    ]
   },
   {
     "id": "q04-migrations-judgment",
     "query": "As a database owner deciding between a destructive column rename and an additive copy-then-backfill migration, I want prior rollback and deploy-safety judgments surfaced.",
-    "echoKeys": ["agent-self"],
     "graded": {
       "00000000-0000-4000-8000-000200000003": 3,
       "00000000-0000-4000-8000-000200000001": 2,
@@ -99,7 +104,10 @@
       "00000000-0000-4000-8000-000200000003": "rollback-safety",
       "00000000-0000-4000-8000-000200000001": "review-discipline",
       "00000000-0000-4000-8000-000200000002": "deploy-coupling"
-    }
+    },
+    "sessions": [
+      "lineage-self"
+    ]
   },
   {
     "id": "q05-api-batch",

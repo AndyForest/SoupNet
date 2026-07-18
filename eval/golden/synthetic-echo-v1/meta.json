@@ -1,22 +1,22 @@
 {
-  "_comment": "referenceNow anchors echo-recency math (fixture created_at values keep their session/day-window meaning forever). echoTraces maps each pollution-arm trace to the logical agent key that authored it; the runner mints a real api_key uuid per logical key per run and stamps these rows (imports write api_key_id NULL). All echoes here sit inside the 90-minute session window before referenceNow, i.e. full demotion weight.",
+  "_comment": "referenceNow anchors the fixture timestamps (created_at values keep their meaning forever). sessionLineages maps each lineage-deposit trace to the session lineage that authored it; the runner mints a real session token per lineage per run, stamps traces.session_id on these rows (imports write it NULL), and derives per-question known-sets from the stamped column. These rows also define the HYGIENE arm split: hygiene-clean = corpus minus these rows.",
   "referenceNow": "2026-07-15T12:00:00Z",
   "clusters": 3,
-  "echoTraces": {
-    "00000000-0000-4000-8000-00e100000001": "agent-self",
-    "00000000-0000-4000-8000-00e100000002": "agent-self",
-    "00000000-0000-4000-8000-00e100000003": "agent-self",
-    "00000000-0000-4000-8000-00e100000004": "agent-self",
-    "00000000-0000-4000-8000-00e100000005": "agent-self",
-    "00000000-0000-4000-8000-00e100000006": "agent-self",
-    "00000000-0000-4000-8000-00e100000007": "agent-self",
-    "00000000-0000-4000-8000-00e100000008": "agent-self",
-    "00000000-0000-4000-8000-00e200000001": "agent-self",
-    "00000000-0000-4000-8000-00e200000002": "agent-self",
-    "00000000-0000-4000-8000-00e200000003": "agent-self",
-    "00000000-0000-4000-8000-00e200000004": "agent-self",
-    "00000000-0000-4000-8000-00e200000005": "agent-self",
-    "00000000-0000-4000-8000-00e200000006": "agent-self",
-    "00000000-0000-4000-8000-00e200000007": "agent-self"
+  "sessionLineages": {
+    "00000000-0000-4000-8000-00e100000001": "lineage-self",
+    "00000000-0000-4000-8000-00e100000002": "lineage-self",
+    "00000000-0000-4000-8000-00e100000003": "lineage-self",
+    "00000000-0000-4000-8000-00e100000004": "lineage-self",
+    "00000000-0000-4000-8000-00e100000005": "lineage-self",
+    "00000000-0000-4000-8000-00e100000006": "lineage-self",
+    "00000000-0000-4000-8000-00e100000007": "lineage-self",
+    "00000000-0000-4000-8000-00e100000008": "lineage-self",
+    "00000000-0000-4000-8000-00e200000001": "lineage-self",
+    "00000000-0000-4000-8000-00e200000002": "lineage-self",
+    "00000000-0000-4000-8000-00e200000003": "lineage-self",
+    "00000000-0000-4000-8000-00e200000004": "lineage-self",
+    "00000000-0000-4000-8000-00e200000005": "lineage-self",
+    "00000000-0000-4000-8000-00e200000006": "lineage-self",
+    "00000000-0000-4000-8000-00e200000007": "lineage-self"
   }
 }

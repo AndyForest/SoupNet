@@ -253,20 +253,29 @@ describe("renderCheckResponseMarkdown", () => {
     });
   });
 
-  describe("known_recipes stubs (rendering only)", () => {
-    it("renders a declared-known result as a one-line stub with id, gist, and similarity", () => {
+  describe("known-set stubs (rendering only)", () => {
+    it("renders a declared-known result as a one-line id-only stub (no gist text)", () => {
       const res = baseResponse();
-      const longRecipe = "As a developer working on an API, I chose Hono so that edge deployment stays possible and the framework keeps working across runtimes.";
-      res.data!.results![0]!.recipe = longRecipe;
+      const recipeText = res.data!.results![0]!.recipe!;
       const text = renderCheckResponseMarkdown(res, { knownRecipeIds: [UUID_A] });
       const stubLine = text.split("\n").find((l) => l.startsWith("#1 "));
-      expect(stubLine).toContain(`#1 (87% similar) ${UUID_A} [known to you] (represents 12 similar recipes): `);
-      expect(stubLine).toContain(longRecipe.slice(0, 80));
-      expect(stubLine!.endsWith("…")).toBe(true);
+      expect(stubLine).toBe(`#1 (87% similar) ${UUID_A} [known to you] (represents 12 similar recipes)`);
+      // Id-only: no recipe text on the stub (operator ruling — the gist is
+      // an ossification risk; bodies come from get_recipes).
+      expect(stubLine).not.toContain(recipeText.slice(0, 40));
       // Stub means: no body, no evidence for this result.
       expect(text).not.toContain("Supporting: Hono runs on Web Standard APIs.");
       // The other result still renders in full.
       expect(text).toContain("Recipe: As a designer, I prefer warm palettes");
+    });
+
+    it("stubs results the builder flagged known (session known-set), without opts", () => {
+      const res = baseResponse();
+      res.data!.results![0]!.known = true;
+      const text = renderCheckResponseMarkdown(res);
+      const stubLine = text.split("\n").find((l) => l.startsWith("#1 "));
+      expect(stubLine).toBe(`#1 (87% similar) ${UUID_A} [known to you] (represents 12 similar recipes)`);
+      expect(text).not.toContain("Recipe: As a developer working on an API");
     });
 
     it("does not stub results that aren't in knownRecipeIds", () => {
@@ -274,6 +283,40 @@ describe("renderCheckResponseMarkdown", () => {
       expect(text).toContain("Recipe: As a developer working on an API");
       expect(text).toContain("[known to you]");
       expect(text).not.toContain("Recipe: As a designer, I prefer warm palettes");
+    });
+
+    it("renders knownStubs on a promoted full item as an id-only next-in-line marker", () => {
+      const res = baseResponse();
+      res.data!.results![0]!.knownStubs = [{ id: UUID_B, known: true }];
+      const text = renderCheckResponseMarkdown(res);
+      expect(text).toContain(`  [shown in place of ${UUID_B} — known to you; this is the next in line]`);
+      // The promoted item itself still renders in full.
+      expect(text).toContain("Recipe: As a developer working on an API");
+    });
+  });
+
+  describe("sessionId line", () => {
+    it("renders one session line when data.sessionId is present", () => {
+      const res = baseResponse();
+      res.data!.sessionId = "0f8d0af7-9503-4f92-a2f0-a8e11b79900d";
+      const text = renderCheckResponseMarkdown(res);
+      expect(text).toContain(
+        "Session: 0f8d0af7-9503-4f92-a2f0-a8e11b79900d — pass session_id on your next check to keep responses lean.",
+      );
+    });
+
+    it("still renders the session line when there are no results", () => {
+      const res: CheckResponseJson = {
+        ok: true,
+        data: { recipeId: CHECK_ID, searchMode: "semantic", results: [], totalResults: 0, page: 1, totalPages: 0, sessionId: "abc12345" },
+      };
+      const text = renderCheckResponseMarkdown(res);
+      expect(text).toContain("No similar recipes found.");
+      expect(text).toContain("Session: abc12345 — pass session_id on your next check");
+    });
+
+    it("omits the session line when sessionId is absent", () => {
+      expect(renderCheckResponseMarkdown(baseResponse())).not.toContain("Session:");
     });
   });
 });

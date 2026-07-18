@@ -94,8 +94,13 @@ describe("MCP tool description budget", () => {
     }
   });
 
-  it("keeps the shared-copy total under 4,000 chars", () => {
+  it("keeps the shared-copy total under 4,300 chars", () => {
+    // 4,000 → 4,300 (2026-07-17): the session_id param joined check_recipe
+    // (ranking simplification, plan v2 seam 2) and the previous total sat at
+    // 3,998 — the cap had no headroom for a genuinely new param. The cap's
+    // job is unchanged: any further growth must be a deliberate, dated raise
+    // here, not silent depth creep in existing descriptions.
     const total = Object.values(all).reduce((n, s) => n + s.length, 0);
-    expect(total).toBeLessThanOrEqual(4000);
+    expect(total).toBeLessThanOrEqual(4300);
   });
 });

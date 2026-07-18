@@ -101,7 +101,7 @@ describe("buildMcpJsonResponse actions hints", () => {
     expect(String(actions["moreClusters"])).toContain("clusters");
   });
 
-  it("known_recipes renders a stub (id + gist + similarity + cluster slot) with no evidence body", () => {
+  it("known_recipes renders an id-only stub (id + similarity + cluster slot; no recipe text, no evidence body)", () => {
     const enriched = makeEnriched("known-1", 4);
     enriched.claimText = "A".repeat(120);
     enriched.evidence = [{ id: "e1", content: "should not appear", references: [] }];
@@ -110,7 +110,7 @@ describe("buildMcpJsonResponse actions hints", () => {
 
     const stub = results[0]!;
     expect(stub["known"]).toBe(true);
-    expect(String(stub["recipe"])).toHaveLength(81); // 80 chars + ellipsis
+    expect(stub["recipe"]).toBeUndefined(); // id-only stub — no gist (operator ruling)
     expect(stub["clusterSize"]).toBe(4); // stub keeps its cluster slot
     expect(stub["evidence"]).toBeUndefined();
     expect(stub["drillDown"]).toBeUndefined();
@@ -119,6 +119,39 @@ describe("buildMcpJsonResponse actions hints", () => {
     const fresh = results[1]!;
     expect(fresh["known"]).toBeUndefined();
     expect(fresh["evidence"]).toBeDefined();
+  });
+
+  it("pipeline-flagged known results (session known-set) render the same id-only stub without the param set", () => {
+    const enriched = makeEnriched("session-known-1", 3);
+    enriched.known = true;
+    enriched.evidence = [{ id: "e1", content: "should not appear", references: [] }];
+    const response = buildMcpJsonResponse(makeResult(), [enriched], 1);
+    const results = (response["data"] as Record<string, unknown>)["results"] as Array<Record<string, unknown>>;
+    const stub = results[0]!;
+    expect(stub["known"]).toBe(true);
+    expect(stub["recipe"]).toBeUndefined();
+    expect(stub["evidence"]).toBeUndefined();
+    expect(stub["drillDown"]).toBeUndefined();
+  });
+
+  it("promoted items carry knownStubs (id-only markers for the known exemplars they replaced)", () => {
+    const enriched = makeEnriched("promoted-1", 5);
+    enriched.promotedOverKnownIds = ["known-a", "known-b"];
+    const response = buildMcpJsonResponse(makeResult(), [enriched], 1);
+    const results = (response["data"] as Record<string, unknown>)["results"] as Array<Record<string, unknown>>;
+    const item = results[0]!;
+    expect(item["recipe"]).toBe("Recipe promoted-1"); // full item, not a stub
+    expect(item["knownStubs"]).toEqual([
+      { id: "known-a", known: true },
+      { id: "known-b", known: true },
+    ]);
+  });
+
+  it("echoes the session token as data.sessionId when the service resolved one", () => {
+    const response = buildMcpJsonResponse(makeResult({ sessionId: "sess-uuid-1" }), [makeEnriched("a")], 1);
+    expect((response["data"] as Record<string, unknown>)["sessionId"]).toBe("sess-uuid-1");
+    const without = buildMcpJsonResponse(makeResult(), [makeEnriched("a")], 1);
+    expect((without["data"] as Record<string, unknown>)["sessionId"]).toBeUndefined();
   });
 
   it("drill-down hint references the clusters param, not expand", () => {

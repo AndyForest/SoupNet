@@ -19,7 +19,7 @@ interface CheckJson {
     results: Array<{
       id: string;
       known?: boolean;
-      recipe: string;
+      recipe?: string;
       evidence?: unknown[];
       score: { semantic: number | null };
     }>;
@@ -102,9 +102,9 @@ describe.skipIf(!BASE)("known_recipes dedup (rendering only)", () => {
     const stub = withParam.data?.results.find((r) => r.id === seedId);
     expect(stub).toBeTruthy();
     expect(stub?.known).toBe(true);
-    // Gist ≤ 80 chars (+ ellipsis), no evidence body.
-    expect((stub?.recipe ?? "").length).toBeLessThanOrEqual(81);
-    expect(stub?.recipe).not.toBe(seedText);
+    // Id-only stub: no recipe text, no evidence body (operator ruling
+    // 2026-07-17 — the gist was an ossification risk).
+    expect(stub?.recipe).toBeUndefined();
     expect(stub?.evidence).toBeUndefined();
     // Similarity still present — the stub carries id + gist + similarity.
     expect(stub?.score).toBeDefined();

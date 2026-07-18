@@ -6,8 +6,8 @@ const empty: PageParams = {
   ea: undefined, sort: undefined, page: undefined, format: undefined,
   clusters: undefined, maxChars: undefined, expand: undefined, compact: undefined,
   axes: undefined, group: undefined, readGroups: undefined, decidedAt: undefined,
-  agentId: undefined, knownRecipes: undefined, filter: undefined,
-  synthesize: undefined, echoSuppress: undefined,
+  agentId: undefined, knownRecipes: undefined, sessionId: undefined, filter: undefined,
+  synthesize: undefined,
   imageFile: undefined,
 };
 
@@ -25,6 +25,14 @@ describe("buildQs", () => {
   it("carries recipe_book (regression for 2026-05-27 trace-dupe bug)", () => {
     const qs = buildQs({ ...empty, key: "k", trace: "t", ef: "e", group: "soup-net-dev" });
     expect(qs).toContain("recipe_book=soup-net-dev");
+  });
+
+  // session_id is an intent-preserving param: losing it on the re-check form
+  // or Copy-URL round-trip would silently reset the caller's known-set and
+  // re-send full bodies for recipes the session already holds.
+  it("carries session_id across round-trips", () => {
+    const qs = buildQs({ ...empty, key: "k", sessionId: "sess-1234abcd" });
+    expect(qs).toContain("session_id=sess-1234abcd");
   });
 
   it("carries every roundTrip-carry field when set", () => {
@@ -88,11 +96,12 @@ describe("buildQs", () => {
 
 describe("readParams", () => {
   it("reads canonical wire names", () => {
-    const p = readParams(makeGet({ key: "K", trace: "T", ef: "E", recipe_book: "R" }));
+    const p = readParams(makeGet({ key: "K", trace: "T", ef: "E", recipe_book: "R", session_id: "S" }));
     expect(p.key).toBe("K");
     expect(p.trace).toBe("T");
     expect(p.ef).toBe("E");
     expect(p.group).toBe("R");
+    expect(p.sessionId).toBe("S");
   });
 
   it("falls through to aliases when wire name is unset", () => {

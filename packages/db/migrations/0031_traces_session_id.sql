@@ -1,0 +1,2 @@
+ALTER TABLE "claimnet"."traces" ADD COLUMN "session_id" text;--> statement-breakpoint
+CREATE INDEX "traces_session_id_created_at_idx" ON "claimnet"."traces" USING btree ("session_id","created_at" DESC NULLS LAST);

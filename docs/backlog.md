@@ -316,7 +316,11 @@ Briefing: [docs/planning/check-recipe-ranking-system.md](planning/check-recipe-r
 
 Golden-dataset exports are delivered out-of-band by the evals side — coordinate through the operator. **Folded in (operator ruling 2026-07-16):** the echo-suppression follow-ups (item below — the default-ON flip is exactly a golden-pair measurement; corroboration signals are the brief's §2/§3a signal work) and the former decay-from-judgment-date item (Decision archaeology section): when any recency/decay parameter lands in the tunable config, it decays from `COALESCE(decided_at, created_at)` so backfilled decisions (decision archaeology) decay as old judgments rather than fresh ones. Blast-radius note for §3d: `briefing-exemplars.ts` consumes the same clustering service — cluster-ordering changes must either scope to the check path via the pipeline config or accept moving the briefing-exemplar surface, which has no regression gate until the behavioral-specs harness (Agent briefing section) exists.
 
-### `[DESIGN]` Session identity for ranking — replace same-api-key authorship with explicit session state
+### ~~`[DESIGN]` Session identity for ranking~~ (resolved 2026-07-17 — built as rendering, not ranking)
+
+Resolved by plan v2 ([session-novelty-and-pool-diversity.md](planning/session-novelty-and-pool-diversity.md)) and implemented same-day: opaque client-held `session_id` (self-healing, `traces.session_id`, migration 0031) drives known-set **id-stub rendering with budget backfill** — suppression itself was retired (ranking is a pure function of check inputs, recipe `9067ca1b`; pollution reclassified as benchmark hygiene, recipe `ebdc6ad7`). Sub-agent inheritance is the orchestrator's choice by construction (hand the token to a child or don't).
+
+### `[DESIGN]` (superseded original) Session identity for ranking — replace same-api-key authorship with explicit session state
 
 Operator direction (2026-07-16, recipe `4d25aec9`): the echo-demotion authorship signal is too coarse — *"we don't actually know if it's the same agent, since all the sub-agents share the same API key"* — and simply omitting/substituting an agent's own recipes is a ruled-out dead end: *"that's exactly how sub-agents cross communicate, by seeing the recent relevant recipes from their peer sub-agents."* Direction: explicit session state, two candidate shapes — **server-side** (briefing and/or check returns a `sessionId`; check accepts it optionally; invalid/absent → a fresh one comes back, self-healing, expirable) or **client-side** (caller declares known recipe ids per call — note `known_recipes` already ships this shape as a rendering-only lever, and the explicit-parameter dedup design predates it, recipe `8e93a948`). Whichever lands becomes a first-class `CandidateSignals` field and a scoring-stage input, shipped through the harness like any lever. **Full plan awaiting operator ruling (2026-07-17): [docs/planning/session-novelty-and-pool-diversity.md](planning/session-novelty-and-pool-diversity.md)** — session plumbing, known-set rendering with budget backfill (the stub + next-in-line idea, unified with `known_recipes`), suppression identity tiers (session / agent_id lineage / key baseline / no-demotion), sibling-visibility guardrail metric, fixture v2. The 2026-07-17 fidelity run showed why this is urgent: at production shape, key-based demotion clears ALL same-key-recent recipes from the display — functionally the ruled-out omission, applied to sibling sub-agents (recipe `81f40bbd`).
 
@@ -327,28 +331,6 @@ Operator insight (2026-07-16, recipe `bb952d78`): the check path clusters only t
 ### `[DESIGN]` K-means cluster stage is input-order sensitive (found by the 2026-07-16 harness run)
 
 The cluster stage inherits the flat result order: K-Means++ initialization seeds from the first vector, so an upstream reorder (echo demotion) restructures cluster *membership*, not just order. Consequence measured on the synthetic golden set: with demotion on, the `demotion-adjusted-mass` ordering lever had nothing left to flip — the two levers are coupled through initialization. An order-independent init (e.g. deterministic farthest-first from a canonical seed, or sorting inputs by trace id before init) would decouple them, making per-lever attribution clean. This is a ranking-path change: it ships through the harness like any other, and it changes displayed clusters for existing users — measure on the real golden sets first. Relates to the pre-existing "Cluster stability" note in search-algorithms.md §Clustering.
-
-### `[IMPL]` Echo-suppression ranking follow-ups (folded into the ranking-system stream, operator ruling 2026-07-16)
-
-Shipped 2026-07-14, feature-flagged **default-OFF** (`docs/planning/echo-suppression.md`):
-`check_recipe` can demote the current agent's own recent hypothesis-appends so an echo
-falls below a cross-agent recipe of similar similarity (reorder only, no truncation,
-percentages intact). Per-request `echo_suppress=on|off` on `/check` is the A/B toggle;
-global default lives in `system_settings.echoSuppression`.
-
-Follow-ups, now shipping through the ranking-system harness above:
-- **Flip the global default to ON** — the measurement is the harness's golden clean/polluted
-  pair: flip when polluted-corpus retrieval recovers to within noise of the clean baseline.
-  (Decision recipe-checked as soup.net `5cfee9bb`; default-OFF-until-measured per the house
-  "ranking changes arrive measured" rule.)
-- **Stronger curation-exemption signals** — v1 exempts only `decided_at` recipes. Add the
-  "independent of the reporting agent" signals: human `trace_reactions` (`still_true`) and
-  cross-agent `check_feedback` corroboration, plumbed as per-stage signals in the brief's
-  §3a pipeline. Pairs with the R2 provenance-weighted feedback-ranking work (same axis:
-  real signal vs echo).
-- Consider a per-key toggle (needs a stable-key story — daily keys rotate) and/or an admin
-  UI for the setting (flip via `setSetting` for now). MCP `check_recipe` tool-arg exposure
-  is deliberately deferred to keep `tools/list` byte-stable.
 
 ---
 
@@ -426,6 +408,10 @@ Both journeys succeeded — zero hard blockers; short-id resolution and the impo
 - **Re-import response points nowhere** — an all-skipped re-import returns `book: null` with no pointer to which book already holds the rows. Report the book(s) containing the matched ids.
 - **`/check` claims "No API key provided" while a valid `Authorization: Bearer` header is present** — it only reads `?key=`. Pre-existing, not from this batch. Either accept Bearer or say "pass it as ?key= on this endpoint." Related: the `/docs` `?key=` prefill audit item.
 - Cosmetic: bare 404s on `GET /import` and `GET /docs` (a 405 / index line would self-document); import book auto-name uses server-UTC date (reads as "tomorrow" for western-hemisphere users); import response `orphaned` count name is opaque until nonzero (the v1.1 `remapped` count is documented in corpus-import.md §v1.1); `format=json` on `/check` is undocumented on the check page; recipe/trace/group vocabulary drift on the wire (`recipeId` vs `trace_id` vs `"group"` — schema rename deferred per ADR-0016, but the feedback error text could accept `recipe_id` as an alias or name the synonym).
+
+### `[IMPL]` stdio MCP proxy: session_id parity
+
+The stdio proxy (`apps/mcp-server/src/index.ts`) forwards to `/check` and exposes `known_recipes` but not the new `session_id` param (2026-07-17). Small parity change; the proxy works unchanged today (sessionless checks just mint fresh tokens per call).
 
 ### `[IMPL]` Extend short-id prefixes beyond feedback `trace_id` (demand-gated)
 

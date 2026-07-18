@@ -1,8 +1,8 @@
 /* eslint-disable no-console -- CLI entry point: the console summary IS the product */
 /**
  * Golden-set ranking eval — Layer B of the offline regression harness
- * (docs/planning/check-recipe-ranking-system.md §3b; workflow:
- * docs/workflows/ranking-tuning.md).
+ * (workflow: docs/workflows/ranking-tuning.md; engine contract:
+ * docs/planning/session-novelty-and-pool-diversity.md, plan v2).
  *
  * One offline run: imports a golden corpus (import-format export payload) into
  * a throwaway database, backfills full_document embeddings SYNCHRONOUSLY per
@@ -23,27 +23,26 @@
  *
  *     npx tsx apps/backend/src/eval/ranking-eval.ts [--dataset <dir>]
  *
- * Env: PG* connection vars (or DATABASE_URL), EMBEDDINGS_PROVIDER=local,
- * JWT_SECRET (defaulted here if unset — eval users are throwaway).
+ * Corpus arms — the HYGIENE scenario (plan v2 seam 3: run isolation is the
+ * benchmark's job; "pollution" is one agent lineage re-depositing over its own
+ * corpus, i.e. bad benchmark hygiene, not a product defect):
+ *   - hygiene-polluted: the full corpus including the session-lineage
+ *     deposits, imported first so trace ids stay canonical.
+ *   - hygiene-clean: the corpus minus meta.sessionLineages — the properly
+ *     isolated run, imported by a SECOND eval user (the import service's
+ *     deterministic mint isolates the arm and returns the id remap).
  *
- * Corpus arms (fixture format: eval/golden/README.md):
- *   - polluted: the full corpus (durable recipes + same-key echo appends),
- *     imported first so trace ids stay canonical (graded labels key on them).
- *   - clean: the corpus minus meta.echoTraces, imported by a SECOND eval user —
- *     the import service's deterministic mint isolates the arm and returns the
- *     id remap the metrics need.
+ * Ranking variants (P6 proving arms — ranking is a pure function, so these
+ * differ only in the clustering-pool boundary):
+ *   - baseline:       DEFAULT_RANKING (page pool — legacy)
+ *   - pool-fixed100:  fixed:100 clustering pool @ 768-dim pool vectors
+ *   - pool-score-gap: score-gap pool (largest gap in [20, 133]) @ 768 dims
  *
- * Ranking variants (§3d + P6 proving arms):
- *   - baseline:        DEFAULT_RANKING (echo off, member-count order, page pool)
- *   - echo-on:         echo demotion enabled, member-count order, page pool
- *   - echo-on-mass:    echo demotion + demotion-adjusted-mass cluster order
- *   - echo-on-pool100: echo demotion + fixed:100 clustering pool @ 768 dims (P6)
- *
- * Two pipeline calls per question × arm × variant (2026-07-17 fidelity
- * refactor): an expanded flat call for the whole-list metrics and a
- * production-shaped clustered call (perPage 20) for the display metrics —
- * the earlier single perPage:100 clustered call idealized production's
- * 20-window and masked exactly the pool problem P6 names.
+ * Calls per question × arm × variant: an expanded flat call for the
+ * whole-list metrics, a production-shaped clustered call (perPage 20) for the
+ * display metrics, and — on session questions in the hygiene-polluted arm — a
+ * session overlay of the display call (knownIds from the stamped
+ * traces.session_id lineages) for tokenEfficiency + siblingVisibility.
  */
 
 import crypto from "node:crypto";
@@ -57,7 +56,6 @@ import { DEFAULT_RANKING, RANKING_ALGORITHM_VERSION } from "@soupnet/domain";
 import type { RankingConfig } from "@soupnet/domain";
 import {
   ndcg,
-  shareAtK,
   recallAtK,
   kendallTau,
   serendipityAtL,
@@ -77,10 +75,10 @@ interface GoldenQuestion {
   query: string;
   /** Trace id → grade 0–3 (0-grades may be omitted; absent = 0). */
   graded: Record<string, number>;
-  /** Logical agent keys the querying agent holds; [0] becomes the current
-   *  api_key. Empty/absent ⇒ a fresh key that authored nothing (guardrail). */
-  echoKeys?: string[];
-  /** Guardrail question: demotion must be a no-op (Kendall tau = 1). */
+  /** Session-lineage names (meta.sessionLineages values) whose deposits form
+   *  the querying agent's known-set for the session overlay measurement. */
+  sessions?: string[];
+  /** Stability-guardrail question (Kendall tau vs baseline must be 1). */
   unaffected?: boolean;
   /** Trace id → aspect label, for cluster-aspect coverage. */
   aspects?: Record<string, string>;
@@ -89,19 +87,22 @@ interface GoldenQuestion {
 }
 
 interface GoldenMeta {
-  /** "now" for echo recency math — fixed so fixture created_at timestamps
-   *  keep their session/day-window meaning forever. */
+  /** Reference "now" — kept so fixture created_at timestamps stay meaningful
+   *  (the runner's known-set derivation is stamped-column-based rather than
+   *  wall-clock-window-based, mirroring production's session query shape
+   *  without time fragility). */
   referenceNow: string;
-  /** Echo trace id → logical agent key that "authored" it. The runner mints
-   *  one real api_key uuid per logical key per run and stamps these rows. */
-  echoTraces: Record<string, string>;
+  /** Trace id → session-lineage name. The runner mints one session token per
+   *  lineage per run, stamps traces.session_id on these rows (imports leave
+   *  it NULL), and derives per-question known-sets from the stamped column. */
+  sessionLineages: Record<string, string>;
   /** Default cluster count for questions (default 3). */
   clusters?: number;
 }
 
 interface ThresholdRule {
   /** Dotted path into the aggregates object, e.g.
-   *  "arms.polluted.echo-on.echoShareTop3". */
+   *  "arms.hygiene-polluted.pool-score-gap.aspectCoverage". */
   metric: string;
   min?: number;
   max?: number;
@@ -110,29 +111,29 @@ interface ThresholdRule {
 }
 
 const MAX_GRADE = 3;
-const VARIANTS = ["baseline", "echo-on", "echo-on-mass", "echo-on-pool100"] as const;
+const VARIANTS = ["baseline", "pool-fixed100", "pool-score-gap"] as const;
 type VariantName = (typeof VARIANTS)[number];
+const ARMS = ["hygiene-polluted", "hygiene-clean"] as const;
+type ArmName = (typeof ARMS)[number];
 
 function variantConfig(name: VariantName): RankingConfig {
   switch (name) {
     case "baseline":
-      return DEFAULT_RANKING;
-    case "echo-on":
-      return { ...DEFAULT_RANKING, echo: { ...DEFAULT_RANKING.echo, enabled: true } };
-    case "echo-on-mass":
+      return DEFAULT_RANKING; // page pool — legacy
+    case "pool-fixed100":
+      // Fixed-cap comparison arm (fixture-relative by design — scaffolding
+      // for the sweep, not the target; candidate-pool-sizing memo).
+      return { clusterPool: { mode: "fixed", size: 100, minSize: 20, vectorDims: 768 } };
+    case "pool-score-gap":
+      // The measured candidate: relevance-bounded boundary at the largest
+      // score gap, searched between the default minSize/size bounds.
       return {
-        ...DEFAULT_RANKING,
-        echo: { ...DEFAULT_RANKING.echo, enabled: true },
-        clusterOrdering: "demotion-adjusted-mass",
-      };
-    case "echo-on-pool100":
-      // The P6 lever's measured candidate (candidate-pool-sizing memo):
-      // demotion on, clustered summary drawn from the top-100 pool at 768-dim
-      // pool vectors. Flat pagination is untouched by the pool by design.
-      return {
-        ...DEFAULT_RANKING,
-        echo: { ...DEFAULT_RANKING.echo, enabled: true },
-        clusterPool: { mode: "fixed", size: 100, vectorDims: 768 },
+        clusterPool: {
+          mode: "score-gap",
+          size: DEFAULT_RANKING.clusterPool.size,
+          minSize: DEFAULT_RANKING.clusterPool.minSize,
+          vectorDims: 768,
+        },
       };
   }
 }
@@ -144,17 +145,19 @@ interface QuestionMeasurement {
   ndcg5: number;
   ndcg10: number;
   ndcg20: number;
-  genuineRecall5: number;
-  genuineRecall10: number;
-  echoShareTop3: number;
-  echoShareTop5: number;
-  /** 1 when the first displayed exemplar (the #1 cluster's face) is an echo. */
-  firstExemplarEcho: number;
-  exemplarEchoShare: number;
-  topClusterEchoShare: number;
+  relevantRecall5: number;
+  relevantRecall10: number;
   aspectCoverage: number;
   serendipity: number;
-  /** Flat post-demotion order — kept for the tau guardrail. */
+  /** Session overlay (hygiene-polluted arm, session questions only): share of
+   *  the display call's recipe-text chars saved by known-set stubs. */
+  tokenEfficiency?: number;
+  /** Absolute chars saved by stubs on the overlay display call. */
+  tokenSavedChars?: number;
+  /** Fraction of relevant non-known-set results the overlay rendered fully —
+   *  1.0 by construction (seam 2's sibling-visibility contract). */
+  siblingVisibility?: number;
+  /** Flat whole-list order — kept for the tau guardrail. */
   flatIds: string[];
 }
 
@@ -163,72 +166,50 @@ interface ArmContext {
   groupId: string;
   /** Canonical (fixture) id → this arm's id. Identity for the polluted arm. */
   mapId: (id: string) => string;
-  /** This arm's echo trace ids (empty for the clean arm). */
-  echoIds: Set<string>;
+  /** Lineage name → this arm's stamped trace ids (empty for the clean arm). */
+  lineageIds: Map<string, string[]>;
 }
 
 async function measureQuestion(
   arm: ArmContext,
   q: GoldenQuestion,
   variant: VariantName,
-  keyForLogicalAgent: (k: string) => string,
   meta: GoldenMeta,
   queryVector: number[],
 ): Promise<QuestionMeasurement> {
   const rc = variantConfig(variant);
-  const currentApiKeyId = q.echoKeys?.[0]
-    ? keyForLogicalAgent(q.echoKeys[0])
-    : crypto.randomUUID();
-  const echo = {
-    config: rc.echo,
-    exemption: rc.exemption,
-    currentApiKeyId,
-    now: new Date(meta.referenceNow),
-  };
-
   const { runSearchPipeline } = await import("../services/search-pipeline");
+  const queryVectorStr = `[${queryVector.join(",")}]`;
+  const k = q.clusters ?? meta.clusters ?? 3;
 
-  // Two calls per question — production fidelity (2026-07-17 refactor). The
-  // previous single perPage:100 clustered call idealized production's
-  // 20-window and masked exactly the P6 pool problem.
-  //   (a) Expanded flat call: the whole-list ranking surface, for the flat
-  //       metrics (ndcg*, recall*, echoShare*, tau, Ser@L).
-  //   (b) Production-shaped clustered call (perPage 20, the caller's k): what
-  //       an agent actually sees, for the display metrics (exemplar/cluster
-  //       echo exposure, aspect coverage).
+  // (a) Expanded flat call: the whole-list ranking surface.
   const flatRes = await runSearchPipeline({
     db: arm.db,
     groupIds: [arm.groupId],
     query: q.query,
-    queryVectorStr: `[${queryVector.join(",")}]`,
+    queryVectorStr,
     expand: true,
     perPage: 100, // whole corpus — no-cutoff retrieval, golden sets are small
     includeVectors: true,
     // Pin full dims so Ser@L's unexp() is computed in the same space for
-    // every variant (a fixed pool would otherwise MRL-truncate to its
-    // vectorDims and make the pool arm's Ser incomparable).
+    // every variant (a pool would otherwise MRL-truncate to its vectorDims).
     vectorDims: 3072,
-    echo,
     ranking: rc,
   });
 
+  // (b) Production-shaped clustered call: what an agent actually sees.
   const displayRes = await runSearchPipeline({
     db: arm.db,
     groupIds: [arm.groupId],
     query: q.query,
-    queryVectorStr: `[${queryVector.join(",")}]`,
-    k: q.clusters ?? meta.clusters ?? 3,
-    perPage: 20, // production default — the window the clustered summary draws from in page mode
-    echo,
+    queryVectorStr,
+    k,
+    perPage: 20, // production default — the page the summary draws from in page mode
     ranking: rc,
   });
 
-  // Flat post-demotion order — the whole-list ranking surface.
   const flat = flatRes.results;
   const flatIds = flat.map((t) => t.id);
-  // Display surface: exemplars in cluster order; membership indexes the
-  // cluster input (the P6 pool in fixed mode, else the page window).
-  const clusterInput = displayRes.allResults ?? displayRes.results;
   const exemplarIds = displayRes.clustered ? displayRes.results.map((t) => t.id) : [];
 
   // Grades are keyed on canonical fixture ids — remap into this arm's ids.
@@ -237,24 +218,21 @@ async function measureQuestion(
   const gradeOf = (id: string) => grade.get(id) ?? 0;
 
   const rankedGains = flatIds.map(gradeOf);
-  // Ideal pool = every graded id present in this arm. With no-truncation
+  // Ideal pool = every graded id present in this arm. With no-cutoff
   // retrieval and perPage > corpus size, the flat list IS the arm's whole
-  // book, so membership-in-flat equals membership-in-arm (the clean arm
-  // simply lacks its echo rows).
+  // book (the clean arm simply lacks its lineage rows).
   const flatIdSet = new Set(flatIds);
   const armGrades = [...grade.entries()]
     .filter(([id]) => flatIdSet.has(id))
     .map(([, g]) => g);
 
-  const genuineTargets = new Set(
-    [...grade.entries()]
-      .filter(([id, g]) => g >= 2 && !arm.echoIds.has(id) && flatIdSet.has(id))
-      .map(([id]) => id),
+  const relevantTargets = new Set(
+    [...grade.entries()].filter(([id, g]) => g >= 2 && flatIdSet.has(id)).map(([id]) => id),
   );
 
   // Ser@L (serendipity memo Candidate A): rel = grade/3; unexp = min cosine
-  // distance to the expectation set E = {query embedding}. Computed over the
-  // flat post-demotion order — the ranking stage's output, position-discounted.
+  // distance to the expectation set E = {query embedding}; computed over the
+  // flat order, position-discounted.
   const serItems: SerendipityItem[] = [];
   for (const t of flat) {
     const vec = flatRes.vectors?.get(t.id);
@@ -267,26 +245,65 @@ async function measureQuestion(
   const aspectMap = new Map(Object.entries(q.aspects ?? {}).map(([id, a]) => [arm.mapId(id), a]));
   const relevantIds = new Set([...grade.entries()].filter(([, g]) => g > 0).map(([id]) => id));
 
-  const topClusterIds = displayRes.clustered
-    ? displayRes.clusters![0]!.memberIndices.map((i) => clusterInput[i]!.id)
-    : [];
-
-  return {
+  const measurement: QuestionMeasurement = {
     ndcgFull: ndcg(rankedGains, armGrades),
     ndcg5: ndcg(rankedGains, armGrades, 5),
     ndcg10: ndcg(rankedGains, armGrades, 10),
     ndcg20: ndcg(rankedGains, armGrades, 20),
-    genuineRecall5: recallAtK(flatIds, genuineTargets, 5),
-    genuineRecall10: recallAtK(flatIds, genuineTargets, 10),
-    echoShareTop3: shareAtK(flatIds, arm.echoIds, 3),
-    echoShareTop5: shareAtK(flatIds, arm.echoIds, 5),
-    firstExemplarEcho: exemplarIds[0] !== undefined && arm.echoIds.has(exemplarIds[0]) ? 1 : 0,
-    exemplarEchoShare: shareAtK(exemplarIds, arm.echoIds),
-    topClusterEchoShare: shareAtK(topClusterIds, arm.echoIds),
+    relevantRecall5: recallAtK(flatIds, relevantTargets, 5),
+    relevantRecall10: recallAtK(flatIds, relevantTargets, 10),
     aspectCoverage: aspectCoverage(exemplarIds, aspectMap, relevantIds),
     serendipity: serendipityAtL(serItems),
     flatIds,
   };
+
+  // (c) Session overlay — only where the question declares session lineages
+  // AND this arm actually holds their deposits (the hygiene-polluted arm).
+  const knownIds = new Set<string>();
+  for (const lineage of q.sessions ?? []) {
+    for (const id of arm.lineageIds.get(lineage) ?? []) knownIds.add(id);
+  }
+  if (knownIds.size > 0) {
+    const overlayRes = await runSearchPipeline({
+      db: arm.db,
+      groupIds: [arm.groupId],
+      query: q.query,
+      queryVectorStr,
+      k,
+      perPage: 20,
+      knownIds,
+      ranking: rc,
+    });
+
+    const textOf = new Map(flat.map((t) => [t.id, t.claimText]));
+    let savedChars = 0;
+    let shownChars = 0;
+    let relevantSiblings = 0;
+    let relevantSiblingsFull = 0;
+    for (const r of overlayRes.results) {
+      if (r.known) {
+        savedChars += (textOf.get(r.id) ?? r.claimText).length;
+      } else {
+        shownChars += r.claimText.length;
+        for (const stubId of r.promotedOverKnownIds ?? []) {
+          savedChars += textOf.get(stubId)?.length ?? 0;
+        }
+      }
+      // Sibling visibility: a relevant result OUTSIDE the known-set must
+      // never arrive stubbed (seam 2 — the cross-communication channel).
+      if (!knownIds.has(r.id) && gradeOf(r.id) >= 2) {
+        relevantSiblings++;
+        if (!r.known) relevantSiblingsFull++;
+      }
+    }
+    measurement.tokenSavedChars = savedChars;
+    measurement.tokenEfficiency =
+      savedChars + shownChars > 0 ? savedChars / (savedChars + shownChars) : 0;
+    measurement.siblingVisibility =
+      relevantSiblings > 0 ? relevantSiblingsFull / relevantSiblings : 1;
+  }
+
+  return measurement;
 }
 
 function cosine(a: number[], b: number[]): number {
@@ -312,7 +329,7 @@ interface CorpusFile {
 async function setupArm(
   db: PostgresJsDatabase,
   corpus: CorpusFile,
-  armName: "polluted" | "clean",
+  armName: ArmName,
   runTag: string,
 ): Promise<{ groupId: string; mapId: (id: string) => string }> {
   const { registerUser } = await import("../auth");
@@ -450,114 +467,125 @@ async function main(): Promise<void> {
   const runTag = Date.now().toString(36);
 
   // Polluted arm first: canonical ids. Clean arm second: minted copies + idMap.
-  const echoIdList = Object.keys(meta.echoTraces);
-  const polluted = await setupArm(db, corpus, "polluted", runTag);
+  const lineageTraceIds = Object.keys(meta.sessionLineages);
+  const polluted = await setupArm(db, corpus, "hygiene-polluted", runTag);
   const cleanCorpus: CorpusFile = {
     ...corpus,
-    traces: corpus.traces.filter((t) => !(t.id in meta.echoTraces)),
+    traces: corpus.traces.filter((t) => !(t.id in meta.sessionLineages)),
   };
-  const clean = await setupArm(db, cleanCorpus, "clean", runTag);
+  const clean = await setupArm(db, cleanCorpus, "hygiene-clean", runTag);
 
-  // Mint one api_key uuid per logical agent key and stamp the echo rows
-  // (imports write api_key_id NULL — a human-only surface — so echo authorship
-  // is fixture metadata the runner applies). Polluted arm only; the clean arm
-  // has no echo rows by construction.
-  const logicalKeys = new Map<string, string>();
-  const keyForLogicalAgent = (k: string): string => {
-    let v = logicalKeys.get(k);
-    if (!v) {
-      v = crypto.randomUUID();
-      logicalKeys.set(k, v);
+  // Stamp session lineages (hygiene-polluted arm): one minted session token
+  // per lineage, written to traces.session_id — the same column production
+  // stamps at deposit time (imports leave it NULL: a human-only surface).
+  // Known-sets are then derived FROM the stamped column, mirroring the
+  // production known-set query shape.
+  const lineageTokens = new Map<string, string>();
+  for (const [traceId, lineage] of Object.entries(meta.sessionLineages)) {
+    let token = lineageTokens.get(lineage);
+    if (!token) {
+      token = crypto.randomUUID();
+      lineageTokens.set(lineage, token);
     }
-    return v;
-  };
-  for (const [traceId, agentKey] of Object.entries(meta.echoTraces)) {
     await db.execute(sql`
-      UPDATE claimnet.traces SET api_key_id = ${keyForLogicalAgent(agentKey)}::uuid
+      UPDATE claimnet.traces SET session_id = ${token}
       WHERE id = ${polluted.mapId(traceId)}::uuid
     `);
   }
+  const pollutedLineageIds = new Map<string, string[]>();
+  for (const [lineage, token] of lineageTokens) {
+    const rows = (await db.execute(sql`
+      SELECT id::text AS id FROM claimnet.traces WHERE session_id = ${token}
+    `)) as unknown as Array<{ id: string }>;
+    pollutedLineageIds.set(lineage, rows.map((r) => r.id));
+  }
+  console.log(
+    `[hygiene-polluted] stamped ${lineageTraceIds.length} lineage deposits across ${lineageTokens.size} session token(s)`,
+  );
 
-  const arms: Record<"polluted" | "clean", ArmContext> = {
-    polluted: {
+  const arms: Record<ArmName, ArmContext> = {
+    "hygiene-polluted": {
       db,
       groupId: polluted.groupId,
       mapId: polluted.mapId,
-      echoIds: new Set(echoIdList.map(polluted.mapId)),
+      lineageIds: pollutedLineageIds,
     },
-    clean: { db, groupId: clean.groupId, mapId: clean.mapId, echoIds: new Set() },
+    "hygiene-clean": { db, groupId: clean.groupId, mapId: clean.mapId, lineageIds: new Map() },
   };
 
   // ── Run every question × arm × variant ────────────────────────────────────
   type PerQuestion = Record<VariantName, QuestionMeasurement>;
-  const results: Record<"polluted" | "clean", Map<string, PerQuestion>> = {
-    polluted: new Map(),
-    clean: new Map(),
+  const results: Record<ArmName, Map<string, PerQuestion>> = {
+    "hygiene-polluted": new Map(),
+    "hygiene-clean": new Map(),
   };
 
   const loopStart = Date.now();
+  let pipelineCalls = 0;
   for (const q of questions) {
     const queryVector = await embedQuery(q.query, "SEMANTIC_SIMILARITY");
     if (!queryVector) throw new Error(`Embedding provider returned null for question ${q.id}`);
-    for (const armName of ["polluted", "clean"] as const) {
+    for (const armName of ARMS) {
       const per = {} as PerQuestion;
       for (const variant of VARIANTS) {
-        per[variant] = await measureQuestion(
-          arms[armName], q, variant, keyForLogicalAgent, meta, queryVector,
-        );
+        per[variant] = await measureQuestion(arms[armName], q, variant, meta, queryVector);
+        pipelineCalls += per[variant].tokenEfficiency !== undefined ? 3 : 2;
       }
       results[armName].set(q.id, per);
     }
     console.log(`  measured ${q.id} (${q.unaffected ? "guardrail" : "graded"})`);
   }
   const loopMs = Date.now() - loopStart;
-  const pipelineCalls = questions.length * 2 * VARIANTS.length * 2; // q × arms × variants × (flat + display)
   console.log(`measurement loop: ${(loopMs / 1000).toFixed(1)}s for ${pipelineCalls} pipeline calls`);
 
   // ── Aggregate ──────────────────────────────────────────────────────────────
-  const affected = questions.filter((q) => (q.echoKeys?.length ?? 0) > 0 && !q.unaffected);
   const unaffected = questions.filter((q) => q.unaffected);
 
-  const aggregateArm = (armName: "polluted" | "clean") => {
+  const aggregateArm = (armName: ArmName) => {
     const out: Record<VariantName, Record<string, number>> = {} as never;
     for (const variant of VARIANTS) {
       const all = questions.map((q) => results[armName].get(q.id)![variant]);
-      const echoQs = affected.map((q) => results[armName].get(q.id)![variant]);
+      const overlay = all.filter((m) => m.tokenEfficiency !== undefined);
       out[variant] = {
         ndcgFull: mean(all.map((m) => m.ndcgFull)),
         ndcg5: mean(all.map((m) => m.ndcg5)),
         ndcg10: mean(all.map((m) => m.ndcg10)),
         ndcg20: mean(all.map((m) => m.ndcg20)),
-        genuineRecall5: mean(all.map((m) => m.genuineRecall5)),
-        genuineRecall10: mean(all.map((m) => m.genuineRecall10)),
+        relevantRecall5: mean(all.map((m) => m.relevantRecall5)),
+        relevantRecall10: mean(all.map((m) => m.relevantRecall10)),
         aspectCoverage: mean(all.map((m) => m.aspectCoverage)),
         serendipity: mean(all.map((m) => m.serendipity)),
-        // Echo-exposure waterfall — over echo-affected questions only.
-        echoShareTop3: mean(echoQs.map((m) => m.echoShareTop3)),
-        echoShareTop5: mean(echoQs.map((m) => m.echoShareTop5)),
-        firstExemplarEchoRate: mean(echoQs.map((m) => m.firstExemplarEcho)),
-        exemplarEchoShare: mean(echoQs.map((m) => m.exemplarEchoShare)),
-        topClusterEchoShare: mean(echoQs.map((m) => m.topClusterEchoShare)),
+        // Session-overlay metrics exist only where lineages were measured —
+        // omitted (not zeroed) elsewhere so thresholds can't pass vacuously.
+        ...(overlay.length > 0
+          ? {
+            tokenEfficiency: mean(overlay.map((m) => m.tokenEfficiency!)),
+            tokenSavedChars: mean(overlay.map((m) => m.tokenSavedChars!)),
+            siblingVisibility: mean(overlay.map((m) => m.siblingVisibility!)),
+          }
+          : {}),
       };
     }
     return out;
   };
 
-  // Guardrail: on unaffected questions, each echo variant's flat order must
-  // match baseline exactly (tau = 1 — the current key authored nothing there,
-  // and the pool lever never touches the flat surface).
+  // Guardrail: on unaffected questions, each pool variant's flat order must
+  // match baseline exactly — the pool shapes only the clustered summary.
   const guardrail: Record<string, number> = {};
-  for (const variant of ["echo-on", "echo-on-mass", "echo-on-pool100"] as const) {
+  for (const variant of ["pool-fixed100", "pool-score-gap"] as const) {
     guardrail[variant] = mean(
       unaffected.map((q) => {
-        const per = results.polluted.get(q.id)!;
+        const per = results["hygiene-polluted"].get(q.id)!;
         return kendallTau(per[variant].flatIds, per.baseline.flatIds);
       }),
     );
   }
 
   const aggregates = {
-    arms: { polluted: aggregateArm("polluted"), clean: aggregateArm("clean") },
+    arms: {
+      "hygiene-polluted": aggregateArm("hygiene-polluted"),
+      "hygiene-clean": aggregateArm("hygiene-clean"),
+    },
     guardrail: { unaffectedTau: guardrail },
   };
 
@@ -568,13 +596,12 @@ async function main(): Promise<void> {
     algorithmVersion: RANKING_ALGORITHM_VERSION,
     provider: { id: provider, modelId: getEmbeddingModelId() },
     questionCount: questions.length,
-    affectedQuestionCount: affected.length,
     unaffectedQuestionCount: unaffected.length,
     measurementLoopMs: loopMs,
     pipelineCalls,
     aggregates,
     perQuestion: Object.fromEntries(
-      (["polluted", "clean"] as const).map((armName) => [
+      ARMS.map((armName) => [
         armName,
         Object.fromEntries(
           [...results[armName].entries()].map(([qid, per]) => [
@@ -637,12 +664,17 @@ function renderMarkdown(report: {
     "",
   ];
   for (const [armName, variants] of Object.entries(report.aggregates.arms)) {
-    const metricNames = Object.keys(Object.values(variants)[0]!);
+    const metricNames = [...new Set(Object.values(variants).flatMap((v) => Object.keys(v)))];
     lines.push(`## ${armName} arm`, "");
     lines.push(`| metric | ${VARIANTS.join(" | ")} |`);
     lines.push(`|---|${VARIANTS.map(() => "---:").join("|")}|`);
     for (const m of metricNames) {
-      lines.push(`| ${m} | ${VARIANTS.map((v) => variants[v]![m]!.toFixed(4)).join(" | ")} |`);
+      lines.push(
+        `| ${m} | ${VARIANTS.map((v) => {
+          const val = variants[v]![m];
+          return val === undefined ? "—" : val.toFixed(4);
+        }).join(" | ")} |`,
+      );
     }
     lines.push("");
   }

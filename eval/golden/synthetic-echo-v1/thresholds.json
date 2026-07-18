@@ -1,72 +1,48 @@
 [
   {
-    "metric": "guardrail.unaffectedTau.echo-on",
+    "metric": "guardrail.unaffectedTau.pool-fixed100",
     "min": 1,
-    "rationale": "Exact no-regression guardrail: on questions whose querying key authored no candidates, echo demotion must be a byte-stable no-op (Kendall tau = 1 exactly). Any value below 1 means demotion touched an unaffected query."
+    "rationale": "Exact stability guardrail: the clustering pool shapes only the clustered summary, so the fixed-pool arm's flat order must match baseline exactly (Kendall tau = 1) on guardrail questions. Any value below 1 means the pool leaked into the ranking surface. Measured exactly 1.0 on the 2026-07-17 simplified-engine rewrite baseline."
   },
   {
-    "metric": "guardrail.unaffectedTau.echo-on-mass",
+    "metric": "guardrail.unaffectedTau.pool-score-gap",
     "min": 1,
-    "rationale": "Same exact no-op guardrail for the demotion-adjusted-mass arm: with no demoted candidates every cluster's mass equals its raw similarity mass, so ordering must match baseline exactly."
+    "rationale": "Same exact no-leak guardrail for the score-gap pool arm. Measured exactly 1.0 on the 2026-07-17 rewrite baseline."
   },
   {
-    "metric": "guardrail.unaffectedTau.echo-on-pool100",
+    "metric": "arms.hygiene-polluted.baseline.siblingVisibility",
     "min": 1,
-    "rationale": "Exact no-op guardrail for the P6 pool arm's FLAT surface: the clustering pool feeds only the clustered summary, so flat order must match baseline exactly on unaffected questions (Layer A proves the same no-leak invariant mechanically). Added with the 2026-07-17 pool variant; measured exactly 1.0."
+    "rationale": "Seam 2 contract (plan v2): relevant deposits OUTSIDE the session's known-set must always render fully — never stubbed (the sub-agent cross-communication channel, recipe 4d25aec9). 1.0 by construction; measured 1.0 on the 2026-07-17 rewrite baseline. This path also serves as a lineage-fixture tripwire: if a corpus edit drops the session-lineage rows, the overlay metrics vanish and this metric path fails the run loudly instead of passing vacuously."
   },
   {
-    "metric": "arms.clean.baseline.ndcgFull",
+    "metric": "arms.hygiene-polluted.pool-score-gap.siblingVisibility",
+    "min": 1,
+    "rationale": "The same seam 2 contract under the measured-candidate pool mode — a bigger clustering pool must never convert sibling deposits into stubs. Measured 1.0 on the 2026-07-17 rewrite baseline."
+  },
+  {
+    "metric": "arms.hygiene-polluted.baseline.tokenEfficiency",
+    "min": 0.2,
+    "rationale": "The known-set stub mechanism must actually save display budget on session questions — if stub rendering silently no-ops, savings drop to 0. Measured 0.3243 (32% of display recipe-text chars saved) on the 2026-07-17 rewrite baseline; floor set with wide margin because the exact share depends on which lineage deposits reach the display window."
+  },
+  {
+    "metric": "arms.hygiene-clean.baseline.ndcgFull",
     "min": 0.87,
-    "rationale": "Retrieval-quality floor on the clean corpus. Calibration run 2026-07-16 (local:bge-small-en-v1.5) measured 0.9237, unchanged by the 2026-07-17 fidelity refactor (flat metrics kept their meaning); 0.05 margin absorbs cross-platform ONNX float drift near ties without letting a real retrieval regression pass."
+    "rationale": "Retrieval-quality floor on the isolated (hygiene-clean) corpus. Measured 0.9237 (local:bge-small-en-v1.5) on the 2026-07-17 rewrite baseline — unchanged from the 2026-07-16 calibration, since flat ranking is now a pure function identical across variants; 0.05 margin absorbs cross-platform ONNX float drift near ties."
   },
   {
-    "metric": "arms.polluted.baseline.ndcgFull",
+    "metric": "arms.hygiene-clean.baseline.relevantRecall10",
+    "min": 0.88,
+    "rationale": "Relevant recipes (grade>=2) must surface in the flat top-10 on the isolated corpus. Measured 0.9342 on the 2026-07-17 rewrite baseline; floor one near-tie below measurement."
+  },
+  {
+    "metric": "arms.hygiene-clean.baseline.aspectCoverage",
+    "min": 0.6,
+    "rationale": "Diversity guardrail paired with the relevance floors (utility x surprise ruling: never gate on relevance alone), on the production-shaped display call. Measured 0.6893 on the 2026-07-17 rewrite baseline; floor one aspect-slot below. Pool-variant coverage is deliberately UNGATED: this fixture's 30-45-trace corpora are smaller than or close to the page window, so pool modes degenerate toward whole-corpus pools here (fixed100 measured 0.6393) — the coverage-gain measurement belongs to real-scale golden exports."
+  },
+  {
+    "metric": "arms.hygiene-polluted.baseline.ndcgFull",
     "min": 0.74,
-    "rationale": "Polluted-arm baseline canary — documents the pollution gap the harness exists to close (clean 0.9237 vs polluted 0.7883, 2026-07-16, flat-metric meaning unchanged 2026-07-17). A drop below 0.74 means retrieval quality regressed beyond the known pollution cost."
-  },
-  {
-    "metric": "arms.polluted.baseline.echoShareTop3",
-    "min": 0.6,
-    "rationale": "Fixture-integrity tripwire, not a quality goal: with demotion OFF, echoes must still dominate the flat top-3 on affected questions (measured 0.8333 on 2026-07-16, flat-metric meaning unchanged 2026-07-17). If a corpus edit de-pollutes the dataset, the demotion metrics below would pass vacuously — this bound fails the run instead."
-  },
-  {
-    "metric": "arms.polluted.baseline.topClusterEchoShare",
-    "min": 0.6,
-    "rationale": "Display-stage twin of the fixture tripwire, added in the 2026-07-17 recalibration for the production-shaped display call (perPage 20): baseline's #1 displayed cluster measured 0.7423 echo, versus 0.5429 under the old idealized perPage-100 clustered call — so this bound also catches an accidental reversion of the runner to the idealized call shape."
-  },
-  {
-    "metric": "arms.polluted.echo-on.echoShareTop3",
-    "max": 0.1,
-    "rationale": "The demotion mechanism's flat-stage effect: same-key session echoes must clear the top-3 on affected questions. Measured 0.0 on 2026-07-16 (from 0.8333 at baseline), unchanged 2026-07-17; 0.1 headroom tolerates one near-tie inversion across the 4 affected questions."
-  },
-  {
-    "metric": "arms.polluted.echo-on.genuineRecall5",
-    "min": 0.55,
-    "rationale": "Demotion must surface genuine cross-agent judgments, not merely bury echoes. Measured 0.6617 with echo-on (0.4867 at baseline) on 2026-07-16, flat-metric meaning unchanged 2026-07-17; floor set one near-tie below the measured value."
-  },
-  {
-    "metric": "arms.polluted.echo-on.ndcgFull",
-    "min": 0.77,
-    "rationale": "Echo demotion must not cost graded relevance overall. Measured 0.8171 on 2026-07-16 (above the 0.7883 baseline — demoting grade-1 echoes lifts grade-3 durables), unchanged 2026-07-17; 0.05 margin below measurement."
-  },
-  {
-    "metric": "arms.polluted.echo-on.topClusterEchoShare",
-    "max": 0.1,
-    "rationale": "Recalibrated 2026-07-17 for the production-shaped display call (perPage 20 — the fidelity refactor that changed this metric's meaning): with demotion on, echoes fall out of the 20-window entirely, so the #1 displayed cluster measured 0.0 echo (baseline 0.7423). The previous idealized-call bound was 0.3 against a measured 0.2019; the production-shaped bound is far tighter because the mechanism is stronger at the real window size. 0.1 headroom for near-tie inversions."
-  },
-  {
-    "metric": "arms.polluted.echo-on-mass.topClusterEchoShare",
-    "max": 0.1,
-    "rationale": "The §3d lever must never leave MORE echo in the #1 displayed cluster than member-count ordering does. Recalibrated 2026-07-17 (production-shaped display call): both orderings measure 0.0 — with demotion clearing the 20-window, mass has nothing to flip on this set; the lever's mechanism is proven by the Layer A waterfall test, and its material effect is measured on the real polluted golden export."
-  },
-  {
-    "metric": "arms.polluted.echo-on.aspectCoverage",
-    "min": 0.6,
-    "rationale": "Diversity guardrail paired with the relevance metrics (utility x surprise ruling: never gate on relevance alone). Recalibrated 2026-07-17 for the production-shaped display call: measured 0.6893 (was 0.6393 under the idealized call); floor one aspect-slot below measurement."
-  },
-  {
-    "metric": "arms.polluted.echo-on-pool100.topClusterEchoShare",
-    "max": 0.3,
-    "rationale": "Regression ceiling for the P6 pool code path, added 2026-07-17: fixed:100 re-admits demoted echoes into the clustering pool (they cluster together and can win exemplar slots), measuring 0.2019 in the #1 displayed cluster versus 0.0 for page-mode demotion on this set. The lever's diversity-gain prediction is deliberately UNGATED here: this 45-trace fixture is smaller than the 100-pool, so the arm degenerates to a whole-corpus pool (aspectCoverage 0.6393 vs 0.6893 page mode) and cannot test the prediction — that measurement belongs to the real golden export sweep (recipe 4431f077)."
+    "max": 0.85,
+    "rationale": "The HYGIENE-scenario canary, both-sided. Min: flat quality must not regress below the known isolation-contamination cost (measured 0.7883 vs clean 0.9237 on the 2026-07-17 rewrite baseline — the gap is now purely a benchmark-hygiene effect, plan v2 seam 3). Max: fixture-integrity tripwire — if a corpus edit removes the lineage near-duplicates, polluted ndcg rises toward the clean value and the hygiene scenario demonstrates nothing; this bound fails the run instead."
   }
 ]

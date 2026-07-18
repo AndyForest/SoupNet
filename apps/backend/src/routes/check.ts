@@ -12,7 +12,6 @@ import { getDb } from "../db";
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { validateKey } from "../services/api-key.service";
-import { parseEchoSuppressOverride } from "../services/system-settings.service";
 import { HTML_ACCEPT_TYPES, renderCheckResponseMarkdown, fenceCheckResponseMarkdown } from "@soupnet/domain";
 import type { CheckResponseJson } from "@soupnet/domain";
 import { rateLimit, perKeyRateLimit, extractCheckRequestKey, getClientIp, hashApiKey } from "../middleware/rate-limit";
@@ -118,11 +117,13 @@ export const CHECK_PARAMS = [
   { field: "decidedAt",  wire: "decided_at",         aliases: ["decided"],     roundTrip: "carry" },
   { field: "agentId",    wire: "agent_id",           aliases: [],              roundTrip: "carry" },
   { field: "knownRecipes", wire: "known_recipes",    aliases: [],              roundTrip: "carry" },
+  // Opaque session token for known-set stub rendering (token efficiency only —
+  // never influences ranking; plan v2 seam 2). Carries forward like the other
+  // intent-preserving params so the session survives the re-check form and
+  // Copy-URL round-trips; the response echoes the effective (possibly freshly
+  // minted) token as data.sessionId.
+  { field: "sessionId",  wire: "session_id",         aliases: [],              roundTrip: "carry" },
   { field: "sort",       wire: "sort",               aliases: [],              roundTrip: "carry" },
-  // Per-request echo-suppression A/B toggle (on|off). Carries forward like the
-  // other intent-preserving params so an arm keeps its setting across the
-  // re-check form and Copy-URL round-trips. See docs/planning/echo-suppression.md.
-  { field: "echoSuppress", wire: "echo_suppress",    aliases: [],              roundTrip: "carry" },
   // Premium opt-in behavior flag — carries like the other intent-preserving
   // params (agent_id, decided_at) so an opted-in caller keeps synthesis on
   // across the page's re-check form and Copy-URL round-trips, rather than
@@ -209,7 +210,6 @@ function buildJsonResponse(
     return { ok: false, error: result.error };
   }
 
-  const KNOWN_GIST_CHARS = 80;
   const response: Record<string, unknown> = {
     ok: true,
     data: {
@@ -218,13 +218,16 @@ function buildJsonResponse(
       searchMode: result.searchMode ?? "semantic",
       clustered: result.clustered ?? false,
       results: enriched.map((r) => {
-        // known_recipes stub (rendering only — logging and cluster math are
-        // untouched upstream; the stub keeps its cluster slot).
-        if (knownRecipeIds?.has(r.id)) {
+        // Known-set stub (rendering only — logging and cluster math are
+        // untouched upstream; the stub keeps its cluster slot at its true
+        // rank). Triggered by client-declared known_recipes ids or the
+        // pipeline's session-known flag. Id-only shape — no recipe gist
+        // (operator ruling: the gist is an ossification risk; fetch the full
+        // recipe via GET /recipes or get_recipes when needed).
+        if (knownRecipeIds?.has(r.id) || r.known) {
           return {
             id: r.id,
             known: true,
-            recipe: r.claimText.slice(0, KNOWN_GIST_CHARS) + (r.claimText.length > KNOWN_GIST_CHARS ? "…" : ""),
             createdAt: r.createdAt,
             score: { combined: r.combinedScore, semantic: r.semanticScore },
             ...(r.clusterSize ? { clusterSize: r.clusterSize } : {}),
@@ -257,11 +260,21 @@ function buildJsonResponse(
         if (r.clusterSize) {
           item["clusterSize"] = r.clusterSize;
         }
+        // Budget backfill marker (seam 2): this item was promoted for display
+        // over known cluster exemplar(s) — "you already know these; this is
+        // the next in line". Id-only stubs, same shape as known results.
+        if (r.promotedOverKnownIds && r.promotedOverKnownIds.length > 0) {
+          item["knownStubs"] = r.promotedOverKnownIds.map((id) => ({ id, known: true }));
+        }
         return item;
       }),
       totalResults: result.totalResults,
       page,
       totalPages: result.totalPages,
+      // The session token in effect for this check — freshly minted when none
+      // was presented (self-healing). Callers pass it back as session_id so
+      // recipes this session already deposited render as id-only stubs.
+      ...(result.sessionId ? { sessionId: result.sessionId } : {}),
       // Which ranking served this response — dated algorithm version +
       // effective switches (docs/architecture/ranking-changelog.md). JSON
       // metadata only; the markdown surfaces stay token-lean.
@@ -560,13 +573,14 @@ function renderPage(
           scoreDetail = `Score: ${r.combinedScore.toFixed(4)}`;
         }
 
-        // known_recipes stub — one line: id + gist + similarity. Rendering
-        // only; the result still occupies its cluster slot.
-        if (knownIdsForHtml.has(r.id)) {
-          const gist = esc(r.claimText.slice(0, 80)) + (r.claimText.length > 80 ? "&hellip;" : "");
+        // Known-set stub — one line: id + similarity, no recipe text (id-only
+        // ruling; the caller already holds the body). Rendering only; the
+        // result still occupies its cluster slot. Triggered by declared
+        // known_recipes ids or the pipeline's session-known flag.
+        if (knownIdsForHtml.has(r.id) || r.known) {
           return `
     <article class="result">
-      <p><small><code>${esc(r.id)}</code> [known to you] ${esc(scoreDetail)}${r.clusterSize ? ` &mdash; represents ${r.clusterSize} similar recipes` : ""} &mdash; ${gist}</small></p>
+      <p><small><code>${esc(r.id)}</code> [known to you] ${esc(scoreDetail)}${r.clusterSize ? ` &mdash; represents ${r.clusterSize} similar recipes` : ""}</small></p>
     </article>`;
         }
 
@@ -605,10 +619,16 @@ function renderPage(
 
         const groupHtml = r.group ? `<span class="group">[${esc(r.group.name)}]</span> ` : "";
 
+        // Budget backfill marker (seam 2): this recipe was promoted for
+        // display over known cluster exemplar(s) the caller already holds.
+        const knownStubsHtml = r.promotedOverKnownIds && r.promotedOverKnownIds.length > 0
+          ? `\n      <p><small>Shown in place of ${r.promotedOverKnownIds.map((id) => `<code>${esc(id)}</code>`).join(", ")} [known to you] &mdash; next in line from the same cluster</small></p>`
+          : "";
+
         return `
     <article class="result">
       <p>${groupHtml}${esc(r.claimText)}</p>
-      <span class="rank">${esc(scoreDetail)}</span>${clusterHtml}
+      <span class="rank">${esc(scoreDetail)}</span>${clusterHtml}${knownStubsHtml}
       ${evidenceHtml}
     </article>`;
       })
@@ -932,6 +952,11 @@ async function handleCheck(
   // stamps "mcp-http" itself without touching this path.
   const surface = c.req.header("x-soupnet-surface") === "mcp-stdio" ? "mcp-stdio" : "web";
 
+  // Known-set ids the client declared (known_recipes). Parsed once — the set
+  // drives route-side stub rendering; the array joins the session's own
+  // deposits inside the service to form the full known-set.
+  const knownRecipeIds = parseKnownRecipes(params.knownRecipes);
+
   let result: SubmitAndSearchResult | undefined;
   let searchOnly = false;
   if (params.trace && params.ef && params.key) {
@@ -963,7 +988,8 @@ async function handleCheck(
       // filter alongside a recipe narrows the candidate set by keyword;
       // the check itself logs normally.
       keywordFilter: params.filter,
-      echoSuppress: parseEchoSuppressOverride(params.echoSuppress),
+      sessionId: params.sessionId,
+      knownRecipeIds: knownRecipeIds.size > 0 ? [...knownRecipeIds] : undefined,
     });
   } else if (params.key && params.filter && !params.trace) {
     // The sanctioned no-logging path: filter (alias f) with no recipe runs a
@@ -1030,11 +1056,10 @@ async function handleCheck(
     let enriched = await enrichResults(db, result.results);
     enriched = await clusterEvidenceInResults(db, enriched);
     const page = params.page ? parseInt(params.page, 10) : 1;
-    const known = parseKnownRecipes(params.knownRecipes);
     const synthesis = await resolveSynthesis(db, params, result, enriched, searchOnly);
     return c.json(searchOnly
-      ? buildSearchOnlyJsonResponse(result, enriched, page, params.filter ?? "", known)
-      : buildJsonResponse(result, enriched, page, known, synthesis));
+      ? buildSearchOnlyJsonResponse(result, enriched, page, params.filter ?? "", knownRecipeIds)
+      : buildJsonResponse(result, enriched, page, knownRecipeIds, synthesis));
   }
 
   // HTML response path — always enrich + cluster evidence

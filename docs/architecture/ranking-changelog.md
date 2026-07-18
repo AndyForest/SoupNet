@@ -8,7 +8,13 @@ Additive levers that default to the previous behavior do **not** mint a new vers
 
 ---
 
-## 2026-07-16 — baseline
+## 2026-07-17 — echo demotion retired; session-aware rendering + pool boundary land (no version mint)
+
+No shipped behavior changed — every removed lever was default-OFF and never flipped, and every added lever ships in its legacy position — so the version stays `2026-07-16`. Recorded here because the *lever inventory* changed shape (operator rulings, recipes `9067ca1b` / `ebdc6ad7`; plan: [session-novelty-and-pool-diversity.md](../planning/session-novelty-and-pool-diversity.md)):
+
+- **Removed**: echo demotion (score reorder, weights, windows), the curation-exemption flags + corroboration counts, the `demotion-adjusted-mass` cluster ordering, the `echo_suppress` request param (dropped cold — it was A/B-only), and the `echoSuppression` system setting. Rationale: ranking is a pure function of the check's explicit inputs (a demoted recipe is indistinguishable from a deleted one), and the pollution it targeted is reclassified as benchmark hygiene.
+- **Added (rendering layer, not ranking)**: `session_id` (opaque client-held token, self-healing, stamped on deposits — migration 0031) and known-set id-stub rendering with budget backfill; the recipe-gist on stubs is removed everywhere (ossification risk — a truncated claim can be read as the claim).
+- **Added (lever, ships off)**: `clusterPool` mode `"score-gap"` — relevance-bounded pool boundary (largest gap in [minSize, size]); `"fixed"` remains as a sweep comparison arm; default stays `"page"`.
 
 Initial versioned config. Behavior is byte-identical to the pre-refactor pipeline; this entry records what the levers ship as, so later flips have an explicit "old" side.
 

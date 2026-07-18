@@ -20,8 +20,11 @@
  *   - No "Page X of Y" pagination text — agents can't page (the tools accept
  *     no page param). When more results exist beyond the exemplars shown, a
  *     one-line narrowing hint replaces it.
- *   - Recipes the agent declared via known_recipes render as one-line stubs —
- *     rendering only; trace logging and cluster math are unaffected upstream.
+ *   - Recipes the caller already holds (declared via known_recipes, or in the
+ *     session's known-set — the builders' `known: true` flag) render as
+ *     one-line id-only stubs — rendering only; trace logging and cluster math
+ *     are unaffected upstream. No gist text (operator ruling 2026-07-17: the
+ *     gist is an ossification risk; fetch bodies via get_recipes).
  */
 
 // ── Response shape (tolerant — both builders' outputs satisfy it) ───────────
@@ -55,6 +58,13 @@ export interface CheckResultItem {
   };
   clusterSize?: number;
   evidence?: CheckResultEvidence[];
+  /** The caller already holds this recipe (session known-set or declared
+   *  known_recipes) — renders as a one-line id-only stub. */
+  known?: boolean;
+  /** Known ids this full item was promoted over for display (a known cluster
+   *  exemplar replaced by this next-nearest member) — rendered as id stubs
+   *  alongside the item: "you already know these; this is the next in line". */
+  knownStubs?: Array<{ id?: string; known?: boolean }>;
 }
 
 export interface CheckRelatedEvidence {
@@ -92,6 +102,9 @@ export interface CheckResponseData {
   synthesisNotice?: string;
   /** MCP builder puts the warning here… */
   formatWarning?: string;
+  /** The session token in effect for this check (freshly minted when none was
+   *  presented). Rendered as a one-line hint so agents adopt it. */
+  sessionId?: string;
 }
 
 export interface CheckResponseJson {
@@ -109,9 +122,6 @@ export interface RenderCheckMarkdownOptions {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-/** First ~80 chars of a recipe text for stub rendering. */
-const KNOWN_STUB_GIST_CHARS = 80;
 
 function similarityLabel(score: CheckResultItem["score"]): string {
   if (score?.semantic !== null && score?.semantic !== undefined) {
@@ -163,12 +173,11 @@ function renderResultItem(r: CheckResultItem, index: number, known: boolean): st
   const head = `#${index + 1} (${similarityLabel(r.score)}) ${r.id ?? "?"}`;
 
   if (known) {
-    // One-line stub: the agent told us it already holds this recipe, so a
-    // reminder line keeps the cluster slot visible without re-sending the body.
-    const gist = (r.recipe ?? "").slice(0, KNOWN_STUB_GIST_CHARS);
-    const ellipsis = (r.recipe ?? "").length > KNOWN_STUB_GIST_CHARS ? "…" : "";
+    // One-line id-only stub: the caller already holds this recipe, so the
+    // line keeps the cluster slot visible without re-sending any body text
+    // (fetch the full recipe via get_recipes if needed).
     const cluster = r.clusterSize ? ` (represents ${r.clusterSize} similar recipes)` : "";
-    return `${head} [known to you]${cluster}: ${gist}${ellipsis}\n`;
+    return `${head} [known to you]${cluster}\n`;
   }
 
   let text = head;
@@ -176,6 +185,12 @@ function renderResultItem(r: CheckResultItem, index: number, known: boolean): st
   if (date) text += ` -- ${date}`;
   if (r.clusterSize) text += ` (represents ${r.clusterSize} similar recipes)`;
   if (r.group?.name) text += ` [${r.group.name}]`;
+  const knownStubIds = (r.knownStubs ?? []).map((s) => s.id).filter(Boolean);
+  if (knownStubIds.length > 0) {
+    // Budget backfill marker: a known exemplar was replaced for display by
+    // this next-nearest cluster member — you already know the stubbed id(s).
+    text += `\n  [shown in place of ${knownStubIds.join(", ")} — known to you; this is the next in line]`;
+  }
   text += `\nRecipe: ${r.recipe ?? ""}\n`;
 
   for (const ev of r.evidence ?? []) {
@@ -228,6 +243,9 @@ export function renderCheckResponseMarkdown(
   const results = data.results ?? [];
   if (results.length === 0) {
     text += "\nNo similar recipes found.";
+    if (data.sessionId) {
+      text += `\nSession: ${data.sessionId} — pass session_id on your next check to keep responses lean.`;
+    }
     return text;
   }
 
@@ -238,7 +256,7 @@ export function renderCheckResponseMarkdown(
   text += ":\n";
 
   results.forEach((r, i) => {
-    text += `\n${renderResultItem(r, i, r.id !== undefined && known.has(r.id))}`;
+    text += `\n${renderResultItem(r, i, r.known === true || (r.id !== undefined && known.has(r.id)))}`;
   });
 
   const related = data.relatedEvidence ?? [];
@@ -264,6 +282,10 @@ export function renderCheckResponseMarkdown(
   // results exist beyond what's shown, point at the levers that do exist.
   if ((data.totalPages ?? 1) > 1) {
     text += `\nMore recipes exist beyond these exemplars. Narrow with read_recipe_books=<slugs>, project with axes="concept A, concept B", or raise clusters for finer granularity.`;
+  }
+
+  if (data.sessionId) {
+    text += `\nSession: ${data.sessionId} — pass session_id on your next check to keep responses lean.`;
   }
 
   return text;

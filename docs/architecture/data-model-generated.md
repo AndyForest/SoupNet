@@ -1,9 +1,9 @@
 # ClaimNet Data Model — Generated Reference
 
-> **Auto-generated** from Drizzle migration snapshot `0030_snapshot.json`.
+> **Auto-generated** from Drizzle migration snapshot `0031_snapshot.json`.
 > Do not edit by hand. Regenerate with: `npx tsx scripts/generate-data-model-docs.ts`
 >
-> Schema as of migration `0030_move_recipe_human_feedback` (2026-07-09).
+> Schema as of migration `0031_traces_session_id` (2026-07-17).
 > Tables: 27 | Schema: `claimnet`
 
 For design rationale, conventions, and context, see [data-model.md](data-model.md).
@@ -289,6 +289,7 @@ erDiagram
         text claim_text_hash
         real format_adherence_score
         timestamptz decided_at
+        text session_id
         timestamptz created_at
         timestamptz updated_at
     }
@@ -504,6 +505,7 @@ These are created by raw SQL in migration files and are not captured in the snap
 | `claim_text_hash` | `text` | YES |  |  |
 | `format_adherence_score` | `real` | YES |  |  |
 | `decided_at` | `timestamptz` | YES |  |  |
+| `session_id` | `text` | YES |  |  |
 | `created_at` | `timestamptz` | NO | `now()` |  |
 | `updated_at` | `timestamptz` | NO | `now()` |  |
 
@@ -515,6 +517,7 @@ These are created by raw SQL in migration files and are not captured in the snap
 - `traces_group_id_idx`: `(group_id)`
 - `traces_api_key_id_idx`: `(api_key_id)`
 - `traces_created_at_idx`: `(created_at)`
+- `traces_session_id_created_at_idx`: `(session_id, created_at)`
 
 ---
 
