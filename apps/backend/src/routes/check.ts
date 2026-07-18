@@ -302,14 +302,25 @@ function buildJsonResponse(
   // (or the get_recipes MCP tool) turns that into a cheap lookup.
   if (result.relatedEvidence && result.relatedEvidence.length > 0) {
     const data = response["data"] as Record<string, unknown>;
-    data["relatedEvidence"] = result.relatedEvidence.map((e) => ({
-      evidenceId: e.evidenceId,
-      recipeId: e.parentTraceId,
-      parentRecipe: e.parentTraceText,
-      evidence: e.evidenceContent,
-      similarity: e.semanticScore,
-      strategy: "contextual_evidence",
-    }));
+    data["relatedEvidence"] = result.relatedEvidence.map((e) =>
+      // Known-set stub (seam 2): the session already holds the parent recipe
+      // — id only, no parent/evidence text (same id-only ruling as results).
+      e.known
+        ? {
+          evidenceId: e.evidenceId,
+          recipeId: e.parentTraceId,
+          known: true,
+          similarity: e.semanticScore,
+          strategy: "contextual_evidence",
+        }
+        : {
+          evidenceId: e.evidenceId,
+          recipeId: e.parentTraceId,
+          parentRecipe: e.parentTraceText,
+          evidence: e.evidenceContent,
+          similarity: e.semanticScore,
+          strategy: "contextual_evidence",
+        });
     data["relatedEvidenceHint"] =
       "Each entry carries the source recipe's UUID as recipeId — fetch the full recipe with GET /recipes?ids=<recipeId> (same API key) instead of re-checking.";
   }
@@ -687,7 +698,13 @@ function renderPage(
     evidence from other recipes that is topically related to yours. The system makes no stance assertion;
     you decide if it supports, contradicts, or adds context.</small></p>
     <ul>
-      ${result.relatedEvidence.map((e) => `
+      ${result.relatedEvidence.map((e) => e.known
+        ? `
+      <li>
+        <p><small>From recipe <code>${esc(e.parentTraceId)}</code> [known to you]
+        (${Math.round(e.semanticScore * 100)}% similar)</small></p>
+      </li>`
+        : `
       <li>
         <p>${esc(e.evidenceContent)}</p>
         <p><small>From recipe <code>${esc(e.parentTraceId)}</code>: <em>${esc(e.parentTraceText.slice(0, 120))}${e.parentTraceText.length > 120 ? "..." : ""}</em>

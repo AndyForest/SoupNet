@@ -156,6 +156,18 @@ describe("renderCheckResponseMarkdown", () => {
     expect(text).toContain("Fetch any full recipe by id: get_recipes (MCP) or GET /recipes?ids=<id>");
   });
 
+  it("renders known-parent related evidence as an id-only stub (seam 2 — no parent or evidence text)", () => {
+    const res = baseResponse();
+    res.data!.relatedEvidence = [
+      { evidenceId: "e1", recipeId: UUID_B, known: true, similarity: 0.77 },
+      { evidenceId: "e2", recipeId: "novel-id", parentRecipe: "As a dev, I chose Y.", evidence: "Novel interpretation", similarity: 0.7 },
+    ];
+    const text = renderCheckResponseMarkdown(res);
+    expect(text).toContain(`  - From recipe ${UUID_B} [known to you] (77% similar)`);
+    expect(text).not.toContain("As a dev, I chose X.");
+    expect(text).toContain("  - Novel interpretation (70% similar)");
+  });
+
   it("renders search-only responses with a no-logging header instead of a recipeId", () => {
     const res = baseResponse();
     delete res.data!.recipeId;

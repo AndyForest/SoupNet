@@ -73,6 +73,8 @@ export interface CheckRelatedEvidence {
    *  full recipe via get_recipes / GET /recipes instead of re-checking. */
   recipeId?: string;
   parentRecipe?: string;
+  /** Known-set stub: the session already holds the parent recipe (seam 2). */
+  known?: boolean;
   evidence?: string;
   similarity?: number;
 }
@@ -264,6 +266,12 @@ export function renderCheckResponseMarkdown(
     text += "\nRelated evidence from other recipes:\n";
     for (const e of related) {
       const pct = e.similarity !== undefined ? ` (${Math.round(e.similarity * 100)}% similar)` : "";
+      if (e.known) {
+        // Known-set stub (seam 2): the session already holds the parent
+        // recipe — id only, same ruling as result stubs.
+        text += `  - From recipe ${e.recipeId ?? ""} [known to you]${pct}\n`;
+        continue;
+      }
       text += `  - ${e.evidence ?? ""}${pct}\n`;
       // Recipe id inline (2026-07-05 eval: entries without ids forced agents
       // to burn full re-checks recovering text they'd already half-seen).

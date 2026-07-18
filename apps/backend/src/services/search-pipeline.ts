@@ -473,25 +473,22 @@ export async function runSearchPipeline(
           ?? (clustered ? results.length : undefined)
           ?? Math.min(5, evidenceCandidates.length);
 
-        if (evidenceCandidates.length > targetCount && targetCount > 0) {
-          const seen = new Set<string>();
-          const diverse: EvidenceSearchResult[] = [];
-          for (const e of evidenceCandidates) {
-            if (diverse.length >= targetCount) break;
-            if (!seen.has(e.parentTraceId)) {
-              diverse.push(e);
-              seen.add(e.parentTraceId);
-            }
-          }
-          if (diverse.length < targetCount) {
-            for (const e of evidenceCandidates) {
-              if (diverse.length >= targetCount) break;
-              if (!diverse.includes(e)) diverse.push(e);
-            }
-          }
-          relatedEvidence = diverse;
+        const known = params.knownIds;
+        if (known?.size && evidenceCandidates.some((e) => known.has(e.parentTraceId))) {
+          // Known-set stubbing for evidence discovery (seam 2): the full
+          // selection is drawn from NOVEL parents — evidence budget goes to
+          // content the session doesn't hold — and any known-parent entry
+          // that would have made the legacy selection is appended as a
+          // flagged stub (id kept, text dropped at render). Nothing hidden.
+          const legacyPick = selectDiverseEvidence(evidenceCandidates, targetCount);
+          const novel = evidenceCandidates.filter((e) => !known.has(e.parentTraceId));
+          const picks = selectDiverseEvidence(novel, targetCount);
+          const displacedKnown = legacyPick
+            .filter((e) => known.has(e.parentTraceId))
+            .map((e) => ({ ...e, known: true }));
+          relatedEvidence = [...picks, ...displacedKnown];
         } else {
-          relatedEvidence = evidenceCandidates;
+          relatedEvidence = selectDiverseEvidence(evidenceCandidates, targetCount);
         }
       }
     } catch (err) {
@@ -563,6 +560,37 @@ export async function runSearchPipeline(
     page,
     totalPages,
   };
+}
+
+// ── Evidence diversity selection ─────────────────────────────────────────────
+
+/**
+ * The evidence-discovery diversity pick: up to targetCount entries preferring
+ * one per parent recipe, topped up by score order. Byte-identical to the
+ * pre-2026-07-17 inline logic (including returning the list as-is when it
+ * already fits the target).
+ */
+function selectDiverseEvidence(
+  candidates: EvidenceSearchResult[],
+  targetCount: number,
+): EvidenceSearchResult[] {
+  if (!(candidates.length > targetCount && targetCount > 0)) return candidates;
+  const seen = new Set<string>();
+  const diverse: EvidenceSearchResult[] = [];
+  for (const e of candidates) {
+    if (diverse.length >= targetCount) break;
+    if (!seen.has(e.parentTraceId)) {
+      diverse.push(e);
+      seen.add(e.parentTraceId);
+    }
+  }
+  if (diverse.length < targetCount) {
+    for (const e of candidates) {
+      if (diverse.length >= targetCount) break;
+      if (!diverse.includes(e)) diverse.push(e);
+    }
+  }
+  return diverse;
 }
 
 // ── Vector math helpers ──────────────────────────────────────────────────────

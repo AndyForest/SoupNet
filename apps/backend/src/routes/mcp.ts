@@ -1114,14 +1114,24 @@ export function buildMcpJsonResponse(
   // without it agents burned full re-checks recovering recipes they'd
   // already half-seen — get_recipes turns that into a cheap lookup.
   if (result.relatedEvidence && result.relatedEvidence.length > 0) {
-    data["relatedEvidence"] = result.relatedEvidence.map((e) => ({
-      evidenceId: e.evidenceId,
-      recipeId: e.parentTraceId,
-      parentRecipe: e.parentTraceText,
-      evidence: e.evidenceContent,
-      similarity: e.semanticScore,
-      strategy: "contextual_evidence",
-    }));
+    data["relatedEvidence"] = result.relatedEvidence.map((e) =>
+      // Known-set stub (seam 2, mirrors check.ts): id only, no text.
+      e.known
+        ? {
+          evidenceId: e.evidenceId,
+          recipeId: e.parentTraceId,
+          known: true,
+          similarity: e.semanticScore,
+          strategy: "contextual_evidence",
+        }
+        : {
+          evidenceId: e.evidenceId,
+          recipeId: e.parentTraceId,
+          parentRecipe: e.parentTraceText,
+          evidence: e.evidenceContent,
+          similarity: e.semanticScore,
+          strategy: "contextual_evidence",
+        });
     data["relatedEvidenceHint"] =
       "Each entry carries the source recipe's UUID as recipeId — fetch the full recipe with the get_recipes tool instead of re-checking.";
   }
