@@ -20,7 +20,7 @@ Feature: known_recipes dedup — trimming repeats without touching the record
   Scenario: Known ids render as compact stubs instead of full bodies
     When the agent calls check_recipe with known_recipes set to the ids it already holds
     And some of those ids are among the results
-    Then each result matching a known id renders as a compact stub (id, one-line gist, similarity) instead of the full recipe text
+    Then each result matching a known id renders as an id-only stub (id, known flag, similarity — no recipe text; gist removed 2026-07-17, ossification ruling) instead of the full recipe text
     And results not in known_recipes still render with full text as usual
 
   Scenario: known_recipes affects rendering only, never the logged trace or idempotency
@@ -33,3 +33,11 @@ Feature: known_recipes dedup — trimming repeats without touching the record
     When the response is clustered to exemplars
     Then the cluster sizes and exemplar selection are computed as if the stubbed members were rendered in full
     And only the rendered text — not the clustering — changes because of known_recipes
+
+  # Session refresh hint (2026-07-17, recipe 31d184df): the session models the
+  # agent's context-fill state, so a compacted context calls for a fresh session.
+  Scenario: Agent that compacted its context refreshes the session
+    Given the agent's context was auto-compacted and it no longer holds the recipes it was shown
+    When the agent makes its next check_recipe call
+    Then it omits session_id instead of passing the stale token
+    And the fresh session renders previously-shown recipes with full text again

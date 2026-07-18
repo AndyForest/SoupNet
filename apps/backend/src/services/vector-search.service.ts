@@ -50,6 +50,14 @@ export interface HybridSearchParams {
    *  unchanged — the pool only feeds the clustered summary. Absent / "page"
    *  ⇒ no pool row load (byte-stable). */
   pool?: ClusterPoolConfig | undefined;
+  /** Known-set for the novel-counted display window (seam 2): the slice
+   *  walks down the ranking until `limit` UNSEEN recipes are collected, with
+   *  known recipes interleaved at their true ranks (rendered as stubs
+   *  downstream) — every check surfaces something new. Offsets count novel
+   *  items, so pagination pages through unseen content; knowns ranked before
+   *  the window start are skipped (already shown). Absent ⇒ plain slice
+   *  (byte-stable). Ranking is untouched either way. */
+  knownIds?: ReadonlySet<string> | undefined;
 }
 
 export interface HybridSearchResult {
@@ -256,8 +264,28 @@ export async function hybridSearch(
       }
     }
 
-    // Apply pagination
-    const paged = sorted.slice(offset, offset + limit);
+    // Apply pagination. With a known-set: novel-counted window walk (seam 2)
+    // — collect until `limit` unseen recipes, knowns interleave at true rank.
+    // Note totalPages still derives from totalResults (which counts knowns),
+    // so it can slightly overstate the novel page count; honest total, cheap.
+    let paged: Array<[string, number]>;
+    if (params.knownIds?.size) {
+      paged = [];
+      let novelSkipped = 0;
+      let novelTaken = 0;
+      for (const pair of sorted) {
+        const isKnown = params.knownIds.has(pair[0]);
+        if (!isKnown && novelSkipped < offset) {
+          novelSkipped++;
+          continue;
+        }
+        if (novelSkipped < offset) continue; // known before the window start — already shown
+        paged.push(pair);
+        if (!isKnown && ++novelTaken >= limit) break;
+      }
+    } else {
+      paged = sorted.slice(offset, offset + limit);
+    }
 
     // Clustering pool (P6): the top candidates by rank down to the pool
     // boundary (fixed size, or the largest score gap for "score-gap" mode),

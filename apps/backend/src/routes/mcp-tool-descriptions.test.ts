@@ -80,6 +80,31 @@ describe("MCP tool registrations — WP2 premium synthesize", () => {
   });
 });
 
+// Session-token feedback capture (2026-07-17): feedback rows accept an
+// optional session_id joining them to the check lineage their session
+// produced. Same drift guard as WT-3/WP2 — if one surface drops the field,
+// the other keeps advertising it.
+describe("MCP tool registrations — feedback session_id capture", () => {
+  it("the HTTP MCP registers session_id on both feedback surfaces", () => {
+    // feedbackRowSchema (check_recipe ride-along) + log_feedback flat params.
+    const matches = mcpSource.match(/session_id: z\.string\(\)\.optional\(\)/g) ?? [];
+    // ≥ 3: check_recipe's own session_id param, the feedback row schema, and
+    // the log_feedback tool.
+    expect(matches.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("the stdio mirror registers session_id on both feedback surfaces too", () => {
+    const stdioSource = readFileSync(
+      join(here, "..", "..", "..", "mcp-server", "src", "index.ts"),
+      "utf-8",
+    );
+    const matches = stdioSource.match(/session_id: z\.string\(\)\.optional\(\)/g) ?? [];
+    // ≥ 2: the feedback row schema and the log_feedback tool (the stdio
+    // check_recipe has no check-level session_id param yet — see backlog).
+    expect(matches.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
 // Description budget (2026-07-06): tool/param descriptions are affordances;
 // teaching lives in the briefing. The pre-trim tools/list was ~18KB and spent
 // ~4.4k tokens of every connected conversation. These caps keep depth from
@@ -94,13 +119,16 @@ describe("MCP tool description budget", () => {
     }
   });
 
-  it("keeps the shared-copy total under 4,300 chars", () => {
+  it("keeps the shared-copy total under 4,400 chars", () => {
     // 4,000 → 4,300 (2026-07-17): the session_id param joined check_recipe
     // (ranking simplification, plan v2 seam 2) and the previous total sat at
     // 3,998 — the cap had no headroom for a genuinely new param. The cap's
     // job is unchanged: any further growth must be a deliberate, dated raise
     // here, not silent depth creep in existing descriptions.
+    // 4,300 → 4,400 (2026-07-17): sessionId gained the operator-directed
+    // context-compaction hint (omit the token to refresh the session —
+    // recipe 31d184df) with the prior total at 4,279.
     const total = Object.values(all).reduce((n, s) => n + s.length, 0);
-    expect(total).toBeLessThanOrEqual(4300);
+    expect(total).toBeLessThanOrEqual(4400);
   });
 });

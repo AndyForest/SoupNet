@@ -304,6 +304,9 @@ export async function runSearchPipeline(
       // P6 pool lever: cluster the top candidates down to the pool boundary
       // instead of the page window. "page" mode ⇒ byte-stable no-op.
       pool: ranking.clusterPool,
+      // Seam 2: novel-counted display window — knowns interleave as stubs,
+      // the window extends until it holds `perPage` unseen recipes.
+      knownIds: params.knownIds,
     }));
 
     const toItem = (r: (typeof searchResponse.results)[number]): SearchResultItem => ({

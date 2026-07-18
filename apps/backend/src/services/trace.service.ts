@@ -569,18 +569,24 @@ export async function submitAndSearch(
     };
   }
 
-  // 5b. Known-set (seam 2): this session's prior deposits within the 7-day
-  // window ∪ client-declared known_recipes. Stub rendering only — a fresh
-  // token can have no prior deposits, so its query is skipped.
+  // 5b. Known-set (seam 2): what this session already holds in context —
+  // its own deposits ∪ what the server has SHOWN it (session_shown display
+  // history, operator ruling 2026-07-17 recipe 31d184df) ∪ client-declared
+  // known_recipes. Stub rendering only — a fresh token has no history, so
+  // its query is skipped. 7-day window doubles as row expiry.
   const knownIds = new Set<string>(params.knownRecipeIds ?? []);
   if (!session.fresh) {
-    const ownRows = await db.execute(sql`
+    const knownRows = await db.execute(sql`
       SELECT id::text AS id FROM claimnet.traces
       WHERE session_id = ${session.sessionId}
         AND created_at > now() - interval '7 days'
         AND id != ${traceId}::uuid
+      UNION
+      SELECT trace_id::text AS id FROM claimnet.session_shown
+      WHERE session_id = ${session.sessionId}
+        AND shown_at > now() - interval '7 days'
     `);
-    for (const row of ownRows as unknown as Array<{ id: string }>) {
+    for (const row of knownRows as unknown as Array<{ id: string }>) {
       knownIds.add(row.id);
     }
   }
@@ -665,6 +671,36 @@ export async function submitAndSearch(
   } catch (err) {
     // Non-blocking — don't fail the recipe check if audit logging fails
     console.error("[trace.service] Audit log write failed:", err);
+  }
+
+  // 7b. Record display history (seam 2): every recipe whose FULL text this
+  // response carries — displayed results (not stubs) and related-evidence
+  // parents (not stubs) — becomes "shown" to this session, so the next check
+  // stubs it and walks to unseen content. Awaited (a floating write here is
+  // the exact teardown hazard diagnosed 2026-07-17) but non-blocking on
+  // failure; idempotent via ON CONFLICT DO NOTHING.
+  const shownIds = [
+    ...pipelineResult.results.filter((r) => !r.known).map((r) => r.id),
+    ...(pipelineResult.relatedEvidence ?? [])
+      .filter((e) => !e.known)
+      .map((e) => e.parentTraceId),
+  ];
+  if (shownIds.length > 0) {
+    try {
+      const values = sql.join(
+        [...new Set(shownIds)].map(
+          (id) => sql`(${session.sessionId}, ${id}::uuid)`,
+        ),
+        sql`, `,
+      );
+      await db.execute(sql`
+        INSERT INTO claimnet.session_shown (session_id, trace_id)
+        VALUES ${values}
+        ON CONFLICT (session_id, trace_id) DO NOTHING
+      `);
+    } catch (err) {
+      console.error("[trace.service] session_shown record failed (non-fatal):", err);
+    }
   }
 
   // One structured timing line per check — the per-stage attribution the

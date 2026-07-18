@@ -340,6 +340,7 @@ const feedbackRowSchema = z.object({
   harness: z.string().optional(),
   harness_version: z.string().optional(),
   related_trace_ids: z.array(z.string()).optional(),
+  session_id: z.string().optional(),
 });
 
 function createMcpServer(backendUrl: string): McpServer {
@@ -585,7 +586,9 @@ function createMcpServer(backendUrl: string): McpServer {
 
         // Ride-along feedback about PRIOR checks. Processed only after the
         // check itself succeeded; per-row markers, never a request-killing
-        // error. The check-level agent_id becomes each row's default.
+        // error. The check-level agent_id and session_id become each row's
+        // defaults (the rows ride the same session as the check they ride
+        // on); a row-level value wins via spread order.
         let feedbackSummary = "";
         let feedbackResults: unknown;
         if (feedback && feedback.length > 0) {
@@ -593,6 +596,7 @@ function createMcpServer(backendUrl: string): McpServer {
           if (keyResult) {
             const rows: RawFeedbackRow[] = feedback.map((row) => ({
               ...(agent_id ? { agent_id } : {}),
+              ...(session_id ? { session_id } : {}),
               ...row,
             }));
             const results = await ingestFeedback({
@@ -959,6 +963,9 @@ function createMcpServer(backendUrl: string): McpServer {
       harness_version: z.string().optional().describe("Harness version, if known."),
       related_trace_ids: z.array(z.string()).optional().describe(
         "Lineage links — recipe UUIDs in the same arc (e.g. the recipe that changed the action and the trace that logged the new decision). Full UUIDs only — short-id prefixes are not resolved here."
+      ),
+      session_id: z.string().optional().describe(
+        "The session token from your check responses — joins your feedback to that session's check lineage. Capture only."
       ),
     },
     {

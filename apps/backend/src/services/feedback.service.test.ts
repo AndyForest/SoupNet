@@ -131,6 +131,30 @@ describe("validateFeedbackRow", () => {
     expect(v.ok).toBe(false);
     if (!v.ok) expect(v.error).toContain("note too long");
   });
+
+  // session_id is capture-only (2026-07-17): a valid token is stored, anything
+  // else — malformed, wrong type, absent — becomes NULL. Never a rejection
+  // (a mangled token must not cost the feedback it rides with) and never a
+  // minted fresh token (feedback joins a session, it doesn't start one).
+  it("captures a valid session_id, trimmed", () => {
+    const v = validateFeedbackRow(validRow({ session_id: "  sess_2026-07-17a  " }));
+    expect(v.ok).toBe(true);
+    if (v.ok) expect(v.row.sessionId).toBe("sess_2026-07-17a");
+  });
+
+  it("stores NULL for malformed session_id values without rejecting the row", () => {
+    for (const bad of ["short", "has spaces here", "bang!bang!", "x".repeat(65), 42, {}, null]) {
+      const v = validateFeedbackRow(validRow({ session_id: bad as never }));
+      expect(v.ok).toBe(true);
+      if (v.ok) expect(v.row.sessionId).toBeNull();
+    }
+  });
+
+  it("stores NULL when session_id is absent", () => {
+    const v = validateFeedbackRow(validRow());
+    expect(v.ok).toBe(true);
+    if (v.ok) expect(v.row.sessionId).toBeNull();
+  });
 });
 
 describe("isTraceIdPrefix", () => {

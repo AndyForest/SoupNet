@@ -551,7 +551,9 @@ ${webSetupSection}
 ## How to check
 \`check_recipe\` accepts: \`recipe\` (the claim), \`supporting_evidence\` (warrant + data), and \`recipe_book\` (slug). Optional: \`axes\` (concept projection), \`clusters\`/\`max_chars\` (response size), and reference file attachments (images, PDF, audio, video) — see your tool schema for the exact file-input params. HTTP MCP also accepts an optional \`region.image_box\` with normalized \`{x0, y0, x1, y1}\` coordinates (0-1) to mark a specific area of an attached image — the embedding pipeline crops to that region plus padding, blurs the padding, and weights the marked area heavily; the original image is stored unmodified, so the region treatment can be redone later.
 
-Further optional params live in your tool schema, each doing what its one-line description says: \`known_recipes\` (declare ids you already hold — repeats come back as stubs, saving your context), \`decided_at\` (backfill the original date of a historical decision), \`response_format\` (markdown report or structured JSON), \`agent_id\` (mint your own id so your checks form a joinable lineage), and \`feedback\` (close the loop on earlier checks while making this one).
+Further optional params live in your tool schema, each doing what its one-line description says: \`session_id\` (returned on every check — pass it back and recipes you've already been shown collapse to id-stubs while results walk to unseen ones), \`known_recipes\` (client-declared ids you still hold — same id-stub rendering), \`decided_at\` (backfill the original date of a historical decision), \`response_format\` (markdown report or structured JSON), \`agent_id\` (mint your own id so your checks form a joinable lineage), and \`feedback\` (close the loop on earlier checks while making this one).
+
+If you auto-compact your context or otherwise no longer hold the recipes you've been shown, refresh your session by omitting \`session_id\` on your next check — a fresh session means full recipe text again.
 
 For local files that have no public URL (screenshots, generated artifacts, anything on your disk), \`file_base64\` will blow your context window on anything bigger than a thumbnail. Instead, POST the file to the \`/uploads\` REST endpoint first using your same Bearer token, then pass the returned URL as \`file_url\`. The MCP server detects own-hostname URLs and resolves them internally — no second HTTP fetch, no public exposure. Example:
 
@@ -817,13 +819,15 @@ export const MCP_PARAM_DESCRIPTIONS = {
     "so check lineages are joinable. Capture only.",
 
   knownRecipes:
-    "Comma-separated recipe UUIDs you still hold in context; matching results render as one-line " +
-    "stubs instead of full bodies. Rendering only — logging and clustering are unchanged.",
+    "Comma-separated recipe UUIDs you still hold in context; matching results render as id-only " +
+    "stubs. Client-declared sibling of session_id. Rendering only — logging, ranking, and " +
+    "clustering are unchanged.",
 
   sessionId:
-    "Pass the sessionId from your previous check response — recipes this session already deposited " +
-    "then render as id-only stubs (token efficiency only; ranking unchanged). A fresh one is " +
-    "returned when absent. Hand it to sub-agents to share your known-set, or don't to keep theirs fresh.",
+    "Session token from any check response (fresh one minted when absent). Recipes this session " +
+    "deposited or was shown render as id-only stubs while results walk down the same ranking to " +
+    "unseen ones — each check surfaces new text; ranking never changes. Share it with sub-agents " +
+    "to share your known-set. Compacted your context? Omit it next check for full text again.",
 
   feedbackParam:
     "Feedback rows about PRIOR checks, riding along with this one. Each row: trace_id of the earlier " +

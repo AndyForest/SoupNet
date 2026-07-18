@@ -30,6 +30,11 @@
  * computed from the hex prefix) rather than `id::text LIKE`, which would
  * force a full scan past the uuid index.
  *
+ * session_id (2026-07-17): optional capture-only token joining a feedback
+ * row to the check lineage its session produced (session_shown, traces).
+ * Shape-validated (see SESSION_ID_RE), stored as NULL when absent or
+ * malformed — never minted, never a rejection.
+ *
  * Rate limit: feedback writes get their own per-key budget, counted on
  * check_feedback via its (api_key_id, created_at DESC) index — mirrors
  * F29's audit-log-count shape WITHOUT adding load to F29's indexed
@@ -71,6 +76,7 @@ export interface RawFeedbackRow {
   harness?: unknown;
   harness_version?: unknown;
   related_trace_ids?: unknown;
+  session_id?: unknown;
 }
 
 export interface ValidatedFeedbackRow {
@@ -87,6 +93,7 @@ export interface ValidatedFeedbackRow {
   harness: string | null;
   harnessVersion: string | null;
   relatedTraceIds: string[] | null;
+  sessionId: string | null;
 }
 
 export interface FeedbackRowResult {
@@ -118,6 +125,13 @@ const UUID_TEMPLATE = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx";
 /** Uniform ACL marker — same text for unknown and unauthorized ids. */
 export const TRACE_NOT_READABLE =
   "trace_id not found or not readable with this key";
+
+/** Session-token shape — same rule as trace.service's resolveSessionId
+ *  (8-64 url-safe chars), but with capture-only leniency: a malformed or
+ *  missing value stores NULL. Never minted here — feedback joins a session
+ *  a check response already named; it never starts one — and never a row
+ *  rejection, so a mangled token can't cost the feedback it rides with. */
+const SESSION_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 
 // ── Short-id prefixes (pure helpers — Layer 1 tested) ────────────────────────
 
@@ -245,6 +259,11 @@ export function validateFeedbackRow(
     relatedTraceIds = ids.length > 0 ? ids : null;
   }
 
+  // Capture-only (see SESSION_ID_RE note): valid shape → stored, anything
+  // else → NULL. Deliberately not an error path.
+  const sessionIdCandidate = typeof raw.session_id === "string" ? raw.session_id.trim() : "";
+  const sessionId = SESSION_ID_RE.test(sessionIdCandidate) ? sessionIdCandidate : null;
+
   return {
     ok: true,
     row: {
@@ -261,6 +280,7 @@ export function validateFeedbackRow(
       harness,
       harnessVersion,
       relatedTraceIds,
+      sessionId,
     },
   };
 }
@@ -422,6 +442,7 @@ export async function ingestFeedback(
         harness: row.harness,
         harnessVersion: row.harnessVersion,
         relatedTraceIds: row.relatedTraceIds,
+        sessionId: row.sessionId,
       })
       .returning({ id: checkFeedback.id });
     const feedbackId = inserted[0]?.id;

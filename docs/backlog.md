@@ -409,9 +409,9 @@ Both journeys succeeded — zero hard blockers; short-id resolution and the impo
 - **`/check` claims "No API key provided" while a valid `Authorization: Bearer` header is present** — it only reads `?key=`. Pre-existing, not from this batch. Either accept Bearer or say "pass it as ?key= on this endpoint." Related: the `/docs` `?key=` prefill audit item.
 - Cosmetic: bare 404s on `GET /import` and `GET /docs` (a 405 / index line would self-document); import book auto-name uses server-UTC date (reads as "tomorrow" for western-hemisphere users); import response `orphaned` count name is opaque until nonzero (the v1.1 `remapped` count is documented in corpus-import.md §v1.1); `format=json` on `/check` is undocumented on the check page; recipe/trace/group vocabulary drift on the wire (`recipeId` vs `trace_id` vs `"group"` — schema rename deferred per ADR-0016, but the feedback error text could accept `recipe_id` as an alias or name the synonym).
 
-### `[IMPL]` stdio MCP proxy: session_id parity
+### ~~`[IMPL]` stdio MCP proxy: session_id parity~~ (resolved 2026-07-17)
 
-The stdio proxy (`apps/mcp-server/src/index.ts`) forwards to `/check` and exposes `known_recipes` but not the new `session_id` param (2026-07-17). Small parity change; the proxy works unchanged today (sessionless checks just mint fresh tokens per call).
+~~The stdio proxy forwards to `/check` and exposes `known_recipes` but not the new `session_id` param.~~ Done same day in the MCP copy sweep: `check_recipe` session_id (shared description) + feedback-row inheritance, forwarding to `/check`/`/feedback`. ~~Feedback-surface parity (session_id on the stdio `log_feedback` params and the check_recipe feedback-row schema)~~ done 2026-07-17 — what remains is the check-level `session_id` param itself (and, once added, defaulting ride-along rows to it the way the HTTP MCP does).
 
 ### `[IMPL]` Extend short-id prefixes beyond feedback `trace_id` (demand-gated)
 

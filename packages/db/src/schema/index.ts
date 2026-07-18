@@ -39,3 +39,4 @@ export * from "./uploads";
 export * from "./oauth-clients";
 export * from "./oauth-authorization-codes";
 export * from "./check-feedback";
+export * from "./session-shown";

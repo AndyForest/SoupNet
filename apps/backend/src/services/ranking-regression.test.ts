@@ -34,6 +34,16 @@ import type { RankingConfig } from "@soupnet/domain";
  *      pre-lever caller shape; "fixed" reaches diversity outside the page
  *      window; "score-gap" cuts the pool at the largest score cliff, clamped
  *      by minSize/size; the pool never leaks into flat pagination.
+ *   5. The novel-counted display window (session/seen design, recipe
+ *      31d184df): the window holds exactly perPage UNSEEN recipes with knowns
+ *      interleaved as stubs at their true ranks; offsets count novel items;
+ *      knowns before the window start are skipped; sessionless calls stay a
+ *      plain slice.
+ *   6. Seen accumulation (session_shown): what a check displays in full stubs
+ *      on the session's next check — results AND related-evidence parents —
+ *      with the window walking to surface new content each time, and an
+ *      omitted token refreshing to full texts (context-compaction
+ *      affordance). Flat ordering identical across the session arms.
  *
  * Requires a running backend + postgres (skipped otherwise). Process
  * discipline (2026-07-17 gate fix): anything that DEPOSITS (a real check)
@@ -210,6 +220,8 @@ function runPipeline(
     expand?: boolean;
     omitRanking?: boolean;
     knownIds?: ReadonlySet<string>;
+    page?: number;
+    perPage?: number;
   },
 ) {
   return runSearchPipeline({
@@ -219,10 +231,51 @@ function runPipeline(
     queryVectorStr: Q,
     k: opts?.k,
     expand: opts?.expand,
-    perPage: 20,
+    page: opts?.page,
+    perPage: opts?.perPage ?? 20,
     knownIds: opts?.knownIds,
     ranking: opts?.omitRanking ? undefined : rc,
   });
+}
+
+/** Seed an evidence row linked to a trace, with a complete hand-crafted
+ *  embedding — so evidence discovery has a candidate without any deposit
+ *  having carried evidence (keeps the shown-set fully observable). */
+async function seedEvidence(agent: Agent, parentTraceId: string, label: string, spec: SeedSpec): Promise<void> {
+  const db = getDb();
+  const evidenceId = crypto.randomUUID();
+  const content = `rankreg-evidence-${uid}-${label}`;
+  const chunkHash = crypto.createHash("sha256").update(`${content}-chunk`).digest("hex");
+  await db.execute(sql`
+    INSERT INTO claimnet.evidence (id, content) VALUES (${evidenceId}::uuid, ${content})
+  `);
+  await db.execute(sql`
+    INSERT INTO claimnet.trace_evidence (trace_id, evidence_id, stance, api_key_id)
+    VALUES (${parentTraceId}::uuid, ${evidenceId}::uuid, 'for', ${agent.keyId}::uuid)
+  `);
+  const srcRows = await db.execute(sql`
+    INSERT INTO claimnet.embedding_sources (source_type, source_id, group_id, source_text, artifact_category)
+    VALUES ('evidence', ${evidenceId}::uuid, ${agent.groupId}::uuid, ${content}, 'text')
+    RETURNING id
+  `);
+  const sourceId = (srcRows as unknown as Array<{ id: string }>)[0]!.id;
+  const stratRows = await db.execute(sql`
+    INSERT INTO claimnet.embedding_chunk_strategies (embedding_source_id, strategy_id, status)
+    VALUES (${sourceId}::uuid, 'full_document', 'complete')
+    RETURNING id
+  `);
+  const strategyId = (stratRows as unknown as Array<{ id: string }>)[0]!.id;
+  const chunkRows = await db.execute(sql`
+    INSERT INTO claimnet.embedding_chunks (embedding_source_id, chunk_strategy_id, chunk_text, chunk_hash, chunk_path)
+    VALUES (${sourceId}::uuid, ${strategyId}::uuid, ${content}, ${chunkHash}, 'doc')
+    RETURNING id
+  `);
+  const chunkId = (chunkRows as unknown as Array<{ id: string }>)[0]!.id;
+  await db.execute(sql`
+    INSERT INTO claimnet.embedding_vectors (embedding_chunk_id, model_id, task_type, status, vector, vector_source)
+    VALUES (${chunkId}::uuid, ${getEmbeddingModelId()}, 'SEMANTIC_SIMILARITY', 'complete',
+            ${toPgVec(dirVec(spec.sim, spec.axis))}::halfvec(3072), 'server')
+  `);
 }
 
 const pageArm = (): RankingConfig => DEFAULT_RANKING; // clusterPool: page (legacy)
@@ -257,6 +310,13 @@ interface CheckJson {
       score: { semantic: number | null };
       knownStubs?: Array<{ id: string; known: boolean }>;
     }>;
+    relatedEvidence?: Array<{
+      evidenceId: string;
+      recipeId: string;
+      known?: boolean;
+      parentRecipe?: string;
+      evidence?: string;
+    }>;
   };
 }
 
@@ -271,13 +331,14 @@ async function httpCheck(
   key: string,
   traceText: string,
   sessionId?: string,
+  clusters = "20", // must stay ≥ the visible corpus for the degenerate-flat reading
 ): Promise<NonNullable<CheckJson["data"]>> {
   const params = new URLSearchParams({
     key,
     trace: traceText,
     ef: 'Fixture interpretation.\n> "fixture quote"\n-- ranking-regression test',
     format: "json",
-    clusters: "20",
+    clusters,
     ...(sessionId !== undefined ? { session_id: sessionId } : {}),
   });
   const res = await fetch(`${BASE}/check?${params.toString()}`, {
@@ -298,6 +359,7 @@ describe.skipIf(!BASE)("ranking regression — pure-function ranking + session r
   let d1 = "";
   let d2 = "";
   let d3 = "";
+  let sessBFirst: NonNullable<CheckJson["data"]>; // SESS_B's first-ever response
 
   const recipeText = (label: string) =>
     `As a backend developer working on ranking regression fixtures, I prefer the ${label} probe recipe so that orderings stay deterministic.`;
@@ -312,7 +374,8 @@ describe.skipIf(!BASE)("ranking regression — pure-function ranking + session r
     // deterministic per text, so orderings are exactly reproducible).
     d1 = (await check(agent.apiKey, "alpha", SESS_A)).recipeId;
     d2 = (await check(agent.apiKey, "beta", SESS_A)).recipeId;
-    d3 = (await check(agent.apiKey, "gamma", SESS_B)).recipeId;
+    sessBFirst = await check(agent.apiKey, "gamma", SESS_B);
+    d3 = sessBFirst.recipeId;
     await check(agent.apiKey, "delta"); // sessionless deposit
   }, 60_000);
 
@@ -361,23 +424,33 @@ describe.skipIf(!BASE)("ranking regression — pure-function ranking + session r
     for (const r of freshSession.results) expect(r.known).toBeUndefined();
   });
 
-  it("seam 2: sibling-session deposits on the same key render fully — never stubbed, never reordered", async () => {
-    // Checking under SESS_B: SESS_A's deposits (same api_key, different
+  it("seam 2: sibling-session deposits arrive FULL on first exposure — never pre-stubbed", () => {
+    // SESS_B's first-ever check: SESS_A's deposits (same api_key, different
     // session) are sibling work — the cross-communication channel — and must
-    // arrive as full recipes; only SESS_B's own deposit is stubbed.
-    const res = await check(agent.apiKey, "siblingprobe", SESS_B);
+    // arrive as full recipes. A session can only ever stub what it has
+    // already deposited or been shown; sibling work is neither, until shown.
     for (const id of [d1, d2]) {
-      const sibling = res.results.find((r) => r.id === id)!;
+      const sibling = sessBFirst.results.find((r) => r.id === id)!;
       expect(sibling).toBeDefined();
       expect(sibling.known).toBeUndefined();
       expect(sibling.recipe).toBeTruthy();
     }
-    const own = res.results.find((r) => r.id === d3)!;
-    expect(own.known).toBe(true);
-    expect(own.recipe).toBeUndefined();
-
     // The response echoes the effective session token (self-healing channel).
-    expect(res.sessionId).toBe(SESS_B);
+    expect(sessBFirst.sessionId).toBe(SESS_B);
+  });
+
+  it("seam 2: after exposure, the session stubs what it was shown AND its own deposit — display history, not authorship", async () => {
+    // SESS_B's second check: d1/d2 were SHOWN to SESS_B by its first response
+    // (session_shown display history) and d3 is SESS_B's own deposit — all
+    // three now stub. Rendering only; ordering is covered by the purity
+    // asserts above and the seen-accumulation suite.
+    const res = await check(agent.apiKey, "siblingprobe", SESS_B);
+    for (const id of [d1, d2, d3]) {
+      const item = res.results.find((r) => r.id === id)!;
+      expect(item).toBeDefined();
+      expect(item.known).toBe(true);
+      expect(item.recipe).toBeUndefined();
+    }
   });
 });
 
@@ -570,6 +643,162 @@ describe.skipIf(!BASE)("ranking regression — cluster pool (P6)", () => {
       expect(flat.totalResults).toBe(flatPage.totalResults);
       expect(flat.totalPages).toBe(flatPage.totalPages);
       expect(flat.results).toHaveLength(20); // the page window, not the pool
+    }
+  });
+});
+
+// ── 5: novel-counted display window (walk mechanics, exact geometry) ─────────
+
+describe.skipIf(!BASE)("ranking regression — novel-counted display window", () => {
+  let agent: Agent;
+  // 30 seeds in strict rank order (sims 0.900, 0.895, …). The known-set marks
+  // ranks 0/2/4/6/8 — knowns interleaved through the top ranks, exactly the
+  // shape a session accumulates.
+  const ids: string[] = [];
+  const KNOWN_RANKS = [0, 2, 4, 6, 8];
+
+  beforeAll(async () => {
+    agent = await registerAgent("window");
+    const old = "now() - interval '40 days'";
+    for (let i = 0; i < 30; i++) {
+      ids.push(await seedTrace(agent, `W${i}`, { sim: 0.9 - i * 0.005, axis: 1, createdAtSql: old }));
+    }
+  }, 120_000);
+
+  const knownSet = () => new Set(KNOWN_RANKS.map((r) => ids[r]!));
+
+  it("window holds exactly perPage NOVEL recipes with knowns as stubs at their true ranks", async () => {
+    const r = await runPipeline(agent, pageArm(), { expand: true, perPage: 10, knownIds: knownSet() });
+    // Walk: ranks 0..14 — 10 novel (1,3,5,7,9,10,11,12,13,14) + the 5 knowns
+    // interleaved in place. Nothing reordered, nothing dropped.
+    expect(r.results.map((t) => t.id)).toEqual(ids.slice(0, 15));
+    expect(r.results.filter((t) => !t.known)).toHaveLength(10);
+    for (let i = 0; i < 15; i++) {
+      expect(r.results[i]!.known).toBe(KNOWN_RANKS.includes(i) ? true : undefined);
+    }
+    // Scores untouched — the walk re-renders and extends, never rescales.
+    r.results.forEach((t, i) => {
+      expect(t.semanticScore).toBeCloseTo(0.9 - i * 0.005, 2);
+    });
+  });
+
+  it("offset counts novel items; knowns before the window start are skipped", async () => {
+    const r = await runPipeline(agent, pageArm(), { expand: true, page: 2, perPage: 10, knownIds: knownSet() });
+    // Page 1 consumed novels at ranks 1..14; page 2 starts at the 11th novel
+    // (rank 15) — all knowns sit before the window start and are skipped, so
+    // the page is 10 purely-novel recipes.
+    expect(r.results.map((t) => t.id)).toEqual(ids.slice(15, 25));
+    expect(r.results.every((t) => !t.known)).toBe(true);
+  });
+
+  it("sessionless call is byte-identical to pre-walk behavior (plain slice)", async () => {
+    const r = await runPipeline(agent, pageArm(), { expand: true, perPage: 10 });
+    expect(r.results.map((t) => t.id)).toEqual(ids.slice(0, 10));
+    expect(r.results.every((t) => t.known === undefined)).toBe(true);
+    expect(r.totalResults).toBe(30);
+  });
+});
+
+// ── 6: seen accumulation across checks (session_shown, real deposit path) ────
+
+describe.skipIf(!BASE)("ranking regression — seen accumulation across checks (session_shown)", () => {
+  let agent: Agent;
+  // 26 seeded recipes (no deposit-borne evidence — so the shown-set stays
+  // fully observable from the responses) + one hand-seeded evidence row for
+  // the evidence-stubbing assert. Probe checks go over HTTP (clusters=20 ⇒
+  // the flat surface; perPage is the route's fixed 20), same query text every
+  // time so all three arms rank the identical corpus.
+  const ids: string[] = [];
+  const SESS = `sess-seen-${uid}`;
+  const probeText =
+    "As a backend developer working on ranking regression fixtures, I prefer the seen-accumulation probe recipe so that display history is exercised end-to-end.";
+  let resA: NonNullable<CheckJson["data"]>;
+  let resB: NonNullable<CheckJson["data"]>;
+  let resC: NonNullable<CheckJson["data"]>;
+  const fullIds = (res: NonNullable<CheckJson["data"]>) =>
+    res.results.filter((r) => !r.known).map((r) => r.id);
+
+  beforeAll(async () => {
+    agent = await registerAgent("seen");
+    const old = "now() - interval '40 days'";
+    for (let i = 0; i < 26; i++) {
+      ids.push(await seedTrace(agent, `SN${i}`, { sim: 0.9 - i * 0.005, axis: 1, createdAtSql: old }));
+    }
+    await seedEvidence(agent, ids[0]!, "E0", { sim: 0.5, axis: 3, createdAtSql: "now()" });
+
+    // A: session token's first check. B: same token, same text (the deposit
+    // row is reused, so A/B/C rank the identical corpus and exclude the same
+    // own-trace). C: token omitted — the context-compaction refresh.
+    // clusters=30 ≥ the 26 visible seeds + B's walked window, so every arm
+    // reads as the degenerate-flat surface (one cluster per result).
+    resA = await httpCheck(agent.apiKey, probeText, SESS, "30");
+    resB = await httpCheck(agent.apiKey, probeText, SESS, "30");
+    resC = await httpCheck(agent.apiKey, probeText, undefined, "30");
+  }, 120_000);
+
+  it("check A (fresh session): a full window of full-text recipes", () => {
+    expect(resA.sessionId).toBe(SESS);
+    expect(resA.results).toHaveLength(20); // route perPage — plain slice, no known-set yet
+    expect(resA.results.every((r) => r.known === undefined && !!r.recipe)).toBe(true);
+  });
+
+  it("check B (same session): everything A displayed returns as stubs AND the window walks to new full-text recipes", () => {
+    // A's display history = its full-text results PLUS its full-text
+    // related-evidence parents (both recording paths of seam 2).
+    const shownByA = new Set([
+      ...fullIds(resA),
+      ...(resA.relatedEvidence ?? []).filter((e) => !e.known).map((e) => e.recipeId),
+    ]);
+    // Every full-text recipe A displayed is now an id-only stub at its rank.
+    for (const r of resB.results) {
+      if (shownByA.has(r.id)) {
+        expect(r.known).toBe(true);
+        expect(r.recipe).toBeUndefined();
+      }
+    }
+    // And the window walked down: the recipes B carries in full are exactly
+    // the corpus remainder A never displayed — something new each time.
+    const novelInB = fullIds(resB);
+    expect(novelInB.length).toBeGreaterThan(0);
+    const remainder = ids.filter((id) => !shownByA.has(id)).sort();
+    expect([...novelInB].sort()).toEqual(remainder);
+    // Stubs + the novel remainder = the whole corpus in one walked window.
+    expect(resB.results).toHaveLength(26);
+  });
+
+  it("evidence parents shown in A stub in B's relatedEvidence", () => {
+    const evA = resA.relatedEvidence?.find((e) => e.recipeId === ids[0]);
+    const evB = resB.relatedEvidence?.find((e) => e.recipeId === ids[0]);
+    expect(evA).toBeDefined();
+    expect(evA!.known).toBeUndefined();
+    expect(evA!.parentRecipe).toBeTruthy();
+    expect(evB).toBeDefined();
+    expect(evB!.known).toBe(true);
+    expect(evB!.parentRecipe).toBeUndefined();
+  });
+
+  it("check C (token omitted): full texts again — the context-compaction refresh affordance", () => {
+    expect(resC.sessionId).toBeTruthy();
+    expect(resC.sessionId).not.toBe(SESS);
+    expect(resC.results.map((r) => r.id)).toEqual(resA.results.map((r) => r.id));
+    expect(resC.results.every((r) => r.known === undefined && !!r.recipe)).toBe(true);
+  });
+
+  it("ranking purity: flat order identical across the session arms — seen state re-renders, never reorders", () => {
+    const idsA = resA.results.map((r) => r.id);
+    const idsB = resB.results.map((r) => r.id);
+    const idsC = resC.results.map((r) => r.id);
+    // B's walked window is A's window extended: same ids in the same order,
+    // then the remainder in rank order.
+    expect(idsB.slice(0, idsA.length)).toEqual(idsA);
+    expect(idsC).toEqual(idsA);
+    // Per-id displayed scores identical across arms (stub or full).
+    const scoreA = new Map(resA.results.map((r) => [r.id, r.score.semantic]));
+    for (const r of [...resB.results, ...resC.results]) {
+      const a = scoreA.get(r.id);
+      if (a !== null && a !== undefined && r.score.semantic !== null) {
+        expect(r.score.semantic).toBeCloseTo(a, 6);
+      }
     }
   });
 });

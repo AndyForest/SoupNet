@@ -225,6 +225,13 @@
       "when": 1784330705494,
       "tag": "0031_traces_session_id",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1784345700434,
+      "tag": "0032_session_shown_and_feedback_session",
+      "breakpoints": true
     }
   ]
 }
