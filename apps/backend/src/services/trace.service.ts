@@ -39,7 +39,19 @@ import { scoreFormatAdherence } from "./format-adherence";
 import { runSearchPipeline } from "./search-pipeline";
 import { StageTimer } from "../lib/stage-timer";
 import { invalidKeyMessage } from "../lib/key-remediation";
-import { resolveEchoSuppression } from "./system-settings.service";
+import { DEFAULT_RANKING, RANKING_ALGORITHM_VERSION } from "@soupnet/domain";
+import type { CandidateSignals } from "@soupnet/domain";
+
+/** Session tokens are opaque and validation-free (they only compress the
+ *  holder's own responses — zero security weight), but bounded so arbitrary
+ *  junk doesn't land in the column: 8-64 url-safe chars, else treated as
+ *  absent and a fresh uuid is minted (self-healing). */
+const SESSION_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
+export function resolveSessionId(raw: string | undefined): { sessionId: string; fresh: boolean } {
+  const candidate = raw?.trim();
+  if (candidate && SESSION_ID_RE.test(candidate)) return { sessionId: candidate, fresh: false };
+  return { sessionId: crypto.randomUUID(), fresh: true };
+}
 import { auditLog } from "@soupnet/db";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -95,10 +107,17 @@ export interface SubmitAndSearchParams {
    *  X-SoupNet-Surface header on /check), or "web" (default for /check).
    *  OAuth client identity is derived from the key itself, not this field. */
   surface?: string | undefined;
-  /** Per-request echo-suppression override ("on"/"off"), the A/B toggle. When
-   *  absent the global `echoSuppression` setting (default OFF) applies. See
-   *  docs/planning/echo-suppression.md. */
-  echoSuppress?: "on" | "off" | undefined;
+  /** Opaque session token for known-set stub rendering (token efficiency
+   *  only — never influences ranking; plan v2 seam 2). Deposits are stamped
+   *  with it; results this session already deposited render as id-stubs.
+   *  Self-healing: an absent/malformed token gets a fresh one minted and
+   *  echoed in the response, so the caller can adopt it. The token is
+   *  client-held — an orchestrator shares it with sub-agents (or doesn't) to
+   *  share (or isolate) the known-set. */
+  sessionId?: string | undefined;
+  /** Client-declared known recipe ids (the known_recipes param) — merged
+   *  with this session's deposits into the known-set for stub rendering. */
+  knownRecipeIds?: string[] | undefined;
 }
 
 export interface SearchResultItem {
@@ -108,6 +127,36 @@ export interface SearchResultItem {
   rank: number;
   semanticScore?: number | undefined;
   clusterSize?: number | undefined;
+  /** Per-candidate ranking signals (@soupnet/domain CandidateSignals) —
+   *  hydrated by hybridSearch in query mode; absent in corpus mode. Available
+   *  to every pipeline stage; NOT serialized into agent responses. */
+  signals?: CandidateSignals | undefined;
+  /** Known-set rendering flag (seam 2): the caller already holds this recipe
+   *  — render an id-only stub at its true rank. */
+  known?: boolean | undefined;
+  /** Known members of this displayed cluster (recipes the session has
+   *  already seen or deposited), each with its raw similarity to the current
+   *  check (already computed at retrieval — recipe ef245b63) — rendered as
+   *  an id+similarity stub list beside the item ("stub, stub, full recipe"). */
+  knownClusterMembers?: Array<{ id: string; similarity: number }> | undefined;
+}
+
+/** Which ranking served this response — version + effective levers.
+ *  Additive response metadata (brief §3c): consumers/experiments report the
+ *  ranking they ran against. */
+export interface RankingResponseInfo {
+  /** Dated algorithm version of the shipped defaults (ranking-changelog.md). */
+  version: string;
+  /** Clustering-pool mode in effect: "page" (legacy), "fixed:<size>", or
+   *  "score-gap:<min>-<max>". */
+  clusterPool: string;
+}
+
+/** Render a ClusterPoolConfig as the compact response form. */
+export function clusterPoolLabel(pool: { mode: string; size: number; minSize: number }): string {
+  if (pool.mode === "fixed") return `fixed:${pool.size}`;
+  if (pool.mode === "score-gap") return `score-gap:${pool.minSize}-${pool.size}`;
+  return pool.mode;
 }
 
 export interface SubmitAndSearchResult {
@@ -119,6 +168,9 @@ export interface SubmitAndSearchResult {
   results: SearchResultItem[];
   /** Evidence from other recipes that's topically related to the checked recipe */
   relatedEvidence?: EvidenceSearchResult[] | undefined;
+  /** Known parents whose evidence would have made the selection — id plus
+   *  best evidence similarity, the token-lean stub form (seam 2). */
+  relatedEvidenceKnown?: Array<{ recipeId: string; similarity: number }> | undefined;
   totalResults: number;
   currentPage: number;
   totalPages: number;
@@ -133,6 +185,14 @@ export interface SubmitAndSearchResult {
   /** Server-Timing header value for the check's per-stage latencies.
    *  Routes attach it as a response header; never part of the JSON payload. */
   serverTiming?: string | undefined;
+  /** Which ranking served this response (JSON/structured payloads only —
+   *  kept out of the token-lean markdown surfaces). */
+  ranking?: RankingResponseInfo | undefined;
+  /** The session token in effect for this check — the caller's validated
+   *  token, or a freshly minted one when none was presented (self-healing).
+   *  Callers adopt it and pass it on subsequent checks (and optionally to
+   *  sub-agents) for known-set stub rendering. */
+  sessionId?: string | undefined;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -375,6 +435,11 @@ export async function submitAndSearch(
     decidedAt = parsed;
   }
 
+  // 1d. Resolve the session token (self-healing: fresh uuid when absent or
+  // malformed). Stamped on the deposit; echoed in the response so the caller
+  // adopts it; drives known-set stub rendering only — never ranking.
+  const session = resolveSessionId(params.sessionId);
+
   // 2. Parse evidence
   const forEntries = parseEvidenceMarkdown(params.evidenceFor);
   // evidence_against removed from ingest — see docs/architecture/embedding-test-results.md
@@ -412,8 +477,8 @@ export async function submitAndSearch(
     // Try to insert — unique constraint on (api_key_id, group_id, claim_text_hash)
     // prevents duplicates from the same agent + group
     const traceRows = await tx.execute(sql`
-      INSERT INTO claimnet.traces (user_id, group_id, api_key_id, claim_text, claim_text_hash, format_adherence_score, decided_at)
-      VALUES (${userId}::uuid, ${groupId}::uuid, ${keyId}::uuid, ${params.traceText}, ${claimTextHash}, ${adherence.score}, ${decidedAt ? decidedAt.toISOString() : null}::timestamptz)
+      INSERT INTO claimnet.traces (user_id, group_id, api_key_id, claim_text, claim_text_hash, format_adherence_score, decided_at, session_id)
+      VALUES (${userId}::uuid, ${groupId}::uuid, ${keyId}::uuid, ${params.traceText}, ${claimTextHash}, ${adherence.score}, ${decidedAt ? decidedAt.toISOString() : null}::timestamptz, ${session.sessionId})
       ON CONFLICT (api_key_id, group_id, claim_text_hash) DO NOTHING
       RETURNING id
     `);
@@ -508,15 +573,33 @@ export async function submitAndSearch(
     };
   }
 
-  // 5b. Resolve echo-suppression config (global default OFF; per-request
-  // override flips `enabled`). The reorder demotes THIS agent's own recent
-  // hypothesis-appends in the results — see docs/planning/echo-suppression.md.
-  const echoConfig = await resolveEchoSuppression(db, params.echoSuppress);
+  // 5b. Known-set (seam 2): what this session already holds in context —
+  // its own deposits ∪ what the server has SHOWN it (session_shown display
+  // history, operator ruling 2026-07-17 recipe 31d184df) ∪ client-declared
+  // known_recipes. Stub rendering only — a fresh token has no history, so
+  // its query is skipped. 7-day window doubles as row expiry.
+  const knownIds = new Set<string>(params.knownRecipeIds ?? []);
+  if (!session.fresh) {
+    const knownRows = await db.execute(sql`
+      SELECT id::text AS id FROM claimnet.traces
+      WHERE session_id = ${session.sessionId}
+        AND created_at > now() - interval '7 days'
+        AND id != ${traceId}::uuid
+      UNION
+      SELECT trace_id::text AS id FROM claimnet.session_shown
+      WHERE session_id = ${session.sessionId}
+        AND shown_at > now() - interval '7 days'
+    `);
+    for (const row of knownRows as unknown as Array<{ id: string }>) {
+      knownIds.add(row.id);
+    }
+  }
 
   // 6. Run unified search pipeline
   // See docs/architecture/search-algorithms.md for the full algorithm description.
   // The pre-resolved trace vector doubles as the query vector (identical text),
-  // so the pipeline makes no embedding API calls of its own.
+  // so the pipeline makes no embedding API calls of its own. Ranking is a
+  // pure function of the check's inputs and the corpus (plan v2 seam 1).
   const pipelineResult = await runSearchPipeline({
     db,
     groupIds: effectiveReadGroupIds,
@@ -531,7 +614,8 @@ export async function submitAndSearch(
     includeVectors: !!params.axes, // need vectors for concept-axis computation
     queryVectorStr: traceVectorStr ?? undefined,
     keywordFilter: params.keywordFilter,
-    echo: { config: echoConfig, currentApiKeyId: keyId, now: new Date() },
+    ranking: DEFAULT_RANKING,
+    knownIds: knownIds.size > 0 ? knownIds : undefined,
     timer,
   });
 
@@ -560,6 +644,10 @@ export async function submitAndSearch(
       resultSimilarities: pipelineResult.results.map((r) => r.semanticScore ?? null),
       // Connection surface: mcp-http | mcp-stdio | web (server-known).
       surface: params.surface ?? "web",
+      // Which ranking served the check — joins offline analysis to the
+      // algorithm version (brief §3c) — and which session deposited it.
+      rankingVersion: RANKING_ALGORITHM_VERSION,
+      sessionId: session.sessionId,
       // OAuth client identity — segmentable cross-vendor column the day a
       // connector check arrives. Null for daily/scoped keys.
       ...(keyType === "oauth" && oauthClientId ? { oauthClientId } : {}),
@@ -589,6 +677,34 @@ export async function submitAndSearch(
     console.error("[trace.service] Audit log write failed:", err);
   }
 
+  // 7b. Record display history (seam 2): every recipe whose FULL text this
+  // response carries — displayed results (not stubs) and related-evidence
+  // parents (not stubs) — becomes "shown" to this session, so the next check
+  // stubs it and walks to unseen content. Awaited (a floating write here is
+  // the exact teardown hazard diagnosed 2026-07-17) but non-blocking on
+  // failure; idempotent via ON CONFLICT DO NOTHING.
+  const shownIds = [
+    ...pipelineResult.results.filter((r) => !r.known).map((r) => r.id),
+    ...(pipelineResult.relatedEvidence ?? []).map((e) => e.parentTraceId),
+  ];
+  if (shownIds.length > 0) {
+    try {
+      const values = sql.join(
+        [...new Set(shownIds)].map(
+          (id) => sql`(${session.sessionId}, ${id}::uuid)`,
+        ),
+        sql`, `,
+      );
+      await db.execute(sql`
+        INSERT INTO claimnet.session_shown (session_id, trace_id)
+        VALUES ${values}
+        ON CONFLICT (session_id, trace_id) DO NOTHING
+      `);
+    } catch (err) {
+      console.error("[trace.service] session_shown record failed (non-fatal):", err);
+    }
+  }
+
   // One structured timing line per check — the per-stage attribution the
   // 2026-07-01 investigation had to reconstruct by black-box measurement.
   // console.warn is the repo's operational-log channel (lint allows warn/error).
@@ -608,6 +724,7 @@ export async function submitAndSearch(
     formatWarning,
     results: pipelineResult.results,
     relatedEvidence: pipelineResult.relatedEvidence,
+    relatedEvidenceKnown: pipelineResult.relatedEvidenceKnown,
     totalResults: pipelineResult.totalResults,
     currentPage: pipelineResult.page,
     totalPages: pipelineResult.totalPages,
@@ -621,6 +738,11 @@ export async function submitAndSearch(
       }
       : undefined,
     serverTiming: timer.toServerTimingHeader(),
+    sessionId: session.sessionId,
+    ranking: {
+      version: RANKING_ALGORITHM_VERSION,
+      clusterPool: clusterPoolLabel(DEFAULT_RANKING.clusterPool),
+    },
   };
 }
 
@@ -726,6 +848,7 @@ export async function searchWithoutLogging(
     // rendering off this absence.
     results: pipelineResult.results,
     relatedEvidence: pipelineResult.relatedEvidence,
+    relatedEvidenceKnown: pipelineResult.relatedEvidenceKnown,
     totalResults: pipelineResult.totalResults,
     currentPage: pipelineResult.page,
     totalPages: pipelineResult.totalPages,
@@ -739,6 +862,13 @@ export async function searchWithoutLogging(
       }
       : undefined,
     serverTiming: timer.toServerTimingHeader(),
+    // The read-only filter path never demotes (echo suppression applies to
+    // the logging check path only) and uses legacy ordering — but it is still
+    // a ranked response, so it reports the algorithm version it ran under.
+    ranking: {
+      version: RANKING_ALGORITHM_VERSION,
+      clusterPool: clusterPoolLabel(DEFAULT_RANKING.clusterPool),
+    },
   };
 }
 

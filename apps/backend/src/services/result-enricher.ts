@@ -53,9 +53,11 @@ export interface EnrichedEvidence {
   clusterSize?: number | undefined;
 }
 
-export interface EnrichedGroup {
-  id: string;
+export interface EnrichedRecipeBook {
+  recipeBookId: string;
   name: string;
+  /** Kept for surfaces that own descriptions (briefing composer); check
+   *  builders serialize {recipeBookId, name} only (recipe f3c0fe2f). */
   description: string | null;
 }
 
@@ -63,11 +65,19 @@ export interface EnrichedResult {
   id: string;
   claimText: string;
   createdAt: string;
-  combinedScore: number;
   semanticScore: number | null;
   clusterSize?: number | undefined;
-  group?: EnrichedGroup | undefined;
+  recipeBook?: EnrichedRecipeBook | undefined;
   evidence: EnrichedEvidence[];
+  /** Known-set rendering flag (seam 2), passed through from SearchResultItem:
+   *  the caller's session already holds this recipe — response builders
+   *  render an id-only stub at its true rank. */
+  known?: boolean | undefined;
+  /** Known members of this displayed cluster (recipes the session has
+   *  already seen or deposited), each with its raw similarity — builders
+   *  render them as an id+percentage list beside the item ("stub, stub,
+   *  full recipe": known cluster-mates stay visible). */
+  knownClusterMembers?: Array<{ id: string; similarity: number }> | undefined;
 }
 
 // ── Main function ────────────────────────────────────────────────────────────
@@ -92,10 +102,10 @@ export async function enrichResults(
     WHERE t.id IN (${traceIdsSql})
   `);
 
-  const traceGroupMap = new Map<string, EnrichedGroup>();
+  const traceGroupMap = new Map<string, EnrichedRecipeBook>();
   for (const row of groupRows as unknown as Record<string, unknown>[]) {
     traceGroupMap.set(row["trace_id"] as string, {
-      id: row["group_id"] as string,
+      recipeBookId: row["group_id"] as string,
       name: row["group_name"] as string,
       description: (row["group_description"] as string) ?? null,
     });
@@ -179,11 +189,12 @@ export async function enrichResults(
     id: r.id,
     claimText: r.claimText,
     createdAt: r.createdAt.toISOString(),
-    combinedScore: r.rank,
     semanticScore: r.semanticScore ?? null,
     clusterSize: r.clusterSize,
-    group: traceGroupMap.get(r.id),
+    recipeBook: traceGroupMap.get(r.id),
     evidence: traceEvidenceMap.get(r.id) ?? [],
+    known: r.known,
+    knownClusterMembers: r.knownClusterMembers,
   }));
 }
 

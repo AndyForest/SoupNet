@@ -45,6 +45,14 @@ export const traces = claimnetSchema.table(
     // COALESCE(decided_at, created_at) as the judgment date.
     decidedAt: timestamp("decided_at", { withTimezone: true }),
 
+    // Opaque client-held session token stamped at deposit (8-64 url-safe
+    // chars, validated at the service boundary). Drives known-set stub
+    // rendering (token efficiency) only — NEVER ranking; it has no security
+    // weight, so there is no sessions table and no server-side validation
+    // beyond shape. NULL = pre-session or sessionless deposit. See
+    // docs/planning/session-novelty-and-pool-diversity.md.
+    sessionId: text("session_id"),
+
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -53,6 +61,8 @@ export const traces = claimnetSchema.table(
     index("traces_group_id_idx").on(t.groupId),
     index("traces_api_key_id_idx").on(t.apiKeyId),
     index("traces_created_at_idx").on(t.createdAt),
+    // Known-set lookup: deposits by session within the recency window.
+    index("traces_session_id_created_at_idx").on(t.sessionId, t.createdAt.desc()),
     // Idempotency: same agent + group + claim text = same trace
     unique("traces_api_key_group_claim_unique").on(t.apiKeyId, t.groupId, t.claimTextHash),
     // tsvector GIN index defined in migration SQL

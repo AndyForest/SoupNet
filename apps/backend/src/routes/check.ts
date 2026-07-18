@@ -12,9 +12,9 @@ import { getDb } from "../db";
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { validateKey } from "../services/api-key.service";
-import { parseEchoSuppressOverride } from "../services/system-settings.service";
 import { HTML_ACCEPT_TYPES, renderCheckResponseMarkdown, fenceCheckResponseMarkdown } from "@soupnet/domain";
 import type { CheckResponseJson } from "@soupnet/domain";
+import type { Recipe } from "@soupnet/contracts";
 import { rateLimit, perKeyRateLimit, extractCheckRequestKey, getClientIp, hashApiKey } from "../middleware/rate-limit";
 import { parseLenientQuery, rawQueryOfUrl } from "../lib/lenient-query";
 import { invalidKeyMessage, keysPageUrl } from "../lib/key-remediation";
@@ -118,11 +118,13 @@ export const CHECK_PARAMS = [
   { field: "decidedAt",  wire: "decided_at",         aliases: ["decided"],     roundTrip: "carry" },
   { field: "agentId",    wire: "agent_id",           aliases: [],              roundTrip: "carry" },
   { field: "knownRecipes", wire: "known_recipes",    aliases: [],              roundTrip: "carry" },
+  // Opaque session token for known-set stub rendering (token efficiency only —
+  // never influences ranking; plan v2 seam 2). Carries forward like the other
+  // intent-preserving params so the session survives the re-check form and
+  // Copy-URL round-trips; the response echoes the effective (possibly freshly
+  // minted) token as data.sessionId.
+  { field: "sessionId",  wire: "session_id",         aliases: [],              roundTrip: "carry" },
   { field: "sort",       wire: "sort",               aliases: [],              roundTrip: "carry" },
-  // Per-request echo-suppression A/B toggle (on|off). Carries forward like the
-  // other intent-preserving params so an arm keeps its setting across the
-  // re-check form and Copy-URL round-trips. See docs/planning/echo-suppression.md.
-  { field: "echoSuppress", wire: "echo_suppress",    aliases: [],              roundTrip: "carry" },
   // Premium opt-in behavior flag — carries like the other intent-preserving
   // params (agent_id, decided_at) so an opted-in caller keeps synthesis on
   // across the page's re-check form and Copy-URL round-trips, rather than
@@ -209,36 +211,44 @@ function buildJsonResponse(
     return { ok: false, error: result.error };
   }
 
-  const KNOWN_GIST_CHARS = 80;
   const response: Record<string, unknown> = {
     ok: true,
     data: {
-      recipeId: result.traceId,
-      checkedRecipe: result.traceText,
+      // The caller's own deposit as a Recipe fill (canonical schema, recipe
+      // 7945fd8a): {recipeId, recipe}.
+      ...(result.traceId
+        ? { checked: { recipeId: result.traceId, recipe: result.traceText } satisfies Recipe }
+        : {}),
       searchMode: result.searchMode ?? "semantic",
       clustered: result.clustered ?? false,
-      results: enriched.map((r) => {
-        // known_recipes stub (rendering only — logging and cluster math are
-        // untouched upstream; the stub keeps its cluster slot).
-        if (knownRecipeIds?.has(r.id)) {
+      results: enriched.map((r): Recipe => {
+        // Known-set stub (rendering only — logging and cluster math are
+        // untouched upstream; the stub keeps its cluster slot at its true
+        // rank). Triggered by client-declared known_recipes ids or the
+        // pipeline's session-known flag. Trimmed id-only shape — no recipe
+        // gist (operator ruling: the gist is an ossification risk), no
+        // createdAt (operator ruling 2026-07-18: trim stub rows). Fetch the
+        // full recipe via GET /recipes or get_recipes when needed.
+        if (knownRecipeIds?.has(r.id) || r.known) {
           return {
-            id: r.id,
+            recipeId: r.id,
             known: true,
-            recipe: r.claimText.slice(0, KNOWN_GIST_CHARS) + (r.claimText.length > KNOWN_GIST_CHARS ? "…" : ""),
-            createdAt: r.createdAt,
-            score: { combined: r.combinedScore, semantic: r.semanticScore },
+            // ONE similarity vocabulary (operator ruling 2026-07-18, recipe
+            // ef245b63): the raw cosine, nothing else.
+            similarity: r.semanticScore ?? undefined,
             ...(r.clusterSize ? { clusterSize: r.clusterSize } : {}),
           };
         }
-        const item: Record<string, unknown> = {
-          id: r.id,
+        return {
+          recipeId: r.id,
           recipe: r.claimText,
           createdAt: r.createdAt,
-          ...(r.group ? { group: { id: r.group.id, name: r.group.name, description: r.group.description } } : {}),
-          score: {
-            combined: r.combinedScore,
-            semantic: r.semanticScore,
-          },
+          // Recipe-book id + name only — the description lives in the
+          // briefing (operator ruling 2026-07-18: "It's in the briefing").
+          ...(r.recipeBook
+            ? { recipeBook: { recipeBookId: r.recipeBook.recipeBookId, name: r.recipeBook.name } }
+            : {}),
+          similarity: r.semanticScore ?? undefined,
           evidence: r.evidence.map((e) => ({
             interpretation: e.content,
             references: e.references.map((ref) => ({
@@ -253,15 +263,29 @@ function buildJsonResponse(
               } : {}),
             })),
           })),
+          ...(r.clusterSize ? { clusterSize: r.clusterSize } : {}),
+          // Known cluster-mates (seam 2, "stub, stub, full recipe"): minimal
+          // Recipe fills {recipeId, similarity} beside the full exemplar.
+          ...(r.knownClusterMembers && r.knownClusterMembers.length > 0
+            ? {
+              knownMembers: r.knownClusterMembers.map(
+                (m): Recipe => ({ recipeId: m.id, similarity: m.similarity }),
+              ),
+            }
+            : {}),
         };
-        if (r.clusterSize) {
-          item["clusterSize"] = r.clusterSize;
-        }
-        return item;
       }),
       totalResults: result.totalResults,
       page,
       totalPages: result.totalPages,
+      // The session token in effect for this check — freshly minted when none
+      // was presented (self-healing). Callers pass it back as session_id so
+      // recipes this session already deposited render as id-only stubs.
+      ...(result.sessionId ? { sessionId: result.sessionId } : {}),
+      // Which ranking served this response — dated algorithm version +
+      // effective switches (docs/architecture/ranking-changelog.md). JSON
+      // metadata only; the markdown surfaces stay token-lean.
+      ...(result.ranking ? { ranking: result.ranking } : {}),
     },
   };
 
@@ -282,19 +306,29 @@ function buildJsonResponse(
   // Related evidence from other recipes (evidence discovery pipeline).
   // recipeId per entry (2026-07-05): without it agents burned full
   // re-checks recovering recipes they'd already half-seen — GET /recipes
-  // (or the get_recipes MCP tool) turns that into a cheap lookup.
+  // (or the get_recipes MCP tool) turns that into a cheap lookup. Entry
+  // shape trimmed 2026-07-18 (operator ruling): no evidenceId, no constant
+  // strategy field.
   if (result.relatedEvidence && result.relatedEvidence.length > 0) {
     const data = response["data"] as Record<string, unknown>;
-    data["relatedEvidence"] = result.relatedEvidence.map((e) => ({
-      evidenceId: e.evidenceId,
+    // Each related-evidence entry is a Recipe fill (canonical schema): the
+    // parent recipe with the matching evidence entry attached.
+    data["relatedEvidence"] = result.relatedEvidence.map((e): Recipe => ({
       recipeId: e.parentTraceId,
-      parentRecipe: e.parentTraceText,
-      evidence: e.evidenceContent,
+      recipe: e.parentTraceText,
       similarity: e.semanticScore,
-      strategy: "contextual_evidence",
+      evidence: [{ interpretation: e.evidenceContent }],
     }));
     data["relatedEvidenceHint"] =
       "Each entry carries the source recipe's UUID as recipeId — fetch the full recipe with GET /recipes?ids=<recipeId> (same API key) instead of re-checking.";
+  }
+  // Known evidence parents (seam 2): minimal Recipe fills — id + best
+  // evidence similarity per parent (ONE similarity vocabulary, ef245b63).
+  if (result.relatedEvidenceKnown && result.relatedEvidenceKnown.length > 0) {
+    (response["data"] as Record<string, unknown>)["relatedEvidenceKnown"] =
+      result.relatedEvidenceKnown.map(
+        (p): Recipe => ({ recipeId: p.recipeId, similarity: p.similarity }),
+      );
   }
 
   // Concept-axis positions (TCAV-style projection)
@@ -308,8 +342,8 @@ function buildJsonResponse(
 
 /**
  * JSON shape for the read-only `filter` search path — same result mapping
- * as a check, minus everything that implies a logged trace (recipeId,
- * checkedRecipe), plus an explicit searchOnly marker and notice.
+ * as a check, minus everything that implies a logged trace (the `checked`
+ * Recipe fill), plus an explicit searchOnly marker and notice.
  */
 function buildSearchOnlyJsonResponse(
   result: SubmitAndSearchResult,
@@ -321,8 +355,7 @@ function buildSearchOnlyJsonResponse(
   const response = buildJsonResponse(result, enriched, page, knownRecipeIds);
   if (response["ok"] !== true) return response;
   const data = response["data"] as Record<string, unknown>;
-  delete data["recipeId"];
-  delete data["checkedRecipe"];
+  delete data["checked"];
   response["data"] = {
     searchOnly: true,
     filter,
@@ -549,20 +582,21 @@ function renderPage(
     const knownIdsForHtml = parseKnownRecipes(params.knownRecipes);
     const resultItems = enriched
       .map((r) => {
-        let scoreDetail: string;
-        if (r.semanticScore !== null && r.semanticScore !== undefined) {
-          scoreDetail = `${Math.round(r.semanticScore * 100)}% similar`;
-        } else {
-          scoreDetail = `Score: ${r.combinedScore.toFixed(4)}`;
-        }
+        // ONE similarity vocabulary (recipe ef245b63): the raw cosine as a
+        // percentage, or an honest n/a — no combined/lexical fallbacks.
+        const scoreDetail =
+          r.semanticScore !== null && r.semanticScore !== undefined
+            ? `${Math.round(r.semanticScore * 100)}% similar`
+            : "similarity n/a";
 
-        // known_recipes stub — one line: id + gist + similarity. Rendering
-        // only; the result still occupies its cluster slot.
-        if (knownIdsForHtml.has(r.id)) {
-          const gist = esc(r.claimText.slice(0, 80)) + (r.claimText.length > 80 ? "&hellip;" : "");
+        // Known-set stub — one line: id + similarity, no recipe text (id-only
+        // ruling; the caller already holds the body). Rendering only; the
+        // result still occupies its cluster slot. Triggered by declared
+        // known_recipes ids or the pipeline's session-known flag.
+        if (knownIdsForHtml.has(r.id) || r.known) {
           return `
     <article class="result">
-      <p><small><code>${esc(r.id)}</code> [known to you] ${esc(scoreDetail)}${r.clusterSize ? ` &mdash; represents ${r.clusterSize} similar recipes` : ""} &mdash; ${gist}</small></p>
+      <p><small><code>${esc(r.id)}</code> [known to you] ${esc(scoreDetail)}${r.clusterSize ? ` &mdash; represents ${r.clusterSize} similar recipes` : ""}</small></p>
     </article>`;
         }
 
@@ -599,12 +633,19 @@ function renderPage(
           ? renderCompactEvidence(r.evidence)
           : renderEvidenceHtml("Evidence", r.evidence);
 
-        const groupHtml = r.group ? `<span class="group">[${esc(r.group.name)}]</span> ` : "";
+        const groupHtml = r.recipeBook ? `<span class="group">[${esc(r.recipeBook.name)}]</span> ` : "";
+
+        // Known cluster-mates (seam 2, "stub, stub, full recipe"): members of
+        // this cluster the caller already holds, listed as id-stubs beside
+        // the full exemplar.
+        const knownMembersHtml = r.knownClusterMembers && r.knownClusterMembers.length > 0
+          ? `\n      <p><small>Cluster also holds ${r.knownClusterMembers.length} you've seen: ${r.knownClusterMembers.map((m) => `<code>${esc(m.id)}</code> ${Math.round(m.similarity * 100)}%`).join(", ")}</small></p>`
+          : "";
 
         return `
     <article class="result">
       <p>${groupHtml}${esc(r.claimText)}</p>
-      <span class="rank">${esc(scoreDetail)}</span>${clusterHtml}
+      <span class="rank">${esc(scoreDetail)}</span>${clusterHtml}${knownMembersHtml}
       ${evidenceHtml}
     </article>`;
       })
@@ -654,8 +695,14 @@ function renderPage(
     ${paginationHtml}
   </section>`;
 
-    // Related evidence from other recipes (evidence discovery pipeline)
-    if (result.relatedEvidence && result.relatedEvidence.length > 0) {
+    // Related evidence from other recipes (evidence discovery pipeline).
+    // Known parents render as ONE compact line of ids, not per-row stubs
+    // (seam 2, 2026-07-18 reshape).
+    if ((result.relatedEvidence && result.relatedEvidence.length > 0)
+      || (result.relatedEvidenceKnown && result.relatedEvidenceKnown.length > 0)) {
+      const knownParentsHtml = result.relatedEvidenceKnown && result.relatedEvidenceKnown.length > 0
+        ? `\n    <p><small>Known evidence parents (already shown): ${result.relatedEvidenceKnown.map((p) => `<code>${esc(p.recipeId)}</code> ${Math.round(p.similarity * 100)}%`).join(", ")}</small></p>`
+        : "";
       resultsHtml += `
   <section id="related-evidence">
     <h2>Related evidence from other recipes</h2>
@@ -663,13 +710,13 @@ function renderPage(
     evidence from other recipes that is topically related to yours. The system makes no stance assertion;
     you decide if it supports, contradicts, or adds context.</small></p>
     <ul>
-      ${result.relatedEvidence.map((e) => `
+      ${(result.relatedEvidence ?? []).map((e) => `
       <li>
         <p>${esc(e.evidenceContent)}</p>
         <p><small>From recipe <code>${esc(e.parentTraceId)}</code>: <em>${esc(e.parentTraceText.slice(0, 120))}${e.parentTraceText.length > 120 ? "..." : ""}</em>
         (${Math.round(e.semanticScore * 100)}% similar)</small></p>
       </li>`).join("\n")}
-    </ul>
+    </ul>${knownParentsHtml}
     <p><small>Fetch any full recipe by id: <code>GET /recipes?ids=&lt;id&gt;</code> with the same API key (Bearer), or the <code>get_recipes</code> MCP tool.</small></p>
   </section>`;
     }
@@ -928,6 +975,11 @@ async function handleCheck(
   // stamps "mcp-http" itself without touching this path.
   const surface = c.req.header("x-soupnet-surface") === "mcp-stdio" ? "mcp-stdio" : "web";
 
+  // Known-set ids the client declared (known_recipes). Parsed once — the set
+  // drives route-side stub rendering; the array joins the session's own
+  // deposits inside the service to form the full known-set.
+  const knownRecipeIds = parseKnownRecipes(params.knownRecipes);
+
   let result: SubmitAndSearchResult | undefined;
   let searchOnly = false;
   if (params.trace && params.ef && params.key) {
@@ -959,7 +1011,8 @@ async function handleCheck(
       // filter alongside a recipe narrows the candidate set by keyword;
       // the check itself logs normally.
       keywordFilter: params.filter,
-      echoSuppress: parseEchoSuppressOverride(params.echoSuppress),
+      sessionId: params.sessionId,
+      knownRecipeIds: knownRecipeIds.size > 0 ? [...knownRecipeIds] : undefined,
     });
   } else if (params.key && params.filter && !params.trace) {
     // The sanctioned no-logging path: filter (alias f) with no recipe runs a
@@ -1026,11 +1079,10 @@ async function handleCheck(
     let enriched = await enrichResults(db, result.results);
     enriched = await clusterEvidenceInResults(db, enriched);
     const page = params.page ? parseInt(params.page, 10) : 1;
-    const known = parseKnownRecipes(params.knownRecipes);
     const synthesis = await resolveSynthesis(db, params, result, enriched, searchOnly);
     return c.json(searchOnly
-      ? buildSearchOnlyJsonResponse(result, enriched, page, params.filter ?? "", known)
-      : buildJsonResponse(result, enriched, page, known, synthesis));
+      ? buildSearchOnlyJsonResponse(result, enriched, page, params.filter ?? "", knownRecipeIds)
+      : buildJsonResponse(result, enriched, page, knownRecipeIds, synthesis));
   }
 
   // HTML response path — always enrich + cluster evidence

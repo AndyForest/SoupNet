@@ -167,3 +167,4 @@ describe("clusterResults", () => {
     expect(centroid[2]).toBeCloseTo(0, 1);
   });
 });
+

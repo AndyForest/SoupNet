@@ -20,3 +20,4 @@ export * from "./nodes";
 export * from "./requests";
 // requests.ts is retained (ClaimRequestSchema used for request broker feature — backlog)
 // artifacts.ts: retained if it exists (MIME allowlist); artifact_kind concept removed (ADR-0011)
+export * from "./recipe";

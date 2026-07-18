@@ -20,8 +20,11 @@
  *   - No "Page X of Y" pagination text — agents can't page (the tools accept
  *     no page param). When more results exist beyond the exemplars shown, a
  *     one-line narrowing hint replaces it.
- *   - Recipes the agent declared via known_recipes render as one-line stubs —
- *     rendering only; trace logging and cluster math are unaffected upstream.
+ *   - Recipes the caller already holds (declared via known_recipes, or in the
+ *     session's known-set — the builders' `known: true` flag) render as
+ *     one-line id-only stubs — rendering only; trace logging and cluster math
+ *     are unaffected upstream. No gist text (operator ruling 2026-07-17: the
+ *     gist is an ossification risk; fetch bodies via get_recipes).
  */
 
 // ── Response shape (tolerant — both builders' outputs satisfy it) ───────────
@@ -44,32 +47,44 @@ export interface CheckResultEvidence {
 }
 
 export interface CheckResultItem {
-  id?: string;
+  /** The recipe's stable id — the canonical schema's one mandatory field
+   *  (GET /schemas/recipe.json, recipe 7945fd8a). */
+  recipeId?: string;
   recipe?: string;
   createdAt?: string | Date;
-  group?: { id?: string; name?: string; description?: string | null };
-  score?: {
-    combined?: number | null;
-    semantic?: number | null;
-    lexical?: number | null;
-  };
+  /** Recipe book, {recipeBookId, name} on check results; the description
+   *  lives in the briefing (operator ruling 2026-07-18). */
+  recipeBook?: { recipeBookId?: string; name?: string };
+  /** Raw cosine similarity — the ONE similarity vocabulary (operator ruling
+   *  2026-07-18, recipe ef245b63). No combined/lexical slots. */
+  similarity?: number | null;
   clusterSize?: number;
   evidence?: CheckResultEvidence[];
+  /** The caller already holds this recipe (session known-set or declared
+   *  known_recipes) — renders as a one-line id-only stub. */
+  known?: boolean;
+  /** Known members of this displayed cluster — minimal Recipe fills
+   *  ({recipeId, similarity}) rendered as one compact line beside the full
+   *  item ("stub, stub, full recipe"). */
+  knownMembers?: Array<{ recipeId?: string; similarity?: number }>;
 }
 
+/** A related-evidence entry IS a Recipe fill (canonical schema): the parent
+ *  recipe with the matching evidence entry attached. */
 export interface CheckRelatedEvidence {
-  evidenceId?: string;
   /** UUID of the recipe the evidence belongs to — lets agents fetch the
    *  full recipe via get_recipes / GET /recipes instead of re-checking. */
   recipeId?: string;
-  parentRecipe?: string;
-  evidence?: string;
+  /** The parent recipe's text. */
+  recipe?: string;
+  evidence?: Array<{ interpretation?: string }>;
   similarity?: number;
 }
 
 export interface CheckResponseData {
-  recipeId?: string;
-  checkedRecipe?: string;
+  /** The caller's own deposit as a Recipe fill ({recipeId, recipe}). Absent
+   *  on the read-only filter path. */
+  checked?: { recipeId?: string; recipe?: string };
   /** True for the /check `filter` read-only search path — no trace logged. */
   searchOnly?: boolean;
   /** The keyword filter text of a search-only response. */
@@ -78,6 +93,10 @@ export interface CheckResponseData {
   clustered?: boolean;
   results?: CheckResultItem[];
   relatedEvidence?: CheckRelatedEvidence[];
+  /** Known evidence parents (seam 2): parents whose evidence would have made
+   *  the selection but the session already holds them — id + best evidence
+   *  similarity per parent. */
+  relatedEvidenceKnown?: Array<{ recipeId?: string; similarity?: number }>;
   conceptAxes?: { axisA?: string; axisB?: string };
   totalResults?: number;
   page?: number;
@@ -92,6 +111,9 @@ export interface CheckResponseData {
   synthesisNotice?: string;
   /** MCP builder puts the warning here… */
   formatWarning?: string;
+  /** The session token in effect for this check (freshly minted when none was
+   *  presented). Rendered as a one-line hint so agents adopt it. */
+  sessionId?: string;
 }
 
 export interface CheckResponseJson {
@@ -110,20 +132,20 @@ export interface RenderCheckMarkdownOptions {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-/** First ~80 chars of a recipe text for stub rendering. */
-const KNOWN_STUB_GIST_CHARS = 80;
-
-function similarityLabel(score: CheckResultItem["score"]): string {
-  if (score?.semantic !== null && score?.semantic !== undefined) {
-    return `${Math.round(score.semantic * 100)}% similar`;
-  }
-  if (score?.lexical !== null && score?.lexical !== undefined) {
-    return `${Math.round(score.lexical * 100)}% keyword`;
-  }
-  if (score?.combined !== null && score?.combined !== undefined) {
-    return `score ${score.combined.toFixed(2)}`;
+/** ONE similarity vocabulary (recipe ef245b63): the raw cosine as a
+ *  percentage, or an honest n/a. The lexical/combined fallbacks died with
+ *  the vestigial score slots — nothing has produced them since the
+ *  2026-04-11 pure-semantic simplification. */
+function similarityLabel(similarity: CheckResultItem["similarity"]): string {
+  if (similarity !== null && similarity !== undefined) {
+    return `${Math.round(similarity * 100)}% similar`;
   }
   return "similarity n/a";
+}
+
+/** Compact percentage for known-member / known-parent lines. */
+function pctLabel(similarity: number | undefined): string {
+  return similarity !== undefined ? ` ${Math.round(similarity * 100)}%` : "";
 }
 
 function dateLabel(createdAt: CheckResultItem["createdAt"]): string {
@@ -160,22 +182,28 @@ function renderReference(ref: CheckResultReference): string {
 }
 
 function renderResultItem(r: CheckResultItem, index: number, known: boolean): string {
-  const head = `#${index + 1} (${similarityLabel(r.score)}) ${r.id ?? "?"}`;
+  const head = `#${index + 1} (${similarityLabel(r.similarity)}) ${r.recipeId ?? "?"}`;
 
   if (known) {
-    // One-line stub: the agent told us it already holds this recipe, so a
-    // reminder line keeps the cluster slot visible without re-sending the body.
-    const gist = (r.recipe ?? "").slice(0, KNOWN_STUB_GIST_CHARS);
-    const ellipsis = (r.recipe ?? "").length > KNOWN_STUB_GIST_CHARS ? "…" : "";
+    // One-line id-only stub: the caller already holds this recipe, so the
+    // line keeps the cluster slot visible without re-sending any body text
+    // (fetch the full recipe via get_recipes if needed).
     const cluster = r.clusterSize ? ` (represents ${r.clusterSize} similar recipes)` : "";
-    return `${head} [known to you]${cluster}: ${gist}${ellipsis}\n`;
+    return `${head} [known to you]${cluster}\n`;
   }
 
   let text = head;
   const date = dateLabel(r.createdAt);
   if (date) text += ` -- ${date}`;
   if (r.clusterSize) text += ` (represents ${r.clusterSize} similar recipes)`;
-  if (r.group?.name) text += ` [${r.group.name}]`;
+  if (r.recipeBook?.name) text += ` [${r.recipeBook.name}]`;
+  if (r.knownMembers && r.knownMembers.length > 0) {
+    // Known cluster-mates ("stub, stub, full recipe"): this cluster also
+    // holds recipes the caller has already seen — one compact line of
+    // id + similarity pairs.
+    const members = r.knownMembers.map((m) => `${m.recipeId ?? "?"}${pctLabel(m.similarity)}`).join(", ");
+    text += `\n  [cluster also holds ${r.knownMembers.length} you've seen: ${members}]`;
+  }
   text += `\nRecipe: ${r.recipe ?? ""}\n`;
 
   for (const ev of r.evidence ?? []) {
@@ -208,7 +236,7 @@ export function renderCheckResponseMarkdown(
 
   let text = data.searchOnly
     ? `Read-only search${data.filter ? ` for "${data.filter}"` : ""} — no recipe was logged.\nSearch mode: ${data.searchMode ?? "semantic"}\n`
-    : `Recipe checked as #${data.recipeId ?? "?"}\nSearch mode: ${data.searchMode ?? "semantic"}\n`;
+    : `Recipe checked as #${data.checked?.recipeId ?? "?"}\nSearch mode: ${data.searchMode ?? "semantic"}\n`;
 
   const warning = data.formatWarning ?? response.formatWarning;
   if (warning) {
@@ -228,6 +256,9 @@ export function renderCheckResponseMarkdown(
   const results = data.results ?? [];
   if (results.length === 0) {
     text += "\nNo similar recipes found.";
+    if (data.sessionId) {
+      text += `\nSession: ${data.sessionId} — pass session_id on your next check to keep responses lean.`;
+    }
     return text;
   }
 
@@ -238,19 +269,29 @@ export function renderCheckResponseMarkdown(
   text += ":\n";
 
   results.forEach((r, i) => {
-    text += `\n${renderResultItem(r, i, r.id !== undefined && known.has(r.id))}`;
+    text += `\n${renderResultItem(r, i, r.known === true || (r.recipeId !== undefined && known.has(r.recipeId)))}`;
   });
 
   const related = data.relatedEvidence ?? [];
-  if (related.length > 0) {
+  const relatedKnown = data.relatedEvidenceKnown ?? [];
+  if (related.length > 0 || relatedKnown.length > 0) {
     text += "\nRelated evidence from other recipes:\n";
     for (const e of related) {
       const pct = e.similarity !== undefined ? ` (${Math.round(e.similarity * 100)}% similar)` : "";
-      text += `  - ${e.evidence ?? ""}${pct}\n`;
+      // The entry is a Recipe fill: the matching evidence interpretation
+      // rides e.evidence[0], the parent text rides e.recipe.
+      text += `  - ${e.evidence?.[0]?.interpretation ?? ""}${pct}\n`;
       // Recipe id inline (2026-07-05 eval: entries without ids forced agents
       // to burn full re-checks recovering text they'd already half-seen).
       const from = e.recipeId ? `From recipe ${e.recipeId}` : "From";
-      text += `    ${from}: "${(e.parentRecipe ?? "").slice(0, 100)}"\n`;
+      text += `    ${from}: "${(e.recipe ?? "").slice(0, 100)}"\n`;
+    }
+    if (relatedKnown.length > 0) {
+      // Known parents in ONE line (seam 2, 2026-07-18 reshape) — the session
+      // already holds these recipes; their evidence budget went to novel
+      // content instead. Id + best evidence similarity per parent.
+      const parents = relatedKnown.map((p) => `${p.recipeId ?? "?"}${pctLabel(p.similarity)}`).join(", ");
+      text += `  Known evidence parents (already shown): ${parents}\n`;
     }
     text += `  Fetch any full recipe by id: get_recipes (MCP) or GET /recipes?ids=<id> (same API key).\n`;
   }
@@ -264,6 +305,10 @@ export function renderCheckResponseMarkdown(
   // results exist beyond what's shown, point at the levers that do exist.
   if ((data.totalPages ?? 1) > 1) {
     text += `\nMore recipes exist beyond these exemplars. Narrow with read_recipe_books=<slugs>, project with axes="concept A, concept B", or raise clusters for finer granularity.`;
+  }
+
+  if (data.sessionId) {
+    text += `\nSession: ${data.sessionId} — pass session_id on your next check to keep responses lean.`;
   }
 
   return text;

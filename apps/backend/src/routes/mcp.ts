@@ -27,6 +27,7 @@ import {
   renderCheckResponseMarkdown,
 } from "@soupnet/domain";
 import type { CheckResponseJson } from "@soupnet/domain";
+import type { Recipe } from "@soupnet/contracts";
 import { composeBriefing, composeCorpusContext } from "../services/briefing";
 import { rateLimit, perKeyRateLimit, extractMcpBearerKey, getClientIp, hashApiKey } from "../middleware/rate-limit";
 import type { SubmitAndSearchResult, ImageAttachment } from "../services/trace.service";
@@ -340,6 +341,7 @@ const feedbackRowSchema = z.object({
   harness: z.string().optional(),
   harness_version: z.string().optional(),
   related_trace_ids: z.array(z.string()).optional(),
+  session_id: z.string().optional(),
 });
 
 function createMcpServer(backendUrl: string): McpServer {
@@ -382,6 +384,7 @@ function createMcpServer(backendUrl: string): McpServer {
       // spec-legal; the shape is documented in the param description.
       response_format: z.enum(["markdown", "structured"]).optional().describe(MCP_PARAM_DESCRIPTIONS.responseFormat),
       known_recipes: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.knownRecipes),
+      session_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.sessionId),
       agent_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.agentId),
       synthesize: z.boolean().optional().describe(MCP_PARAM_DESCRIPTIONS.synthesize),
       feedback: z.array(feedbackRowSchema).optional().describe(MCP_PARAM_DESCRIPTIONS.feedbackParam),
@@ -446,7 +449,7 @@ function createMcpServer(backendUrl: string): McpServer {
       idempotentHint: true,
       openWorldHint: true,
     },
-    async ({ recipe, supporting_evidence, clusters, max_chars, decided_at, axes, recipe_book, read_recipe_books, file_url, file_base64, file_name, file_mime_type, region, response_format, known_recipes, agent_id, synthesize, feedback }, extra) => {
+    async ({ recipe, supporting_evidence, clusters, max_chars, decided_at, axes, recipe_book, read_recipe_books, file_url, file_base64, file_name, file_mime_type, region, response_format, known_recipes, session_id, agent_id, synthesize, feedback }, extra) => {
       // Get API key from auth info (passed by the transport middleware)
       const apiKey = (extra.authInfo as Record<string, unknown> | undefined)?.["token"] as string | undefined;
       if (!apiKey) {
@@ -522,6 +525,13 @@ function createMcpServer(backendUrl: string): McpServer {
         }
       }
 
+      // Known-set ids the agent declared (known_recipes). Parsed before the
+      // service call — the array joins the session's own deposits inside the
+      // service; the set drives route-side stub rendering below.
+      const knownRecipeIds = new Set(
+        (known_recipes ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+      );
+
       try {
         // Call the service directly — no HTTP roundtrip needed since we're in the same process
         console.warn(`[mcp] check_recipe: calling submitAndSearch directly${image ? ` (with ${image.mimeType} attachment${regionMeta ? " + ROI" : ""})` : ""}`);
@@ -539,6 +549,8 @@ function createMcpServer(backendUrl: string): McpServer {
           region: regionMeta,
           agentId: agent_id ?? undefined,
           surface: "mcp-http",
+          sessionId: session_id ?? undefined,
+          knownRecipeIds: knownRecipeIds.size > 0 ? [...knownRecipeIds] : undefined,
         });
 
         if (result.error) {
@@ -550,14 +562,6 @@ function createMcpServer(backendUrl: string): McpServer {
         const db = getDb();
         let enriched = await enrichResults(db, result.results);
         enriched = await clusterEvidenceInResults(db, enriched);
-
-        // known_recipes dedup, phase 1 (rendering only): ids the agent
-        // declared it already holds render as one-line stubs. Trace logging,
-        // idempotency, and cluster math upstream are untouched — stubs still
-        // occupy their cluster slots.
-        const knownRecipeIds = new Set(
-          (known_recipes ?? "").split(",").map((s) => s.trim()).filter(Boolean),
-        );
 
         // Premium synthesis (opt-in). Resolve the user via a dedicated
         // validateKey lookup only on this branch, mirroring the web /check
@@ -583,7 +587,9 @@ function createMcpServer(backendUrl: string): McpServer {
 
         // Ride-along feedback about PRIOR checks. Processed only after the
         // check itself succeeded; per-row markers, never a request-killing
-        // error. The check-level agent_id becomes each row's default.
+        // error. The check-level agent_id and session_id become each row's
+        // defaults (the rows ride the same session as the check they ride
+        // on); a row-level value wins via spread order.
         let feedbackSummary = "";
         let feedbackResults: unknown;
         if (feedback && feedback.length > 0) {
@@ -591,6 +597,7 @@ function createMcpServer(backendUrl: string): McpServer {
           if (keyResult) {
             const rows: RawFeedbackRow[] = feedback.map((row) => ({
               ...(agent_id ? { agent_id } : {}),
+              ...(session_id ? { session_id } : {}),
               ...row,
             }));
             const results = await ingestFeedback({
@@ -611,7 +618,8 @@ function createMcpServer(backendUrl: string): McpServer {
         if (response_format === "structured") {
           const data = jsonResponse["data"] as Record<string, unknown>;
           if (feedbackResults !== undefined) data["feedbackResults"] = feedbackResults;
-          const stub = `Recipe checked as #${String(data["recipeId"])}. ${String(data["totalResults"])} similar recipe(s) — see structuredContent.`;
+          const checkedFill = data["checked"] as { recipeId?: string } | undefined;
+          const stub = `Recipe checked as #${String(checkedFill?.recipeId)}. ${String(data["totalResults"])} similar recipe(s) — see structuredContent.`;
           return {
             content: [{ type: "text" as const, text: stub }],
             structuredContent: data,
@@ -958,6 +966,9 @@ function createMcpServer(backendUrl: string): McpServer {
       related_trace_ids: z.array(z.string()).optional().describe(
         "Lineage links — recipe UUIDs in the same arc (e.g. the recipe that changed the action and the trace that logged the new decision). Full UUIDs only — short-id prefixes are not resolved here."
       ),
+      session_id: z.string().optional().describe(
+        "The session token from your check responses — joins your feedback to that session's check lineage. Capture only."
+      ),
     },
     {
       title: "Log feedback",
@@ -1017,34 +1028,42 @@ export function buildMcpJsonResponse(
   knownRecipeIds?: ReadonlySet<string>,
   synthesis?: SynthesisResult,
 ): Record<string, unknown> {
-  const KNOWN_GIST_CHARS = 80;
   const data: Record<string, unknown> = {
-    recipeId: result.traceId,
-    checkedRecipe: result.traceText,
+    // The caller's own deposit as a Recipe fill (canonical schema, recipe
+    // 7945fd8a): {recipeId, recipe}.
+    ...(result.traceId
+      ? { checked: { recipeId: result.traceId, recipe: result.traceText } satisfies Recipe }
+      : {}),
     searchMode: result.searchMode ?? "lexical",
     clustered: result.clustered ?? false,
     results: enriched.map((r) => {
-      // known_recipes stub (rendering only): id + gist + similarity, no
-      // evidence body. clusterSize stays so the cluster slot remains visible.
-      if (knownRecipeIds?.has(r.id)) {
-        return {
-          id: r.id,
+      // Known-set stub (rendering only): the caller already holds this recipe
+      // — declared via known_recipes or flagged by the pipeline's session
+      // known-set. Id-only shape (no recipe gist — operator ruling: the gist
+      // is an ossification risk; use get_recipes for the body). No drillDown
+      // hint — there's no claim text to include. clusterSize stays so the
+      // cluster slot remains visible.
+      if (knownRecipeIds?.has(r.id) || r.known) {
+        // Trimmed stub row (operator ruling 2026-07-18): no createdAt; ONE
+        // similarity vocabulary (recipe ef245b63) — the raw cosine only.
+        const stub: Recipe = {
+          recipeId: r.id,
           known: true,
-          recipe: r.claimText.slice(0, KNOWN_GIST_CHARS) + (r.claimText.length > KNOWN_GIST_CHARS ? "…" : ""),
-          createdAt: r.createdAt,
-          score: { combined: r.combinedScore, semantic: r.semanticScore },
+          similarity: r.semanticScore ?? undefined,
           ...(r.clusterSize ? { clusterSize: r.clusterSize } : {}),
         };
+        return stub;
       }
-      const item: Record<string, unknown> = {
-        id: r.id,
+      const fill: Recipe = {
+        recipeId: r.id,
         recipe: r.claimText,
         createdAt: r.createdAt,
-        ...(r.group ? { group: { id: r.group.id, name: r.group.name, description: r.group.description } } : {}),
-        score: {
-          combined: r.combinedScore,
-          semantic: r.semanticScore,
-        },
+        // Recipe-book id + name only — the description lives in the briefing
+        // (operator ruling 2026-07-18).
+        ...(r.recipeBook
+          ? { recipeBook: { recipeBookId: r.recipeBook.recipeBookId, name: r.recipeBook.name } }
+          : {}),
+        similarity: r.semanticScore ?? undefined,
         evidence: r.evidence.map((e) => ({
           interpretation: e.content,
           ...(e.clusterSize ? { clusterSize: e.clusterSize } : {}),
@@ -1060,23 +1079,39 @@ export function buildMcpJsonResponse(
             } : {}),
           })),
         })),
+        ...(r.clusterSize ? { clusterSize: r.clusterSize } : {}),
+        // Known cluster-mates (seam 2, "stub, stub, full recipe"): minimal
+        // Recipe fills {recipeId, similarity} beside the full exemplar.
+        ...(r.knownClusterMembers && r.knownClusterMembers.length > 0
+          ? {
+            knownMembers: r.knownClusterMembers.map(
+              (m): Recipe => ({ recipeId: m.id, similarity: m.similarity }),
+            ),
+          }
+          : {}),
       };
-      if (r.clusterSize) {
-        item["clusterSize"] = r.clusterSize;
-        // Drill-down hint: agent can re-check with the exemplar text to
-        // explore this cluster. Phrased around params the tool actually
-        // accepts (clusters) — the old expand=true wording advertised a web
-        // /check param this tool doesn't have.
-        item["drillDown"] = {
+      if (!r.clusterSize) return fill;
+      // Drill-down hint: agent can re-check with the exemplar text to explore
+      // this cluster. MCP-only extra beside the canonical Recipe fill (the
+      // published schema strips unknown keys on parse; consumers may ignore).
+      return {
+        ...fill,
+        drillDown: {
           hint: `This exemplar represents ${r.clusterSize} similar recipes. To explore them, re-check with this recipe text and a higher clusters value.`,
           exemplarText: r.claimText,
-        };
-      }
-      return item;
+        },
+      };
     }),
     totalResults: result.totalResults,
     page,
     totalPages: result.totalPages,
+    // The session token in effect for this check — freshly minted when none
+    // was presented (self-healing). Callers pass it back as session_id so
+    // recipes this session already deposited render as id-only stubs.
+    ...(result.sessionId ? { sessionId: result.sessionId } : {}),
+    // Which ranking served this response (mirrors check.ts) — structured
+    // metadata only; the default markdown format stays token-lean.
+    ...(result.ranking ? { ranking: result.ranking } : {}),
   };
 
   // Format warning
@@ -1093,20 +1128,28 @@ export function buildMcpJsonResponse(
     data["synthesisNotice"] = synthesis.synthesisNotice;
   }
 
-  // Related evidence (full fields). recipeId per entry (2026-07-05):
-  // without it agents burned full re-checks recovering recipes they'd
-  // already half-seen — get_recipes turns that into a cheap lookup.
+  // Related evidence. recipeId per entry (2026-07-05): without it agents
+  // burned full re-checks recovering recipes they'd already half-seen —
+  // get_recipes turns that into a cheap lookup. Entry shape trimmed
+  // 2026-07-18 (operator ruling): no evidenceId, no constant strategy field.
   if (result.relatedEvidence && result.relatedEvidence.length > 0) {
-    data["relatedEvidence"] = result.relatedEvidence.map((e) => ({
-      evidenceId: e.evidenceId,
+    // Each related-evidence entry is a Recipe fill (canonical schema): the
+    // parent recipe with the matching evidence entry attached.
+    data["relatedEvidence"] = result.relatedEvidence.map((e): Recipe => ({
       recipeId: e.parentTraceId,
-      parentRecipe: e.parentTraceText,
-      evidence: e.evidenceContent,
+      recipe: e.parentTraceText,
       similarity: e.semanticScore,
-      strategy: "contextual_evidence",
+      evidence: [{ interpretation: e.evidenceContent }],
     }));
     data["relatedEvidenceHint"] =
       "Each entry carries the source recipe's UUID as recipeId — fetch the full recipe with the get_recipes tool instead of re-checking.";
+  }
+  // Known evidence parents (seam 2): minimal Recipe fills — id + best
+  // evidence similarity per parent (ONE similarity vocabulary, ef245b63).
+  if (result.relatedEvidenceKnown && result.relatedEvidenceKnown.length > 0) {
+    data["relatedEvidenceKnown"] = result.relatedEvidenceKnown.map(
+      (p): Recipe => ({ recipeId: p.recipeId, similarity: p.similarity }),
+    );
   }
 
   // Concept axes (semantic projection)

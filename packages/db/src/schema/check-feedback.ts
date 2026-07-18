@@ -72,6 +72,12 @@ export const checkFeedback = claimnetSchema.table(
      *  Capture only — no dedup behavior until the phase-2 recall evals pass. */
     agentId: text("agent_id"),
 
+    /** Opaque session token the reporting agent presented (2026-07-17) —
+     *  joins feedback rows to the check lineage that session produced.
+     *  Capture only; shape-validated at the service boundary; NULL for
+     *  sessionless or human-origin rows. */
+    sessionId: text("session_id"),
+
     // ── Schema v1 enums (see @soupnet/domain FEEDBACK_* for vocabulary) ──
     kind: text("kind").notNull(),               // check-feedback | operational | outcome
     impact: text("impact").notNull(),           // none | new | subtle | big | operational

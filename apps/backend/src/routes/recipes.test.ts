@@ -73,8 +73,8 @@ async function createTrace(apiKey: string, recipeText: string): Promise<string> 
   const ef = `Test evidence interpretation.\n> "verbatim test quote"\n-- integration test, 2026-07-05`;
   const url = `${BASE}/check?key=${encodeURIComponent(apiKey)}&trace=${encodeURIComponent(recipeText)}&ef=${encodeURIComponent(ef)}&format=json`;
   const res = await fetch(url, { headers: { Accept: "application/json" } });
-  const body = (await res.json()) as { ok: boolean; data?: { recipeId?: string } };
-  const id = body.data?.recipeId;
+  const body = (await res.json()) as { ok: boolean; data?: { checked?: { recipeId?: string } } };
+  const id = body.data?.checked?.recipeId;
   if (!id) throw new Error("Setup failed: createTrace");
   return id;
 }

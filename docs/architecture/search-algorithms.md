@@ -5,6 +5,7 @@
 > **Audience:** Engineers working on the codebase. Read this to understand what code does what and where to make changes.
 >
 > **Related docs (and how they differ):**
+> - [ranking-engine.md](ranking-engine.md) — **The ranking engine for newcomers**: goals, the pipeline stage by stage with inputs/outputs, extension points, and the hypothesis register. Start there; come here for code-level detail.
 > - [research-foundations.md](research-foundations.md) — **Why** each algorithm works: formal math (LaTeX), research lineage, verification experiments. Same algorithms, deeper theory. Written for researchers.
 > - [search-strategies.md](search-strategies.md) — **What we considered:** general research notes, alternatives we evaluated, ideas for future exploration. Not necessarily implemented.
 > - [design-thinking.md](../design-thinking.md) — **Who and why:** user archetypes, product vision, design principles. No algorithm details.
@@ -320,29 +321,50 @@ Six experimental strategies designed to test whether different text formatting a
 - No vectors in DB yet (cold start) → no results returned
 - Gemini API error → error logged, no results (previously fell back to lexical)
 
-### Echo suppression — same-agent/same-session downranking (2026-07-14)
+### ~~Echo suppression — same-agent/same-session downranking~~ (retired 2026-07-17, never enabled)
 
-The ranking half of the self-pollution fix (see `docs/planning/echo-suppression.md`
-and `docs/benchmarks.md` "A finding that changed the product"). `hybridSearch` can
-**reorder the deduped candidate set before pagination** to demote the *current agent's
-own recent hypothesis-appends*, so an echo falls below a genuinely cross-agent recipe of
-similar similarity — and onto a later page rather than off the result set.
+The demotion mechanism shipped 2026-07-14 default-OFF and was removed 2026-07-17 without ever flipping on (operator ruling: ranking is a pure function of the check's explicit inputs; the same-key signal conflates sibling sub-agents with echoes; the measured "self-pollution" is benchmark hygiene, not product). Design history: [echo-suppression.md](../planning/echo-suppression.md) (superseded banner); successor: session-aware known-set **stub rendering** — recipes the presenting session already deposited render as id-only stubs at their true rank with the freed display budget backfilled by the next results in line (`session_id` on `/check` and MCP `check_recipe`; [session-novelty-and-pool-diversity.md](../planning/session-novelty-and-pool-diversity.md)).
 
-- **Signals** (`packages/domain/ranking.ts`): authorship (`traces.api_key_id` = the
-  checking key), recency on `created_at` (same-session ≤ 90 min → full `weight`;
-  same-day ≤ 24 h → `weight × dayWeightFactor`; older → none), and a curation exemption
-  (`decided_at` set ⇒ deliberately-dated decision ⇒ never demoted).
-- **Reorder only.** The demotion is a multiplicative penalty on the *ranking* score;
-  the displayed similarity percentage is the raw cosine and is never mutated. Nothing is
-  truncated and no floor is applied (full clustered results always).
-- **Cost.** Only the current key's OWN traces among the candidates are looked up
-  (indexed by `api_key_id`); every other candidate gets penalty 0 with no per-row work.
-- **Feature-flagged, default OFF.** Global `system_settings.echoSuppression`
-  (`{ enabled:false, weight:0.5, sessionWindowMinutes:90, dayWindowHours:24,
-  dayWeightFactor:0.5 }`); per-request `echo_suppress=on|off` on `/check` overrides
-  `enabled` for one request (the A/B toggle). Disabled ⇒ no metadata query, candidate
-  order untouched (byte-stable). Applies to the logging check path; the read-only
-  `filter` path is left unchanged.
+### Ranking pipeline config — versioned, tunable, signal-complete (2026-07-16)
+
+The point-fix era ended with the measured lesson that demotion at one stage gets
+absorbed by untouched downstream stages (echo-at-top-rank fell 0.779 → 0.191 while
+end-to-end recovery was only ~15–17% — see
+[docs/planning/check-recipe-ranking-system.md](../planning/check-recipe-ranking-system.md)).
+The pipeline is now an explicit system:
+
+- **One config object** — `RankingConfig` (`packages/domain/src/ranking-config.ts`)
+  flows through `runSearchPipeline` (`SearchPipelineParams.ranking`). Layering:
+  versioned code defaults (`DEFAULT_RANKING`) ← the `echoSuppression` system
+  setting ← the per-request `echo_suppress` override
+  (`resolveRankingConfig`, system-settings.service.ts). Absent ⇒ defaults, which
+  are byte-identical to legacy behavior; the read-only surfaces (map, briefing
+  exemplars) pass nothing and stay untouched.
+- **Dated algorithm version** — `RANKING_ALGORITHM_VERSION`, minted only when a
+  shipped default changes, with a mandatory same-commit entry in
+  [ranking-changelog.md](ranking-changelog.md). Echoed as `data.ranking`
+  (`{version, echoSuppression, clusterOrdering, overrides}`) in `/check` JSON and
+  MCP structured responses (never the token-lean markdown), and as
+  `rankingVersion` in `recipe.checked` audit metadata.
+- **Per-candidate signals** — `CandidateSignals` (authorship api_key/user, raw
+  `created_at`, `decided_at`) hydrate on hybridSearch's existing trace-row load
+  (zero extra queries) and ride every `SearchResultItem` in query mode; the
+  expensive corroboration counts (human `still_true` reactions, cross-agent
+  fulfilled check-feedback) hydrate lazily inside the demotion query only when
+  their `exemption` flag is on. Any future recency/decay lever must decay from
+  `COALESCE(decided_at, created_at)` (operator ruling 2026-07-16).
+- **Cluster-ordering lever (§3d)** — `clusterOrdering: "demotion-adjusted-mass"`
+  sorts displayed clusters by the sum of members' demotion-adjusted ranking
+  scores (`similarity × (1 − echo penalty)`, reusing the penalties the demotion
+  stage actually applied) instead of raw `memberCount`, so a cluster of demoted
+  echoes sinks below a smaller durable cluster. Implemented via
+  `ClusterParams.memberWeights`; ordering only — membership, exemplars, displayed
+  percentages, and the `clusters[i] ↔ results[i]` index-parallel contract are
+  untouched. Ships default `"member-count"` pending the golden-set ruling.
+- **Stage names** (timer keys match): `query_embed` → `search` (retrieval +
+  scoring/demotion inside hybridSearch) → `vectors` → `cluster` (k-means +
+  cluster ordering) → `evidence` → axes. Regression harness and tuning workflow:
+  `npm run eval:ranking`, [docs/workflows/ranking-tuning.md](../workflows/ranking-tuning.md).
 
 ## format_adherence_score — IMPLEMENTED (heuristic, v1)
 

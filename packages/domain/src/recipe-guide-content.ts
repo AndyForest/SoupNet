@@ -551,7 +551,11 @@ ${webSetupSection}
 ## How to check
 \`check_recipe\` accepts: \`recipe\` (the claim), \`supporting_evidence\` (warrant + data), and \`recipe_book\` (slug). Optional: \`axes\` (concept projection), \`clusters\`/\`max_chars\` (response size), and reference file attachments (images, PDF, audio, video) — see your tool schema for the exact file-input params. HTTP MCP also accepts an optional \`region.image_box\` with normalized \`{x0, y0, x1, y1}\` coordinates (0-1) to mark a specific area of an attached image — the embedding pipeline crops to that region plus padding, blurs the padding, and weights the marked area heavily; the original image is stored unmodified, so the region treatment can be redone later.
 
-Further optional params live in your tool schema, each doing what its one-line description says: \`known_recipes\` (declare ids you already hold — repeats come back as stubs, saving your context), \`decided_at\` (backfill the original date of a historical decision), \`response_format\` (markdown report or structured JSON), \`agent_id\` (mint your own id so your checks form a joinable lineage), and \`feedback\` (close the loop on earlier checks while making this one).
+Further optional params live in your tool schema, each doing what its one-line description says: \`session_id\` (returned on every check — pass it back and recipes you've already been shown collapse to id-stubs while results walk to unseen ones), \`known_recipes\` (client-declared ids you still hold — same id-stub rendering), \`decided_at\` (backfill the original date of a historical decision), \`response_format\` (markdown report or structured JSON), \`agent_id\` (mint your own id so your checks form a joinable lineage), and \`feedback\` (close the loop on earlier checks while making this one).
+
+If you auto-compact your context or otherwise no longer hold the recipes you've been shown, refresh your session by omitting \`session_id\` on your next check — a fresh session means full recipe text again.
+
+Full field meanings for every response object live at \`GET ${backendUrl}/schemas/recipe.json\` (and \`/schemas/check-response.json\`) — canonical, generated from the same source the server validates against.
 
 For local files that have no public URL (screenshots, generated artifacts, anything on your disk), \`file_base64\` will blow your context window on anything bigger than a thumbnail. Instead, POST the file to the \`/uploads\` REST endpoint first using your same Bearer token, then pass the returned URL as \`file_url\`. The MCP server detects own-hostname URLs and resolves them internally — no second HTTP fetch, no public exposure. Example:
 
@@ -784,8 +788,33 @@ export const MCP_TOOL_DESCRIPTIONS = {
     "Same as the briefing's recipe-books section without the boilerplate.",
 } as const;
 
+// Canonical-source stitches (operator ruling 2026-07-18, recipe 43ce7ec0):
+// several short-form param descriptions below are budget-capped derivations
+// of the canonical field definitions in @soupnet/contracts/src/recipe.ts —
+// the published JSON Schema (GET /schemas/recipe.json) carries the full
+// meaning; the short forms keep only the load-bearing concepts. The map is
+// consumed by the drift-guard test (mcp-tool-descriptions.test.ts), which
+// asserts each short form still shares its canonical source's load-bearing
+// phrases — an edit to either side that breaks the derivation is a red test,
+// not silent drift.
+import {
+  RECIPE_TEXT_DEFINITION,
+  KNOWN_DEFINITION,
+  SESSION_ID_DEFINITION,
+  CREATED_AT_DEFINITION,
+} from "@soupnet/contracts";
+
+export const CANONICAL_PARAM_SOURCES = {
+  recipe: RECIPE_TEXT_DEFINITION,
+  knownRecipes: KNOWN_DEFINITION,
+  sessionId: SESSION_ID_DEFINITION,
+  decidedAt: CREATED_AT_DEFINITION,
+} as const;
+
 export const MCP_PARAM_DESCRIPTIONS = {
-  /** Recipe param — the one-line voice rule; ROLE_PATTERNS in the briefing teaches it with examples. */
+  /** Recipe param — the one-line voice rule, derived from
+   *  RECIPE_TEXT_DEFINITION (@soupnet/contracts — the canonical source);
+   *  ROLE_PATTERNS in the briefing teaches it with examples. */
   recipe:
     "The claim, in the HUMAN USER's voice with a transferable role: 'As a [role] working on [goal], " +
     "I [prefer/chose] so that [reason]'. Use the user's functional role — not your voice, not their " +
@@ -803,6 +832,8 @@ export const MCP_PARAM_DESCRIPTIONS = {
   maxChars:
     "Target response size in characters — auto-clusters to fit. 2000 for tight context, 5000 for detail.",
 
+  /** Short form of CREATED_AT_DEFINITION (@soupnet/contracts — the canonical
+   *  judgment-date source), phrased for the input side (backfilling). */
   decidedAt:
     "ISO 8601 date/datetime of when the human originally made this call, for backfilling decisions " +
     "found in dated artifacts (an ADR dated 2024-03-15 → decided_at='2024-03-15'). Not in the future; " +
@@ -816,9 +847,20 @@ export const MCP_PARAM_DESCRIPTIONS = {
     "Free-text agent id you mint for yourself (e.g. 'a-refactor-2026-07'), stamped on audit records " +
     "so check lineages are joinable. Capture only.",
 
+  /** Short form of KNOWN_DEFINITION (@soupnet/contracts — the canonical
+   *  known-stub source), phrased for the declaring side. */
   knownRecipes:
-    "Comma-separated recipe UUIDs you still hold in context; matching results render as one-line " +
-    "stubs instead of full bodies. Rendering only — logging and clustering are unchanged.",
+    "Comma-separated recipe UUIDs you still hold in context; matching results render as id-only " +
+    "stubs. Client-declared sibling of session_id. Rendering only — logging, ranking, and " +
+    "clustering are unchanged.",
+
+  /** Short form of SESSION_ID_DEFINITION (@soupnet/contracts — the canonical
+   *  session-token source). */
+  sessionId:
+    "Session token from any check response (fresh one minted when absent). Recipes this session " +
+    "deposited or was shown render as id-only stubs while results walk down the same ranking to " +
+    "unseen ones — each check surfaces new text; ranking never changes. Share it with sub-agents " +
+    "to share your known-set. Compacted your context? Omit it next check for full text again.",
 
   feedbackParam:
     "Feedback rows about PRIOR checks, riding along with this one. Each row: trace_id of the earlier " +

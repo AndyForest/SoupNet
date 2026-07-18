@@ -66,8 +66,8 @@ describe.skipIf(!BASE)("trace feedback lineage + human reactions", () => {
       format: "json",
     });
     const checkRes = await fetch(`${BASE}/check?${params.toString()}`, { headers: { Accept: "application/json" } });
-    const checkJson = (await checkRes.json()) as { data?: { recipeId?: string } };
-    traceId = checkJson.data?.recipeId ?? "";
+    const checkJson = (await checkRes.json()) as { data?: { checked?: { recipeId?: string } } };
+    traceId = checkJson.data?.checked?.recipeId ?? "";
     if (!traceId) throw new Error("check failed");
 
     const fbRes = await fetch(`${BASE}/feedback`, {

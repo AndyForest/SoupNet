@@ -1,0 +1,55 @@
+# Update for the evaluation workstream — the ranking engine simplified (2026-07-17)
+
+**Audience**: the agents of the companion evaluation workstream — you wrote the original implementation brief ([check-recipe-ranking-system.md](check-recipe-ranking-system.md)) that set this direction, so here is what the operator's design reviews changed, what it means for your datasets and benchmarks, and what the engine asks of you now. Authored at the operator's direction: *"Since the benchmark agent wrote a bunch of planning for you that set us on this path, we'll need a good update for that agent explaining approach."* (Andy, 2026-07-17).
+
+## The two rulings that changed the architecture
+
+**1. Ranking is a pure function of the check's explicit inputs.** *"The sum of the inputs to the recipe check should be all that influences the results. Holds true even if we add reranking layers later with reranking models or LLMs, etc."* (Andy, 2026-07-17, recipe `9067ca1b`). Echo demotion — the same-agent downranking your brief's §3d built its proving run around — was retired without ever flipping on: it made results a black box (*"Did that old recipe dissappear because it got deleted by the human because it was wrong? Or is it just gone because I submitted it?"*), and its same-api-key signal conflated a fleet's sibling sub-agents (who deliberately communicate through each other's fresh recipes) with echoes. Retirement record: [ranking-changelog.md 2026-07-17](../architecture/ranking-changelog.md). What replaced it is **rendering, not ranking**: an opaque client-held `session_id` stamps deposits, and recipes the presenting session already knows return as id-only stubs at their true rank with the freed display budget backfilled by the next results in line. Nothing is ever hidden or reordered by identity.
+
+**2. "Self-pollution" is benchmark hygiene, not product behavior.** *"'pollution' is actually the system working as intended for normal use. I think our benchmark hygiene is just bad, and we're not deleting data we should be before a fresh run, or re-using users for what should be isolated agents, etc. … it's something to solve in the benchmark design."* (Andy, 2026-07-17, recipe `ebdc6ad7`). The measured degradations that motivated the echo work — *"accuracy fell 0.706 → 0.538 over five runs"* ([benchmarks.md](../benchmarks.md)) and the R1 A/B reproduction (recipe `cde0353d`, n=420/arm) — are hereby reclassified: both are one agent re-using one corpus across runs, the hygiene shape, not normal use. They are transparently recorded as *evidence reclassified*, not evidence dropped.
+
+## What this means for your existing assets
+
+- **The clean/polluted corpus pair** (your brief §3b golden set #1): still valuable — relabeled. It is now (a) a **hygiene demonstration** (what happens to any retrieval system when runs aren't isolated), and (b) real-scale material for the **pool/diversity sweep** (P6 — see below). It is no longer the measurement for a demotion default flip, because there is no demotion.
+- **The graded feedback set** (~705 rows, golden set #2): fully alive. The provenance principle it grounds — protection/reinforcement signals must come from someone other than the reporting agent — survives the retirement and governs the future reinforcement lever (register row S5) and the Ser@L validity question (M1/H4).
+- **The held-out judgment Q&A set** (golden set #3): unchanged in purpose.
+- **Dataset delivery contract**: unchanged — import-format exports per [eval/golden/README.md](../../eval/golden/README.md), delivered via the operator.
+
+## Benchmark hygiene checklist (the product's isolation primitives, your run design)
+
+The seam the operator drew: run isolation is the benchmark's job; the product provides the primitives. Available today: per-agent users and recipe books; full corpus export/import (rewind to any snapshot); account deletion with cascade; the read-only `filter` path for lookups that must not deposit; and now `session_id` for known-set compression. Concretely for your runs: fresh user (or at minimum fresh book + fresh key) per logically-isolated agent; delete or rewind between repeated runs of the same task; never re-use one user's corpus for what the experiment treats as independent agents; pass a per-agent `session_id` if you want stubbed (token-lean) responses — or omit it to keep full texts, which also reproduces pre-2026-07-17 response shapes exactly.
+
+## benchmarks.md needs your rewrite
+
+The operator has assigned the public benchmark narrative to your side: *"I feel like the soupnet-evals agent is better suited to keep this document up to date."* (Andy, 2026-07-17). What is now stale in [benchmarks.md](../benchmarks.md) "A finding that changed the product: self-pollution": it presents the degradation as a product defect and says *"The fix ... drove real product changes: a read-only retrieval mode, same-agent-trace downranking, and feedback-driven ranking."* Of those three: same-agent downranking is retired (never enabled); feedback-driven ranking remains future work (register S5, eval-gated per recipe `eb291228`); the read-only filter path exists and stands. The honest rewrite per the reclassification: the finding's durable value is as a *benchmark-hygiene* discovery plus the product's isolation primitives — coordinate the new text with the operator, whose voice that document carries.
+
+## What the engine offers you now
+
+- **Determinism worth exploiting**: pure-function ranking means identical inputs + identical corpus ⇒ identical results — replays and regression baselines need no arm-flag bookkeeping.
+- **The live hypothesis register** ([ranking-engine.md §5](../architecture/ranking-engine.md)): P6 (relevance-bounded pool — the current sweep: `page` vs `fixed` vs `score-gap`), P2–P5 (clustering quality), R1–R5 (embedding strategies — six `exp_*` variants embed the whole corpus and have never been scored), S4–S6 (decay from the judgment date, reinforcement, stance), M1–M2 (metric validity, noise floor).
+- **The harness**: `npm run eval:ranking`, now measuring relevance (NDCG/recall), diversity (aspect coverage), stability (τ guardrails), **sibling visibility** (other-session same-key deposits must render fully — the fleet-communication contract test), and **token efficiency** (stub savings). Response self-description: `data.ranking.version` + `data.sessionId`; audit rows carry `rankingVersion` + `sessionId` for joins.
+
+## Appendix (2026-07-18) — wire-format changes since you read v1
+
+You've read the version above; this appendix carries only what changed after. Operator design reviews on 2026-07-18 reshaped the check response payload (recipes `bf43fa57`, `f3c0fe2f`, `ef245b63`) — if your harness parses check responses, these are the breaks:
+
+- **One similarity vocabulary.** Every result item (full and stub) now carries a single `similarity: <raw cosine>` — the `score: {combined, semantic}` object is gone (`combined` was a vestigial copy from the retired 2026-04-11 hybrid blend; nothing ever diverged them). Evidence entries already used `similarity` and are unchanged in that respect.
+- **Known-set lists carry scores.** `knownMembers` on a displayed cluster is now `[{id, similarity}]` (each known cluster-mate with its similarity to the current check — computed at retrieval, zero added cost), and known evidence parents are `relatedEvidenceKnown: [{recipeId, similarity}]` (best evidence similarity per parent). The prior per-row evidence stub objects are gone.
+- **Cluster-visible known members.** Known recipes that are cluster *members* (not exemplars) are no longer invisible inside `clusterSize` — they appear in `knownMembers`. If you count "recipes surfaced," decide whether known members count (they are ids+scores, not text).
+- **Payload slimming**: result `group` objects are `{id, name}` only (descriptions live in the briefing / `list_my_recipe_books`); evidence entries are `{recipeId, parentRecipe, evidence, similarity}` (`evidenceId` and the constant `strategy` field removed); stub rows have no `createdAt`; the evidence section is capped at max(3, displayed-result count) entries — the 20-entries-vs-1-result disproportion is gone.
+- **Measurement note for your stub-blind/delivered-payload split** (recipe `74e925ec`): the stub-blind ranking variant is unaffected (ranking untouched); the delivered-payload variant gains signal — known members' similarities are now part of the delivered payload, so "information delivered per token" can count them as compressed content rather than loss.
+
+## Appendix 2 (2026-07-18, later) — the wire is now schema-canonical
+
+Third and final wire change of this branch (operator rulings, recipes `7945fd8a`, `ef245b63`): one canonical **Recipe object** at every surface, published as validatable JSON Schema. If you parse responses, this supersedes some field names in the appendix above:
+
+- **`recipeId` everywhere** — no more bare `id` on recipe objects (results, knownMembers pairs, everything). `data.recipeId` + `data.checkedRecipe` became **`data.checked: {recipeId, recipe}`** — your own deposit is a Recipe like the rest.
+- **One Recipe shape, optional fill**: only `recipeId` is mandatory. A stub is `{recipeId, known, similarity}`, a known cluster-mate `{recipeId, similarity}`, a full exemplar adds `recipe`/`evidence`/`recipeBook`. `relatedEvidence` entries are now Recipe fills too: `{recipeId, recipe, similarity, evidence: [{interpretation}]}` (the flat `parentRecipe`/`evidence` fields are gone).
+- **`recipeBook: {recipeBookId, name}`** replaces the legacy `group` wire vocabulary (description still briefing-only).
+- **Validate, don't guess**: `GET /schemas/recipe.json` and `GET /schemas/check-response.json` serve the canonical JSON Schema, generated from the same Zod source the builders type against (`packages/contracts/src/recipe.ts`) — field meanings are embedded as descriptions, so the schema is also the field documentation. Your harness can validate every captured response in CI; a parse failure is a real contract break, not drift.
+- **`recipe_id` accepted as an alias for `trace_id`** on feedback rows.
+
+1. **Real-scale golden material for the P6 pool sweep** — the committed 45-trace synthetic cannot answer diversity questions (measured: a 100-pool degenerates to whole-corpus there); your pollution-replay corpora at real scale can, relabeled per above.
+2. **The benchmarks.md rewrite** (with the operator).
+3. **Hygiene-checklist adoption** in your run designs — and tell us which primitives are missing or awkward; gaps there are product backlog items.
+4. **H4/M1**: validate Ser@L against the graded feedback rows, so the utility × surprise proxy earns (or loses) its place.

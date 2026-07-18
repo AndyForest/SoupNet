@@ -235,10 +235,18 @@ export async function validateKey(
 
   const row = rows[0] as Record<string, unknown>;
 
-  // Update lastUsedAt asynchronously (fire and forget)
+  // Update lastUsedAt asynchronously (fire and forget). The catch is
+  // load-bearing: an untracked rejection (e.g. the pool closing under an
+  // in-process caller at test/worker teardown) is otherwise unhandleable and
+  // kills the whole process via Node's default unhandled-rejection behavior
+  // — diagnosed 2026-07-17 as a vitest "Worker exited unexpectedly" that
+  // only reproduced at full-suite scale. Telemetry write: losing one
+  // last_used_at tick is acceptable; killing the caller is not.
   void db.execute(sql`
     UPDATE claimnet.api_keys SET last_used_at = NOW() WHERE key = ${hashedKey}
-  `);
+  `).catch((err) => {
+    console.error("[api-key.service] last_used_at update failed (non-fatal):", err);
+  });
 
   return {
     keyId: row["id"] as string,

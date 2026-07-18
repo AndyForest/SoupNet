@@ -31,13 +31,12 @@ interface CheckJson {
   error?: string;
   remediation?: { keysUrl?: string; note?: string };
   data?: {
-    recipeId?: string;
-    checkedRecipe?: string;
+    checked?: { recipeId?: string; recipe?: string };
     searchOnly?: boolean;
     filter?: string;
     notice?: string;
-    results?: Array<{ id: string; recipe?: string; known?: boolean }>;
-    relatedEvidence?: Array<{ recipeId?: string; evidenceId?: string }>;
+    results?: Array<{ recipeId: string; recipe?: string; known?: boolean }>;
+    relatedEvidence?: Array<{ recipeId?: string }>;
     relatedEvidenceHint?: string;
     totalResults?: number;
   };
@@ -314,7 +313,7 @@ describe("POST /check honors format=json (parity with GET)", () => {
     expect(res.headers.get("content-type")).toContain("application/json");
     const json = (await res.json()) as CheckJson;
     expect(json.ok).toBe(true);
-    expect(json.data?.recipeId).toBeTruthy();
+    expect(json.data?.checked?.recipeId).toBeTruthy();
   });
 
   it("format=json as a body field returns JSON", async () => {
@@ -333,7 +332,7 @@ describe("POST /check honors format=json (parity with GET)", () => {
     expect(res.status).toBe(200);
     const json = (await res.json()) as CheckJson;
     expect(json.ok).toBe(true);
-    expect(json.data?.recipeId).toBeTruthy();
+    expect(json.data?.checked?.recipeId).toBeTruthy();
   });
 
   it("Accept: application/json on POST returns JSON", async () => {
@@ -386,9 +385,9 @@ describe("query decoding stores exact intended bytes (the %97 artifact)", () => 
     expect(res.status).toBe(200);
     const json = (await res.json()) as CheckJson;
     expect(json.ok).toBe(true);
-    expect(json.data?.checkedRecipe).toContain(`decoding ${EM_DASH} windows-1252 fallback ${EM_DASH}`);
-    expect(json.data?.checkedRecipe).not.toContain("%97");
-    const stored = await storedClaimText(json.data!.recipeId!);
+    expect(json.data?.checked?.recipe).toContain(`decoding ${EM_DASH} windows-1252 fallback ${EM_DASH}`);
+    expect(json.data?.checked?.recipe).not.toContain("%97");
+    const stored = await storedClaimText(json.data!.checked!.recipeId!);
     expect(stored).toBe(`As a developer working on encoding, I chose lenient decoding ${EM_DASH} windows-1252 fallback ${EM_DASH} so that agents' text survives.`);
   });
 
@@ -398,7 +397,7 @@ describe("query decoding stores exact intended bytes (the %97 artifact)", () => 
     const res = await fetch(checkUrl({ key: apiKey, format: "json", recipe, evidence: EVIDENCE }));
     const json = (await res.json()) as CheckJson;
     expect(json.ok).toBe(true);
-    const stored = await storedClaimText(json.data!.recipeId!);
+    const stored = await storedClaimText(json.data!.checked!.recipeId!);
     expect(stored).toBe(recipe);
   });
 
@@ -409,7 +408,7 @@ describe("query decoding stores exact intended bytes (the %97 artifact)", () => 
     );
     const json = (await res.json()) as CheckJson;
     expect(json.ok).toBe(true);
-    const stored = await storedClaimText(json.data!.recipeId!);
+    const stored = await storedClaimText(json.data!.checked!.recipeId!);
     expect(stored).toContain("the %97 artifact");
     expect(stored).not.toContain(EM_DASH);
   });
@@ -424,7 +423,7 @@ describe("query decoding stores exact intended bytes (the %97 artifact)", () => 
     });
     const json = (await res.json()) as CheckJson;
     expect(json.ok).toBe(true);
-    const stored = await storedClaimText(json.data!.recipeId!);
+    const stored = await storedClaimText(json.data!.checked!.recipeId!);
     expect(stored).toBe(`As a developer working on POST bodies, I chose lenient decoding ${EM_DASH} again ${EM_DASH} so that parity holds.`);
   });
 
@@ -439,7 +438,7 @@ describe("query decoding stores exact intended bytes (the %97 artifact)", () => 
     const res = await fetch(`${BASE}/check`, { method: "POST", body: fd });
     const json = (await res.json()) as CheckJson;
     expect(json.ok).toBe(true);
-    const stored = await storedClaimText(json.data!.recipeId!);
+    const stored = await storedClaimText(json.data!.checked!.recipeId!);
     expect(stored).toBe(recipe);
   });
 
@@ -491,7 +490,7 @@ describe("filter/f read-only search on /check", () => {
     expect(json.data?.searchOnly).toBe(true);
     expect(json.data?.filter).toBe("grapefruit clustering");
     expect(json.data?.notice).toContain("no recipe was logged");
-    expect(json.data?.recipeId).toBeUndefined();
+    expect(json.data?.checked?.recipeId).toBeUndefined();
     expect((json.data?.results?.length ?? 0)).toBeGreaterThan(0);
 
     const after = await auditCounts(apiKey);
@@ -540,7 +539,7 @@ describe("filter/f read-only search on /check", () => {
     }));
     const json = (await res.json()) as CheckJson;
     expect(json.ok).toBe(true);
-    expect(json.data?.recipeId).toBeTruthy();       // the check logged
+    expect(json.data?.checked?.recipeId).toBeTruthy();       // the check logged
     expect(json.data?.searchOnly).toBeUndefined();
     const results = json.data?.results ?? [];
     expect(results.length).toBeGreaterThan(0);

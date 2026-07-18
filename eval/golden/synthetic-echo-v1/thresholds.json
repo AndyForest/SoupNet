@@ -1,0 +1,48 @@
+[
+  {
+    "metric": "guardrail.unaffectedTau.pool-fixed100",
+    "min": 1,
+    "rationale": "Exact stability guardrail: the clustering pool shapes only the clustered summary, so the fixed-pool arm's flat order must match baseline exactly (Kendall tau = 1) on guardrail questions. Any value below 1 means the pool leaked into the ranking surface. Measured exactly 1.0 on the 2026-07-17 simplified-engine rewrite baseline."
+  },
+  {
+    "metric": "guardrail.unaffectedTau.pool-score-gap",
+    "min": 1,
+    "rationale": "Same exact no-leak guardrail for the score-gap pool arm. Measured exactly 1.0 on the 2026-07-17 rewrite baseline."
+  },
+  {
+    "metric": "arms.hygiene-polluted.baseline.siblingVisibility",
+    "min": 1,
+    "rationale": "Seam 2 contract (plan v2): relevant deposits OUTSIDE the session's known-set must always render fully — never stubbed (the sub-agent cross-communication channel, recipe 4d25aec9). 1.0 by construction; measured 1.0 on the 2026-07-17 rewrite baseline. This path also serves as a lineage-fixture tripwire: if a corpus edit drops the session-lineage rows, the overlay metrics vanish and this metric path fails the run loudly instead of passing vacuously."
+  },
+  {
+    "metric": "arms.hygiene-polluted.pool-score-gap.siblingVisibility",
+    "min": 1,
+    "rationale": "The same seam 2 contract under the measured-candidate pool mode — a bigger clustering pool must never convert sibling deposits into stubs. Measured 1.0 on the 2026-07-17 rewrite baseline."
+  },
+  {
+    "metric": "arms.hygiene-polluted.baseline.tokenEfficiency",
+    "min": 0.2,
+    "rationale": "The known-set stub mechanism must actually save display budget on session questions — if stub rendering silently no-ops, savings drop to 0. Measured 0.3243 (32% of display recipe-text chars saved) on the 2026-07-17 rewrite baseline; floor set with wide margin because the exact share depends on which lineage deposits reach the display window."
+  },
+  {
+    "metric": "arms.hygiene-clean.baseline.ndcgFull",
+    "min": 0.87,
+    "rationale": "Retrieval-quality floor on the isolated (hygiene-clean) corpus. Measured 0.9237 (local:bge-small-en-v1.5) on the 2026-07-17 rewrite baseline — unchanged from the 2026-07-16 calibration, since flat ranking is now a pure function identical across variants; 0.05 margin absorbs cross-platform ONNX float drift near ties."
+  },
+  {
+    "metric": "arms.hygiene-clean.baseline.relevantRecall10",
+    "min": 0.88,
+    "rationale": "Relevant recipes (grade>=2) must surface in the flat top-10 on the isolated corpus. Measured 0.9342 on the 2026-07-17 rewrite baseline; floor one near-tie below measurement."
+  },
+  {
+    "metric": "arms.hygiene-clean.baseline.aspectCoverage",
+    "min": 0.6,
+    "rationale": "Diversity guardrail paired with the relevance floors (utility x surprise ruling: never gate on relevance alone), on the production-shaped display call. Measured 0.6893 on the 2026-07-17 rewrite baseline; floor one aspect-slot below. Pool-variant coverage is deliberately UNGATED: this fixture's 30-45-trace corpora are smaller than or close to the page window, so pool modes degenerate toward whole-corpus pools here (fixed100 measured 0.6393) — the coverage-gain measurement belongs to real-scale golden exports."
+  },
+  {
+    "metric": "arms.hygiene-polluted.baseline.ndcgFull",
+    "min": 0.74,
+    "max": 0.85,
+    "rationale": "The HYGIENE-scenario canary, both-sided. Min: flat quality must not regress below the known isolation-contamination cost (measured 0.7883 vs clean 0.9237 on the 2026-07-17 rewrite baseline — the gap is now purely a benchmark-hygiene effect, plan v2 seam 3). Max: fixture-integrity tripwire — if a corpus edit removes the lineage near-duplicates, polluted ndcg rises toward the clean value and the hygiene scenario demonstrates nothing; this bound fails the run instead."
+  }
+]

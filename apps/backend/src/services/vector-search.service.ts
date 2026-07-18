@@ -20,8 +20,8 @@
 
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { PRODUCTION_SEARCH_STRATEGY_IDS, rankWithEchoSuppression } from "@soupnet/domain";
-import type { EchoSuppressionConfig, EchoRankCandidate } from "@soupnet/domain";
+import { PRODUCTION_SEARCH_STRATEGY_IDS, poolBoundary } from "@soupnet/domain";
+import type { ClusterPoolConfig, CandidateSignals } from "@soupnet/domain";
 import { embedQuery, getEmbeddingModelId } from "../lib/embeddings/provider";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -43,34 +43,45 @@ export interface HybridSearchParams {
    *  substring matches on the recipe text. Applied inside the SQL predicates
    *  so the exact count, ANN top-k, and exhaustive fallback all agree. */
   keywordFilter?: string | undefined;
-  /** Echo-suppression ranking context. When present AND config.enabled, the
-   *  deduped candidate set is reordered (before pagination) to demote the
-   *  current agent's own recent hypothesis-appends — reorder only, never
-   *  truncated, displayed similarity untouched. Absent / disabled ⇒ byte-stable
-   *  (no metadata query, no reorder). See docs/planning/echo-suppression.md. */
-  echo?: EchoContext | undefined;
-}
-
-export interface EchoContext {
-  config: EchoSuppressionConfig;
-  /** api_key making the current check (the authorship-match key). */
-  currentApiKeyId: string | null;
-  /** "now" for recency math. */
-  now: Date;
+  /** Clustering-pool config (P6 lever). When set and not "page" mode, the
+   *  response additionally carries `pool`: the top candidates by rank down to
+   *  the pool boundary (fixed size or largest score gap), pre-pagination, for
+   *  the cluster stage to summarize. Pagination and the paged `results` are
+   *  unchanged — the pool only feeds the clustered summary. Absent / "page"
+   *  ⇒ no pool row load (byte-stable). */
+  pool?: ClusterPoolConfig | undefined;
+  /** Known-set for the novel-counted display window (seam 2): the slice
+   *  walks down the ranking until `limit` UNSEEN recipes are collected, with
+   *  known recipes interleaved at their true ranks (rendered as stubs
+   *  downstream) — every check surfaces something new. Offsets count novel
+   *  items, so pagination pages through unseen content; knowns ranked before
+   *  the window start are skipped (already shown). Absent ⇒ plain slice
+   *  (byte-stable). Ranking is untouched either way. */
+  knownIds?: ReadonlySet<string> | undefined;
 }
 
 export interface HybridSearchResult {
   id: string;
   claimText: string;
+  /** Display date — COALESCE(decided_at, created_at), the judgment date. */
   createdAt: Date;
+  /** Raw cosine similarity — the ONE score (the vestigial combined/lexical
+   *  slots from the retired hybrid blend were removed 2026-07-18, recipe
+   *  ef245b63; wire surfaces render this as `similarity`). */
   semanticScore: number | null;
-  combinedScore: number;
+  /** Per-candidate ranking signals (raw append time, authorship, curation) —
+   *  hydrated from the same row load, available to every downstream stage.
+   *  See docs/planning/check-recipe-ranking-system.md §3a. */
+  signals: CandidateSignals;
 }
 
 export interface HybridSearchResponse {
   results: HybridSearchResult[];
   totalResults: number;
   searchMode: "semantic";
+  /** Clustering pool — the top candidates by rank down to the pool boundary
+   *  (pre-pagination), only when HybridSearchParams.pool was set (non-page). */
+  pool?: HybridSearchResult[] | undefined;
 }
 
 // ── Main search function ─────────────────────────────────────────────────────
@@ -255,20 +266,42 @@ export async function hybridSearch(
       }
     }
 
-    // ── Echo suppression (reorder-only, before pagination) ────────────────
-    // Demote the current agent's own recent hypothesis-appends so an echo can
-    // fall below a genuinely cross-agent recipe of similar similarity — and
-    // onto a later page rather than off the result set. Skipped entirely (no
-    // metadata query) when disabled, keeping the default path byte-stable.
-    if (params.echo?.config.enabled && params.echo.currentApiKeyId) {
-      sorted = await applyEchoSuppression(db, sorted, params.echo);
+    // Apply pagination. With a known-set: novel-counted window walk (seam 2)
+    // — collect until `limit` unseen recipes, knowns interleave at true rank.
+    // Note totalPages still derives from totalResults (which counts knowns),
+    // so it can slightly overstate the novel page count; honest total, cheap.
+    let paged: Array<[string, number]>;
+    if (params.knownIds?.size) {
+      paged = [];
+      let novelSkipped = 0;
+      let novelTaken = 0;
+      for (const pair of sorted) {
+        const isKnown = params.knownIds.has(pair[0]);
+        if (!isKnown && novelSkipped < offset) {
+          novelSkipped++;
+          continue;
+        }
+        if (novelSkipped < offset) continue; // known before the window start — already shown
+        paged.push(pair);
+        if (!isKnown && ++novelTaken >= limit) break;
+      }
+    } else {
+      paged = sorted.slice(offset, offset + limit);
     }
 
-    // Apply pagination
-    const paged = sorted.slice(offset, offset + limit);
+    // Clustering pool (P6): the top candidates by rank down to the pool
+    // boundary (fixed size, or the largest score gap for "score-gap" mode),
+    // independent of the page window. Row data rides the same load below.
+    const poolCut = params.pool
+      ? poolBoundary(sorted.map(([, score]) => score), params.pool)
+      : undefined;
+    const poolPairs = poolCut !== undefined ? sorted.slice(0, poolCut) : undefined;
 
-    // ── Load trace data ─────────────────────────────────────────────────
-    const traceIds = paged.map(([id]) => id);
+    // ── Load trace data (page ∪ pool, one query) ─────────────────────────
+    const traceIds = [...new Set([
+      ...paged.map(([id]) => id),
+      ...(poolPairs ?? []).map(([id]) => id),
+    ])];
 
     if (traceIds.length === 0) {
       return { results: [], totalResults: 0, searchMode: "semantic" };
@@ -281,101 +314,58 @@ export async function hybridSearch(
 
     // created_at is coalesced with decided_at so the date agents see is the
     // judgment date — backfilled recipes (decision archaeology) read as old
-    // judgments, not fresh context. Raw created_at stays on the trace row.
+    // judgments, not fresh context. The raw append time, judgment date, and
+    // session stamp ride the same row load as per-candidate signals (zero
+    // extra queries) — the session id drives known-set STUB RENDERING only,
+    // never ranking (plan v2 seam 2).
     const traceRows = await db.execute(sql`
-      SELECT id, claim_text, COALESCE(decided_at, created_at) AS created_at
+      SELECT id, claim_text, COALESCE(decided_at, created_at) AS created_at,
+             created_at AS created_at_raw, decided_at, session_id
       FROM claimnet.traces
       WHERE id IN (${traceIdsSql})
     `);
 
     const traceMap = new Map<
       string,
-      { claimText: string; createdAt: Date }
+      { claimText: string; createdAt: Date; signals: CandidateSignals }
     >();
     for (const row of traceRows as unknown as Record<string, unknown>[]) {
       traceMap.set(row["id"] as string, {
         claimText: row["claim_text"] as string,
         createdAt: new Date(row["created_at"] as string),
+        signals: {
+          createdAt: new Date(row["created_at_raw"] as string),
+          decidedAt: row["decided_at"] ? new Date(row["decided_at"] as string) : null,
+          sessionId: (row["session_id"] as string | null) ?? null,
+        },
       });
     }
 
     // ── Build response ────────────────────────────────────────────────────
 
-    const results: HybridSearchResult[] = paged.map(([traceId, score]) => {
+    const toResult = ([traceId, score]: [string, number]): HybridSearchResult => {
       const trace = traceMap.get(traceId);
       return {
         id: traceId,
         claimText: trace?.claimText ?? "",
         createdAt: trace?.createdAt ?? new Date(),
         semanticScore: score,
-        combinedScore: score,
+        signals: trace?.signals ?? {
+          createdAt: trace?.createdAt ?? new Date(),
+          decidedAt: null,
+          sessionId: null,
+        },
       };
-    });
+    };
 
-    return { results, totalResults, searchMode: "semantic" };
+    const results = paged.map(toResult);
+    const pool = poolPairs?.map(toResult);
+
+    return { results, totalResults, searchMode: "semantic", pool };
   } catch (err) {
     console.error("[vector-search] Semantic search failed:", err);
     return { results: [], totalResults: 0, searchMode: "semantic" };
   }
-}
-
-// ── Echo suppression helper ──────────────────────────────────────────────────
-
-/**
- * Reorder the deduped [traceId, semanticScore] candidate list to demote the
- * current agent's own recent hypothesis-appends. Only the current key's OWN
- * traces among the candidates are fetched (indexed by api_key_id) — every other
- * candidate gets penalty 0 with no per-row work. The displayed semantic score
- * is preserved; only the order changes, and nothing is dropped.
- */
-async function applyEchoSuppression(
-  db: PostgresJsDatabase,
-  sorted: Array<[string, number]>,
-  echo: EchoContext,
-): Promise<Array<[string, number]>> {
-  const currentApiKeyId = echo.currentApiKeyId;
-  if (!currentApiKeyId || sorted.length === 0) return sorted;
-
-  const idsSql = sql.join(
-    sorted.map(([id]) => sql`${id}::uuid`),
-    sql`, `,
-  );
-  // Only the agent's own traces can be demoted — fetch just those.
-  const ownRows = await db.execute(sql`
-    SELECT id::text AS id, created_at, decided_at
-    FROM claimnet.traces
-    WHERE api_key_id = ${currentApiKeyId}::uuid
-      AND id IN (${idsSql})
-  `);
-
-  const own = new Map<string, { createdAt: Date; curated: boolean }>();
-  for (const row of ownRows as unknown as Record<string, unknown>[]) {
-    own.set(row["id"] as string, {
-      createdAt: new Date(row["created_at"] as string),
-      // decided_at set ⇒ deliberately-dated / curated decision ⇒ exempt.
-      curated: row["decided_at"] !== null && row["decided_at"] !== undefined,
-    });
-  }
-  // Nothing of the agent's own in the candidate set — order can't change.
-  if (own.size === 0) return sorted;
-
-  const candidates: EchoRankCandidate[] = sorted.map(([id, score]) => {
-    const mine = own.get(id);
-    return {
-      id,
-      semanticScore: score,
-      authorApiKeyId: mine ? currentApiKeyId : null,
-      createdAt: mine?.createdAt ?? echo.now,
-      curated: mine?.curated ?? false,
-    };
-  });
-
-  const ranked = rankWithEchoSuppression(
-    candidates,
-    { currentApiKeyId, now: echo.now },
-    echo.config,
-  );
-  return ranked.map((c) => [c.id, c.semanticScore] as [string, number]);
 }
 
 // ── Evidence search ─────────────────────────────────────────────────────────

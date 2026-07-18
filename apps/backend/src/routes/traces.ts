@@ -435,6 +435,7 @@ traces.get("/:id/feedback", async (c) => {
       cf.harness,
       cf.harness_version AS "harnessVersion",
       cf.related_trace_ids AS "relatedTraceIds",
+      cf.session_id AS "sessionId",
       cf.created_at AS "createdAt",
       ak.label AS "apiKeyLabel",
       -- Human-origin rows (a re-filing correction) carry actor_user_id and a

@@ -62,8 +62,8 @@ async function checkRecipe(apiKey: string, recipeText: string): Promise<string> 
   const res = await fetch(`${BASE}/check?${params.toString()}`, {
     headers: { Accept: "application/json" },
   });
-  const json = (await res.json()) as { ok: boolean; data?: { recipeId?: string } };
-  const id = json.data?.recipeId;
+  const json = (await res.json()) as { ok: boolean; data?: { checked?: { recipeId?: string } } };
+  const id = json.data?.checked?.recipeId;
   if (!id) throw new Error(`check failed: ${JSON.stringify(json)}`);
   return id;
 }
@@ -204,6 +204,72 @@ describe.skipIf(!BASE)("feedback ingestion surfaces", () => {
     expect(unreadable!.error).toBe(nonexistent!.error);
     expect(unreadable!.error).toContain("not found or not readable");
   });
+
+  it("stores a valid session_id and NULLs malformed or absent ones (capture only, never a rejection)", async () => {
+    const sessionId = `sess-int-${Date.now().toString(36)}`;
+    const res = await fetch(`${BASE}/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${userA.apiKey}` },
+      body: JSON.stringify({ feedback: [
+        feedbackRow(traceA, { session_id: sessionId }),
+        feedbackRow(traceA, { session_id: "not a valid token!" }),
+        feedbackRow(traceA),
+      ] }),
+    });
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { data: { recorded: number; results: Array<{ ok: boolean; feedbackId?: string }> } };
+    // Capture-only: a malformed token never costs the row.
+    expect(json.data.recorded).toBe(3);
+    const ids = json.data.results.map((r) => r.feedbackId);
+
+    // Read back through the human lineage surface (JWT) to assert storage.
+    const read = await fetch(`${BASE}/traces/${traceA}/feedback`, {
+      headers: { Authorization: `Bearer ${userA.jwt}` },
+    });
+    expect(read.status).toBe(200);
+    const readJson = (await read.json()) as { data: { feedback: Array<{ id: string; sessionId: string | null }> } };
+    const byId = new Map(readJson.data.feedback.map((f) => [f.id, f.sessionId]));
+    expect(byId.get(ids[0]!)).toBe(sessionId); // valid → stored
+    expect(byId.get(ids[1]!)).toBeNull();      // malformed → NULL, row still landed
+    expect(byId.get(ids[2]!)).toBeNull();      // absent → NULL
+  });
+
+  it("MCP check_recipe ride-along rows inherit the check-level session_id", async () => {
+    const sessionId = `sess-ride-${Date.now().toString(36)}`;
+    const callRes = await fetch(`${BASE}/mcp`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: ACCEPT_BOTH,
+        Authorization: `Bearer ${userA.apiKey}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "tools/call",
+        params: {
+          name: "check_recipe",
+          arguments: {
+            recipe: `As a developer working on the feedback loop, I chose to default ride-along rows to the check's session token so that lineage joins don't depend on per-row repetition. (${Date.now()})`,
+            supporting_evidence: `Test evidence.\n> "quote"\n-- test suite`,
+            session_id: sessionId,
+            feedback: [feedbackRow(traceA, { note: `session ride-along ${sessionId}` })],
+          },
+        },
+        id: 5,
+      }),
+    });
+    expect(callRes.status).toBe(200);
+    const text = await callRes.text();
+    expect(text).toContain("Feedback: 1/1 row(s) recorded.");
+
+    const read = await fetch(`${BASE}/traces/${traceA}/feedback`, {
+      headers: { Authorization: `Bearer ${userA.jwt}` },
+    });
+    const readJson = (await read.json()) as { data: { feedback: Array<{ note: string | null; sessionId: string | null }> } };
+    const row = readJson.data.feedback.find((f) => f.note === `session ride-along ${sessionId}`);
+    expect(row).toBeTruthy();
+    expect(row?.sessionId).toBe(sessionId);
+  }, 30_000);
 
   it("rejects requests without a Bearer key", async () => {
     const res = await fetch(`${BASE}/feedback`, {

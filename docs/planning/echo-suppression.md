@@ -1,6 +1,8 @@
 # Echo-suppression retrieval ranking
 
-Status: implemented, feature-flagged **default-OFF** (2026-07-14). Owner: retrieval/ranking.
+> **SUPERSEDED AND RETIRED (2026-07-17, never enabled in production).** The demotion mechanism this document designed was removed by operator ruling: ranking must be a pure function of the check's explicit inputs (a demoted recipe is indistinguishable from a deleted one), the same-api-key authorship signal conflates a fleet's sibling sub-agents with echoes, and the "self-pollution" it targeted is reclassified as benchmark run hygiene, not a product problem. Successor design: [session-novelty-and-pool-diversity.md](session-novelty-and-pool-diversity.md) (session-aware id-stub rendering with budget backfill). Retirement record: [ranking-changelog.md 2026-07-17](../architecture/ranking-changelog.md). This document is preserved as the design history of the retired mechanism.
+
+Status: ~~implemented, feature-flagged **default-OFF** (2026-07-14)~~ retired 2026-07-17. Owner: retrieval/ranking.
 
 ## Problem
 

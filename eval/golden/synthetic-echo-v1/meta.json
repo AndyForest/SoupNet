@@ -1,0 +1,22 @@
+{
+  "_comment": "referenceNow anchors the fixture timestamps (created_at values keep their meaning forever). sessionLineages maps each lineage-deposit trace to the session lineage that authored it; the runner mints a real session token per lineage per run, stamps traces.session_id on these rows (imports write it NULL), and derives per-question known-sets from the stamped column. These rows also define the HYGIENE arm split: hygiene-clean = corpus minus these rows.",
+  "referenceNow": "2026-07-15T12:00:00Z",
+  "clusters": 3,
+  "sessionLineages": {
+    "00000000-0000-4000-8000-00e100000001": "lineage-self",
+    "00000000-0000-4000-8000-00e100000002": "lineage-self",
+    "00000000-0000-4000-8000-00e100000003": "lineage-self",
+    "00000000-0000-4000-8000-00e100000004": "lineage-self",
+    "00000000-0000-4000-8000-00e100000005": "lineage-self",
+    "00000000-0000-4000-8000-00e100000006": "lineage-self",
+    "00000000-0000-4000-8000-00e100000007": "lineage-self",
+    "00000000-0000-4000-8000-00e100000008": "lineage-self",
+    "00000000-0000-4000-8000-00e200000001": "lineage-self",
+    "00000000-0000-4000-8000-00e200000002": "lineage-self",
+    "00000000-0000-4000-8000-00e200000003": "lineage-self",
+    "00000000-0000-4000-8000-00e200000004": "lineage-self",
+    "00000000-0000-4000-8000-00e200000005": "lineage-self",
+    "00000000-0000-4000-8000-00e200000006": "lineage-self",
+    "00000000-0000-4000-8000-00e200000007": "lineage-self"
+  }
+}

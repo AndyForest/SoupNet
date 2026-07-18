@@ -1,10 +1,10 @@
 # ClaimNet Data Model — Generated Reference
 
-> **Auto-generated** from Drizzle migration snapshot `0030_snapshot.json`.
+> **Auto-generated** from Drizzle migration snapshot `0032_snapshot.json`.
 > Do not edit by hand. Regenerate with: `npx tsx scripts/generate-data-model-docs.ts`
 >
-> Schema as of migration `0030_move_recipe_human_feedback` (2026-07-09).
-> Tables: 27 | Schema: `claimnet`
+> Schema as of migration `0032_session_shown_and_feedback_session` (2026-07-18).
+> Tables: 28 | Schema: `claimnet`
 
 For design rationale, conventions, and context, see [data-model.md](data-model.md).
 
@@ -13,7 +13,7 @@ For design rationale, conventions, and context, see [data-model.md](data-model.m
 **Identity & Access:** [`users`](#claimnetusers) · [`organizations`](#claimnetorganizations) · [`groups`](#claimnetgroups) · [`group_members`](#claimnetgroup_members)
 **Core Content:** [`traces`](#claimnettraces) · [`evidence`](#claimnetevidence) · [`references`](#claimnetreferences) · [`uploads`](#claimnetuploads)
 **Linking:** [`trace_evidence`](#claimnettrace_evidence) · [`trace_references`](#claimnettrace_references) · [`evidence_references`](#claimnetevidence_references)
-**Feedback & Reactions:** [`check_feedback`](#claimnetcheck_feedback) · [`check_feedback_stars`](#claimnetcheck_feedback_stars) · [`trace_reactions`](#claimnettrace_reactions)
+**Feedback & Reactions:** [`check_feedback`](#claimnetcheck_feedback) · [`check_feedback_stars`](#claimnetcheck_feedback_stars) · [`trace_reactions`](#claimnettrace_reactions) · [`session_shown`](#claimnetsession_shown)
 **Auth & Admin:** [`api_keys`](#claimnetapi_keys) · [`oauth_clients`](#claimnetoauth_clients) · [`oauth_authorization_codes`](#claimnetoauth_authorization_codes) · [`invitations`](#claimnetinvitations) · [`system_settings`](#claimnetsystem_settings) · [`audit_log`](#claimnetaudit_log) · [`email_log`](#claimnetemail_log)
 **Embedding Pipeline:** [`embedding_sources`](#claimnetembedding_sources) · [`embedding_chunk_strategies`](#claimnetembedding_chunk_strategies) · [`embedding_chunks`](#claimnetembedding_chunks) · [`embedding_vectors`](#claimnetembedding_vectors)
 **Caching:** [`reference_source_cache`](#claimnetreference_source_cache) · [`vector_cache`](#claimnetvector_cache)
@@ -64,6 +64,7 @@ erDiagram
         uuid api_key_id
         uuid actor_user_id FK
         text agent_id
+        text session_id
         text kind
         text impact
         text disposition
@@ -247,6 +248,13 @@ erDiagram
         timestamptz created_at
     }
 
+    session_shown {
+        uuid id PK
+        text session_id
+        uuid trace_id
+        timestamptz shown_at
+    }
+
     system_settings {
         uuid id PK
         text key
@@ -289,6 +297,7 @@ erDiagram
         text claim_text_hash
         real format_adherence_score
         timestamptz decided_at
+        text session_id
         timestamptz created_at
         timestamptz updated_at
     }
@@ -504,6 +513,7 @@ These are created by raw SQL in migration files and are not captured in the snap
 | `claim_text_hash` | `text` | YES |  |  |
 | `format_adherence_score` | `real` | YES |  |  |
 | `decided_at` | `timestamptz` | YES |  |  |
+| `session_id` | `text` | YES |  |  |
 | `created_at` | `timestamptz` | NO | `now()` |  |
 | `updated_at` | `timestamptz` | NO | `now()` |  |
 
@@ -515,6 +525,7 @@ These are created by raw SQL in migration files and are not captured in the snap
 - `traces_group_id_idx`: `(group_id)`
 - `traces_api_key_id_idx`: `(api_key_id)`
 - `traces_created_at_idx`: `(created_at)`
+- `traces_session_id_created_at_idx`: `(session_id, created_at)`
 
 ---
 
@@ -638,6 +649,7 @@ These are created by raw SQL in migration files and are not captured in the snap
 | `api_key_id` | `uuid` | YES |  |  |
 | `actor_user_id` | `uuid` | YES |  |  |
 | `agent_id` | `text` | YES |  |  |
+| `session_id` | `text` | YES |  |  |
 | `kind` | `text` | NO |  |  |
 | `impact` | `text` | NO |  |  |
 | `disposition` | `text` | NO |  |  |
@@ -702,6 +714,23 @@ These are created by raw SQL in migration files and are not captured in the snap
 
 **Indexes:**
 - `trace_reactions_trace_id_idx`: `(trace_id)`
+
+---
+
+### `claimnet.session_shown`
+
+| Column | Type | Nullable | Default | PK |
+|---|---|---|---|---|
+| `id` | `uuid` | NO | `gen_random_uuid()` | PK |
+| `session_id` | `text` | NO |  |  |
+| `trace_id` | `uuid` | NO |  |  |
+| `shown_at` | `timestamptz` | NO | `now()` |  |
+
+**Unique constraints:**
+- `session_shown_session_trace_unique`: `(session_id, trace_id)`
+
+**Indexes:**
+- `session_shown_session_id_shown_at_idx`: `(session_id, shown_at)`
 
 ---
 

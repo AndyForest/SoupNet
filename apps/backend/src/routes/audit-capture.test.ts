@@ -77,8 +77,8 @@ async function checkAndGetMetadata(
   const res = await fetch(`${BASE}/check?${params.toString()}`, {
     headers: { Accept: "application/json", ...headers },
   });
-  const json = (await res.json()) as { data?: { recipeId?: string } };
-  const recipeId = json.data?.recipeId;
+  const json = (await res.json()) as { data?: { checked?: { recipeId?: string } } };
+  const recipeId = json.data?.checked?.recipeId;
   if (!recipeId) throw new Error("check failed");
 
   const sql = await auditSql();

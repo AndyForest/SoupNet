@@ -37,6 +37,28 @@ describe("validateFeedbackRow", () => {
     }
   });
 
+  it("accepts recipe_id as an alias for trace_id (canonical wire vocabulary, recipe 7945fd8a)", () => {
+    const v = validateFeedbackRow(validRow({ trace_id: undefined, recipe_id: TRACE_ID }));
+    expect(v.ok).toBe(true);
+    if (v.ok) expect(v.row.traceId).toBe(TRACE_ID);
+  });
+
+  it("trace_id wins when both trace_id and recipe_id are present", () => {
+    const other = "550e8400-e29b-41d4-a716-446655440000";
+    const v = validateFeedbackRow(validRow({ recipe_id: other }));
+    expect(v.ok).toBe(true);
+    if (v.ok) expect(v.row.traceId).toBe(TRACE_ID);
+  });
+
+  it("mentions both field names when neither id is usable", () => {
+    const v = validateFeedbackRow(validRow({ trace_id: undefined }));
+    expect(v.ok).toBe(false);
+    if (!v.ok) {
+      expect(v.error).toContain("trace_id");
+      expect(v.error).toContain("recipe_id");
+    }
+  });
+
   it("accepts a fully-populated row and normalizes optionals", () => {
     const v = validateFeedbackRow(validRow({
       note: "  changed approach  ",
@@ -130,6 +152,30 @@ describe("validateFeedbackRow", () => {
     const v = validateFeedbackRow(validRow({ note: "x".repeat(5000) }));
     expect(v.ok).toBe(false);
     if (!v.ok) expect(v.error).toContain("note too long");
+  });
+
+  // session_id is capture-only (2026-07-17): a valid token is stored, anything
+  // else — malformed, wrong type, absent — becomes NULL. Never a rejection
+  // (a mangled token must not cost the feedback it rides with) and never a
+  // minted fresh token (feedback joins a session, it doesn't start one).
+  it("captures a valid session_id, trimmed", () => {
+    const v = validateFeedbackRow(validRow({ session_id: "  sess_2026-07-17a  " }));
+    expect(v.ok).toBe(true);
+    if (v.ok) expect(v.row.sessionId).toBe("sess_2026-07-17a");
+  });
+
+  it("stores NULL for malformed session_id values without rejecting the row", () => {
+    for (const bad of ["short", "has spaces here", "bang!bang!", "x".repeat(65), 42, {}, null]) {
+      const v = validateFeedbackRow(validRow({ session_id: bad as never }));
+      expect(v.ok).toBe(true);
+      if (v.ok) expect(v.row.sessionId).toBeNull();
+    }
+  });
+
+  it("stores NULL when session_id is absent", () => {
+    const v = validateFeedbackRow(validRow());
+    expect(v.ok).toBe(true);
+    if (v.ok) expect(v.row.sessionId).toBeNull();
   });
 });
 

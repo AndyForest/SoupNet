@@ -61,6 +61,7 @@ server.tool(
     // violating the one-format-per-response rule.
     response_format: z.enum(["markdown", "structured"]).optional().describe(MCP_PARAM_DESCRIPTIONS.responseFormat),
     known_recipes: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.knownRecipes),
+    session_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.sessionId),
     agent_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.agentId),
     synthesize: z.boolean().optional().describe(MCP_PARAM_DESCRIPTIONS.synthesize),
     feedback: z.array(z.object({
@@ -77,6 +78,7 @@ server.tool(
       harness: z.string().optional(),
       harness_version: z.string().optional(),
       related_trace_ids: z.array(z.string()).optional(),
+      session_id: z.string().optional(),
     })).optional().describe(MCP_PARAM_DESCRIPTIONS.feedbackParam),
     file: z.string().optional().describe(
       "Optional file to attach as reference evidence (multimodal embedding). " +
@@ -92,7 +94,7 @@ server.tool(
     idempotentHint: false,
     openWorldHint: true,
   },
-  async ({ recipe, supporting_evidence, clusters, max_chars, decided_at, response_format, known_recipes, agent_id, synthesize, feedback, file }) => {
+  async ({ recipe, supporting_evidence, clusters, max_chars, decided_at, response_format, known_recipes, session_id, agent_id, synthesize, feedback, file }) => {
     if (!apiKey) {
       return {
         content: [{ type: "text" as const, text: "Error: SOUPNET_API_KEY not configured. Get a key from your Soup.net dashboard." }],
@@ -137,6 +139,7 @@ server.tool(
         if (decided_at) formData.set("decided_at", decided_at);
         if (agent_id) formData.set("agent_id", agent_id);
         if (known_recipes) formData.set("known_recipes", known_recipes);
+        if (session_id) formData.set("session_id", session_id);
         if (synthesize) formData.set("synthesize", "true");
         formData.set("format", "json");
         // Wrap in a fresh Uint8Array so the BlobPart type is Uint8Array<ArrayBuffer>
@@ -160,6 +163,7 @@ server.tool(
         if (decided_at) params.set("decided_at", decided_at);
         if (agent_id) params.set("agent_id", agent_id);
         if (known_recipes) params.set("known_recipes", known_recipes);
+        if (session_id) params.set("session_id", session_id);
         if (synthesize) params.set("synthesize", "true");
         params.set("format", "json");
 
@@ -177,7 +181,11 @@ server.tool(
       let feedbackSummary = "";
       if (feedback && feedback.length > 0) {
         try {
-          const rows = feedback.map((row) => ({ ...(agent_id ? { agent_id } : {}), ...row }));
+          const rows = feedback.map((row) => ({
+            ...(agent_id ? { agent_id } : {}),
+            ...(session_id ? { session_id } : {}),
+            ...row,
+          }));
           const fbRes = await fetch(`${backendUrl}/feedback`, {
             method: "POST",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
@@ -206,7 +214,7 @@ server.tool(
       // as structuredContent with a one-line stub; markdown (default) is the
       // shared readable report. Never both.
       if (response_format === "structured" && json.ok && json.data) {
-        const stub = `Recipe checked as #${json.data.recipeId ?? "?"}. ${json.data.totalResults ?? 0} similar recipe(s) — see structuredContent.${feedbackSummary ? `\n${feedbackSummary}` : ""}`;
+        const stub = `Recipe checked as #${json.data.checked?.recipeId ?? "?"}. ${json.data.totalResults ?? 0} similar recipe(s) — see structuredContent.${feedbackSummary ? `\n${feedbackSummary}` : ""}`;
         return {
           content: [{ type: "text" as const, text: stub }],
           structuredContent: json.data as unknown as Record<string, unknown>,
@@ -265,6 +273,9 @@ server.tool(
     harness_version: z.string().optional().describe("Harness version, if known."),
     related_trace_ids: z.array(z.string()).optional().describe(
       "Lineage links — recipe UUIDs in the same arc (e.g. the recipe that changed the action and the trace that logged the new decision). Full UUIDs only — short-id prefixes are not resolved here."
+    ),
+    session_id: z.string().optional().describe(
+      "The session token from your check responses — joins your feedback to that session's check lineage. Capture only."
     ),
   },
   {

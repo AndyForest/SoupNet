@@ -633,8 +633,8 @@ describe.skipIf(!BASE)("data export", () => {
       const res = await fetch(`${BASE}/check?${params.toString()}`, {
         headers: { Accept: "application/json" },
       });
-      const body = (await res.json()) as { ok: boolean; data?: { recipeId?: string } };
-      const id = body.data?.recipeId;
+      const body = (await res.json()) as { ok: boolean; data?: { checked?: { recipeId?: string } } };
+      const id = body.data?.checked?.recipeId;
       if (!id) throw new Error(`Trace creation failed: ${JSON.stringify(body)}`);
       return id;
     };

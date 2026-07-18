@@ -19,9 +19,10 @@
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 
-import { PRODUCTION_SEARCH_STRATEGY_IDS } from "@soupnet/domain";
+import { PRODUCTION_SEARCH_STRATEGY_IDS, DEFAULT_RANKING } from "@soupnet/domain";
+import type { RankingConfig } from "@soupnet/domain";
 import { hybridSearch, evidenceSearch } from "./vector-search.service";
-import type { EvidenceSearchResult, EchoContext } from "./vector-search.service";
+import type { EvidenceSearchResult } from "./vector-search.service";
 import type { SearchResultItem } from "./trace.service";
 import { clusterResults } from "./clustering.service";
 import type { ClusterResult } from "./clustering.service";
@@ -72,11 +73,22 @@ export interface SearchPipelineParams {
   /** Optional per-request stage timer — the check path passes its own so
    *  pipeline stages land in the same Server-Timing header / log line. */
   timer?: StageTimer | undefined;
-  /** Echo-suppression ranking context — forwarded to hybridSearch. When
-   *  enabled, the current agent's own recent hypothesis-appends are demoted in
-   *  the trace-search ranking (reorder only). Absent / disabled ⇒ no effect.
-   *  Only meaningful in query mode. See docs/planning/echo-suppression.md. */
-  echo?: EchoContext | undefined;
+  /** Ranking pipeline config (@soupnet/domain RankingConfig) — the single
+   *  config object every ranking stage reads. Absent ⇒ DEFAULT_RANKING
+   *  (byte-stable legacy behavior). Ranking is a pure function of the check's
+   *  explicit inputs and the corpus (plan v2 seam 1) — this config carries no
+   *  identity state. Stage names, in pipeline order: query_embed → search
+   *  (retrieval) → vectors → cluster (k-means to budget) → evidence → axes.
+   *  Timer keys match. */
+  ranking?: RankingConfig | undefined;
+  /** Known-set for stub RENDERING (plan v2 seam 2): recipe ids the caller
+   *  already holds (this session's deposits ∪ client-declared known_recipes).
+   *  Never touches ranking or membership — a known flat result is flagged for
+   *  stub rendering at its true rank, and a known cluster exemplar is
+   *  replaced for display by the cluster's next-nearest non-known member
+   *  (the "return the ID instead… and the full text of the next recipe in
+   *  line" budget backfill), with the known id carried as a stub. */
+  knownIds?: ReadonlySet<string> | undefined;
   /** Read-time MRL truncation for fetched trace vectors (clustering, concept
    *  axes, response vectors). Stored vectors are NEVER modified — pgvector's
    *  subvector() slices the leading dims at query time. gemini embeddings are
@@ -109,6 +121,10 @@ export interface SearchPipelineResult {
   /** All results before clustering (for member ID resolution). Only set when clustered. */
   allResults?: SearchResultItem[] | undefined;
   relatedEvidence?: EvidenceSearchResult[] | undefined;
+  /** Known parents whose evidence would have made the selection — id plus
+   *  its best evidence similarity (already computed; recipe ef245b63), the
+   *  token-lean stub form (seam 2). */
+  relatedEvidenceKnown?: Array<{ recipeId: string; similarity: number }> | undefined;
   clusters?: ClusterAssignment[] | undefined;
   totalResults: number;
   searchMode: "semantic" | "corpus";
@@ -263,6 +279,7 @@ export async function runSearchPipeline(
   let totalResults: number;
   let searchMode: "semantic" | "corpus";
 
+  const ranking = params.ranking ?? DEFAULT_RANKING;
   const timer = params.timer ?? new StageTimer();
 
   // Resolve the query embedding once — trace search and evidence search share
@@ -276,6 +293,8 @@ export async function runSearchPipeline(
     // null → leave undefined; hybridSearch/evidenceSearch degrade gracefully.
   }
 
+  let poolItems: SearchResultItem[] | undefined;
+
   if (params.query) {
     // ── Query mode: semantic vector search ─────────────────────────────────
     const searchResponse = await timer.time("search", () => hybridSearch(db, {
@@ -286,16 +305,25 @@ export async function runSearchPipeline(
       excludeTraceId: params.excludeTraceId,
       queryVectorStr,
       keywordFilter: params.keywordFilter,
-      echo: params.echo,
+      // P6 pool lever: cluster the top candidates down to the pool boundary
+      // instead of the page window. "page" mode ⇒ byte-stable no-op.
+      pool: ranking.clusterPool,
+      // Seam 2: novel-counted display window — knowns interleave as stubs,
+      // the window extends until it holds `perPage` unseen recipes.
+      knownIds: params.knownIds,
     }));
 
-    results = searchResponse.results.map((r) => ({
+    const toItem = (r: (typeof searchResponse.results)[number]): SearchResultItem => ({
       id: r.id,
       claimText: r.claimText,
       createdAt: r.createdAt,
-      rank: r.semanticScore ?? r.combinedScore,
+      rank: r.semanticScore ?? 0,
       semanticScore: r.semanticScore ?? undefined,
-    }));
+      signals: r.signals,
+    });
+
+    results = searchResponse.results.map(toItem);
+    poolItems = searchResponse.pool?.map(toItem);
 
     totalResults = searchResponse.totalResults;
     searchMode = searchResponse.searchMode;
@@ -321,26 +349,34 @@ export async function runSearchPipeline(
   }
 
   // ── Clustering (optional) ────────────────────────────────────────────────
+  // clusterInput is what the cluster stage summarizes: the P6 pool when the
+  // lever is on, else the page (legacy — byte-stable). Vectors, membership,
+  // weights, and exemplars all index into clusterInput.
   let clustered = false;
   let clusterAssignments: ClusterAssignment[] | undefined;
   let vectorMap: Map<string, number[]> | undefined;
   let preClusterResults: SearchResultItem[] | undefined;
 
-  const shouldCluster = !params.expand && (params.k || params.maxChars) && results.length > 1;
+  const clusterInput = poolItems && poolItems.length > 1 ? poolItems : results;
+  const shouldCluster = !params.expand && (params.k || params.maxChars) && clusterInput.length > 1;
   if (shouldCluster || params.includeVectors || params.axes) {
-    // Fetch vectors for all results (optionally filtered by strategy for experiments)
-    const resultIds = results.map((r) => r.id);
+    // Fetch vectors for the cluster input ∪ page (optionally filtered by
+    // strategy for experiments). Pool vectors are MRL-truncated per the
+    // lever's vectorDims unless the caller pinned dims explicitly.
+    const vecIds = [...new Set([...clusterInput, ...results].map((r) => r.id))];
+    const dims = params.vectorDims
+      ?? (poolItems && ranking.clusterPool.vectorDims > 0 ? ranking.clusterPool.vectorDims : undefined);
     vectorMap = await timer.time("vectors", () =>
-      fetchTraceVectors(db, resultIds, params.vectorStrategy, params.vectorDims));
+      fetchTraceVectors(db, vecIds, params.vectorStrategy, dims));
   }
 
   if (shouldCluster && vectorMap && vectorMap.size > 1) {
-    // Build vectors array matching results order
+    // Build vectors array matching clusterInput order
     const vectors: number[][] = [];
     const validIndices: number[] = [];
 
-    for (let i = 0; i < results.length; i++) {
-      const vec = vectorMap.get(results[i]!.id);
+    for (let i = 0; i < clusterInput.length; i++) {
+      const vec = vectorMap.get(clusterInput[i]!.id);
       if (vec) {
         vectors.push(vec);
         validIndices.push(i);
@@ -352,7 +388,7 @@ export async function runSearchPipeline(
         vectors,
         k: params.k,
         maxChars: params.maxChars,
-        resultTexts: validIndices.map((i) => results[i]!.claimText),
+        resultTexts: validIndices.map((i) => clusterInput[i]!.claimText),
       }));
 
       // Build cluster assignments with member tracking
@@ -370,16 +406,78 @@ export async function runSearchPipeline(
         clusterAssignments[clusterIdx]!.memberIndices.push(validIndices[vi]!);
       }
 
-      // Save pre-clustered results for member ID resolution (used by map endpoint)
-      preClusterResults = [...results];
+      // Save pre-clustered input for member ID resolution (used by map
+      // endpoint; = the P6 pool when the lever is on).
+      preClusterResults = [...clusterInput];
 
-      // Replace results with exemplars (add clusterSize)
-      results = clusterAssignments.map((c) => ({
-        ...results[validIndices[c.exemplarIndex]!]!,
-        clusterSize: c.memberCount,
-      }));
+      // Replace results with exemplars (add clusterSize). Known-set rendering
+      // (seam 2): each displayed cluster LISTS its known member ids — the
+      // caller sees "you've seen these cluster-mates" as stubs beside the
+      // full text ("stub, stub, full recipe" — operator design, 2026-07-18).
+      // A known exemplar yields to the cluster's next-nearest non-known
+      // member; an all-known cluster renders its exemplar as a stub. Display
+      // budget goes to novel content; every known id stays visible.
+      results = clusterAssignments.map((c, ci) => {
+        const exemplarInputIdx = validIndices[c.exemplarIndex]!;
+        const exemplar = clusterInput[exemplarInputIdx]!;
+        const knownMembers = params.knownIds
+          ? c.memberIndices
+            .map((mi) => clusterInput[mi]!)
+            .filter((m) => params.knownIds!.has(m.id))
+            // Similarity rides along free — already computed at retrieval
+            // (recipe ef245b63: the id is actionable only with its score).
+            .map((m) => ({ id: m.id, similarity: m.rank }))
+          : [];
+        if (!params.knownIds?.has(exemplar.id)) {
+          return {
+            ...exemplar,
+            clusterSize: c.memberCount,
+            ...(knownMembers.length > 0 ? { knownClusterMembers: knownMembers } : {}),
+          };
+        }
+        const centroid = rawClusters[ci]!.centroid;
+        let promoted: SearchResultItem | undefined;
+        let bestDist = Infinity;
+        for (const mi of c.memberIndices) {
+          const member = clusterInput[mi]!;
+          if (params.knownIds.has(member.id)) continue;
+          const vec = vectorMap!.get(member.id);
+          if (!vec) continue;
+          const dist = 1 - cosineSimilarity(vec, centroid);
+          if (dist < bestDist) {
+            bestDist = dist;
+            promoted = member;
+          }
+        }
+        if (promoted) {
+          // The passed-over known exemplar is itself a known member — it is
+          // already in knownMembers, so one uniform field carries it.
+          return {
+            ...promoted,
+            clusterSize: c.memberCount,
+            knownClusterMembers: knownMembers,
+          };
+        }
+        // Every member is known — the exemplar renders as a stub; its known
+        // siblings ride the same list (minus the stub's own id).
+        const siblings = knownMembers.filter((m) => m.id !== exemplar.id);
+        return {
+          ...exemplar,
+          clusterSize: c.memberCount,
+          known: true,
+          ...(siblings.length > 0 ? { knownClusterMembers: siblings } : {}),
+        };
+      });
       clustered = true;
     }
+  }
+
+  // Flat known flagging (seam 2): unclustered known results keep their true
+  // rank and are flagged for id-stub rendering. No backfill in flat mode —
+  // pagination already reaches everything.
+  if (params.knownIds?.size && !clustered) {
+    results = results.map((r) =>
+      params.knownIds!.has(r.id) ? { ...r, known: true } : r);
   }
 
   if (params.sort === "recent") {
@@ -388,6 +486,7 @@ export async function runSearchPipeline(
 
   // ── Evidence discovery (query mode only) ─────────────────────────────────
   let relatedEvidence: EvidenceSearchResult[] | undefined;
+  let relatedEvidenceKnown: Array<{ recipeId: string; similarity: number }> | undefined;
   if (params.query) {
     try {
       const evidenceParams: Parameters<typeof evidenceSearch>[1] = {
@@ -405,25 +504,34 @@ export async function runSearchPipeline(
           ?? (clustered ? results.length : undefined)
           ?? Math.min(5, evidenceCandidates.length);
 
-        if (evidenceCandidates.length > targetCount && targetCount > 0) {
-          const seen = new Set<string>();
-          const diverse: EvidenceSearchResult[] = [];
-          for (const e of evidenceCandidates) {
-            if (diverse.length >= targetCount) break;
-            if (!seen.has(e.parentTraceId)) {
-              diverse.push(e);
-              seen.add(e.parentTraceId);
-            }
+        // Proportionality (operator finding 2026-07-18: a filter-narrowed
+        // check with 1 result carried 20 evidence entries): the evidence
+        // budget never exceeds the displayed result count (floor 3, so
+        // narrow checks still get some adjacent context).
+        const displayedFull = results.filter((r) => !r.known).length;
+        const cappedTarget = Math.min(targetCount, Math.max(3, displayedFull));
+
+        const known = params.knownIds;
+        if (known?.size && evidenceCandidates.some((e) => known.has(e.parentTraceId))) {
+          // Known-set stubbing for evidence discovery (seam 2): the full
+          // selection is drawn from NOVEL parents — evidence budget goes to
+          // content the session doesn't hold — and known parents that would
+          // have made the legacy selection surface as a bare id list
+          // (relatedEvidenceKnownIds), not per-row stubs. Nothing hidden.
+          const legacyPick = selectDiverseEvidence(evidenceCandidates, cappedTarget);
+          const novel = evidenceCandidates.filter((e) => !known.has(e.parentTraceId));
+          relatedEvidence = selectDiverseEvidence(novel, cappedTarget);
+          // Dedup by parent keeping the first (score-ordered ⇒ best)
+          // occurrence — similarity rides free (recipe ef245b63).
+          const seenParents = new Set<string>();
+          relatedEvidenceKnown = [];
+          for (const e of legacyPick) {
+            if (!known.has(e.parentTraceId) || seenParents.has(e.parentTraceId)) continue;
+            seenParents.add(e.parentTraceId);
+            relatedEvidenceKnown.push({ recipeId: e.parentTraceId, similarity: e.semanticScore });
           }
-          if (diverse.length < targetCount) {
-            for (const e of evidenceCandidates) {
-              if (diverse.length >= targetCount) break;
-              if (!diverse.includes(e)) diverse.push(e);
-            }
-          }
-          relatedEvidence = diverse;
         } else {
-          relatedEvidence = evidenceCandidates;
+          relatedEvidence = selectDiverseEvidence(evidenceCandidates, cappedTarget);
         }
       }
     } catch (err) {
@@ -486,6 +594,7 @@ export async function runSearchPipeline(
     results,
     allResults: preClusterResults,
     relatedEvidence,
+    relatedEvidenceKnown,
     clusters: clusterAssignments,
     totalResults,
     searchMode,
@@ -495,6 +604,37 @@ export async function runSearchPipeline(
     page,
     totalPages,
   };
+}
+
+// ── Evidence diversity selection ─────────────────────────────────────────────
+
+/**
+ * The evidence-discovery diversity pick: up to targetCount entries preferring
+ * one per parent recipe, topped up by score order. Byte-identical to the
+ * pre-2026-07-17 inline logic (including returning the list as-is when it
+ * already fits the target).
+ */
+function selectDiverseEvidence(
+  candidates: EvidenceSearchResult[],
+  targetCount: number,
+): EvidenceSearchResult[] {
+  if (!(candidates.length > targetCount && targetCount > 0)) return candidates;
+  const seen = new Set<string>();
+  const diverse: EvidenceSearchResult[] = [];
+  for (const e of candidates) {
+    if (diverse.length >= targetCount) break;
+    if (!seen.has(e.parentTraceId)) {
+      diverse.push(e);
+      seen.add(e.parentTraceId);
+    }
+  }
+  if (diverse.length < targetCount) {
+    for (const e of candidates) {
+      if (diverse.length >= targetCount) break;
+      if (!diverse.includes(e)) diverse.push(e);
+    }
+  }
+  return diverse;
 }
 
 // ── Vector math helpers ──────────────────────────────────────────────────────

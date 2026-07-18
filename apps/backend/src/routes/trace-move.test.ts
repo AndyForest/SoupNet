@@ -106,11 +106,11 @@ async function seedTrace(key: string, claim: string): Promise<string> {
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: form.toString(),
   });
-  const body = (await res.json()) as { ok: boolean; data?: { recipeId: string } };
-  if (!body.ok || !body.data?.recipeId) {
+  const body = (await res.json()) as { ok: boolean; data?: { checked?: { recipeId: string } } };
+  if (!body.ok || !body.data?.checked?.recipeId) {
     throw new Error(`Failed to seed trace: ${JSON.stringify(body)}`);
   }
-  return body.data.recipeId;
+  return body.data.checked.recipeId;
 }
 
 /**

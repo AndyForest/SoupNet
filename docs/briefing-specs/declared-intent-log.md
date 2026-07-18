@@ -2,6 +2,30 @@
 
 Every PR that touches briefing copy (`packages/domain/src/recipe-guide-content.ts`, the briefing composer, MCP tool descriptions) appends an entry here **before** merging: the date, each edit, the scenarios it intends to move, and the rationale for why every other scenario holds. See [README.md](README.md) §The regression rule. Newest entry first.
 
+## 2026-07-17 — Session-refresh hint + feedback session_id capture
+
+Operator-directed (recipe 31d184df: the session models the agent's context-fill state; Andy derived the compaction affordance himself in the design review). Declared intent: the refresh hint is the only briefing-content change in this batch — nothing else moves.
+
+### Edits
+
+1. **"## How to check"** gains one line after the further-optional-params paragraph: if you auto-compact your context or otherwise no longer hold the recipes you've been shown, refresh your session by omitting `session_id` on your next check — a fresh session means full recipe text again.
+2. **`MCP_PARAM_DESCRIPTIONS.sessionId`** gains the same idea in a few words ("Compacted your context? Omit it on your next check — a fresh session gets full text again."). Shared-copy budget raised 4,300 → 4,400 with a dated comment in `mcp-tool-descriptions.test.ts` (prior total 4,279 left no headroom).
+3. **`log_feedback` / feedback-row schemas** (HTTP MCP + stdio mirror, inline descriptions, not shared copy): optional `session_id` param — "the session token from your check responses — joins your feedback to that session's check lineage. Capture only."
+4. **Same-batch copy sweep (operator-directed, "sweep other mcp surfaces to check if sessionId is concise and clearly documented"):** `MCP_PARAM_DESCRIPTIONS.sessionId` rewritten to carry the current mechanism — known = deposited OR shown, results walk down the same ranking to unseen ones, ranking never changes — replacing the stale "already deposited" framing; `MCP_PARAM_DESCRIPTIONS.knownRecipes` corrected from "one-line stubs" to "id-only stubs" and named the client-declared sibling of `session_id`; the "## How to check" optional-params enumeration now lists `session_id` first (previously absent — briefing readers never learned the param existed). Budget: within the 4,400 cap.
+5. **stdio proxy parity** (schema, not copy): `check_recipe` gains `session_id` using the same shared description; forwards to `/check`; ride-along feedback rows inherit it like `agent_id`. Closes the backlog parity item.
+6. **`known-recipes-dedup.feature`** stub-shape wording corrected to id-only (spec truth-up to the 2026-07-17 ossification ruling — describes shipped behavior, moves no scenario intent).
+
+### Scenarios intended to move
+
+- **`known-recipes-dedup.feature` — "Agent that compacted its context refreshes the session"** (added in this change, `@unreleased` with the rest of the file): the hint is the fed copy that produces that behavior.
+
+### Scenarios watched, with rationale for holding
+
+- **`known-recipes-dedup.feature` (existing scenarios)** — the hint adds a refresh affordance; the stub-rendering and rendering-only invariants those scenarios assert are untouched by this copy.
+- **`feedback-loop.feature`** — feedback copy in "## Closing the loop" is unchanged; `session_id` on feedback rows is a schema affordance (capture only), not a workflow change, so no feedback scenario's behavior moves.
+- **All other scenarios** — principles, format, voice, setup, divergence, and link-formatting copy untouched.
+- Suite re-run: harness not yet wired (README §regression rule "once wired"); .feature files remain the manual checklist.
+
 ## 2026-07-06 — Placeholder mode: no raw key in any briefing response
 
 Operator-approved generalization of the same day's OAuth branch. Principle: every MCP/API consumer of the briefing had to supply the key to get the briefing, so echoing it back is redundant; the only consumer that needs an inline key is the human copy-briefing flow, and the browser does that substitution itself. Raw keys never appear in responses — not even on the JWT path.
@@ -94,3 +118,11 @@ Briefing size: 18,560 → 19,324 bytes (+764, +4.1%) with fixed reference inputs
 **Scenarios intended to move:** none — this is a redundancy reduction, not a behavior change; all teaching remains reachable via get_briefing, which every comprehension scenario already routes through.
 
 **Scenarios watched, with rationale for holding:** voice/format scenarios (voice-and-format.feature and kin) — the one behavioral risk is agents that skip get_briefing now get a one-line voice rule in the recipe param instead of the example set; mitigated by keeping the rule itself plus an explicit "get_briefing teaches the voice rules" pointer in both the check_recipe trailer and the recipe param. If the naive-agent evals show voice quality regressing for briefing-skipping agents, the reversal is scoped: restore examples to the recipe param only.
+
+## 2026-07-18 — Canonical Recipe schema pointer + derivation stitches (recipes 7945fd8a, 43ce7ec0)
+
+**Edits:** (1) one pointer line added to the guide/briefing "How to check" section: full field meanings live at `GET /schemas/recipe.json` (+ `/schemas/check-response.json`) — canonical, generated from the same zod source the server validates against; (2) no param-description text changed, but four short forms (`recipe`, `known_recipes`, `session_id`, `decided_at`) are now formally stitched to their canonical `*_DEFINITION` constants in `@soupnet/contracts` via `CANONICAL_PARAM_SOURCES` + per-description source comments, with a drift-guard test (mcp-tool-descriptions.test.ts) asserting each short form keeps its source's load-bearing concepts.
+
+**Scenarios intended to move:** `known-recipes-dedup.feature` — new scenario "Agent needing full field meanings fetches the published schema" (added in this PR).
+
+**Scenarios watched, with rationale for holding:** all others — no existing briefing copy was reworded; the pointer is additive (one line), the stitches are comments + a constants map, and the tool-description budget totals are unchanged (budget tests still green). Suite re-run: harness not yet wired; per README the .feature files remain the manual checklist.
