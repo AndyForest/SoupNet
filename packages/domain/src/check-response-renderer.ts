@@ -53,20 +53,18 @@ export interface CheckResultItem {
   /** Recipe-book id + name; the description lives in the briefing (operator
    *  ruling 2026-07-18). */
   group?: { id?: string; name?: string };
-  score?: {
-    combined?: number | null;
-    semantic?: number | null;
-    lexical?: number | null;
-  };
+  /** Raw cosine similarity — the ONE similarity vocabulary (operator ruling
+   *  2026-07-18, recipe ef245b63). No combined/lexical slots. */
+  similarity?: number | null;
   clusterSize?: number;
   evidence?: CheckResultEvidence[];
   /** The caller already holds this recipe (session known-set or declared
    *  known_recipes) — renders as a one-line id-only stub. */
   known?: boolean;
-  /** Known member ids of this displayed cluster (recipes the session has
-   *  already seen or deposited) — rendered as one compact id-list line
-   *  beside the full item ("stub, stub, full recipe"). */
-  knownMembers?: string[];
+  /** Known members of this displayed cluster (recipes the session has
+   *  already seen or deposited), each with its raw similarity — rendered as
+   *  one compact line beside the full item ("stub, stub, full recipe"). */
+  knownMembers?: Array<{ id?: string; similarity?: number }>;
 }
 
 export interface CheckRelatedEvidence {
@@ -90,8 +88,9 @@ export interface CheckResponseData {
   results?: CheckResultItem[];
   relatedEvidence?: CheckRelatedEvidence[];
   /** Known evidence parents (seam 2): parents whose evidence would have made
-   *  the selection but the session already holds them — bare id list. */
-  relatedEvidenceKnown?: string[];
+   *  the selection but the session already holds them — id + best evidence
+   *  similarity per parent. */
+  relatedEvidenceKnown?: Array<{ recipeId?: string; similarity?: number }>;
   conceptAxes?: { axisA?: string; axisB?: string };
   totalResults?: number;
   page?: number;
@@ -127,17 +126,20 @@ export interface RenderCheckMarkdownOptions {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function similarityLabel(score: CheckResultItem["score"]): string {
-  if (score?.semantic !== null && score?.semantic !== undefined) {
-    return `${Math.round(score.semantic * 100)}% similar`;
-  }
-  if (score?.lexical !== null && score?.lexical !== undefined) {
-    return `${Math.round(score.lexical * 100)}% keyword`;
-  }
-  if (score?.combined !== null && score?.combined !== undefined) {
-    return `score ${score.combined.toFixed(2)}`;
+/** ONE similarity vocabulary (recipe ef245b63): the raw cosine as a
+ *  percentage, or an honest n/a. The lexical/combined fallbacks died with
+ *  the vestigial score slots — nothing has produced them since the
+ *  2026-04-11 pure-semantic simplification. */
+function similarityLabel(similarity: CheckResultItem["similarity"]): string {
+  if (similarity !== null && similarity !== undefined) {
+    return `${Math.round(similarity * 100)}% similar`;
   }
   return "similarity n/a";
+}
+
+/** Compact percentage for known-member / known-parent lines. */
+function pctLabel(similarity: number | undefined): string {
+  return similarity !== undefined ? ` ${Math.round(similarity * 100)}%` : "";
 }
 
 function dateLabel(createdAt: CheckResultItem["createdAt"]): string {
@@ -174,7 +176,7 @@ function renderReference(ref: CheckResultReference): string {
 }
 
 function renderResultItem(r: CheckResultItem, index: number, known: boolean): string {
-  const head = `#${index + 1} (${similarityLabel(r.score)}) ${r.id ?? "?"}`;
+  const head = `#${index + 1} (${similarityLabel(r.similarity)}) ${r.id ?? "?"}`;
 
   if (known) {
     // One-line id-only stub: the caller already holds this recipe, so the
@@ -191,8 +193,10 @@ function renderResultItem(r: CheckResultItem, index: number, known: boolean): st
   if (r.group?.name) text += ` [${r.group.name}]`;
   if (r.knownMembers && r.knownMembers.length > 0) {
     // Known cluster-mates ("stub, stub, full recipe"): this cluster also
-    // holds recipes the caller has already seen — one compact id line.
-    text += `\n  [cluster also holds ${r.knownMembers.length} you've seen: ${r.knownMembers.join(", ")}]`;
+    // holds recipes the caller has already seen — one compact line of
+    // id + similarity pairs.
+    const members = r.knownMembers.map((m) => `${m.id ?? "?"}${pctLabel(m.similarity)}`).join(", ");
+    text += `\n  [cluster also holds ${r.knownMembers.length} you've seen: ${members}]`;
   }
   text += `\nRecipe: ${r.recipe ?? ""}\n`;
 
@@ -277,8 +281,9 @@ export function renderCheckResponseMarkdown(
     if (relatedKnown.length > 0) {
       // Known parents in ONE line (seam 2, 2026-07-18 reshape) — the session
       // already holds these recipes; their evidence budget went to novel
-      // content instead.
-      text += `  Known evidence parents (already shown): ${relatedKnown.join(", ")}\n`;
+      // content instead. Id + best evidence similarity per parent.
+      const parents = relatedKnown.map((p) => `${p.recipeId ?? "?"}${pctLabel(p.similarity)}`).join(", ");
+      text += `  Known evidence parents (already shown): ${parents}\n`;
     }
     text += `  Fetch any full recipe by id: get_recipes (MCP) or GET /recipes?ids=<id> (same API key).\n`;
   }

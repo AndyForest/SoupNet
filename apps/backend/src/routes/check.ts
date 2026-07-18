@@ -229,7 +229,9 @@ function buildJsonResponse(
           return {
             id: r.id,
             known: true,
-            score: { combined: r.combinedScore, semantic: r.semanticScore },
+            // ONE similarity vocabulary (operator ruling 2026-07-18, recipe
+            // ef245b63): the raw cosine, nothing else.
+            similarity: r.semanticScore,
             ...(r.clusterSize ? { clusterSize: r.clusterSize } : {}),
           };
         }
@@ -240,10 +242,7 @@ function buildJsonResponse(
           // Recipe-book id + name only — the description lives in the
           // briefing (operator ruling 2026-07-18: "It's in the briefing").
           ...(r.group ? { group: { id: r.group.id, name: r.group.name } } : {}),
-          score: {
-            combined: r.combinedScore,
-            semantic: r.semanticScore,
-          },
+          similarity: r.semanticScore,
           evidence: r.evidence.map((e) => ({
             interpretation: e.content,
             references: e.references.map((ref) => ({
@@ -263,10 +262,10 @@ function buildJsonResponse(
           item["clusterSize"] = r.clusterSize;
         }
         // Known cluster-mates (seam 2, "stub, stub, full recipe" — operator
-        // design 2026-07-18): ids of this cluster's members the session
-        // already holds, visible as an id list beside the full exemplar.
-        if (r.knownClusterMemberIds && r.knownClusterMemberIds.length > 0) {
-          item["knownMembers"] = r.knownClusterMemberIds;
+        // design 2026-07-18): this cluster's members the session already
+        // holds, each with its raw similarity, beside the full exemplar.
+        if (r.knownClusterMembers && r.knownClusterMembers.length > 0) {
+          item["knownMembers"] = r.knownClusterMembers;
         }
         return item;
       }),
@@ -316,10 +315,11 @@ function buildJsonResponse(
       "Each entry carries the source recipe's UUID as recipeId — fetch the full recipe with GET /recipes?ids=<recipeId> (same API key) instead of re-checking.";
   }
   // Known evidence parents (seam 2): parents whose evidence would have made
-  // the selection but the session already holds them — one bare id list.
-  if (result.relatedEvidenceKnownIds && result.relatedEvidenceKnownIds.length > 0) {
+  // the selection but the session already holds them — id + best evidence
+  // similarity per parent (ONE similarity vocabulary, recipe ef245b63).
+  if (result.relatedEvidenceKnown && result.relatedEvidenceKnown.length > 0) {
     (response["data"] as Record<string, unknown>)["relatedEvidenceKnown"] =
-      result.relatedEvidenceKnownIds;
+      result.relatedEvidenceKnown;
   }
 
   // Concept-axis positions (TCAV-style projection)
@@ -574,12 +574,12 @@ function renderPage(
     const knownIdsForHtml = parseKnownRecipes(params.knownRecipes);
     const resultItems = enriched
       .map((r) => {
-        let scoreDetail: string;
-        if (r.semanticScore !== null && r.semanticScore !== undefined) {
-          scoreDetail = `${Math.round(r.semanticScore * 100)}% similar`;
-        } else {
-          scoreDetail = `Score: ${r.combinedScore.toFixed(4)}`;
-        }
+        // ONE similarity vocabulary (recipe ef245b63): the raw cosine as a
+        // percentage, or an honest n/a — no combined/lexical fallbacks.
+        const scoreDetail =
+          r.semanticScore !== null && r.semanticScore !== undefined
+            ? `${Math.round(r.semanticScore * 100)}% similar`
+            : "similarity n/a";
 
         // Known-set stub — one line: id + similarity, no recipe text (id-only
         // ruling; the caller already holds the body). Rendering only; the
@@ -630,8 +630,8 @@ function renderPage(
         // Known cluster-mates (seam 2, "stub, stub, full recipe"): members of
         // this cluster the caller already holds, listed as id-stubs beside
         // the full exemplar.
-        const knownMembersHtml = r.knownClusterMemberIds && r.knownClusterMemberIds.length > 0
-          ? `\n      <p><small>Cluster also holds ${r.knownClusterMemberIds.length} you've seen: ${r.knownClusterMemberIds.map((id) => `<code>${esc(id)}</code>`).join(", ")}</small></p>`
+        const knownMembersHtml = r.knownClusterMembers && r.knownClusterMembers.length > 0
+          ? `\n      <p><small>Cluster also holds ${r.knownClusterMembers.length} you've seen: ${r.knownClusterMembers.map((m) => `<code>${esc(m.id)}</code> ${Math.round(m.similarity * 100)}%`).join(", ")}</small></p>`
           : "";
 
         return `
@@ -691,9 +691,9 @@ function renderPage(
     // Known parents render as ONE compact line of ids, not per-row stubs
     // (seam 2, 2026-07-18 reshape).
     if ((result.relatedEvidence && result.relatedEvidence.length > 0)
-      || (result.relatedEvidenceKnownIds && result.relatedEvidenceKnownIds.length > 0)) {
-      const knownParentsHtml = result.relatedEvidenceKnownIds && result.relatedEvidenceKnownIds.length > 0
-        ? `\n    <p><small>Known evidence parents (already shown): ${result.relatedEvidenceKnownIds.map((id) => `<code>${esc(id)}</code>`).join(", ")}</small></p>`
+      || (result.relatedEvidenceKnown && result.relatedEvidenceKnown.length > 0)) {
+      const knownParentsHtml = result.relatedEvidenceKnown && result.relatedEvidenceKnown.length > 0
+        ? `\n    <p><small>Known evidence parents (already shown): ${result.relatedEvidenceKnown.map((p) => `<code>${esc(p.recipeId)}</code> ${Math.round(p.similarity * 100)}%`).join(", ")}</small></p>`
         : "";
       resultsHtml += `
   <section id="related-evidence">

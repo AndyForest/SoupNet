@@ -65,8 +65,10 @@ export interface HybridSearchResult {
   claimText: string;
   /** Display date — COALESCE(decided_at, created_at), the judgment date. */
   createdAt: Date;
+  /** Raw cosine similarity — the ONE score (the vestigial combined/lexical
+   *  slots from the retired hybrid blend were removed 2026-07-18, recipe
+   *  ef245b63; wire surfaces render this as `similarity`). */
   semanticScore: number | null;
-  combinedScore: number;
   /** Per-candidate ranking signals (raw append time, authorship, curation) —
    *  hydrated from the same row load, available to every downstream stage.
    *  See docs/planning/check-recipe-ranking-system.md §3a. */
@@ -348,7 +350,6 @@ export async function hybridSearch(
         claimText: trace?.claimText ?? "",
         createdAt: trace?.createdAt ?? new Date(),
         semanticScore: score,
-        combinedScore: score,
         signals: trace?.signals ?? {
           createdAt: trace?.createdAt ?? new Date(),
           decidedAt: null,

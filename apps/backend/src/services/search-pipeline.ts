@@ -121,9 +121,10 @@ export interface SearchPipelineResult {
   /** All results before clustering (for member ID resolution). Only set when clustered. */
   allResults?: SearchResultItem[] | undefined;
   relatedEvidence?: EvidenceSearchResult[] | undefined;
-  /** Parent recipe ids the session already knows whose evidence would have
-   *  made the selection — a bare id list, the token-lean stub form (seam 2). */
-  relatedEvidenceKnownIds?: string[] | undefined;
+  /** Known parents whose evidence would have made the selection — id plus
+   *  its best evidence similarity (already computed; recipe ef245b63), the
+   *  token-lean stub form (seam 2). */
+  relatedEvidenceKnown?: Array<{ recipeId: string; similarity: number }> | undefined;
   clusters?: ClusterAssignment[] | undefined;
   totalResults: number;
   searchMode: "semantic" | "corpus";
@@ -316,7 +317,7 @@ export async function runSearchPipeline(
       id: r.id,
       claimText: r.claimText,
       createdAt: r.createdAt,
-      rank: r.semanticScore ?? r.combinedScore,
+      rank: r.semanticScore ?? 0,
       semanticScore: r.semanticScore ?? undefined,
       signals: r.signals,
     });
@@ -421,14 +422,17 @@ export async function runSearchPipeline(
         const exemplar = clusterInput[exemplarInputIdx]!;
         const knownMembers = params.knownIds
           ? c.memberIndices
-            .map((mi) => clusterInput[mi]!.id)
-            .filter((id) => params.knownIds!.has(id))
+            .map((mi) => clusterInput[mi]!)
+            .filter((m) => params.knownIds!.has(m.id))
+            // Similarity rides along free — already computed at retrieval
+            // (recipe ef245b63: the id is actionable only with its score).
+            .map((m) => ({ id: m.id, similarity: m.rank }))
           : [];
         if (!params.knownIds?.has(exemplar.id)) {
           return {
             ...exemplar,
             clusterSize: c.memberCount,
-            ...(knownMembers.length > 0 ? { knownClusterMemberIds: knownMembers } : {}),
+            ...(knownMembers.length > 0 ? { knownClusterMembers: knownMembers } : {}),
           };
         }
         const centroid = rawClusters[ci]!.centroid;
@@ -451,18 +455,17 @@ export async function runSearchPipeline(
           return {
             ...promoted,
             clusterSize: c.memberCount,
-            knownClusterMemberIds: knownMembers,
+            knownClusterMembers: knownMembers,
           };
         }
         // Every member is known — the exemplar renders as a stub; its known
         // siblings ride the same list (minus the stub's own id).
+        const siblings = knownMembers.filter((m) => m.id !== exemplar.id);
         return {
           ...exemplar,
           clusterSize: c.memberCount,
           known: true,
-          ...(knownMembers.filter((id) => id !== exemplar.id).length > 0
-            ? { knownClusterMemberIds: knownMembers.filter((id) => id !== exemplar.id) }
-            : {}),
+          ...(siblings.length > 0 ? { knownClusterMembers: siblings } : {}),
         };
       });
       clustered = true;
@@ -483,7 +486,7 @@ export async function runSearchPipeline(
 
   // ── Evidence discovery (query mode only) ─────────────────────────────────
   let relatedEvidence: EvidenceSearchResult[] | undefined;
-  let relatedEvidenceKnownIds: string[] | undefined;
+  let relatedEvidenceKnown: Array<{ recipeId: string; similarity: number }> | undefined;
   if (params.query) {
     try {
       const evidenceParams: Parameters<typeof evidenceSearch>[1] = {
@@ -518,11 +521,15 @@ export async function runSearchPipeline(
           const legacyPick = selectDiverseEvidence(evidenceCandidates, cappedTarget);
           const novel = evidenceCandidates.filter((e) => !known.has(e.parentTraceId));
           relatedEvidence = selectDiverseEvidence(novel, cappedTarget);
-          relatedEvidenceKnownIds = [...new Set(
-            legacyPick
-              .filter((e) => known.has(e.parentTraceId))
-              .map((e) => e.parentTraceId),
-          )];
+          // Dedup by parent keeping the first (score-ordered ⇒ best)
+          // occurrence — similarity rides free (recipe ef245b63).
+          const seenParents = new Set<string>();
+          relatedEvidenceKnown = [];
+          for (const e of legacyPick) {
+            if (!known.has(e.parentTraceId) || seenParents.has(e.parentTraceId)) continue;
+            seenParents.add(e.parentTraceId);
+            relatedEvidenceKnown.push({ recipeId: e.parentTraceId, similarity: e.semanticScore });
+          }
         } else {
           relatedEvidence = selectDiverseEvidence(evidenceCandidates, cappedTarget);
         }
@@ -587,7 +594,7 @@ export async function runSearchPipeline(
     results,
     allResults: preClusterResults,
     relatedEvidence,
-    relatedEvidenceKnownIds,
+    relatedEvidenceKnown,
     clusters: clusterAssignments,
     totalResults,
     searchMode,

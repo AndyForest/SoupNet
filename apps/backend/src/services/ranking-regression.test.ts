@@ -309,15 +309,15 @@ interface CheckJson {
       known?: boolean;
       recipe?: string;
       createdAt?: string;
-      score: { semantic: number | null };
-      knownMembers?: string[];
+      similarity: number | null;
+      knownMembers?: Array<{ id: string; similarity: number }>;
     }>;
     relatedEvidence?: Array<{
       recipeId: string;
       parentRecipe?: string;
       evidence?: string;
     }>;
-    relatedEvidenceKnown?: string[];
+    relatedEvidenceKnown?: Array<{ recipeId: string; similarity: number }>;
   };
 }
 
@@ -392,7 +392,7 @@ describe.skipIf(!BASE)("ranking regression — pure-function ranking + session r
 
     expect(resB.results.map((r) => r.id)).toEqual(resA.results.map((r) => r.id));
     resB.results.forEach((r, i) => {
-      expect(r.score.semantic).toBeCloseTo(resA.results[i]!.score.semantic!, 6);
+      expect(r.similarity).toBeCloseTo(resA.results[i]!.similarity!, 6);
     });
   });
 
@@ -405,7 +405,7 @@ describe.skipIf(!BASE)("ranking regression — pure-function ranking + session r
 
     expect(freshSession.results.map((r) => r.id)).toEqual(withSession.results.map((r) => r.id));
     freshSession.results.forEach((r, i) => {
-      expect(r.score.semantic).toBeCloseTo(withSession.results[i]!.score.semantic!, 6);
+      expect(r.similarity).toBeCloseTo(withSession.results[i]!.similarity!, 6);
     });
 
     // SESS_A's deposits are flagged known ONLY under SESS_A — at their true,
@@ -499,8 +499,19 @@ describe.skipIf(!BASE)("ranking regression — known-set cluster rendering (seam
     // to vanish).
     const promoted = res.results.find((r) => r.id === n)!;
     expect(promoted).toBeDefined();
-    expect([...(promoted.knownClusterMemberIds ?? [])].sort()).toEqual([a1, a2].sort());
-    expect(promoted.knownClusterMemberIds).toContain(exemplarA.id);
+    const members = promoted.knownClusterMembers ?? [];
+    expect(members.map((m) => m.id).sort()).toEqual([a1, a2].sort());
+    expect(members.map((m) => m.id)).toContain(exemplarA.id);
+    // Member similarities ride free from retrieval (recipe ef245b63): each
+    // is the member's own raw cosine, present and in [0, 1].
+    for (const m of members) {
+      expect(m.similarity).toBeGreaterThan(0);
+      expect(m.similarity).toBeLessThanOrEqual(1);
+    }
+    // The seeds' exact cosines: a1 = 0.9, a2 = 0.895 (fp16 storage).
+    const simOf = new Map(members.map((m) => [m.id, m.similarity]));
+    expect(simOf.get(a1)).toBeCloseTo(0.9, 2);
+    expect(simOf.get(a2)).toBeCloseTo(0.895, 2);
     expect(promoted.known).toBeUndefined();
     expect(promoted.clusterSize).toBe(3);
 
@@ -512,7 +523,7 @@ describe.skipIf(!BASE)("ranking regression — known-set cluster rendering (seam
     expect(stubbed.known).toBe(true);
     expect(stubbed.clusterSize).toBe(2);
     const siblingB = exemplarB.id === b1 ? b2 : b1;
-    expect(stubbed.knownClusterMemberIds).toEqual([siblingB]);
+    expect((stubbed.knownClusterMembers ?? []).map((m) => m.id)).toEqual([siblingB]);
 
     // Ranking/membership invariants: the flat list and the cluster geometry
     // are IDENTICAL with and without the known-set — rendering only.
@@ -781,9 +792,13 @@ describe.skipIf(!BASE)("ranking regression — seen accumulation across checks (
     expect(evA).toBeDefined();
     expect(evA!.parentRecipe).toBeTruthy();
     // In B the parent is known: it never appears as a relatedEvidence row —
-    // its id rides the bare relatedEvidenceKnown list instead.
+    // it rides relatedEvidenceKnown as {recipeId, similarity} instead
+    // (recipe ef245b63: id + best evidence similarity, in [0, 1]).
     expect(resB.relatedEvidence?.some((e) => e.recipeId === ids[0])).toBeFalsy();
-    expect(resB.relatedEvidenceKnown).toContain(ids[0]);
+    const knownParent = resB.relatedEvidenceKnown?.find((p) => p.recipeId === ids[0]);
+    expect(knownParent).toBeDefined();
+    expect(knownParent!.similarity).toBeGreaterThan(0);
+    expect(knownParent!.similarity).toBeLessThanOrEqual(1);
   });
 
   it("stub rows are trimmed: no createdAt, no recipe text (operator ruling 2026-07-18)", () => {
@@ -840,11 +855,11 @@ describe.skipIf(!BASE)("ranking regression — seen accumulation across checks (
     expect(idsB.slice(0, idsA.length)).toEqual(idsA);
     expect(idsC).toEqual(idsA);
     // Per-id displayed scores identical across arms (stub or full).
-    const scoreA = new Map(resA.results.map((r) => [r.id, r.score.semantic]));
+    const scoreA = new Map(resA.results.map((r) => [r.id, r.similarity]));
     for (const r of [...resB.results, ...resC.results]) {
       const a = scoreA.get(r.id);
-      if (a !== null && a !== undefined && r.score.semantic !== null) {
-        expect(r.score.semantic).toBeCloseTo(a, 6);
+      if (a !== null && a !== undefined && r.similarity !== null) {
+        expect(r.similarity).toBeCloseTo(a, 6);
       }
     }
   });

@@ -1039,11 +1039,12 @@ export function buildMcpJsonResponse(
       // hint — there's no claim text to include. clusterSize stays so the
       // cluster slot remains visible.
       if (knownRecipeIds?.has(r.id) || r.known) {
-        // Trimmed stub row (operator ruling 2026-07-18): no createdAt.
+        // Trimmed stub row (operator ruling 2026-07-18): no createdAt; ONE
+        // similarity vocabulary (recipe ef245b63) — the raw cosine only.
         return {
           id: r.id,
           known: true,
-          score: { combined: r.combinedScore, semantic: r.semanticScore },
+          similarity: r.semanticScore,
           ...(r.clusterSize ? { clusterSize: r.clusterSize } : {}),
         };
       }
@@ -1054,10 +1055,7 @@ export function buildMcpJsonResponse(
         // Recipe-book id + name only — the description lives in the briefing
         // (operator ruling 2026-07-18).
         ...(r.group ? { group: { id: r.group.id, name: r.group.name } } : {}),
-        score: {
-          combined: r.combinedScore,
-          semantic: r.semanticScore,
-        },
+        similarity: r.semanticScore,
         evidence: r.evidence.map((e) => ({
           interpretation: e.content,
           ...(e.clusterSize ? { clusterSize: e.clusterSize } : {}),
@@ -1086,10 +1084,10 @@ export function buildMcpJsonResponse(
         };
       }
       // Known cluster-mates (seam 2, "stub, stub, full recipe" — operator
-      // design 2026-07-18): ids of this cluster's members the session already
-      // holds, visible as an id list beside the full exemplar.
-      if (r.knownClusterMemberIds && r.knownClusterMemberIds.length > 0) {
-        item["knownMembers"] = r.knownClusterMemberIds;
+      // design 2026-07-18): this cluster's members the session already holds,
+      // each with its raw similarity, beside the full exemplar.
+      if (r.knownClusterMembers && r.knownClusterMembers.length > 0) {
+        item["knownMembers"] = r.knownClusterMembers;
       }
       return item;
     }),
@@ -1134,9 +1132,10 @@ export function buildMcpJsonResponse(
       "Each entry carries the source recipe's UUID as recipeId — fetch the full recipe with the get_recipes tool instead of re-checking.";
   }
   // Known evidence parents (seam 2): parents whose evidence would have made
-  // the selection but the session already holds them — one bare id list.
-  if (result.relatedEvidenceKnownIds && result.relatedEvidenceKnownIds.length > 0) {
-    data["relatedEvidenceKnown"] = result.relatedEvidenceKnownIds;
+  // the selection but the session already holds them — id + best evidence
+  // similarity per parent (ONE similarity vocabulary, recipe ef245b63).
+  if (result.relatedEvidenceKnown && result.relatedEvidenceKnown.length > 0) {
+    data["relatedEvidenceKnown"] = result.relatedEvidenceKnown;
   }
 
   // Concept axes (semantic projection)

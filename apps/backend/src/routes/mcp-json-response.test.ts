@@ -30,7 +30,6 @@ function makeEnriched(id: string, clusterSize?: number): EnrichedResult {
     id,
     claimText: `Recipe ${id}`,
     createdAt: "2026-07-01T00:00:00Z",
-    combinedScore: 0.8,
     semanticScore: 0.8,
     ...(clusterSize !== undefined ? { clusterSize } : {}),
     evidence: [],
@@ -114,7 +113,9 @@ describe("buildMcpJsonResponse actions hints", () => {
     expect(stub["clusterSize"]).toBe(4); // stub keeps its cluster slot
     expect(stub["evidence"]).toBeUndefined();
     expect(stub["drillDown"]).toBeUndefined();
-    expect((stub["score"] as Record<string, unknown>)["semantic"]).toBe(0.8);
+    // ONE similarity vocabulary (recipe ef245b63): a single raw-cosine field.
+    expect(stub["similarity"]).toBe(0.8);
+    expect(stub["score"]).toBeUndefined();
 
     const fresh = results[1]!;
     expect(fresh["known"]).toBeUndefined();
@@ -134,15 +135,23 @@ describe("buildMcpJsonResponse actions hints", () => {
     expect(stub["drillDown"]).toBeUndefined();
   });
 
-  it("full items list their cluster's known members as knownMembers (bare id list)", () => {
+  it("full items list their cluster's known members as knownMembers ({id, similarity} pairs)", () => {
     const enriched = makeEnriched("promoted-1", 5);
-    enriched.knownClusterMemberIds = ["known-a", "known-b"];
+    enriched.knownClusterMembers = [
+      { id: "known-a", similarity: 0.94 },
+      { id: "known-b", similarity: 0.87 },
+    ];
     const response = buildMcpJsonResponse(makeResult(), [enriched], 1);
     const results = (response["data"] as Record<string, unknown>)["results"] as Array<Record<string, unknown>>;
     const item = results[0]!;
     expect(item["recipe"]).toBe("Recipe promoted-1"); // full item, not a stub
-    expect(item["knownMembers"]).toEqual(["known-a", "known-b"]);
+    expect(item["knownMembers"]).toEqual([
+      { id: "known-a", similarity: 0.94 },
+      { id: "known-b", similarity: 0.87 },
+    ]);
     expect(item["knownStubs"]).toBeUndefined(); // retired per-row stub objects (2026-07-18)
+    expect(item["score"]).toBeUndefined(); // retired score object (recipe ef245b63)
+    expect(item["similarity"]).toBe(0.8);
   });
 
   it("stub rows are trimmed: no createdAt (operator ruling 2026-07-18)", () => {
@@ -165,7 +174,10 @@ describe("buildMcpJsonResponse actions hints", () => {
           evidenceContent: "Evidence body",
           semanticScore: 0.7,
         }],
-        relatedEvidenceKnownIds: ["seen-parent-1", "seen-parent-2"],
+        relatedEvidenceKnown: [
+          { recipeId: "seen-parent-1", similarity: 0.79 },
+          { recipeId: "seen-parent-2", similarity: 0.66 },
+        ],
       }),
       [enriched],
       1,
@@ -180,7 +192,10 @@ describe("buildMcpJsonResponse actions hints", () => {
       evidence: "Evidence body",
       similarity: 0.7,
     });
-    expect(data["relatedEvidenceKnown"]).toEqual(["seen-parent-1", "seen-parent-2"]);
+    expect(data["relatedEvidenceKnown"]).toEqual([
+      { recipeId: "seen-parent-1", similarity: 0.79 },
+      { recipeId: "seen-parent-2", similarity: 0.66 },
+    ]);
   });
 
   it("echoes the session token as data.sessionId when the service resolved one", () => {

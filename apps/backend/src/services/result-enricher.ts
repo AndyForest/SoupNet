@@ -63,7 +63,6 @@ export interface EnrichedResult {
   id: string;
   claimText: string;
   createdAt: string;
-  combinedScore: number;
   semanticScore: number | null;
   clusterSize?: number | undefined;
   group?: EnrichedGroup | undefined;
@@ -72,10 +71,11 @@ export interface EnrichedResult {
    *  the caller's session already holds this recipe — response builders
    *  render an id-only stub at its true rank. */
   known?: boolean | undefined;
-  /** Known member ids of this displayed cluster (recipes the session has
-   *  already seen or deposited) — builders render them as an id list beside
-   *  the item ("stub, stub, full recipe": known cluster-mates stay visible). */
-  knownClusterMemberIds?: string[] | undefined;
+  /** Known members of this displayed cluster (recipes the session has
+   *  already seen or deposited), each with its raw similarity — builders
+   *  render them as an id+percentage list beside the item ("stub, stub,
+   *  full recipe": known cluster-mates stay visible). */
+  knownClusterMembers?: Array<{ id: string; similarity: number }> | undefined;
 }
 
 // ── Main function ────────────────────────────────────────────────────────────
@@ -187,13 +187,12 @@ export async function enrichResults(
     id: r.id,
     claimText: r.claimText,
     createdAt: r.createdAt.toISOString(),
-    combinedScore: r.rank,
     semanticScore: r.semanticScore ?? null,
     clusterSize: r.clusterSize,
     group: traceGroupMap.get(r.id),
     evidence: traceEvidenceMap.get(r.id) ?? [],
     known: r.known,
-    knownClusterMemberIds: r.knownClusterMemberIds,
+    knownClusterMembers: r.knownClusterMembers,
   }));
 }
 

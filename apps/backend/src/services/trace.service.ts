@@ -134,11 +134,11 @@ export interface SearchResultItem {
   /** Known-set rendering flag (seam 2): the caller already holds this recipe
    *  — render an id-only stub at its true rank. */
   known?: boolean | undefined;
-  /** Known member ids of this displayed cluster (recipes the session has
-   *  already seen or deposited) — rendered as an id-stub list beside the
-   *  item, so the caller sees "you know these cluster-mates" while the full
-   *  text goes to novel content ("stub, stub, full recipe"). */
-  knownClusterMemberIds?: string[] | undefined;
+  /** Known members of this displayed cluster (recipes the session has
+   *  already seen or deposited), each with its raw similarity to the current
+   *  check (already computed at retrieval — recipe ef245b63) — rendered as
+   *  an id+similarity stub list beside the item ("stub, stub, full recipe"). */
+  knownClusterMembers?: Array<{ id: string; similarity: number }> | undefined;
 }
 
 /** Which ranking served this response — version + effective levers.
@@ -168,9 +168,9 @@ export interface SubmitAndSearchResult {
   results: SearchResultItem[];
   /** Evidence from other recipes that's topically related to the checked recipe */
   relatedEvidence?: EvidenceSearchResult[] | undefined;
-  /** Known parent ids whose evidence would have made the selection — bare id
-   *  list, the token-lean stub form (seam 2). */
-  relatedEvidenceKnownIds?: string[] | undefined;
+  /** Known parents whose evidence would have made the selection — id plus
+   *  best evidence similarity, the token-lean stub form (seam 2). */
+  relatedEvidenceKnown?: Array<{ recipeId: string; similarity: number }> | undefined;
   totalResults: number;
   currentPage: number;
   totalPages: number;
@@ -724,7 +724,7 @@ export async function submitAndSearch(
     formatWarning,
     results: pipelineResult.results,
     relatedEvidence: pipelineResult.relatedEvidence,
-    relatedEvidenceKnownIds: pipelineResult.relatedEvidenceKnownIds,
+    relatedEvidenceKnown: pipelineResult.relatedEvidenceKnown,
     totalResults: pipelineResult.totalResults,
     currentPage: pipelineResult.page,
     totalPages: pipelineResult.totalPages,
@@ -848,7 +848,7 @@ export async function searchWithoutLogging(
     // rendering off this absence.
     results: pipelineResult.results,
     relatedEvidence: pipelineResult.relatedEvidence,
-    relatedEvidenceKnownIds: pipelineResult.relatedEvidenceKnownIds,
+    relatedEvidenceKnown: pipelineResult.relatedEvidenceKnown,
     totalResults: pipelineResult.totalResults,
     currentPage: pipelineResult.page,
     totalPages: pipelineResult.totalPages,

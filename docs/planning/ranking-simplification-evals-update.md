@@ -29,6 +29,16 @@ The operator has assigned the public benchmark narrative to your side: *"I feel 
 - **The live hypothesis register** ([ranking-engine.md §5](../architecture/ranking-engine.md)): P6 (relevance-bounded pool — the current sweep: `page` vs `fixed` vs `score-gap`), P2–P5 (clustering quality), R1–R5 (embedding strategies — six `exp_*` variants embed the whole corpus and have never been scored), S4–S6 (decay from the judgment date, reinforcement, stance), M1–M2 (metric validity, noise floor).
 - **The harness**: `npm run eval:ranking`, now measuring relevance (NDCG/recall), diversity (aspect coverage), stability (τ guardrails), **sibling visibility** (other-session same-key deposits must render fully — the fleet-communication contract test), and **token efficiency** (stub savings). Response self-description: `data.ranking.version` + `data.sessionId`; audit rows carry `rankingVersion` + `sessionId` for joins.
 
+## Appendix (2026-07-18) — wire-format changes since you read v1
+
+You've read the version above; this appendix carries only what changed after. Operator design reviews on 2026-07-18 reshaped the check response payload (recipes `bf43fa57`, `f3c0fe2f`, `ef245b63`) — if your harness parses check responses, these are the breaks:
+
+- **One similarity vocabulary.** Every result item (full and stub) now carries a single `similarity: <raw cosine>` — the `score: {combined, semantic}` object is gone (`combined` was a vestigial copy from the retired 2026-04-11 hybrid blend; nothing ever diverged them). Evidence entries already used `similarity` and are unchanged in that respect.
+- **Known-set lists carry scores.** `knownMembers` on a displayed cluster is now `[{id, similarity}]` (each known cluster-mate with its similarity to the current check — computed at retrieval, zero added cost), and known evidence parents are `relatedEvidenceKnown: [{recipeId, similarity}]` (best evidence similarity per parent). The prior per-row evidence stub objects are gone.
+- **Cluster-visible known members.** Known recipes that are cluster *members* (not exemplars) are no longer invisible inside `clusterSize` — they appear in `knownMembers`. If you count "recipes surfaced," decide whether known members count (they are ids+scores, not text).
+- **Payload slimming**: result `group` objects are `{id, name}` only (descriptions live in the briefing / `list_my_recipe_books`); evidence entries are `{recipeId, parentRecipe, evidence, similarity}` (`evidenceId` and the constant `strategy` field removed); stub rows have no `createdAt`; the evidence section is capped at max(3, displayed-result count) entries — the 20-entries-vs-1-result disproportion is gone.
+- **Measurement note for your stub-blind/delivered-payload split** (recipe `74e925ec`): the stub-blind ranking variant is unaffected (ranking untouched); the delivered-payload variant gains signal — known members' similarities are now part of the delivered payload, so "information delivered per token" can count them as compressed content rather than loss.
+
 ## What would help most, in order
 
 1. **Real-scale golden material for the P6 pool sweep** — the committed 45-trace synthetic cannot answer diversity questions (measured: a 100-pool degenerates to whole-corpus there); your pollution-replay corpora at real scale can, relabeled per above.

@@ -22,7 +22,7 @@ function baseResponse(): CheckResponseJson {
           recipe: "As a developer working on an API, I chose Hono so that edge deployment stays possible.",
           createdAt: "2026-04-03T12:34:56.000Z",
           group: { id: "g1", name: "SoupNet" },
-          score: { combined: 0.9, semantic: 0.87 },
+          similarity: 0.87,
           clusterSize: 12,
           evidence: [
             {
@@ -38,7 +38,7 @@ function baseResponse(): CheckResponseJson {
           id: UUID_B,
           recipe: "As a designer, I prefer warm palettes so that pages feel human.",
           createdAt: "2026-05-10T08:00:00.000Z",
-          score: { combined: 0.5, semantic: null, lexical: 0.42 },
+          similarity: null,
           evidence: [],
         },
       ],
@@ -68,7 +68,9 @@ describe("renderCheckResponseMarkdown", () => {
     const lineB = lines.find((l) => l.startsWith("#2 "));
     // Single line: rank, similarity, full UUID, timestamp, cluster size, book — together.
     expect(lineA).toBe(`#1 (87% similar) ${UUID_A} -- 2026-04-03T12:34Z (represents 12 similar recipes) [SoupNet]`);
-    expect(lineB).toBe(`#2 (42% keyword) ${UUID_B} -- 2026-05-10T08:00Z`);
+    // ONE similarity vocabulary (recipe ef245b63): no lexical/combined
+    // fallbacks — a missing similarity is an honest n/a.
+    expect(lineB).toBe(`#2 (similarity n/a) ${UUID_B} -- 2026-05-10T08:00Z`);
   });
 
   it("renders timestamps as explicit UTC, never a bare date slice (2026-07-05: a minutes-old check read as tomorrow)", () => {
@@ -156,23 +158,26 @@ describe("renderCheckResponseMarkdown", () => {
     expect(text).toContain("Fetch any full recipe by id: get_recipes (MCP) or GET /recipes?ids=<id>");
   });
 
-  it("renders known evidence parents as ONE compact id line (seam 2, 2026-07-18 reshape)", () => {
+  it("renders known evidence parents as ONE compact line of id + similarity pairs (seam 2, 2026-07-18 reshape)", () => {
     const res = baseResponse();
     res.data!.relatedEvidence = [
       { recipeId: "novel-id", parentRecipe: "As a dev, I chose Y.", evidence: "Novel interpretation", similarity: 0.7 },
     ];
-    res.data!.relatedEvidenceKnown = [UUID_B, "seen-2"];
+    res.data!.relatedEvidenceKnown = [
+      { recipeId: UUID_B, similarity: 0.79 },
+      { recipeId: "seen-2", similarity: 0.655 },
+    ];
     const text = renderCheckResponseMarkdown(res);
-    expect(text).toContain(`  Known evidence parents (already shown): ${UUID_B}, seen-2`);
+    expect(text).toContain(`  Known evidence parents (already shown): ${UUID_B} 79%, seen-2 66%`);
     expect(text).toContain("  - Novel interpretation (70% similar)");
   });
 
   it("renders the known-parents line even when every candidate parent was known (no novel entries)", () => {
     const res = baseResponse();
-    res.data!.relatedEvidenceKnown = [UUID_B];
+    res.data!.relatedEvidenceKnown = [{ recipeId: UUID_B, similarity: 0.8 }];
     const text = renderCheckResponseMarkdown(res);
     expect(text).toContain("Related evidence from other recipes:");
-    expect(text).toContain(`  Known evidence parents (already shown): ${UUID_B}`);
+    expect(text).toContain(`  Known evidence parents (already shown): ${UUID_B} 80%`);
   });
 
   it("renders search-only responses with a no-logging header instead of a recipeId", () => {
@@ -202,14 +207,14 @@ describe("renderCheckResponseMarkdown", () => {
     expect(text).toContain("    [region x 10%–50%, y 20%–90%]");
   });
 
-  it("falls back through semantic → lexical → combined → n/a for the similarity label", () => {
+  it("renders an honest n/a when similarity is absent — no lexical/combined fallbacks (recipe ef245b63)", () => {
     const res = baseResponse();
     res.data!.results = [
-      { id: UUID_A, recipe: "r", createdAt: "2026-01-01T00:00:00Z", score: { combined: 0.1234, semantic: null, lexical: null } },
+      { id: UUID_A, recipe: "r", createdAt: "2026-01-01T00:00:00Z", similarity: null },
       { id: UUID_B, recipe: "r2", createdAt: "2026-01-02T00:00:00Z" },
     ];
     const text = renderCheckResponseMarkdown(res);
-    expect(text).toContain(`#1 (score 0.12) ${UUID_A}`);
+    expect(text).toContain(`#1 (similarity n/a) ${UUID_A}`);
     expect(text).toContain(`#2 (similarity n/a) ${UUID_B}`);
   });
 
@@ -304,11 +309,14 @@ describe("renderCheckResponseMarkdown", () => {
       expect(text).not.toContain("Recipe: As a designer, I prefer warm palettes");
     });
 
-    it("renders knownMembers on a full item as one compact cluster-mates line", () => {
+    it("renders knownMembers on a full item as one compact cluster-mates line with percentages", () => {
       const res = baseResponse();
-      res.data!.results![0]!.knownMembers = [UUID_B, "seen-2"];
+      res.data!.results![0]!.knownMembers = [
+        { id: UUID_B, similarity: 0.94 },
+        { id: "seen-2", similarity: 0.87 },
+      ];
       const text = renderCheckResponseMarkdown(res);
-      expect(text).toContain(`  [cluster also holds 2 you've seen: ${UUID_B}, seen-2]`);
+      expect(text).toContain(`  [cluster also holds 2 you've seen: ${UUID_B} 94%, seen-2 87%]`);
       // The item itself still renders in full.
       expect(text).toContain("Recipe: As a developer working on an API");
     });

@@ -21,7 +21,7 @@ interface CheckJson {
       known?: boolean;
       recipe?: string;
       evidence?: unknown[];
-      score: { semantic: number | null };
+      similarity?: number | null;
     }>;
   };
 }
@@ -106,8 +106,8 @@ describe.skipIf(!BASE)("known_recipes dedup (rendering only)", () => {
     // 2026-07-17 — the gist was an ossification risk).
     expect(stub?.recipe).toBeUndefined();
     expect(stub?.evidence).toBeUndefined();
-    // Similarity still present — the stub carries id + gist + similarity.
-    expect(stub?.score).toBeDefined();
+    // Similarity still present — one raw-cosine field (recipe ef245b63).
+    expect(stub?.similarity).toBeDefined();
 
     // Result-set shape unchanged: same ids in both responses (stubs still
     // occupy their slots; clustering unaffected by the param).
