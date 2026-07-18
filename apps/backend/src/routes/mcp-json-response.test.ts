@@ -134,17 +134,53 @@ describe("buildMcpJsonResponse actions hints", () => {
     expect(stub["drillDown"]).toBeUndefined();
   });
 
-  it("promoted items carry knownStubs (id-only markers for the known exemplars they replaced)", () => {
+  it("full items list their cluster's known members as knownMembers (bare id list)", () => {
     const enriched = makeEnriched("promoted-1", 5);
-    enriched.promotedOverKnownIds = ["known-a", "known-b"];
+    enriched.knownClusterMemberIds = ["known-a", "known-b"];
     const response = buildMcpJsonResponse(makeResult(), [enriched], 1);
     const results = (response["data"] as Record<string, unknown>)["results"] as Array<Record<string, unknown>>;
     const item = results[0]!;
     expect(item["recipe"]).toBe("Recipe promoted-1"); // full item, not a stub
-    expect(item["knownStubs"]).toEqual([
-      { id: "known-a", known: true },
-      { id: "known-b", known: true },
-    ]);
+    expect(item["knownMembers"]).toEqual(["known-a", "known-b"]);
+    expect(item["knownStubs"]).toBeUndefined(); // retired per-row stub objects (2026-07-18)
+  });
+
+  it("stub rows are trimmed: no createdAt (operator ruling 2026-07-18)", () => {
+    const enriched = makeEnriched("known-slim", 2);
+    enriched.known = true;
+    const response = buildMcpJsonResponse(makeResult(), [enriched], 1);
+    const results = (response["data"] as Record<string, unknown>)["results"] as Array<Record<string, unknown>>;
+    expect(results[0]!["createdAt"]).toBeUndefined();
+  });
+
+  it("full-item group carries id + name only; evidence entries drop evidenceId/strategy; known parents ride relatedEvidenceKnown", () => {
+    const enriched = makeEnriched("fresh-1");
+    enriched.group = { id: "g1", name: "Book", description: "should not appear" };
+    const response = buildMcpJsonResponse(
+      makeResult({
+        relatedEvidence: [{
+          evidenceId: "ev-1",
+          parentTraceId: "parent-1",
+          parentTraceText: "Parent recipe text",
+          evidenceContent: "Evidence body",
+          semanticScore: 0.7,
+        }],
+        relatedEvidenceKnownIds: ["seen-parent-1", "seen-parent-2"],
+      }),
+      [enriched],
+      1,
+    );
+    const data = response["data"] as Record<string, unknown>;
+    const item = (data["results"] as Array<Record<string, unknown>>)[0]!;
+    expect(item["group"]).toEqual({ id: "g1", name: "Book" });
+    const entry = (data["relatedEvidence"] as Array<Record<string, unknown>>)[0]!;
+    expect(entry).toEqual({
+      recipeId: "parent-1",
+      parentRecipe: "Parent recipe text",
+      evidence: "Evidence body",
+      similarity: 0.7,
+    });
+    expect(data["relatedEvidenceKnown"]).toEqual(["seen-parent-1", "seen-parent-2"]);
   });
 
   it("echoes the session token as data.sessionId when the service resolved one", () => {

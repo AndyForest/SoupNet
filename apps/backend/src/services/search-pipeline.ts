@@ -121,6 +121,9 @@ export interface SearchPipelineResult {
   /** All results before clustering (for member ID resolution). Only set when clustered. */
   allResults?: SearchResultItem[] | undefined;
   relatedEvidence?: EvidenceSearchResult[] | undefined;
+  /** Parent recipe ids the session already knows whose evidence would have
+   *  made the selection — a bare id list, the token-lean stub form (seam 2). */
+  relatedEvidenceKnownIds?: string[] | undefined;
   clusters?: ClusterAssignment[] | undefined;
   totalResults: number;
   searchMode: "semantic" | "corpus";
@@ -406,16 +409,27 @@ export async function runSearchPipeline(
       // endpoint; = the P6 pool when the lever is on).
       preClusterResults = [...clusterInput];
 
-      // Replace results with exemplars (add clusterSize). Known-set budget
-      // backfill (seam 2): when the chosen exemplar is already known to the
-      // caller, display the cluster's next-nearest non-known member instead
-      // and carry the known id as a stub — the display budget is spent on
-      // novel content, nothing is hidden (the stub keeps the id fetchable).
+      // Replace results with exemplars (add clusterSize). Known-set rendering
+      // (seam 2): each displayed cluster LISTS its known member ids — the
+      // caller sees "you've seen these cluster-mates" as stubs beside the
+      // full text ("stub, stub, full recipe" — operator design, 2026-07-18).
+      // A known exemplar yields to the cluster's next-nearest non-known
+      // member; an all-known cluster renders its exemplar as a stub. Display
+      // budget goes to novel content; every known id stays visible.
       results = clusterAssignments.map((c, ci) => {
         const exemplarInputIdx = validIndices[c.exemplarIndex]!;
         const exemplar = clusterInput[exemplarInputIdx]!;
+        const knownMembers = params.knownIds
+          ? c.memberIndices
+            .map((mi) => clusterInput[mi]!.id)
+            .filter((id) => params.knownIds!.has(id))
+          : [];
         if (!params.knownIds?.has(exemplar.id)) {
-          return { ...exemplar, clusterSize: c.memberCount };
+          return {
+            ...exemplar,
+            clusterSize: c.memberCount,
+            ...(knownMembers.length > 0 ? { knownClusterMemberIds: knownMembers } : {}),
+          };
         }
         const centroid = rawClusters[ci]!.centroid;
         let promoted: SearchResultItem | undefined;
@@ -432,14 +446,24 @@ export async function runSearchPipeline(
           }
         }
         if (promoted) {
+          // The passed-over known exemplar is itself a known member — it is
+          // already in knownMembers, so one uniform field carries it.
           return {
             ...promoted,
             clusterSize: c.memberCount,
-            promotedOverKnownIds: [exemplar.id],
+            knownClusterMemberIds: knownMembers,
           };
         }
-        // Every member is known — the exemplar renders as a stub.
-        return { ...exemplar, clusterSize: c.memberCount, known: true };
+        // Every member is known — the exemplar renders as a stub; its known
+        // siblings ride the same list (minus the stub's own id).
+        return {
+          ...exemplar,
+          clusterSize: c.memberCount,
+          known: true,
+          ...(knownMembers.filter((id) => id !== exemplar.id).length > 0
+            ? { knownClusterMemberIds: knownMembers.filter((id) => id !== exemplar.id) }
+            : {}),
+        };
       });
       clustered = true;
     }
@@ -459,6 +483,7 @@ export async function runSearchPipeline(
 
   // ── Evidence discovery (query mode only) ─────────────────────────────────
   let relatedEvidence: EvidenceSearchResult[] | undefined;
+  let relatedEvidenceKnownIds: string[] | undefined;
   if (params.query) {
     try {
       const evidenceParams: Parameters<typeof evidenceSearch>[1] = {
@@ -476,22 +501,30 @@ export async function runSearchPipeline(
           ?? (clustered ? results.length : undefined)
           ?? Math.min(5, evidenceCandidates.length);
 
+        // Proportionality (operator finding 2026-07-18: a filter-narrowed
+        // check with 1 result carried 20 evidence entries): the evidence
+        // budget never exceeds the displayed result count (floor 3, so
+        // narrow checks still get some adjacent context).
+        const displayedFull = results.filter((r) => !r.known).length;
+        const cappedTarget = Math.min(targetCount, Math.max(3, displayedFull));
+
         const known = params.knownIds;
         if (known?.size && evidenceCandidates.some((e) => known.has(e.parentTraceId))) {
           // Known-set stubbing for evidence discovery (seam 2): the full
           // selection is drawn from NOVEL parents — evidence budget goes to
-          // content the session doesn't hold — and any known-parent entry
-          // that would have made the legacy selection is appended as a
-          // flagged stub (id kept, text dropped at render). Nothing hidden.
-          const legacyPick = selectDiverseEvidence(evidenceCandidates, targetCount);
+          // content the session doesn't hold — and known parents that would
+          // have made the legacy selection surface as a bare id list
+          // (relatedEvidenceKnownIds), not per-row stubs. Nothing hidden.
+          const legacyPick = selectDiverseEvidence(evidenceCandidates, cappedTarget);
           const novel = evidenceCandidates.filter((e) => !known.has(e.parentTraceId));
-          const picks = selectDiverseEvidence(novel, targetCount);
-          const displacedKnown = legacyPick
-            .filter((e) => known.has(e.parentTraceId))
-            .map((e) => ({ ...e, known: true }));
-          relatedEvidence = [...picks, ...displacedKnown];
+          relatedEvidence = selectDiverseEvidence(novel, cappedTarget);
+          relatedEvidenceKnownIds = [...new Set(
+            legacyPick
+              .filter((e) => known.has(e.parentTraceId))
+              .map((e) => e.parentTraceId),
+          )];
         } else {
-          relatedEvidence = selectDiverseEvidence(evidenceCandidates, targetCount);
+          relatedEvidence = selectDiverseEvidence(evidenceCandidates, cappedTarget);
         }
       }
     } catch (err) {
@@ -554,6 +587,7 @@ export async function runSearchPipeline(
     results,
     allResults: preClusterResults,
     relatedEvidence,
+    relatedEvidenceKnownIds,
     clusters: clusterAssignments,
     totalResults,
     searchMode,

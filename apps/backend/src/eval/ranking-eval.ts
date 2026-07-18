@@ -285,9 +285,11 @@ async function measureQuestion(
         savedChars += (textOf.get(r.id) ?? r.claimText).length;
       } else {
         shownChars += r.claimText.length;
-        for (const stubId of r.promotedOverKnownIds ?? []) {
-          savedChars += textOf.get(stubId)?.length ?? 0;
-        }
+      }
+      // Known cluster-mates listed beside the item (2026-07-18 reshape) are
+      // savings too — their full text stays out of the payload.
+      for (const stubId of r.knownClusterMemberIds ?? []) {
+        if (stubId !== r.id) savedChars += textOf.get(stubId)?.length ?? 0;
       }
       // Sibling visibility: a relevant result OUTSIDE the known-set must
       // never arrive stubbed (seam 2 — the cross-communication channel).

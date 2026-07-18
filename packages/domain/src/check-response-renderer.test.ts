@@ -137,7 +137,7 @@ describe("renderCheckResponseMarkdown", () => {
   it("renders related evidence and concept axes", () => {
     const res = baseResponse();
     res.data!.relatedEvidence = [
-      { evidenceId: "e1", parentRecipe: "As a dev, I chose X.", evidence: "Interpretation here", similarity: 0.76 },
+      { parentRecipe: "As a dev, I chose X.", evidence: "Interpretation here", similarity: 0.76 },
     ];
     res.data!.conceptAxes = { axisA: "accessibility", axisB: "performance" };
     const text = renderCheckResponseMarkdown(res);
@@ -149,23 +149,30 @@ describe("renderCheckResponseMarkdown", () => {
   it("carries the source recipe UUID on related-evidence entries with a lookup hint (2026-07-05: id-less entries forced re-checks)", () => {
     const res = baseResponse();
     res.data!.relatedEvidence = [
-      { evidenceId: "e1", recipeId: UUID_B, parentRecipe: "As a dev, I chose X.", evidence: "Interpretation here", similarity: 0.76 },
+      { recipeId: UUID_B, parentRecipe: "As a dev, I chose X.", evidence: "Interpretation here", similarity: 0.76 },
     ];
     const text = renderCheckResponseMarkdown(res);
     expect(text).toContain(`    From recipe ${UUID_B}: "As a dev, I chose X."`);
     expect(text).toContain("Fetch any full recipe by id: get_recipes (MCP) or GET /recipes?ids=<id>");
   });
 
-  it("renders known-parent related evidence as an id-only stub (seam 2 — no parent or evidence text)", () => {
+  it("renders known evidence parents as ONE compact id line (seam 2, 2026-07-18 reshape)", () => {
     const res = baseResponse();
     res.data!.relatedEvidence = [
-      { evidenceId: "e1", recipeId: UUID_B, known: true, similarity: 0.77 },
-      { evidenceId: "e2", recipeId: "novel-id", parentRecipe: "As a dev, I chose Y.", evidence: "Novel interpretation", similarity: 0.7 },
+      { recipeId: "novel-id", parentRecipe: "As a dev, I chose Y.", evidence: "Novel interpretation", similarity: 0.7 },
     ];
+    res.data!.relatedEvidenceKnown = [UUID_B, "seen-2"];
     const text = renderCheckResponseMarkdown(res);
-    expect(text).toContain(`  - From recipe ${UUID_B} [known to you] (77% similar)`);
-    expect(text).not.toContain("As a dev, I chose X.");
+    expect(text).toContain(`  Known evidence parents (already shown): ${UUID_B}, seen-2`);
     expect(text).toContain("  - Novel interpretation (70% similar)");
+  });
+
+  it("renders the known-parents line even when every candidate parent was known (no novel entries)", () => {
+    const res = baseResponse();
+    res.data!.relatedEvidenceKnown = [UUID_B];
+    const text = renderCheckResponseMarkdown(res);
+    expect(text).toContain("Related evidence from other recipes:");
+    expect(text).toContain(`  Known evidence parents (already shown): ${UUID_B}`);
   });
 
   it("renders search-only responses with a no-logging header instead of a recipeId", () => {
@@ -297,12 +304,12 @@ describe("renderCheckResponseMarkdown", () => {
       expect(text).not.toContain("Recipe: As a designer, I prefer warm palettes");
     });
 
-    it("renders knownStubs on a promoted full item as an id-only next-in-line marker", () => {
+    it("renders knownMembers on a full item as one compact cluster-mates line", () => {
       const res = baseResponse();
-      res.data!.results![0]!.knownStubs = [{ id: UUID_B, known: true }];
+      res.data!.results![0]!.knownMembers = [UUID_B, "seen-2"];
       const text = renderCheckResponseMarkdown(res);
-      expect(text).toContain(`  [shown in place of ${UUID_B} — known to you; this is the next in line]`);
-      // The promoted item itself still renders in full.
+      expect(text).toContain(`  [cluster also holds 2 you've seen: ${UUID_B}, seen-2]`);
+      // The item itself still renders in full.
       expect(text).toContain("Recipe: As a developer working on an API");
     });
   });

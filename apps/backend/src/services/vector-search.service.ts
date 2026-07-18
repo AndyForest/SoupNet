@@ -389,10 +389,6 @@ export interface EvidenceSearchResult {
   parentTraceText: string;
   evidenceContent: string;
   semanticScore: number;
-  /** Known-set rendering flag (seam 2): the caller's session already holds
-   *  the parent recipe — render an id-stub (no parent/evidence text). Set by
-   *  the pipeline's evidence-discovery stage, never by the search itself. */
-  known?: boolean | undefined;
 }
 
 export async function evidenceSearch(

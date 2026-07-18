@@ -221,14 +221,14 @@ function buildJsonResponse(
         // Known-set stub (rendering only — logging and cluster math are
         // untouched upstream; the stub keeps its cluster slot at its true
         // rank). Triggered by client-declared known_recipes ids or the
-        // pipeline's session-known flag. Id-only shape — no recipe gist
-        // (operator ruling: the gist is an ossification risk; fetch the full
-        // recipe via GET /recipes or get_recipes when needed).
+        // pipeline's session-known flag. Trimmed id-only shape — no recipe
+        // gist (operator ruling: the gist is an ossification risk), no
+        // createdAt (operator ruling 2026-07-18: trim stub rows). Fetch the
+        // full recipe via GET /recipes or get_recipes when needed.
         if (knownRecipeIds?.has(r.id) || r.known) {
           return {
             id: r.id,
             known: true,
-            createdAt: r.createdAt,
             score: { combined: r.combinedScore, semantic: r.semanticScore },
             ...(r.clusterSize ? { clusterSize: r.clusterSize } : {}),
           };
@@ -237,7 +237,9 @@ function buildJsonResponse(
           id: r.id,
           recipe: r.claimText,
           createdAt: r.createdAt,
-          ...(r.group ? { group: { id: r.group.id, name: r.group.name, description: r.group.description } } : {}),
+          // Recipe-book id + name only — the description lives in the
+          // briefing (operator ruling 2026-07-18: "It's in the briefing").
+          ...(r.group ? { group: { id: r.group.id, name: r.group.name } } : {}),
           score: {
             combined: r.combinedScore,
             semantic: r.semanticScore,
@@ -260,11 +262,11 @@ function buildJsonResponse(
         if (r.clusterSize) {
           item["clusterSize"] = r.clusterSize;
         }
-        // Budget backfill marker (seam 2): this item was promoted for display
-        // over known cluster exemplar(s) — "you already know these; this is
-        // the next in line". Id-only stubs, same shape as known results.
-        if (r.promotedOverKnownIds && r.promotedOverKnownIds.length > 0) {
-          item["knownStubs"] = r.promotedOverKnownIds.map((id) => ({ id, known: true }));
+        // Known cluster-mates (seam 2, "stub, stub, full recipe" — operator
+        // design 2026-07-18): ids of this cluster's members the session
+        // already holds, visible as an id list beside the full exemplar.
+        if (r.knownClusterMemberIds && r.knownClusterMemberIds.length > 0) {
+          item["knownMembers"] = r.knownClusterMemberIds;
         }
         return item;
       }),
@@ -299,30 +301,25 @@ function buildJsonResponse(
   // Related evidence from other recipes (evidence discovery pipeline).
   // recipeId per entry (2026-07-05): without it agents burned full
   // re-checks recovering recipes they'd already half-seen — GET /recipes
-  // (or the get_recipes MCP tool) turns that into a cheap lookup.
+  // (or the get_recipes MCP tool) turns that into a cheap lookup. Entry
+  // shape trimmed 2026-07-18 (operator ruling): no evidenceId, no constant
+  // strategy field.
   if (result.relatedEvidence && result.relatedEvidence.length > 0) {
     const data = response["data"] as Record<string, unknown>;
-    data["relatedEvidence"] = result.relatedEvidence.map((e) =>
-      // Known-set stub (seam 2): the session already holds the parent recipe
-      // — id only, no parent/evidence text (same id-only ruling as results).
-      e.known
-        ? {
-          evidenceId: e.evidenceId,
-          recipeId: e.parentTraceId,
-          known: true,
-          similarity: e.semanticScore,
-          strategy: "contextual_evidence",
-        }
-        : {
-          evidenceId: e.evidenceId,
-          recipeId: e.parentTraceId,
-          parentRecipe: e.parentTraceText,
-          evidence: e.evidenceContent,
-          similarity: e.semanticScore,
-          strategy: "contextual_evidence",
-        });
+    data["relatedEvidence"] = result.relatedEvidence.map((e) => ({
+      recipeId: e.parentTraceId,
+      parentRecipe: e.parentTraceText,
+      evidence: e.evidenceContent,
+      similarity: e.semanticScore,
+    }));
     data["relatedEvidenceHint"] =
       "Each entry carries the source recipe's UUID as recipeId — fetch the full recipe with GET /recipes?ids=<recipeId> (same API key) instead of re-checking.";
+  }
+  // Known evidence parents (seam 2): parents whose evidence would have made
+  // the selection but the session already holds them — one bare id list.
+  if (result.relatedEvidenceKnownIds && result.relatedEvidenceKnownIds.length > 0) {
+    (response["data"] as Record<string, unknown>)["relatedEvidenceKnown"] =
+      result.relatedEvidenceKnownIds;
   }
 
   // Concept-axis positions (TCAV-style projection)
@@ -630,16 +627,17 @@ function renderPage(
 
         const groupHtml = r.group ? `<span class="group">[${esc(r.group.name)}]</span> ` : "";
 
-        // Budget backfill marker (seam 2): this recipe was promoted for
-        // display over known cluster exemplar(s) the caller already holds.
-        const knownStubsHtml = r.promotedOverKnownIds && r.promotedOverKnownIds.length > 0
-          ? `\n      <p><small>Shown in place of ${r.promotedOverKnownIds.map((id) => `<code>${esc(id)}</code>`).join(", ")} [known to you] &mdash; next in line from the same cluster</small></p>`
+        // Known cluster-mates (seam 2, "stub, stub, full recipe"): members of
+        // this cluster the caller already holds, listed as id-stubs beside
+        // the full exemplar.
+        const knownMembersHtml = r.knownClusterMemberIds && r.knownClusterMemberIds.length > 0
+          ? `\n      <p><small>Cluster also holds ${r.knownClusterMemberIds.length} you've seen: ${r.knownClusterMemberIds.map((id) => `<code>${esc(id)}</code>`).join(", ")}</small></p>`
           : "";
 
         return `
     <article class="result">
       <p>${groupHtml}${esc(r.claimText)}</p>
-      <span class="rank">${esc(scoreDetail)}</span>${clusterHtml}${knownStubsHtml}
+      <span class="rank">${esc(scoreDetail)}</span>${clusterHtml}${knownMembersHtml}
       ${evidenceHtml}
     </article>`;
       })
@@ -689,8 +687,14 @@ function renderPage(
     ${paginationHtml}
   </section>`;
 
-    // Related evidence from other recipes (evidence discovery pipeline)
-    if (result.relatedEvidence && result.relatedEvidence.length > 0) {
+    // Related evidence from other recipes (evidence discovery pipeline).
+    // Known parents render as ONE compact line of ids, not per-row stubs
+    // (seam 2, 2026-07-18 reshape).
+    if ((result.relatedEvidence && result.relatedEvidence.length > 0)
+      || (result.relatedEvidenceKnownIds && result.relatedEvidenceKnownIds.length > 0)) {
+      const knownParentsHtml = result.relatedEvidenceKnownIds && result.relatedEvidenceKnownIds.length > 0
+        ? `\n    <p><small>Known evidence parents (already shown): ${result.relatedEvidenceKnownIds.map((id) => `<code>${esc(id)}</code>`).join(", ")}</small></p>`
+        : "";
       resultsHtml += `
   <section id="related-evidence">
     <h2>Related evidence from other recipes</h2>
@@ -698,19 +702,13 @@ function renderPage(
     evidence from other recipes that is topically related to yours. The system makes no stance assertion;
     you decide if it supports, contradicts, or adds context.</small></p>
     <ul>
-      ${result.relatedEvidence.map((e) => e.known
-        ? `
-      <li>
-        <p><small>From recipe <code>${esc(e.parentTraceId)}</code> [known to you]
-        (${Math.round(e.semanticScore * 100)}% similar)</small></p>
-      </li>`
-        : `
+      ${(result.relatedEvidence ?? []).map((e) => `
       <li>
         <p>${esc(e.evidenceContent)}</p>
         <p><small>From recipe <code>${esc(e.parentTraceId)}</code>: <em>${esc(e.parentTraceText.slice(0, 120))}${e.parentTraceText.length > 120 ? "..." : ""}</em>
         (${Math.round(e.semanticScore * 100)}% similar)</small></p>
       </li>`).join("\n")}
-    </ul>
+    </ul>${knownParentsHtml}
     <p><small>Fetch any full recipe by id: <code>GET /recipes?ids=&lt;id&gt;</code> with the same API key (Bearer), or the <code>get_recipes</code> MCP tool.</small></p>
   </section>`;
     }

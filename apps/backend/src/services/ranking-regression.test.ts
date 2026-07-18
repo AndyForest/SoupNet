@@ -26,8 +26,9 @@ import type { RankingConfig } from "@soupnet/domain";
  *      cross-communication guardrail, recipe 4d25aec9).
  *   3. Known-set rendering: same-session deposits come back known:true at
  *      unchanged rank with unchanged scores; a known cluster exemplar is
- *      replaced for display by the next-nearest non-known member with
- *      promotedOverKnownIds carrying the stub; an all-known cluster renders a
+ *      replaced for display by the next-nearest non-known member, with ALL
+ *      known cluster-mates listed via knownClusterMemberIds ("stub, stub,
+ *      full recipe" — 2026-07-18 reshape); an all-known cluster renders a
  *      stub exemplar. Id-multiset + display-score invariants hold across a
  *      with/without-session pair.
  *   4. The clusterPool lever (P6): "page" mode is byte-identical to the
@@ -307,16 +308,16 @@ interface CheckJson {
       id: string;
       known?: boolean;
       recipe?: string;
+      createdAt?: string;
       score: { semantic: number | null };
-      knownStubs?: Array<{ id: string; known: boolean }>;
+      knownMembers?: string[];
     }>;
     relatedEvidence?: Array<{
-      evidenceId: string;
       recipeId: string;
-      known?: boolean;
       parentRecipe?: string;
       evidence?: string;
     }>;
+    relatedEvidenceKnown?: string[];
   };
 }
 
@@ -478,7 +479,7 @@ describe.skipIf(!BASE)("ranking regression — known-set cluster rendering (seam
     b2 = await seedTrace(agent, "B2", { sim: 0.69, axis: 2, createdAtSql: old });
   }, 60_000);
 
-  it("known exemplar → next-nearest non-known member promoted with the stub id; all-known cluster → stub exemplar", async () => {
+  it("known exemplar → next-nearest non-known member promoted, listing ALL known cluster-mates; all-known cluster → stub exemplar", async () => {
     const base = await runPipeline(agent, pageArm(), { k: 2 });
     expect(base.clustered).toBe(true);
 
@@ -491,20 +492,27 @@ describe.skipIf(!BASE)("ranking regression — known-set cluster rendering (seam
     const res = await runPipeline(agent, pageArm(), { k: 2, knownIds: known });
 
     // Cluster A: the known exemplar is replaced for display by the
-    // next-nearest non-known member (N — the only candidate), with the known
-    // id carried as a stub and the cluster size untouched.
+    // next-nearest non-known member (N — the only candidate), and the item
+    // lists ALL of the cluster's known member ids — the "stub, stub, full
+    // recipe" model (2026-07-18): the passed-over exemplar AND every other
+    // shown cluster-mate stay visible (the check2b gap — known members used
+    // to vanish).
     const promoted = res.results.find((r) => r.id === n)!;
     expect(promoted).toBeDefined();
-    expect(promoted.promotedOverKnownIds).toEqual([exemplarA.id]);
+    expect([...(promoted.knownClusterMemberIds ?? [])].sort()).toEqual([a1, a2].sort());
+    expect(promoted.knownClusterMemberIds).toContain(exemplarA.id);
     expect(promoted.known).toBeUndefined();
     expect(promoted.clusterSize).toBe(3);
 
     // Cluster B: every member is known — the exemplar itself renders as a
-    // stub, same id the base run chose.
+    // stub, same id the base run chose, with its known sibling listed
+    // (minus the stub's own id).
     const stubbed = res.results.find((r) => [b1, b2].includes(r.id))!;
     expect(stubbed.id).toBe(exemplarB.id);
     expect(stubbed.known).toBe(true);
     expect(stubbed.clusterSize).toBe(2);
+    const siblingB = exemplarB.id === b1 ? b2 : b1;
+    expect(stubbed.knownClusterMemberIds).toEqual([siblingB]);
 
     // Ranking/membership invariants: the flat list and the cluster geometry
     // are IDENTICAL with and without the known-set — rendering only.
@@ -747,7 +755,9 @@ describe.skipIf(!BASE)("ranking regression — seen accumulation across checks (
     // related-evidence parents (both recording paths of seam 2).
     const shownByA = new Set([
       ...fullIds(resA),
-      ...(resA.relatedEvidence ?? []).filter((e) => !e.known).map((e) => e.recipeId),
+      // Every relatedEvidence row is full text by construction now — known
+      // parents ride relatedEvidenceKnown instead (2026-07-18 reshape).
+      ...(resA.relatedEvidence ?? []).map((e) => e.recipeId),
     ]);
     // Every full-text recipe A displayed is now an id-only stub at its rank.
     for (const r of resB.results) {
@@ -766,15 +776,21 @@ describe.skipIf(!BASE)("ranking regression — seen accumulation across checks (
     expect(resB.results).toHaveLength(26);
   });
 
-  it("evidence parents shown in A stub in B's relatedEvidence", () => {
+  it("evidence parents shown in A move to B's relatedEvidenceKnown id list (2026-07-18 reshape: no per-row stubs)", () => {
     const evA = resA.relatedEvidence?.find((e) => e.recipeId === ids[0]);
-    const evB = resB.relatedEvidence?.find((e) => e.recipeId === ids[0]);
     expect(evA).toBeDefined();
-    expect(evA!.known).toBeUndefined();
     expect(evA!.parentRecipe).toBeTruthy();
-    expect(evB).toBeDefined();
-    expect(evB!.known).toBe(true);
-    expect(evB!.parentRecipe).toBeUndefined();
+    // In B the parent is known: it never appears as a relatedEvidence row —
+    // its id rides the bare relatedEvidenceKnown list instead.
+    expect(resB.relatedEvidence?.some((e) => e.recipeId === ids[0])).toBeFalsy();
+    expect(resB.relatedEvidenceKnown).toContain(ids[0]);
+  });
+
+  it("stub rows are trimmed: no createdAt, no recipe text (operator ruling 2026-07-18)", () => {
+    const stub = resB.results.find((r) => r.known === true);
+    expect(stub).toBeDefined();
+    expect(stub!.createdAt).toBeUndefined();
+    expect(stub!.recipe).toBeUndefined();
   });
 
   it("check C (token omitted): full texts again — the context-compaction refresh affordance", () => {
@@ -782,6 +798,37 @@ describe.skipIf(!BASE)("ranking regression — seen accumulation across checks (
     expect(resC.sessionId).not.toBe(SESS);
     expect(resC.results.map((r) => r.id)).toEqual(resA.results.map((r) => r.id));
     expect(resC.results.every((r) => r.known === undefined && !!r.recipe)).toBe(true);
+  });
+
+  it("evidence proportionality: a filter-narrowed check with 1 result carries at most 3 evidence entries", async () => {
+    // Operator finding 2026-07-18: a keyword-narrowed check with a single
+    // result carried 20 evidence entries. The evidence budget is now capped
+    // at max(3, displayed-full-result count). The seen suite's corpus has 26
+    // traces but only ONE evidence row, so this uses its own probe: narrow
+    // to one trace by full-claim keyword filter with a high k — the
+    // uncapped targetCount would be k.
+    const db = getDb();
+    // Give four more corpus traces evidence so candidates (5) exceed the cap.
+    for (let i = 1; i <= 4; i++) {
+      await seedEvidence(agent, ids[i]!, `EP${i}`, { sim: 0.5 - i * 0.01, axis: 3, createdAtSql: "now()" });
+    }
+    const claimRows = (await db.execute(sql`
+      SELECT claim_text AS claim FROM claimnet.traces WHERE id = ${ids[3]}::uuid
+    `)) as unknown as Array<{ claim: string }>;
+    const res = await runSearchPipeline({
+      db,
+      groupIds: [agent.groupId],
+      query: "unused — queryVectorStr provided",
+      queryVectorStr: toPgVec(dirVec(1, 1)),
+      keywordFilter: claimRows[0]!.claim, // narrows results to exactly one trace
+      k: 5,
+      perPage: 20,
+      ranking: DEFAULT_RANKING,
+    });
+    expect(res.results).toHaveLength(1);
+    expect(res.relatedEvidence).toBeDefined();
+    expect(res.relatedEvidence!.length).toBeLessThanOrEqual(3);
+    expect(res.relatedEvidence!.length).toBeGreaterThan(1); // floor keeps adjacent context
   });
 
   it("ranking purity: flat order identical across the session arms — seen state re-renders, never reorders", () => {

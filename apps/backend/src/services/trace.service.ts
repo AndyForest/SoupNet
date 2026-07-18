@@ -134,10 +134,11 @@ export interface SearchResultItem {
   /** Known-set rendering flag (seam 2): the caller already holds this recipe
    *  — render an id-only stub at its true rank. */
   known?: boolean | undefined;
-  /** Known ids this displayed item was promoted over (a known cluster
-   *  exemplar replaced for display by this next-nearest member) — rendered
-   *  as id-stubs alongside the full item. */
-  promotedOverKnownIds?: string[] | undefined;
+  /** Known member ids of this displayed cluster (recipes the session has
+   *  already seen or deposited) — rendered as an id-stub list beside the
+   *  item, so the caller sees "you know these cluster-mates" while the full
+   *  text goes to novel content ("stub, stub, full recipe"). */
+  knownClusterMemberIds?: string[] | undefined;
 }
 
 /** Which ranking served this response — version + effective levers.
@@ -167,6 +168,9 @@ export interface SubmitAndSearchResult {
   results: SearchResultItem[];
   /** Evidence from other recipes that's topically related to the checked recipe */
   relatedEvidence?: EvidenceSearchResult[] | undefined;
+  /** Known parent ids whose evidence would have made the selection — bare id
+   *  list, the token-lean stub form (seam 2). */
+  relatedEvidenceKnownIds?: string[] | undefined;
   totalResults: number;
   currentPage: number;
   totalPages: number;
@@ -681,9 +685,7 @@ export async function submitAndSearch(
   // failure; idempotent via ON CONFLICT DO NOTHING.
   const shownIds = [
     ...pipelineResult.results.filter((r) => !r.known).map((r) => r.id),
-    ...(pipelineResult.relatedEvidence ?? [])
-      .filter((e) => !e.known)
-      .map((e) => e.parentTraceId),
+    ...(pipelineResult.relatedEvidence ?? []).map((e) => e.parentTraceId),
   ];
   if (shownIds.length > 0) {
     try {
@@ -722,6 +724,7 @@ export async function submitAndSearch(
     formatWarning,
     results: pipelineResult.results,
     relatedEvidence: pipelineResult.relatedEvidence,
+    relatedEvidenceKnownIds: pipelineResult.relatedEvidenceKnownIds,
     totalResults: pipelineResult.totalResults,
     currentPage: pipelineResult.page,
     totalPages: pipelineResult.totalPages,
@@ -845,6 +848,7 @@ export async function searchWithoutLogging(
     // rendering off this absence.
     results: pipelineResult.results,
     relatedEvidence: pipelineResult.relatedEvidence,
+    relatedEvidenceKnownIds: pipelineResult.relatedEvidenceKnownIds,
     totalResults: pipelineResult.totalResults,
     currentPage: pipelineResult.page,
     totalPages: pipelineResult.totalPages,

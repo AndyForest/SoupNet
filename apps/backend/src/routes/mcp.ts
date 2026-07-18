@@ -1039,10 +1039,10 @@ export function buildMcpJsonResponse(
       // hint — there's no claim text to include. clusterSize stays so the
       // cluster slot remains visible.
       if (knownRecipeIds?.has(r.id) || r.known) {
+        // Trimmed stub row (operator ruling 2026-07-18): no createdAt.
         return {
           id: r.id,
           known: true,
-          createdAt: r.createdAt,
           score: { combined: r.combinedScore, semantic: r.semanticScore },
           ...(r.clusterSize ? { clusterSize: r.clusterSize } : {}),
         };
@@ -1051,7 +1051,9 @@ export function buildMcpJsonResponse(
         id: r.id,
         recipe: r.claimText,
         createdAt: r.createdAt,
-        ...(r.group ? { group: { id: r.group.id, name: r.group.name, description: r.group.description } } : {}),
+        // Recipe-book id + name only — the description lives in the briefing
+        // (operator ruling 2026-07-18).
+        ...(r.group ? { group: { id: r.group.id, name: r.group.name } } : {}),
         score: {
           combined: r.combinedScore,
           semantic: r.semanticScore,
@@ -1083,11 +1085,11 @@ export function buildMcpJsonResponse(
           exemplarText: r.claimText,
         };
       }
-      // Budget backfill marker (seam 2): this item was promoted for display
-      // over known cluster exemplar(s) — "you already know these; this is
-      // the next in line". Id-only stubs, same shape as known results.
-      if (r.promotedOverKnownIds && r.promotedOverKnownIds.length > 0) {
-        item["knownStubs"] = r.promotedOverKnownIds.map((id) => ({ id, known: true }));
+      // Known cluster-mates (seam 2, "stub, stub, full recipe" — operator
+      // design 2026-07-18): ids of this cluster's members the session already
+      // holds, visible as an id list beside the full exemplar.
+      if (r.knownClusterMemberIds && r.knownClusterMemberIds.length > 0) {
+        item["knownMembers"] = r.knownClusterMemberIds;
       }
       return item;
     }),
@@ -1117,30 +1119,24 @@ export function buildMcpJsonResponse(
     data["synthesisNotice"] = synthesis.synthesisNotice;
   }
 
-  // Related evidence (full fields). recipeId per entry (2026-07-05):
-  // without it agents burned full re-checks recovering recipes they'd
-  // already half-seen — get_recipes turns that into a cheap lookup.
+  // Related evidence. recipeId per entry (2026-07-05): without it agents
+  // burned full re-checks recovering recipes they'd already half-seen —
+  // get_recipes turns that into a cheap lookup. Entry shape trimmed
+  // 2026-07-18 (operator ruling): no evidenceId, no constant strategy field.
   if (result.relatedEvidence && result.relatedEvidence.length > 0) {
-    data["relatedEvidence"] = result.relatedEvidence.map((e) =>
-      // Known-set stub (seam 2, mirrors check.ts): id only, no text.
-      e.known
-        ? {
-          evidenceId: e.evidenceId,
-          recipeId: e.parentTraceId,
-          known: true,
-          similarity: e.semanticScore,
-          strategy: "contextual_evidence",
-        }
-        : {
-          evidenceId: e.evidenceId,
-          recipeId: e.parentTraceId,
-          parentRecipe: e.parentTraceText,
-          evidence: e.evidenceContent,
-          similarity: e.semanticScore,
-          strategy: "contextual_evidence",
-        });
+    data["relatedEvidence"] = result.relatedEvidence.map((e) => ({
+      recipeId: e.parentTraceId,
+      parentRecipe: e.parentTraceText,
+      evidence: e.evidenceContent,
+      similarity: e.semanticScore,
+    }));
     data["relatedEvidenceHint"] =
       "Each entry carries the source recipe's UUID as recipeId — fetch the full recipe with the get_recipes tool instead of re-checking.";
+  }
+  // Known evidence parents (seam 2): parents whose evidence would have made
+  // the selection but the session already holds them — one bare id list.
+  if (result.relatedEvidenceKnownIds && result.relatedEvidenceKnownIds.length > 0) {
+    data["relatedEvidenceKnown"] = result.relatedEvidenceKnownIds;
   }
 
   // Concept axes (semantic projection)

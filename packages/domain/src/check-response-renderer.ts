@@ -50,7 +50,9 @@ export interface CheckResultItem {
   id?: string;
   recipe?: string;
   createdAt?: string | Date;
-  group?: { id?: string; name?: string; description?: string | null };
+  /** Recipe-book id + name; the description lives in the briefing (operator
+   *  ruling 2026-07-18). */
+  group?: { id?: string; name?: string };
   score?: {
     combined?: number | null;
     semantic?: number | null;
@@ -61,20 +63,17 @@ export interface CheckResultItem {
   /** The caller already holds this recipe (session known-set or declared
    *  known_recipes) — renders as a one-line id-only stub. */
   known?: boolean;
-  /** Known ids this full item was promoted over for display (a known cluster
-   *  exemplar replaced by this next-nearest member) — rendered as id stubs
-   *  alongside the item: "you already know these; this is the next in line". */
-  knownStubs?: Array<{ id?: string; known?: boolean }>;
+  /** Known member ids of this displayed cluster (recipes the session has
+   *  already seen or deposited) — rendered as one compact id-list line
+   *  beside the full item ("stub, stub, full recipe"). */
+  knownMembers?: string[];
 }
 
 export interface CheckRelatedEvidence {
-  evidenceId?: string;
   /** UUID of the recipe the evidence belongs to — lets agents fetch the
    *  full recipe via get_recipes / GET /recipes instead of re-checking. */
   recipeId?: string;
   parentRecipe?: string;
-  /** Known-set stub: the session already holds the parent recipe (seam 2). */
-  known?: boolean;
   evidence?: string;
   similarity?: number;
 }
@@ -90,6 +89,9 @@ export interface CheckResponseData {
   clustered?: boolean;
   results?: CheckResultItem[];
   relatedEvidence?: CheckRelatedEvidence[];
+  /** Known evidence parents (seam 2): parents whose evidence would have made
+   *  the selection but the session already holds them — bare id list. */
+  relatedEvidenceKnown?: string[];
   conceptAxes?: { axisA?: string; axisB?: string };
   totalResults?: number;
   page?: number;
@@ -187,11 +189,10 @@ function renderResultItem(r: CheckResultItem, index: number, known: boolean): st
   if (date) text += ` -- ${date}`;
   if (r.clusterSize) text += ` (represents ${r.clusterSize} similar recipes)`;
   if (r.group?.name) text += ` [${r.group.name}]`;
-  const knownStubIds = (r.knownStubs ?? []).map((s) => s.id).filter(Boolean);
-  if (knownStubIds.length > 0) {
-    // Budget backfill marker: a known exemplar was replaced for display by
-    // this next-nearest cluster member — you already know the stubbed id(s).
-    text += `\n  [shown in place of ${knownStubIds.join(", ")} — known to you; this is the next in line]`;
+  if (r.knownMembers && r.knownMembers.length > 0) {
+    // Known cluster-mates ("stub, stub, full recipe"): this cluster also
+    // holds recipes the caller has already seen — one compact id line.
+    text += `\n  [cluster also holds ${r.knownMembers.length} you've seen: ${r.knownMembers.join(", ")}]`;
   }
   text += `\nRecipe: ${r.recipe ?? ""}\n`;
 
@@ -262,21 +263,22 @@ export function renderCheckResponseMarkdown(
   });
 
   const related = data.relatedEvidence ?? [];
-  if (related.length > 0) {
+  const relatedKnown = data.relatedEvidenceKnown ?? [];
+  if (related.length > 0 || relatedKnown.length > 0) {
     text += "\nRelated evidence from other recipes:\n";
     for (const e of related) {
       const pct = e.similarity !== undefined ? ` (${Math.round(e.similarity * 100)}% similar)` : "";
-      if (e.known) {
-        // Known-set stub (seam 2): the session already holds the parent
-        // recipe — id only, same ruling as result stubs.
-        text += `  - From recipe ${e.recipeId ?? ""} [known to you]${pct}\n`;
-        continue;
-      }
       text += `  - ${e.evidence ?? ""}${pct}\n`;
       // Recipe id inline (2026-07-05 eval: entries without ids forced agents
       // to burn full re-checks recovering text they'd already half-seen).
       const from = e.recipeId ? `From recipe ${e.recipeId}` : "From";
       text += `    ${from}: "${(e.parentRecipe ?? "").slice(0, 100)}"\n`;
+    }
+    if (relatedKnown.length > 0) {
+      // Known parents in ONE line (seam 2, 2026-07-18 reshape) — the session
+      // already holds these recipes; their evidence budget went to novel
+      // content instead.
+      text += `  Known evidence parents (already shown): ${relatedKnown.join(", ")}\n`;
     }
     text += `  Fetch any full recipe by id: get_recipes (MCP) or GET /recipes?ids=<id> (same API key).\n`;
   }

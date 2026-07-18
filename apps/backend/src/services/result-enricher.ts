@@ -72,10 +72,10 @@ export interface EnrichedResult {
    *  the caller's session already holds this recipe — response builders
    *  render an id-only stub at its true rank. */
   known?: boolean | undefined;
-  /** Known ids this displayed item was promoted over (a known cluster
-   *  exemplar replaced for display by this next-nearest member) — builders
-   *  render them as id-only stubs alongside the full item. */
-  promotedOverKnownIds?: string[] | undefined;
+  /** Known member ids of this displayed cluster (recipes the session has
+   *  already seen or deposited) — builders render them as an id list beside
+   *  the item ("stub, stub, full recipe": known cluster-mates stay visible). */
+  knownClusterMemberIds?: string[] | undefined;
 }
 
 // ── Main function ────────────────────────────────────────────────────────────
@@ -193,7 +193,7 @@ export async function enrichResults(
     group: traceGroupMap.get(r.id),
     evidence: traceEvidenceMap.get(r.id) ?? [],
     known: r.known,
-    promotedOverKnownIds: r.promotedOverKnownIds,
+    knownClusterMemberIds: r.knownClusterMemberIds,
   }));
 }
 
