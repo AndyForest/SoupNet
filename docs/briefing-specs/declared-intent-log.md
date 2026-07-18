@@ -118,3 +118,11 @@ Briefing size: 18,560 → 19,324 bytes (+764, +4.1%) with fixed reference inputs
 **Scenarios intended to move:** none — this is a redundancy reduction, not a behavior change; all teaching remains reachable via get_briefing, which every comprehension scenario already routes through.
 
 **Scenarios watched, with rationale for holding:** voice/format scenarios (voice-and-format.feature and kin) — the one behavioral risk is agents that skip get_briefing now get a one-line voice rule in the recipe param instead of the example set; mitigated by keeping the rule itself plus an explicit "get_briefing teaches the voice rules" pointer in both the check_recipe trailer and the recipe param. If the naive-agent evals show voice quality regressing for briefing-skipping agents, the reversal is scoped: restore examples to the recipe param only.
+
+## 2026-07-18 — Canonical Recipe schema pointer + derivation stitches (recipes 7945fd8a, 43ce7ec0)
+
+**Edits:** (1) one pointer line added to the guide/briefing "How to check" section: full field meanings live at `GET /schemas/recipe.json` (+ `/schemas/check-response.json`) — canonical, generated from the same zod source the server validates against; (2) no param-description text changed, but four short forms (`recipe`, `known_recipes`, `session_id`, `decided_at`) are now formally stitched to their canonical `*_DEFINITION` constants in `@soupnet/contracts` via `CANONICAL_PARAM_SOURCES` + per-description source comments, with a drift-guard test (mcp-tool-descriptions.test.ts) asserting each short form keeps its source's load-bearing concepts.
+
+**Scenarios intended to move:** `known-recipes-dedup.feature` — new scenario "Agent needing full field meanings fetches the published schema" (added in this PR).
+
+**Scenarios watched, with rationale for holding:** all others — no existing briefing copy was reworded; the pointer is additive (one line), the stitches are comments + a constants map, and the tool-description budget totals are unchanged (budget tests still green). Suite re-run: harness not yet wired; per README the .feature files remain the manual checklist.

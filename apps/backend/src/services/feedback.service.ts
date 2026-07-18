@@ -64,6 +64,8 @@ export const FEEDBACK_DAILY_DEFAULT = 1000;
 /** Raw (untrusted) feedback row as it arrives from a tool call or POST body. */
 export interface RawFeedbackRow {
   trace_id?: unknown;
+  /** Alias for trace_id (canonical wire vocabulary prints recipeId). */
+  recipe_id?: unknown;
   kind?: unknown;
   impact?: unknown;
   disposition?: unknown;
@@ -189,12 +191,18 @@ export function validateFeedbackRow(
 ): { ok: true; row: ValidatedFeedbackRow } | { ok: false; error: string } {
   // Full UUID or an unambiguous short-id prefix (≥ MIN_TRACE_ID_PREFIX hex
   // chars — the form check responses print). Normalized to lowercase so the
-  // resolved-set membership checks below compare canonically.
-  const traceId = typeof raw.trace_id === "string" ? raw.trace_id.trim().toLowerCase() : "";
+  // resolved-set membership checks below compare canonically. `recipe_id` is
+  // an accepted alias (canonical wire vocabulary, recipe 7945fd8a — check
+  // responses print recipeId, so rows citing it verbatim must join);
+  // trace_id wins when both are present (the historical field name).
+  const rawId = typeof raw.trace_id === "string" && raw.trace_id.trim() !== ""
+    ? raw.trace_id
+    : typeof raw.recipe_id === "string" ? raw.recipe_id : "";
+  const traceId = rawId.trim().toLowerCase();
   if (!UUID_RE.test(traceId) && !isTraceIdPrefix(traceId)) {
     return {
       ok: false,
-      error: `trace_id must be the full recipe UUID from a prior check response, or an unambiguous prefix of at least ${MIN_TRACE_ID_PREFIX} characters (the short id check responses print)`,
+      error: `trace_id (alias: recipe_id) must be the full recipe UUID from a prior check response, or an unambiguous prefix of at least ${MIN_TRACE_ID_PREFIX} characters (the short id check responses print)`,
     };
   }
 

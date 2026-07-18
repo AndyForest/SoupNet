@@ -48,6 +48,11 @@ COPY packages/ packages/
 COPY apps/backend/ apps/backend/
 COPY apps/mcp-server/ apps/mcp-server/
 RUN npm run build --workspace=packages/db
+# contracts is a RUNTIME import since the canonical Recipe schema (2026-07-18,
+# recipe 7945fd8a): its own build must run (tsc + tsup bundle) — domain's
+# project-reference tsc pass alone emits extensionless ESM that crashes at
+# import time.
+RUN npm run build --workspace=packages/contracts
 RUN npm run build --workspace=packages/domain
 RUN npm run build --workspace=apps/backend
 

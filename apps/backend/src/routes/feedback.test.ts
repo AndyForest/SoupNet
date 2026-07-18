@@ -62,8 +62,8 @@ async function checkRecipe(apiKey: string, recipeText: string): Promise<string> 
   const res = await fetch(`${BASE}/check?${params.toString()}`, {
     headers: { Accept: "application/json" },
   });
-  const json = (await res.json()) as { ok: boolean; data?: { recipeId?: string } };
-  const id = json.data?.recipeId;
+  const json = (await res.json()) as { ok: boolean; data?: { checked?: { recipeId?: string } } };
+  const id = json.data?.checked?.recipeId;
   if (!id) throw new Error(`check failed: ${JSON.stringify(json)}`);
   return id;
 }

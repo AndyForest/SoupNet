@@ -17,6 +17,7 @@ import { groupRoutes } from "./routes/groups";
 import { invitationRoutes } from "./routes/invitations";
 import { adminRoutes } from "./routes/admin";
 import { docsRoutes } from "./routes/docs";
+import { schemas as schemaRoutes } from "./routes/schemas";
 import { traceRoutes } from "./routes/traces";
 import { importRoutes } from "./routes/import";
 import { mcpRoutes } from "./routes/mcp";
@@ -122,6 +123,8 @@ app.use("/groups", async (c) => c.redirect(`/recipe-books${c.req.url.includes("?
 app.route("/invitations", invitationRoutes);
 app.route("/admin", adminRoutes);
 app.route("/docs", docsRoutes);
+// Published wire schemas — public like /docs (shapes, not data).
+app.route("/schemas", schemaRoutes);
 app.route("/traces", traceRoutes);
 // Corpus import — the inverse of GET /auth/me/export (docs/planning/corpus-import.md).
 app.route("/import", importRoutes);

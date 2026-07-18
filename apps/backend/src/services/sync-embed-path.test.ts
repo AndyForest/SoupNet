@@ -26,7 +26,7 @@ interface ApiResponse {
   ok: boolean;
   error?: string;
   data?: {
-    recipeId?: string;
+    checked?: { recipeId?: string };
     results?: unknown[];
     totalResults?: number;
   };
@@ -113,7 +113,7 @@ describe.skipIf(!BASE)("sync embedding path (recipe check write)", () => {
     const recipe = `As a backend engineer testing the sync embed path (run ${uid}), I prefer generating only the searched task type synchronously so that checks stay fast.`;
     const body = await submitCheck(recipe);
     expect(body.ok).toBe(true);
-    const recipeId = body.data?.recipeId;
+    const recipeId = body.data?.checked?.recipeId;
     expect(recipeId).toBeDefined();
 
     const rows = await traceVectorShape(recipeId!);
@@ -139,13 +139,13 @@ describe.skipIf(!BASE)("sync embedding path (recipe check write)", () => {
     const recipe = `As a backend engineer testing duplicate re-checks (run ${uid}), I prefer idempotent check submissions so that repeated checks never duplicate pipeline rows.`;
     const first = await submitCheck(recipe);
     expect(first.ok).toBe(true);
-    const recipeId = first.data?.recipeId;
+    const recipeId = first.data?.checked?.recipeId;
     expect(recipeId).toBeDefined();
     const rowsAfterFirst = await traceVectorShape(recipeId!);
 
     const second = await submitCheck(recipe);
     expect(second.ok).toBe(true);
-    expect(second.data?.recipeId).toBe(recipeId);
+    expect(second.data?.checked?.recipeId).toBe(recipeId);
     // Duplicate path skips the write block entirely — same pipeline rows.
     const rowsAfterSecond = await traceVectorShape(recipeId!);
     expect(rowsAfterSecond).toHaveLength(rowsAfterFirst.length);

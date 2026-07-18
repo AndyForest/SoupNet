@@ -135,7 +135,7 @@ describe("buildMcpJsonResponse actions hints", () => {
     expect(stub["drillDown"]).toBeUndefined();
   });
 
-  it("full items list their cluster's known members as knownMembers ({id, similarity} pairs)", () => {
+  it("full items list their cluster's known members as knownMembers ({recipeId, similarity} Recipe fills)", () => {
     const enriched = makeEnriched("promoted-1", 5);
     enriched.knownClusterMembers = [
       { id: "known-a", similarity: 0.94 },
@@ -146,8 +146,8 @@ describe("buildMcpJsonResponse actions hints", () => {
     const item = results[0]!;
     expect(item["recipe"]).toBe("Recipe promoted-1"); // full item, not a stub
     expect(item["knownMembers"]).toEqual([
-      { id: "known-a", similarity: 0.94 },
-      { id: "known-b", similarity: 0.87 },
+      { recipeId: "known-a", similarity: 0.94 },
+      { recipeId: "known-b", similarity: 0.87 },
     ]);
     expect(item["knownStubs"]).toBeUndefined(); // retired per-row stub objects (2026-07-18)
     expect(item["score"]).toBeUndefined(); // retired score object (recipe ef245b63)
@@ -164,7 +164,7 @@ describe("buildMcpJsonResponse actions hints", () => {
 
   it("full-item group carries id + name only; evidence entries drop evidenceId/strategy; known parents ride relatedEvidenceKnown", () => {
     const enriched = makeEnriched("fresh-1");
-    enriched.group = { id: "g1", name: "Book", description: "should not appear" };
+    enriched.recipeBook = { recipeBookId: "g1", name: "Book", description: "should not appear" };
     const response = buildMcpJsonResponse(
       makeResult({
         relatedEvidence: [{
@@ -184,13 +184,13 @@ describe("buildMcpJsonResponse actions hints", () => {
     );
     const data = response["data"] as Record<string, unknown>;
     const item = (data["results"] as Array<Record<string, unknown>>)[0]!;
-    expect(item["group"]).toEqual({ id: "g1", name: "Book" });
+    expect(item["recipeBook"]).toEqual({ recipeBookId: "g1", name: "Book" });
     const entry = (data["relatedEvidence"] as Array<Record<string, unknown>>)[0]!;
     expect(entry).toEqual({
       recipeId: "parent-1",
-      parentRecipe: "Parent recipe text",
-      evidence: "Evidence body",
+      recipe: "Parent recipe text",
       similarity: 0.7,
+      evidence: [{ interpretation: "Evidence body" }],
     });
     expect(data["relatedEvidenceKnown"]).toEqual([
       { recipeId: "seen-parent-1", similarity: 0.79 },

@@ -39,7 +39,15 @@ You've read the version above; this appendix carries only what changed after. Op
 - **Payload slimming**: result `group` objects are `{id, name}` only (descriptions live in the briefing / `list_my_recipe_books`); evidence entries are `{recipeId, parentRecipe, evidence, similarity}` (`evidenceId` and the constant `strategy` field removed); stub rows have no `createdAt`; the evidence section is capped at max(3, displayed-result count) entries — the 20-entries-vs-1-result disproportion is gone.
 - **Measurement note for your stub-blind/delivered-payload split** (recipe `74e925ec`): the stub-blind ranking variant is unaffected (ranking untouched); the delivered-payload variant gains signal — known members' similarities are now part of the delivered payload, so "information delivered per token" can count them as compressed content rather than loss.
 
-## What would help most, in order
+## Appendix 2 (2026-07-18, later) — the wire is now schema-canonical
+
+Third and final wire change of this branch (operator rulings, recipes `7945fd8a`, `ef245b63`): one canonical **Recipe object** at every surface, published as validatable JSON Schema. If you parse responses, this supersedes some field names in the appendix above:
+
+- **`recipeId` everywhere** — no more bare `id` on recipe objects (results, knownMembers pairs, everything). `data.recipeId` + `data.checkedRecipe` became **`data.checked: {recipeId, recipe}`** — your own deposit is a Recipe like the rest.
+- **One Recipe shape, optional fill**: only `recipeId` is mandatory. A stub is `{recipeId, known, similarity}`, a known cluster-mate `{recipeId, similarity}`, a full exemplar adds `recipe`/`evidence`/`recipeBook`. `relatedEvidence` entries are now Recipe fills too: `{recipeId, recipe, similarity, evidence: [{interpretation}]}` (the flat `parentRecipe`/`evidence` fields are gone).
+- **`recipeBook: {recipeBookId, name}`** replaces the legacy `group` wire vocabulary (description still briefing-only).
+- **Validate, don't guess**: `GET /schemas/recipe.json` and `GET /schemas/check-response.json` serve the canonical JSON Schema, generated from the same Zod source the builders type against (`packages/contracts/src/recipe.ts`) — field meanings are embedded as descriptions, so the schema is also the field documentation. Your harness can validate every captured response in CI; a parse failure is a real contract break, not drift.
+- **`recipe_id` accepted as an alias for `trace_id`** on feedback rows.
 
 1. **Real-scale golden material for the P6 pool sweep** — the committed 45-trace synthetic cannot answer diversity questions (measured: a 100-pool degenerates to whole-corpus there); your pollution-replay corpora at real scale can, relabeled per above.
 2. **The benchmarks.md rewrite** (with the operator).

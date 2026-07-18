@@ -302,20 +302,20 @@ interface CheckJson {
   ok: boolean;
   error?: string;
   data?: {
-    recipeId: string;
+    checked: { recipeId: string; recipe?: string };
     sessionId?: string;
     results: Array<{
-      id: string;
+      recipeId: string;
       known?: boolean;
       recipe?: string;
       createdAt?: string;
       similarity: number | null;
-      knownMembers?: Array<{ id: string; similarity: number }>;
+      knownMembers?: Array<{ recipeId: string; similarity: number }>;
     }>;
     relatedEvidence?: Array<{
       recipeId: string;
-      parentRecipe?: string;
-      evidence?: string;
+      recipe?: string;
+      evidence?: Array<{ interpretation?: string }>;
     }>;
     relatedEvidenceKnown?: Array<{ recipeId: string; similarity: number }>;
   };
@@ -373,10 +373,10 @@ describe.skipIf(!BASE)("ranking regression — pure-function ranking + session r
     scopedKey = await mintScopedKey(agent);
     // Corpus deposits, each under a controlled session (stub embeddings —
     // deterministic per text, so orderings are exactly reproducible).
-    d1 = (await check(agent.apiKey, "alpha", SESS_A)).recipeId;
-    d2 = (await check(agent.apiKey, "beta", SESS_A)).recipeId;
+    d1 = (await check(agent.apiKey, "alpha", SESS_A)).checked.recipeId;
+    d2 = (await check(agent.apiKey, "beta", SESS_A)).checked.recipeId;
     sessBFirst = await check(agent.apiKey, "gamma", SESS_B);
-    d3 = sessBFirst.recipeId;
+    d3 = sessBFirst.checked.recipeId;
     await check(agent.apiKey, "delta"); // sessionless deposit
   }, 60_000);
 
@@ -386,11 +386,11 @@ describe.skipIf(!BASE)("ranking regression — pure-function ranking + session r
     // with the scoped key — both checks exclude their own deposit, so both
     // rank the same corpus.
     const resA = await check(agent.apiKey, "purefn");
-    await deleteDeposit(agent, resA.recipeId);
+    await deleteDeposit(agent, resA.checked.recipeId);
     const resB = await check(scopedKey, "purefn");
-    await deleteDeposit(agent, resB.recipeId);
+    await deleteDeposit(agent, resB.checked.recipeId);
 
-    expect(resB.results.map((r) => r.id)).toEqual(resA.results.map((r) => r.id));
+    expect(resB.results.map((r) => r.recipeId)).toEqual(resA.results.map((r) => r.recipeId));
     resB.results.forEach((r, i) => {
       expect(r.similarity).toBeCloseTo(resA.results[i]!.similarity!, 6);
     });
@@ -403,7 +403,7 @@ describe.skipIf(!BASE)("ranking regression — pure-function ranking + session r
     const withSession = await check(agent.apiKey, "sessprobe", SESS_A);
     const freshSession = await check(agent.apiKey, "sessprobe", `sess-f-${uid}`);
 
-    expect(freshSession.results.map((r) => r.id)).toEqual(withSession.results.map((r) => r.id));
+    expect(freshSession.results.map((r) => r.recipeId)).toEqual(withSession.results.map((r) => r.recipeId));
     freshSession.results.forEach((r, i) => {
       expect(r.similarity).toBeCloseTo(withSession.results[i]!.similarity!, 6);
     });
@@ -412,8 +412,8 @@ describe.skipIf(!BASE)("ranking regression — pure-function ranking + session r
     // unchanged rank, as id-only stubs (no recipe text); the fresh session
     // gets them in full.
     for (const id of [d1, d2]) {
-      const flaggedIdx = withSession.results.findIndex((r) => r.id === id);
-      const freshIdx = freshSession.results.findIndex((r) => r.id === id);
+      const flaggedIdx = withSession.results.findIndex((r) => r.recipeId === id);
+      const freshIdx = freshSession.results.findIndex((r) => r.recipeId === id);
       expect(flaggedIdx).toBeGreaterThanOrEqual(0);
       expect(freshIdx).toBe(flaggedIdx);
       expect(withSession.results[flaggedIdx]!.known).toBe(true);
@@ -431,7 +431,7 @@ describe.skipIf(!BASE)("ranking regression — pure-function ranking + session r
     // arrive as full recipes. A session can only ever stub what it has
     // already deposited or been shown; sibling work is neither, until shown.
     for (const id of [d1, d2]) {
-      const sibling = sessBFirst.results.find((r) => r.id === id)!;
+      const sibling = sessBFirst.results.find((r) => r.recipeId === id)!;
       expect(sibling).toBeDefined();
       expect(sibling.known).toBeUndefined();
       expect(sibling.recipe).toBeTruthy();
@@ -447,7 +447,7 @@ describe.skipIf(!BASE)("ranking regression — pure-function ranking + session r
     // asserts above and the seen-accumulation suite.
     const res = await check(agent.apiKey, "siblingprobe", SESS_B);
     for (const id of [d1, d2, d3]) {
-      const item = res.results.find((r) => r.id === id)!;
+      const item = res.results.find((r) => r.recipeId === id)!;
       expect(item).toBeDefined();
       expect(item.known).toBe(true);
       expect(item.recipe).toBeUndefined();
@@ -735,7 +735,7 @@ describe.skipIf(!BASE)("ranking regression — seen accumulation across checks (
   let resB: NonNullable<CheckJson["data"]>;
   let resC: NonNullable<CheckJson["data"]>;
   const fullIds = (res: NonNullable<CheckJson["data"]>) =>
-    res.results.filter((r) => !r.known).map((r) => r.id);
+    res.results.filter((r) => !r.known).map((r) => r.recipeId);
 
   beforeAll(async () => {
     agent = await registerAgent("seen");
@@ -772,7 +772,7 @@ describe.skipIf(!BASE)("ranking regression — seen accumulation across checks (
     ]);
     // Every full-text recipe A displayed is now an id-only stub at its rank.
     for (const r of resB.results) {
-      if (shownByA.has(r.id)) {
+      if (shownByA.has(r.recipeId)) {
         expect(r.known).toBe(true);
         expect(r.recipe).toBeUndefined();
       }
@@ -790,7 +790,8 @@ describe.skipIf(!BASE)("ranking regression — seen accumulation across checks (
   it("evidence parents shown in A move to B's relatedEvidenceKnown id list (2026-07-18 reshape: no per-row stubs)", () => {
     const evA = resA.relatedEvidence?.find((e) => e.recipeId === ids[0]);
     expect(evA).toBeDefined();
-    expect(evA!.parentRecipe).toBeTruthy();
+    expect(evA!.recipe).toBeTruthy();
+    expect(evA!.evidence?.[0]?.interpretation).toBeTruthy();
     // In B the parent is known: it never appears as a relatedEvidence row —
     // it rides relatedEvidenceKnown as {recipeId, similarity} instead
     // (recipe ef245b63: id + best evidence similarity, in [0, 1]).
@@ -808,10 +809,37 @@ describe.skipIf(!BASE)("ranking regression — seen accumulation across checks (
     expect(stub!.recipe).toBeUndefined();
   });
 
+  it("a real check response parses with the published CheckResponseSchema (the strongest drift guard)", async () => {
+    // Same probe text + token: the deposit row is reused and the response is
+    // stub-rich (known results, known evidence parents) — the fullest wire
+    // shape. Parsing the RAW body with the canonical zod schema from
+    // @soupnet/contracts is exactly the validation an external consumer runs
+    // against GET /schemas/check-response.json; a builder field the schema
+    // doesn't know (or a schema field the builder breaks) fails here.
+    const { CheckResponseSchema } = await import("@soupnet/contracts");
+    const params = new URLSearchParams({
+      key: agent.apiKey,
+      trace: probeText,
+      ef: 'Fixture interpretation.\n> "fixture quote"\n-- ranking-regression test',
+      format: "json",
+      clusters: "30",
+      session_id: SESS,
+    });
+    const raw = (await (await fetch(`${BASE}/check?${params.toString()}`, {
+      headers: { Accept: "application/json" },
+    })).json()) as unknown;
+    const parsed = CheckResponseSchema.parse(raw);
+    expect(parsed.ok).toBe(true);
+    expect(parsed.data?.checked?.recipeId).toBeTruthy();
+    expect(parsed.data?.results?.length).toBeGreaterThan(0);
+    expect(parsed.data?.results?.some((r) => r.known === true)).toBe(true);
+    expect(parsed.data?.relatedEvidenceKnown?.length).toBeGreaterThan(0);
+  });
+
   it("check C (token omitted): full texts again — the context-compaction refresh affordance", () => {
     expect(resC.sessionId).toBeTruthy();
     expect(resC.sessionId).not.toBe(SESS);
-    expect(resC.results.map((r) => r.id)).toEqual(resA.results.map((r) => r.id));
+    expect(resC.results.map((r) => r.recipeId)).toEqual(resA.results.map((r) => r.recipeId));
     expect(resC.results.every((r) => r.known === undefined && !!r.recipe)).toBe(true);
   });
 
@@ -847,17 +875,17 @@ describe.skipIf(!BASE)("ranking regression — seen accumulation across checks (
   });
 
   it("ranking purity: flat order identical across the session arms — seen state re-renders, never reorders", () => {
-    const idsA = resA.results.map((r) => r.id);
-    const idsB = resB.results.map((r) => r.id);
-    const idsC = resC.results.map((r) => r.id);
+    const idsA = resA.results.map((r) => r.recipeId);
+    const idsB = resB.results.map((r) => r.recipeId);
+    const idsC = resC.results.map((r) => r.recipeId);
     // B's walked window is A's window extended: same ids in the same order,
     // then the remainder in rank order.
     expect(idsB.slice(0, idsA.length)).toEqual(idsA);
     expect(idsC).toEqual(idsA);
     // Per-id displayed scores identical across arms (stub or full).
-    const scoreA = new Map(resA.results.map((r) => [r.id, r.similarity]));
+    const scoreA = new Map(resA.results.map((r) => [r.recipeId, r.similarity]));
     for (const r of [...resB.results, ...resC.results]) {
-      const a = scoreA.get(r.id);
+      const a = scoreA.get(r.recipeId);
       if (a !== null && a !== undefined && r.similarity !== null) {
         expect(r.similarity).toBeCloseTo(a, 6);
       }

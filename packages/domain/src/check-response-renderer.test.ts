@@ -13,15 +13,15 @@ function baseResponse(): CheckResponseJson {
   return {
     ok: true,
     data: {
-      recipeId: CHECK_ID,
+      checked: { recipeId: CHECK_ID },
       searchMode: "semantic",
       clustered: true,
       results: [
         {
-          id: UUID_A,
+          recipeId: UUID_A,
           recipe: "As a developer working on an API, I chose Hono so that edge deployment stays possible.",
           createdAt: "2026-04-03T12:34:56.000Z",
-          group: { id: "g1", name: "SoupNet" },
+          recipeBook: { recipeBookId: "g1", name: "SoupNet" },
           similarity: 0.87,
           clusterSize: 12,
           evidence: [
@@ -35,7 +35,7 @@ function baseResponse(): CheckResponseJson {
           ],
         },
         {
-          id: UUID_B,
+          recipeId: UUID_B,
           recipe: "As a designer, I prefer warm palettes so that pages feel human.",
           createdAt: "2026-05-10T08:00:00.000Z",
           similarity: null,
@@ -120,7 +120,7 @@ describe("renderCheckResponseMarkdown", () => {
   it("handles empty results", () => {
     const res: CheckResponseJson = {
       ok: true,
-      data: { recipeId: CHECK_ID, searchMode: "semantic", results: [], totalResults: 0, page: 1, totalPages: 0 },
+      data: { checked: { recipeId: CHECK_ID }, searchMode: "semantic", results: [], totalResults: 0, page: 1, totalPages: 0 },
     };
     const text = renderCheckResponseMarkdown(res);
     expect(text).toContain("No similar recipes found.");
@@ -139,7 +139,7 @@ describe("renderCheckResponseMarkdown", () => {
   it("renders related evidence and concept axes", () => {
     const res = baseResponse();
     res.data!.relatedEvidence = [
-      { parentRecipe: "As a dev, I chose X.", evidence: "Interpretation here", similarity: 0.76 },
+      { recipe: "As a dev, I chose X.", evidence: [{ interpretation: "Interpretation here" }], similarity: 0.76 },
     ];
     res.data!.conceptAxes = { axisA: "accessibility", axisB: "performance" };
     const text = renderCheckResponseMarkdown(res);
@@ -151,7 +151,7 @@ describe("renderCheckResponseMarkdown", () => {
   it("carries the source recipe UUID on related-evidence entries with a lookup hint (2026-07-05: id-less entries forced re-checks)", () => {
     const res = baseResponse();
     res.data!.relatedEvidence = [
-      { recipeId: UUID_B, parentRecipe: "As a dev, I chose X.", evidence: "Interpretation here", similarity: 0.76 },
+      { recipeId: UUID_B, recipe: "As a dev, I chose X.", evidence: [{ interpretation: "Interpretation here" }], similarity: 0.76 },
     ];
     const text = renderCheckResponseMarkdown(res);
     expect(text).toContain(`    From recipe ${UUID_B}: "As a dev, I chose X."`);
@@ -161,7 +161,7 @@ describe("renderCheckResponseMarkdown", () => {
   it("renders known evidence parents as ONE compact line of id + similarity pairs (seam 2, 2026-07-18 reshape)", () => {
     const res = baseResponse();
     res.data!.relatedEvidence = [
-      { recipeId: "novel-id", parentRecipe: "As a dev, I chose Y.", evidence: "Novel interpretation", similarity: 0.7 },
+      { recipeId: "novel-id", recipe: "As a dev, I chose Y.", evidence: [{ interpretation: "Novel interpretation" }], similarity: 0.7 },
     ];
     res.data!.relatedEvidenceKnown = [
       { recipeId: UUID_B, similarity: 0.79 },
@@ -182,7 +182,7 @@ describe("renderCheckResponseMarkdown", () => {
 
   it("renders search-only responses with a no-logging header instead of a recipeId", () => {
     const res = baseResponse();
-    delete res.data!.recipeId;
+    delete res.data!.checked;
     res.data!.searchOnly = true;
     res.data!.filter = "postgres migrations";
     const text = renderCheckResponseMarkdown(res);
@@ -210,8 +210,8 @@ describe("renderCheckResponseMarkdown", () => {
   it("renders an honest n/a when similarity is absent — no lexical/combined fallbacks (recipe ef245b63)", () => {
     const res = baseResponse();
     res.data!.results = [
-      { id: UUID_A, recipe: "r", createdAt: "2026-01-01T00:00:00Z", similarity: null },
-      { id: UUID_B, recipe: "r2", createdAt: "2026-01-02T00:00:00Z" },
+      { recipeId: UUID_A, recipe: "r", createdAt: "2026-01-01T00:00:00Z", similarity: null },
+      { recipeId: UUID_B, recipe: "r2", createdAt: "2026-01-02T00:00:00Z" },
     ];
     const text = renderCheckResponseMarkdown(res);
     expect(text).toContain(`#1 (similarity n/a) ${UUID_A}`);
@@ -260,7 +260,7 @@ describe("renderCheckResponseMarkdown", () => {
       const res: CheckResponseJson = {
         ok: true,
         data: {
-          recipeId: CHECK_ID,
+          checked: { recipeId: CHECK_ID },
           searchMode: "semantic",
           results: [],
           totalResults: 0,
@@ -312,8 +312,8 @@ describe("renderCheckResponseMarkdown", () => {
     it("renders knownMembers on a full item as one compact cluster-mates line with percentages", () => {
       const res = baseResponse();
       res.data!.results![0]!.knownMembers = [
-        { id: UUID_B, similarity: 0.94 },
-        { id: "seen-2", similarity: 0.87 },
+        { recipeId: UUID_B, similarity: 0.94 },
+        { recipeId: "seen-2", similarity: 0.87 },
       ];
       const text = renderCheckResponseMarkdown(res);
       expect(text).toContain(`  [cluster also holds 2 you've seen: ${UUID_B} 94%, seen-2 87%]`);
@@ -335,7 +335,7 @@ describe("renderCheckResponseMarkdown", () => {
     it("still renders the session line when there are no results", () => {
       const res: CheckResponseJson = {
         ok: true,
-        data: { recipeId: CHECK_ID, searchMode: "semantic", results: [], totalResults: 0, page: 1, totalPages: 0, sessionId: "abc12345" },
+        data: { checked: { recipeId: CHECK_ID }, searchMode: "semantic", results: [], totalResults: 0, page: 1, totalPages: 0, sessionId: "abc12345" },
       };
       const text = renderCheckResponseMarkdown(res);
       expect(text).toContain("No similar recipes found.");

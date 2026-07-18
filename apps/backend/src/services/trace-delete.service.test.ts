@@ -195,13 +195,13 @@ describe.skipIf(!canConnect() || !BASE)("DELETE /traces/:id integration", () => 
         format: "json",
       }).toString(),
     });
-    const checkBody = (await checkRes.json()) as { ok: boolean; data?: { recipeId: string } };
-    if (!checkBody.ok || !checkBody.data?.recipeId) {
+    const checkBody = (await checkRes.json()) as { ok: boolean; data?: { checked?: { recipeId: string } } };
+    if (!checkBody.ok || !checkBody.data?.checked?.recipeId) {
       throw new Error(`Failed to seed trace: ${JSON.stringify(checkBody)}`);
     }
 
     return {
-      traceId: checkBody.data.recipeId,
+      traceId: checkBody.data.checked.recipeId,
       ownerToken: opts.actorToken,
       ownerUserId: opts.actorUserId,
       groupId,

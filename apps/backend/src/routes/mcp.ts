@@ -27,6 +27,7 @@ import {
   renderCheckResponseMarkdown,
 } from "@soupnet/domain";
 import type { CheckResponseJson } from "@soupnet/domain";
+import type { Recipe } from "@soupnet/contracts";
 import { composeBriefing, composeCorpusContext } from "../services/briefing";
 import { rateLimit, perKeyRateLimit, extractMcpBearerKey, getClientIp, hashApiKey } from "../middleware/rate-limit";
 import type { SubmitAndSearchResult, ImageAttachment } from "../services/trace.service";
@@ -617,7 +618,8 @@ function createMcpServer(backendUrl: string): McpServer {
         if (response_format === "structured") {
           const data = jsonResponse["data"] as Record<string, unknown>;
           if (feedbackResults !== undefined) data["feedbackResults"] = feedbackResults;
-          const stub = `Recipe checked as #${String(data["recipeId"])}. ${String(data["totalResults"])} similar recipe(s) — see structuredContent.`;
+          const checkedFill = data["checked"] as { recipeId?: string } | undefined;
+          const stub = `Recipe checked as #${String(checkedFill?.recipeId)}. ${String(data["totalResults"])} similar recipe(s) — see structuredContent.`;
           return {
             content: [{ type: "text" as const, text: stub }],
             structuredContent: data,
@@ -1027,8 +1029,11 @@ export function buildMcpJsonResponse(
   synthesis?: SynthesisResult,
 ): Record<string, unknown> {
   const data: Record<string, unknown> = {
-    recipeId: result.traceId,
-    checkedRecipe: result.traceText,
+    // The caller's own deposit as a Recipe fill (canonical schema, recipe
+    // 7945fd8a): {recipeId, recipe}.
+    ...(result.traceId
+      ? { checked: { recipeId: result.traceId, recipe: result.traceText } satisfies Recipe }
+      : {}),
     searchMode: result.searchMode ?? "lexical",
     clustered: result.clustered ?? false,
     results: enriched.map((r) => {
@@ -1041,21 +1046,24 @@ export function buildMcpJsonResponse(
       if (knownRecipeIds?.has(r.id) || r.known) {
         // Trimmed stub row (operator ruling 2026-07-18): no createdAt; ONE
         // similarity vocabulary (recipe ef245b63) — the raw cosine only.
-        return {
-          id: r.id,
+        const stub: Recipe = {
+          recipeId: r.id,
           known: true,
-          similarity: r.semanticScore,
+          similarity: r.semanticScore ?? undefined,
           ...(r.clusterSize ? { clusterSize: r.clusterSize } : {}),
         };
+        return stub;
       }
-      const item: Record<string, unknown> = {
-        id: r.id,
+      const fill: Recipe = {
+        recipeId: r.id,
         recipe: r.claimText,
         createdAt: r.createdAt,
         // Recipe-book id + name only — the description lives in the briefing
         // (operator ruling 2026-07-18).
-        ...(r.group ? { group: { id: r.group.id, name: r.group.name } } : {}),
-        similarity: r.semanticScore,
+        ...(r.recipeBook
+          ? { recipeBook: { recipeBookId: r.recipeBook.recipeBookId, name: r.recipeBook.name } }
+          : {}),
+        similarity: r.semanticScore ?? undefined,
         evidence: r.evidence.map((e) => ({
           interpretation: e.content,
           ...(e.clusterSize ? { clusterSize: e.clusterSize } : {}),
@@ -1071,25 +1079,28 @@ export function buildMcpJsonResponse(
             } : {}),
           })),
         })),
+        ...(r.clusterSize ? { clusterSize: r.clusterSize } : {}),
+        // Known cluster-mates (seam 2, "stub, stub, full recipe"): minimal
+        // Recipe fills {recipeId, similarity} beside the full exemplar.
+        ...(r.knownClusterMembers && r.knownClusterMembers.length > 0
+          ? {
+            knownMembers: r.knownClusterMembers.map(
+              (m): Recipe => ({ recipeId: m.id, similarity: m.similarity }),
+            ),
+          }
+          : {}),
       };
-      if (r.clusterSize) {
-        item["clusterSize"] = r.clusterSize;
-        // Drill-down hint: agent can re-check with the exemplar text to
-        // explore this cluster. Phrased around params the tool actually
-        // accepts (clusters) — the old expand=true wording advertised a web
-        // /check param this tool doesn't have.
-        item["drillDown"] = {
+      if (!r.clusterSize) return fill;
+      // Drill-down hint: agent can re-check with the exemplar text to explore
+      // this cluster. MCP-only extra beside the canonical Recipe fill (the
+      // published schema strips unknown keys on parse; consumers may ignore).
+      return {
+        ...fill,
+        drillDown: {
           hint: `This exemplar represents ${r.clusterSize} similar recipes. To explore them, re-check with this recipe text and a higher clusters value.`,
           exemplarText: r.claimText,
-        };
-      }
-      // Known cluster-mates (seam 2, "stub, stub, full recipe" — operator
-      // design 2026-07-18): this cluster's members the session already holds,
-      // each with its raw similarity, beside the full exemplar.
-      if (r.knownClusterMembers && r.knownClusterMembers.length > 0) {
-        item["knownMembers"] = r.knownClusterMembers;
-      }
-      return item;
+        },
+      };
     }),
     totalResults: result.totalResults,
     page,
@@ -1122,20 +1133,23 @@ export function buildMcpJsonResponse(
   // get_recipes turns that into a cheap lookup. Entry shape trimmed
   // 2026-07-18 (operator ruling): no evidenceId, no constant strategy field.
   if (result.relatedEvidence && result.relatedEvidence.length > 0) {
-    data["relatedEvidence"] = result.relatedEvidence.map((e) => ({
+    // Each related-evidence entry is a Recipe fill (canonical schema): the
+    // parent recipe with the matching evidence entry attached.
+    data["relatedEvidence"] = result.relatedEvidence.map((e): Recipe => ({
       recipeId: e.parentTraceId,
-      parentRecipe: e.parentTraceText,
-      evidence: e.evidenceContent,
+      recipe: e.parentTraceText,
       similarity: e.semanticScore,
+      evidence: [{ interpretation: e.evidenceContent }],
     }));
     data["relatedEvidenceHint"] =
       "Each entry carries the source recipe's UUID as recipeId — fetch the full recipe with the get_recipes tool instead of re-checking.";
   }
-  // Known evidence parents (seam 2): parents whose evidence would have made
-  // the selection but the session already holds them — id + best evidence
-  // similarity per parent (ONE similarity vocabulary, recipe ef245b63).
+  // Known evidence parents (seam 2): minimal Recipe fills — id + best
+  // evidence similarity per parent (ONE similarity vocabulary, ef245b63).
   if (result.relatedEvidenceKnown && result.relatedEvidenceKnown.length > 0) {
-    data["relatedEvidenceKnown"] = result.relatedEvidenceKnown;
+    data["relatedEvidenceKnown"] = result.relatedEvidenceKnown.map(
+      (p): Recipe => ({ recipeId: p.recipeId, similarity: p.similarity }),
+    );
   }
 
   // Concept axes (semantic projection)

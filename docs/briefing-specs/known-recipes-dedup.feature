@@ -41,3 +41,12 @@ Feature: known_recipes dedup — trimming repeats without touching the record
     When the agent makes its next check_recipe call
     Then it omits session_id instead of passing the stale token
     And the fresh session renders previously-shown recipes with full text again
+
+  # Published schema pointer (2026-07-18, recipes 7945fd8a + 43ce7ec0): the
+  # briefing carries ONE pointer line; the canonical field meanings live in
+  # the generated JSON Schema, so copy and validation cannot drift.
+  Scenario: Agent needing full field meanings fetches the published schema
+    Given a briefed agent unsure what a response field (known, knownMembers, sessionId) means precisely
+    When it re-reads the briefing's "How to check" section
+    Then it finds the pointer to GET /schemas/recipe.json and /schemas/check-response.json
+    And the fetched schema embeds each field's canonical description

@@ -157,8 +157,8 @@ describe.skipIf(!BASE)("DELETE /auth/me — self-serve account deletion", () => 
       format: "json",
     });
     const checkRes = await fetch(`${BASE}/check?${checkParams.toString()}`, { headers: { Accept: "application/json" } });
-    const checkJson = (await checkRes.json()) as { data?: { recipeId?: string } };
-    const traceId = checkJson.data?.recipeId ?? "";
+    const checkJson = (await checkRes.json()) as { data?: { checked?: { recipeId?: string } } };
+    const traceId = checkJson.data?.checked?.recipeId ?? "";
     expect(traceId).toBeTruthy();
 
     const fbRes = await fetch(`${BASE}/feedback`, {

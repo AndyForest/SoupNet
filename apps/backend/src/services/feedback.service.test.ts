@@ -37,6 +37,28 @@ describe("validateFeedbackRow", () => {
     }
   });
 
+  it("accepts recipe_id as an alias for trace_id (canonical wire vocabulary, recipe 7945fd8a)", () => {
+    const v = validateFeedbackRow(validRow({ trace_id: undefined, recipe_id: TRACE_ID }));
+    expect(v.ok).toBe(true);
+    if (v.ok) expect(v.row.traceId).toBe(TRACE_ID);
+  });
+
+  it("trace_id wins when both trace_id and recipe_id are present", () => {
+    const other = "550e8400-e29b-41d4-a716-446655440000";
+    const v = validateFeedbackRow(validRow({ recipe_id: other }));
+    expect(v.ok).toBe(true);
+    if (v.ok) expect(v.row.traceId).toBe(TRACE_ID);
+  });
+
+  it("mentions both field names when neither id is usable", () => {
+    const v = validateFeedbackRow(validRow({ trace_id: undefined }));
+    expect(v.ok).toBe(false);
+    if (!v.ok) {
+      expect(v.error).toContain("trace_id");
+      expect(v.error).toContain("recipe_id");
+    }
+  });
+
   it("accepts a fully-populated row and normalizes optionals", () => {
     const v = validateFeedbackRow(validRow({
       note: "  changed approach  ",

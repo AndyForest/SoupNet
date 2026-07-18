@@ -94,8 +94,8 @@ async function checkRecipe(apiKey: string, recipe: string, evidence: string): Pr
     format: "json",
   });
   const res = await fetch(`${BASE}/check?${params.toString()}`, { headers: { Accept: "application/json" } });
-  const json = (await res.json()) as { data?: { recipeId?: string } };
-  const traceId = json.data?.recipeId ?? "";
+  const json = (await res.json()) as { data?: { checked?: { recipeId?: string } } };
+  const traceId = json.data?.checked?.recipeId ?? "";
   if (!traceId) throw new Error(`Setup: /check did not return a recipeId (status ${res.status})`);
   return traceId;
 }

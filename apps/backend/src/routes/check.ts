@@ -14,6 +14,7 @@ import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { validateKey } from "../services/api-key.service";
 import { HTML_ACCEPT_TYPES, renderCheckResponseMarkdown, fenceCheckResponseMarkdown } from "@soupnet/domain";
 import type { CheckResponseJson } from "@soupnet/domain";
+import type { Recipe } from "@soupnet/contracts";
 import { rateLimit, perKeyRateLimit, extractCheckRequestKey, getClientIp, hashApiKey } from "../middleware/rate-limit";
 import { parseLenientQuery, rawQueryOfUrl } from "../lib/lenient-query";
 import { invalidKeyMessage, keysPageUrl } from "../lib/key-remediation";
@@ -213,11 +214,14 @@ function buildJsonResponse(
   const response: Record<string, unknown> = {
     ok: true,
     data: {
-      recipeId: result.traceId,
-      checkedRecipe: result.traceText,
+      // The caller's own deposit as a Recipe fill (canonical schema, recipe
+      // 7945fd8a): {recipeId, recipe}.
+      ...(result.traceId
+        ? { checked: { recipeId: result.traceId, recipe: result.traceText } satisfies Recipe }
+        : {}),
       searchMode: result.searchMode ?? "semantic",
       clustered: result.clustered ?? false,
-      results: enriched.map((r) => {
+      results: enriched.map((r): Recipe => {
         // Known-set stub (rendering only — logging and cluster math are
         // untouched upstream; the stub keeps its cluster slot at its true
         // rank). Triggered by client-declared known_recipes ids or the
@@ -227,22 +231,24 @@ function buildJsonResponse(
         // full recipe via GET /recipes or get_recipes when needed.
         if (knownRecipeIds?.has(r.id) || r.known) {
           return {
-            id: r.id,
+            recipeId: r.id,
             known: true,
             // ONE similarity vocabulary (operator ruling 2026-07-18, recipe
             // ef245b63): the raw cosine, nothing else.
-            similarity: r.semanticScore,
+            similarity: r.semanticScore ?? undefined,
             ...(r.clusterSize ? { clusterSize: r.clusterSize } : {}),
           };
         }
-        const item: Record<string, unknown> = {
-          id: r.id,
+        return {
+          recipeId: r.id,
           recipe: r.claimText,
           createdAt: r.createdAt,
           // Recipe-book id + name only — the description lives in the
           // briefing (operator ruling 2026-07-18: "It's in the briefing").
-          ...(r.group ? { group: { id: r.group.id, name: r.group.name } } : {}),
-          similarity: r.semanticScore,
+          ...(r.recipeBook
+            ? { recipeBook: { recipeBookId: r.recipeBook.recipeBookId, name: r.recipeBook.name } }
+            : {}),
+          similarity: r.semanticScore ?? undefined,
           evidence: r.evidence.map((e) => ({
             interpretation: e.content,
             references: e.references.map((ref) => ({
@@ -257,17 +263,17 @@ function buildJsonResponse(
               } : {}),
             })),
           })),
+          ...(r.clusterSize ? { clusterSize: r.clusterSize } : {}),
+          // Known cluster-mates (seam 2, "stub, stub, full recipe"): minimal
+          // Recipe fills {recipeId, similarity} beside the full exemplar.
+          ...(r.knownClusterMembers && r.knownClusterMembers.length > 0
+            ? {
+              knownMembers: r.knownClusterMembers.map(
+                (m): Recipe => ({ recipeId: m.id, similarity: m.similarity }),
+              ),
+            }
+            : {}),
         };
-        if (r.clusterSize) {
-          item["clusterSize"] = r.clusterSize;
-        }
-        // Known cluster-mates (seam 2, "stub, stub, full recipe" — operator
-        // design 2026-07-18): this cluster's members the session already
-        // holds, each with its raw similarity, beside the full exemplar.
-        if (r.knownClusterMembers && r.knownClusterMembers.length > 0) {
-          item["knownMembers"] = r.knownClusterMembers;
-        }
-        return item;
       }),
       totalResults: result.totalResults,
       page,
@@ -305,21 +311,24 @@ function buildJsonResponse(
   // strategy field.
   if (result.relatedEvidence && result.relatedEvidence.length > 0) {
     const data = response["data"] as Record<string, unknown>;
-    data["relatedEvidence"] = result.relatedEvidence.map((e) => ({
+    // Each related-evidence entry is a Recipe fill (canonical schema): the
+    // parent recipe with the matching evidence entry attached.
+    data["relatedEvidence"] = result.relatedEvidence.map((e): Recipe => ({
       recipeId: e.parentTraceId,
-      parentRecipe: e.parentTraceText,
-      evidence: e.evidenceContent,
+      recipe: e.parentTraceText,
       similarity: e.semanticScore,
+      evidence: [{ interpretation: e.evidenceContent }],
     }));
     data["relatedEvidenceHint"] =
       "Each entry carries the source recipe's UUID as recipeId — fetch the full recipe with GET /recipes?ids=<recipeId> (same API key) instead of re-checking.";
   }
-  // Known evidence parents (seam 2): parents whose evidence would have made
-  // the selection but the session already holds them — id + best evidence
-  // similarity per parent (ONE similarity vocabulary, recipe ef245b63).
+  // Known evidence parents (seam 2): minimal Recipe fills — id + best
+  // evidence similarity per parent (ONE similarity vocabulary, ef245b63).
   if (result.relatedEvidenceKnown && result.relatedEvidenceKnown.length > 0) {
     (response["data"] as Record<string, unknown>)["relatedEvidenceKnown"] =
-      result.relatedEvidenceKnown;
+      result.relatedEvidenceKnown.map(
+        (p): Recipe => ({ recipeId: p.recipeId, similarity: p.similarity }),
+      );
   }
 
   // Concept-axis positions (TCAV-style projection)
@@ -333,8 +342,8 @@ function buildJsonResponse(
 
 /**
  * JSON shape for the read-only `filter` search path — same result mapping
- * as a check, minus everything that implies a logged trace (recipeId,
- * checkedRecipe), plus an explicit searchOnly marker and notice.
+ * as a check, minus everything that implies a logged trace (the `checked`
+ * Recipe fill), plus an explicit searchOnly marker and notice.
  */
 function buildSearchOnlyJsonResponse(
   result: SubmitAndSearchResult,
@@ -346,8 +355,7 @@ function buildSearchOnlyJsonResponse(
   const response = buildJsonResponse(result, enriched, page, knownRecipeIds);
   if (response["ok"] !== true) return response;
   const data = response["data"] as Record<string, unknown>;
-  delete data["recipeId"];
-  delete data["checkedRecipe"];
+  delete data["checked"];
   response["data"] = {
     searchOnly: true,
     filter,
@@ -625,7 +633,7 @@ function renderPage(
           ? renderCompactEvidence(r.evidence)
           : renderEvidenceHtml("Evidence", r.evidence);
 
-        const groupHtml = r.group ? `<span class="group">[${esc(r.group.name)}]</span> ` : "";
+        const groupHtml = r.recipeBook ? `<span class="group">[${esc(r.recipeBook.name)}]</span> ` : "";
 
         // Known cluster-mates (seam 2, "stub, stub, full recipe"): members of
         // this cluster the caller already holds, listed as id-stubs beside

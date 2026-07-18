@@ -10,8 +10,8 @@ interface CheckResponse {
   ok: boolean;
   error?: string;
   data?: {
-    recipeId?: string;
-    results?: Array<{ id?: string; evidence?: unknown[] }>;
+    checked?: { recipeId?: string };
+    results?: Array<{ recipeId?: string; evidence?: unknown[] }>;
     synthesis?: string;
     synthesisNotice?: string;
   };
@@ -106,8 +106,8 @@ describe.skipIf(!BASE)("/check routes integration", () => {
     const body = (await res.json()) as CheckResponse;
     expect(body.ok).toBe(true);
     expect(body.data).toBeDefined();
-    expect(body.data?.recipeId).toBeDefined();
-    expect(typeof body.data?.recipeId).toBe("string");
+    expect(body.data?.checked?.recipeId).toBeDefined();
+    expect(typeof body.data?.checked?.recipeId).toBe("string");
   });
 
   it("JSON response includes evidence and references", { timeout: 15_000 }, async () => {
@@ -151,7 +151,7 @@ describe.skipIf(!BASE)("/check routes integration", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as CheckResponse;
     expect(body.ok).toBe(true);
-    expect(body.data?.recipeId).toBeDefined();
+    expect(body.data?.checked?.recipeId).toBeDefined();
   });
 
   it("missing key returns error", async () => {
@@ -177,7 +177,7 @@ describe.skipIf(!BASE)("/check routes integration", () => {
     const res = await fetch(`${BASE}/check?${params.toString()}`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as CheckResponse;
-    const recipeId = body.data?.recipeId;
+    const recipeId = body.data?.checked?.recipeId;
     if (!recipeId) throw new Error("recipeId missing from /check JSON response");
 
     const sql = postgres({
@@ -229,7 +229,7 @@ describe.skipIf(!BASE)("/check routes integration", () => {
     const res = await fetch(`${BASE}/check`, { method: "POST", body: form });
     expect(res.status).toBe(200);
     const body = (await res.json()) as CheckResponse;
-    const recipeId = body.data?.recipeId;
+    const recipeId = body.data?.checked?.recipeId;
     if (!recipeId) throw new Error("recipeId missing from /check JSON response");
 
     const sql = postgres({
@@ -275,7 +275,7 @@ describe.skipIf(!BASE)("/check routes integration", () => {
 
     expect(body1.ok).toBe(true);
     expect(body2.ok).toBe(true);
-    expect(body1.data?.recipeId).toBe(body2.data?.recipeId);
+    expect(body1.data?.checked?.recipeId).toBe(body2.data?.checked?.recipeId);
   });
 
   // ── Premium synthesis (synthesize param) ────────────────────────────────
@@ -306,7 +306,7 @@ describe.skipIf(!BASE)("/check routes integration", () => {
     const body = (await res.json()) as CheckResponse;
     expect(body.ok).toBe(true);
     // Response is otherwise normal — a recipe was still logged.
-    expect(body.data?.recipeId).toBeDefined();
+    expect(body.data?.checked?.recipeId).toBeDefined();
     expect(body.data?.synthesis).toBeUndefined();
     expect(body.data?.synthesisNotice).toBeDefined();
     expect(body.data?.synthesisNotice).toMatch(/premium/i);
@@ -357,8 +357,8 @@ describe.skipIf(!BASE)("/check routes integration", () => {
     // The stub cites every returned recipe id verbatim — assert the top result's
     // id appears in the profile when the corpus returned any exemplars.
     const results = body.data?.results ?? [];
-    if (results.length > 0 && results[0]?.id) {
-      expect(body.data?.synthesis).toContain(results[0]!.id!);
+    if (results.length > 0 && results[0]?.recipeId) {
+      expect(body.data?.synthesis).toContain(results[0]!.recipeId!);
     }
   });
 

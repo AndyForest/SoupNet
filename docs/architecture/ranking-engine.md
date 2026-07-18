@@ -194,3 +194,4 @@ In human terms — the engine succeeds when these are ordinarily true (the techn
 | [ranking-tuning.md](../workflows/ranking-tuning.md) | The tuning workflow: sweep → report → ruling → versioned event |
 | [eval/golden/README.md](../../eval/golden/README.md) | Golden dataset file contract + delivery path |
 | [ranking-config.ts](../../packages/domain/src/ranking-config.ts) | The config object: every lever, default, range, and rule |
+| [recipe.ts (contracts)](../../packages/contracts/src/recipe.ts) | The canonical Recipe wire schema — one object at every fill level, field definitions as source of truth; published at `GET /schemas/recipe.json` + `/schemas/check-response.json` |

@@ -214,7 +214,7 @@ server.tool(
       // as structuredContent with a one-line stub; markdown (default) is the
       // shared readable report. Never both.
       if (response_format === "structured" && json.ok && json.data) {
-        const stub = `Recipe checked as #${json.data.recipeId ?? "?"}. ${json.data.totalResults ?? 0} similar recipe(s) — see structuredContent.${feedbackSummary ? `\n${feedbackSummary}` : ""}`;
+        const stub = `Recipe checked as #${json.data.checked?.recipeId ?? "?"}. ${json.data.totalResults ?? 0} similar recipe(s) — see structuredContent.${feedbackSummary ? `\n${feedbackSummary}` : ""}`;
         return {
           content: [{ type: "text" as const, text: stub }],
           structuredContent: json.data as unknown as Record<string, unknown>,

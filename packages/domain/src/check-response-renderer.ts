@@ -47,12 +47,14 @@ export interface CheckResultEvidence {
 }
 
 export interface CheckResultItem {
-  id?: string;
+  /** The recipe's stable id — the canonical schema's one mandatory field
+   *  (GET /schemas/recipe.json, recipe 7945fd8a). */
+  recipeId?: string;
   recipe?: string;
   createdAt?: string | Date;
-  /** Recipe-book id + name; the description lives in the briefing (operator
-   *  ruling 2026-07-18). */
-  group?: { id?: string; name?: string };
+  /** Recipe book, {recipeBookId, name} on check results; the description
+   *  lives in the briefing (operator ruling 2026-07-18). */
+  recipeBook?: { recipeBookId?: string; name?: string };
   /** Raw cosine similarity — the ONE similarity vocabulary (operator ruling
    *  2026-07-18, recipe ef245b63). No combined/lexical slots. */
   similarity?: number | null;
@@ -61,24 +63,28 @@ export interface CheckResultItem {
   /** The caller already holds this recipe (session known-set or declared
    *  known_recipes) — renders as a one-line id-only stub. */
   known?: boolean;
-  /** Known members of this displayed cluster (recipes the session has
-   *  already seen or deposited), each with its raw similarity — rendered as
-   *  one compact line beside the full item ("stub, stub, full recipe"). */
-  knownMembers?: Array<{ id?: string; similarity?: number }>;
+  /** Known members of this displayed cluster — minimal Recipe fills
+   *  ({recipeId, similarity}) rendered as one compact line beside the full
+   *  item ("stub, stub, full recipe"). */
+  knownMembers?: Array<{ recipeId?: string; similarity?: number }>;
 }
 
+/** A related-evidence entry IS a Recipe fill (canonical schema): the parent
+ *  recipe with the matching evidence entry attached. */
 export interface CheckRelatedEvidence {
   /** UUID of the recipe the evidence belongs to — lets agents fetch the
    *  full recipe via get_recipes / GET /recipes instead of re-checking. */
   recipeId?: string;
-  parentRecipe?: string;
-  evidence?: string;
+  /** The parent recipe's text. */
+  recipe?: string;
+  evidence?: Array<{ interpretation?: string }>;
   similarity?: number;
 }
 
 export interface CheckResponseData {
-  recipeId?: string;
-  checkedRecipe?: string;
+  /** The caller's own deposit as a Recipe fill ({recipeId, recipe}). Absent
+   *  on the read-only filter path. */
+  checked?: { recipeId?: string; recipe?: string };
   /** True for the /check `filter` read-only search path — no trace logged. */
   searchOnly?: boolean;
   /** The keyword filter text of a search-only response. */
@@ -176,7 +182,7 @@ function renderReference(ref: CheckResultReference): string {
 }
 
 function renderResultItem(r: CheckResultItem, index: number, known: boolean): string {
-  const head = `#${index + 1} (${similarityLabel(r.similarity)}) ${r.id ?? "?"}`;
+  const head = `#${index + 1} (${similarityLabel(r.similarity)}) ${r.recipeId ?? "?"}`;
 
   if (known) {
     // One-line id-only stub: the caller already holds this recipe, so the
@@ -190,12 +196,12 @@ function renderResultItem(r: CheckResultItem, index: number, known: boolean): st
   const date = dateLabel(r.createdAt);
   if (date) text += ` -- ${date}`;
   if (r.clusterSize) text += ` (represents ${r.clusterSize} similar recipes)`;
-  if (r.group?.name) text += ` [${r.group.name}]`;
+  if (r.recipeBook?.name) text += ` [${r.recipeBook.name}]`;
   if (r.knownMembers && r.knownMembers.length > 0) {
     // Known cluster-mates ("stub, stub, full recipe"): this cluster also
     // holds recipes the caller has already seen — one compact line of
     // id + similarity pairs.
-    const members = r.knownMembers.map((m) => `${m.id ?? "?"}${pctLabel(m.similarity)}`).join(", ");
+    const members = r.knownMembers.map((m) => `${m.recipeId ?? "?"}${pctLabel(m.similarity)}`).join(", ");
     text += `\n  [cluster also holds ${r.knownMembers.length} you've seen: ${members}]`;
   }
   text += `\nRecipe: ${r.recipe ?? ""}\n`;
@@ -230,7 +236,7 @@ export function renderCheckResponseMarkdown(
 
   let text = data.searchOnly
     ? `Read-only search${data.filter ? ` for "${data.filter}"` : ""} — no recipe was logged.\nSearch mode: ${data.searchMode ?? "semantic"}\n`
-    : `Recipe checked as #${data.recipeId ?? "?"}\nSearch mode: ${data.searchMode ?? "semantic"}\n`;
+    : `Recipe checked as #${data.checked?.recipeId ?? "?"}\nSearch mode: ${data.searchMode ?? "semantic"}\n`;
 
   const warning = data.formatWarning ?? response.formatWarning;
   if (warning) {
@@ -263,7 +269,7 @@ export function renderCheckResponseMarkdown(
   text += ":\n";
 
   results.forEach((r, i) => {
-    text += `\n${renderResultItem(r, i, r.known === true || (r.id !== undefined && known.has(r.id)))}`;
+    text += `\n${renderResultItem(r, i, r.known === true || (r.recipeId !== undefined && known.has(r.recipeId)))}`;
   });
 
   const related = data.relatedEvidence ?? [];
@@ -272,11 +278,13 @@ export function renderCheckResponseMarkdown(
     text += "\nRelated evidence from other recipes:\n";
     for (const e of related) {
       const pct = e.similarity !== undefined ? ` (${Math.round(e.similarity * 100)}% similar)` : "";
-      text += `  - ${e.evidence ?? ""}${pct}\n`;
+      // The entry is a Recipe fill: the matching evidence interpretation
+      // rides e.evidence[0], the parent text rides e.recipe.
+      text += `  - ${e.evidence?.[0]?.interpretation ?? ""}${pct}\n`;
       // Recipe id inline (2026-07-05 eval: entries without ids forced agents
       // to burn full re-checks recovering text they'd already half-seen).
       const from = e.recipeId ? `From recipe ${e.recipeId}` : "From";
-      text += `    ${from}: "${(e.parentRecipe ?? "").slice(0, 100)}"\n`;
+      text += `    ${from}: "${(e.recipe ?? "").slice(0, 100)}"\n`;
     }
     if (relatedKnown.length > 0) {
       // Known parents in ONE line (seam 2, 2026-07-18 reshape) — the session

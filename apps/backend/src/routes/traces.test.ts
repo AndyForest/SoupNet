@@ -233,8 +233,8 @@ describe.skipIf(!BASE)("/traces/map cross-author visibility in shared groups", (
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: formBody.toString(),
     });
-    const checkBody = (await checkRes.json()) as { ok: boolean; data?: { recipeId: string } };
-    if (!checkBody.ok || !checkBody.data?.recipeId) {
+    const checkBody = (await checkRes.json()) as { ok: boolean; data?: { checked?: { recipeId: string } } };
+    if (!checkBody.ok || !checkBody.data?.checked?.recipeId) {
       throw new Error(`Failed to seed author's trace: ${JSON.stringify(checkBody)}`);
     }
   });

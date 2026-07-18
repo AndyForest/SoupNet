@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { MCP_TOOL_DESCRIPTIONS, MCP_PARAM_DESCRIPTIONS } from "@soupnet/domain";
+import { MCP_TOOL_DESCRIPTIONS, MCP_PARAM_DESCRIPTIONS, CANONICAL_PARAM_SOURCES } from "@soupnet/domain";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const mcpRoutePath = join(here, "mcp.ts");
@@ -130,5 +130,44 @@ describe("MCP tool description budget", () => {
     // recipe 31d184df) with the prior total at 4,279.
     const total = Object.values(all).reduce((n, s) => n + s.length, 0);
     expect(total).toBeLessThanOrEqual(4400);
+  });
+});
+
+// Derivation drift guard (operator ruling 2026-07-18, recipe 43ce7ec0): the
+// budget-capped short-form param descriptions derive from the canonical field
+// definitions in @soupnet/contracts (the same source the published JSON
+// Schema and validation use). Each short form must keep sharing its source's
+// load-bearing concepts — an edit that severs the derivation on either side
+// is a red test, not silent drift.
+describe("MCP param descriptions — canonical-source derivation", () => {
+  const loadBearing: Record<keyof typeof CANONICAL_PARAM_SOURCES, string[]> = {
+    // Voice contract: human's voice, transferable role, the recipe shape.
+    recipe: ["voice", "transferable", "so that"],
+    // Known-stub contract: stub rendering, rendering-only (never ranking).
+    knownRecipes: ["stub", "rendering", "ranking"],
+    // Session contract: omit-to-refresh, stubs, ranking untouched.
+    sessionId: ["omit", "stub", "ranking"],
+    // Judgment-date contract: backfilled decisions from dated artifacts.
+    decidedAt: ["backfill", "artifact", "8601"],
+  };
+
+  it("every derived short form has its canonical constant, and both are non-trivial", () => {
+    for (const [param, canonical] of Object.entries(CANONICAL_PARAM_SOURCES)) {
+      expect(canonical, `${param} canonical source`).toBeTruthy();
+      expect(canonical.length, `${param} canonical length`).toBeGreaterThan(100);
+      const short = MCP_PARAM_DESCRIPTIONS[param as keyof typeof CANONICAL_PARAM_SOURCES];
+      expect(short, `${param} short form`).toBeTruthy();
+    }
+  });
+
+  it("each short form shares its canonical source's load-bearing concepts", () => {
+    for (const [param, concepts] of Object.entries(loadBearing)) {
+      const canonical = CANONICAL_PARAM_SOURCES[param as keyof typeof CANONICAL_PARAM_SOURCES].toLowerCase();
+      const short = MCP_PARAM_DESCRIPTIONS[param as keyof typeof CANONICAL_PARAM_SOURCES].toLowerCase();
+      for (const concept of concepts) {
+        expect(canonical, `${param} canonical mentions "${concept}"`).toContain(concept.toLowerCase());
+        expect(short, `${param} short form mentions "${concept}"`).toContain(concept.toLowerCase());
+      }
+    }
   });
 });
