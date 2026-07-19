@@ -30,16 +30,21 @@
  * behavior do not mint. Surfaced in check responses (`data.ranking.version`)
  * and audit metadata. History: docs/architecture/ranking-changelog.md.
  */
-export const RANKING_ALGORITHM_VERSION = "2026-07-16";
+export const RANKING_ALGORITHM_VERSION = "2026-07-19";
 
 /**
  * Clustering candidate pool — hypothesis P6 (ranking-engine.md stage 3).
  *
  *   - "page": legacy — the pool is the pagination window (per_page, default
- *     20), an inherited default doing double duty. Byte-stable.
- *   - "fixed": the pool is the top `size` candidates by rank. A comparison
- *     arm for sweeps — fixed caps are fixture-relative (measured 2026-07-17),
- *     so this is scaffolding, not the target.
+ *     20), an inherited default doing double duty. Comparison arm since the
+ *     2026-07-19 flip.
+ *   - "fixed": the pool is the top `size` candidates by rank. THE DEFAULT
+ *     since 2026-07-19: the real-scale P6 sweep measured coverage gains
+ *     saturating at or before pool 60 in both embedding spaces with every
+ *     other metric invariant (docs/planning/ranking-research/
+ *     p6-pool-sweep-report.md); 100 is the four-source convention and sits
+ *     inside the ANN plan. (The 2026-07-17 "fixture-relative" caution applied
+ *     to corpora smaller than the pool — real-scale measurement superseded it.)
  *   - "score-gap": the pool extends down the ranking to the largest adjacent
  *     score gap found between `minSize` and `size` candidates — a
  *     relevance-bounded boundary instead of a global cutoff ("a single global
@@ -67,14 +72,16 @@ export interface ClusterPoolConfig {
  * scattered constants, so a new lever is a field + a stage read.
  */
 export interface RankingConfig {
-  /** Clustering candidate pool (P6). Ships "page" (legacy); "score-gap" is
-   *  the measured candidate. */
+  /** Clustering candidate pool (P6). Ships "fixed:100" (2026-07-19 ruling);
+   *  "page" (legacy) and "score-gap" stay plumbed as comparison arms. */
   clusterPool: ClusterPoolConfig;
 }
 
-/** Shipped defaults — byte-identical to legacy behavior. */
+/** Shipped defaults. Flat results, pagination, and displayed scores are
+ *  untouched by the pool — it shapes only the clustered summary (P6 sweep:
+ *  every flat metric byte-identical, guardrail tau exactly 1.0). */
 export const DEFAULT_RANKING: RankingConfig = {
-  clusterPool: { mode: "page", size: 133, minSize: 20, vectorDims: 768 },
+  clusterPool: { mode: "fixed", size: 100, minSize: 20, vectorDims: 768 },
 };
 
 /**

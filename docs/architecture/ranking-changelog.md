@@ -8,6 +8,14 @@ Additive levers that default to the previous behavior do **not** mint a new vers
 
 ---
 
+## 2026-07-19 — clustering pool decoupled from the page window: `page` → `fixed:100` (version mint: `2026-07-16` → `2026-07-19`)
+
+`DEFAULT_RANKING.clusterPool` flips `{mode: "page"}` → `{mode: "fixed", size: 100, minSize: 20, vectorDims: 768}`. The clustering stage now summarizes the top 100 candidates instead of the 20-item pagination window; flat results, pagination arithmetic, displayed scores, and the result set are untouched (the pool feeds only the clustered summary — measured: every flat metric byte-identical across pool variants, guardrail Kendall tau exactly 1.0 in every run).
+
+Rests on: the real-scale P6 sweep ([p6-pool-sweep-report.md](../planning/ranking-research/p6-pool-sweep-report.md), 39,524-trace golden corpus, 3,978 graded rows, both embedding spaces) — display diversity rises and saturates at or before pool 60 (bge +2.8–3.2pts, gemini +0.34–0.55pts; the lever matters most where near-duplicates are dense), latency ~144ms/call at pools to 400, and `score-gap` trails fixed in both spaces (stays plumbed as a comparison arm, as does `page`). 100 over 60: same measured result, same cost class (both inside the ANN plan), and 100 is the external convention (sbert retrieve-100, Elasticsearch sampler default, Carrot2's ≥100 minimum, the eval runner's own number).
+
+Ruling: operator, 2026-07-19 ("Maybe we should push this fixed:100 work first"), on the report's recommendation. Sweep lineage recipes: `46ba63f5`, `dc280520`, `7f3b8e51`.
+
 ## 2026-07-17 — echo demotion retired; session-aware rendering + pool boundary land (no version mint)
 
 No shipped behavior changed — every removed lever was default-OFF and never flipped, and every added lever ships in its legacy position — so the version stays `2026-07-16`. Recorded here because the *lever inventory* changed shape (operator rulings, recipes `9067ca1b` / `ebdc6ad7`; plan: [session-novelty-and-pool-diversity.md](../planning/session-novelty-and-pool-diversity.md)):

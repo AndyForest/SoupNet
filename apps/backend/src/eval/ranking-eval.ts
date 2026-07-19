@@ -34,8 +34,8 @@
  *
  * Ranking variants (P6 proving arms — ranking is a pure function, so these
  * differ only in the clustering-pool boundary):
- *   - baseline:       DEFAULT_RANKING (page pool — legacy)
- *   - pool-fixed100:  fixed:100 clustering pool @ 768-dim pool vectors
+ *   - baseline:       DEFAULT_RANKING (fixed:100 since 2026-07-19)
+ *   - pool-fixed100:  explicit fixed:100 @ 768-dim pool vectors (= baseline's twin)
  *   - pool-score-gap: score-gap pool (largest gap in [20, 133]) @ 768 dims
  *
  * Calls per question × arm × variant: an expanded flat call for the
@@ -132,10 +132,11 @@ type ArmName = (typeof ARMS)[number];
 function variantConfig(name: VariantName): RankingConfig {
   switch (name) {
     case "baseline":
-      return DEFAULT_RANKING; // page pool — legacy
+      // The shipped default — fixed:100 since the 2026-07-19 flip
+      // (ranking-changelog.md; pool-fixed100 below is now its explicit twin,
+      // kept so threshold paths and cross-version comparisons stay stable).
+      return DEFAULT_RANKING;
     case "pool-fixed100":
-      // Fixed-cap comparison arm (fixture-relative by design — scaffolding
-      // for the sweep, not the target; candidate-pool-sizing memo).
       return { clusterPool: { mode: "fixed", size: 100, minSize: 20, vectorDims: 768 } };
     case "pool-score-gap":
       // The measured candidate: relevance-bounded boundary at the largest
