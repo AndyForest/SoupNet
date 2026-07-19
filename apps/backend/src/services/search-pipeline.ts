@@ -19,8 +19,8 @@
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 
-import { PRODUCTION_SEARCH_STRATEGY_IDS, DEFAULT_RANKING } from "@soupnet/domain";
-import type { RankingConfig } from "@soupnet/domain";
+import { PRODUCTION_SEARCH_STRATEGY_IDS, DEFAULT_RANKING, orderClusters } from "@soupnet/domain";
+import type { RankingConfig, ClusterOrderStat } from "@soupnet/domain";
 import { hybridSearch, evidenceSearch } from "./vector-search.service";
 import type { EvidenceSearchResult } from "./vector-search.service";
 import type { SearchResultItem } from "./trace.service";
@@ -218,6 +218,30 @@ export async function fetchTraceVectors(
   return result;
 }
 
+/**
+ * Per-trace evidence-row counts for a set of traces — the corroboration weight
+ * the P7 "evidence-mass" cluster ordering ranks on. One grouped count query,
+ * executed lazily by the pipeline (only for that ordering mode). Traces with no
+ * evidence are simply absent from the map (the caller reads absent as 0).
+ */
+async function fetchEvidenceCounts(
+  db: PostgresJsDatabase,
+  traceIds: string[],
+): Promise<Map<string, number>> {
+  if (traceIds.length === 0) return new Map();
+  const rows = await db.execute(sql`
+    SELECT trace_id::text AS trace_id, COUNT(*)::int AS n
+    FROM claimnet.trace_evidence
+    WHERE trace_id IN (${sql.join(traceIds.map((id) => sql`${id}::uuid`), sql`, `)})
+    GROUP BY trace_id
+  `);
+  const map = new Map<string, number>();
+  for (const row of rows as unknown as Record<string, unknown>[]) {
+    map.set(row["trace_id"] as string, Number(row["n"]));
+  }
+  return map;
+}
+
 // ── Corpus fetch (no query mode) ─────────────────────────────────────────────
 
 interface CorpusTrace {
@@ -384,7 +408,7 @@ export async function runSearchPipeline(
     }
 
     if (vectors.length > 1) {
-      const rawClusters = timer.timeSync("cluster", () => clusterResults({
+      let rawClusters = timer.timeSync("cluster", () => clusterResults({
         vectors,
         k: params.k,
         maxChars: params.maxChars,
@@ -404,6 +428,38 @@ export async function runSearchPipeline(
       for (let vi = 0; vi < assignments.length; vi++) {
         const clusterIdx = assignments[vi]!;
         clusterAssignments[clusterIdx]!.memberIndices.push(validIndices[vi]!);
+      }
+
+      // Cluster display ordering (P7, ranking-engine.md stage 5): clusters
+      // arrive member-count-descending out of clustering.service (pure
+      // geometry — untouched, the map/briefing surfaces depend on it). A
+      // non-legacy mode reorders the DISPLAY sequence only, as one permutation
+      // of the parallel cluster arrays here — upstream of the exemplar mapping
+      // so the results↔clusters index-parallelism, known-set promotion, and
+      // stubbing below are all agnostic to how order was chosen. Membership,
+      // scores, and the flat surface never move (same seam discipline as P6).
+      if (ranking.clusterOrdering !== "member-count") {
+        // evidence-mass needs a corpus read; fetch it lazily, only for that
+        // mode (one grouped count over the pool ids).
+        let evidenceByTrace: Map<string, number> | undefined;
+        if (ranking.clusterOrdering === "evidence-mass") {
+          evidenceByTrace = await timer.time("cluster_order_evidence", () =>
+            fetchEvidenceCounts(db, clusterInput.map((r) => r.id)));
+        }
+        const stats: ClusterOrderStat[] = clusterAssignments.map((c) => {
+          let maxScore = -Infinity;
+          let evidenceMass = 0;
+          for (const mi of c.memberIndices) {
+            const item = clusterInput[mi]!;
+            const score = item.semanticScore ?? item.rank;
+            if (score > maxScore) maxScore = score;
+            evidenceMass += evidenceByTrace?.get(item.id) ?? 0;
+          }
+          return { memberCount: c.memberCount, maxScore, evidenceMass };
+        });
+        const order = orderClusters(stats, ranking.clusterOrdering);
+        clusterAssignments = order.map((i) => clusterAssignments![i]!);
+        rawClusters = order.map((i) => rawClusters[i]!);
       }
 
       // Save pre-clustered input for member ID resolution (used by map

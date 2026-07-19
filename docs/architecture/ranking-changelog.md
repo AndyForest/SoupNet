@@ -8,6 +8,14 @@ Additive levers that default to the previous behavior do **not** mint a new vers
 
 ---
 
+## 2026-07-19 — cluster-ordering lever added, ships legacy member-count (no version mint)
+
+Adds the `clusterOrdering` lever to `RankingConfig` (stage 5 cluster display ordering) with three modes: `member-count` (legacy — biggest cluster first, the shipped default), `max-similarity` (relevance-first — order by each cluster's best member's query similarity), and `evidence-mass` (corroboration weight — order by the summed evidence-row count of members). No shipped behavior changed — the lever ships in its legacy position (`member-count`, byte-stable), so the version stays `2026-07-19`; this entry records the *lever inventory* change per the 2026-07-17 convention.
+
+Motivation: the contrarian-miss diagnosis (2026-07-19, evals-side) found member-count-descending ordering "rewards the failure mode" — self-similar echo clusters win the member count. The lever reorders the clustered summary's *sequence* only (never membership, ranking, scores, or the flat surface), as one permutation applied downstream of the pure-geometry clustering stage (clustering.service stays size-ordered for the map/briefing surfaces). Order-sensitive eval metrics (`exemplarOrderNdcg`, `firstExemplarGrade`) and the `order:max-similarity` / `order:evidence-mass` variants (`RANKEVAL_EXTRA_VARIANTS`) make it measurable; aspectCoverage is order-blind. A flip to a non-legacy default awaits the sweep → report → ruling path.
+
+Distinct from the retired `demotion-adjusted-mass` ordering (2026-07-17): that lever derived cluster mass from echo demotion and left with it; this one ranks on explicit corpus properties (query similarity, evidence count), consistent with the pure-function ranking ruling (recipe `9067ca1b`). Register hypothesis: P7 ([ranking-engine.md §5](ranking-engine.md#presentation--budget)).
+
 ## 2026-07-19 — clustering pool decoupled from the page window: `page` → `fixed:100` (version mint: `2026-07-16` → `2026-07-19`)
 
 `DEFAULT_RANKING.clusterPool` flips `{mode: "page"}` → `{mode: "fixed", size: 100, minSize: 20, vectorDims: 768}`. The clustering stage now summarizes the top 100 candidates instead of the 20-item pagination window; flat results, pagination arithmetic, displayed scores, and the result set are untouched (the pool feeds only the clustered summary — measured: every flat metric byte-identical across pool variants, guardrail Kendall tau exactly 1.0 in every run).

@@ -190,6 +190,35 @@ export function aspectCoverage(
   return covered.size / relevantAspects.size;
 }
 
+// ── Cluster-ordering quality (P7 lever) ──────────────────────────────────────
+
+/**
+ * NDCG of the displayed exemplars AS ORDERED against the ideal ordering of the
+ * SAME exemplars (their grades sorted descending). Measures whether cluster
+ * ordering surfaced the best exemplar first — independent of WHICH exemplars
+ * clustering chose (that is aspectCoverage's job, which is order-blind). 1.0
+ * when no displayed exemplar carries relevance mass (nothing to get wrong).
+ *
+ * @param displayedGrades exemplar grades in DISPLAY order (position 0 first).
+ */
+export function exemplarOrderNdcg(displayedGrades: readonly number[]): number {
+  return ndcg(displayedGrades, displayedGrades);
+}
+
+/**
+ * Grade of the FIRST displayed exemplar, normalized to [0,1] (grade /
+ * maxGrade) — the single most attention-weighted slot, which member-count
+ * ordering is suspected to squander on the echo-mass cluster. Empty display ⇒ 0
+ * (nothing relevant surfaced first).
+ *
+ * @param displayedGrades exemplar grades in DISPLAY order (position 0 first).
+ * @param maxGrade the grading scale's maximum (3 in the golden sets).
+ */
+export function firstExemplarGrade(displayedGrades: readonly number[], maxGrade: number): number {
+  if (displayedGrades.length === 0) return 0;
+  return displayedGrades[0]! / maxGrade;
+}
+
 // ── Aggregation helper ───────────────────────────────────────────────────────
 
 /** Arithmetic mean; empty input ⇒ 0 (an empty question set aggregates to 0,

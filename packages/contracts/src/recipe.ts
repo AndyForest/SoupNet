@@ -304,6 +304,13 @@ export const CheckResponseDataSchema = z
       .object({
         version: z.string().describe("Dated ranking-algorithm version that served this response."),
         clusterPool: z.string().describe("Clustering-pool mode in effect (page | fixed:<n> | score-gap:<min>-<max>)."),
+        clusterOrdering: z
+          .string()
+          .optional()
+          .describe(
+            "Cluster display ordering in effect (member-count | max-similarity | evidence-mass). "
+            + "Ordering shapes the clustered summary's sequence only — never membership, ranking, or scores.",
+          ),
       })
       .optional()
       .describe("Which ranking algorithm produced this response."),
