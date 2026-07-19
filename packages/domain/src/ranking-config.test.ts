@@ -7,18 +7,18 @@ import {
 } from "./ranking-config";
 
 describe("DEFAULT_RANKING", () => {
-  it("ships byte-identical to legacy behavior", () => {
-    // "page" = the legacy pagination-window pool. Changing any default is a
-    // versioned algorithm event: bump RANKING_ALGORITHM_VERSION and add a
-    // ranking-changelog.md entry.
-    expect(DEFAULT_RANKING.clusterPool.mode).toBe("page");
-    expect(DEFAULT_RANKING.clusterPool.size).toBe(133);
+  it("ships the 2026-07-19 ruling: fixed:100 clustering pool", () => {
+    // Changing any default is a versioned algorithm event: bump
+    // RANKING_ALGORITHM_VERSION and add a ranking-changelog.md entry
+    // (this flip: p6-pool-sweep-report.md; "page" stays a comparison arm).
+    expect(DEFAULT_RANKING.clusterPool.mode).toBe("fixed");
+    expect(DEFAULT_RANKING.clusterPool.size).toBe(100);
     expect(DEFAULT_RANKING.clusterPool.minSize).toBe(20);
     expect(DEFAULT_RANKING.clusterPool.vectorDims).toBe(768);
   });
 
-  it("has a dated version identifier", () => {
-    expect(RANKING_ALGORITHM_VERSION).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  it("has a dated version identifier matching the pool-flip mint", () => {
+    expect(RANKING_ALGORITHM_VERSION).toBe("2026-07-19");
   });
 });
 

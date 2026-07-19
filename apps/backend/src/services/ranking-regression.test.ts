@@ -279,7 +279,11 @@ async function seedEvidence(agent: Agent, parentTraceId: string, label: string, 
   `);
 }
 
-const pageArm = (): RankingConfig => DEFAULT_RANKING; // clusterPool: page (legacy)
+// Explicit page config — no longer DEFAULT_RANKING since the 2026-07-19 flip
+// to fixed:100 (ranking-changelog.md); page stays a comparison arm.
+const pageArm = (): RankingConfig => ({
+  clusterPool: { mode: "page", size: 133, minSize: 20, vectorDims: 768 },
+});
 const fixedArm = (size: number): RankingConfig => ({
   clusterPool: { mode: "fixed", size, minSize: 20, vectorDims: 768 },
 });
@@ -639,10 +643,10 @@ describe.skipIf(!BASE)("ranking regression — cluster pool (P6)", () => {
     expect(pool.every((t) => commonIds.includes(t.id))).toBe(true);
   });
 
-  it("page mode is byte-identical to a run with no ranking param at all (pre-lever shape)", async () => {
+  it("the shipped default (no ranking param) is byte-identical to an explicit fixed:100 config", async () => {
     const [withLever, preLever] = await Promise.all([
-      runPipeline(agent, pageArm(), { k: 2 }),
-      runPipeline(agent, pageArm(), { k: 2, omitRanking: true }),
+      runPipeline(agent, fixedArm(100), { k: 2 }),
+      runPipeline(agent, fixedArm(100), { k: 2, omitRanking: true }),
     ]);
     expect(withLever.results.map((t) => t.id)).toEqual(preLever.results.map((t) => t.id));
     expect(withLever.results.map((t) => t.clusterSize)).toEqual(preLever.results.map((t) => t.clusterSize));
@@ -734,6 +738,7 @@ describe.skipIf(!BASE)("ranking regression — seen accumulation across checks (
   let resA: NonNullable<CheckJson["data"]>;
   let resB: NonNullable<CheckJson["data"]>;
   let resC: NonNullable<CheckJson["data"]>;
+  let resD: NonNullable<CheckJson["data"]>;
   const fullIds = (res: NonNullable<CheckJson["data"]>) =>
     res.results.filter((r) => !r.known).map((r) => r.recipeId);
 
@@ -748,16 +753,30 @@ describe.skipIf(!BASE)("ranking regression — seen accumulation across checks (
     // A: session token's first check. B: same token, same text (the deposit
     // row is reused, so A/B/C rank the identical corpus and exclude the same
     // own-trace). C: token omitted — the context-compaction refresh.
-    // clusters=30 ≥ the 26 visible seeds + B's walked window, so every arm
-    // reads as the degenerate-flat surface (one cluster per result).
-    resA = await httpCheck(agent.apiKey, probeText, SESS, "30");
+    // Budgets: since the fixed:100 pool flip (ranking-changelog.md
+    // 2026-07-19) a clusters value ≥ corpus size displays EVERY seed, so A
+    // and C use clusters=15 (< 26 seeds — a never-shown remainder must exist
+    // for B's walk to be observable), while B uses clusters=30 ≥ the corpus
+    // so its walked window reads as the degenerate-flat surface (one cluster
+    // per result).
+    resA = await httpCheck(agent.apiKey, probeText, SESS, "15");
     resB = await httpCheck(agent.apiKey, probeText, SESS, "30");
-    resC = await httpCheck(agent.apiKey, probeText, undefined, "30");
+    resC = await httpCheck(agent.apiKey, probeText, undefined, "15");
+    // D: B's sessionless twin (fresh token, same budget) — the pure display
+    // the purity test compares B against. Note the HTTP probe embeds via the
+    // STUB provider, so the seeds' rank order under this query is arbitrary
+    // (deterministic, but NOT the seeded-sim order) — purity is asserted
+    // arm-vs-arm, never against the seed array.
+    resD = await httpCheck(agent.apiKey, probeText, undefined, "30");
   }, 120_000);
 
   it("check A (fresh session): a full window of full-text recipes", () => {
     expect(resA.sessionId).toBe(SESS);
-    expect(resA.results).toHaveLength(20); // route perPage — plain slice, no known-set yet
+    // k=15 exemplars over 26 seeds — strictly fewer than the corpus, so a
+    // never-shown remainder exists for B's walk (exact count is k-means's
+    // business, not this contract's).
+    expect(resA.results.length).toBeGreaterThan(0);
+    expect(resA.results.length).toBeLessThan(26);
     expect(resA.results.every((r) => r.known === undefined && !!r.recipe)).toBe(true);
   });
 
@@ -878,13 +897,19 @@ describe.skipIf(!BASE)("ranking regression — seen accumulation across checks (
     const idsA = resA.results.map((r) => r.recipeId);
     const idsB = resB.results.map((r) => r.recipeId);
     const idsC = resC.results.map((r) => r.recipeId);
-    // B's walked window is A's window extended: same ids in the same order,
-    // then the remainder in rank order.
-    expect(idsB.slice(0, idsA.length)).toEqual(idsA);
+    const idsD = resD.results.map((r) => r.recipeId);
+    // Purity is arm-vs-arm at EQUAL budgets: the session arm's walked window
+    // (B) must be id-for-id the sessionless twin's display (D) — seen state
+    // re-renders rows as stubs, never reorders, never drops. Same for the
+    // k=15 pair (C vs A). Cross-budget comparisons are meaningless (A's
+    // exemplars are not a flat prefix), and the seed array is NOT a valid
+    // reference (the HTTP probe embeds via the stub provider, so rank order
+    // under this query is deterministic but unrelated to seeded sims).
+    expect(idsB).toEqual(idsD);
     expect(idsC).toEqual(idsA);
     // Per-id displayed scores identical across arms (stub or full).
     const scoreA = new Map(resA.results.map((r) => [r.recipeId, r.similarity]));
-    for (const r of [...resB.results, ...resC.results]) {
+    for (const r of [...resB.results, ...resC.results, ...resD.results]) {
       const a = scoreA.get(r.recipeId);
       if (a !== null && a !== undefined && r.similarity !== null) {
         expect(r.similarity).toBeCloseTo(a, 6);

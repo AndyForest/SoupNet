@@ -177,6 +177,13 @@ docs/planning/temp/
 # under eval/golden/ ARE tracked)
 eval/reports/
 
+# Real-scale golden datasets delivered from the evals side carry real recipe
+# text — never public-repo material (eval/golden/README.md §"Real golden
+# datasets arrive out-of-band"). Only the synthetic starter is committed.
+eval/golden/*
+!eval/golden/README.md
+!eval/golden/synthetic-echo-v1/
+
 # Local TLS certificates (if using mkcert for future HTTPS)
 /certs/
 

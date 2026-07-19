@@ -34,8 +34,8 @@
  *
  * Ranking variants (P6 proving arms — ranking is a pure function, so these
  * differ only in the clustering-pool boundary):
- *   - baseline:       DEFAULT_RANKING (page pool — legacy)
- *   - pool-fixed100:  fixed:100 clustering pool @ 768-dim pool vectors
+ *   - baseline:       DEFAULT_RANKING (fixed:100 since 2026-07-19)
+ *   - pool-fixed100:  explicit fixed:100 @ 768-dim pool vectors (= baseline's twin)
  *   - pool-score-gap: score-gap pool (largest gap in [20, 133]) @ 768 dims
  *
  * Calls per question × arm × variant: an expanded flat call for the
@@ -111,18 +111,32 @@ interface ThresholdRule {
 }
 
 const MAX_GRADE = 3;
-const VARIANTS = ["baseline", "pool-fixed100", "pool-score-gap"] as const;
-type VariantName = (typeof VARIANTS)[number];
+const BASE_VARIANTS = ["baseline", "pool-fixed100", "pool-score-gap"] as const;
+// Sweep-grid extension (candidate-pool-sizing memo §Alternatives, sizes
+// bracketing the ANN boundary): RANKEVAL_EXTRA_VARIANTS="fixed:60,fixed:133,fixed:400"
+// adds pool-fixed<N> arms for one run without touching CI's standard three.
+const EXTRA_VARIANTS = (process.env["RANKEVAL_EXTRA_VARIANTS"] ?? "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean)
+  .map((spec) => {
+    const m = /^fixed:(\d+)$/.exec(spec);
+    if (!m) throw new Error(`RANKEVAL_EXTRA_VARIANTS entry "${spec}" — only "fixed:<n>" is supported`);
+    return `pool-fixed${m[1]}`;
+  });
+const VARIANTS: readonly string[] = [...BASE_VARIANTS, ...EXTRA_VARIANTS];
+type VariantName = string;
 const ARMS = ["hygiene-polluted", "hygiene-clean"] as const;
 type ArmName = (typeof ARMS)[number];
 
 function variantConfig(name: VariantName): RankingConfig {
   switch (name) {
     case "baseline":
-      return DEFAULT_RANKING; // page pool — legacy
+      // The shipped default — fixed:100 since the 2026-07-19 flip
+      // (ranking-changelog.md; pool-fixed100 below is now its explicit twin,
+      // kept so threshold paths and cross-version comparisons stay stable).
+      return DEFAULT_RANKING;
     case "pool-fixed100":
-      // Fixed-cap comparison arm (fixture-relative by design — scaffolding
-      // for the sweep, not the target; candidate-pool-sizing memo).
       return { clusterPool: { mode: "fixed", size: 100, minSize: 20, vectorDims: 768 } };
     case "pool-score-gap":
       // The measured candidate: relevance-bounded boundary at the largest
@@ -136,6 +150,11 @@ function variantConfig(name: VariantName): RankingConfig {
         },
       };
   }
+  const fixed = /^pool-fixed(\d+)$/.exec(name);
+  if (fixed) {
+    return { clusterPool: { mode: "fixed", size: Number(fixed[1]), minSize: 20, vectorDims: 768 } };
+  }
+  throw new Error(`Unknown ranking variant "${name}"`);
 }
 
 // ── Per-question measurement ─────────────────────────────────────────────────
@@ -469,13 +488,22 @@ async function main(): Promise<void> {
   const runTag = Date.now().toString(36);
 
   // Polluted arm first: canonical ids. Clean arm second: minted copies + idMap.
+  // With no session lineages the two arms are byte-identical (a clean-only
+  // delivery, e.g. hygiene-realscale), so the clean arm reuses the polluted
+  // import instead of double-importing a large corpus.
   const lineageTraceIds = Object.keys(meta.sessionLineages);
   const polluted = await setupArm(db, corpus, "hygiene-polluted", runTag);
-  const cleanCorpus: CorpusFile = {
-    ...corpus,
-    traces: corpus.traces.filter((t) => !(t.id in meta.sessionLineages)),
-  };
-  const clean = await setupArm(db, cleanCorpus, "hygiene-clean", runTag);
+  let clean: Awaited<ReturnType<typeof setupArm>>;
+  if (lineageTraceIds.length === 0) {
+    console.log("[hygiene-clean] no session lineages — reusing the polluted-arm import (arms are identical)");
+    clean = polluted;
+  } else {
+    const cleanCorpus: CorpusFile = {
+      ...corpus,
+      traces: corpus.traces.filter((t) => !(t.id in meta.sessionLineages)),
+    };
+    clean = await setupArm(db, cleanCorpus, "hygiene-clean", runTag);
+  }
 
   // Stamp session lineages (hygiene-polluted arm): one minted session token
   // per lineage, written to traces.session_id — the same column production
@@ -546,7 +574,7 @@ async function main(): Promise<void> {
   const aggregateArm = (armName: ArmName) => {
     const out: Record<VariantName, Record<string, number>> = {} as never;
     for (const variant of VARIANTS) {
-      const all = questions.map((q) => results[armName].get(q.id)![variant]);
+      const all = questions.map((q) => results[armName].get(q.id)![variant]!);
       const overlay = all.filter((m) => m.tokenEfficiency !== undefined);
       out[variant] = {
         ndcgFull: mean(all.map((m) => m.ndcgFull)),
@@ -574,11 +602,11 @@ async function main(): Promise<void> {
   // Guardrail: on unaffected questions, each pool variant's flat order must
   // match baseline exactly — the pool shapes only the clustered summary.
   const guardrail: Record<string, number> = {};
-  for (const variant of ["pool-fixed100", "pool-score-gap"] as const) {
+  for (const variant of VARIANTS.filter((v) => v !== "baseline")) {
     guardrail[variant] = mean(
       unaffected.map((q) => {
         const per = results["hygiene-polluted"].get(q.id)!;
-        return kendallTau(per[variant].flatIds, per.baseline.flatIds);
+        return kendallTau(per[variant]!.flatIds, per["baseline"]!.flatIds);
       }),
     );
   }
@@ -610,7 +638,7 @@ async function main(): Promise<void> {
             qid,
             Object.fromEntries(
               VARIANTS.map((v) => {
-                const { flatIds: _flatIds, ...metrics } = per[v];
+                const { flatIds: _flatIds, ...metrics } = per[v]!;
                 return [v, metrics];
               }),
             ),
