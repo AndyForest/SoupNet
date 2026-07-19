@@ -52,4 +52,4 @@ Third and final wire change of this branch (operator rulings, recipes `7945fd8a`
 1. **Real-scale golden material for the P6 pool sweep** — the committed 45-trace synthetic cannot answer diversity questions (measured: a 100-pool degenerates to whole-corpus there); your pollution-replay corpora at real scale can, relabeled per above.
 2. **The benchmarks.md rewrite** (with the operator).
 3. **Hygiene-checklist adoption** in your run designs — and tell us which primitives are missing or awkward; gaps there are product backlog items.
-4. **H4/M1**: validate Ser@L against the graded feedback rows, so the utility × surprise proxy earns (or loses) its place.
+4. ~~**H4/M1**: validate Ser@L against the graded feedback rows, so the utility × surprise proxy earns (or loses) its place.~~ **Answered 2026-07-18** — the validation had already run eval-side (2026-07-17) before this doc landed: *"Ser@L earns its place as a report-only regression/tuning metric — not a ranking driver."* See [seral-validation-pointer.md](seral-validation-pointer.md); register row M1 updated to `validated (report-only)`.

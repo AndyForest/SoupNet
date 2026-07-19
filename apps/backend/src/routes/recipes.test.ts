@@ -17,13 +17,13 @@ import { describe, it, expect, beforeAll } from "vitest";
 const BASE = process.env["BACKEND_URL"] ?? "";
 
 interface LookupEntry {
-  id: string;
+  recipeId: string;
   status: string;
   recipe?: string;
-  recipeBook?: { slug: string; name: string } | null;
-  author?: { email: string; displayName: string | null } | null;
+  recipeBook?: { recipeBookId: string; slug: string; name: string } | null;
+  author?: { email: string; displayName?: string } | null;
   createdAt?: string;
-  decidedAt?: string | null;
+  loggedAt?: string;
   evidence?: Array<{ interpretation: string; references: Array<{ quote: string | null; source: string | null }> }>;
 }
 
@@ -148,13 +148,15 @@ describe.skipIf(!BASE)("GET /recipes — recipe lookup by id", () => {
     const entries = body.data?.recipes ?? [];
     expect(entries).toHaveLength(1);
     const entry = entries[0]!;
-    expect(entry.id).toBe(traceA);
+    expect(entry.recipeId).toBe(traceA);
     expect(entry.status).toBe("ok");
     expect(entry.recipe).toContain("seeding one canonical trace");
+    expect(entry.recipeBook?.recipeBookId).toBeTruthy();
     expect(entry.recipeBook?.slug).toBeTruthy();
     expect(entry.author?.email).toContain("@test.local");
     expect(entry.createdAt).toBeTruthy();
-    expect(entry.decidedAt).toBeNull();
+    // No decided_at was set, so the judgment date IS the append time.
+    expect(entry.loggedAt).toBe(entry.createdAt);
     expect(entry.evidence?.length).toBeGreaterThan(0);
     expect(entry.evidence?.[0]?.interpretation).toContain("Test evidence interpretation");
     const refs = entry.evidence?.[0]?.references ?? [];
@@ -168,9 +170,9 @@ describe.skipIf(!BASE)("GET /recipes — recipe lookup by id", () => {
     const body = (await res.json()) as LookupResponse;
     const entries = body.data?.recipes ?? [];
     expect(entries).toHaveLength(2);
-    expect(entries[0]!.id).toBe(UNKNOWN_UUID);
+    expect(entries[0]!.recipeId).toBe(UNKNOWN_UUID);
     expect(entries[0]!.status).toBe("not_found_or_unreadable");
-    expect(entries[1]!.id).toBe(traceA);
+    expect(entries[1]!.recipeId).toBe(traceA);
     expect(entries[1]!.status).toBe("ok");
   });
 
@@ -206,7 +208,7 @@ describe.skipIf(!BASE)("GET /recipes — recipe lookup by id", () => {
     expect(unknown).toBeDefined();
     // Same status, same key set — after normalizing the id, the two markers
     // must be byte-identical so a caller can't distinguish the cases.
-    const normalize = (e: LookupEntry) => JSON.stringify({ ...e, id: "X" });
+    const normalize = (e: LookupEntry) => JSON.stringify({ ...e, recipeId: "X" });
     expect(normalize(unreadable!)).toBe(normalize(unknown!));
   });
 
@@ -218,7 +220,7 @@ describe.skipIf(!BASE)("GET /recipes — recipe lookup by id", () => {
     const body = (await res.json()) as LookupResponse;
     const entries = body.data?.recipes ?? [];
     expect(entries).toHaveLength(2);
-    expect(entries[0]!.id).toBe("not-a-uuid");
+    expect(entries[0]!.recipeId).toBe("not-a-uuid");
     expect(entries[0]!.status).toBe("not_found_or_unreadable");
     expect(entries[1]!.status).toBe("ok");
     // Malformed marker is shape-identical to the unknown-id marker too.
@@ -226,7 +228,7 @@ describe.skipIf(!BASE)("GET /recipes — recipe lookup by id", () => {
       headers: { Authorization: `Bearer ${keyA}` },
     });
     const unknownBody = (await unknownRes.json()) as LookupResponse;
-    const normalize = (e: LookupEntry) => JSON.stringify({ ...e, id: "X" });
+    const normalize = (e: LookupEntry) => JSON.stringify({ ...e, recipeId: "X" });
     expect(normalize(entries[0]!)).toBe(normalize(unknownBody.data!.recipes[0]!));
   });
 });

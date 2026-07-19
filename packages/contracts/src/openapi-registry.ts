@@ -1,6 +1,15 @@
 /**
  * OpenAPI registry — public API source of truth.
  *
+ * ⚠️ PRE-PIVOT SURFACE (flagged 2026-07-18): every path registered here
+ * (/api/v1/claims, /validations, /search) belongs to the pre-pivot
+ * claims/validations model and is NOT served by the current backend. The live
+ * agent surface (/check, /recipes, /schemas/*) validates inline against the
+ * canonical Recipe schema in ./recipe.ts, which is not yet registered here —
+ * consolidation is tracked in docs/backlog.md ("Contracts/OpenAPI entry for
+ * GET /recipes"). Generated artifacts downstream (packages/api-client
+ * openapi.json + Orval hooks, client-sdk) inherit this staleness.
+ *
  * This file defines the ClaimNet public API (/api/v1/) for agents and external integrations.
  * It is NOT the BFF API (see packages/contracts/src/bff-registry.ts — to be created).
  *

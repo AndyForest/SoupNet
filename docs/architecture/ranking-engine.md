@@ -146,7 +146,7 @@ What we suspect might improve the engine, where each idea came from, which exten
 
 | # | Hypothesis | Source | Extension point | Status |
 |---|---|---|---|---|
-| M1 | Ser@L (the utility × surprise proxy) tracks real downstream usefulness — validated against feedback-row outcomes, which carry principle 3's measured self-report caveat | [Serendipity memo](../planning/ranking-research/serendipity-diversity-metrics.md); recipe `ff54eafd` | Metric suite | plumbed (report-only) |
+| M1 | Ser@L (the utility × surprise proxy) tracks real downstream usefulness — validated against feedback-row outcomes, which carry principle 3's measured self-report caveat. **Validated eval-side 2026-07-17** against the 705 graded rows: *"Ser@L earns its place as a report-only regression/tuning metric — not a ranking driver"*; pure rank-discounted relevance is *"a self-pollution trap"* (echo-over-genuine AUC **0.103**, inverted) while *"Ser@L's surprise term corrects direction on all three cuts"* (0.103 → 0.332; full-list 0.573). Caveat: the offline run used a *"conservative **lexical** surprise proxy"* — a same-embedding confirmatory run is queued eval-side, non-blocking | [Ser@L validation pointer](../planning/seral-validation-pointer.md); [Serendipity memo](../planning/ranking-research/serendipity-diversity-metrics.md); recipes `ff54eafd`, `74e925ec` | Metric suite | validated (report-only) |
 | M2 | The synthetic thresholds' margins match the true cross-platform noise floor | [Tuning workflow §Threshold philosophy](../workflows/ranking-tuning.md) | Threshold rules | plumbed |
 
 ## 6. What standard retrieval systems do that we deliberately don't
