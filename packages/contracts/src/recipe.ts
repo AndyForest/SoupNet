@@ -83,6 +83,17 @@ export const CREATED_AT_DEFINITION =
   + "backfilled from dated artifacts (git history, ADRs — decision archaeology) this is the "
   + "artifact's date, so old judgments read as old; otherwise it is the logged time.";
 
+export const LOGGED_AT_DEFINITION =
+  "When the recipe entered the corpus (ISO 8601, the raw append time). Differs from createdAt "
+  + "only for decisions backfilled from dated artifacts (decision archaeology), where createdAt "
+  + "carries the original judgment date. Present on the full-detail lookup surface (get_recipes / "
+  + "GET /recipes); check results carry createdAt alone.";
+
+export const AUTHOR_DEFINITION =
+  "The human account the recipe belongs to — whose taste and judgment it records. Present only "
+  + "on the full-detail lookup surface (get_recipes / GET /recipes), where readers of a shared "
+  + "book need attribution; check results omit it.";
+
 export const CLUSTER_SIZE_DEFINITION =
   "How many similar recipes this exemplar represents in the clustered view. Clustering is the "
   + "response-size mechanism: results are grouped by embedding similarity and each cluster is "
@@ -103,6 +114,15 @@ export const RecipeBookSchema = z
       .string()
       .uuid()
       .describe("Stable id of the recipe book (the shared collection this recipe lives in)."),
+    slug: z
+      .string()
+      .optional()
+      .describe(
+        "Stable short handle for the book — the value the recipe_book and "
+        + "read_recipe_books parameters accept. Present on surfaces that own "
+        + "book identity (the briefing, list_my_recipe_books, recipe lookup); "
+        + "check results carry {recipeBookId, name}.",
+      ),
     name: z.string().optional().describe("Human-readable book name."),
     description: z
       .string()
@@ -116,6 +136,17 @@ export const RecipeBookSchema = z
   .describe(RECIPE_BOOK_DEFINITION);
 
 export type RecipeBook = z.infer<typeof RecipeBookSchema>;
+
+// ── Author ──────────────────────────────────────────────────────────────────
+
+export const RecipeAuthorSchema = z
+  .object({
+    email: z.string().optional().describe("Account email of the recipe's human."),
+    displayName: z.string().optional().describe("Display name, when the account has one."),
+  })
+  .describe(AUTHOR_DEFINITION);
+
+export type RecipeAuthor = z.infer<typeof RecipeAuthorSchema>;
 
 // ── Evidence ────────────────────────────────────────────────────────────────
 
@@ -182,6 +213,8 @@ const recipeFields = {
   recipe: z.string().optional().describe(RECIPE_TEXT_DEFINITION),
   similarity: z.number().min(0).max(1).optional().describe(SIMILARITY_DEFINITION),
   createdAt: z.string().optional().describe(CREATED_AT_DEFINITION),
+  loggedAt: z.string().optional().describe(LOGGED_AT_DEFINITION),
+  author: RecipeAuthorSchema.optional().describe(AUTHOR_DEFINITION),
   known: z.boolean().optional().describe(KNOWN_DEFINITION),
   clusterSize: z.number().int().optional().describe(CLUSTER_SIZE_DEFINITION),
   recipeBook: RecipeBookSchema.optional().describe(
@@ -198,6 +231,8 @@ export interface Recipe {
   recipe?: string | undefined;
   similarity?: number | undefined;
   createdAt?: string | undefined;
+  loggedAt?: string | undefined;
+  author?: RecipeAuthor | undefined;
   known?: boolean | undefined;
   clusterSize?: number | undefined;
   recipeBook?: RecipeBook | undefined;

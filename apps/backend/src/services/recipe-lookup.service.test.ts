@@ -34,13 +34,13 @@ describe("parseRecipeIds", () => {
 
 describe("renderRecipeEntries", () => {
   const found: RecipeLookupFound = {
-    id: "11111111-2222-3333-4444-555555555555",
+    recipeId: "11111111-2222-3333-4444-555555555555",
     status: "ok",
     recipe: "As a tester, I prefer deterministic fixtures so that assertions are stable.",
-    recipeBook: { slug: "test-book", name: "Test Book" },
+    recipeBook: { recipeBookId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", slug: "test-book", name: "Test Book" },
     author: { email: "a@test.local", displayName: "Ada" },
-    createdAt: "2026-07-01T12:00:00.000Z",
-    decidedAt: "2026-06-15T00:00:00.000Z",
+    createdAt: "2026-06-15T00:00:00.000Z",
+    loggedAt: "2026-07-01T12:00:00.000Z",
     evidence: [
       {
         interpretation: "The user said so directly.",
@@ -54,7 +54,7 @@ describe("renderRecipeEntries", () => {
   it("renders metadata, recipe text, and evidence for a found entry", () => {
     const out = renderRecipeEntries([found]);
     expect(out).toContain("### 11111111-2222-3333-4444-555555555555");
-    expect(out).toContain("Recipe book: test-book (Test Book)");
+    expect(out).toContain("Recipe book: Test Book (test-book)");
     expect(out).toContain("Author: Ada <a@test.local>");
     expect(out).toContain("Logged: 2026-07-01");
     expect(out).toContain("Decided: 2026-06-15");
@@ -64,14 +64,15 @@ describe("renderRecipeEntries", () => {
     expect(out).toContain("-- chat, 2026-07-01");
   });
 
-  it("omits the Decided line when decidedAt is null", () => {
-    const out = renderRecipeEntries([{ ...found, decidedAt: null }]);
+  it("omits the Decided line when the judgment date matches the append time", () => {
+    const out = renderRecipeEntries([{ ...found, createdAt: found.loggedAt }]);
     expect(out).not.toContain("Decided:");
+    expect(out).toContain("Logged: 2026-07-01");
   });
 
   it("renders the uniform marker for unresolved entries", () => {
     const entries: RecipeLookupEntry[] = [
-      { id: "99999999-9999-9999-9999-999999999999", status: "not_found_or_unreadable" },
+      { recipeId: "99999999-9999-9999-9999-999999999999", status: "not_found_or_unreadable" },
     ];
     const out = renderRecipeEntries(entries);
     expect(out).toContain("### 99999999-9999-9999-9999-999999999999");
@@ -82,9 +83,9 @@ describe("renderRecipeEntries", () => {
   });
 
   it("renders markers and found entries in input order", () => {
-    const marker: RecipeLookupEntry = { id: "zzz", status: "not_found_or_unreadable" };
+    const marker: RecipeLookupEntry = { recipeId: "zzz", status: "not_found_or_unreadable" };
     const out = renderRecipeEntries([marker, found]);
-    expect(out.indexOf("### zzz")).toBeLessThan(out.indexOf(`### ${found.id}`));
+    expect(out.indexOf("### zzz")).toBeLessThan(out.indexOf(`### ${found.recipeId}`));
   });
 });
 

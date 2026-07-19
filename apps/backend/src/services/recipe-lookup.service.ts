@@ -13,9 +13,15 @@
  * Marker semantics (anti-enumeration, mirrors the F30 waitlist/register
  * pattern and the uploads "uniform unreachable URL" shape): unknown ids,
  * unreadable ids, and malformed ids all resolve to ONE indistinguishable
- * marker entry — { id, status: "not_found_or_unreadable" }. Never content,
- * never distinct statuses, never a request-killing error. A caller holding
- * someone else's trace id must not be able to learn whether it exists.
+ * marker entry — { recipeId, status: "not_found_or_unreadable" }. Never
+ * content, never distinct statuses, never a request-killing error. A caller
+ * holding someone else's trace id must not be able to learn whether it exists.
+ *
+ * Wire shape: canonical Recipe (packages/contracts/src/recipe.ts) plus a
+ * per-entry `status`. As on check results, `createdAt` is the JUDGMENT date
+ * (COALESCE(decided_at, created_at)); this full-detail surface additionally
+ * carries `loggedAt` (raw append time) and `author` (shared-book attribution)
+ * — both optional canon fields that only this surface owns.
  */
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
@@ -44,21 +50,21 @@ export interface RecipeLookupEvidence {
 }
 
 export interface RecipeLookupFound {
-  id: string;
+  recipeId: string;
   status: "ok";
   /** The recipe (claim) text. */
   recipe: string;
-  recipeBook: { slug: string; name: string } | null;
-  author: { email: string; displayName: string | null } | null;
-  /** ISO timestamp of when the trace was logged. */
+  recipeBook: { recipeBookId: string; slug: string; name: string } | null;
+  author: { email: string; displayName?: string } | null;
+  /** Judgment date — COALESCE(decided_at, created_at), same as check results. */
   createdAt: string;
-  /** ISO timestamp of the original judgment (decided_at), when backfilled. */
-  decidedAt: string | null;
+  /** Raw append time; differs from createdAt only for backfilled decisions. */
+  loggedAt: string;
   evidence: RecipeLookupEvidence[];
 }
 
 export interface RecipeLookupMarker {
-  id: string;
+  recipeId: string;
   status: "not_found_or_unreadable";
 }
 
@@ -82,6 +88,7 @@ interface TraceRow {
   claimText: string;
   createdAt: string;
   decidedAt: string | null;
+  groupId: string | null;
   groupSlug: string | null;
   groupName: string | null;
   authorEmail: string | null;
@@ -112,6 +119,7 @@ export async function lookupRecipes(
         t.claim_text        AS "claimText",
         t.created_at        AS "createdAt",
         t.decided_at        AS "decidedAt",
+        g.id                AS "groupId",
         g.slug              AS "groupSlug",
         g.name              AS "groupName",
         u.email             AS "authorEmail",
@@ -150,17 +158,22 @@ export async function lookupRecipes(
         }));
 
         foundById.set(row.id, {
-          id: row.id,
+          recipeId: row.id,
           status: "ok",
           recipe: row.claimText,
-          recipeBook: row.groupSlug !== null || row.groupName !== null
-            ? { slug: row.groupSlug ?? "", name: row.groupName ?? "" }
+          recipeBook: row.groupId !== null
+            ? { recipeBookId: row.groupId, slug: row.groupSlug ?? "", name: row.groupName ?? "" }
             : null,
           author: row.authorEmail
-            ? { email: row.authorEmail, displayName: row.authorDisplayName }
+            ? {
+                email: row.authorEmail,
+                ...(row.authorDisplayName ? { displayName: row.authorDisplayName } : {}),
+              }
             : null,
-          createdAt: new Date(row.createdAt).toISOString(),
-          decidedAt: row.decidedAt ? new Date(row.decidedAt).toISOString() : null,
+          // Judgment date on the wire, same as check results (canon
+          // CREATED_AT_DEFINITION); the raw append time rides as loggedAt.
+          createdAt: new Date(row.decidedAt ?? row.createdAt).toISOString(),
+          loggedAt: new Date(row.createdAt).toISOString(),
           evidence,
         });
       }
@@ -171,7 +184,7 @@ export async function lookupRecipes(
   // malformed alike) gets the same marker.
   return capped.map((id) => {
     const found = foundById.get(id.toLowerCase()) ?? foundById.get(id);
-    return found ?? { id, status: "not_found_or_unreadable" as const };
+    return found ?? { recipeId: id, status: "not_found_or_unreadable" as const };
   });
 }
 
@@ -190,17 +203,21 @@ function shortDate(iso: string): string {
 export function renderRecipeEntries(entries: RecipeLookupEntry[]): string {
   return entries.map((entry) => {
     if (entry.status !== "ok") {
-      return `### ${entry.id}\nStatus: not_found_or_unreadable — this id does not exist or is not readable by this API key (the two cases are deliberately indistinguishable).`;
+      return `### ${entry.recipeId}\nStatus: not_found_or_unreadable — this id does not exist or is not readable by this API key (the two cases are deliberately indistinguishable).`;
     }
 
     const metaLines = [
-      `### ${entry.id}`,
-      ...(entry.recipeBook ? [`Recipe book: ${entry.recipeBook.slug} (${entry.recipeBook.name})`] : []),
+      `### ${entry.recipeId}`,
+      ...(entry.recipeBook ? [`Recipe book: ${entry.recipeBook.name} (${entry.recipeBook.slug})`] : []),
       ...(entry.author
         ? [`Author: ${entry.author.displayName ? `${entry.author.displayName} <${entry.author.email}>` : entry.author.email}`]
         : []),
-      `Logged: ${shortDate(entry.createdAt)}`,
-      ...(entry.decidedAt ? [`Decided: ${shortDate(entry.decidedAt)}`] : []),
+      `Logged: ${shortDate(entry.loggedAt)}`,
+      // createdAt is the judgment date; a separate Decided line only means
+      // something when it differs from the append time (backfilled decisions).
+      ...(shortDate(entry.createdAt) !== shortDate(entry.loggedAt)
+        ? [`Decided: ${shortDate(entry.createdAt)}`]
+        : []),
     ].join("\n");
 
     let text = `${metaLines}\n\n${entry.recipe}`;

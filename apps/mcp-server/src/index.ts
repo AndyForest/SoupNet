@@ -376,27 +376,31 @@ interface LookupReference {
 }
 
 interface LookupEntry {
-  id: string;
+  recipeId: string;
   status: "ok" | "not_found_or_unreadable";
   recipe?: string;
-  recipeBook?: { slug: string; name: string } | null;
-  author?: { email: string; displayName: string | null } | null;
+  recipeBook?: { recipeBookId: string; slug: string; name: string } | null;
+  author?: { email: string; displayName?: string } | null;
+  /** Judgment date (COALESCE(decided_at, created_at)), per the canonical schema. */
   createdAt?: string;
-  decidedAt?: string | null;
+  /** Raw append time; differs from createdAt only for backfilled decisions. */
+  loggedAt?: string;
   evidence?: Array<{ interpretation: string; references: LookupReference[] }>;
 }
 
 function formatLookupEntries(entries: LookupEntry[]): string {
   return entries.map((entry) => {
     if (entry.status !== "ok") {
-      return `### ${entry.id}\nStatus: not_found_or_unreadable — this id does not exist or is not readable by this API key (the two cases are deliberately indistinguishable).`;
+      return `### ${entry.recipeId}\nStatus: not_found_or_unreadable — this id does not exist or is not readable by this API key (the two cases are deliberately indistinguishable).`;
     }
     const meta = [
-      `### ${entry.id}`,
-      ...(entry.recipeBook ? [`Recipe book: ${entry.recipeBook.slug} (${entry.recipeBook.name})`] : []),
+      `### ${entry.recipeId}`,
+      ...(entry.recipeBook ? [`Recipe book: ${entry.recipeBook.name} (${entry.recipeBook.slug})`] : []),
       ...(entry.author ? [`Author: ${entry.author.displayName ? `${entry.author.displayName} <${entry.author.email}>` : entry.author.email}`] : []),
-      ...(entry.createdAt ? [`Logged: ${entry.createdAt.slice(0, 10)}`] : []),
-      ...(entry.decidedAt ? [`Decided: ${entry.decidedAt.slice(0, 10)}`] : []),
+      ...(entry.loggedAt ? [`Logged: ${entry.loggedAt.slice(0, 10)}`] : []),
+      ...(entry.createdAt && entry.createdAt.slice(0, 10) !== entry.loggedAt?.slice(0, 10)
+        ? [`Decided: ${entry.createdAt.slice(0, 10)}`]
+        : []),
     ].join("\n");
     let text = `${meta}\n\n${entry.recipe ?? ""}`;
     if (entry.evidence && entry.evidence.length > 0) {
