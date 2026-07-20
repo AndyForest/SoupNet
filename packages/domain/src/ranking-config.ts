@@ -30,7 +30,7 @@
  * behavior do not mint. Surfaced in check responses (`data.ranking.version`)
  * and audit metadata. History: docs/architecture/ranking-changelog.md.
  */
-export const RANKING_ALGORITHM_VERSION = "2026-07-19";
+export const RANKING_ALGORITHM_VERSION = "2026-07-20";
 
 /**
  * Clustering candidate pool — hypothesis P6 (ranking-engine.md stage 3).
@@ -76,14 +76,15 @@ export interface ClusterPoolConfig {
  * and briefing-exemplar surfaces depend on it).
  *
  *   - "member-count": legacy — biggest cluster first (the scatter/gather-era
- *     size ordering). THE DEFAULT (byte-stable): additive lever, ships in the
- *     legacy position, so no version mint (ranking-changelog.md convention).
+ *     size ordering). Comparison arm since the 2026-07-20 flip.
  *   - "max-similarity": order clusters by their best member's query
  *     similarity — relevance-first cluster ranking, the standard remedy when
- *     size ordering rewards redundancy. The contrarian-miss diagnosis found
- *     member-count "rewards the failure mode": "Echo clusters win member-count
- *     by self-similarity; the metric rewards the failure mode"
- *     (contrarian-miss diagnosis 2026-07-19).
+ *     size ordering rewards redundancy. THE DEFAULT since 2026-07-20 (P7
+ *     sweep: +6.3pts exemplar-order quality on the echo-shaped arm — the
+ *     diagnosed failure mode ("Echo clusters win member-count by
+ *     self-similarity; the metric rewards the failure mode", contrarian-miss
+ *     diagnosis 2026-07-19) — at a within-noise cost on clean corpora;
+ *     docs/planning/ranking-research/p7-ordering-sweep-report.md).
  *   - "evidence-mass": order by the summed evidence-row count of members —
  *     corroboration weight. Evidence count is an explicit corpus property, so
  *     this stays a pure function of the check's inputs and corpus state
@@ -100,19 +101,19 @@ export interface RankingConfig {
   /** Clustering candidate pool (P6). Ships "fixed:100" (2026-07-19 ruling);
    *  "page" (legacy) and "score-gap" stay plumbed as comparison arms. */
   clusterPool: ClusterPoolConfig;
-  /** Cluster display ordering (P7). Ships "member-count" (legacy); the
-   *  relevance-first and corroboration-weighted arms stay plumbed, awaiting
-   *  the sweep → report → ruling path (no default flip yet). */
+  /** Cluster display ordering (P7). Ships "max-similarity" (2026-07-20
+   *  ruling); "member-count" (legacy) stays a comparison arm and
+   *  "evidence-mass" stays plumbed awaiting evidence-bearing golden material. */
   clusterOrdering: ClusterOrderingMode;
 }
 
 /** Shipped defaults. Flat results, pagination, and displayed scores are
- *  untouched by the pool — it shapes only the clustered summary (P6 sweep:
- *  every flat metric byte-identical, guardrail tau exactly 1.0). Cluster
- *  ordering ships legacy member-count (P7 lever added default-off). */
+ *  untouched by either lever — the pool shapes what clustering sees, the
+ *  ordering shapes the clustered summary's sequence (measured: every flat
+ *  metric byte-identical across variants, guardrail tau exactly 1.0). */
 export const DEFAULT_RANKING: RankingConfig = {
   clusterPool: { mode: "fixed", size: 100, minSize: 20, vectorDims: 768 },
-  clusterOrdering: "member-count",
+  clusterOrdering: "max-similarity",
 };
 
 /**

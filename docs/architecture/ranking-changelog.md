@@ -8,6 +8,14 @@ Additive levers that default to the previous behavior do **not** mint a new vers
 
 ---
 
+## 2026-07-20 — cluster ordering: `member-count` → `max-similarity` (version mint: `2026-07-19` → `2026-07-20`)
+
+`DEFAULT_RANKING.clusterOrdering` flips `member-count` → `max-similarity`: the clustered summary's sequence now leads with the cluster whose best member is most query-similar, instead of the biggest cluster. Membership, ranking, scores, the flat surface, and pagination are untouched (measured: flat tau exactly 1.0 for every ordering variant; aspectCoverage order-blind and identical).
+
+Rests on: the P7 ordering sweep ([p7-ordering-sweep-report.md](../planning/ranking-research/p7-ordering-sweep-report.md)) — on the echo-shaped polluted arm (the diagnosed failure mode: *"Echo clusters win member-count by self-similarity; the metric rewards the failure mode"*) max-similarity gains +6.3pts exemplarOrderNdcg and +20% relative firstExemplarGrade; on clean corpora at real scale the cost is within-or-near seeding noise (gemini −0.6pt). The payoff is asymmetric toward the corpus shape production actually exhibits, and "the most relevant cluster leads" is the more explainable contract. `member-count` stays a comparison arm; `evidence-mass` stays plumbed awaiting evidence-bearing golden material (unmeasurable on traces-only corpora — degenerates to the legacy tie-break).
+
+Ruling: operator, 2026-07-20 ("Ok, it sounds like (a) is best"), on the report's recommendation. Lineage recipes: `d8b369b2`, `7f3b8e51`.
+
 ## 2026-07-19 — cluster-ordering lever added, ships legacy member-count (no version mint)
 
 Adds the `clusterOrdering` lever to `RankingConfig` (stage 5 cluster display ordering) with three modes: `member-count` (legacy — biggest cluster first, the shipped default), `max-similarity` (relevance-first — order by each cluster's best member's query similarity), and `evidence-mass` (corroboration weight — order by the summed evidence-row count of members). No shipped behavior changed — the lever ships in its legacy position (`member-count`, byte-stable), so the version stays `2026-07-19`; this entry records the *lever inventory* change per the 2026-07-17 convention.

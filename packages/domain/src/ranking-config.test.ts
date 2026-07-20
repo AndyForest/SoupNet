@@ -19,14 +19,15 @@ describe("DEFAULT_RANKING", () => {
     expect(DEFAULT_RANKING.clusterPool.vectorDims).toBe(768);
   });
 
-  it("ships legacy member-count cluster ordering (P7 lever added default-off)", () => {
-    // Additive lever in the legacy position ⇒ no version mint; a flip to
-    // max-similarity / evidence-mass is a versioned ruling.
-    expect(DEFAULT_RANKING.clusterOrdering).toBe("member-count");
+  it("ships the 2026-07-20 ruling: max-similarity cluster ordering", () => {
+    // Versioned flip (p7-ordering-sweep-report.md): relevance-first cluster
+    // ranking; member-count stays a comparison arm, evidence-mass stays
+    // plumbed awaiting evidence-bearing golden material.
+    expect(DEFAULT_RANKING.clusterOrdering).toBe("max-similarity");
   });
 
-  it("has a dated version identifier matching the pool-flip mint", () => {
-    expect(RANKING_ALGORITHM_VERSION).toBe("2026-07-19");
+  it("has a dated version identifier matching the ordering-flip mint", () => {
+    expect(RANKING_ALGORITHM_VERSION).toBe("2026-07-20");
   });
 });
 

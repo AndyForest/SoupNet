@@ -297,9 +297,16 @@ const gapArm = (minSize: number, size: number): RankingConfig => ({
 // display ordering changes. `order` is the mode name; page-pool variants are
 // used where a small hand-seeded corpus must fit the pool.
 const orderArm = (
-  order: "max-similarity" | "evidence-mass",
+  order: "member-count" | "max-similarity" | "evidence-mass",
   pool: RankingConfig["clusterPool"] = { mode: "page", size: 133, minSize: 20, vectorDims: 768 },
 ): RankingConfig => ({ clusterPool: pool, clusterOrdering: order });
+// The shipped default, written out explicitly (fixed:100 + max-similarity
+// since the 2026-07-20 ordering flip) — byte-identity tests pair this with
+// omitted-ranking runs so a silent default drift fails loudly.
+const defaultArm = (): RankingConfig => ({
+  clusterPool: { mode: "fixed", size: 100, minSize: 20, vectorDims: 768 },
+  clusterOrdering: "max-similarity",
+});
 
 beforeAll(async () => {
   if (!BASE) return;
@@ -653,10 +660,10 @@ describe.skipIf(!BASE)("ranking regression — cluster pool (P6)", () => {
     expect(pool.every((t) => commonIds.includes(t.id))).toBe(true);
   });
 
-  it("the shipped default (no ranking param) is byte-identical to an explicit fixed:100 config", async () => {
+  it("the shipped default (no ranking param) is byte-identical to the explicit default config", async () => {
     const [withLever, preLever] = await Promise.all([
-      runPipeline(agent, fixedArm(100), { k: 2 }),
-      runPipeline(agent, fixedArm(100), { k: 2, omitRanking: true }),
+      runPipeline(agent, defaultArm(), { k: 2 }),
+      runPipeline(agent, defaultArm(), { k: 2, omitRanking: true }),
     ]);
     expect(withLever.results.map((t) => t.id)).toEqual(preLever.results.map((t) => t.id));
     expect(withLever.results.map((t) => t.clusterSize)).toEqual(preLever.results.map((t) => t.clusterSize));
@@ -720,17 +727,21 @@ describe.skipIf(!BASE)("ranking regression — cluster ordering (P7)", () => {
     }
   }, 120_000);
 
-  it("member-count ordering is byte-identical to omitting the ordering param (default legacy)", async () => {
+  it("max-similarity is the shipped default: explicit config byte-identical to omitting the ranking param", async () => {
+    // Since the 2026-07-20 ordering flip (ranking-changelog.md) the no-param
+    // default is fixed:100 + max-similarity — [B, C, A] on this geometry.
     const [explicit, omitted] = await Promise.all([
-      runPipeline(agent, memberArm, { k: 3 }),
-      runPipeline(agent, memberArm, { k: 3, omitRanking: true }),
+      runPipeline(agent, orderArm("max-similarity", fixedPool), { k: 3 }),
+      runPipeline(agent, orderArm("max-similarity", fixedPool), { k: 3, omitRanking: true }),
     ]);
     expect(explicit.results.map((r) => r.id)).toEqual(omitted.results.map((r) => r.id));
     expect(explicit.results.map((r) => r.clusterSize)).toEqual(omitted.results.map((r) => r.clusterSize));
     expect(explicit.clusters).toEqual(omitted.clusters);
     expect(explicit.allResults!.map((r) => r.id)).toEqual(omitted.allResults!.map((r) => r.id));
-    // Sanity: the legacy order is biggest-cluster-first.
-    expect(explicit.results.map((r) => groupOf(r.id))).toEqual(["A", "B", "C"]);
+    expect(omitted.results.map((r) => groupOf(r.id))).toEqual(["B", "C", "A"]);
+    // The legacy comparison arm still orders biggest-cluster-first.
+    const member = await runPipeline(agent, memberArm, { k: 3 });
+    expect(member.results.map((r) => groupOf(r.id))).toEqual(["A", "B", "C"]);
   });
 
   it("max-similarity permutes cluster ORDER only — same exemplar set, same size multiset, same flat results", async () => {
