@@ -283,12 +283,29 @@ async function seedEvidence(agent: Agent, parentTraceId: string, label: string, 
 // to fixed:100 (ranking-changelog.md); page stays a comparison arm.
 const pageArm = (): RankingConfig => ({
   clusterPool: { mode: "page", size: 133, minSize: 20, vectorDims: 768 },
+  clusterOrdering: "member-count",
 });
 const fixedArm = (size: number): RankingConfig => ({
   clusterPool: { mode: "fixed", size, minSize: 20, vectorDims: 768 },
+  clusterOrdering: "member-count",
 });
 const gapArm = (minSize: number, size: number): RankingConfig => ({
   clusterPool: { mode: "score-gap", size, minSize, vectorDims: 768 },
+  clusterOrdering: "member-count",
+});
+// P7 cluster-ordering arms — DEFAULT_RANKING's pool (fixed:100), only the
+// display ordering changes. `order` is the mode name; page-pool variants are
+// used where a small hand-seeded corpus must fit the pool.
+const orderArm = (
+  order: "member-count" | "max-similarity" | "evidence-mass",
+  pool: RankingConfig["clusterPool"] = { mode: "page", size: 133, minSize: 20, vectorDims: 768 },
+): RankingConfig => ({ clusterPool: pool, clusterOrdering: order });
+// The shipped default, written out explicitly (fixed:100 + max-similarity
+// since the 2026-07-20 ordering flip) — byte-identity tests pair this with
+// omitted-ranking runs so a silent default drift fails loudly.
+const defaultArm = (): RankingConfig => ({
+  clusterPool: { mode: "fixed", size: 100, minSize: 20, vectorDims: 768 },
+  clusterOrdering: "max-similarity",
 });
 
 beforeAll(async () => {
@@ -643,10 +660,10 @@ describe.skipIf(!BASE)("ranking regression — cluster pool (P6)", () => {
     expect(pool.every((t) => commonIds.includes(t.id))).toBe(true);
   });
 
-  it("the shipped default (no ranking param) is byte-identical to an explicit fixed:100 config", async () => {
+  it("the shipped default (no ranking param) is byte-identical to the explicit default config", async () => {
     const [withLever, preLever] = await Promise.all([
-      runPipeline(agent, fixedArm(100), { k: 2 }),
-      runPipeline(agent, fixedArm(100), { k: 2, omitRanking: true }),
+      runPipeline(agent, defaultArm(), { k: 2 }),
+      runPipeline(agent, defaultArm(), { k: 2, omitRanking: true }),
     ]);
     expect(withLever.results.map((t) => t.id)).toEqual(preLever.results.map((t) => t.id));
     expect(withLever.results.map((t) => t.clusterSize)).toEqual(preLever.results.map((t) => t.clusterSize));
@@ -667,6 +684,102 @@ describe.skipIf(!BASE)("ranking regression — cluster pool (P6)", () => {
       expect(flat.totalPages).toBe(flatPage.totalPages);
       expect(flat.results).toHaveLength(20); // the page window, not the pool
     }
+  });
+});
+
+// ── 4b: cluster display ordering lever (P7, hand-crafted geometry) ───────────
+
+describe.skipIf(!BASE)("ranking regression — cluster ordering (P7)", () => {
+  let agent: Agent;
+  // Three well-separated clusters whose three ordering keys DISAGREE:
+  //   A (axis 1): 3 members, max sim 0.70 — biggest, least similar, evidence 1.
+  //   B (axis 2): 2 members, max sim 0.95 — most query-similar, evidence 2.
+  //   C (axis 3): 1 member,  sim 0.80     — smallest, evidence-heaviest (5).
+  // member-count ⇒ [A, B, C]; max-similarity ⇒ [B, C, A]; evidence-mass ⇒ [C, B, A].
+  const aIds: string[] = [];
+  const bIds: string[] = [];
+  const cIds: string[] = [];
+  const groupOf = (id: string): string =>
+    aIds.includes(id) ? "A" : bIds.includes(id) ? "B" : cIds.includes(id) ? "C" : "?";
+
+  const memberArm = fixedArm(100); // = DEFAULT_RANKING (fixed:100 + member-count)
+  const fixedPool = { mode: "fixed" as const, size: 100, minSize: 20, vectorDims: 768 };
+  const maxSimArm = orderArm("max-similarity", fixedPool);
+  const evidenceArm = orderArm("evidence-mass", fixedPool);
+
+  beforeAll(async () => {
+    agent = await registerAgent("order");
+    const old = "now() - interval '40 days'";
+    aIds.push(await seedTrace(agent, "OA1", { sim: 0.70, axis: 1, createdAtSql: old }));
+    aIds.push(await seedTrace(agent, "OA2", { sim: 0.695, axis: 1, createdAtSql: old }));
+    aIds.push(await seedTrace(agent, "OA3", { sim: 0.69, axis: 1, createdAtSql: old }));
+    bIds.push(await seedTrace(agent, "OB1", { sim: 0.95, axis: 2, createdAtSql: old }));
+    bIds.push(await seedTrace(agent, "OB2", { sim: 0.945, axis: 2, createdAtSql: old }));
+    cIds.push(await seedTrace(agent, "OC1", { sim: 0.80, axis: 3, createdAtSql: old }));
+    // Evidence mass by cluster: A=1, B=2, C=5 (embedding axis is irrelevant to
+    // the count — evidence-mass sums trace_evidence rows).
+    await seedEvidence(agent, aIds[0]!, "OEA", { sim: 0.5, axis: 5, createdAtSql: "now()" });
+    for (let i = 0; i < 2; i++) {
+      await seedEvidence(agent, bIds[0]!, `OEB${i}`, { sim: 0.5, axis: 5, createdAtSql: "now()" });
+    }
+    for (let i = 0; i < 5; i++) {
+      await seedEvidence(agent, cIds[0]!, `OEC${i}`, { sim: 0.5, axis: 5, createdAtSql: "now()" });
+    }
+  }, 120_000);
+
+  it("max-similarity is the shipped default: explicit config byte-identical to omitting the ranking param", async () => {
+    // Since the 2026-07-20 ordering flip (ranking-changelog.md) the no-param
+    // default is fixed:100 + max-similarity — [B, C, A] on this geometry.
+    const [explicit, omitted] = await Promise.all([
+      runPipeline(agent, orderArm("max-similarity", fixedPool), { k: 3 }),
+      runPipeline(agent, orderArm("max-similarity", fixedPool), { k: 3, omitRanking: true }),
+    ]);
+    expect(explicit.results.map((r) => r.id)).toEqual(omitted.results.map((r) => r.id));
+    expect(explicit.results.map((r) => r.clusterSize)).toEqual(omitted.results.map((r) => r.clusterSize));
+    expect(explicit.clusters).toEqual(omitted.clusters);
+    expect(explicit.allResults!.map((r) => r.id)).toEqual(omitted.allResults!.map((r) => r.id));
+    expect(omitted.results.map((r) => groupOf(r.id))).toEqual(["B", "C", "A"]);
+    // The legacy comparison arm still orders biggest-cluster-first.
+    const member = await runPipeline(agent, memberArm, { k: 3 });
+    expect(member.results.map((r) => groupOf(r.id))).toEqual(["A", "B", "C"]);
+  });
+
+  it("max-similarity permutes cluster ORDER only — same exemplar set, same size multiset, same flat results", async () => {
+    const [member, maxSim] = await Promise.all([
+      runPipeline(agent, memberArm, { k: 3 }),
+      runPipeline(agent, maxSimArm, { k: 3 }),
+    ]);
+    // Relevance-first: the top-similarity cluster (B) leads, the biggest but
+    // least-similar cluster (A — the echo failure mode) drops to last.
+    expect(maxSim.results.map((r) => groupOf(r.id))).toEqual(["B", "C", "A"]);
+    // A permutation, not a re-cluster: same exemplar SET, same clusterSize
+    // multiset, index-parallel results↔clusters preserved.
+    const bySize = (a: number | undefined, b: number | undefined) => a! - b!;
+    expect(maxSim.results.map((r) => r.id).sort()).toEqual(member.results.map((r) => r.id).sort());
+    expect(maxSim.results.map((r) => r.clusterSize).sort(bySize))
+      .toEqual(member.results.map((r) => r.clusterSize).sort(bySize));
+    expect(maxSim.results).toHaveLength(maxSim.clusters!.length);
+    maxSim.results.forEach((r, i) => expect(r.clusterSize).toBe(maxSim.clusters![i]!.memberCount));
+
+    // Flat surface untouched by ordering (same seam discipline as the pool).
+    const [flatM, flatS] = await Promise.all([
+      runPipeline(agent, memberArm, { expand: true }),
+      runPipeline(agent, maxSimArm, { expand: true }),
+    ]);
+    expect(flatS.results.map((r) => r.id)).toEqual(flatM.results.map((r) => r.id));
+    expect(flatS.results.map((r) => r.semanticScore)).toEqual(flatM.results.map((r) => r.semanticScore));
+  });
+
+  it("evidence-mass orders clusters by summed member evidence counts (seedEvidence)", async () => {
+    const [member, evid] = await Promise.all([
+      runPipeline(agent, memberArm, { k: 3 }),
+      runPipeline(agent, evidenceArm, { k: 3 }),
+    ]);
+    // Corroboration weight: C (5 evidence rows) leads, then B (2), then A (1)
+    // — an order distinct from both member-count and max-similarity.
+    expect(evid.results.map((r) => groupOf(r.id))).toEqual(["C", "B", "A"]);
+    // Same permutation invariant: exemplar set and sizes unchanged.
+    expect(evid.results.map((r) => r.id).sort()).toEqual(member.results.map((r) => r.id).sort());
   });
 });
 

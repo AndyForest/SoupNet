@@ -4,7 +4,9 @@ import {
   DEFAULT_RANKING,
   RANKING_ALGORITHM_VERSION,
   poolBoundary,
+  orderClusters,
 } from "./ranking-config";
+import type { ClusterOrderStat } from "./ranking-config";
 
 describe("DEFAULT_RANKING", () => {
   it("ships the 2026-07-19 ruling: fixed:100 clustering pool", () => {
@@ -17,8 +19,15 @@ describe("DEFAULT_RANKING", () => {
     expect(DEFAULT_RANKING.clusterPool.vectorDims).toBe(768);
   });
 
-  it("has a dated version identifier matching the pool-flip mint", () => {
-    expect(RANKING_ALGORITHM_VERSION).toBe("2026-07-19");
+  it("ships the 2026-07-20 ruling: max-similarity cluster ordering", () => {
+    // Versioned flip (p7-ordering-sweep-report.md): relevance-first cluster
+    // ranking; member-count stays a comparison arm, evidence-mass stays
+    // plumbed awaiting evidence-bearing golden material.
+    expect(DEFAULT_RANKING.clusterOrdering).toBe("max-similarity");
+  });
+
+  it("has a dated version identifier matching the ordering-flip mint", () => {
+    expect(RANKING_ALGORITHM_VERSION).toBe("2026-07-20");
   });
 });
 
@@ -62,5 +71,45 @@ describe("poolBoundary", () => {
 
   it("score-gap: candidate count below minSize returns everything", () => {
     expect(poolBoundary([0.9, 0.8], pool("score-gap", 10, 5))).toBe(2);
+  });
+});
+
+describe("orderClusters", () => {
+  // Three clusters where the three modes DISAGREE: cluster 0 is biggest but
+  // lowest-similarity and evidence-thin (the echo failure mode); cluster 1 has
+  // the best member similarity; cluster 2 carries the most evidence.
+  const stats: ClusterOrderStat[] = [
+    { memberCount: 5, maxScore: 0.70, evidenceMass: 1 }, // 0
+    { memberCount: 2, maxScore: 0.95, evidenceMass: 2 }, // 1
+    { memberCount: 1, maxScore: 0.80, evidenceMass: 9 }, // 2
+  ];
+
+  it("member-count: biggest cluster first (legacy)", () => {
+    expect(orderClusters(stats, "member-count")).toEqual([0, 1, 2]);
+  });
+
+  it("max-similarity: best member's query similarity first (relevance-first)", () => {
+    expect(orderClusters(stats, "max-similarity")).toEqual([1, 2, 0]);
+  });
+
+  it("evidence-mass: heaviest summed evidence first (corroboration)", () => {
+    expect(orderClusters(stats, "evidence-mass")).toEqual([2, 1, 0]);
+  });
+
+  it("ties preserve incoming (legacy) order — stable", () => {
+    const tied: ClusterOrderStat[] = [
+      { memberCount: 3, maxScore: 0.5, evidenceMass: 0 }, // 0
+      { memberCount: 3, maxScore: 0.9, evidenceMass: 0 }, // 1 — higher sim, same count
+      { memberCount: 3, maxScore: 0.5, evidenceMass: 0 }, // 2
+    ];
+    // Equal member counts ⇒ the incoming order is preserved, not resorted by
+    // any secondary key.
+    expect(orderClusters(tied, "member-count")).toEqual([0, 1, 2]);
+    // Equal evidence mass ⇒ likewise stable.
+    expect(orderClusters(tied, "evidence-mass")).toEqual([0, 1, 2]);
+  });
+
+  it("empty input ⇒ empty permutation", () => {
+    expect(orderClusters([], "max-similarity")).toEqual([]);
   });
 });

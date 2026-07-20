@@ -38,6 +38,18 @@
  *   - pool-fixed100:  explicit fixed:100 @ 768-dim pool vectors (= baseline's twin)
  *   - pool-score-gap: score-gap pool (largest gap in [20, 133]) @ 768 dims
  *
+ * Opt-in extra variants via RANKEVAL_EXTRA_VARIANTS (comma-separated), for one
+ * run without touching CI's standard three:
+ *   - fixed:<n>            → pool-fixed<n> (pool-size sweep grid)
+ *   - order:max-similarity → order-max-similarity (P7 cluster ordering)
+ *   - order:evidence-mass  → order-evidence-mass (P7 cluster ordering)
+ * P7 ordering variants keep DEFAULT_RANKING's pool and change only the
+ * clustered DISPLAY sequence — so their flat order is baseline's and the
+ * unaffectedTau guardrail must stay exactly 1 for them (the same flat-surface
+ * invariant the pool variants hold). exemplarOrderNdcg / firstExemplarGrade
+ * are the order-sensitive metrics that make the ordering measurable
+ * (aspectCoverage is order-blind).
+ *
  * Calls per question × arm × variant: an expanded flat call for the
  * whole-list metrics, a production-shaped clustered call (perPage 20) for the
  * display metrics, and — on session questions in the hygiene-polluted arm — a
@@ -53,13 +65,15 @@ import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 
 import { DEFAULT_RANKING, RANKING_ALGORITHM_VERSION } from "@soupnet/domain";
-import type { RankingConfig } from "@soupnet/domain";
+import type { RankingConfig, ClusterOrderingMode } from "@soupnet/domain";
 import {
   ndcg,
   recallAtK,
   kendallTau,
   serendipityAtL,
   aspectCoverage,
+  exemplarOrderNdcg,
+  firstExemplarGrade,
   mean,
 } from "./metrics";
 import type { SerendipityItem } from "./metrics";
@@ -120,9 +134,14 @@ const EXTRA_VARIANTS = (process.env["RANKEVAL_EXTRA_VARIANTS"] ?? "")
   .map((s) => s.trim())
   .filter(Boolean)
   .map((spec) => {
-    const m = /^fixed:(\d+)$/.exec(spec);
-    if (!m) throw new Error(`RANKEVAL_EXTRA_VARIANTS entry "${spec}" — only "fixed:<n>" is supported`);
-    return `pool-fixed${m[1]}`;
+    const fixed = /^fixed:(\d+)$/.exec(spec);
+    if (fixed) return `pool-fixed${fixed[1]}`;
+    const order = /^order:(max-similarity|evidence-mass)$/.exec(spec);
+    if (order) return `order-${order[1]}`;
+    throw new Error(
+      `RANKEVAL_EXTRA_VARIANTS entry "${spec}" — supported: ` +
+        `"fixed:<n>", "order:max-similarity", "order:evidence-mass"`,
+    );
   });
 const VARIANTS: readonly string[] = [...BASE_VARIANTS, ...EXTRA_VARIANTS];
 type VariantName = string;
@@ -137,11 +156,15 @@ function variantConfig(name: VariantName): RankingConfig {
       // kept so threshold paths and cross-version comparisons stay stable).
       return DEFAULT_RANKING;
     case "pool-fixed100":
-      return { clusterPool: { mode: "fixed", size: 100, minSize: 20, vectorDims: 768 } };
+      return {
+        ...DEFAULT_RANKING,
+        clusterPool: { mode: "fixed", size: 100, minSize: 20, vectorDims: 768 },
+      };
     case "pool-score-gap":
       // The measured candidate: relevance-bounded boundary at the largest
       // score gap, searched between the default minSize/size bounds.
       return {
+        ...DEFAULT_RANKING,
         clusterPool: {
           mode: "score-gap",
           size: DEFAULT_RANKING.clusterPool.size,
@@ -152,7 +175,15 @@ function variantConfig(name: VariantName): RankingConfig {
   }
   const fixed = /^pool-fixed(\d+)$/.exec(name);
   if (fixed) {
-    return { clusterPool: { mode: "fixed", size: Number(fixed[1]), minSize: 20, vectorDims: 768 } };
+    return {
+      ...DEFAULT_RANKING,
+      clusterPool: { mode: "fixed", size: Number(fixed[1]), minSize: 20, vectorDims: 768 },
+    };
+  }
+  const order = /^order-(max-similarity|evidence-mass)$/.exec(name);
+  if (order) {
+    // P7: DEFAULT_RANKING's pool, only the cluster display ordering changes.
+    return { ...DEFAULT_RANKING, clusterOrdering: order[1] as ClusterOrderingMode };
   }
   throw new Error(`Unknown ranking variant "${name}"`);
 }
@@ -167,6 +198,12 @@ interface QuestionMeasurement {
   relevantRecall5: number;
   relevantRecall10: number;
   aspectCoverage: number;
+  /** Order-sensitive display metrics (P7): NDCG of the exemplars in display
+   *  order vs their own ideal ordering, and the normalized grade of the first
+   *  exemplar. Computed on the production-shaped display call; aspectCoverage
+   *  is order-blind, these are not. */
+  exemplarOrderNdcg: number;
+  firstExemplarGrade: number;
   serendipity: number;
   /** Session overlay (hygiene-polluted arm, session questions only): share of
    *  the display call's recipe-text chars saved by known-set stubs. */
@@ -272,6 +309,9 @@ async function measureQuestion(
     relevantRecall5: recallAtK(flatIds, relevantTargets, 5),
     relevantRecall10: recallAtK(flatIds, relevantTargets, 10),
     aspectCoverage: aspectCoverage(exemplarIds, aspectMap, relevantIds),
+    // Exemplar grades in DISPLAY order — the sequence the ordering lever sets.
+    exemplarOrderNdcg: exemplarOrderNdcg(exemplarIds.map(gradeOf)),
+    firstExemplarGrade: firstExemplarGrade(exemplarIds.map(gradeOf), MAX_GRADE),
     serendipity: serendipityAtL(serItems),
     flatIds,
   };
@@ -584,6 +624,8 @@ async function main(): Promise<void> {
         relevantRecall5: mean(all.map((m) => m.relevantRecall5)),
         relevantRecall10: mean(all.map((m) => m.relevantRecall10)),
         aspectCoverage: mean(all.map((m) => m.aspectCoverage)),
+        exemplarOrderNdcg: mean(all.map((m) => m.exemplarOrderNdcg)),
+        firstExemplarGrade: mean(all.map((m) => m.firstExemplarGrade)),
         serendipity: mean(all.map((m) => m.serendipity)),
         // Session-overlay metrics exist only where lineages were measured —
         // omitted (not zeroed) elsewhere so thresholds can't pass vacuously.

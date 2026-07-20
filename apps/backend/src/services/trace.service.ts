@@ -150,6 +150,11 @@ export interface RankingResponseInfo {
   /** Clustering-pool mode in effect: "page" (legacy), "fixed:<size>", or
    *  "score-gap:<min>-<max>". */
   clusterPool: string;
+  /** Cluster display ordering in effect (P7): "member-count" (legacy),
+   *  "max-similarity", or "evidence-mass". Shapes the clustered summary's
+   *  sequence only — never membership, ranking, or scores. Honest config echo:
+   *  emitted always. */
+  clusterOrdering: string;
 }
 
 /** Render a ClusterPoolConfig as the compact response form. */
@@ -742,6 +747,7 @@ export async function submitAndSearch(
     ranking: {
       version: RANKING_ALGORITHM_VERSION,
       clusterPool: clusterPoolLabel(DEFAULT_RANKING.clusterPool),
+      clusterOrdering: DEFAULT_RANKING.clusterOrdering,
     },
   };
 }
@@ -868,6 +874,7 @@ export async function searchWithoutLogging(
     ranking: {
       version: RANKING_ALGORITHM_VERSION,
       clusterPool: clusterPoolLabel(DEFAULT_RANKING.clusterPool),
+      clusterOrdering: DEFAULT_RANKING.clusterOrdering,
     },
   };
 }

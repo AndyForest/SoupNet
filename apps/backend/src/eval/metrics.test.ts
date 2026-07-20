@@ -8,6 +8,8 @@ import {
   kendallTau,
   serendipityAtL,
   aspectCoverage,
+  exemplarOrderNdcg,
+  firstExemplarGrade,
   mean,
 } from "./metrics";
 
@@ -162,6 +164,33 @@ describe("aspectCoverage", () => {
   it("ignores exemplars without an aspect label", () => {
     const relevant = new Set(["t1", "unlabeled"]);
     expect(aspectCoverage(["unlabeled", "t1"], aspects, relevant)).toBe(1);
+  });
+});
+
+describe("exemplarOrderNdcg", () => {
+  it("is 1 when exemplars are displayed best-grade first", () => {
+    expect(exemplarOrderNdcg([3, 2, 1])).toBe(1);
+  });
+
+  it("penalizes a top slot squandered on a low-grade exemplar", () => {
+    // Same exemplars, worst-first — the ideal is [3,2,1], so this is < 1.
+    expect(exemplarOrderNdcg([1, 2, 3])).toBeLessThan(1);
+  });
+
+  it("is 1 when no exemplar carries relevance mass", () => {
+    expect(exemplarOrderNdcg([0, 0, 0])).toBe(1);
+    expect(exemplarOrderNdcg([])).toBe(1);
+  });
+});
+
+describe("firstExemplarGrade", () => {
+  it("normalizes the first exemplar's grade by the scale max", () => {
+    expect(firstExemplarGrade([3, 0, 1], 3)).toBe(1);
+    expect(firstExemplarGrade([0, 3], 3)).toBe(0);
+  });
+
+  it("is 0 for an empty display", () => {
+    expect(firstExemplarGrade([], 3)).toBe(0);
   });
 });
 
