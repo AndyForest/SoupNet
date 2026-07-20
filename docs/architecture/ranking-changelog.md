@@ -8,6 +8,14 @@ Additive levers that default to the previous behavior do **not** mint a new vers
 
 ---
 
+## 2026-07-20 — display selection: k-means cluster → MMR λ0.6 over a band:0.15 pool (version mint: `2026-07-20` → `2026-07-20-mmr`)
+
+`DEFAULT_RANKING` flips to `displaySelection {mode: "mmr", lambda: 0.6}` with `clusterPool {mode: "band", band: 0.15, size: 1500, minSize: 100}`: the check path's displayed representatives are now selected by Maximal Marginal Relevance over a score-banded reach — one standard mechanism replacing per-check k-means, the fixed pool size, and the ordering permutation. Flat results, pagination, scores, and the session/stub rendering are untouched (regression-proven: flat identical across modes, known-set stubbing flows through the MMR path). The suffix `-mmr` disambiguates the second mint of 2026-07-20.
+
+Rests on: the P8 sweep ([p8-mmr-sweep-report.md](../planning/ranking-research/p8-mmr-sweep-report.md)) — firstExemplarGrade 0.20 → 0.77 (polluted) / 0.93 (clean) on the echo-shaped set, neutral-within-grading-bias on the graded real-scale set, and on the operator's real corpus (real-recipe probes) the side-by-side showed k-means's structural buried-best-recipe flaw (centroid-nearest ≠ most relevant) which MMR removes. Subsumed on the check path: P6's fixed:100 pool and P7's ordering permutation (their modes stay as comparison arms; the map and briefing keep real clustering). `cluster` display remains selectable for A/Bs.
+
+Ruling: operator, 2026-07-20 — *"Ok, the side-by-side sells it, flip to mmr."* Lineage recipes: `ee4479c4`, `257950f3`.
+
 ## 2026-07-20 — MMR display-selection lever + score-banded pool added, ship off (no version mint)
 
 Adds two plumbed levers, both defaulting to the shipped behavior, so no default flips and the version stays `2026-07-20`; this entry records the *lever inventory* change per the 2026-07-17 convention.

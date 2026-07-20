@@ -321,10 +321,13 @@ const mmrBandArm = (
 // The shipped default, written out explicitly (fixed:100 + max-similarity +
 // cluster display since the 2026-07-20 ordering flip) — byte-identity tests
 // pair this with omitted-ranking runs so a silent default drift fails loudly.
+// The shipped default, written out explicitly (band pool + MMR λ0.6 since the
+// 2026-07-20 MMR flip, ranking-changelog.md) — byte-identity tests pair this
+// with omitted-ranking runs so a silent default drift fails loudly.
 const defaultArm = (): RankingConfig => ({
-  clusterPool: { mode: "fixed", size: 100, minSize: 20, vectorDims: 768 },
+  clusterPool: { mode: "band", band: 0.15, size: 1500, minSize: 100, vectorDims: 768 },
   clusterOrdering: "max-similarity",
-  displaySelection: CLUSTER_DISPLAY,
+  displaySelection: { mode: "mmr", lambda: 0.6 },
 });
 
 beforeAll(async () => {
@@ -746,19 +749,20 @@ describe.skipIf(!BASE)("ranking regression — cluster ordering (P7)", () => {
     }
   }, 120_000);
 
-  it("max-similarity is the shipped default: explicit config byte-identical to omitting the ranking param", async () => {
-    // Since the 2026-07-20 ordering flip (ranking-changelog.md) the no-param
-    // default is fixed:100 + max-similarity — [B, C, A] on this geometry.
+  it("the shipped default (MMR since 2026-07-20-mmr) is byte-identical to omitting the ranking param; explicit ordering arms behave per mode", async () => {
     const [explicit, omitted] = await Promise.all([
-      runPipeline(agent, orderArm("max-similarity", fixedPool), { k: 3 }),
-      runPipeline(agent, orderArm("max-similarity", fixedPool), { k: 3, omitRanking: true }),
+      runPipeline(agent, defaultArm(), { k: 3 }),
+      runPipeline(agent, defaultArm(), { k: 3, omitRanking: true }),
     ]);
     expect(explicit.results.map((r) => r.id)).toEqual(omitted.results.map((r) => r.id));
     expect(explicit.results.map((r) => r.clusterSize)).toEqual(omitted.results.map((r) => r.clusterSize));
     expect(explicit.clusters).toEqual(omitted.clusters);
     expect(explicit.allResults!.map((r) => r.id)).toEqual(omitted.allResults!.map((r) => r.id));
-    expect(omitted.results.map((r) => groupOf(r.id))).toEqual(["B", "C", "A"]);
-    // The legacy comparison arm still orders biggest-cluster-first.
+    // MMR leads with the highest-relevance pick on any geometry.
+    expect(groupOf(omitted.results[0]!.id)).toBe("B");
+    // The explicit cluster-path arms keep their P7 contracts.
+    const maxSim = await runPipeline(agent, orderArm("max-similarity", fixedPool), { k: 3 });
+    expect(maxSim.results.map((r) => groupOf(r.id))).toEqual(["B", "C", "A"]);
     const member = await runPipeline(agent, memberArm, { k: 3 });
     expect(member.results.map((r) => groupOf(r.id))).toEqual(["A", "B", "C"]);
   });
@@ -833,7 +837,7 @@ describe.skipIf(!BASE)("ranking regression — display selection (MMR)", () => {
     }
   }, 120_000);
 
-  it("(a) cluster mode (default) is byte-identical to an omitted ranking param", async () => {
+  it("(a) the shipped default (MMR + band) is byte-identical to an omitted ranking param", async () => {
     const [explicit, omitted] = await Promise.all([
       runPipeline(agent, defaultArm(), { k: 3 }),
       runPipeline(agent, defaultArm(), { k: 3, omitRanking: true }),

@@ -30,7 +30,7 @@
  * behavior do not mint. Surfaced in check responses (`data.ranking.version`)
  * and audit metadata. History: docs/architecture/ranking-changelog.md.
  */
-export const RANKING_ALGORITHM_VERSION = "2026-07-20";
+export const RANKING_ALGORITHM_VERSION = "2026-07-20-mmr";
 
 /**
  * Clustering candidate pool — hypothesis P6 (ranking-engine.md stage 3).
@@ -158,9 +158,16 @@ export interface RankingConfig {
  *  variants, guardrail tau exactly 1.0). The "mmr" display-selection prototype
  *  defaults off, so this object is byte-stable. */
 export const DEFAULT_RANKING: RankingConfig = {
-  clusterPool: { mode: "fixed", size: 100, minSize: 20, vectorDims: 768 },
+  // The 2026-07-20 MMR ruling ("Ok, the side-by-side sells it, flip to mmr"):
+  // display selection is MMR λ0.6 over a score-banded reach — one standard
+  // mechanism (Carbonell & Goldstein 1998) replacing per-check k-means, the
+  // fixed pool size, and the ordering permutation on the check path. The
+  // subsumed modes stay as comparison arms; the map/briefing surfaces keep
+  // real clustering (corpus summarization is genuinely their question).
+  // Version suffix "-mmr" disambiguates the second mint of 2026-07-20.
+  clusterPool: { mode: "band", band: 0.15, size: 1500, minSize: 100, vectorDims: 768 },
   clusterOrdering: "max-similarity",
-  displaySelection: { mode: "cluster", lambda: 0.6 },
+  displaySelection: { mode: "mmr", lambda: 0.6 },
 };
 
 /**

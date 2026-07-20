@@ -9,13 +9,15 @@ import {
 import type { ClusterOrderStat } from "./ranking-config";
 
 describe("DEFAULT_RANKING", () => {
-  it("ships the 2026-07-19 ruling: fixed:100 clustering pool", () => {
+  it("ships the 2026-07-20 MMR ruling: score-banded pool", () => {
     // Changing any default is a versioned algorithm event: bump
     // RANKING_ALGORITHM_VERSION and add a ranking-changelog.md entry
-    // (this flip: p6-pool-sweep-report.md; "page" stays a comparison arm).
-    expect(DEFAULT_RANKING.clusterPool.mode).toBe("fixed");
-    expect(DEFAULT_RANKING.clusterPool.size).toBe(100);
-    expect(DEFAULT_RANKING.clusterPool.minSize).toBe(20);
+    // (this flip: p8-mmr-sweep-report.md; fixed/page/score-gap stay
+    // comparison arms — P6's fixed:100 is subsumed on the check path).
+    expect(DEFAULT_RANKING.clusterPool.mode).toBe("band");
+    expect(DEFAULT_RANKING.clusterPool.band).toBe(0.15);
+    expect(DEFAULT_RANKING.clusterPool.size).toBe(1500);
+    expect(DEFAULT_RANKING.clusterPool.minSize).toBe(100);
     expect(DEFAULT_RANKING.clusterPool.vectorDims).toBe(768);
   });
 
@@ -26,14 +28,15 @@ describe("DEFAULT_RANKING", () => {
     expect(DEFAULT_RANKING.clusterOrdering).toBe("max-similarity");
   });
 
-  it("has a dated version identifier matching the ordering-flip mint", () => {
-    // The MMR display-selection lever is additive and defaults off (cluster),
-    // so it does NOT mint a new version.
-    expect(RANKING_ALGORITHM_VERSION).toBe("2026-07-20");
+  it("has a version identifier matching the MMR-flip mint (same-day suffix)", () => {
+    expect(RANKING_ALGORITHM_VERSION).toBe("2026-07-20-mmr");
   });
 
-  it("ships the legacy k-means display selection (mmr defaults off)", () => {
-    expect(DEFAULT_RANKING.displaySelection.mode).toBe("cluster");
+  it("ships the 2026-07-20 ruling: MMR display selection at λ0.6", () => {
+    // p8-mmr-sweep-report.md; ruling "Ok, the side-by-side sells it, flip to
+    // mmr". "cluster" (k-means) stays a comparison arm on the check path and
+    // the real mechanism for the map/briefing surfaces.
+    expect(DEFAULT_RANKING.displaySelection.mode).toBe("mmr");
     expect(DEFAULT_RANKING.displaySelection.lambda).toBe(0.6);
   });
 });
