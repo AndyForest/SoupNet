@@ -30,7 +30,7 @@
  * behavior do not mint. Surfaced in check responses (`data.ranking.version`)
  * and audit metadata. History: docs/architecture/ranking-changelog.md.
  */
-export const RANKING_ALGORITHM_VERSION = "2026-07-20";
+export const RANKING_ALGORITHM_VERSION = "2026-07-20-mmr";
 
 /**
  * Clustering candidate pool — hypothesis P6 (ranking-engine.md stage 3).
@@ -50,6 +50,15 @@ export const RANKING_ALGORITHM_VERSION = "2026-07-20";
  *     relevance-bounded boundary instead of a global cutoff ("a single global
  *     cutoff is inherently brittle" — Tail-Aware Adaptive-k, see
  *     docs/planning/ranking-research/candidate-pool-sizing.md).
+ *   - "band": the pool extends to every candidate scoring within `band` of the
+ *     top score (score ≥ topScore − band), clamped to [`minSize`, `size`] —
+ *     the SCORE-BANDED reach a homogeneous top of the ranking automatically
+ *     extends deeper. This is the answer to the MMR homogeneous-top what-if
+ *     ("the top fixed 100 are all basically the same. Then MMR doesn't get us
+ *     anything, right?" — operator, 2026-07-20): when the top scores cluster,
+ *     the band reaches past the near-duplicate pile to the similarly-scored but
+ *     semantically distinct candidates MMR needs to build a diverse display.
+ *     Pairs with `displaySelection: "mmr"` (hypothesis P8).
  *
  * Pool selection shapes only the clustered summary — no score floor ever
  * hides a result from the flat surface. `size` also bounds implementation
@@ -58,11 +67,15 @@ export const RANKING_ALGORITHM_VERSION = "2026-07-20";
  * Map precedent, 4× cheaper than full 3,072; 0 = full dims).
  */
 export interface ClusterPoolConfig {
-  mode: "page" | "fixed" | "score-gap";
-  /** Fixed-mode pool size, and the score-gap mode's maximum. */
+  mode: "page" | "fixed" | "score-gap" | "band";
+  /** Fixed-mode pool size, and the score-gap/band mode's maximum. */
   size: number;
-  /** Score-gap mode's minimum pool size (gap search starts here). */
+  /** Score-gap/band mode's minimum pool size (the lower clamp). */
   minSize: number;
+  /** Band-mode score reach below the top score (e.g. 0.15): candidates with
+   *  score ≥ topScore − band join the pool. Ignored by other modes; absent ⇒ 0
+   *  (only exact-top-score ties, then clamped up to minSize). */
+  band?: number;
   vectorDims: number;
 }
 
@@ -93,27 +106,68 @@ export interface ClusterPoolConfig {
 export type ClusterOrderingMode = "member-count" | "max-similarity" | "evidence-mass";
 
 /**
+ * Display-selection mechanism — hypothesis P8 (ranking-engine.md stage 4).
+ * Chooses HOW the displayed representatives are picked from the pool.
+ *
+ *   - "cluster": THE DEFAULT — k-means over the pool, one exemplar per cluster
+ *     (the shipped scatter/gather path, byte-stable). The P6 pool + P7 ordering
+ *     levers shape it.
+ *   - "mmr": Maximal Marginal Relevance (Carbonell & Goldstein 1998, SIGIR) —
+ *     the standard diversity-selection mechanism ("closest but still relatively
+ *     unique"): pick the most query-relevant candidate, then each next one to
+ *     maximize λ·sim(query, c) − (1−λ)·max sim(selected, c). Parity with
+ *     LangChain's `maximalMarginalRelevance` (@langchain/core/utils/math); the
+ *     vendored implementation lives in mmr.ts. `lambda` is the relevance↔
+ *     diversity trade-off (1 = pure relevance, 0 = pure diversity). MMR replaces
+ *     the per-check clustering + ordering with one standard mechanism; the
+ *     score-banded `clusterPool` mode "band" answers the homogeneous-top
+ *     what-if by extending the candidate reach deeper when the top is
+ *     near-duplicate-dense. A PROTOTYPE behind the lever seam — measured via the
+ *     sweep → report → ruling path before any flip.
+ */
+export interface DisplaySelectionConfig {
+  mode: "cluster" | "mmr";
+  /** MMR relevance↔diversity trade-off in [0,1]; ignored in "cluster" mode. */
+  lambda: number;
+}
+
+/**
  * The pipeline config object. Every ranking lever is a named field with a
  * documented default and range; stages read from this object rather than
  * scattered constants, so a new lever is a field + a stage read.
  */
 export interface RankingConfig {
   /** Clustering candidate pool (P6). Ships "fixed:100" (2026-07-19 ruling);
-   *  "page" (legacy) and "score-gap" stay plumbed as comparison arms. */
+   *  "page" (legacy) and "score-gap" stay plumbed as comparison arms, and
+   *  "band" pairs with the "mmr" display-selection prototype. */
   clusterPool: ClusterPoolConfig;
   /** Cluster display ordering (P7). Ships "max-similarity" (2026-07-20
    *  ruling); "member-count" (legacy) stays a comparison arm and
-   *  "evidence-mass" stays plumbed awaiting evidence-bearing golden material. */
+   *  "evidence-mass" stays plumbed awaiting evidence-bearing golden material.
+   *  Read only in the "cluster" display-selection mode. */
   clusterOrdering: ClusterOrderingMode;
+  /** Display-selection mechanism (P8). Ships "cluster" (k-means, byte-stable);
+   *  "mmr" is a prototype behind the lever seam. */
+  displaySelection: DisplaySelectionConfig;
 }
 
 /** Shipped defaults. Flat results, pagination, and displayed scores are
- *  untouched by either lever — the pool shapes what clustering sees, the
- *  ordering shapes the clustered summary's sequence (measured: every flat
- *  metric byte-identical across variants, guardrail tau exactly 1.0). */
+ *  untouched by any lever — the pool shapes what selection sees, the ordering
+ *  shapes the clustered summary's sequence, and displaySelection ships the
+ *  legacy k-means path (measured: every flat metric byte-identical across
+ *  variants, guardrail tau exactly 1.0). The "mmr" display-selection prototype
+ *  defaults off, so this object is byte-stable. */
 export const DEFAULT_RANKING: RankingConfig = {
-  clusterPool: { mode: "fixed", size: 100, minSize: 20, vectorDims: 768 },
+  // The 2026-07-20 MMR ruling ("Ok, the side-by-side sells it, flip to mmr"):
+  // display selection is MMR λ0.6 over a score-banded reach — one standard
+  // mechanism (Carbonell & Goldstein 1998) replacing per-check k-means, the
+  // fixed pool size, and the ordering permutation on the check path. The
+  // subsumed modes stay as comparison arms; the map/briefing surfaces keep
+  // real clustering (corpus summarization is genuinely their question).
+  // Version suffix "-mmr" disambiguates the second mint of 2026-07-20.
+  clusterPool: { mode: "band", band: 0.15, size: 1500, minSize: 100, vectorDims: 768 },
   clusterOrdering: "max-similarity",
+  displaySelection: { mode: "mmr", lambda: 0.6 },
 };
 
 /**
@@ -142,6 +196,18 @@ export function poolBoundary(
   if (pool.mode === "page") return undefined;
   const max = Math.min(pool.size, scoresDescending.length);
   if (pool.mode === "fixed") return max;
+  if (pool.mode === "band") {
+    if (max === 0) return 0;
+    // Scores are descending, so candidates within the band form a prefix —
+    // count until the first score below topScore − band, then clamp to
+    // [minSize, size]. A homogeneous top makes the prefix long, extending the
+    // reach deeper (up to the cap); a sharp drop keeps it near minSize.
+    const threshold = scoresDescending[0]! - (pool.band ?? 0);
+    let count = 0;
+    while (count < scoresDescending.length && scoresDescending[count]! >= threshold) count++;
+    const lower = Math.min(Math.max(1, pool.minSize), max);
+    return Math.min(max, Math.max(lower, count));
+  }
   // score-gap: cut at the largest adjacent score drop in [minSize, max].
   const min = Math.min(Math.max(1, pool.minSize), max);
   if (max <= min) return max;

@@ -1,4 +1,5 @@
 export * from "./ranking-config";
+export * from "./mmr";
 export * from "./check-response-renderer";
 export * from "./entities/index";
 export * from "./recipe-guide-content";

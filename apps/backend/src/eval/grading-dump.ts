@@ -119,16 +119,36 @@ async function prepare(db: PostgresJsDatabase, datasetDir: string): Promise<Prep
     JOIN claimnet.embedding_sources es ON es.id = ec.embedding_source_id
     WHERE ev.status = 'pending' AND es.group_id = ${groupId}::uuid
   `)) as unknown as Array<{ id: string; chunk_text: string; chunk_hash: string; task_type: string }>;
+  let drained = 0;
+  let skipped = 0;
   for (const r of rows) {
-    const vec = await getOrCreateCachedVector(db, r.chunk_hash, r.chunk_text, r.task_type);
-    if (!vec) throw new Error(`Embedding provider returned null for pending chunk ${r.id}`);
+    // Remote providers return null on transient failures in this path (rather
+    // than throwing) — retry with backoff, and SKIP a persistently-null chunk
+    // instead of killing an hours-long prepare (skips are counted + reported;
+    // a rerun picks them up via the cache-first path).
+    let vec: Awaited<ReturnType<typeof getOrCreateCachedVector>> = null;
+    for (let attempt = 1; attempt <= 5 && !vec; attempt++) {
+      vec = await getOrCreateCachedVector(db, r.chunk_hash, r.chunk_text, r.task_type);
+      if (!vec && attempt < 5) {
+        const waitMs = 2000 * 2 ** (attempt - 1);
+        console.log(`  drain retry ${attempt}/5 for chunk ${r.id} in ${waitMs}ms`);
+        await new Promise((res) => setTimeout(res, waitMs));
+      }
+    }
+    if (!vec) {
+      skipped++;
+      console.log(`  SKIPPED chunk ${r.id} (provider returned null after 5 attempts)`);
+      continue;
+    }
     await db.execute(sql`
       UPDATE claimnet.embedding_vectors
       SET status = 'complete', vector = ${vec}::vector(3072)::halfvec(3072)
       WHERE id = ${r.id}::uuid
     `);
+    drained++;
+    if (drained % 1000 === 0) console.log(`  drained ${drained}/${rows.length} pending rows`);
   }
-  console.log(`embedded ${parsed.data.traces.length} traces (+${rows.length} pending drained) in ${((Date.now() - started) / 60000).toFixed(1)} min`);
+  console.log(`embedded ${parsed.data.traces.length} traces (+${drained} pending drained, ${skipped} skipped) in ${((Date.now() - started) / 60000).toFixed(1)} min`);
 
   const state: PrepState = {
     groupId,

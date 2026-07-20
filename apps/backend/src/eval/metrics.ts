@@ -219,6 +219,47 @@ export function firstExemplarGrade(displayedGrades: readonly number[], maxGrade:
   return displayedGrades[0]! / maxGrade;
 }
 
+// ── Display redundancy (grade-free diversity) ────────────────────────────────
+
+/** Cosine similarity, truncating to the shorter vector (MRL prefix). */
+function cosineSim(a: readonly number[], b: readonly number[]): number {
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    dot += a[i]! * b[i]!;
+    na += a[i]! * a[i]!;
+    nb += b[i]! * b[i]!;
+  }
+  const denom = Math.sqrt(na) * Math.sqrt(nb);
+  return denom === 0 ? 0 : dot / denom;
+}
+
+/**
+ * Mean pairwise cosine similarity of the displayed representatives' vectors —
+ * the redundancy of the display (lower = more diverse). A GRADE-FREE metric: it
+ * reads only the display vectors, so it makes the k-means baseline and MMR
+ * comparable on ungraded corpora, where the graded metrics (nDCG, aspect
+ * coverage) can't tell them apart. This is exactly the redundancy term MMR
+ * minimizes (Carbonell & Goldstein 1998), read straight off the pipeline
+ * output. Fewer than two vectors ⇒ 0 (a lone representative is redundant with
+ * nothing).
+ */
+export function displayRedundancy(vectors: readonly (readonly number[])[]): number {
+  const n = vectors.length;
+  if (n < 2) return 0;
+  let sum = 0;
+  let pairs = 0;
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      sum += cosineSim(vectors[i]!, vectors[j]!);
+      pairs++;
+    }
+  }
+  return sum / pairs;
+}
+
 // ── Aggregation helper ───────────────────────────────────────────────────────
 
 /** Arithmetic mean; empty input ⇒ 0 (an empty question set aggregates to 0,

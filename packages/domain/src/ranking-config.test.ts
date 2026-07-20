@@ -9,13 +9,15 @@ import {
 import type { ClusterOrderStat } from "./ranking-config";
 
 describe("DEFAULT_RANKING", () => {
-  it("ships the 2026-07-19 ruling: fixed:100 clustering pool", () => {
+  it("ships the 2026-07-20 MMR ruling: score-banded pool", () => {
     // Changing any default is a versioned algorithm event: bump
     // RANKING_ALGORITHM_VERSION and add a ranking-changelog.md entry
-    // (this flip: p6-pool-sweep-report.md; "page" stays a comparison arm).
-    expect(DEFAULT_RANKING.clusterPool.mode).toBe("fixed");
-    expect(DEFAULT_RANKING.clusterPool.size).toBe(100);
-    expect(DEFAULT_RANKING.clusterPool.minSize).toBe(20);
+    // (this flip: p8-mmr-sweep-report.md; fixed/page/score-gap stay
+    // comparison arms — P6's fixed:100 is subsumed on the check path).
+    expect(DEFAULT_RANKING.clusterPool.mode).toBe("band");
+    expect(DEFAULT_RANKING.clusterPool.band).toBe(0.15);
+    expect(DEFAULT_RANKING.clusterPool.size).toBe(1500);
+    expect(DEFAULT_RANKING.clusterPool.minSize).toBe(100);
     expect(DEFAULT_RANKING.clusterPool.vectorDims).toBe(768);
   });
 
@@ -26,16 +28,30 @@ describe("DEFAULT_RANKING", () => {
     expect(DEFAULT_RANKING.clusterOrdering).toBe("max-similarity");
   });
 
-  it("has a dated version identifier matching the ordering-flip mint", () => {
-    expect(RANKING_ALGORITHM_VERSION).toBe("2026-07-20");
+  it("has a version identifier matching the MMR-flip mint (same-day suffix)", () => {
+    expect(RANKING_ALGORITHM_VERSION).toBe("2026-07-20-mmr");
+  });
+
+  it("ships the 2026-07-20 ruling: MMR display selection at λ0.6", () => {
+    // p8-mmr-sweep-report.md; ruling "Ok, the side-by-side sells it, flip to
+    // mmr". "cluster" (k-means) stays a comparison arm on the check path and
+    // the real mechanism for the map/briefing surfaces.
+    expect(DEFAULT_RANKING.displaySelection.mode).toBe("mmr");
+    expect(DEFAULT_RANKING.displaySelection.lambda).toBe(0.6);
   });
 });
 
 describe("poolBoundary", () => {
-  const pool = (mode: "page" | "fixed" | "score-gap", size = 10, minSize = 3) => ({
+  const pool = (
+    mode: "page" | "fixed" | "score-gap" | "band",
+    size = 10,
+    minSize = 3,
+    band?: number,
+  ) => ({
     mode,
     size,
     minSize,
+    ...(band !== undefined ? { band } : {}),
     vectorDims: 768,
   });
 
@@ -71,6 +87,36 @@ describe("poolBoundary", () => {
 
   it("score-gap: candidate count below minSize returns everything", () => {
     expect(poolBoundary([0.9, 0.8], pool("score-gap", 10, 5))).toBe(2);
+  });
+
+  it("band: cuts where scores fall below topScore − band", () => {
+    // Top 0.90; band 0.10 ⇒ threshold 0.80. Candidates ≥ 0.80: the first 4.
+    const scores = [0.9, 0.85, 0.82, 0.8, 0.6, 0.5];
+    expect(poolBoundary(scores, pool("band", 100, 1, 0.1))).toBe(4);
+  });
+
+  it("band: a homogeneous top extends the reach to the size cap", () => {
+    // All scores within the band ⇒ the whole prefix qualifies, clamped to size.
+    const scores = [0.9, 0.9, 0.89, 0.89, 0.88, 0.88, 0.87, 0.87];
+    expect(poolBoundary(scores, pool("band", 5, 1, 0.15))).toBe(5); // size cap
+    expect(poolBoundary(scores, pool("band", 100, 1, 0.15))).toBe(8); // all of them
+  });
+
+  it("band: clamps up to minSize when the band admits fewer than minSize", () => {
+    // A sharp drop after index 1 (0.9 → 0.4) admits only 2 within the band, but
+    // minSize 4 raises the cut.
+    const scores = [0.9, 0.88, 0.4, 0.39, 0.38, 0.37];
+    expect(poolBoundary(scores, pool("band", 100, 4, 0.1))).toBe(4);
+  });
+
+  it("band: an absent band admits only exact-top ties, then clamps to minSize", () => {
+    const scores = [0.9, 0.9, 0.7, 0.6];
+    // band undefined ⇒ threshold = top; 2 exact ties, but minSize 3 raises it.
+    expect(poolBoundary(scores, pool("band", 100, 3))).toBe(3);
+  });
+
+  it("band: empty candidate list ⇒ 0", () => {
+    expect(poolBoundary([], pool("band", 100, 1, 0.1))).toBe(0);
   });
 });
 

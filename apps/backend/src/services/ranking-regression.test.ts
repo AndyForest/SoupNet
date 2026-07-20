@@ -279,19 +279,24 @@ async function seedEvidence(agent: Agent, parentTraceId: string, label: string, 
   `);
 }
 
+// The legacy k-means display selection, shared by every non-mmr arm below.
+const CLUSTER_DISPLAY: RankingConfig["displaySelection"] = { mode: "cluster", lambda: 0.6 };
 // Explicit page config — no longer DEFAULT_RANKING since the 2026-07-19 flip
 // to fixed:100 (ranking-changelog.md); page stays a comparison arm.
 const pageArm = (): RankingConfig => ({
   clusterPool: { mode: "page", size: 133, minSize: 20, vectorDims: 768 },
   clusterOrdering: "member-count",
+  displaySelection: CLUSTER_DISPLAY,
 });
 const fixedArm = (size: number): RankingConfig => ({
   clusterPool: { mode: "fixed", size, minSize: 20, vectorDims: 768 },
   clusterOrdering: "member-count",
+  displaySelection: CLUSTER_DISPLAY,
 });
 const gapArm = (minSize: number, size: number): RankingConfig => ({
   clusterPool: { mode: "score-gap", size, minSize, vectorDims: 768 },
   clusterOrdering: "member-count",
+  displaySelection: CLUSTER_DISPLAY,
 });
 // P7 cluster-ordering arms — DEFAULT_RANKING's pool (fixed:100), only the
 // display ordering changes. `order` is the mode name; page-pool variants are
@@ -299,13 +304,30 @@ const gapArm = (minSize: number, size: number): RankingConfig => ({
 const orderArm = (
   order: "member-count" | "max-similarity" | "evidence-mass",
   pool: RankingConfig["clusterPool"] = { mode: "page", size: 133, minSize: 20, vectorDims: 768 },
-): RankingConfig => ({ clusterPool: pool, clusterOrdering: order });
-// The shipped default, written out explicitly (fixed:100 + max-similarity
-// since the 2026-07-20 ordering flip) — byte-identity tests pair this with
-// omitted-ranking runs so a silent default drift fails loudly.
+): RankingConfig => ({ clusterPool: pool, clusterOrdering: order, displaySelection: CLUSTER_DISPLAY });
+// MMR display selection (P8) over a score-banded pool — the prototype behind
+// the lever seam. `band` is the score reach below the top; a homogeneous top
+// extends it deeper.
+const mmrBandArm = (
+  band: number,
+  size: number,
+  minSize = 5,
+  lambda = 0.6,
+): RankingConfig => ({
+  clusterPool: { mode: "band", band, size, minSize, vectorDims: 768 },
+  clusterOrdering: "member-count",
+  displaySelection: { mode: "mmr", lambda },
+});
+// The shipped default, written out explicitly (fixed:100 + max-similarity +
+// cluster display since the 2026-07-20 ordering flip) — byte-identity tests
+// pair this with omitted-ranking runs so a silent default drift fails loudly.
+// The shipped default, written out explicitly (band pool + MMR λ0.6 since the
+// 2026-07-20 MMR flip, ranking-changelog.md) — byte-identity tests pair this
+// with omitted-ranking runs so a silent default drift fails loudly.
 const defaultArm = (): RankingConfig => ({
-  clusterPool: { mode: "fixed", size: 100, minSize: 20, vectorDims: 768 },
+  clusterPool: { mode: "band", band: 0.15, size: 1500, minSize: 100, vectorDims: 768 },
   clusterOrdering: "max-similarity",
+  displaySelection: { mode: "mmr", lambda: 0.6 },
 });
 
 beforeAll(async () => {
@@ -727,19 +749,20 @@ describe.skipIf(!BASE)("ranking regression — cluster ordering (P7)", () => {
     }
   }, 120_000);
 
-  it("max-similarity is the shipped default: explicit config byte-identical to omitting the ranking param", async () => {
-    // Since the 2026-07-20 ordering flip (ranking-changelog.md) the no-param
-    // default is fixed:100 + max-similarity — [B, C, A] on this geometry.
+  it("the shipped default (MMR since 2026-07-20-mmr) is byte-identical to omitting the ranking param; explicit ordering arms behave per mode", async () => {
     const [explicit, omitted] = await Promise.all([
-      runPipeline(agent, orderArm("max-similarity", fixedPool), { k: 3 }),
-      runPipeline(agent, orderArm("max-similarity", fixedPool), { k: 3, omitRanking: true }),
+      runPipeline(agent, defaultArm(), { k: 3 }),
+      runPipeline(agent, defaultArm(), { k: 3, omitRanking: true }),
     ]);
     expect(explicit.results.map((r) => r.id)).toEqual(omitted.results.map((r) => r.id));
     expect(explicit.results.map((r) => r.clusterSize)).toEqual(omitted.results.map((r) => r.clusterSize));
     expect(explicit.clusters).toEqual(omitted.clusters);
     expect(explicit.allResults!.map((r) => r.id)).toEqual(omitted.allResults!.map((r) => r.id));
-    expect(omitted.results.map((r) => groupOf(r.id))).toEqual(["B", "C", "A"]);
-    // The legacy comparison arm still orders biggest-cluster-first.
+    // MMR leads with the highest-relevance pick on any geometry.
+    expect(groupOf(omitted.results[0]!.id)).toBe("B");
+    // The explicit cluster-path arms keep their P7 contracts.
+    const maxSim = await runPipeline(agent, orderArm("max-similarity", fixedPool), { k: 3 });
+    expect(maxSim.results.map((r) => groupOf(r.id))).toEqual(["B", "C", "A"]);
     const member = await runPipeline(agent, memberArm, { k: 3 });
     expect(member.results.map((r) => groupOf(r.id))).toEqual(["A", "B", "C"]);
   });
@@ -780,6 +803,103 @@ describe.skipIf(!BASE)("ranking regression — cluster ordering (P7)", () => {
     expect(evid.results.map((r) => groupOf(r.id))).toEqual(["C", "B", "A"]);
     // Same permutation invariant: exemplar set and sizes unchanged.
     expect(evid.results.map((r) => r.id).sort()).toEqual(member.results.map((r) => r.id).sort());
+  });
+});
+
+// ── 4c: MMR display selection over a score-banded pool (P8) ──────────────────
+
+describe.skipIf(!BASE)("ranking regression — display selection (MMR)", () => {
+  let agent: Agent;
+  // A homogeneous near-duplicate pile at the top of the ranking (12 axis-1
+  // seeds, sims 0.900…0.878, all near-identical vectors) followed by 3 axis-2
+  // seeds that are semantically DISTINCT but still score within the band
+  // (sims 0.85/0.845/0.84 ≥ topScore − 0.15). The distinct topic sits at ranks
+  // 13–15 — past a fixed:10 boundary (the "top N are all basically the same"
+  // shape), inside the score band. This is the operator's homogeneous-top
+  // what-if made concrete: fixed-N-by-count can't reach the distinct topic,
+  // score-band-by-value can, and MMR then diversifies onto it.
+  const PILE = 12;
+  const pileIds: string[] = [];
+  const distinctIds: string[] = [];
+
+  const clusterArm = fixedArm(10); // pool = top 10 → the pile only
+  const mmrArm = mmrBandArm(0.15, 100, 5); // band 0.15 reaches all 15; MMR diversifies
+
+  beforeAll(async () => {
+    agent = await registerAgent("mmr");
+    const old = "now() - interval '40 days'";
+    for (let i = 0; i < PILE; i++) {
+      pileIds.push(await seedTrace(agent, `MP${i}`, { sim: 0.9 - i * 0.002, axis: 1, createdAtSql: old }));
+    }
+    const distinctSims = [0.85, 0.845, 0.84];
+    for (let i = 0; i < distinctSims.length; i++) {
+      distinctIds.push(await seedTrace(agent, `MD${i}`, { sim: distinctSims[i]!, axis: 2, createdAtSql: old }));
+    }
+  }, 120_000);
+
+  it("(a) the shipped default (MMR + band) is byte-identical to an omitted ranking param", async () => {
+    const [explicit, omitted] = await Promise.all([
+      runPipeline(agent, defaultArm(), { k: 3 }),
+      runPipeline(agent, defaultArm(), { k: 3, omitRanking: true }),
+    ]);
+    expect(explicit.results.map((r) => r.id)).toEqual(omitted.results.map((r) => r.id));
+    expect(explicit.results.map((r) => r.clusterSize)).toEqual(omitted.results.map((r) => r.clusterSize));
+    expect(explicit.clusters).toEqual(omitted.clusters);
+  });
+
+  it("(b) MMR + band reaches past the pile: a distinct-topic exemplar the cluster+fixed path cannot display", async () => {
+    const [cluster, mmr] = await Promise.all([
+      runPipeline(agent, clusterArm, { k: 3 }),
+      runPipeline(agent, mmrArm, { k: 3 }),
+    ]);
+    expect(cluster.clustered).toBe(true);
+    expect(mmr.clustered).toBe(true);
+
+    // The fixed:10 pool is the near-duplicate pile — no distinct exemplar can
+    // appear (the boundary cut off the distinct topic entirely).
+    expect(cluster.allResults!).toHaveLength(10);
+    expect(cluster.allResults!.every((t) => pileIds.includes(t.id))).toBe(true);
+    for (const r of cluster.results) expect(distinctIds).not.toContain(r.id);
+
+    // The band pool admits all 15 (the homogeneous top extends the reach), and
+    // MMR diversifies onto the distinct topic — at least one distinct exemplar.
+    expect(mmr.allResults!).toHaveLength(15);
+    expect(mmr.results.some((r) => distinctIds.includes(r.id))).toBe(true);
+  });
+
+  it("(c) flat results are identical across cluster and MMR modes (display-only lever)", async () => {
+    const [flatCluster, flatMmr] = await Promise.all([
+      runPipeline(agent, clusterArm, { expand: true }),
+      runPipeline(agent, mmrArm, { expand: true }),
+    ]);
+    expect(flatMmr.results.map((r) => r.id)).toEqual(flatCluster.results.map((r) => r.id));
+    expect(flatMmr.results.map((r) => r.semanticScore)).toEqual(flatCluster.results.map((r) => r.semanticScore));
+    expect(flatMmr.totalResults).toBe(flatCluster.totalResults);
+  });
+
+  it("(d) known-set stubbing flows through the MMR path (rendering only, ranking untouched)", async () => {
+    const base = await runPipeline(agent, mmrArm, { k: 3 });
+    // Mark the first displayed representative known — the highest-relevance
+    // MMR pick, which anchors the pile cluster.
+    const rep = base.results[0]!.id;
+    const known = new Set([rep]);
+    const res = await runPipeline(agent, mmrArm, { k: 3, knownIds: known });
+
+    // The known rep is accounted for as known: either it renders as a stub in
+    // place (all-known cluster) or it's promoted aside and listed among a
+    // displayed row's known cluster-mates — never shown as a plain full exemplar.
+    const knownViaMembers = res.results.some((r) =>
+      (r.knownClusterMembers ?? []).some((m) => m.id === rep));
+    const knownAsStub = res.results.some((r) => r.id === rep && r.known === true);
+    expect(knownViaMembers || knownAsStub).toBe(true);
+    const plainFull = res.results.some((r) => r.id === rep && !r.known && !r.knownClusterMembers);
+    expect(plainFull).toBe(false);
+
+    // Ranking/membership invariants: MMR selection and its member partition are
+    // identical with and without the known-set — rendering only (same contract
+    // the k-means path holds in suite 3).
+    expect(res.allResults!.map((r) => r.id)).toEqual(base.allResults!.map((r) => r.id));
+    expect(res.clusters).toEqual(base.clusters);
   });
 });
 

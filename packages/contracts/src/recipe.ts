@@ -311,6 +311,14 @@ export const CheckResponseDataSchema = z
             "Cluster display ordering in effect (member-count | max-similarity | evidence-mass). "
             + "Ordering shapes the clustered summary's sequence only — never membership, ranking, or scores.",
           ),
+        displaySelection: z
+          .string()
+          .optional()
+          .describe(
+            "Display-selection mechanism in effect (cluster | mmr:<lambda>). \"cluster\" is the "
+            + "k-means default; \"mmr\" is Maximal Marginal Relevance diversity selection. Shapes "
+            + "which representatives display — never the flat surface.",
+          ),
       })
       .optional()
       .describe("Which ranking algorithm produced this response."),
