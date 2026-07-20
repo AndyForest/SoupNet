@@ -334,37 +334,39 @@ end-to-end recovery was only ~15–17% — see
 The pipeline is now an explicit system:
 
 - **One config object** — `RankingConfig` (`packages/domain/src/ranking-config.ts`)
-  flows through `runSearchPipeline` (`SearchPipelineParams.ranking`). Layering:
-  versioned code defaults (`DEFAULT_RANKING`) ← the `echoSuppression` system
-  setting ← the per-request `echo_suppress` override
-  (`resolveRankingConfig`, system-settings.service.ts). Absent ⇒ defaults, which
-  are byte-identical to legacy behavior; the read-only surfaces (map, briefing
-  exemplars) pass nothing and stay untouched.
+  flows through `runSearchPipeline` (`SearchPipelineParams.ranking`): versioned
+  code defaults only (`DEFAULT_RANKING`) — the echo-demotion-era layering
+  (`echoSuppression` system setting, per-request `echo_suppress` override) was
+  retired 2026-07-17 with the demotion itself ([changelog](ranking-changelog.md)).
+  Fields: `clusterPool` (candidate reach — `band:0.15` default since
+  `2026-07-20-mmr`; `fixed`/`page`/`score-gap` comparison arms),
+  `clusterOrdering` (cluster-path display order — `max-similarity` since
+  2026-07-20; `member-count` legacy arm), and `displaySelection` (**`mmr` λ0.6
+  default since `2026-07-20-mmr`** — MMR picks the displayed representatives
+  directly, subsuming per-check k-means and the ordering permutation on the
+  check path; `cluster` stays a comparison arm and remains the real mechanism
+  for the map/briefing corpus-summary surfaces). Full narrative:
+  [ranking-engine.md](ranking-engine.md); evidence:
+  [p6](../planning/ranking-research/p6-pool-sweep-report.md) /
+  [p7](../planning/ranking-research/p7-ordering-sweep-report.md) /
+  [p8](../planning/ranking-research/p8-mmr-sweep-report.md) sweep reports.
 - **Dated algorithm version** — `RANKING_ALGORITHM_VERSION`, minted only when a
   shipped default changes, with a mandatory same-commit entry in
   [ranking-changelog.md](ranking-changelog.md). Echoed as `data.ranking`
-  (`{version, echoSuppression, clusterOrdering, overrides}`) in `/check` JSON and
-  MCP structured responses (never the token-lean markdown), and as
+  (`{version, clusterPool, clusterOrdering, displaySelection}`) in `/check`
+  JSON and MCP structured responses (never the token-lean markdown), and as
   `rankingVersion` in `recipe.checked` audit metadata.
-- **Per-candidate signals** — `CandidateSignals` (authorship api_key/user, raw
-  `created_at`, `decided_at`) hydrate on hybridSearch's existing trace-row load
-  (zero extra queries) and ride every `SearchResultItem` in query mode; the
-  expensive corroboration counts (human `still_true` reactions, cross-agent
-  fulfilled check-feedback) hydrate lazily inside the demotion query only when
-  their `exemption` flag is on. Any future recency/decay lever must decay from
+- **Per-candidate signals** — `CandidateSignals` (raw `created_at`,
+  `decided_at`, deposit `session_id`) hydrate on hybridSearch's existing
+  trace-row load (zero extra queries) and ride every `SearchResultItem` in
+  query mode; the session field drives known-set stub RENDERING only, never
+  ranking. Any future recency/decay lever must decay from
   `COALESCE(decided_at, created_at)` (operator ruling 2026-07-16).
-- **Cluster-ordering lever (§3d)** — `clusterOrdering: "demotion-adjusted-mass"`
-  sorts displayed clusters by the sum of members' demotion-adjusted ranking
-  scores (`similarity × (1 − echo penalty)`, reusing the penalties the demotion
-  stage actually applied) instead of raw `memberCount`, so a cluster of demoted
-  echoes sinks below a smaller durable cluster. Implemented via
-  `ClusterParams.memberWeights`; ordering only — membership, exemplars, displayed
-  percentages, and the `clusters[i] ↔ results[i]` index-parallel contract are
-  untouched. Ships default `"member-count"` pending the golden-set ruling.
 - **Stage names** (timer keys match): `query_embed` → `search` (retrieval +
-  scoring/demotion inside hybridSearch) → `vectors` → `cluster` (k-means +
-  cluster ordering) → `evidence` → axes. Regression harness and tuning workflow:
-  `npm run eval:ranking`, [docs/workflows/ranking-tuning.md](../workflows/ranking-tuning.md).
+  the pool/reach boundary inside hybridSearch) → `vectors` → `cluster` (MMR
+  selection or k-means, per `displaySelection`) → `evidence` → axes.
+  Regression harness and tuning workflow: `npm run eval:ranking`,
+  [docs/workflows/ranking-tuning.md](../workflows/ranking-tuning.md).
 
 ## format_adherence_score — IMPLEMENTED (heuristic, v1)
 
