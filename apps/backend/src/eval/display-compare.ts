@@ -23,8 +23,17 @@ import path from "node:path";
 import { DEFAULT_RANKING } from "@soupnet/domain";
 import type { RankingConfig } from "@soupnet/domain";
 
-interface QueryEntry { id: string; query: string; graded?: Record<string, number> }
-interface PrepState { groupId: string }
+interface QueryEntry {
+  id: string;
+  query: string;
+  graded?: Record<string, number>;
+  /** When the probe IS a real corpus recipe (operator feedback 2026-07-20:
+   *  probe with genuine taste/judgment recipes, not intention-framed queries),
+   *  its own trace is excluded from results — exactly like a real check's
+   *  deposit. Canonical id; mapped through the mint idmap when present. */
+  sourceTraceId?: string;
+}
+interface PrepState { groupId: string; idMapFile?: string }
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(name);
@@ -59,11 +68,16 @@ async function main(): Promise<void> {
 
   const state = JSON.parse(readFileSync(path.join(datasetDir, ".gradeprep.json"), "utf-8")) as PrepState;
   const questions = JSON.parse(readFileSync(path.join(datasetDir, "questions.json"), "utf-8")) as QueryEntry[];
+  const toMinted = new Map<string, string>();
+  if (state.idMapFile) {
+    const pairs = JSON.parse(readFileSync(path.join(datasetDir, state.idMapFile), "utf-8")) as Array<[string, string]>;
+    for (const [from, to] of pairs) toMinted.set(from, to);
+  }
 
   const lines: string[] = [
     `# Display comparison — ${path.basename(datasetDir)} (${getEmbeddingModelId()})`,
     "",
-    `Config A = shipped default (cluster k-means, fixed:100 pool, max-similarity order). Config B = MMR λ0.6 over a band:0.15 pool (P8 candidate). k=${k} representatives per question. Generated ${new Date().toISOString()}.`,
+    `Config A = shipped default (cluster k-means, fixed:100 pool, max-similarity order). Config B = MMR λ0.6 over a band:0.15 pool (P8 candidate). k=${k} representatives per question. Probes are REAL corpus recipes re-checked verbatim, each excluded from its own results — exactly a real check's shape. Generated ${new Date().toISOString()}.`,
     "",
   ];
 
@@ -72,6 +86,9 @@ async function main(): Promise<void> {
     if (!vec) throw new Error(`query embed failed for ${q.id}`);
     const queryVectorStr = `[${vec.join(",")}]`;
 
+    const exclude = q.sourceTraceId
+      ? (toMinted.get(q.sourceTraceId) ?? q.sourceTraceId)
+      : undefined;
     const run = (ranking: RankingConfig) => runSearchPipeline({
       db,
       groupIds: [state.groupId],
@@ -79,6 +96,7 @@ async function main(): Promise<void> {
       queryVectorStr,
       k,
       perPage: 20,
+      ...(exclude ? { excludeTraceId: exclude } : {}),
       ranking,
     });
     const [a, b] = [await run(DEFAULT_RANKING), await run(MMR_CONFIG)];
