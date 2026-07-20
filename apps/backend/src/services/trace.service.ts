@@ -155,13 +155,25 @@ export interface RankingResponseInfo {
    *  sequence only — never membership, ranking, or scores. Honest config echo:
    *  emitted always. */
   clusterOrdering: string;
+  /** Display-selection mechanism in effect (P8): "cluster" (k-means, the
+   *  default) or "mmr:<lambda>" (Maximal Marginal Relevance). Shapes which
+   *  representatives display — never the flat surface. */
+  displaySelection: string;
 }
 
 /** Render a ClusterPoolConfig as the compact response form. */
-export function clusterPoolLabel(pool: { mode: string; size: number; minSize: number }): string {
+export function clusterPoolLabel(
+  pool: { mode: string; size: number; minSize: number; band?: number },
+): string {
   if (pool.mode === "fixed") return `fixed:${pool.size}`;
   if (pool.mode === "score-gap") return `score-gap:${pool.minSize}-${pool.size}`;
+  if (pool.mode === "band") return `band:${pool.band ?? 0}`;
   return pool.mode;
+}
+
+/** Render a DisplaySelectionConfig as the compact response form. */
+export function displaySelectionLabel(ds: { mode: string; lambda: number }): string {
+  return ds.mode === "mmr" ? `mmr:${ds.lambda}` : ds.mode;
 }
 
 export interface SubmitAndSearchResult {
@@ -748,6 +760,7 @@ export async function submitAndSearch(
       version: RANKING_ALGORITHM_VERSION,
       clusterPool: clusterPoolLabel(DEFAULT_RANKING.clusterPool),
       clusterOrdering: DEFAULT_RANKING.clusterOrdering,
+      displaySelection: displaySelectionLabel(DEFAULT_RANKING.displaySelection),
     },
   };
 }
@@ -875,6 +888,7 @@ export async function searchWithoutLogging(
       version: RANKING_ALGORITHM_VERSION,
       clusterPool: clusterPoolLabel(DEFAULT_RANKING.clusterPool),
       clusterOrdering: DEFAULT_RANKING.clusterOrdering,
+      displaySelection: displaySelectionLabel(DEFAULT_RANKING.displaySelection),
     },
   };
 }

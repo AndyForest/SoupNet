@@ -24,7 +24,7 @@ import type { RankingConfig, ClusterOrderStat } from "@soupnet/domain";
 import { hybridSearch, evidenceSearch } from "./vector-search.service";
 import type { EvidenceSearchResult } from "./vector-search.service";
 import type { SearchResultItem } from "./trace.service";
-import { clusterResults } from "./clustering.service";
+import { clusterResults, mmrClusters } from "./clustering.service";
 import type { ClusterResult } from "./clustering.service";
 import { embedQuery, getEmbeddingModelId } from "../lib/embeddings/provider";
 import { StageTimer } from "../lib/stage-timer";
@@ -408,12 +408,29 @@ export async function runSearchPipeline(
     }
 
     if (vectors.length > 1) {
-      let rawClusters = timer.timeSync("cluster", () => clusterResults({
-        vectors,
-        k: params.k,
-        maxChars: params.maxChars,
-        resultTexts: validIndices.map((i) => clusterInput[i]!.claimText),
-      }));
+      // Display selection (P8): "mmr" picks representatives by Maximal Marginal
+      // Relevance over the pool against the query; "cluster" (default) runs
+      // k-means. Both return the identical ClusterResult[] shape, so the
+      // exemplar mapping, known-set stubbing, and results↔clusters
+      // index-parallel contract below are single-sourced (recipe 257950f3).
+      // The MMR query vector is the just-resolved query embedding — cosine
+      // truncates it to the pool's MRL dims implicitly (same math as clustering).
+      const useMmr = ranking.displaySelection.mode === "mmr" && queryVectorStr !== undefined;
+      let rawClusters = timer.timeSync("cluster", () => useMmr
+        ? mmrClusters({
+          vectors,
+          queryVector: parseVector(queryVectorStr!),
+          lambda: ranking.displaySelection.lambda,
+          k: params.k,
+          maxChars: params.maxChars,
+          resultTexts: validIndices.map((i) => clusterInput[i]!.claimText),
+        })
+        : clusterResults({
+          vectors,
+          k: params.k,
+          maxChars: params.maxChars,
+          resultTexts: validIndices.map((i) => clusterInput[i]!.claimText),
+        }));
 
       // Build cluster assignments with member tracking
       clusterAssignments = rawClusters.map((c) => ({
@@ -438,7 +455,10 @@ export async function runSearchPipeline(
       // so the results↔clusters index-parallelism, known-set promotion, and
       // stubbing below are all agnostic to how order was chosen. Membership,
       // scores, and the flat surface never move (same seam discipline as P6).
-      if (ranking.clusterOrdering !== "member-count") {
+      // MMR display selection (P8) already emits clusters in pick order — its
+      // relevance-then-diversity sequence IS the display order, so the P7
+      // ordering permutation is skipped for that mode (MMR replaces ordering).
+      if (!useMmr && ranking.clusterOrdering !== "member-count") {
         // evidence-mass needs a corpus read; fetch it lazily, only for that
         // mode (one grouped count over the pool ids).
         let evidenceByTrace: Map<string, number> | undefined;

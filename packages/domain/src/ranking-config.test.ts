@@ -27,15 +27,28 @@ describe("DEFAULT_RANKING", () => {
   });
 
   it("has a dated version identifier matching the ordering-flip mint", () => {
+    // The MMR display-selection lever is additive and defaults off (cluster),
+    // so it does NOT mint a new version.
     expect(RANKING_ALGORITHM_VERSION).toBe("2026-07-20");
+  });
+
+  it("ships the legacy k-means display selection (mmr defaults off)", () => {
+    expect(DEFAULT_RANKING.displaySelection.mode).toBe("cluster");
+    expect(DEFAULT_RANKING.displaySelection.lambda).toBe(0.6);
   });
 });
 
 describe("poolBoundary", () => {
-  const pool = (mode: "page" | "fixed" | "score-gap", size = 10, minSize = 3) => ({
+  const pool = (
+    mode: "page" | "fixed" | "score-gap" | "band",
+    size = 10,
+    minSize = 3,
+    band?: number,
+  ) => ({
     mode,
     size,
     minSize,
+    ...(band !== undefined ? { band } : {}),
     vectorDims: 768,
   });
 
@@ -71,6 +84,36 @@ describe("poolBoundary", () => {
 
   it("score-gap: candidate count below minSize returns everything", () => {
     expect(poolBoundary([0.9, 0.8], pool("score-gap", 10, 5))).toBe(2);
+  });
+
+  it("band: cuts where scores fall below topScore − band", () => {
+    // Top 0.90; band 0.10 ⇒ threshold 0.80. Candidates ≥ 0.80: the first 4.
+    const scores = [0.9, 0.85, 0.82, 0.8, 0.6, 0.5];
+    expect(poolBoundary(scores, pool("band", 100, 1, 0.1))).toBe(4);
+  });
+
+  it("band: a homogeneous top extends the reach to the size cap", () => {
+    // All scores within the band ⇒ the whole prefix qualifies, clamped to size.
+    const scores = [0.9, 0.9, 0.89, 0.89, 0.88, 0.88, 0.87, 0.87];
+    expect(poolBoundary(scores, pool("band", 5, 1, 0.15))).toBe(5); // size cap
+    expect(poolBoundary(scores, pool("band", 100, 1, 0.15))).toBe(8); // all of them
+  });
+
+  it("band: clamps up to minSize when the band admits fewer than minSize", () => {
+    // A sharp drop after index 1 (0.9 → 0.4) admits only 2 within the band, but
+    // minSize 4 raises the cut.
+    const scores = [0.9, 0.88, 0.4, 0.39, 0.38, 0.37];
+    expect(poolBoundary(scores, pool("band", 100, 4, 0.1))).toBe(4);
+  });
+
+  it("band: an absent band admits only exact-top ties, then clamps to minSize", () => {
+    const scores = [0.9, 0.9, 0.7, 0.6];
+    // band undefined ⇒ threshold = top; 2 exact ties, but minSize 3 raises it.
+    expect(poolBoundary(scores, pool("band", 100, 3))).toBe(3);
+  });
+
+  it("band: empty candidate list ⇒ 0", () => {
+    expect(poolBoundary([], pool("band", 100, 1, 0.1))).toBe(0);
   });
 });
 

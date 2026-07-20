@@ -10,6 +10,7 @@ import {
   aspectCoverage,
   exemplarOrderNdcg,
   firstExemplarGrade,
+  displayRedundancy,
   mean,
 } from "./metrics";
 
@@ -191,6 +192,27 @@ describe("firstExemplarGrade", () => {
 
   it("is 0 for an empty display", () => {
     expect(firstExemplarGrade([], 3)).toBe(0);
+  });
+});
+
+describe("displayRedundancy", () => {
+  it("is 0 for fewer than two vectors", () => {
+    expect(displayRedundancy([])).toBe(0);
+    expect(displayRedundancy([[1, 0]])).toBe(0);
+  });
+
+  it("is 1 for identical representatives (maximally redundant)", () => {
+    expect(displayRedundancy([[1, 0], [2, 0], [3, 0]])).toBeCloseTo(1, 10);
+  });
+
+  it("is 0 for mutually orthogonal representatives (maximally diverse)", () => {
+    expect(displayRedundancy([[1, 0, 0], [0, 1, 0], [0, 0, 1]])).toBeCloseTo(0, 10);
+  });
+
+  it("averages cosine over ALL pairs", () => {
+    // pairs: (e0,e1)=0, (e0,diag)=1/√2, (e1,diag)=1/√2 → mean = (2/√2)/3.
+    const inv = 1 / Math.sqrt(2);
+    expect(displayRedundancy([[1, 0], [0, 1], [inv, inv]])).toBeCloseTo((2 * inv) / 3, 10);
   });
 });
 

@@ -23,6 +23,8 @@
  * See: docs/architecture/embedding-test-results.md for verification plan
  */
 
+import { maximalMarginalRelevance } from "@soupnet/domain";
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export interface ClusterResult {
@@ -41,6 +43,13 @@ export interface ClusterParams {
   k?: number | undefined; // explicit cluster count
   maxChars?: number | undefined; // auto-k from character budget
   resultTexts?: string[] | undefined; // for auto-k estimation
+}
+
+export interface MmrClusterParams extends ClusterParams {
+  /** Query embedding — MMR selects representatives most relevant to this. */
+  queryVector: number[];
+  /** Relevance↔diversity trade-off in [0,1] (1 = pure relevance). */
+  lambda: number;
 }
 
 // Backward compatibility alias
@@ -79,6 +88,26 @@ function estimateK(
   const effectiveCharsPerResult = avgChars * EVIDENCE_OVERHEAD_MULTIPLIER;
   const k = Math.floor(maxChars / effectiveCharsPerResult);
   return Math.max(2, Math.min(n, k));
+}
+
+/**
+ * Resolve the cluster-count budget from the caller's size steer, clamped to
+ * [1, n]. Shared by k-means and MMR display selection so a `clusters` /
+ * `max_chars` budget means the same number of representatives under either
+ * mechanism.
+ */
+function resolveK(params: ClusterParams, n: number): number {
+  let k: number;
+  // eslint-disable-next-line eqeqeq -- loose equality: checks both null and undefined
+  if (params.k != null) {
+    k = params.k;
+  // eslint-disable-next-line eqeqeq
+  } else if (params.maxChars != null && params.resultTexts) {
+    k = estimateK(n, params.maxChars, params.resultTexts);
+  } else {
+    k = Math.min(n, 3);
+  }
+  return Math.max(1, Math.min(n, k));
 }
 
 // ── K-Means++ initialization ────────────────────────────────────────────────
@@ -158,19 +187,7 @@ export function clusterResults(params: ClusterParams): ClusterResult[] {
 
   if (n === 0) return [];
 
-  // Determine k
-  let k: number;
-  // eslint-disable-next-line eqeqeq -- loose equality: checks both null and undefined
-  if (params.k != null) {
-    k = params.k;
-  // eslint-disable-next-line eqeqeq
-  } else if (params.maxChars != null && params.resultTexts) {
-    k = estimateK(n, params.maxChars, params.resultTexts);
-  } else {
-    k = Math.min(n, 3);
-  }
-
-  k = Math.max(1, Math.min(n, k));
+  const k = resolveK(params, n);
 
   // Edge case: one cluster per point
   if (k >= n) {
@@ -264,4 +281,65 @@ export function clusterResults(params: ClusterParams): ClusterResult[] {
   results.sort((a, b) => b.memberCount - a.memberCount || a.exemplarIndex - b.exemplarIndex);
 
   return results;
+}
+
+// ── MMR display selection ─────────────────────────────────────────────────────
+
+/**
+ * Maximal Marginal Relevance display selection — an alternative to k-means that
+ * returns the SAME ClusterResult[] shape, so the pipeline's exemplar mapping,
+ * known-set stubbing, and results↔clusters index-parallel contract are
+ * single-sourced across both display modes (the reuse-over-fork ruling, recipe
+ * 257950f3). The k representatives are chosen by MMR (Carbonell & Goldstein
+ * 1998; the vendored @soupnet/domain `maximalMarginalRelevance`) over the pool
+ * against the query, then every pool member is assigned to its nearest
+ * representative by cosine — each returned cluster's "centroid" IS its
+ * representative vector, so the pipeline's nearest-centroid member assignment
+ * reproduces this partition exactly.
+ *
+ * Clusters are returned in MMR PICK ORDER (relevance, then diversity), which is
+ * itself the display order — so the pipeline skips the P7 clusterOrdering
+ * permutation for this mode (hypothesis P8: MMR replaces clustering + ordering
+ * with one standard mechanism). k is resolved exactly as clusterResults
+ * resolves it (shared resolveK), so a caller's budget means the same thing
+ * under either mechanism.
+ */
+export function mmrClusters(params: MmrClusterParams): ClusterResult[] {
+  const { vectors, queryVector, lambda } = params;
+  const n = vectors.length;
+  if (n === 0) return [];
+
+  const k = resolveK(params, n);
+  const selected = maximalMarginalRelevance(queryVector, vectors, lambda, k);
+
+  // Assign every vector to its nearest selected representative (cosine). A
+  // representative is at distance 0 from itself, so it always anchors its own
+  // cluster. Tie-break on the lowest representative index — identical to the
+  // pipeline's assignToClusters, so memberCount here equals the memberIndices
+  // count computed downstream.
+  const memberIndicesByRep: number[][] = selected.map(() => []);
+  for (let i = 0; i < n; i++) {
+    let best = 0;
+    let bestDist = cosineDistance(vectors[i]!, vectors[selected[0]!]!);
+    for (let c = 1; c < selected.length; c++) {
+      const d = cosineDistance(vectors[i]!, vectors[selected[c]!]!);
+      if (d < bestDist) {
+        bestDist = d;
+        best = c;
+      }
+    }
+    memberIndicesByRep[best]!.push(i);
+  }
+
+  return selected.map((repIdx, c) => {
+    const members = memberIndicesByRep[c]!;
+    let totalSim = 0;
+    for (const m of members) totalSim += 1 - cosineDistance(vectors[m]!, vectors[repIdx]!);
+    return {
+      exemplarIndex: repIdx,
+      memberCount: members.length,
+      avgSimilarity: members.length > 0 ? totalSim / members.length : 1,
+      centroid: vectors[repIdx]!.slice(),
+    };
+  });
 }

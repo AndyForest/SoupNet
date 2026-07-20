@@ -74,6 +74,7 @@ import {
   aspectCoverage,
   exemplarOrderNdcg,
   firstExemplarGrade,
+  displayRedundancy,
   mean,
 } from "./metrics";
 import type { SerendipityItem } from "./metrics";
@@ -138,9 +139,13 @@ const EXTRA_VARIANTS = (process.env["RANKEVAL_EXTRA_VARIANTS"] ?? "")
     if (fixed) return `pool-fixed${fixed[1]}`;
     const order = /^order:(max-similarity|evidence-mass)$/.exec(spec);
     if (order) return `order-${order[1]}`;
+    // MMR display selection (P8): "mmr" ⇒ variant "mmr" (λ 0.6); "mmr:<lambda>"
+    // ⇒ variant "mmr-<lambda>". The config pairs it with the score-banded pool.
+    const mmr = /^mmr(?::(\d*\.?\d+))?$/.exec(spec);
+    if (mmr) return mmr[1] ? `mmr-${mmr[1]}` : "mmr";
     throw new Error(
       `RANKEVAL_EXTRA_VARIANTS entry "${spec}" — supported: ` +
-        `"fixed:<n>", "order:max-similarity", "order:evidence-mass"`,
+        `"fixed:<n>", "order:max-similarity", "order:evidence-mass", "mmr", "mmr:<lambda>"`,
     );
   });
 const VARIANTS: readonly string[] = [...BASE_VARIANTS, ...EXTRA_VARIANTS];
@@ -185,6 +190,18 @@ function variantConfig(name: VariantName): RankingConfig {
     // P7: DEFAULT_RANKING's pool, only the cluster display ordering changes.
     return { ...DEFAULT_RANKING, clusterOrdering: order[1] as ClusterOrderingMode };
   }
+  const mmr = /^mmr(?:-(\d*\.?\d+))?$/.exec(name);
+  if (mmr) {
+    // P8: MMR display selection over the score-banded pool — the band reach
+    // answers the homogeneous-top what-if (a near-duplicate-dense top extends
+    // the candidate pool deeper for MMR to diversify over).
+    const lambda = mmr[1] ? Number(mmr[1]) : 0.6;
+    return {
+      ...DEFAULT_RANKING,
+      displaySelection: { mode: "mmr", lambda },
+      clusterPool: { mode: "band", band: 0.15, size: 1500, minSize: 100, vectorDims: 768 },
+    };
+  }
   throw new Error(`Unknown ranking variant "${name}"`);
 }
 
@@ -204,6 +221,11 @@ interface QuestionMeasurement {
    *  is order-blind, these are not. */
   exemplarOrderNdcg: number;
   firstExemplarGrade: number;
+  /** Grade-free display diversity (P8): mean pairwise cosine similarity of the
+   *  displayed representatives' vectors. Lower = more diverse. Makes k-means and
+   *  MMR comparable on ungraded corpora. Computed on the production-shaped
+   *  display call (includeVectors). */
+  displayRedundancy: number;
   serendipity: number;
   /** Session overlay (hygiene-polluted arm, session questions only): share of
    *  the display call's recipe-text chars saved by known-set stubs. */
@@ -254,6 +276,8 @@ async function measureQuestion(
   });
 
   // (b) Production-shaped clustered call: what an agent actually sees.
+  // includeVectors so displayRedundancy can read the representatives' vectors
+  // (pool-truncated, same space for every variant — the pool vectorDims match).
   const displayRes = await runSearchPipeline({
     db: arm.db,
     groupIds: [arm.groupId],
@@ -261,12 +285,17 @@ async function measureQuestion(
     queryVectorStr,
     k,
     perPage: 20, // production default — the page the summary draws from in page mode
+    includeVectors: true,
     ranking: rc,
   });
 
   const flat = flatRes.results;
   const flatIds = flat.map((t) => t.id);
   const exemplarIds = displayRes.clustered ? displayRes.results.map((t) => t.id) : [];
+  // Displayed representatives' vectors, in display order (grade-free diversity).
+  const displayVecs = exemplarIds
+    .map((id) => displayRes.vectors?.get(id))
+    .filter((v): v is number[] => v !== undefined);
 
   // Grades are keyed on canonical fixture ids — remap into this arm's ids.
   const grade = new Map<string, number>();
@@ -312,6 +341,7 @@ async function measureQuestion(
     // Exemplar grades in DISPLAY order — the sequence the ordering lever sets.
     exemplarOrderNdcg: exemplarOrderNdcg(exemplarIds.map(gradeOf)),
     firstExemplarGrade: firstExemplarGrade(exemplarIds.map(gradeOf), MAX_GRADE),
+    displayRedundancy: displayRedundancy(displayVecs),
     serendipity: serendipityAtL(serItems),
     flatIds,
   };
@@ -626,6 +656,7 @@ async function main(): Promise<void> {
         aspectCoverage: mean(all.map((m) => m.aspectCoverage)),
         exemplarOrderNdcg: mean(all.map((m) => m.exemplarOrderNdcg)),
         firstExemplarGrade: mean(all.map((m) => m.firstExemplarGrade)),
+        displayRedundancy: mean(all.map((m) => m.displayRedundancy)),
         serendipity: mean(all.map((m) => m.serendipity)),
         // Session-overlay metrics exist only where lineages were measured —
         // omitted (not zeroed) elsewhere so thresholds can't pass vacuously.
