@@ -14,6 +14,7 @@ import { briefingRoutes } from "./routes/briefing";
 import { checkRoutes } from "./routes/check";
 import { recipeRoutes } from "./routes/recipes";
 import { versionRoutes } from "./routes/version";
+import { integrityRoutes } from "./routes/integrity";
 import { groupRoutes } from "./routes/groups";
 import { invitationRoutes } from "./routes/invitations";
 import { adminRoutes } from "./routes/admin";
@@ -108,6 +109,13 @@ app.get("/health/ready", async (c) => {
 // expiry) requires a valid key. Distinct exact path from /health and
 // /health/ready, so it mounts as its own sub-router. See routes/version.ts.
 app.route("/health/version", versionRoutes);
+
+// Retrieval-index integrity check (eval-reset contract item (b1)). API-key
+// authed, read-only. Reports orphaned embedding sources/chunks/vectors per
+// readable book so an eval runner can prove index-consistency cheaply before a
+// scored run. Distinct exact path from /health, /health/ready, /health/version.
+// See routes/integrity.ts.
+app.route("/health/integrity", integrityRoutes);
 
 // Routes
 app.route("/auth", authRoutes);
