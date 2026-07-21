@@ -57,7 +57,7 @@ import { writeAudit } from "../services/audit-log.service";
 import { ClientSafeError, publicErrorMessage } from "../lib/client-safe-error";
 import { invalidKeyMessage } from "../lib/key-remediation";
 import type { RawFeedbackRow } from "../services/feedback.service";
-import { ingestFeedback, summarizeFeedbackResults } from "../services/feedback.service";
+import { ingestFeedback, summarizeFeedbackResults, withCheckDefaults } from "../services/feedback.service";
 
 // F47 (security-audit-2026-06-11): tool catch-alls surface only deliberate
 // ClientSafeError messages (validation, size caps, MIME — written for the
@@ -595,11 +595,9 @@ function createMcpServer(backendUrl: string): McpServer {
         if (feedback && feedback.length > 0) {
           const keyResult = await validateKey(db, apiKey);
           if (keyResult) {
-            const rows: RawFeedbackRow[] = feedback.map((row) => ({
-              ...(agent_id ? { agent_id } : {}),
-              ...(session_id ? { session_id } : {}),
-              ...row,
-            }));
+            const rows: RawFeedbackRow[] = feedback.map((row) =>
+              withCheckDefaults(row, { agentId: agent_id, sessionId: session_id }),
+            );
             const results = await ingestFeedback({
               db,
               apiKeyId: keyResult.keyId,
@@ -972,11 +970,15 @@ function createMcpServer(backendUrl: string): McpServer {
     },
     {
       title: "Log feedback",
-      // Appends a feedback row — not read-only, not destructive, not
-      // idempotent (each call logs a new row).
+      // Appends a feedback row — not read-only, not destructive.
+      // idempotentHint:true (2026-07-21) mirrors check_recipe's: the row is
+      // deduped by sha256 over the validated+resolved fields under a unique
+      // (api_key_id, trace_id, content_hash) constraint with ON CONFLICT DO
+      // NOTHING, so re-firing an identical row (retry, prefetching
+      // link-preview bot) returns the SAME feedback id and inserts nothing new.
       readOnlyHint: false,
       destructiveHint: false,
-      idempotentHint: false,
+      idempotentHint: true,
       openWorldHint: false,
     },
     async (args, extra) => {
@@ -998,7 +1000,10 @@ function createMcpServer(backendUrl: string): McpServer {
         });
         const r = results[0];
         if (r?.ok) {
-          return { content: [{ type: "text" as const, text: `Feedback recorded for check ${r.traceId} (feedback id ${r.feedbackId}).` }] };
+          const text = r.dup
+            ? `Feedback already recorded for check ${r.traceId} (feedback id ${r.feedbackId}) — identical resubmission.`
+            : `Feedback recorded for check ${r.traceId} (feedback id ${r.feedbackId}).`;
+          return { content: [{ type: "text" as const, text }] };
         }
         return { content: [{ type: "text" as const, text: `Feedback rejected: ${r?.error ?? "unknown error"}` }] };
       } catch (err) {

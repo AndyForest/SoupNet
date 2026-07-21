@@ -362,6 +362,169 @@ describe.skipIf(!BASE)("/check routes integration", () => {
     }
   });
 
+  // ── Ride-along feedback (feedback_* params) ─────────────────────────────
+  // GET-only agents can't POST JSON or set headers, so feedback about a
+  // prior check has to ride along as flat query params on /check itself.
+  // override-only (see check-params.test.ts): these must never leak into
+  // the Copy-URL / re-check hidden form, or a re-check would double-log.
+
+  it("ride-along feedback_* params record both the trace and the feedback row, inheriting check-level agent_id/session_id", { timeout: 15_000 }, async () => {
+    // Establish a prior recipe to attach feedback to.
+    const priorParams = new URLSearchParams({
+      key: apiKey,
+      trace: `As a test engineer, I prefer a prior recipe to attach ride-along feedback to — prior ${uid}`,
+      ef: `Setup step for the ride-along feedback test.\n> "Need a target trace"\n-- test suite`,
+      format: "json",
+    });
+    const priorRes = await fetch(`${BASE}/check?${priorParams.toString()}`);
+    const priorBody = (await priorRes.json()) as CheckResponse;
+    const priorId = priorBody.data?.checked?.recipeId;
+    if (!priorId) throw new Error("prior recipeId missing");
+
+    const sessionId = `sess-ridealong-${uid}`;
+    const params = new URLSearchParams({
+      key: apiKey,
+      trace: `As a test engineer, I prefer feedback ride-along coverage so that regressions surface — ridealong ${uid}`,
+      ef: `Ride-along feedback needs its own coverage.\n> "Cover the happy path"\n-- test suite`,
+      format: "json",
+      agent_id: "ride-along-agent",
+      session_id: sessionId,
+      feedback_trace_id: priorId,
+      feedback_kind: "check-feedback",
+      feedback_impact: "subtle",
+      feedback_disposition: "proceeded",
+      feedback_story_fulfilled: "yes",
+      feedback_story: "As a test engineer, I logged ride-along feedback so that inheritance is covered.",
+      feedback_note: "ride-along test row",
+    });
+    const res = await fetch(`${BASE}/check?${params.toString()}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as CheckResponse & {
+      data?: { feedbackResults?: Array<{ ok: boolean; feedbackId?: string; traceId: string; error?: string }> };
+    };
+    expect(body.ok).toBe(true);
+    // Both landed: the check itself, and the ride-along feedback row.
+    expect(body.data?.checked?.recipeId).toBeDefined();
+    const fbResults = body.data?.feedbackResults;
+    expect(fbResults?.length).toBe(1);
+    expect(fbResults?.[0]?.ok).toBe(true);
+    expect(fbResults?.[0]?.traceId).toBe(priorId);
+
+    const read = await fetch(`${BASE}/traces/${priorId}/feedback`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(read.status).toBe(200);
+    const readJson = (await read.json()) as {
+      data: { feedback: Array<{ id: string; agentId: string | null; sessionId: string | null }> };
+    };
+    const row = readJson.data.feedback.find((f) => f.id === fbResults?.[0]?.feedbackId);
+    expect(row).toBeTruthy();
+    expect(row?.agentId).toBe("ride-along-agent");
+    expect(row?.sessionId).toBe(sessionId);
+  });
+
+  it("idempotency: submitting the identical check URL (with feedback_* ride-along params) twice dedupes both the trace and the feedback row", { timeout: 20_000 }, async () => {
+    // Establish a prior recipe to attach ride-along feedback to.
+    const priorParams = new URLSearchParams({
+      key: apiKey,
+      trace: `As a test engineer, I prefer a prior recipe to attach dedup ride-along feedback to — priordedup ${uid}`,
+      ef: `Setup step for the dedup ride-along feedback test.\n> "Need a target trace"\n-- test suite`,
+      format: "json",
+    });
+    const priorRes = await fetch(`${BASE}/check?${priorParams.toString()}`);
+    const priorBody = (await priorRes.json()) as CheckResponse;
+    const priorId = priorBody.data?.checked?.recipeId;
+    if (!priorId) throw new Error("prior recipeId missing");
+
+    const dedupNote = `dedup ride-along test row ${uid}`;
+    const params = new URLSearchParams({
+      key: apiKey,
+      trace: `As a test engineer, I prefer identical ride-along resubmission to dedupe so that link-preview bots can't duplicate feedback — dedup ${uid}`,
+      ef: `Identical resubmission must not duplicate feedback.\n> "Cover the dedup path"\n-- test suite`,
+      format: "json",
+      agent_id: "ride-along-dedup-agent",
+      feedback_trace_id: priorId,
+      feedback_kind: "check-feedback",
+      feedback_impact: "subtle",
+      feedback_disposition: "proceeded",
+      feedback_story_fulfilled: "yes",
+      feedback_story: "As a test engineer, I logged dedup ride-along feedback so that idempotency is covered.",
+      feedback_note: dedupNote,
+    });
+    const url = `${BASE}/check?${params.toString()}`;
+
+    type DedupResponse = CheckResponse & {
+      data?: { feedbackResults?: Array<{ ok: boolean; dup?: boolean; feedbackId?: string; traceId: string }> };
+    };
+
+    const res1 = await fetch(url);
+    expect(res1.status).toBe(200);
+    const body1 = (await res1.json()) as DedupResponse;
+    const recipeId1 = body1.data?.checked?.recipeId;
+    const fb1 = body1.data?.feedbackResults?.[0];
+    expect(recipeId1).toBeDefined();
+    expect(fb1?.ok).toBe(true);
+    expect(fb1?.dup).toBeUndefined();
+    expect(fb1?.feedbackId).toBeTruthy();
+
+    const res2 = await fetch(url);
+    expect(res2.status).toBe(200);
+    const body2 = (await res2.json()) as DedupResponse;
+    const recipeId2 = body2.data?.checked?.recipeId;
+    const fb2 = body2.data?.feedbackResults?.[0];
+
+    // Trace dedup (existing behavior, trace.service.ts): identical resubmission
+    // returns the SAME recipe id rather than logging a second one.
+    expect(recipeId2).toBe(recipeId1);
+    // Feedback dedup (new): same feedback id, marked dup.
+    expect(fb2?.ok).toBe(true);
+    expect(fb2?.dup).toBe(true);
+    expect(fb2?.feedbackId).toBe(fb1?.feedbackId);
+
+    const read = await fetch(`${BASE}/traces/${priorId}/feedback`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(read.status).toBe(200);
+    const readJson = (await read.json()) as { data: { feedback: Array<{ id: string; note: string | null }> } };
+    const matching = readJson.data.feedback.filter((f) => f.note === dedupNote);
+    expect(matching.length).toBe(1);
+  });
+
+  it("a bad feedback_kind does not fail the check — 200, error echoed in feedbackResults", { timeout: 15_000 }, async () => {
+    const priorParams = new URLSearchParams({
+      key: apiKey,
+      trace: `As a test engineer, I prefer a second prior recipe for the bad-feedback-kind test — prior2 ${uid}`,
+      ef: `Setup step.\n> "Need a target trace"\n-- test suite`,
+      format: "json",
+    });
+    const priorRes = await fetch(`${BASE}/check?${priorParams.toString()}`);
+    const priorBody = (await priorRes.json()) as CheckResponse;
+    const priorId = priorBody.data?.checked?.recipeId;
+    if (!priorId) throw new Error("prior recipeId missing");
+
+    const params = new URLSearchParams({
+      key: apiKey,
+      trace: `As a test engineer, I prefer that a bad feedback_kind never blocks the check itself — badkind ${uid}`,
+      ef: `A malformed ride-along row must not fail the whole request.\n> "Fail soft"\n-- test suite`,
+      format: "json",
+      feedback_trace_id: priorId,
+      feedback_kind: "not-a-real-kind",
+      feedback_impact: "subtle",
+      feedback_disposition: "proceeded",
+      feedback_story_fulfilled: "yes",
+      feedback_story: "As a test engineer, I logged feedback with a bad kind on purpose.",
+    });
+    const res = await fetch(`${BASE}/check?${params.toString()}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as CheckResponse & {
+      data?: { feedbackResults?: Array<{ ok: boolean; error?: string }> };
+    };
+    expect(body.ok).toBe(true);
+    expect(body.data?.checked?.recipeId).toBeDefined();
+    expect(body.data?.feedbackResults?.[0]?.ok).toBe(false);
+    expect(body.data?.feedbackResults?.[0]?.error).toContain("kind must be one of");
+  });
+
   // F28: framework-level body size cap. A 22 MiB POST should be rejected
   // before Hono parses the body, so the route handler never runs. This
   // test is intentionally last in the describe block — bodyLimit middleware

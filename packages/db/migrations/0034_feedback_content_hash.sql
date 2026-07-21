@@ -1,0 +1,2 @@
+ALTER TABLE "claimnet"."check_feedback" ADD COLUMN "content_hash" text;--> statement-breakpoint
+ALTER TABLE "claimnet"."check_feedback" ADD CONSTRAINT "check_feedback_dedup_unique" UNIQUE("api_key_id","trace_id","content_hash");

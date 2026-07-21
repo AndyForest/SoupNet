@@ -18,6 +18,8 @@ import type { Recipe } from "@soupnet/contracts";
 import { rateLimit, perKeyRateLimit, extractCheckRequestKey, getClientIp, hashApiKey } from "../middleware/rate-limit";
 import { parseLenientQuery, rawQueryOfUrl } from "../lib/lenient-query";
 import { invalidKeyMessage, keysPageUrl } from "../lib/key-remediation";
+import type { RawFeedbackRow, FeedbackRowResult } from "../services/feedback.service";
+import { ingestFeedback, withCheckDefaults } from "../services/feedback.service";
 
 // Rate limit check/search:
 //   - per-IP: 1000 per hour (defense-in-depth, catches NAT'd attackers)
@@ -137,6 +139,20 @@ export const CHECK_PARAMS = [
   { field: "format",     wire: "format",             aliases: [],              roundTrip: "override-only" },
   { field: "expand",     wire: "expand",             aliases: [],              roundTrip: "override-only" },
   { field: "compact",    wire: "compact",            aliases: [],              roundTrip: "override-only" },
+  // Ride-along feedback about a PRIOR check — one row's worth of flat,
+  // snake_case params matching the feedback service's field names 1:1 (a
+  // web-only agent that can't POST JSON constructs these the same way it
+  // constructs trace/ef). override-only: if these carried forward into the
+  // Copy-URL / re-check hidden form fields, resubmitting the page (or the
+  // "Re-check with file" form) would re-post the same feedback_* values and
+  // double-log the row against a check that never mentioned it.
+  { field: "feedbackTraceId",        wire: "feedback_trace_id",        aliases: [], roundTrip: "override-only" },
+  { field: "feedbackKind",           wire: "feedback_kind",            aliases: [], roundTrip: "override-only" },
+  { field: "feedbackImpact",         wire: "feedback_impact",          aliases: [], roundTrip: "override-only" },
+  { field: "feedbackDisposition",    wire: "feedback_disposition",     aliases: [], roundTrip: "override-only" },
+  { field: "feedbackStoryFulfilled", wire: "feedback_story_fulfilled", aliases: [], roundTrip: "override-only" },
+  { field: "feedbackStory",          wire: "feedback_story",           aliases: [], roundTrip: "override-only" },
+  { field: "feedbackNote",           wire: "feedback_note",            aliases: [], roundTrip: "override-only" },
 ] as const satisfies readonly ParamSpec[];
 
 // PageParams is derived from CHECK_PARAMS. Adding a row grants the field;
@@ -341,6 +357,22 @@ function buildJsonResponse(
 }
 
 /**
+ * Attach ride-along feedback results to a JSON response body under
+ * `data.feedbackResults` — the same field name/shape the MCP check_recipe
+ * surface uses (mcp.ts: `data["feedbackResults"] = feedbackResults`), so a
+ * caller parsing either surface's response reads feedback the same way.
+ * A no-op when no feedback_trace_id was present on the request.
+ */
+function withFeedbackField(
+  body: Record<string, unknown>,
+  feedbackResults: FeedbackRowResult[] | undefined,
+): Record<string, unknown> {
+  if (!feedbackResults) return body;
+  const data = (body["data"] as Record<string, unknown> | undefined) ?? {};
+  return { ...body, data: { ...data, feedbackResults } };
+}
+
+/**
  * JSON shape for the read-only `filter` search path — same result mapping
  * as a check, minus everything that implies a logged trace (the `checked`
  * Recipe fill), plus an explicit searchOnly marker and notice.
@@ -395,6 +427,63 @@ async function resolveSynthesis(
     checkedRecipe: result.traceText ?? params.trace ?? "",
     results: enriched,
     relatedEvidence: result.relatedEvidence,
+  });
+}
+
+// ── Ride-along feedback (feedback_* params) ─────────────────────────────────
+
+/**
+ * Assemble and ingest the single ride-along feedback row carried by the
+ * feedback_* params, if `feedback_trace_id` is present. Mirrors check_recipe's
+ * `feedback` array (mcp.ts): the row inherits this check's agent_id/session_id
+ * via withCheckDefaults, then goes through the same ingestFeedback path as
+ * every other feedback surface (per-row markers; never blocks the check).
+ *
+ * Called unconditionally from handleCheck, before either the recipe-check or
+ * search-only branch runs, so it covers both without duplicating the call.
+ */
+async function resolveRideAlongFeedback(
+  db: PostgresJsDatabase,
+  params: PageParams,
+): Promise<FeedbackRowResult[] | undefined> {
+  if (!params.feedbackTraceId) return undefined;
+  if (!params.key) {
+    return [{
+      index: 0,
+      ok: false,
+      traceId: params.feedbackTraceId,
+      error: "feedback_trace_id requires an API key (?key=) to identify the submitting agent",
+    }];
+  }
+  // A present-but-invalid key never reaches here — handleCheck's key-death
+  // gate already returned. This lookup is defensive (kept independent so a
+  // future reordering can't make feedback silently vanish).
+  const keyResult = await validateKey(db, params.key);
+  if (!keyResult) {
+    return [{
+      index: 0,
+      ok: false,
+      traceId: params.feedbackTraceId,
+      error: "invalid or expired API key",
+    }];
+  }
+  const row: RawFeedbackRow = withCheckDefaults(
+    {
+      trace_id: params.feedbackTraceId,
+      kind: params.feedbackKind,
+      impact: params.feedbackImpact,
+      disposition: params.feedbackDisposition,
+      story_fulfilled: params.feedbackStoryFulfilled,
+      story: params.feedbackStory,
+      note: params.feedbackNote,
+    },
+    { agentId: params.agentId, sessionId: params.sessionId },
+  );
+  return ingestFeedback({
+    db,
+    apiKeyId: keyResult.keyId,
+    readGroupIds: keyResult.readGroupIds,
+    rows: [row],
   });
 }
 
@@ -492,6 +581,31 @@ function renderCompactEvidence(items: EnrichedEvidence[]): string {
   return html;
 }
 
+// ── Feedback confirmation (HTML) ────────────────────────────────────────────
+
+/** One "recorded" / "error" line per ride-along feedback row — a GET-only
+ *  agent constructing feedback_* params by hand has no other way to see
+ *  whether the row landed. Mirrors the existing error/warning div style. */
+function renderFeedbackHtml(results?: FeedbackRowResult[]): string {
+  if (!results || results.length === 0) return "";
+  const lines = results
+    .map((r) =>
+      r.ok
+        ? r.dup
+          ? `<li>already recorded &mdash; feedback id <code>${esc(r.feedbackId ?? "")}</code> for recipe <code>${esc(r.traceId)}</code></li>`
+          : `<li>recorded &mdash; feedback id <code>${esc(r.feedbackId ?? "")}</code> for recipe <code>${esc(r.traceId)}</code></li>`
+        : `<li>error &mdash; ${esc(r.error ?? "unknown error")}</li>`,
+    )
+    .join("\n      ");
+  return `
+  <section id="feedback-result" style="background:#f0efe3;padding:0.75rem 1rem;border-radius:4px;margin:0.5rem 0">
+    <p style="margin:0.25rem 0"><strong>Feedback</strong></p>
+    <ul style="margin:0.25rem 0">
+      ${lines}
+    </ul>
+  </section>`;
+}
+
 // ── Page renderer ────────────────────────────────────────────────────────────
 
 interface KeyGroup {
@@ -510,6 +624,7 @@ function renderPage(
   keyGroups?: KeyGroup[],
   nonce?: string,
   synthesisResult?: SynthesisResult,
+  feedbackResults?: FeedbackRowResult[],
 ): string {
   const hasSearch = !!(params.trace && params.ef && params.key);
   // A result with no traceId is the read-only `filter` search — nothing was
@@ -735,6 +850,8 @@ function renderPage(
     formatWarningHtml = `<div class="warning" style="background:#fff3cd;border:1px solid #ffc107;padding:0.75rem 1rem;border-radius:4px;margin:0.5rem 0"><strong>Format suggestion:</strong> ${esc(result.formatWarning)}</div>`;
   }
 
+  const feedbackHtml = renderFeedbackHtml(feedbackResults);
+
   // Instructions: show fully only on empty form, collapse when results present
   let instructionsHtml: string;
   const keyParam = params.key ? `?key=${encodeURIComponent(params.key)}` : "";
@@ -812,6 +929,8 @@ function renderPage(
   ${errorHtml}
 
   ${formatWarningHtml}
+
+  ${feedbackHtml}
 
   ${nextStepsHtml}
 
@@ -942,6 +1061,14 @@ async function handleCheck(
     }
   }
 
+  // Ride-along feedback about a PRIOR check, carried by feedback_* params.
+  // Resolved unconditionally here (not inside the recipe-check or
+  // search-only branches below) so every /check path — GET, POST, a real
+  // check, or a search-only `filter` request — gets the same treatment; no
+  // branch can silently drop a feedback param. Never affects what follows:
+  // a bad or unreadable row only ever produces a per-row marker.
+  const feedbackResults = await resolveRideAlongFeedback(getDb(), params);
+
   // For HTML responses, default to clustered results unless explicitly expanded
   // or the caller already specified clustering params.
   const isExpanded = params.expand === "true";
@@ -1053,10 +1180,10 @@ async function handleCheck(
   if (jsonMode) {
     if (!result) {
       if (!params.key) {
-        return c.json({
+        return c.json(withFeedbackField({
           ok: false,
           error: "No API key provided. Generate one at " + keysPageUrl(),
-        }, 400);
+        }, feedbackResults), 400);
       }
       // Accurate per-request diff in modern vocabulary (2026-07-05 eval
       // finding: the old static "key, trace, ef" list named params the
@@ -1065,24 +1192,24 @@ async function handleCheck(
       const missing: string[] = [];
       if (!params.trace) missing.push("recipe (alias: trace)");
       if (!params.ef) missing.push("evidence (alias: ef)");
-      return c.json({
+      return c.json(withFeedbackField({
         ok: false,
         error:
           `Missing required parameter${missing.length > 1 ? "s" : ""}: ${missing.join(", ")}. ` +
           "To check a recipe, provide both. Just looking for something? Use filter=<keywords> (alias f) for a read-only search that logs nothing.",
-      }, 400);
+      }, feedbackResults), 400);
     }
     if (result.error) {
-      return c.json({ ok: false, error: result.error }, 400);
+      return c.json(withFeedbackField({ ok: false, error: result.error }, feedbackResults), 400);
     }
     const db = getDb();
     let enriched = await enrichResults(db, result.results);
     enriched = await clusterEvidenceInResults(db, enriched);
     const page = params.page ? parseInt(params.page, 10) : 1;
     const synthesis = await resolveSynthesis(db, params, result, enriched, searchOnly);
-    return c.json(searchOnly
+    return c.json(withFeedbackField(searchOnly
       ? buildSearchOnlyJsonResponse(result, enriched, page, params.filter ?? "", knownRecipeIds)
-      : buildJsonResponse(result, enriched, page, knownRecipeIds, synthesis));
+      : buildJsonResponse(result, enriched, page, knownRecipeIds, synthesis), feedbackResults));
   }
 
   // HTML response path — always enrich + cluster evidence
@@ -1128,7 +1255,7 @@ async function handleCheck(
   }
 
   const nonce = c.get("cspNonce" as never) as string | undefined;
-  const html = renderPage(params, result, enriched, keyGroups, nonce, synthesisResult);
+  const html = renderPage(params, result, enriched, keyGroups, nonce, synthesisResult, feedbackResults);
   return c.html(html, result?.error ? 400 : 200);
 }
 

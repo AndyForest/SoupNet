@@ -8,6 +8,9 @@ const empty: PageParams = {
   axes: undefined, group: undefined, readGroups: undefined, decidedAt: undefined,
   agentId: undefined, knownRecipes: undefined, sessionId: undefined, filter: undefined,
   synthesize: undefined,
+  feedbackTraceId: undefined, feedbackKind: undefined, feedbackImpact: undefined,
+  feedbackDisposition: undefined, feedbackStoryFulfilled: undefined,
+  feedbackStory: undefined, feedbackNote: undefined,
   imageFile: undefined,
 };
 
@@ -65,6 +68,31 @@ describe("buildQs", () => {
     expect(qs).not.toContain("format=");
     expect(qs).not.toContain("expand=");
     expect(qs).not.toContain("compact=");
+  });
+
+  // Ride-along feedback params must NEVER carry forward — round-tripping
+  // them into the Copy-URL or the re-check hidden form would attach the same
+  // feedback row to the next check too and double-log it.
+  it("feedback_* ride-along params do not round-trip from params", () => {
+    const qs = buildQs({
+      ...empty,
+      key: "k",
+      feedbackTraceId: "18912fbd-0000-0000-0000-000000000000",
+      feedbackKind: "check-feedback",
+      feedbackImpact: "subtle",
+      feedbackDisposition: "proceeded",
+      feedbackStoryFulfilled: "yes",
+      feedbackStory: "As a developer, I logged feedback so that future checks calibrate.",
+      feedbackNote: "test note",
+    });
+    expect(qs).toContain("key=k");
+    expect(qs).not.toContain("feedback_trace_id=");
+    expect(qs).not.toContain("feedback_kind=");
+    expect(qs).not.toContain("feedback_impact=");
+    expect(qs).not.toContain("feedback_disposition=");
+    expect(qs).not.toContain("feedback_story_fulfilled=");
+    expect(qs).not.toContain("feedback_story=");
+    expect(qs).not.toContain("feedback_note=");
   });
 
   it("overrides replace carry values", () => {
@@ -141,6 +169,25 @@ describe("readParams", () => {
     expect(p.sort).toBeUndefined();
   });
 
+  it("reads feedback_* wire params with no aliases", () => {
+    const p = readParams(makeGet({
+      feedback_trace_id: "18912fbd-0000-0000-0000-000000000000",
+      feedback_kind: "check-feedback",
+      feedback_impact: "subtle",
+      feedback_disposition: "proceeded",
+      feedback_story_fulfilled: "yes",
+      feedback_story: "story text",
+      feedback_note: "note text",
+    }));
+    expect(p.feedbackTraceId).toBe("18912fbd-0000-0000-0000-000000000000");
+    expect(p.feedbackKind).toBe("check-feedback");
+    expect(p.feedbackImpact).toBe("subtle");
+    expect(p.feedbackDisposition).toBe("proceeded");
+    expect(p.feedbackStoryFulfilled).toBe("yes");
+    expect(p.feedbackStory).toBe("story text");
+    expect(p.feedbackNote).toBe("note text");
+  });
+
   it("preserves empty-string for nullable fields (matches `?? null` semantics)", () => {
     // `?recipe=` with explicit empty value: original GET reader returned ""
     // (via `c.req.query("trace") ?? c.req.query("recipe") ?? null` — `??`
@@ -149,5 +196,32 @@ describe("readParams", () => {
     // we preserve the type contract.
     const p = readParams(makeGet({ trace: "" }));
     expect(p.trace).toBe("");
+  });
+});
+
+describe("feedback_* CHECK_PARAMS rows", () => {
+  const feedbackFields = [
+    "feedbackTraceId", "feedbackKind", "feedbackImpact", "feedbackDisposition",
+    "feedbackStoryFulfilled", "feedbackStory", "feedbackNote",
+  ];
+  const feedbackWires = [
+    "feedback_trace_id", "feedback_kind", "feedback_impact", "feedback_disposition",
+    "feedback_story_fulfilled", "feedback_story", "feedback_note",
+  ];
+
+  it("declares one row per feedback field, override-only, no aliases", () => {
+    for (const field of feedbackFields) {
+      const spec = CHECK_PARAMS.find((s) => s.field === field);
+      expect(spec, `CHECK_PARAMS should declare a row for ${field}`).toBeDefined();
+      expect(spec!.roundTrip).toBe("override-only");
+      expect(spec!.aliases).toEqual([]);
+    }
+  });
+
+  it("uses the settled flat snake_case wire names", () => {
+    for (let i = 0; i < feedbackFields.length; i++) {
+      const spec = CHECK_PARAMS.find((s) => s.field === feedbackFields[i]);
+      expect(spec!.wire).toBe(feedbackWires[i]);
+    }
   });
 });

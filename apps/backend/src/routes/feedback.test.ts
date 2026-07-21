@@ -109,6 +109,65 @@ describe.skipIf(!BASE)("feedback ingestion surfaces", () => {
     expect(json.data.results[0]?.feedbackId).toBeTruthy();
   });
 
+  it("idempotency: identical POST /feedback rows dedupe to one row (dup:true, same feedbackId)", async () => {
+    const row = feedbackRow(traceA, { note: `dedup post test ${Date.now()}` });
+    const first = await fetch(`${BASE}/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${userA.apiKey}` },
+      body: JSON.stringify({ feedback: [row] }),
+    });
+    const firstJson = (await first.json()) as { data: { results: Array<{ ok: boolean; dup?: boolean; feedbackId?: string }> } };
+    expect(firstJson.data.results[0]?.ok).toBe(true);
+    expect(firstJson.data.results[0]?.dup).toBeUndefined();
+    const feedbackId = firstJson.data.results[0]?.feedbackId;
+    expect(feedbackId).toBeTruthy();
+
+    const second = await fetch(`${BASE}/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${userA.apiKey}` },
+      body: JSON.stringify({ feedback: [row] }),
+    });
+    expect(second.status).toBe(200);
+    const secondJson = (await second.json()) as { data: { results: Array<{ ok: boolean; dup?: boolean; feedbackId?: string }> } };
+    expect(secondJson.data.results[0]?.ok).toBe(true);
+    expect(secondJson.data.results[0]?.dup).toBe(true);
+    expect(secondJson.data.results[0]?.feedbackId).toBe(feedbackId);
+
+    // A resubmission with different content is NOT a dup — a distinct row lands.
+    const third = await fetch(`${BASE}/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${userA.apiKey}` },
+      body: JSON.stringify({ feedback: [feedbackRow(traceA, { note: `${row.note} — different` })] }),
+    });
+    const thirdJson = (await third.json()) as { data: { results: Array<{ ok: boolean; dup?: boolean; feedbackId?: string }> } };
+    expect(thirdJson.data.results[0]?.ok).toBe(true);
+    expect(thirdJson.data.results[0]?.dup).toBeUndefined();
+    expect(thirdJson.data.results[0]?.feedbackId).not.toBe(feedbackId);
+  });
+
+  it("idempotency: a short-id resubmission and a full-UUID resubmission of the same content dedupe together", async () => {
+    const note = `dedup short-id test ${Date.now()}`;
+    const first = await fetch(`${BASE}/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${userA.apiKey}` },
+      body: JSON.stringify(feedbackRow(traceA.slice(0, 8), { note })),
+    });
+    const firstJson = (await first.json()) as { data: { results: Array<{ ok: boolean; feedbackId?: string; traceId: string }> } };
+    expect(firstJson.data.results[0]?.ok).toBe(true);
+    expect(firstJson.data.results[0]?.traceId).toBe(traceA);
+    const feedbackId = firstJson.data.results[0]?.feedbackId;
+
+    const second = await fetch(`${BASE}/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${userA.apiKey}` },
+      body: JSON.stringify(feedbackRow(traceA, { note })),
+    });
+    const secondJson = (await second.json()) as { data: { results: Array<{ ok: boolean; dup?: boolean; feedbackId?: string }> } };
+    expect(secondJson.data.results[0]?.ok).toBe(true);
+    expect(secondJson.data.results[0]?.dup).toBe(true);
+    expect(secondJson.data.results[0]?.feedbackId).toBe(feedbackId);
+  });
+
   it("REST POST /feedback accepts a bare single-row body", async () => {
     const res = await fetch(`${BASE}/feedback`, {
       method: "POST",
@@ -387,4 +446,133 @@ describe.skipIf(!BASE)("feedback ingestion surfaces", () => {
     expect(text).toContain("Feedback: 1/2 row(s) recorded.");
     expect(text).toContain("not found or not readable");
   }, 30_000);
+
+  // ── GET /feedback (backup surface for web-only agents) ────────────────────
+  // The design gap this closes: a real agent hand-built
+  // `GET /feedback?key=...&trace_id=...&kind=check-feedback&...` and hit a
+  // 404 because only POST existed.
+
+  function feedbackQueryParams(apiKey: string, traceId: string, overrides: Record<string, string> = {}): URLSearchParams {
+    return new URLSearchParams({
+      key: apiKey,
+      trace_id: traceId,
+      kind: "check-feedback",
+      impact: "subtle",
+      disposition: "proceeded",
+      story_fulfilled: "yes",
+      story: "As a developer working on tests, I wanted coverage so that regressions surface.",
+      note: "GET integration test row",
+      ...overrides,
+    });
+  }
+
+  it("GET /feedback: 401 with no key at all", async () => {
+    const params = new URLSearchParams({ trace_id: traceA, kind: "check-feedback" });
+    const res = await fetch(`${BASE}/feedback?${params.toString()}`);
+    expect(res.status).toBe(401);
+  });
+
+  it("GET /feedback: 401 with an invalid key", async () => {
+    const params = feedbackQueryParams("not-a-real-key", traceA);
+    const res = await fetch(`${BASE}/feedback?${params.toString()}`, {
+      headers: { Accept: "application/json" },
+    });
+    expect(res.status).toBe(401);
+    const json = (await res.json()) as { ok: boolean; error?: string };
+    expect(json.ok).toBe(false);
+    expect(json.error).toContain("?key=");
+  });
+
+  it("GET /feedback: 400 with no trace_id or recipe_id", async () => {
+    const params = new URLSearchParams({ key: userA.apiKey, kind: "check-feedback" });
+    const res = await fetch(`${BASE}/feedback?${params.toString()}`, {
+      headers: { Accept: "application/json" },
+    });
+    expect(res.status).toBe(400);
+    const json = (await res.json()) as { ok: boolean; error?: string };
+    expect(json.ok).toBe(false);
+    expect(json.error).toContain("trace_id");
+  });
+
+  it("GET /feedback: 200 + row recorded with ?key= and format=json", async () => {
+    const params = feedbackQueryParams(userA.apiKey, traceA, { format: "json" });
+    const res = await fetch(`${BASE}/feedback?${params.toString()}`);
+    expect(res.status).toBe(200);
+    const contentType = res.headers.get("content-type") ?? "";
+    expect(contentType).toContain("application/json");
+    const json = (await res.json()) as { ok: boolean; data: { recorded: number; results: Array<{ ok: boolean; feedbackId?: string }> } };
+    expect(json.ok).toBe(true);
+    expect(json.data.recorded).toBe(1);
+    expect(json.data.results[0]?.ok).toBe(true);
+    expect(json.data.results[0]?.feedbackId).toBeTruthy();
+  });
+
+  it("GET /feedback: defaults to an HTML confirmation page without format=json", async () => {
+    const params = feedbackQueryParams(userA.apiKey, traceA);
+    const res = await fetch(`${BASE}/feedback?${params.toString()}`);
+    expect(res.status).toBe(200);
+    const contentType = res.headers.get("content-type") ?? "";
+    expect(contentType).toContain("text/html");
+    const html = await res.text();
+    expect(html).toContain("recorded");
+  });
+
+  it("GET /feedback: Accept: application/json negotiates JSON without format=json", async () => {
+    const params = feedbackQueryParams(userA.apiKey, traceA);
+    const res = await fetch(`${BASE}/feedback?${params.toString()}`, {
+      headers: { Accept: "application/json" },
+    });
+    const contentType = res.headers.get("content-type") ?? "";
+    expect(contentType).toContain("application/json");
+  });
+
+  it("GET /feedback: an invalid enum value surfaces a per-row error (request-level ok:false, matching POST)", async () => {
+    const params = feedbackQueryParams(userA.apiKey, traceA, { impact: "colossal", format: "json" });
+    const res = await fetch(`${BASE}/feedback?${params.toString()}`);
+    expect(res.status).toBe(400);
+    const json = (await res.json()) as { ok: boolean; data: { recorded: number; results: Array<{ ok: boolean; error?: string }> } };
+    expect(json.ok).toBe(false);
+    expect(json.data.recorded).toBe(0);
+    expect(json.data.results[0]?.ok).toBe(false);
+    expect(json.data.results[0]?.error).toContain("none | new | subtle | big | operational");
+  });
+
+  it("idempotency: fetching the identical GET /feedback URL twice dedupes (dup:true, same feedbackId) — the link-preview-unfurler-prefetch failure mode", async () => {
+    const params = feedbackQueryParams(userA.apiKey, traceA, { format: "json", note: `dedup get test ${Date.now()}` });
+    const url = `${BASE}/feedback?${params.toString()}`;
+
+    const first = await fetch(url);
+    expect(first.status).toBe(200);
+    const firstJson = (await first.json()) as { data: { results: Array<{ ok: boolean; dup?: boolean; feedbackId?: string }> } };
+    expect(firstJson.data.results[0]?.ok).toBe(true);
+    expect(firstJson.data.results[0]?.dup).toBeUndefined();
+    const feedbackId = firstJson.data.results[0]?.feedbackId;
+    expect(feedbackId).toBeTruthy();
+
+    const second = await fetch(url);
+    expect(second.status).toBe(200);
+    const secondJson = (await second.json()) as { data: { results: Array<{ ok: boolean; dup?: boolean; feedbackId?: string }> } };
+    expect(secondJson.data.results[0]?.ok).toBe(true);
+    expect(secondJson.data.results[0]?.dup).toBe(true);
+    expect(secondJson.data.results[0]?.feedbackId).toBe(feedbackId);
+  });
+
+  it("GET /feedback: Bearer header fallback works when no ?key= is present", async () => {
+    const params = new URLSearchParams({
+      trace_id: traceA,
+      kind: "check-feedback",
+      impact: "subtle",
+      disposition: "proceeded",
+      story_fulfilled: "yes",
+      story: "As a developer working on tests, I wanted Bearer fallback coverage.",
+      format: "json",
+    });
+    const res = await fetch(`${BASE}/feedback?${params.toString()}`, {
+      headers: { Authorization: `Bearer ${userA.apiKey}` },
+    });
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { ok: boolean; data: { recorded: number } };
+    expect(json.ok).toBe(true);
+    expect(json.data.recorded).toBe(1);
+  });
 });

@@ -48,3 +48,23 @@ Feature: Feedback ingestion — chained on the next check, or via log_feedback
     When it has feedback on that check to report
     Then it issues POST /feedback with Bearer API-key auth
     And the body is a single row object carrying trace_id (or {"feedback": [rows]}) with the same fields the MCP feedback parameter uses
+
+  Scenario: URL-constructing agent rides feedback on the next check URL
+    # Guards: briefing §Closing the loop + CONNECTION_TIERS tier 2 — flat
+    # feedback_*-prefixed check params (CHECK_PARAMS override-only rows,
+    # shipped 2026-07-21 after a live GET-only agent 404'd on a hand-built
+    # /feedback?key=... URL — the shape this spec now sanctions on /check).
+    Given a fresh web agent that can construct and fetch URLs but cannot POST or set headers, primed with the unified briefing
+    And it holds the recipe id from an earlier check
+    When it has feedback on that check and another check to make
+    Then it adds feedback_-prefixed fields (feedback_trace_id, feedback_kind, ...) to the next check URL rather than inventing a separate endpoint
+    And the single URL it builds carries the new recipe and the feedback row together
+
+  Scenario: GET-only agent with no follow-up check uses GET /feedback
+    # Guards: briefing §Closing the loop — the standalone backup for the same
+    # agent class (GET /feedback?key=..., flat fields, same service).
+    Given a fresh web agent that can construct and fetch URLs but cannot POST or set headers, primed with the unified briefing
+    And no further check is planned
+    When it has feedback on an earlier check to report
+    Then it builds GET /feedback?key=...&trace_id=...&kind=... with the same flat field names the POST body uses
+    And it does not attempt a POST request or a custom Authorization header
