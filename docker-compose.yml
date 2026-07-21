@@ -26,6 +26,11 @@ services:
         # `docker compose` can run EMBEDDINGS_PROVIDER=local out of the box. The
         # hosted deploy builds via `docker build` with no args → lean image.
         EMBEDDINGS_LOCAL: "true"
+        # Surfaced by GET /health/version (eval-reset contract item (d)) so a
+        # runner can tell if the stack is stale. Defaults to "unknown" when the
+        # env var isn't exported — export GIT_COMMIT=$(git rev-parse HEAD)
+        # before `docker compose up --build` to stamp the real commit.
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
     restart: unless-stopped
     depends_on:
       postgres:

@@ -13,6 +13,7 @@ import { meRoutes } from "./routes/me";
 import { briefingRoutes } from "./routes/briefing";
 import { checkRoutes } from "./routes/check";
 import { recipeRoutes } from "./routes/recipes";
+import { versionRoutes } from "./routes/version";
 import { groupRoutes } from "./routes/groups";
 import { invitationRoutes } from "./routes/invitations";
 import { adminRoutes } from "./routes/admin";
@@ -100,6 +101,13 @@ app.get("/health/ready", async (c) => {
     return c.json({ ok: false }, 503);
   }
 });
+
+// Stack introspection (eval-reset contract item (d) + reduced (f)). API-key
+// authed — coarse liveness stays public above; the detailed block (git commit,
+// ranking version, migration head, embeddings provider/model, presenting key's
+// expiry) requires a valid key. Distinct exact path from /health and
+// /health/ready, so it mounts as its own sub-router. See routes/version.ts.
+app.route("/health/version", versionRoutes);
 
 // Routes
 app.route("/auth", authRoutes);

@@ -80,6 +80,12 @@ interface ValidateKeyResult {
   keyType: string;
   /** oauth_clients.client_id for key_type='oauth'; null otherwise. */
   oauthClientId: string | null;
+  /** When this key expires. The validation query already SELECTs expires_at
+   *  (the `expires_at > NOW()` guard), so surfacing it here is purely additive
+   *  — no extra query, no second lookup. Lets the presenting key see its own
+   *  runway (GET /health/version, eval-reset contract item (f)) without a new
+   *  DB round-trip. Never exposes another key's expiry — only the caller's. */
+  expiresAt: Date;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -256,6 +262,7 @@ export async function validateKey(
     defaultWriteGroupId: row["default_write_group_id"] as string,
     keyType: row["key_type"] as string,
     oauthClientId: (row["oauth_client_id"] as string | null) ?? null,
+    expiresAt: new Date(row["expires_at"] as string),
   };
 }
 
