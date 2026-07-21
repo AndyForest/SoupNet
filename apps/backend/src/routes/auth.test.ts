@@ -59,7 +59,7 @@ describe.skipIf(!BASE)("/auth routes integration", () => {
   // the 409-on-duplicate branch. The response is a generic message either
   // way; callers must verify and then explicitly /auth/login to obtain a
   // token.
-  it("POST /auth/register returns generic message for new email (no auto-login)", { timeout: 15_000 }, async () => {
+  it("POST /auth/register returns generic message for new email (no auto-login)", { timeout: 45_000 }, async () => {
     const res = await fetch(`${BASE}/auth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

@@ -56,7 +56,7 @@ describe.skipIf(!BASE)("DELETE /auth/me — self-serve account deletion", () => 
     expect(res.status).toBe(401);
   });
 
-  it("rejects a request with a missing password", { timeout: 15_000 }, async () => {
+  it("rejects a request with a missing password", { timeout: 45_000 }, async () => {
     const user = await provisionUser("missing-pwd");
     const res = await fetch(`${BASE}/auth/me`, {
       method: "DELETE",

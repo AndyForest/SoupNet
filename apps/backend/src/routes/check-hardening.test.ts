@@ -181,7 +181,13 @@ describe("key-death UX (invalid/expired key states)", () => {
     expect(body.error).toContain("/app/keys");
   });
 
-  it("an EXPIRED key renders byte-identically to an unknown key (anti-enumeration)", async () => {
+  // 45s timeout: bcrypt-convoy tolerance. bcryptjs hashes on the main event
+  // loop, so full-suite gates with many concurrent registrations convoy the
+  // backend and starve whichever bcrypt-path request queues last (diagnosed
+  // 2026-07-21: three rotating 15s timeouts across gate runs with ZERO db
+  // queries >1s — the db was idle; the event loop wasn't). Real fix tracked
+  // in the backlog (native bcrypt on the threadpool / hashing semaphore).
+  it("an EXPIRED key renders byte-identically to an unknown key (anti-enumeration)", { timeout: 45_000 }, async () => {
     const { apiKey } = await setupUserWithKey("expire");
     const sql = await getSql();
     await sql`
