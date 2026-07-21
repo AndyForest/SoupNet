@@ -146,9 +146,16 @@ describe.skipIf(!BASE)("sync embedding path (recipe check write)", () => {
     const second = await submitCheck(recipe);
     expect(second.ok).toBe(true);
     expect(second.data?.checked?.recipeId).toBe(recipeId);
-    // Duplicate path skips the write block entirely — same pipeline rows.
+    // Duplicate path skips the write block entirely — same pipeline rows FOR
+    // THE PRODUCTION STRATEGIES. Compare that subset, not the raw count: the
+    // worker sweep backfills exp_* strategies on a 1-minute cadence, so on a
+    // slow runner a legitimate sweep row can land between these two snapshots
+    // (CI run 29804767919, 2026-07-21: raw count 2 → 3 mid-test). Sweep
+    // additions are not duplicate-check leaks; new PRODUCTION rows would be.
+    const prodOnly = (rows: Awaited<ReturnType<typeof traceVectorShape>>) =>
+      rows.filter((r) => r.strategy_id === "full_document" || r.strategy_id === "full_recipe_context");
     const rowsAfterSecond = await traceVectorShape(recipeId!);
-    expect(rowsAfterSecond).toHaveLength(rowsAfterFirst.length);
+    expect(prodOnly(rowsAfterSecond)).toHaveLength(prodOnly(rowsAfterFirst).length);
     // And the search half still ran (results array present).
     expect(second.data?.results).toBeDefined();
   });
