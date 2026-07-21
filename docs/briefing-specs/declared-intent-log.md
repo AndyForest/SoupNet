@@ -2,6 +2,28 @@
 
 Every PR that touches briefing copy (`packages/domain/src/recipe-guide-content.ts`, the briefing composer, MCP tool descriptions) appends an entry here **before** merging: the date, each edit, the scenarios it intends to move, and the rationale for why every other scenario holds. See [README.md](README.md) §The regression rule. Newest entry first.
 
+## 2026-07-21 — Feedback over URLs: feedback_* ride-along check params + GET /feedback
+
+Triggered by a live failure (2026-07-21): a URL-constructing web agent, primed with the briefing, hand-built `GET /feedback?key=...&trace_id=...&kind=check-feedback&...` — faithful field names, the only request shape its capability class can produce — and 404'd, because the loop-closing copy documented POST+Bearer only and no GET surface existed. This PR ships flat `feedback_*` ride-along params on `/check` (override-only in CHECK_PARAMS — never carried into Copy-URL/re-check forms, so a re-check cannot double-log the row) and `GET /feedback` (`?key=` or Bearer) as the standalone backup, then teaches both in copy. Corpus rulings applied: e9c5aa23 (flat single-row beats nested for agent surfaces), 7828d4c8 (the roundTrip axis decides persistence), abddb65d (ride-along rows inherit check-level agent_id/session_id), 86f6bc53 (offer-shaped copy — "you can X so that Y").
+
+### Edits
+
+1. **Briefing §Closing the loop** gains one sentence after the POST /feedback sentence: URL-building agents can ride the same fields on the next check URL prefixed `feedback_`, or `GET /feedback` with the unprefixed fields standalone when no follow-up check is coming ("same auth as your check URLs"). Offer-shaped; deliberately credential-form-agnostic — the section is shared verbatim with the OAuth briefing branch, whose guard test forbids any `?key=` substring, so the concrete `/feedback?key=YOUR_KEY` example lives in CONNECTION_TIERS (guide surface, never OAuth-composed) instead.
+2. **CONNECTION_TIERS tier 2** gains two sentences: the `feedback_*` ride-along URL pattern + standalone `GET /feedback`, framed by value (feedback shows the human which recipes earned their keep; a "nothing similar found" result is worth a row too).
+
+### Scenarios intended to move
+
+- **`feedback-loop.feature` — "URL-constructing agent rides feedback on the next check URL"** (added in this PR): the ride-along copy is the fed text that produces that behavior.
+- **`feedback-loop.feature` — "GET-only agent with no follow-up check uses GET /feedback"** (added in this PR): the standalone-backup sentence is its fed text.
+
+### Scenarios watched, with rationale for holding
+
+- **`feedback-loop.feature` (existing scenarios)** — MCP carrier guidance (chained vs `log_feedback`) and the POST /feedback scenario are unchanged; the new copy adds surfaces for a capability class that previously had none, without altering carrier selection for tool- or POST-capable agents.
+- **`checking-behavior.feature` check-freely framing** — both additions are offer-shaped ("you can close the loop", "stands alone"); no new imperatives, no warnings.
+- **`web-only-agents.feature`** — link-formatting guidance untouched; feedback URLs are the same key-carrying URL class those scenarios already govern.
+- **All other scenarios** — principles, voice, format, routing, divergence, and setup copy untouched.
+- Suite re-run: harness not yet wired (README §regression rule "once wired"); the .feature files remain the manual checklist.
+
 ## 2026-07-17 — Session-refresh hint + feedback session_id capture
 
 Operator-directed (recipe 31d184df: the session models the agent's context-fill state; Andy derived the compaction affordance himself in the design review). Declared intent: the refresh hint is the only briefing-content change in this batch — nothing else moves.
