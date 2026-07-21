@@ -4,12 +4,13 @@ import {
   validateFeedbackRow,
   summarizeFeedbackResults,
   ingestFeedback,
+  computeFeedbackContentHash,
   isTraceIdPrefix,
   uuidPrefixRange,
   MIN_TRACE_ID_PREFIX,
   TRACE_NOT_READABLE,
 } from "./feedback.service";
-import type { RawFeedbackRow, FeedbackRowResult } from "./feedback.service";
+import type { RawFeedbackRow, FeedbackRowResult, ValidatedFeedbackRow } from "./feedback.service";
 
 const TRACE_ID = "7676e323-e4a8-493e-b705-febfac26081a";
 
@@ -231,7 +232,9 @@ describe("ingestFeedback short-id prefix resolution (stubbed db)", () => {
       execute: async () => executeResults[call++] ?? [],
       insert: () => ({
         values: () => ({
-          returning: async () => [{ id: "fb-00000000" }],
+          onConflictDoNothing: () => ({
+            returning: async () => [{ id: "fb-00000000" }],
+          }),
         }),
       }),
     } as unknown as PostgresJsDatabase;
@@ -310,5 +313,124 @@ describe("summarizeFeedbackResults", () => {
 
   it("returns empty string for no rows", () => {
     expect(summarizeFeedbackResults([])).toBe("");
+  });
+
+  it("notes dup rows with an already-recorded line, distinct from a fresh insert", () => {
+    const results: FeedbackRowResult[] = [
+      { index: 0, ok: true, traceId: TRACE_ID, feedbackId: "f1", dup: true },
+    ];
+    const text = summarizeFeedbackResults(results);
+    expect(text).toContain("Feedback: 1/1 row(s) recorded");
+    expect(text).toContain("already recorded");
+    expect(text).toContain("f1");
+  });
+});
+
+// ── Idempotency (2026-07-21) ─────────────────────────────────────────────────
+
+describe("computeFeedbackContentHash", () => {
+  function row(overrides: Partial<ValidatedFeedbackRow> = {}): ValidatedFeedbackRow {
+    return {
+      traceId: TRACE_ID,
+      kind: "check-feedback",
+      impact: "subtle",
+      disposition: "proceeded",
+      storyFulfilled: "yes",
+      story: "As an AI sub-agent working on X, I wanted Y so that Z",
+      note: null,
+      agentId: null,
+      topSimilarity: null,
+      model: null,
+      harness: null,
+      harnessVersion: null,
+      relatedTraceIds: null,
+      sessionId: null,
+      ...overrides,
+    };
+  }
+
+  it("is deterministic for identical inputs", () => {
+    expect(computeFeedbackContentHash(TRACE_ID, row())).toBe(computeFeedbackContentHash(TRACE_ID, row()));
+  });
+
+  it("changes when the resolved trace id differs", () => {
+    const other = "550e8400-e29b-41d4-a716-446655440000";
+    expect(computeFeedbackContentHash(TRACE_ID, row())).not.toBe(computeFeedbackContentHash(other, row()));
+  });
+
+  it("changes when any single field changes (each field participates in the hash)", () => {
+    const base = computeFeedbackContentHash(TRACE_ID, row());
+    expect(computeFeedbackContentHash(TRACE_ID, row({ kind: "outcome" }))).not.toBe(base);
+    expect(computeFeedbackContentHash(TRACE_ID, row({ impact: "big" }))).not.toBe(base);
+    expect(computeFeedbackContentHash(TRACE_ID, row({ disposition: "corrected" }))).not.toBe(base);
+    expect(computeFeedbackContentHash(TRACE_ID, row({ storyFulfilled: "partial" }))).not.toBe(base);
+    expect(computeFeedbackContentHash(TRACE_ID, row({ story: "different story" }))).not.toBe(base);
+    expect(computeFeedbackContentHash(TRACE_ID, row({ note: "changed" }))).not.toBe(base);
+    expect(computeFeedbackContentHash(TRACE_ID, row({ agentId: "a-1" }))).not.toBe(base);
+    expect(computeFeedbackContentHash(TRACE_ID, row({ sessionId: "sess-1" }))).not.toBe(base);
+    expect(computeFeedbackContentHash(TRACE_ID, row({ topSimilarity: 0.5 }))).not.toBe(base);
+    expect(computeFeedbackContentHash(TRACE_ID, row({ model: "m" }))).not.toBe(base);
+    expect(computeFeedbackContentHash(TRACE_ID, row({ harness: "h" }))).not.toBe(base);
+    expect(computeFeedbackContentHash(TRACE_ID, row({ harnessVersion: "v1" }))).not.toBe(base);
+    expect(computeFeedbackContentHash(TRACE_ID, row({ relatedTraceIds: [TRACE_ID] }))).not.toBe(base);
+  });
+});
+
+describe("ingestFeedback idempotency (stubbed db)", () => {
+  const GROUP = "11111111-1111-1111-1111-111111111111";
+  const KEY = "22222222-2222-2222-2222-222222222222";
+
+  beforeEach(() => {
+    vi.stubEnv("DISABLE_RATE_LIMIT", "true");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  /** Simulates an ON CONFLICT DO NOTHING that found a conflict (returning()
+   *  comes back empty) — the service must then SELECT the existing row. */
+  function stubDbWithConflict(existingId: string | undefined) {
+    return {
+      // ACL readable-check query — the row's trace id is readable.
+      execute: async () => [{ id: TRACE_ID }],
+      insert: () => ({
+        values: () => ({
+          onConflictDoNothing: () => ({
+            returning: async () => [], // conflict — nothing inserted
+          }),
+        }),
+      }),
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            limit: async () => (existingId ? [{ id: existingId }] : []),
+          }),
+        }),
+      }),
+    } as unknown as PostgresJsDatabase;
+  }
+
+  it("returns the existing feedback id with dup:true when the insert conflicts", async () => {
+    const results = await ingestFeedback({
+      db: stubDbWithConflict("existing-fb-id"),
+      apiKeyId: KEY,
+      readGroupIds: [GROUP],
+      rows: [validRow()],
+    });
+    expect(results[0]?.ok).toBe(true);
+    expect(results[0]?.dup).toBe(true);
+    expect(results[0]?.feedbackId).toBe("existing-fb-id");
+    expect(results[0]?.traceId).toBe(TRACE_ID);
+  });
+
+  it("falls back to an insert-failed error if the conflicting row can't be found (defensive)", async () => {
+    const results = await ingestFeedback({
+      db: stubDbWithConflict(undefined),
+      apiKeyId: KEY,
+      readGroupIds: [GROUP],
+      rows: [validRow()],
+    });
+    expect(results[0]?.ok).toBe(false);
+    expect(results[0]?.error).toBe("insert failed");
   });
 });

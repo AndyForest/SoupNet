@@ -109,6 +109,65 @@ describe.skipIf(!BASE)("feedback ingestion surfaces", () => {
     expect(json.data.results[0]?.feedbackId).toBeTruthy();
   });
 
+  it("idempotency: identical POST /feedback rows dedupe to one row (dup:true, same feedbackId)", async () => {
+    const row = feedbackRow(traceA, { note: `dedup post test ${Date.now()}` });
+    const first = await fetch(`${BASE}/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${userA.apiKey}` },
+      body: JSON.stringify({ feedback: [row] }),
+    });
+    const firstJson = (await first.json()) as { data: { results: Array<{ ok: boolean; dup?: boolean; feedbackId?: string }> } };
+    expect(firstJson.data.results[0]?.ok).toBe(true);
+    expect(firstJson.data.results[0]?.dup).toBeUndefined();
+    const feedbackId = firstJson.data.results[0]?.feedbackId;
+    expect(feedbackId).toBeTruthy();
+
+    const second = await fetch(`${BASE}/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${userA.apiKey}` },
+      body: JSON.stringify({ feedback: [row] }),
+    });
+    expect(second.status).toBe(200);
+    const secondJson = (await second.json()) as { data: { results: Array<{ ok: boolean; dup?: boolean; feedbackId?: string }> } };
+    expect(secondJson.data.results[0]?.ok).toBe(true);
+    expect(secondJson.data.results[0]?.dup).toBe(true);
+    expect(secondJson.data.results[0]?.feedbackId).toBe(feedbackId);
+
+    // A resubmission with different content is NOT a dup — a distinct row lands.
+    const third = await fetch(`${BASE}/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${userA.apiKey}` },
+      body: JSON.stringify({ feedback: [feedbackRow(traceA, { note: `${row.note} — different` })] }),
+    });
+    const thirdJson = (await third.json()) as { data: { results: Array<{ ok: boolean; dup?: boolean; feedbackId?: string }> } };
+    expect(thirdJson.data.results[0]?.ok).toBe(true);
+    expect(thirdJson.data.results[0]?.dup).toBeUndefined();
+    expect(thirdJson.data.results[0]?.feedbackId).not.toBe(feedbackId);
+  });
+
+  it("idempotency: a short-id resubmission and a full-UUID resubmission of the same content dedupe together", async () => {
+    const note = `dedup short-id test ${Date.now()}`;
+    const first = await fetch(`${BASE}/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${userA.apiKey}` },
+      body: JSON.stringify(feedbackRow(traceA.slice(0, 8), { note })),
+    });
+    const firstJson = (await first.json()) as { data: { results: Array<{ ok: boolean; feedbackId?: string; traceId: string }> } };
+    expect(firstJson.data.results[0]?.ok).toBe(true);
+    expect(firstJson.data.results[0]?.traceId).toBe(traceA);
+    const feedbackId = firstJson.data.results[0]?.feedbackId;
+
+    const second = await fetch(`${BASE}/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${userA.apiKey}` },
+      body: JSON.stringify(feedbackRow(traceA, { note })),
+    });
+    const secondJson = (await second.json()) as { data: { results: Array<{ ok: boolean; dup?: boolean; feedbackId?: string }> } };
+    expect(secondJson.data.results[0]?.ok).toBe(true);
+    expect(secondJson.data.results[0]?.dup).toBe(true);
+    expect(secondJson.data.results[0]?.feedbackId).toBe(feedbackId);
+  });
+
   it("REST POST /feedback accepts a bare single-row body", async () => {
     const res = await fetch(`${BASE}/feedback`, {
       method: "POST",
@@ -476,6 +535,26 @@ describe.skipIf(!BASE)("feedback ingestion surfaces", () => {
     expect(json.data.recorded).toBe(0);
     expect(json.data.results[0]?.ok).toBe(false);
     expect(json.data.results[0]?.error).toContain("none | new | subtle | big | operational");
+  });
+
+  it("idempotency: fetching the identical GET /feedback URL twice dedupes (dup:true, same feedbackId) — the link-preview-unfurler-prefetch failure mode", async () => {
+    const params = feedbackQueryParams(userA.apiKey, traceA, { format: "json", note: `dedup get test ${Date.now()}` });
+    const url = `${BASE}/feedback?${params.toString()}`;
+
+    const first = await fetch(url);
+    expect(first.status).toBe(200);
+    const firstJson = (await first.json()) as { data: { results: Array<{ ok: boolean; dup?: boolean; feedbackId?: string }> } };
+    expect(firstJson.data.results[0]?.ok).toBe(true);
+    expect(firstJson.data.results[0]?.dup).toBeUndefined();
+    const feedbackId = firstJson.data.results[0]?.feedbackId;
+    expect(feedbackId).toBeTruthy();
+
+    const second = await fetch(url);
+    expect(second.status).toBe(200);
+    const secondJson = (await second.json()) as { data: { results: Array<{ ok: boolean; dup?: boolean; feedbackId?: string }> } };
+    expect(secondJson.data.results[0]?.ok).toBe(true);
+    expect(secondJson.data.results[0]?.dup).toBe(true);
+    expect(secondJson.data.results[0]?.feedbackId).toBe(feedbackId);
   });
 
   it("GET /feedback: Bearer header fallback works when no ?key= is present", async () => {

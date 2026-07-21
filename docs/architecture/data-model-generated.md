@@ -1,9 +1,9 @@
 # ClaimNet Data Model — Generated Reference
 
-> **Auto-generated** from Drizzle migration snapshot `0033_snapshot.json`.
+> **Auto-generated** from Drizzle migration snapshot `0034_snapshot.json`.
 > Do not edit by hand. Regenerate with: `npx tsx scripts/generate-data-model-docs.ts`
 >
-> Schema as of migration `0033_ephemeral_books_and_personal_org` (2026-07-21).
+> Schema as of migration `0034_feedback_content_hash` (2026-07-21).
 > Tables: 29 | Schema: `claimnet`
 
 For design rationale, conventions, and context, see [data-model.md](data-model.md).
@@ -76,6 +76,7 @@ erDiagram
         text harness
         text harness_version
         uuid[] related_trace_ids
+        text content_hash
         timestamptz created_at
     }
 
@@ -691,11 +692,15 @@ These are created by raw SQL in migration files and are not captured in the snap
 | `harness` | `text` | YES |  |  |
 | `harness_version` | `text` | YES |  |  |
 | `related_trace_ids` | `uuid[]` | YES |  |  |
+| `content_hash` | `text` | YES |  |  |
 | `created_at` | `timestamptz` | NO | `now()` |  |
 
 **Foreign keys:**
 - `trace_id` → `traces.id`
 - `actor_user_id` → `users.id`
+
+**Unique constraints:**
+- `check_feedback_dedup_unique`: `(api_key_id, trace_id, content_hash)`
 
 **Indexes:**
 - `check_feedback_trace_id_idx`: `(trace_id)`

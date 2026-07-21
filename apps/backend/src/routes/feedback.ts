@@ -26,6 +26,11 @@
  * per-key feedback budget lives in the service (counted on check_feedback's
  * own index — NOT audit_log, which is F29's hot path). A fully-over-budget
  * batch returns 429 with Retry-After on both verbs.
+ *
+ * Idempotency (2026-07-21): identical resubmissions of the same row — most
+ * concretely, a link-preview unfurler or URL sanitizer prefetching a GET
+ * /feedback URL — dedupe server-side (feedback.service.ts) and return the
+ * original row (`dup: true`) instead of inserting a duplicate.
  */
 
 import { Hono } from "hono";
@@ -96,7 +101,9 @@ function renderFeedbackResultsHtml(results: FeedbackRowResult[]): string {
   const lines = results
     .map((r) =>
       r.ok
-        ? `<li>recorded &mdash; feedback id <code>${esc(r.feedbackId ?? "")}</code> for recipe <code>${esc(r.traceId)}</code></li>`
+        ? r.dup
+          ? `<li>already recorded &mdash; feedback id <code>${esc(r.feedbackId ?? "")}</code> for recipe <code>${esc(r.traceId)}</code></li>`
+          : `<li>recorded &mdash; feedback id <code>${esc(r.feedbackId ?? "")}</code> for recipe <code>${esc(r.traceId)}</code></li>`
         : `<li>error &mdash; ${esc(r.error ?? "unknown error")}</li>`,
     )
     .join("\n      ");

@@ -41,8 +41,18 @@
  * audit_log query path. Defaults 200/hour, 1000/day; env overrides
  * FEEDBACK_RATE_LIMIT_HOURLY / FEEDBACK_RATE_LIMIT_DAILY;
  * DISABLE_RATE_LIMIT=true bypasses (test environments).
+ *
+ * Idempotency (2026-07-21, mirrors trace.service.ts's claim_text_hash):
+ * agent-origin rows are hashed (contentHash, below) over the validated,
+ * RESOLVED row and inserted with ON CONFLICT DO NOTHING on
+ * (api_key_id, trace_id, content_hash) — an identical resubmission (retry,
+ * a link-preview unfurler prefetching a GET /feedback URL) returns the
+ * original row (`dup: true`) instead of duplicating it. A conflicting row
+ * never consumes budget beyond the COUNT it already contributed the first
+ * time it landed.
  */
 
+import crypto from "node:crypto";
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import {
@@ -110,6 +120,12 @@ export interface FeedbackRowResult {
   feedbackId?: string;
   /** Present on rejection — validation, ACL, or budget. */
   error?: string;
+  /** True only when this row conflicted with an existing identical row
+   *  (same api_key_id + trace_id + content_hash) and the returned
+   *  feedbackId names the ORIGINAL row, not a new insert. Absent (not
+   *  `false`) on a fresh insert, so existing consumers see identical shapes
+   *  for the common case. */
+  dup?: boolean;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -314,6 +330,40 @@ export function withCheckDefaults(
   };
 }
 
+// ── Idempotency (pure — Layer 1 tested) ──────────────────────────────────────
+
+/**
+ * sha256 hex over a canonical JSON array of the validated, RESOLVED row
+ * values, in a fixed field order (see module header). Uses the resolved
+ * full trace UUID (post short-id resolution) so a short-id resubmission and
+ * a full-UUID resubmission of the same row dedupe together. Missing fields
+ * serialize as `null` (JSON.stringify already does this for `undefined` in
+ * an array position only via replacer quirks, so every field is explicitly
+ * coalesced to `null` here rather than relying on that).
+ */
+export function computeFeedbackContentHash(
+  resolvedTraceId: string,
+  row: ValidatedFeedbackRow,
+): string {
+  const canonical = JSON.stringify([
+    resolvedTraceId,
+    row.kind,
+    row.impact,
+    row.disposition,
+    row.storyFulfilled,
+    row.story,
+    row.note ?? null,
+    row.agentId ?? null,
+    row.sessionId ?? null,
+    row.topSimilarity ?? null,
+    row.model ?? null,
+    row.harness ?? null,
+    row.harnessVersion ?? null,
+    row.relatedTraceIds ?? null,
+  ]);
+  return crypto.createHash("sha256").update(canonical).digest("hex");
+}
+
 // ── Ingestion ────────────────────────────────────────────────────────────────
 
 export interface IngestFeedbackParams {
@@ -454,6 +504,12 @@ export async function ingestFeedback(
       results.push({ index, ok: false, traceId: row.traceId, error: TRACE_NOT_READABLE });
       continue;
     }
+    // Idempotency: hash the validated+resolved row, ON CONFLICT return the
+    // existing row. Only agent rows go through this path (apiKeyId is always
+    // set here) — the human-origin re-filing write path (trace-move.service.ts)
+    // is a separate insert and stays untouched, so its rows keep content_hash
+    // NULL.
+    const contentHash = computeFeedbackContentHash(effectiveTraceId, row);
     const inserted = await params.db
       .insert(checkFeedback)
       .values({
@@ -472,6 +528,10 @@ export async function ingestFeedback(
         harnessVersion: row.harnessVersion,
         relatedTraceIds: row.relatedTraceIds,
         sessionId: row.sessionId,
+        contentHash,
+      })
+      .onConflictDoNothing({
+        target: [checkFeedback.apiKeyId, checkFeedback.traceId, checkFeedback.contentHash],
       })
       .returning({ id: checkFeedback.id });
     const feedbackId = inserted[0]?.id;
@@ -480,7 +540,23 @@ export async function ingestFeedback(
       // prefix) so the caller learns the canonical id for future rows.
       results.push({ index, ok: true, traceId: effectiveTraceId, feedbackId });
     } else {
-      results.push({ index, ok: false, traceId: effectiveTraceId, error: "insert failed" });
+      // Either a genuine conflict (identical resubmission) or an insert
+      // failure — distinguish by looking up the row the conflict points at.
+      const existing = await params.db
+        .select({ id: checkFeedback.id })
+        .from(checkFeedback)
+        .where(
+          sql`${checkFeedback.apiKeyId} = ${apiKeyId}::uuid
+            AND ${checkFeedback.traceId} = ${effectiveTraceId}::uuid
+            AND ${checkFeedback.contentHash} = ${contentHash}`,
+        )
+        .limit(1);
+      const existingId = existing[0]?.id;
+      if (existingId) {
+        results.push({ index, ok: true, traceId: effectiveTraceId, feedbackId: existingId, dup: true });
+      } else {
+        results.push({ index, ok: false, traceId: effectiveTraceId, error: "insert failed" });
+      }
     }
   }
 
@@ -491,10 +567,14 @@ export async function ingestFeedback(
 export function summarizeFeedbackResults(results: FeedbackRowResult[]): string {
   if (results.length === 0) return "";
   const okCount = results.filter((r) => r.ok).length;
-  const lines = [`Feedback: ${okCount}/${results.length} row(s) recorded.`];
+  const dupCount = results.filter((r) => r.ok && r.dup).length;
+  const dupSuffix = dupCount > 0 ? ` (${dupCount} already recorded — identical resubmission)` : "";
+  const lines = [`Feedback: ${okCount}/${results.length} row(s) recorded${dupSuffix}.`];
   for (const r of results) {
     if (!r.ok) {
       lines.push(`  - row ${r.index + 1} (${r.traceId || "no trace_id"}): ${r.error}`);
+    } else if (r.dup) {
+      lines.push(`  - row ${r.index + 1} (${r.traceId}): already recorded — feedback id ${r.feedbackId}`);
     }
   }
   return lines.join("\n");

@@ -30,6 +30,12 @@
  *
  * FKs cascade on trace/feedback deletion so trace-delete cleanup doesn't
  * need to know about these tables.
+ *
+ * Idempotency (2026-07-21, mirrors traces.claim_text_hash — see
+ * trace.service.ts): content_hash + the dedup unique index below let
+ * identical resubmissions (retries, link-preview unfurlers prefetching a
+ * GET /feedback URL) land on ON CONFLICT DO NOTHING and return the original
+ * row instead of duplicating it.
  */
 
 import {
@@ -104,6 +110,14 @@ export const checkFeedback = claimnetSchema.table(
      *  (§Validating the UVP Layer 2). */
     relatedTraceIds: uuid("related_trace_ids").array(),
 
+    /** sha256 hex over the validated row's content (fixed field order — see
+     *  feedback.service.ts's contentHash construction). Drives the
+     *  check_feedback_dedup_unique index below. Nullable: pre-migration rows
+     *  are exempt, and Postgres unique indexes treat NULLs as distinct so
+     *  NULL never collides with itself. Human-origin rows (actor_user_id
+     *  set) never populate this column — see the index comment. */
+    contentHash: text("content_hash"),
+
     /** Server-stamped — the true ingestion time (v1's append-time ambiguity
      *  fix). */
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -120,6 +134,11 @@ export const checkFeedback = claimnetSchema.table(
       "check_feedback_one_actor",
       sql`(${t.apiKeyId} IS NULL) <> (${t.actorUserId} IS NULL)`,
     ),
+    // Identical agent resubmission (retry, prefetching link-preview bot,
+    // re-clicked URL) lands on the conflict and returns the original row;
+    // human-origin rows (NULL api_key_id) are deliberately excluded — each
+    // human correction is its own event.
+    unique("check_feedback_dedup_unique").on(t.apiKeyId, t.traceId, t.contentHash),
   ],
 );
 

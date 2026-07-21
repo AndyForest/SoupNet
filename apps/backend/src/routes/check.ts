@@ -591,7 +591,9 @@ function renderFeedbackHtml(results?: FeedbackRowResult[]): string {
   const lines = results
     .map((r) =>
       r.ok
-        ? `<li>recorded &mdash; feedback id <code>${esc(r.feedbackId ?? "")}</code> for recipe <code>${esc(r.traceId)}</code></li>`
+        ? r.dup
+          ? `<li>already recorded &mdash; feedback id <code>${esc(r.feedbackId ?? "")}</code> for recipe <code>${esc(r.traceId)}</code></li>`
+          : `<li>recorded &mdash; feedback id <code>${esc(r.feedbackId ?? "")}</code> for recipe <code>${esc(r.traceId)}</code></li>`
         : `<li>error &mdash; ${esc(r.error ?? "unknown error")}</li>`,
     )
     .join("\n      ");

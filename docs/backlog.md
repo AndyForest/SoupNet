@@ -397,6 +397,10 @@ Recorded so it isn't re-proposed. The `trace.moved` audit row already reconstruc
 
 ## Unsorted
 
+### `[IMPL]` workspaces.test.ts race: "(3) after expire-now …" asserts expired-not-yet-reaped while the reaper is live
+
+Observed 2026-07-21 (feat/feedback-web-surface gate run; the failing assert is `workspaces.test.ts:318`, `integ.expiredNotYetReaped.some(...)`): the test expires a workspace with `expire-now` and then asserts `/health/integrity` still reports it as expired-not-yet-reaped — but the reaper runs in-process during test:ci, so if it fires inside that window the book is already reaped and the assert reads `false`. Intermittent by construction: the test asserts an intermediate state without pausing the process that consumes it. Fix options: disable/pause the reaper for this test, stub its interval long, or assert the disjunction (expired-not-yet-reaped OR already-gone) since both prove expiry took effect. Unrelated to the feedback-surface work that surfaced it — the same tree passed the identical gate twice earlier the same day.
+
 ### `[IMPL]` test:ci flake: vitest worker fork "exited unexpectedly" after all tests pass
 
 Observed 2026-07-21 (feat/feedback-web-surface, first gate run): 924/924 tests passed but vitest reported "Unhandled Error: [vitest-pool]: Worker forks emitted error / Worker exited unexpectedly" at teardown, which fails the gate; the immediate re-run passed clean with an identical working tree. No test failed in either run, so this is a teardown-phase crash (open handle, OOM, or child-process race) in one of the integration files, not a logic failure. If it recurs, re-run with `--reporter=verbose` to identify which worker/file dies post-pass before treating any green-tests-red-gate run as real.
