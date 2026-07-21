@@ -36,12 +36,12 @@
  * deferred to the forward-compat section below rather than emitted as a bare
  * group id with no book to name it (corpus recipe b7c56886).
  *
- * FORWARD-COMPATIBILITY (do not implement here): when ephemeral workspaces land
- * (eval-reset contract step 3, the tombstone-at-expiry design in
- * eval-reset-contract-response.md item (b1)), this response gains an "expired,
- * not yet reaped" section — books past their TTL that the reaper has not yet
- * physically deleted — so a validity gate asserts a clean scope, orphans AND
- * un-reaped tombstones, in one read.
+ * EXPIRED-NOT-YET-REAPED (implemented with the ephemeral-workspaces tier): the
+ * response carries an `expiredNotYetReaped` section — born-ephemeral books in
+ * the key's read scope whose TTL has passed (they are already tombstoned:
+ * invisible to search and refusing deposits) but the 5-minute reaper has not
+ * yet physically deleted. A validity gate asserts a clean scope — orphans AND
+ * un-reaped tombstones both zero — in one read; `summary.clean` folds it in.
  *
  * Performance: one set-based query — NOT EXISTS anti-joins scoped by `group_id`
  * IN the key's read set, aggregated per book, LEFT JOINed back onto the full
@@ -203,6 +203,41 @@ async function readIntegrity(
   }));
 }
 
+/** Born-ephemeral books in the key's read scope whose TTL has passed but the
+ *  reaper hasn't yet physically deleted. The scan is FROM ephemeral_books, so
+ *  it only ever surfaces books with a real birth record. */
+interface ExpiredBook {
+  recipeBookId: string;
+  slug: string;
+  name: string;
+  expiresAt: string;
+}
+
+async function readExpiredNotYetReaped(
+  db: ReturnType<typeof getDb>,
+  readGroupIds: string[],
+): Promise<ExpiredBook[]> {
+  if (readGroupIds.length === 0) return [];
+  const groupIdArray = sql`ARRAY[${sql.join(
+    readGroupIds.map((g) => sql`${g}::uuid`),
+    sql`,`,
+  )}]`;
+  const rows = await db.execute(sql`
+    SELECT g.id AS recipe_book_id, g.slug, g.name, eb.expires_at
+    FROM claimnet.ephemeral_books eb
+    JOIN claimnet.groups g ON g.id = eb.group_id
+    WHERE eb.expires_at <= NOW()
+      AND eb.group_id = ANY(${groupIdArray}::uuid[])
+    ORDER BY g.slug ASC
+  `);
+  return (rows as unknown as Array<{ recipe_book_id: string; slug: string; name: string; expires_at: string }>).map((r) => ({
+    recipeBookId: r.recipe_book_id,
+    slug: r.slug,
+    name: r.name,
+    expiresAt: new Date(r.expires_at).toISOString(),
+  }));
+}
+
 // GET /health/integrity
 // Authorization: Bearer <api-key>  OR  ?key=<api-key>. No JWT — agent surface.
 integrity.get("/", integrityIpRateLimit, integrityPerKeyRateLimit, async (c) => {
@@ -219,6 +254,7 @@ integrity.get("/", integrityIpRateLimit, integrityPerKeyRateLimit, async (c) => 
   }
 
   const books = await readIntegrity(db, validated.readGroupIds);
+  const expiredNotYetReaped = await readExpiredNotYetReaped(db, validated.readGroupIds);
 
   const totalSources = books.reduce((n, b) => n + b.orphanedSources, 0);
   const totalChunks = books.reduce((n, b) => n + b.orphanedChunks, 0);
@@ -228,14 +264,21 @@ integrity.get("/", integrityIpRateLimit, integrityPerKeyRateLimit, async (c) => 
     ok: true,
     data: {
       books,
+      expiredNotYetReaped,
       summary: {
         booksScanned: books.length,
         orphanedSources: totalSources,
         orphanedChunks: totalChunks,
         orphanedVectors: totalVectors,
-        // The affirmative a validity gate reads: index is consistent across
-        // the whole scope. True iff every orphan count is zero.
-        clean: totalSources === 0 && totalChunks === 0 && totalVectors === 0,
+        expiredNotYetReaped: expiredNotYetReaped.length,
+        // The affirmative a validity gate reads: index is consistent AND no
+        // tombstoned-but-un-reaped books linger in scope. True iff every orphan
+        // count is zero and no expired ephemeral book remains.
+        clean:
+          totalSources === 0 &&
+          totalChunks === 0 &&
+          totalVectors === 0 &&
+          expiredNotYetReaped.length === 0,
       },
     },
   });

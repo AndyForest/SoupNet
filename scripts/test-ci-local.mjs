@@ -188,6 +188,9 @@ async function main() {
         DEV_PASSWORD: "ci-test-password",
         ALLOW_AUTO_SETUP: "true",
         DISABLE_RATE_LIMIT: "true",
+        // Mirrors ci.yml's backend spawn — enables /workspaces so the
+        // ephemeral-workspace integration tests can create/expire/reap.
+        ALLOW_BENCHMARK_OPS: "true",
         PORT: String(CI_PORT),
         // Align the backend's self-knowledge with the port it listens on, so
         // surfaces that render absolute URLs (briefing, OAuth metadata, etc.)

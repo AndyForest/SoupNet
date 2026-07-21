@@ -29,6 +29,10 @@ export const QUEUES = {
   // Ranking
   RANKING_RECOMPUTE: "ranking.recompute",
 
+  // Ephemeral workspaces — reaper (eval-reset destructive tier). Cron every
+  // 5 min; physically deletes expired born-ephemeral books. The only deleter.
+  EPHEMERAL_REAP: "ephemeral.reap",
+
   // Payload fulfillment (indexed + air-gapped modes)
   PAYLOAD_FULFILLMENT: "payload.fulfillment",
   CLIENT_FULFILLMENT_RETRY: "client.fulfillment.retry",

@@ -4,7 +4,10 @@ import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 export interface TraceDeleteOptions {
   db: PostgresJsDatabase;
   traceId: string;
-  actorUserId: string;
+  /** The user on whose behalf the delete runs — used only by the CALLER for
+   *  its audit row (this function writes none). null for system-initiated
+   *  cascades with no human actor, e.g. the ephemeral-workspace reaper. */
+  actorUserId: string | null;
   reason?: string | undefined;
 }
 

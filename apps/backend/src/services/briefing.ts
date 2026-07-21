@@ -27,6 +27,7 @@ import type {
   BriefingUser,
 } from "@soupnet/domain";
 import { fetchBriefingExemplars } from "./briefing-exemplars";
+import { listTombstonedGroupIds } from "./ephemeral-workspace.service";
 import { writeAudit } from "./audit-log.service";
 import {
   RECIPE_LOOKUP_MAX_IDS,
@@ -230,6 +231,19 @@ async function resolveScope(
   const keyRow = (keyRows as unknown as KeyRow[])[0];
   if (!keyRow) {
     return { error: { ok: false, code: "key_not_found" } };
+  }
+
+  // Tombstone seam (audit F57): a born-ephemeral book past its TTL leaves the
+  // briefing's recipe-book list, member counts, and exemplar scope the instant
+  // expiry passes — the same scope-resolution exclusion the check path applies,
+  // so a briefing never surfaces a book a check can no longer read or write.
+  const tomb = await listTombstonedGroupIds(
+    db,
+    [...new Set([...keyRow.read_group_ids, ...keyRow.write_group_ids])],
+  );
+  if (tomb.size > 0) {
+    keyRow.read_group_ids = keyRow.read_group_ids.filter((g) => !tomb.has(g));
+    keyRow.write_group_ids = keyRow.write_group_ids.filter((g) => !tomb.has(g));
   }
 
   // User identity (display name + email) for the "## Your user" line.

@@ -29,6 +29,7 @@ import { handleVectorCheck } from "./jobs/vector-check";
 import { handleVectorApiCall } from "./jobs/vector-api-call";
 import { handleChunkingJob } from "./jobs/chunking";
 import { handleVectoringJob } from "./jobs/vectoring";
+import { handleEphemeralReap } from "./jobs/ephemeral-reap";
 
 /** Build a pg-boss instance from the same env vars as the backend's db.ts. */
 function createBoss(): PgBoss {
@@ -92,6 +93,7 @@ export async function startEmbeddingWorker(
   await boss.createQueue(QUEUES.VECTOR_API_CALL);
   await boss.createQueue(QUEUES.EMBEDDINGS_CHUNK);
   await boss.createQueue(QUEUES.EMBEDDINGS_VECTOR);
+  await boss.createQueue(QUEUES.EPHEMERAL_REAP);
 
   // Cleanup orphaned schedules from pre-refactor worker.
   try {
@@ -171,6 +173,15 @@ export async function startEmbeddingWorker(
         await handleVectoringJob(job, db);
       }
     },
+  );
+
+  // Ephemeral workspace reaper (eval-reset destructive tier) — cron every 5
+  // minutes. Always registered; harmless (zero-cost scan) when the feature flag
+  // is off. See jobs/ephemeral-reap.ts.
+  await boss.schedule(QUEUES.EPHEMERAL_REAP, "*/5 * * * *", {});
+  await boss.work(
+    QUEUES.EPHEMERAL_REAP,
+    async () => { await handleEphemeralReap(db); },
   );
 
   console.warn("[embedding-worker] All processors registered");

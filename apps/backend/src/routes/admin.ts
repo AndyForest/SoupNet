@@ -16,6 +16,8 @@ import { setUserPremium } from "../services/user-premium.service";
 import { sendWaitlistApprovedEmail } from "../services/email.service";
 import { normalizeEmail } from "../lib/normalize-email";
 import { rateLimit } from "../middleware/rate-limit";
+import { writeAudit } from "../services/audit-log.service";
+import { repairOrphanedEmbeddings } from "../services/integrity-repair.service";
 import type { AppEnv } from "../types";
 
 // Rate limit admin invitations: 20 per hour per user
@@ -829,6 +831,29 @@ admin.get("/invitations", async (c) => {
     LIMIT 100
   `);
   return c.json({ ok: true, data: rows });
+});
+
+// POST /admin/integrity/repair — sweep orphaned embedding rows (eval-reset
+// contract item b2). The destructive twin of GET /health/integrity. Admin-JWT
+// only (this router is requireSystem-gated); NOT flag-gated — it repairs
+// dangling index rows, never user content, so admin + audit suffices (audit
+// F64). Race-safe: see services/integrity-repair.service.ts.
+admin.post("/integrity/repair", async (c) => {
+  const user = c.get("user");
+  const db = getDb();
+  const result = await repairOrphanedEmbeddings(db);
+  await writeAudit(db, {
+    actorUserId: user.id,
+    action: "integrity.repaired",
+    targetType: "system",
+    metadata: {
+      booksRepaired: result.summary.booksRepaired,
+      orphanedSourcesDeleted: result.summary.orphanedSourcesDeleted,
+      orphanedChunksDeleted: result.summary.orphanedChunksDeleted,
+      orphanedVectorsDeleted: result.summary.orphanedVectorsDeleted,
+    },
+  });
+  return c.json({ ok: true, data: result });
 });
 
 export { admin as adminRoutes };

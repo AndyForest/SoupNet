@@ -27,6 +27,7 @@ import {
 import { getDb } from "../db";
 import { parseEvidenceMarkdown } from "./evidence-parser";
 import { validateKey } from "./api-key.service";
+import { listTombstonedGroupIds } from "./ephemeral-workspace.service";
 import {
   enqueueEmbedding,
   getOrCreateCachedVector,
@@ -382,10 +383,26 @@ export async function submitAndSearch(
 
   const { keyId, userId, readGroupIds, writeGroupIds, defaultWriteGroupId, keyType, oauthClientId } = keyResult;
 
-  // Resolve write target group (slug or ID, within key's write groups)
+  // Tombstone seam (eval-reset destructive tier, audit F57): a born-ephemeral
+  // book past its TTL leaves read scope AND refuses deposits, enforced HERE
+  // where scope resolves from the key — so a deposit racing expiry loses, and
+  // the book is invisible to search the instant expiry passes (before the
+  // reaper physically deletes it). Durable books are never tombstoned (no
+  // ephemeral_books row). Excluding tombstoned ids from writeGroupIds makes a
+  // deposit into an expired book fail with the EXISTING "not writable" shape —
+  // no new error class, no oracle.
+  const tombstoned = await listTombstonedGroupIds(
+    db,
+    [...new Set([...readGroupIds, ...writeGroupIds])],
+  );
+  const liveWriteGroupIds = tombstoned.size > 0
+    ? writeGroupIds.filter((g) => !tombstoned.has(g))
+    : writeGroupIds;
+
+  // Resolve write target group (slug or ID, within key's LIVE write groups)
   let groupId: string;
   if (params.targetGroup) {
-    const resolved = await resolveGroupSlug(db, params.targetGroup, writeGroupIds);
+    const resolved = await resolveGroupSlug(db, params.targetGroup, liveWriteGroupIds);
     if (!resolved) {
       return {
         error: `Group "${params.targetGroup}" not found or not writable with this key.`,
@@ -397,20 +414,25 @@ export async function submitAndSearch(
     groupId = defaultWriteGroupId;
   }
 
-  if (!groupId || !writeGroupIds.includes(groupId)) {
+  if (!groupId || !liveWriteGroupIds.includes(groupId)) {
     return {
       error: "API key has no write access to its default group.",
       results: [], totalResults: 0, currentPage: page, totalPages: 0,
     };
   }
 
-  // Resolve read scope (optional per-call narrowing of readable groups)
-  let effectiveReadGroupIds = readGroupIds;
+  // Resolve read scope (optional per-call narrowing of readable groups),
+  // starting from the LIVE (non-tombstoned) read set.
+  let effectiveReadGroupIds = tombstoned.size > 0
+    ? readGroupIds.filter((g) => !tombstoned.has(g))
+    : readGroupIds;
   if (params.readGroups) {
     const slugs = params.readGroups.split(",").map((s) => s.trim()).filter(Boolean);
     const resolved: string[] = [];
+    // Resolve narrowing slugs against the LIVE read set so a caller cannot
+    // re-admit a tombstoned book via read_recipe_books.
     for (const slug of slugs) {
-      const id = await resolveGroupSlug(db, slug, readGroupIds);
+      const id = await resolveGroupSlug(db, slug, effectiveReadGroupIds);
       if (id) resolved.push(id);
     }
     if (resolved.length > 0) effectiveReadGroupIds = resolved;

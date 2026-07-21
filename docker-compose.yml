@@ -52,6 +52,7 @@ services:
       TEST_USERNAME: ${TEST_USERNAME:-}
       TEST_PASSWORD: ${TEST_PASSWORD:-}
       ALLOW_AUTO_SETUP: "true"  # Docker dev env — allow auto-setup despite NODE_ENV=production
+      ALLOW_BENCHMARK_OPS: "true"  # Docker dev env — enables /workspaces (ephemeral-workspace eval tier). Prod task def must NOT set this (default off).
       DISABLE_RATE_LIMIT: "true"  # Dev env — tests make many rapid requests (matches CI)
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       # Embedding provider — "gemini" (real API), "stub" (deterministic fake

@@ -174,6 +174,14 @@ export async function registerUser(
   const org = orgRows[0];
   if (!org) throw new Error("Failed to create organization");
 
+  // Pin the personal org pointer. This is the org agent-created ephemeral
+  // workspaces attach to (eval-reset destructive tier); recording it at
+  // creation time keeps the choice unambiguous for a user who later owns
+  // several orgs, and the 0033 backfill sets it for pre-existing users.
+  await db.execute(sql`
+    UPDATE claimnet.users SET personal_organization_id = ${org.id}::uuid WHERE id = ${user.id}::uuid
+  `);
+
   // Create default group in that org
   const groupRows = await db.insert(groups).values({
     name: "Personal",

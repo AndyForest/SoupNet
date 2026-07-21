@@ -127,7 +127,7 @@ function mermaidType(type: string): string {
 // the index listed 20). Fail-loud makes that drift structurally impossible to
 // ship; recipe 9d43fe77.
 const tableGroups: Record<string, string[]> = {
-  "Identity & Access": ["users", "organizations", "groups", "group_members"],
+  "Identity & Access": ["users", "organizations", "groups", "group_members", "ephemeral_books"],
   "Core Content": ["traces", "evidence", "references", "uploads"],
   "Linking": ["trace_evidence", "trace_references", "evidence_references"],
   "Feedback & Reactions": [

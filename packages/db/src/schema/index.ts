@@ -10,6 +10,7 @@
  *   users.ts               — user identity and authentication
  *   organizations.ts       — multi-tenant organization containers
  *   groups.ts              — groups and group membership
+ *   ephemeral-books.ts     — born-ephemeral workspace birth records (TTL + reaper)
  *   evidence.ts            — evidence entries (interpretations)
  *   references.ts          — raw quotes + source citations
  *   links.ts               — N:N linking tables (trace↔evidence, trace↔reference, evidence↔reference)
@@ -24,6 +25,7 @@ export * from "./traces";
 export * from "./users";
 export * from "./organizations";
 export * from "./groups";
+export * from "./ephemeral-books";
 export * from "./evidence";
 export * from "./references";
 export * from "./links";

@@ -26,6 +26,7 @@
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { enrichResults } from "./result-enricher";
+import { excludeTombstoned } from "./ephemeral-workspace.service";
 import type { SearchResultItem } from "./trace.service";
 
 /** Hard cap on ids per lookup call. Routes reject above this; the briefing
@@ -110,7 +111,12 @@ export async function lookupRecipes(
 
   const foundById = new Map<string, RecipeLookupFound>();
 
-  if (validIds.length > 0 && readGroupIds.length > 0) {
+  // Tombstone seam (audit F57): drop born-ephemeral books past their TTL from
+  // the read scope, so a by-id read of a tombstoned book's trace resolves to
+  // the uniform not_found_or_unreadable marker like any out-of-scope id.
+  const liveReadGroupIds = await excludeTombstoned(db, readGroupIds);
+
+  if (validIds.length > 0 && liveReadGroupIds.length > 0) {
     // ACL is enforced IN the query: a trace outside the key's read scope is
     // never fetched, so it cannot leak through any downstream shape.
     const rows = await db.execute(sql`
@@ -128,7 +134,7 @@ export async function lookupRecipes(
       LEFT JOIN claimnet.groups g ON g.id = t.group_id
       LEFT JOIN claimnet.users u ON u.id = t.user_id
       WHERE t.id IN (${sql.join(validIds.map((id) => sql`${id}::uuid`), sql`, `)})
-        AND t.group_id IN (${sql.join(readGroupIds.map((id) => sql`${id}::uuid`), sql`, `)})
+        AND t.group_id IN (${sql.join(liveReadGroupIds.map((id) => sql`${id}::uuid`), sql`, `)})
     `);
 
     const traceRows = rows as unknown as TraceRow[];

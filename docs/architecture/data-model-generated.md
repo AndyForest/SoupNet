@@ -1,16 +1,16 @@
 # ClaimNet Data Model — Generated Reference
 
-> **Auto-generated** from Drizzle migration snapshot `0032_snapshot.json`.
+> **Auto-generated** from Drizzle migration snapshot `0033_snapshot.json`.
 > Do not edit by hand. Regenerate with: `npx tsx scripts/generate-data-model-docs.ts`
 >
-> Schema as of migration `0032_session_shown_and_feedback_session` (2026-07-18).
-> Tables: 28 | Schema: `claimnet`
+> Schema as of migration `0033_ephemeral_books_and_personal_org` (2026-07-21).
+> Tables: 29 | Schema: `claimnet`
 
 For design rationale, conventions, and context, see [data-model.md](data-model.md).
 
 ## Tables
 
-**Identity & Access:** [`users`](#claimnetusers) · [`organizations`](#claimnetorganizations) · [`groups`](#claimnetgroups) · [`group_members`](#claimnetgroup_members)
+**Identity & Access:** [`users`](#claimnetusers) · [`organizations`](#claimnetorganizations) · [`groups`](#claimnetgroups) · [`group_members`](#claimnetgroup_members) · [`ephemeral_books`](#claimnetephemeral_books)
 **Core Content:** [`traces`](#claimnettraces) · [`evidence`](#claimnetevidence) · [`references`](#claimnetreferences) · [`uploads`](#claimnetuploads)
 **Linking:** [`trace_evidence`](#claimnettrace_evidence) · [`trace_references`](#claimnettrace_references) · [`evidence_references`](#claimnetevidence_references)
 **Feedback & Reactions:** [`check_feedback`](#claimnetcheck_feedback) · [`check_feedback_stars`](#claimnetcheck_feedback_stars) · [`trace_reactions`](#claimnettrace_reactions) · [`session_shown`](#claimnetsession_shown)
@@ -139,6 +139,14 @@ erDiagram
         halfvec vector
         timestamptz created_at
         timestamptz updated_at
+    }
+
+    ephemeral_books {
+        uuid group_id PK
+        uuid created_by_key_id
+        uuid created_by_user_id
+        timestamptz expires_at
+        timestamptz created_at
     }
 
     evidence {
@@ -332,6 +340,7 @@ erDiagram
         timestamptz waitlisted_at
         text signup_reason
         timestamptz premium_at
+        uuid personal_organization_id
         jsonb preferences
         timestamptz created_at
         timestamptz updated_at
@@ -354,6 +363,7 @@ erDiagram
     embedding_chunks }o--|| embedding_sources : "embedding_source_id"
     embedding_chunks }o--|| embedding_chunk_strategies : "chunk_strategy_id"
     embedding_vectors }o--|| embedding_chunks : "embedding_chunk_id"
+    ephemeral_books }o--|| groups : "group_id"
     evidence_references }o--|| evidence : "evidence_id"
     evidence_references }o--|| references : "reference_id"
     group_members }o--|| groups : "group_id"
@@ -415,6 +425,7 @@ These are created by raw SQL in migration files and are not captured in the snap
 | `waitlisted_at` | `timestamptz` | YES |  |  |
 | `signup_reason` | `text` | YES |  |  |
 | `premium_at` | `timestamptz` | YES |  |  |
+| `personal_organization_id` | `uuid` | YES |  |  |
 | `preferences` | `jsonb` | NO | `'{}'::jsonb` |  |
 | `created_at` | `timestamptz` | NO | `now()` |  |
 | `updated_at` | `timestamptz` | NO | `now()` |  |
@@ -495,6 +506,25 @@ These are created by raw SQL in migration files and are not captured in the snap
 **Indexes:**
 - `group_members_group_id_idx`: `(group_id)`
 - `group_members_user_id_idx`: `(user_id)`
+
+---
+
+### `claimnet.ephemeral_books`
+
+| Column | Type | Nullable | Default | PK |
+|---|---|---|---|---|
+| `group_id` | `uuid` | NO |  | PK |
+| `created_by_key_id` | `uuid` | NO |  |  |
+| `created_by_user_id` | `uuid` | NO |  |  |
+| `expires_at` | `timestamptz` | NO |  |  |
+| `created_at` | `timestamptz` | NO | `now()` |  |
+
+**Foreign keys:**
+- `group_id` → `groups.id`
+
+**Indexes:**
+- `ephemeral_books_expires_at_idx`: `(expires_at)`
+- `ephemeral_books_created_by_key_id_idx`: `(created_by_key_id)`
 
 ---
 

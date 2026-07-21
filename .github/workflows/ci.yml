@@ -113,6 +113,7 @@ jobs:
           PORT: 3001
           ALLOW_AUTO_SETUP: "true"
           DISABLE_RATE_LIMIT: "true"
+          ALLOW_BENCHMARK_OPS: "true"  # enables /workspaces so the ephemeral-workspace integration tests can create/expire/reap
 
       - name: Seed CI system settings
         run: |

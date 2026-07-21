@@ -79,6 +79,17 @@ export const users = claimnetSchema.table(
     // See docs/planning/premium-llm-features.md.
     premiumAt: timestamp("premium_at", { withTimezone: true }),
 
+    // The user's personal owned organization — the one created first at
+    // registration/auto-setup (is_personal = true). Pinned as an authoritative
+    // pointer (rather than re-deriving from organizations.is_personal each time)
+    // so agent-created ephemeral workspaces have one unambiguous org to attach
+    // to even for a user who owns several orgs (security-audit-2026-07-21,
+    // operator answer to open question 3). Nullable + no cascade: it's a soft
+    // reference set after the org exists; backfilled for existing users to
+    // their oldest owned org. No FK to organizations to avoid a hard circular
+    // constraint with organizations.owner_id → users.id at insert time.
+    personalOrganizationId: uuid("personal_organization_id"),
+
     // User-level preferences (briefing cluster count, etc). Sparse JSONB —
     // stored object may contain only the keys the user has overridden; the
     // domain layer merges with defaults before use. Shape is validated by
