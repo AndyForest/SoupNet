@@ -34,7 +34,7 @@
     "clean": "find . -name 'node_modules' -not -path '*/.git/*' -prune -exec rm -rf {} + && find . -name 'dist' -not -path '*/.git/*' -prune -exec rm -rf {} +"
   },
   "devDependencies": {
-    "js-yaml": "4.3.0",
+    "js-yaml": "5.2.1",
     "puppeteer": "^24.42.0",
     "tsup": "^8.5.1",
     "typescript": "^5.7.0",
