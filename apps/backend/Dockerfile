@@ -69,6 +69,14 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3001
 
+# GIT_COMMIT — surfaced by GET /health/version so a benchmark runner can tell
+# whether the deployed stack is stale. Passed as a build arg (docker-compose /
+# `docker build --build-arg GIT_COMMIT=$(git rev-parse HEAD)`); baked to an env
+# var read at runtime. Falls back to "unknown" in the route when unset, so an
+# arg-less `docker build` still works.
+ARG GIT_COMMIT=unknown
+ENV GIT_COMMIT=$GIT_COMMIT
+
 COPY --from=builder /app/node_modules node_modules
 COPY --from=builder /app/apps/backend/dist apps/backend/dist
 COPY --from=builder /app/apps/backend/public apps/backend/public
