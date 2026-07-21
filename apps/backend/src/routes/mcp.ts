@@ -57,7 +57,7 @@ import { writeAudit } from "../services/audit-log.service";
 import { ClientSafeError, publicErrorMessage } from "../lib/client-safe-error";
 import { invalidKeyMessage } from "../lib/key-remediation";
 import type { RawFeedbackRow } from "../services/feedback.service";
-import { ingestFeedback, summarizeFeedbackResults } from "../services/feedback.service";
+import { ingestFeedback, summarizeFeedbackResults, withCheckDefaults } from "../services/feedback.service";
 
 // F47 (security-audit-2026-06-11): tool catch-alls surface only deliberate
 // ClientSafeError messages (validation, size caps, MIME — written for the
@@ -595,11 +595,9 @@ function createMcpServer(backendUrl: string): McpServer {
         if (feedback && feedback.length > 0) {
           const keyResult = await validateKey(db, apiKey);
           if (keyResult) {
-            const rows: RawFeedbackRow[] = feedback.map((row) => ({
-              ...(agent_id ? { agent_id } : {}),
-              ...(session_id ? { session_id } : {}),
-              ...row,
-            }));
+            const rows: RawFeedbackRow[] = feedback.map((row) =>
+              withCheckDefaults(row, { agentId: agent_id, sessionId: session_id }),
+            );
             const results = await ingestFeedback({
               db,
               apiKeyId: keyResult.keyId,

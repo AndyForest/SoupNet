@@ -387,4 +387,113 @@ describe.skipIf(!BASE)("feedback ingestion surfaces", () => {
     expect(text).toContain("Feedback: 1/2 row(s) recorded.");
     expect(text).toContain("not found or not readable");
   }, 30_000);
+
+  // ── GET /feedback (backup surface for web-only agents) ────────────────────
+  // The design gap this closes: a real agent hand-built
+  // `GET /feedback?key=...&trace_id=...&kind=check-feedback&...` and hit a
+  // 404 because only POST existed.
+
+  function feedbackQueryParams(apiKey: string, traceId: string, overrides: Record<string, string> = {}): URLSearchParams {
+    return new URLSearchParams({
+      key: apiKey,
+      trace_id: traceId,
+      kind: "check-feedback",
+      impact: "subtle",
+      disposition: "proceeded",
+      story_fulfilled: "yes",
+      story: "As a developer working on tests, I wanted coverage so that regressions surface.",
+      note: "GET integration test row",
+      ...overrides,
+    });
+  }
+
+  it("GET /feedback: 401 with no key at all", async () => {
+    const params = new URLSearchParams({ trace_id: traceA, kind: "check-feedback" });
+    const res = await fetch(`${BASE}/feedback?${params.toString()}`);
+    expect(res.status).toBe(401);
+  });
+
+  it("GET /feedback: 401 with an invalid key", async () => {
+    const params = feedbackQueryParams("not-a-real-key", traceA);
+    const res = await fetch(`${BASE}/feedback?${params.toString()}`, {
+      headers: { Accept: "application/json" },
+    });
+    expect(res.status).toBe(401);
+    const json = (await res.json()) as { ok: boolean; error?: string };
+    expect(json.ok).toBe(false);
+    expect(json.error).toContain("?key=");
+  });
+
+  it("GET /feedback: 400 with no trace_id or recipe_id", async () => {
+    const params = new URLSearchParams({ key: userA.apiKey, kind: "check-feedback" });
+    const res = await fetch(`${BASE}/feedback?${params.toString()}`, {
+      headers: { Accept: "application/json" },
+    });
+    expect(res.status).toBe(400);
+    const json = (await res.json()) as { ok: boolean; error?: string };
+    expect(json.ok).toBe(false);
+    expect(json.error).toContain("trace_id");
+  });
+
+  it("GET /feedback: 200 + row recorded with ?key= and format=json", async () => {
+    const params = feedbackQueryParams(userA.apiKey, traceA, { format: "json" });
+    const res = await fetch(`${BASE}/feedback?${params.toString()}`);
+    expect(res.status).toBe(200);
+    const contentType = res.headers.get("content-type") ?? "";
+    expect(contentType).toContain("application/json");
+    const json = (await res.json()) as { ok: boolean; data: { recorded: number; results: Array<{ ok: boolean; feedbackId?: string }> } };
+    expect(json.ok).toBe(true);
+    expect(json.data.recorded).toBe(1);
+    expect(json.data.results[0]?.ok).toBe(true);
+    expect(json.data.results[0]?.feedbackId).toBeTruthy();
+  });
+
+  it("GET /feedback: defaults to an HTML confirmation page without format=json", async () => {
+    const params = feedbackQueryParams(userA.apiKey, traceA);
+    const res = await fetch(`${BASE}/feedback?${params.toString()}`);
+    expect(res.status).toBe(200);
+    const contentType = res.headers.get("content-type") ?? "";
+    expect(contentType).toContain("text/html");
+    const html = await res.text();
+    expect(html).toContain("recorded");
+  });
+
+  it("GET /feedback: Accept: application/json negotiates JSON without format=json", async () => {
+    const params = feedbackQueryParams(userA.apiKey, traceA);
+    const res = await fetch(`${BASE}/feedback?${params.toString()}`, {
+      headers: { Accept: "application/json" },
+    });
+    const contentType = res.headers.get("content-type") ?? "";
+    expect(contentType).toContain("application/json");
+  });
+
+  it("GET /feedback: an invalid enum value surfaces a per-row error (request-level ok:false, matching POST)", async () => {
+    const params = feedbackQueryParams(userA.apiKey, traceA, { impact: "colossal", format: "json" });
+    const res = await fetch(`${BASE}/feedback?${params.toString()}`);
+    expect(res.status).toBe(400);
+    const json = (await res.json()) as { ok: boolean; data: { recorded: number; results: Array<{ ok: boolean; error?: string }> } };
+    expect(json.ok).toBe(false);
+    expect(json.data.recorded).toBe(0);
+    expect(json.data.results[0]?.ok).toBe(false);
+    expect(json.data.results[0]?.error).toContain("none | new | subtle | big | operational");
+  });
+
+  it("GET /feedback: Bearer header fallback works when no ?key= is present", async () => {
+    const params = new URLSearchParams({
+      trace_id: traceA,
+      kind: "check-feedback",
+      impact: "subtle",
+      disposition: "proceeded",
+      story_fulfilled: "yes",
+      story: "As a developer working on tests, I wanted Bearer fallback coverage.",
+      format: "json",
+    });
+    const res = await fetch(`${BASE}/feedback?${params.toString()}`, {
+      headers: { Authorization: `Bearer ${userA.apiKey}` },
+    });
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { ok: boolean; data: { recorded: number } };
+    expect(json.ok).toBe(true);
+    expect(json.data.recorded).toBe(1);
+  });
 });

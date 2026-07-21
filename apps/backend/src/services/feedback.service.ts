@@ -293,6 +293,27 @@ export function validateFeedbackRow(
   };
 }
 
+// ── Ride-along assembly ──────────────────────────────────────────────────────
+
+/**
+ * Merge a check-level agent_id/session_id default into a ride-along feedback
+ * row — the row's own value wins (spread order). Shared by both ride-along
+ * surfaces: check_recipe's `feedback` array (mcp.ts) and /check's
+ * `feedback_*` params (check.ts) — one assembly rule so a row riding a check
+ * inherits that check's identity the same way regardless of which surface
+ * carried it in.
+ */
+export function withCheckDefaults(
+  row: RawFeedbackRow,
+  defaults: { agentId?: string | undefined; sessionId?: string | undefined },
+): RawFeedbackRow {
+  return {
+    ...(defaults.agentId ? { agent_id: defaults.agentId } : {}),
+    ...(defaults.sessionId ? { session_id: defaults.sessionId } : {}),
+    ...row,
+  };
+}
+
 // ── Ingestion ────────────────────────────────────────────────────────────────
 
 export interface IngestFeedbackParams {
