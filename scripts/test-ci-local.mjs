@@ -122,7 +122,11 @@ function clearTsBuildInfo(root) {
   return removed;
 }
 
-async function waitForHealth(url, maxRetries = 20) {
+// 45s: cold-stack boot (fresh postgres + 34 migrations + bcrypt auto-setup +
+// pg-boss schema install) has tripped a 20s budget on the dev box at least
+// once (2026-07-22, error was swallowed pre-fix so cause is inferred); CI's
+// own wait in ci.yml is untouched — this only lengthens local patience.
+async function waitForHealth(url, maxRetries = 45) {
   for (let i = 0; i < maxRetries; i++) {
     try {
       const res = await fetch(`${url}/health`);
@@ -269,7 +273,11 @@ async function main() {
 
     console.log("\n=== CI tests passed! ===");
   } catch (err) {
+    // Print the cause — a gate that hides its failure reason costs a
+    // diagnosis round-trip every time it trips (found 2026-07-22 when a
+    // swallowed waitForHealth timeout looked like a silent test failure).
     console.error("\n=== CI tests FAILED ===");
+    console.error(err instanceof Error ? `${err.message}\n${err.stack}` : err);
     process.exitCode = 1;
   } finally {
     // 8. Tear down
