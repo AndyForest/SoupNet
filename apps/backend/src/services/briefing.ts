@@ -52,6 +52,10 @@ export interface BriefingOptions {
   /** Recipe ids (WT-3) to render in a "Requested recipes" section — same
    *  lookup service and ACL/marker semantics as GET /recipes. */
   recipeIds?: string[] | undefined;
+  /** Exemplar-selection mechanism (adaptive-briefing experiment arm, OFF by
+   *  default; no public surface sets it yet — the eval harness passes it
+   *  directly). See ExemplarFetchOptions.selection for semantics. */
+  selection?: "corpus-kmeans" | "goal-mmr" | undefined;
 }
 
 export interface BriefingComposeInput {
@@ -350,6 +354,7 @@ async function renderExemplars(
     ...(scope.options.filter !== undefined ? { filter: scope.options.filter } : {}),
     ...(scope.options.vectorStrategy !== undefined ? { vectorStrategy: scope.options.vectorStrategy } : {}),
     ...(scope.options.purpose !== undefined ? { purpose: scope.options.purpose } : {}),
+    ...(scope.options.selection !== undefined ? { selection: scope.options.selection } : {}),
   });
 
   // Trim undefined fields off mapContext before passing to the formatter so

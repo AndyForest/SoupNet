@@ -12,6 +12,7 @@ import { Hono } from "hono";
 import { getDb } from "../db";
 import type { AppEnv } from "../types";
 import { composeBriefing } from "../services/briefing";
+import { parseVerbosity, VERBOSITY_EXEMPLAR_K } from "@soupnet/domain";
 import { validateKey } from "../services/api-key.service";
 import { parseRecipeIds } from "../services/recipe-lookup.service";
 import { invalidKeyMessage } from "../lib/key-remediation";
@@ -43,6 +44,12 @@ briefing.get("/", async (c) => {
   const kParam = c.req.query("k");
   const k = kParam ? parseInt(kParam, 10) : undefined;
 
+  // Verbosity lever (2026-07-26): level → exemplar count. Explicit k (the
+  // pre-existing power param) wins; omitted verbosity leaves the briefing's
+  // preference-driven default untouched.
+  const verbosity = parseVerbosity(c.req.query("verbosity"));
+  const verbosityK = verbosity ? VERBOSITY_EXEMPLAR_K[verbosity] : undefined;
+
   // WT-3: purpose biases within-cluster exemplar choice; recipe_ids renders
   // a "Requested recipes" section (same service/ACL/markers as GET /recipes).
   const recipeIdsParam = c.req.query("recipe_ids");
@@ -54,7 +61,7 @@ briefing.get("/", async (c) => {
     backendUrl,
     frontendUrl,
     options: {
-      k: k && !Number.isNaN(k) ? k : undefined,
+      k: k && !Number.isNaN(k) ? k : verbosityK,
       axes: c.req.query("axes"),
       filter: c.req.query("filter"),
       vectorStrategy: c.req.query("strategy"),

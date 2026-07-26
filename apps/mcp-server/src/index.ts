@@ -21,6 +21,7 @@ import {
   EXT_TO_MIME,
   MCP_PARAM_DESCRIPTIONS,
   MCP_TOOL_DESCRIPTIONS,
+  VERBOSITY_LEVELS,
   buildCheckRecipeToolDescription,
   renderCheckResponseMarkdown,
 } from "@soupnet/domain";
@@ -53,6 +54,9 @@ server.tool(
   {
     recipe: z.string().describe(MCP_PARAM_DESCRIPTIONS.recipe),
     supporting_evidence: z.string().describe(MCP_PARAM_DESCRIPTIONS.supportingEvidence),
+    verbosity: z.enum(VERBOSITY_LEVELS).optional().describe(MCP_PARAM_DESCRIPTIONS.verbosity),
+    // Deprecated size levers — kept in schema so existing callers stay
+    // honored (mirrors routes/mcp.ts on the HTTP surface).
     clusters: z.number().optional().describe(MCP_PARAM_DESCRIPTIONS.clusters),
     max_chars: z.number().optional().describe(MCP_PARAM_DESCRIPTIONS.maxChars),
     decided_at: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.decidedAt),
@@ -94,7 +98,7 @@ server.tool(
     idempotentHint: false,
     openWorldHint: true,
   },
-  async ({ recipe, supporting_evidence, clusters, max_chars, decided_at, response_format, known_recipes, session_id, agent_id, synthesize, feedback, file }) => {
+  async ({ recipe, supporting_evidence, verbosity, clusters, max_chars, decided_at, response_format, known_recipes, session_id, agent_id, synthesize, feedback, file }) => {
     if (!apiKey) {
       return {
         content: [{ type: "text" as const, text: "Error: SOUPNET_API_KEY not configured. Get a key from your Soup.net dashboard." }],
@@ -134,6 +138,7 @@ server.tool(
         formData.set("key", apiKey);
         formData.set("trace", recipe);
         formData.set("ef", supporting_evidence);
+        if (verbosity) formData.set("verbosity", verbosity);
         if (clusters) formData.set("clusters", String(clusters));
         if (max_chars) formData.set("max_chars", String(max_chars));
         if (decided_at) formData.set("decided_at", decided_at);
@@ -158,6 +163,7 @@ server.tool(
         params.set("key", apiKey);
         params.set("trace", recipe);
         params.set("ef", supporting_evidence);
+        if (verbosity) params.set("verbosity", verbosity);
         if (clusters) params.set("clusters", String(clusters));
         if (max_chars) params.set("max_chars", String(max_chars));
         if (decided_at) params.set("decided_at", decided_at);
@@ -327,6 +333,7 @@ server.tool(
   {
     purpose: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.briefingPurpose),
     recipe_ids: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.briefingRecipeIds),
+    verbosity: z.enum(VERBOSITY_LEVELS).optional().describe(MCP_PARAM_DESCRIPTIONS.briefingVerbosity),
   },
   {
     title: "Get briefing",
@@ -334,7 +341,7 @@ server.tool(
     idempotentHint: true,
     openWorldHint: false,
   },
-  async ({ purpose, recipe_ids }) => {
+  async ({ purpose, recipe_ids, verbosity }) => {
     if (!apiKey) {
       return {
         content: [{ type: "text" as const, text: "Error: SOUPNET_API_KEY not configured. Get a key from your Soup.net dashboard." }],
@@ -345,6 +352,7 @@ server.tool(
       const params = new URLSearchParams();
       if (purpose) params.set("purpose", purpose);
       if (recipe_ids) params.set("recipe_ids", recipe_ids);
+      if (verbosity) params.set("verbosity", verbosity);
       const qs = params.toString();
       const res = await fetch(`${backendUrl}/briefing${qs ? `?${qs}` : ""}`, {
         headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },

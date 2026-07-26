@@ -12,7 +12,7 @@ import { getDb } from "../db";
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { validateKey } from "../services/api-key.service";
-import { HTML_ACCEPT_TYPES, renderCheckResponseMarkdown, fenceCheckResponseMarkdown } from "@soupnet/domain";
+import { HTML_ACCEPT_TYPES, renderCheckResponseMarkdown, fenceCheckResponseMarkdown, parseVerbosity } from "@soupnet/domain";
 import type { CheckResponseJson } from "@soupnet/domain";
 import type { Recipe } from "@soupnet/contracts";
 import { rateLimit, perKeyRateLimit, extractCheckRequestKey, getClientIp, hashApiKey } from "../middleware/rate-limit";
@@ -133,6 +133,10 @@ export const CHECK_PARAMS = [
   // silently losing it on the second submission (the class of bug the
   // CHECK_PARAMS header records). See docs/planning/premium-llm-features.md.
   { field: "synthesize", wire: "synthesize",         aliases: [],              roundTrip: "carry" },
+  // The one size lever (2026-07-26 verbosity ruling): low | medium | high,
+  // omitted = automatic. clusters/max_chars below are its deprecated
+  // predecessors — still honored so existing callers keep working.
+  { field: "verbosity",  wire: "verbosity",          aliases: [],              roundTrip: "carry-unless-expand" },
   { field: "clusters",   wire: "clusters",           aliases: [],              roundTrip: "carry-unless-expand" },
   { field: "maxChars",   wire: "max_chars",          aliases: [],              roundTrip: "carry-unless-expand" },
   { field: "page",       wire: "page",               aliases: [],              roundTrip: "override-only" },
@@ -190,14 +194,12 @@ export function readParams(get: (name: string) => string | undefined): PageParam
   return out as unknown as PageParams;
 }
 
-// Default max_chars for HTML responses when no clustering params are specified.
-// Produces ~3-5 compact exemplars. Agents can override via expand=true or explicit clusters/max_chars.
-const HTML_DEFAULT_MAX_CHARS = 3000;
-
-// Default clusters for JSON/MCP responses when no clustering params are specified.
-// 3 clusters surfaces diverse viewpoints without overwhelming context budgets.
-// max_chars overrides this when specified.
-const JSON_DEFAULT_CLUSTERS = 3;
+// When a caller specifies no size steer at all (no verbosity, clusters, or
+// max_chars), both HTML and JSON responses take the automatic verbosity path:
+// the internal "auto" sentinel flows to the ranking-config `autoK` lever
+// (ships "fixed" = 3 exemplars, the long-standing default; "adaptive" resolves
+// k from the similarity curve — flipped only by a golden-corpus ruling). See
+// docs/planning/response-verbosity-lever.md.
 
 /** Parse the known_recipes wire param (comma-separated recipe UUIDs) into a
  *  set. Rendering-only dedup — see the stub branches below. */
@@ -726,6 +728,7 @@ function renderPage(
               filter: r.claimText,
               trace: null,
               ef: null,
+              verbosity: undefined,
               clusters: undefined,
               maxChars: undefined,
               expand: undefined,
@@ -735,6 +738,7 @@ function renderPage(
               ...params,
               trace: r.claimText,
               ef: r.evidence[0]?.content || params.ef || "",
+              verbosity: undefined,
               clusters: undefined,
               maxChars: undefined,
               expand: undefined,
@@ -797,7 +801,7 @@ function renderPage(
     <h2>Similar recipes (${result.totalResults} found${result.clustered ? `, ${result.results.length} exemplars shown` : ""})</h2>
     ${result.clustered ? `<p>Clustered by similarity. Each exemplar represents a group.
       <a href="/check${buildQs(params, { expand: "true" })}">Show all</a>
-      ${!(params.clusters || params.maxChars) ? ` | <a href="/check${buildQs(params, { clusters: "10" })}">More exemplars</a>` : ""}
+      ${!(params.verbosity || params.clusters || params.maxChars) ? ` | <a href="/check${buildQs(params, { verbosity: "high" })}">More exemplars</a>` : ""}
       ${isCompact ? ` | <a href="/check${buildQs(params, { compact: "false" })}">Show all evidence</a>` : ""}
     </p>` : ""}
     <p>Sort:
@@ -974,11 +978,13 @@ function renderPage(
 
       <label for="read_groups">Search recipe books (comma-separated slugs &mdash; default: all)</label>
       <input type="text" id="read_groups" name="read_groups" placeholder="all recipe books" value="${esc(params.readGroups)}">
-      <label for="max_chars">Max response size (characters &mdash; auto-clusters to fit)</label>
-      <input type="number" id="max_chars" name="max_chars" placeholder="2000" value="${esc(params.maxChars)}">
-
-      <label for="clusters">Cluster count (reduce results to k exemplars)</label>
-      <input type="number" id="clusters" name="clusters" placeholder="5" value="${esc(params.clusters)}">
+      <label for="verbosity">Response detail (omit for automatic)</label>
+      <select id="verbosity" name="verbosity">
+        <option value=""${!params.verbosity ? " selected" : ""}>automatic</option>
+        <option value="low"${params.verbosity === "low" ? " selected" : ""}>low (~2-3 exemplars)</option>
+        <option value="medium"${params.verbosity === "medium" ? " selected" : ""}>medium (~5)</option>
+        <option value="high"${params.verbosity === "high" ? " selected" : ""}>high (~10)</option>
+      </select>
 
       <label for="mix">Mix traces (trace_id:weight, comma-separated)</label>
       <input type="text" id="mix" name="mix" placeholder="4821:1.0, 3102:0.5, 3450:-0.3">
@@ -1069,12 +1075,14 @@ async function handleCheck(
   // a bad or unreadable row only ever produces a per-row marker.
   const feedbackResults = await resolveRideAlongFeedback(getDb(), params);
 
-  // For HTML responses, default to clustered results unless explicitly expanded
-  // or the caller already specified clustering params.
+  // Default to clustered results unless explicitly expanded or the caller
+  // already gave a size steer. With no steer, the automatic verbosity path
+  // applies (internal "auto" sentinel — never a wire value).
   const isExpanded = params.expand === "true";
-  const hasExplicitClustering = !!(params.clusters || params.maxChars);
-  const useDefaultHtmlClustering = !jsonMode && !isExpanded && !hasExplicitClustering;
-  const useDefaultJsonClustering = jsonMode && !hasExplicitClustering;
+  const explicitVerbosity = parseVerbosity(params.verbosity);
+  const hasExplicitClustering = !!(explicitVerbosity || params.clusters || params.maxChars);
+  const useAutomaticVerbosity = !hasExplicitClustering && (jsonMode || !isExpanded);
+  const verbositySteer = explicitVerbosity ?? (useAutomaticVerbosity ? ("auto" as const) : undefined);
 
   // Convert uploaded file to image attachment if present
   let image: { buffer: Buffer; mimeType: string; filename: string } | undefined;
@@ -1119,16 +1127,9 @@ async function handleCheck(
       // distinguish stance). Related evidence is surfaced via discovery pipeline instead.
       sort: params.sort,
       page: params.page ? parseInt(params.page, 10) : undefined,
-      clusters: params.clusters
-        ? parseInt(params.clusters, 10)
-        : useDefaultJsonClustering
-          ? JSON_DEFAULT_CLUSTERS
-          : undefined,
-      maxChars: params.maxChars
-        ? parseInt(params.maxChars, 10)
-        : useDefaultHtmlClustering
-          ? HTML_DEFAULT_MAX_CHARS
-          : undefined,
+      clusters: params.clusters ? parseInt(params.clusters, 10) : undefined,
+      maxChars: params.maxChars ? parseInt(params.maxChars, 10) : undefined,
+      verbosity: verbositySteer,
       image,
       axes: params.axes,
       targetGroup: params.group,
@@ -1154,16 +1155,9 @@ async function handleCheck(
       filter: params.filter,
       sort: params.sort,
       page: params.page ? parseInt(params.page, 10) : undefined,
-      clusters: params.clusters
-        ? parseInt(params.clusters, 10)
-        : useDefaultJsonClustering
-          ? JSON_DEFAULT_CLUSTERS
-          : undefined,
-      maxChars: params.maxChars
-        ? parseInt(params.maxChars, 10)
-        : useDefaultHtmlClustering
-          ? HTML_DEFAULT_MAX_CHARS
-          : undefined,
+      clusters: params.clusters ? parseInt(params.clusters, 10) : undefined,
+      maxChars: params.maxChars ? parseInt(params.maxChars, 10) : undefined,
+      verbosity: verbositySteer,
       axes: params.axes,
       readGroups: params.readGroups,
     });

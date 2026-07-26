@@ -175,12 +175,12 @@ export const RELATED_EVIDENCE_IS_NEUTRAL = {
 
 export const RESPONSE_SIZE_CONTROL = {
   title: "Response size control",
-  text: `Results are clustered to 3 exemplars by default. Use max_chars or clusters to adjust:
-- max_chars=2000: tight budget, auto-clusters to ~3-5 exemplars
-- max_chars=5000: detailed, auto-clusters to ~8-12 exemplars
-- clusters=5: explicit control over how many exemplars to return
-max_chars overrides clusters when both are specified.
-Each exemplar shows how many similar recipes it represents (clusterSize).`,
+  text: `Results are clustered to a handful of exemplars. One lever adjusts how much comes back — verbosity:
+- verbosity=low: tight context (~2-3 exemplars)
+- verbosity=medium: balanced (~5 exemplars)
+- verbosity=high: fuller detail (~10 exemplars)
+- omitted: automatic — the server adapts the count to your results
+It steers response detail rather than enforcing a hard size cap, so counts are approximate. Each exemplar shows how many similar recipes it represents (clusterSize). The legacy clusters= and max_chars= parameters remain accepted but are deprecated in favor of verbosity.`,
 };
 
 export const GROUPS_GUIDE = {
@@ -551,7 +551,7 @@ ${mcpSetupSection}
 ${webSetupSection}
 
 ## How to check
-\`check_recipe\` accepts: \`recipe\` (the claim), \`supporting_evidence\` (warrant + data), and \`recipe_book\` (slug). Optional: \`axes\` (concept projection), \`clusters\`/\`max_chars\` (response size), and reference file attachments (images, PDF, audio, video) — see your tool schema for the exact file-input params. HTTP MCP also accepts an optional \`region.image_box\` with normalized \`{x0, y0, x1, y1}\` coordinates (0-1) to mark a specific area of an attached image — the embedding pipeline crops to that region plus padding, blurs the padding, and weights the marked area heavily; the original image is stored unmodified, so the region treatment can be redone later.
+\`check_recipe\` accepts: \`recipe\` (the claim), \`supporting_evidence\` (warrant + data), and \`recipe_book\` (slug). Optional: \`axes\` (concept projection), \`verbosity\` (response detail: low | medium | high, omit for automatic), and reference file attachments (images, PDF, audio, video) — see your tool schema for the exact file-input params. HTTP MCP also accepts an optional \`region.image_box\` with normalized \`{x0, y0, x1, y1}\` coordinates (0-1) to mark a specific area of an attached image — the embedding pipeline crops to that region plus padding, blurs the padding, and weights the marked area heavily; the original image is stored unmodified, so the region treatment can be redone later.
 
 Further optional params live in your tool schema, each doing what its one-line description says: \`session_id\` (returned on every check — pass it back and recipes you've already been shown collapse to id-stubs while results walk to unseen ones), \`known_recipes\` (client-declared ids you still hold — same id-stub rendering), \`decided_at\` (backfill the original date of a historical decision), \`response_format\` (markdown report or structured JSON), \`agent_id\` (mint your own id so your checks form a joinable lineage), and \`feedback\` (close the loop on earlier checks while making this one).
 
@@ -720,7 +720,7 @@ export const TIPS = [
   "References (quotes) must be raw and verifiable. Interpretation goes in the evidence text.",
   "Coverage strengthens when diverse evidence arrives from different agent sessions.",
   "Use the axes parameter for concept-axis projection — positions each result by similarity to two concepts you choose (see concept-axis section above).",
-  "Use max_chars when juggling multiple tools to control context usage.",
+  "Use verbosity=low when juggling multiple tools to control context usage; omit it for automatic sizing.",
 ];
 
 // ── MCP tool & parameter descriptions ───────────────────────────────────────
@@ -736,7 +736,8 @@ export const TIPS = [
 // surfaces can compose what they support: HTTP includes the file-attachment
 // sentence (file_url / file_base64); stdio omits it (uses a single `file`
 // param with a different shape). Param descriptions for the shared params
-// (recipe, supporting_evidence, clusters, max_chars) are also identical
+// (recipe, supporting_evidence, verbosity, and the deprecated clusters /
+// max_chars) are also identical
 // across both surfaces and live here. Surface-specific params (axes,
 // recipe_book, file_url, region, etc.) stay inline in the MCP files.
 
@@ -827,12 +828,28 @@ export const MCP_PARAM_DESCRIPTIONS = {
     "Supporting evidence for your recipe. Each entry: interpretation text, then '> direct quote', " +
     "then '-- source citation'. Separate entries with blank lines.",
 
+  /** The response-size lever (2026-07-26 verbosity ruling): one enum, omitted
+   *  = automatic. Matches the industry numeric→enum arc (OpenAI text.verbosity,
+   *  Anthropic effort, Gemini thinking_level) — a behavioral steer, never a
+   *  hard cap. Realization (exemplar count, evidence compactness) is
+   *  server-side and tunable; see docs/planning/response-verbosity-lever.md. */
+  verbosity:
+    "Response detail: low (~2-3 exemplars) | medium (~5) | high (~10). Omit for automatic — " +
+    "the server adapts to your results. A steer, not a hard cap.",
+
+  /** Deprecated legacy levers — kept in schema so existing callers stay
+   *  honored (the SDK strips unknown keys silently, which would recreate the
+   *  parameter-silently-ignored defect the verbosity ruling fixed). */
   clusters:
-    "Result cluster count (default 3). Use 5+ for discovery checks to surface diverse viewpoints. " +
-    "Overridden by max_chars.",
+    "Deprecated — use verbosity. Exact exemplar count, still honored (harness/sweep use).",
 
   maxChars:
-    "Target response size in characters — auto-clusters to fit. 2000 for tight context, 5000 for detail.",
+    "Deprecated — use verbosity. Approximate size target in characters, still honored.",
+
+  /** get_briefing verbosity — same enum, scaled to the briefing's exemplars. */
+  briefingVerbosity:
+    "Briefing detail: 'low' | 'medium' | 'high' — scales the corpus exemplar count. " +
+    "Omit for the default briefing.",
 
   /** Short form of CREATED_AT_DEFINITION (@soupnet/contracts — the canonical
    *  judgment-date source), phrased for the input side (backfilling). */

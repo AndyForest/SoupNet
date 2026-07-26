@@ -105,6 +105,41 @@ describe("MCP tool registrations — feedback session_id capture", () => {
   });
 });
 
+// Verbosity lever (2026-07-26 ruling, docs/planning/response-verbosity-lever.md):
+// one enum size steer on both MCP surfaces, omission = automatic. The legacy
+// clusters/max_chars params must STAY in the zod schemas — the SDK strips
+// unknown keys silently, so removing them would recreate the exact
+// parameter-silently-ignored defect the lever fixed (finding doc, 2026-07-26).
+describe("MCP tool registrations — verbosity lever", () => {
+  const stdioSource = readFileSync(
+    join(here, "..", "..", "..", "mcp-server", "src", "index.ts"),
+    "utf-8",
+  );
+
+  it("the HTTP MCP registers verbosity on check_recipe and get_briefing", () => {
+    const matches = mcpSource.match(/verbosity: z\.enum\(VERBOSITY_LEVELS\)\.optional\(\)/g) ?? [];
+    expect(matches.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("the stdio mirror registers verbosity on check_recipe and get_briefing", () => {
+    const matches = stdioSource.match(/verbosity: z\.enum\(VERBOSITY_LEVELS\)\.optional\(\)/g) ?? [];
+    expect(matches.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("legacy clusters/max_chars stay in both schemas — honored, not silently stripped", () => {
+    for (const source of [mcpSource, stdioSource]) {
+      expect(source).toContain("clusters: z.number().optional()");
+      expect(source).toContain("max_chars: z.number().optional()");
+    }
+  });
+
+  it("the MCP handler no longer injects an unconditional default cluster count", () => {
+    // The finding-doc defect: `clusters ?? MCP_DEFAULT_CLUSTERS` made the
+    // max_chars branch of resolveK unreachable from MCP.
+    expect(mcpSource).not.toContain("MCP_DEFAULT_CLUSTERS");
+  });
+});
+
 // Description budget (2026-07-06): tool/param descriptions are affordances;
 // teaching lives in the briefing. The pre-trim tools/list was ~18KB and spent
 // ~4.4k tokens of every connected conversation. These caps keep depth from
@@ -128,8 +163,12 @@ describe("MCP tool description budget", () => {
     // 4,300 → 4,400 (2026-07-17): sessionId gained the operator-directed
     // context-compaction hint (omit the token to refresh the session —
     // recipe 31d184df) with the prior total at 4,279.
+    // 4,400 → 4,650 (2026-07-26): the verbosity lever added two genuinely new
+    // params (check_recipe verbosity + get_briefing verbosity, operator-
+    // ratified design, response-verbosity-lever.md) while clusters/max_chars
+    // shrank to deprecation one-liners; prior total 4,391, new total ~4,590.
     const total = Object.values(all).reduce((n, s) => n + s.length, 0);
-    expect(total).toBeLessThanOrEqual(4400);
+    expect(total).toBeLessThanOrEqual(4650);
   });
 });
 
