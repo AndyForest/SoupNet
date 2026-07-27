@@ -23,7 +23,8 @@
  * See: docs/architecture/embedding-test-results.md for verification plan
  */
 
-import { maximalMarginalRelevance } from "@soupnet/domain";
+import { maximalMarginalRelevance, VERBOSITY_EXEMPLAR_K } from "@soupnet/domain";
+import type { VerbositySteer } from "@soupnet/domain";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -40,9 +41,21 @@ export interface ClusterResult {
 
 export interface ClusterParams {
   vectors: number[][]; // N vectors, each float array
-  k?: number | undefined; // explicit cluster count
-  maxChars?: number | undefined; // auto-k from character budget
-  resultTexts?: string[] | undefined; // for auto-k estimation
+  k?: number | undefined; // explicit cluster count (legacy `clusters` — exact control)
+  /** Verbosity steer (2026-07-26 lever): level → k via VERBOSITY_EXEMPLAR_K;
+   *  the internal "auto" sentinel (no caller steer) takes the automatic path
+   *  governed by `autoK`. */
+  verbosity?: VerbositySteer | undefined;
+  maxChars?: number | undefined; // legacy auto-k from character budget
+  resultTexts?: string[] | undefined; // for legacy maxChars estimation
+  /** Automatic-k realization when no size steer is given (ranking-config
+   *  lever): "adaptive" resolves k from the similarity curve when
+   *  similarities are available; "fixed"/absent keeps the k=3 default. */
+  autoK?: "fixed" | "adaptive" | undefined;
+  /** Per-vector cosine similarity to the query, parallel to `vectors` —
+   *  the adaptive-k signal. mmrClusters computes these itself; k-means
+   *  callers may supply them when available. */
+  similarities?: number[] | undefined;
 }
 
 export interface MmrClusterParams extends ClusterParams {
@@ -50,6 +63,9 @@ export interface MmrClusterParams extends ClusterParams {
   queryVector: number[];
   /** Relevance↔diversity trade-off in [0,1] (1 = pure relevance). */
   lambda: number;
+  /** λ realization (ranking-config lever): "variance" adapts λ per query from
+   *  the pool's similarity dispersion; "fixed"/absent uses `lambda` as-is. */
+  lambdaMode?: "fixed" | "variance" | undefined;
 }
 
 // Backward compatibility alias
@@ -90,11 +106,123 @@ function estimateK(
   return Math.max(2, Math.min(n, k));
 }
 
+// ── Adaptive k (automatic verbosity) ─────────────────────────────────────────
+
+export interface AdaptiveKOptions {
+  /** Smallest k the automatic mode returns (when n allows). Default 2. */
+  minK?: number;
+  /** Largest k the automatic mode returns. Default 10 — the `verbosity=high`
+   *  steer, so automatic never exceeds what an explicit caller can ask for. */
+  maxK?: number;
+  /** Fixed buffer added past the detected cut — the Adaptive-k paper's hedge
+   *  against cutting one item too early (B=5 at passage scale; 1 at ours). */
+  buffer?: number;
+}
+
+/**
+ * Adaptive result-count selection from the query-similarity curve — the
+ * "automatic" realization of the verbosity lever (ranking-config `autoK`).
+ *
+ * Largest-gap rule: sort similarities descending and cut where the drop
+ * between neighbors is largest — Weaviate's production `autocut` ("looks for
+ * discontinuities, or jumps, in result metrics") and Adaptive-k (EMNLP 2025:
+ * "choose the index k where the similarity drop is the largest"), searched
+ * only over cut positions the clamp allows. When no meaningful gap exists
+ * (dense-retrieval curves are steep–flat–steep and can be smooth through the
+ * clamp window), fall back to the knee: the point of maximum distance below
+ * the chord from first to last score in the window — the curvature intuition
+ * of Kneedle (Satopää et al. 2011) in discrete form.
+ *
+ * Pure; lineage + measurement plan: docs/planning/response-verbosity-lever.md.
+ */
+export function adaptiveK(similarities: number[], options?: AdaptiveKOptions): number {
+  const n = similarities.length;
+  const minK = Math.max(1, options?.minK ?? 2);
+  const maxK = Math.max(minK, options?.maxK ?? 10);
+  const buffer = options?.buffer ?? 1;
+  if (n <= minK) return n;
+
+  const sims = [...similarities].sort((a, b) => b - a);
+  // Cut positions: keep i items, i in [minK, hi]. hi stays one short of n so
+  // a gap is always measured between a kept item and a dropped one.
+  const hi = Math.min(maxK, n - 1);
+
+  let bestGap = 0;
+  let gapCut = 0;
+  for (let i = minK; i <= hi; i++) {
+    const gap = sims[i - 1]! - sims[i]!;
+    if (gap > bestGap) {
+      bestGap = gap;
+      gapCut = i;
+    }
+  }
+
+  // Gap significance: a "jump" must stand out from the window's total drop,
+  // or every quasi-linear curve would produce an arbitrary cut. Threshold =
+  // 2× the window's average per-step drop; below it, use the knee fallback.
+  const windowDrop = sims[minK - 1]! - sims[hi]!;
+  const avgStep = windowDrop / Math.max(1, hi - minK + 1);
+  let cut: number;
+  if (bestGap > 2 * avgStep && bestGap > 0) {
+    // Buffer hedges the gap cut only (the "one item too early" risk the
+    // Adaptive-k paper names); knee/default fallbacks are not inflated.
+    cut = gapCut + buffer;
+  } else {
+    // Knee: max vertical distance below the chord over the clamp window.
+    const x0 = minK - 1;
+    const x1 = hi;
+    const y0 = sims[x0]!;
+    const y1 = sims[x1]!;
+    const span = x1 - x0;
+    let bestDist = -Infinity;
+    let knee = Math.min(n, 3); // degenerate (flat/linear) curve → pre-lever default
+    for (let i = x0 + 1; i < x1; i++) {
+      const chordY = y0 + ((y1 - y0) * (i - x0)) / span;
+      const dist = chordY - sims[i]!;
+      if (dist > bestDist + 1e-12) {
+        bestDist = dist;
+        knee = i + 1; // keep items up to and including the knee point
+      }
+    }
+    cut = bestDist > 1e-9 ? knee : Math.min(n, 3);
+  }
+
+  return Math.max(minK, Math.min(maxK, Math.min(n, cut)));
+}
+
+// ── Adaptive λ (variance mode) ───────────────────────────────────────────────
+
+/**
+ * Variance-keyed MMR λ (ranking-config `displaySelection.lambdaMode:
+ * "variance"`, plumbed off-by-default): higher similarity dispersion in the
+ * pool → lower effective λ (more diversification) — the mean-variance risk
+ * logic of Wang & Zhu (SIGIR 2009) with Santos et al. (CIKM 2010) as the
+ * per-query selective-diversification precedent. Linear map between anchor
+ * spreads, clamped to Carbonell & Goldstein's own working range
+ * (λ .3 explore ↔ .7 focus, stretched to .8 for near-duplicate heads).
+ * Anchors are sweep hypotheses, not rulings.
+ */
+export function varianceLambda(similarities: number[], baseLambda: number): number {
+  const n = similarities.length;
+  if (n < 3) return baseLambda;
+  const mean = similarities.reduce((s, v) => s + v, 0) / n;
+  const variance = similarities.reduce((s, v) => s + (v - mean) * (v - mean), 0) / n;
+  const spread = Math.sqrt(variance);
+  const TIGHT = 0.02; // spread ≤ TIGHT → focus (λ 0.8)
+  const WIDE = 0.10; // spread ≥ WIDE → diversify (λ 0.3)
+  if (spread <= TIGHT) return 0.8;
+  if (spread >= WIDE) return 0.3;
+  const t = (spread - TIGHT) / (WIDE - TIGHT);
+  return 0.8 + t * (0.3 - 0.8);
+}
+
 /**
  * Resolve the cluster-count budget from the caller's size steer, clamped to
- * [1, n]. Shared by k-means and MMR display selection so a `clusters` /
- * `max_chars` budget means the same number of representatives under either
- * mechanism.
+ * [1, n]. Shared by k-means and MMR display selection so any size steer means
+ * the same number of representatives under either mechanism. Precedence:
+ * explicit k (legacy `clusters` — exact control for harnesses/sweeps) >
+ * verbosity level > legacy `max_chars` estimate > automatic (adaptive when
+ * the lever + similarity signal allow, else the fixed k=3 default).
  */
 function resolveK(params: ClusterParams, n: number): number {
   let k: number;
@@ -102,8 +230,17 @@ function resolveK(params: ClusterParams, n: number): number {
   if (params.k != null) {
     k = params.k;
   // eslint-disable-next-line eqeqeq
+  } else if (params.verbosity != null && params.verbosity !== "auto") {
+    k = VERBOSITY_EXEMPLAR_K[params.verbosity];
+  // eslint-disable-next-line eqeqeq
   } else if (params.maxChars != null && params.resultTexts) {
     k = estimateK(n, params.maxChars, params.resultTexts);
+  } else if (
+    params.autoK === "adaptive" &&
+    params.similarities &&
+    params.similarities.length === n
+  ) {
+    k = adaptiveK(params.similarities);
   } else {
     k = Math.min(n, 3);
   }
@@ -309,8 +446,28 @@ export function mmrClusters(params: MmrClusterParams): ClusterResult[] {
   const n = vectors.length;
   if (n === 0) return [];
 
-  const k = resolveK(params, n);
-  const selected = maximalMarginalRelevance(queryVector, vectors, lambda, k);
+  // Query-similarity curve — computed here (not threaded from the pipeline)
+  // because the query vector is already in hand. Feeds adaptive k and the
+  // variance-λ mode; skipped entirely when neither lever needs it.
+  const onAutomaticPath =
+    params.k === undefined &&
+    params.maxChars === undefined &&
+    (params.verbosity === undefined || params.verbosity === "auto");
+  const wantsCurve =
+    (params.autoK === "adaptive" && onAutomaticPath) || params.lambdaMode === "variance";
+  // Pool vector FIRST: its (possibly MRL-truncated) length bounds the cosine
+  // loop, implicitly truncating the full-dim query embedding — the same
+  // convention the pipeline and the briefing purpose pass rely on.
+  const similarities = wantsCurve
+    ? vectors.map((v) => 1 - cosineDistance(v, queryVector))
+    : params.similarities;
+
+  const k = resolveK({ ...params, similarities }, n);
+  const effectiveLambda =
+    params.lambdaMode === "variance" && similarities
+      ? varianceLambda(similarities, lambda)
+      : lambda;
+  const selected = maximalMarginalRelevance(queryVector, vectors, effectiveLambda, k);
 
   // Assign every vector to its nearest selected representative (cosine). A
   // representative is at distance 0 from itself, so it always anchors its own

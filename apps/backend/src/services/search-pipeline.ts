@@ -20,7 +20,7 @@ import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 
 import { PRODUCTION_SEARCH_STRATEGY_IDS, DEFAULT_RANKING, orderClusters } from "@soupnet/domain";
-import type { RankingConfig, ClusterOrderStat } from "@soupnet/domain";
+import type { RankingConfig, ClusterOrderStat, VerbositySteer } from "@soupnet/domain";
 import { hybridSearch, evidenceSearch } from "./vector-search.service";
 import type { EvidenceSearchResult } from "./vector-search.service";
 import type { SearchResultItem } from "./trace.service";
@@ -40,6 +40,10 @@ export interface SearchPipelineParams {
   k?: number | undefined;
   /** Character budget for auto-k estimation. */
   maxChars?: number | undefined;
+  /** Verbosity steer (2026-07-26 lever): "low" | "medium" | "high" from the
+   *  caller, or the internal "auto" sentinel a route substitutes when the
+   *  caller gave no size steer — takes the ranking-config `autoK` path. */
+  verbosity?: VerbositySteer | undefined;
   /** Disable clustering (return all results). */
   expand?: boolean | undefined;
   /** Sort order: "relevance" (default) or "recent". */
@@ -382,7 +386,8 @@ export async function runSearchPipeline(
   let preClusterResults: SearchResultItem[] | undefined;
 
   const clusterInput = poolItems && poolItems.length > 1 ? poolItems : results;
-  const shouldCluster = !params.expand && (params.k || params.maxChars) && clusterInput.length > 1;
+  const shouldCluster =
+    !params.expand && (params.k || params.maxChars || params.verbosity) && clusterInput.length > 1;
   if (shouldCluster || params.includeVectors || params.axes) {
     // Fetch vectors for the cluster input ∪ page (optionally filtered by
     // strategy for experiments). Pool vectors are MRL-truncated per the
@@ -421,14 +426,22 @@ export async function runSearchPipeline(
           vectors,
           queryVector: parseVector(queryVectorStr!),
           lambda: ranking.displaySelection.lambda,
+          lambdaMode: ranking.displaySelection.lambdaMode,
           k: params.k,
+          verbosity: params.verbosity,
           maxChars: params.maxChars,
+          autoK: ranking.autoK,
           resultTexts: validIndices.map((i) => clusterInput[i]!.claimText),
         })
         : clusterResults({
           vectors,
           k: params.k,
+          verbosity: params.verbosity,
           maxChars: params.maxChars,
+          // No query vector on the k-means arm — the adaptive automatic path
+          // needs the similarity curve, so "auto" falls back to the fixed
+          // default here regardless of the autoK lever.
+          autoK: ranking.autoK,
           resultTexts: validIndices.map((i) => clusterInput[i]!.claimText),
         }));
 

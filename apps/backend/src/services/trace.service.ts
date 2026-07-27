@@ -41,7 +41,7 @@ import { runSearchPipeline } from "./search-pipeline";
 import { StageTimer } from "../lib/stage-timer";
 import { invalidKeyMessage } from "../lib/key-remediation";
 import { DEFAULT_RANKING, RANKING_ALGORITHM_VERSION } from "@soupnet/domain";
-import type { CandidateSignals } from "@soupnet/domain";
+import type { CandidateSignals, VerbositySteer } from "@soupnet/domain";
 
 /** Session tokens are opaque and validation-free (they only compress the
  *  holder's own responses — zero security weight), but bounded so arbitrary
@@ -72,6 +72,9 @@ export interface SubmitAndSearchParams {
   perPage?: number | undefined;
   clusters?: number | undefined;
   maxChars?: number | undefined;
+  /** Verbosity steer ("low"|"medium"|"high", or internal "auto" when the
+   *  caller gave no size steer). See @soupnet/domain verbosity.ts. */
+  verbosity?: VerbositySteer | undefined;
   /** Optional image attachment — stored as evidence and embedded multimodally */
   image?: ImageAttachment | undefined;
   /** Optional region-of-interest metadata for the attached image. If
@@ -645,6 +648,7 @@ export async function submitAndSearch(
     query: params.traceText,
     k: params.clusters,
     maxChars: params.maxChars,
+    verbosity: params.verbosity,
     sort: params.sort,
     page,
     perPage,
@@ -673,6 +677,7 @@ export async function submitAndSearch(
       apiKeyId: keyId,
       k: params.clusters ?? null,
       maxChars: params.maxChars ?? null,
+      verbosity: params.verbosity ?? null,
       searchMode: pipelineResult.searchMode,
       resultCount: pipelineResult.totalResults,
       clustered: pipelineResult.clustered,
@@ -799,6 +804,8 @@ export interface SearchOnlyParams {
   perPage?: number | undefined;
   clusters?: number | undefined;
   maxChars?: number | undefined;
+  /** Verbosity steer — same semantics as SubmitAndSearchParams.verbosity. */
+  verbosity?: VerbositySteer | undefined;
   axes?: string | undefined;
   readGroups?: string | undefined;
   surface?: string | undefined;
@@ -857,6 +864,7 @@ export async function searchWithoutLogging(
     query: params.filter,
     k: params.clusters,
     maxChars: params.maxChars,
+    verbosity: params.verbosity,
     sort: params.sort,
     page,
     perPage,

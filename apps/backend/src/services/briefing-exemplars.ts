@@ -14,7 +14,9 @@
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { runSearchPipeline, cosineSimilarity, MAP_VECTOR_DIMS } from "./search-pipeline";
+import { mmrClusters } from "./clustering.service";
 import { embedQuery } from "../lib/embeddings/provider";
+import { DEFAULT_RANKING } from "@soupnet/domain";
 import type { BriefingExemplar } from "@soupnet/domain";
 
 export interface ExemplarFetchOptions {
@@ -30,6 +32,18 @@ export interface ExemplarFetchOptions {
    *  (which narrows the pool via the semantic-query slot). Degrades
    *  gracefully to centroid exemplars when embedding is unavailable. */
   purpose?: string | undefined;
+  /** Exemplar-selection mechanism (adaptive-briefing experiment arm, plumbed
+   *  2026-07-26, OFF by default — no surface param sets it yet):
+   *  - "corpus-kmeans" (default): corpus-wide k-means; `purpose` only biases
+   *    within-cluster exemplar choice — the shipped WT-3 behavior.
+   *  - "goal-mmr": the purpose embedding drives selection itself — MMR over
+   *    the corpus against the goal text, the same display-selection mechanism
+   *    the check path ships. Requires `purpose`; degrades to corpus-kmeans
+   *    without it. Goal-text-to-recipe similarities run lower than
+   *    recipe-to-recipe, which is why this arm uses MMR's relative ranking
+   *    rather than any absolute similarity floor (operator note, 2026-07-26).
+   *  Flipped only by A/B measurement; see response-verbosity-lever.md §7. */
+  selection?: "corpus-kmeans" | "goal-mmr" | undefined;
 }
 
 export interface ExemplarFetchResult {
@@ -103,6 +117,41 @@ export async function fetchBriefingExemplars(
     }
   }
 
+  // Goal-conditioned selection (experiment arm): MMR over the corpus against
+  // the purpose embedding replaces corpus k-means entirely — selection itself
+  // adapts to the caller's goals, not just the within-cluster exemplar pick.
+  // Falls through to the k-means path whenever its inputs are missing.
+  if (options.selection === "goal-mmr" && purposeVector && result.vectors && result.allResults) {
+    const pool = result.allResults;
+    const vecs: number[][] = [];
+    const poolIdx: number[] = [];
+    pool.forEach((m, i) => {
+      const v = result.vectors!.get(m.id);
+      if (v) {
+        vecs.push(v);
+        poolIdx.push(i);
+      }
+    });
+    if (vecs.length > 0) {
+      const mmr = mmrClusters({
+        vectors: vecs,
+        queryVector: purposeVector,
+        lambda: DEFAULT_RANKING.displaySelection.lambda,
+        k: options.k,
+      });
+      const mmrRows = mmr.map((c) => {
+        const member = pool[poolIdx[c.exemplarIndex]!]!;
+        return {
+          traceId: member.id,
+          claimText: member.claimText,
+          createdAt: member.createdAt as unknown,
+          memberCount: c.memberCount,
+        };
+      });
+      return enrichExemplarRows(db, mmrRows, mapContext);
+    }
+  }
+
   // Each cluster's exemplar maps to result.results[clusterIdx]. SearchResultItem
   // is typed as having `createdAt: Date` but the raw db.execute path actually
   // returns it as a string (postgres-js, no coercion); handled by
@@ -136,6 +185,23 @@ export async function fetchBriefingExemplars(
     };
   }).filter((x): x is { traceId: string; claimText: string; createdAt: unknown; memberCount: number } => x !== null);
 
+  return enrichExemplarRows(db, exemplarRows, mapContext);
+}
+
+interface ExemplarRow {
+  traceId: string;
+  claimText: string;
+  createdAt: unknown;
+  memberCount: number;
+}
+
+/** Shared enrichment tail for both selection paths: batched meta/evidence/
+ *  reference fetches → BriefingExemplar[] (single query per concern). */
+async function enrichExemplarRows(
+  db: PostgresJsDatabase,
+  exemplarRows: ExemplarRow[],
+  mapContext: ExemplarFetchResult["mapContext"],
+): Promise<ExemplarFetchResult> {
   if (exemplarRows.length === 0) {
     return { exemplars: [], mapContext };
   }

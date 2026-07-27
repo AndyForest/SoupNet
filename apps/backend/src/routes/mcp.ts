@@ -23,6 +23,8 @@ import {
   MAX_UPLOAD_BYTES,
   MCP_PARAM_DESCRIPTIONS,
   MCP_TOOL_DESCRIPTIONS,
+  VERBOSITY_LEVELS,
+  VERBOSITY_EXEMPLAR_K,
   buildCheckRecipeToolDescription,
   renderCheckResponseMarkdown,
 } from "@soupnet/domain";
@@ -373,6 +375,11 @@ function createMcpServer(backendUrl: string): McpServer {
     {
       recipe: z.string().describe(MCP_PARAM_DESCRIPTIONS.recipe),
       supporting_evidence: z.string().describe(MCP_PARAM_DESCRIPTIONS.supportingEvidence),
+      verbosity: z.enum(VERBOSITY_LEVELS).optional().describe(MCP_PARAM_DESCRIPTIONS.verbosity),
+      // Deprecated size levers — kept in the schema so existing callers stay
+      // HONORED, not silently stripped (the SDK drops unknown keys, which
+      // would recreate the parameter-silently-ignored defect; finding doc:
+      // docs/planning/finding-max-chars-mcp-contract.md).
       clusters: z.number().optional().describe(MCP_PARAM_DESCRIPTIONS.clusters),
       max_chars: z.number().optional().describe(MCP_PARAM_DESCRIPTIONS.maxChars),
       decided_at: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.decidedAt),
@@ -449,14 +456,21 @@ function createMcpServer(backendUrl: string): McpServer {
       idempotentHint: true,
       openWorldHint: true,
     },
-    async ({ recipe, supporting_evidence, clusters, max_chars, decided_at, axes, recipe_book, read_recipe_books, file_url, file_base64, file_name, file_mime_type, region, response_format, known_recipes, session_id, agent_id, synthesize, feedback }, extra) => {
+    async ({ recipe, supporting_evidence, verbosity, clusters, max_chars, decided_at, axes, recipe_book, read_recipe_books, file_url, file_base64, file_name, file_mime_type, region, response_format, known_recipes, session_id, agent_id, synthesize, feedback }, extra) => {
       // Get API key from auth info (passed by the transport middleware)
       const apiKey = (extra.authInfo as Record<string, unknown> | undefined)?.["token"] as string | undefined;
       if (!apiKey) {
         return { content: [{ type: "text" as const, text: "Error: No API key in auth context." }] };
       }
 
-      const MCP_DEFAULT_CLUSTERS = 3;
+      // Size steer: explicit verbosity wins; with NO steer at all, the
+      // internal "auto" sentinel takes the automatic path (ranking-config
+      // autoK — ships as the fixed 3-exemplar default). Legacy clusters /
+      // max_chars pass through un-defaulted, so max_chars finally reaches the
+      // estimator here exactly as it does on the web route (the finding-doc
+      // fix: no more unconditional default cluster count shadowing it).
+      const verbositySteer =
+        verbosity ?? (clusters === undefined && max_chars === undefined ? ("auto" as const) : undefined);
 
       // Resolve optional file attachment. Agent picks ONE of file_url or
       // file_base64; both together is an error.
@@ -539,8 +553,9 @@ function createMcpServer(backendUrl: string): McpServer {
           key: apiKey,
           traceText: recipe,
           evidenceFor: supporting_evidence,
-          clusters: clusters ?? MCP_DEFAULT_CLUSTERS,
+          clusters: clusters ?? undefined,
           maxChars: max_chars ?? undefined,
+          verbosity: verbositySteer,
           axes: axes ?? undefined,
           targetGroup: recipe_book ?? undefined,
           readGroups: read_recipe_books ?? undefined,
@@ -648,6 +663,7 @@ function createMcpServer(backendUrl: string): McpServer {
     {
       purpose: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.briefingPurpose),
       recipe_ids: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.briefingRecipeIds),
+      verbosity: z.enum(VERBOSITY_LEVELS).optional().describe(MCP_PARAM_DESCRIPTIONS.briefingVerbosity),
     },
     {
       title: "Get briefing",
@@ -655,7 +671,7 @@ function createMcpServer(backendUrl: string): McpServer {
       idempotentHint: true,
       openWorldHint: false,
     },
-    async ({ purpose, recipe_ids }, extra) => {
+    async ({ purpose, recipe_ids, verbosity }, extra) => {
       const apiKey = (extra.authInfo as Record<string, unknown> | undefined)?.["token"] as string | undefined;
       if (!apiKey) {
         return { content: [{ type: "text" as const, text: "Error: No API key in auth context." }] };
@@ -672,6 +688,9 @@ function createMcpServer(backendUrl: string): McpServer {
           surface: "mcp-http",
           options: {
             purpose: purpose ?? undefined,
+            // Verbosity → exemplar count; omitted leaves the briefing's
+            // preference-driven default untouched (decision 3, 2026-07-26).
+            k: verbosity ? VERBOSITY_EXEMPLAR_K[verbosity] : undefined,
             ...(recipeIds.length > 0 ? { recipeIds } : {}),
           },
         });
@@ -1102,7 +1121,7 @@ export function buildMcpJsonResponse(
       return {
         ...fill,
         drillDown: {
-          hint: `This exemplar represents ${r.clusterSize} similar recipes. To explore them, re-check with this recipe text and a higher clusters value.`,
+          hint: `This exemplar represents ${r.clusterSize} similar recipes. To explore them, re-check with this recipe text and verbosity=high.`,
           exemplarText: r.claimText,
         },
       };
@@ -1169,10 +1188,10 @@ export function buildMcpJsonResponse(
   // showed zero agents paging anyway).
   const actions: Record<string, unknown> = {};
   if (result.clustered && enriched.some((r) => r.clusterSize && r.clusterSize > 1)) {
-    actions["moreClusters"] = "Re-check with a higher clusters value (e.g., clusters=10) for finer granularity.";
+    actions["moreClusters"] = "Re-check with verbosity=high for finer granularity.";
   }
   if (result.totalPages > page) {
-    actions["narrow"] = "More recipes exist beyond these exemplars. Narrow with read_recipe_books=<slugs>, project with axes=\"concept A, concept B\", or raise clusters.";
+    actions["narrow"] = "More recipes exist beyond these exemplars. Narrow with read_recipe_books=<slugs>, project with axes=\"concept A, concept B\", or raise verbosity.";
   }
   data["actions"] = actions;
 

@@ -4,7 +4,7 @@ import { CHECK_PARAMS, buildQs, readParams, type PageParams } from "./check";
 const empty: PageParams = {
   key: null, trace: null, ef: null,
   ea: undefined, sort: undefined, page: undefined, format: undefined,
-  clusters: undefined, maxChars: undefined, expand: undefined, compact: undefined,
+  verbosity: undefined, clusters: undefined, maxChars: undefined, expand: undefined, compact: undefined,
   axes: undefined, group: undefined, readGroups: undefined, decidedAt: undefined,
   agentId: undefined, knownRecipes: undefined, sessionId: undefined, filter: undefined,
   synthesize: undefined,

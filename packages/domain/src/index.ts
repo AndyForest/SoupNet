@@ -11,3 +11,4 @@ export * from "./user-preferences";
 export * from "./synthesis";
 export * from "./feedback";
 export * from "./trace-move";
+export * from "./verbosity";

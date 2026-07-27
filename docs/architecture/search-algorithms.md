@@ -602,53 +602,37 @@ See [visualization-research.md](visualization-research.md) for the full research
 
 ---
 
-## Response Summarization via Vector Clustering (planned)
+## Response Size — the Verbosity Lever (shipped 2026-07-26)
 
-The search returns many results, but agents with limited context need concise responses. Rather than LLM-based summarization (which we don't have on the backend), we use the existing vector embeddings for extractive summarization.
+The search returns many results, but agents with limited context need concise responses. Display selection (MMR over a score-banded pool, see ranking-engine.md) reduces the result set to k exemplars; the verbosity lever is how a caller steers k. History: the original plan here (K-Medoids + hierarchical drill-down + `max_chars`/`clusters` numeric params) shipped in parts and was superseded — pagination and drill-down went unused in field data (`session_id` known-set walking now serves iterative deepening), and the numeric size params were replaced by one enum after `max_chars` was found silently inert on the MCP surface (docs/planning/finding-max-chars-mcp-contract.md; design + operator ruling: docs/planning/response-verbosity-lever.md).
 
-### Approach: K-Medoids Clustering
-
-**Goal:** Reduce N results into k representative exemplars that maximize information density.
-
-**Why K-Medoids over K-Means:** K-Medoids selects actual data points (medoids) as cluster centers, not synthetic means. This means the "summary" is composed of real recipes — no generated text, no hallucination risk, no LLM needed.
-
-**Pipeline:**
-1. Take the N result vectors (already in the DB from SEMANTIC_SIMILARITY embeddings)
-2. Run K-Medoids to group into k clusters
-3. Select the medoid (most central recipe) from each cluster as the exemplar
-4. Return k exemplars with their evidence, ordered by cluster size (largest cluster = most common theme)
-
-**Hierarchical exploration:**
-- Use a top-down (divisive) approach: start with k=3–5 clusters, let the agent request deeper splits
-- Only split clusters that warrant it based on internal density or Silhouette Scores
-- The agent resubmits the same (idempotent) recipe with different depth/cluster parameters
-- The server remains stateless — clustering is computed on each request from the existing vectors
-
-### Late Chunking
-
-Before clustering, apply Late Chunking to ensure fragments retain global context. Standard chunking splits text before embedding, losing context. Late Chunking:
-1. Embeds the full recipe text first (which we already do — `full_document` strategy)
-2. Uses the full-document embedding as context when interpreting chunk-level similarities
-3. Ensures medoid sentences still make sense in isolation
-
-Since we currently only use `full_document` chunking (one vector per recipe), each recipe IS its own chunk. Late Chunking becomes relevant when we add finer-grained chunking strategies (`overlap_256_64`, `semantic_markdown`) for longer evidence text.
-
-### Extractive Summarization Objective
-
-The output is NOT human-readable prose. It's a compressed set of the most central, unique fragments from across the result set. AI agents consume this directly — they don't need narrative flow, they need information density.
-
-**Quality metric:** A good extractive summary should cover the maximum number of distinct themes with the minimum number of exemplars.
-
-### API Parameters (planned)
+### The lever
 
 | Parameter | Description |
 |-----------|-------------|
-| `max_chars` | Target response character count. Triggers clustering to reduce results. |
-| `clusters` | Number of clusters (default: auto based on result count). |
-| `depth` | Clustering hierarchy depth (0 = flat, 1 = one split, etc.). |
-| `page` / `per_page` | Pagination within a cluster or across exemplars. |
+| `verbosity` | `low` (~2-3 exemplars) \| `medium` (~5) \| `high` (~10). Omitted = **automatic**. A behavioral steer, not a hard cap — the realization is server-side and tunable. |
+| `clusters` | Deprecated (exact exemplar count, still honored — harness/sweep use). |
+| `max_chars` | Deprecated (approximate char target via `estimateK`, still honored). |
 
-These parameters work with idempotent recipe checks — the agent can resubmit the same recipe with different clustering parameters to iteratively explore the result space without creating new traces.
+The enum-with-automatic-default shape follows the LLM APIs' own arc away from numeric budgets: OpenAI's `text.verbosity` ("Lets you hint the model to be more or less expansive in its replies.", [GPT-5 new params](https://developers.openai.com/cookbook/examples/gpt-5/gpt-5_new_params_and_tools)), Anthropic's `output_config.effort` ("Effort is a behavioral signal, not a strict token budget.", [effort docs](https://platform.claude.com/docs/en/build-with-claude/effort.md)) which replaced the numeric `budget_tokens`, and Gemini's `thinking_level` superseding `thinkingBudget` with "dynamic thinking by default" ([Gemini thinking docs](https://ai.google.dev/gemini-api/docs/thinking)).
+
+### Automatic mode (adaptive k)
+
+With no steer given, k resolution takes the automatic path, governed by the `autoK` ranking-config lever: `"fixed"` (ships — the long-standing 3-exemplar default) or `"adaptive"` (`adaptiveK` in clustering.service.ts — flipped only by a golden-corpus sweep ruling). The adaptive realization is ranked-list truncation from the query-similarity curve:
+
+1. **Largest-gap rule** — sort pool similarities descending, cut where the drop between neighbors is largest, searched only over cut positions the clamp allows, plus a small buffer past the cut. This is Weaviate's production `autocut` ("autocut looks for discontinuities, or jumps, in result metrics such as vector distance or search score" — [Weaviate docs](https://docs.weaviate.io/weaviate/api/graphql/additional-operators)) and Adaptive-k for RAG ("Sort the scores in descending order. Compute their first discrete differences and choose the index k where the similarity drop is the largest" — [Adaptive-k, EMNLP 2025](https://arxiv.org/abs/2506.08479), which reports "up to 10x fewer tokens than full-context input" at 70% relevant-passage retention).
+2. **Knee fallback** — when no gap stands out (threshold: 2× the window's average per-step drop), cut at the point of maximum distance below the chord across the clamp window — the curvature intuition of Kneedle ([Satopää et al. 2011](https://dl.acm.org/doi/abs/10.1109/icdcsw.2011.20)) in discrete form. Dense-retrieval score curves have a documented "steep–flat–steep pattern, corresponding to a relevance-dominated head, a transition region, and a noise-dominated tail" ([TAA-k](https://arxiv.org/html/2606.11907v1)).
+3. **Clamp** — k stays in [2, 10], so automatic never exceeds what an explicit `verbosity=high` caller gets; a degenerate flat curve returns the pre-lever default of 3.
+
+The statistical ancestry of this problem is score-distributional threshold optimization — Manmatha, Rath & Feng's normal/exponential score mixture ([SIGIR 2001](https://dl.acm.org/doi/10.1145/383952.384005)) and Arampatzis, Kamps & Robertson's "Where to stop reading a ranked list?" ([SIGIR 2009](https://dl.acm.org/doi/10.1145/1571941.1572031)); learned (Choppy, [SIGIR 2020](https://arxiv.org/abs/2004.13012)) and EVT-based (Surprise, [SIGIR 2023](https://dl.acm.org/doi/10.1145/3539618.3592066)) variants exist but need more scores per query than this corpus scale provides — the gap/knee rule is the deliberately simple end of that literature.
+
+### Adaptive MMR λ (plumbed, off by default)
+
+`displaySelection.lambdaMode: "variance"` adapts the MMR relevance↔diversity trade-off per query from the pool's similarity dispersion: higher spread → lower effective λ (more diversification). Precedents: per-query selective diversification ("not all queries are equally ambiguous, and hence different queries could benefit from different diversification strategies" — [Santos, Macdonald & Ounis, CIKM 2010](https://dl.acm.org/doi/10.1145/1871437.1871586)) and mean-variance ranking ("an optimal rank order is the one that balancing the overall relevance (mean) of the ranked list against its risk level (variance)" — [Wang & Zhu, SIGIR 2009](https://dl.acm.org/doi/10.1145/1571941.1571963)). The linear map's anchors sit inside Carbonell & Goldstein's own working range (λ .3 explore ↔ .7 focus, [MMR 1998](http://www.cs.cmu.edu/~jgc/publication/The_Use_MMR_Diversity_Based_LTMIR_1998.pdf)) and are sweep hypotheses, not rulings.
+
+### Regression guard
+
+`ranking-regression.test.ts` suite 7 asserts, per surface (in-process pipeline, web `/check`, MCP): monotone non-decreasing exemplar count across the verbosity ladder, byte spread between the smallest and largest steer, deprecated params still moving the response, and the adaptive arm cutting at an engineered score cliff. The guarded defect class is "documented parameter silently ignored" — every stage individually correct while a default upstream made a branch unreachable.
 
 ---
 
@@ -662,7 +646,7 @@ These parameters work with idempotent recipe checks — the agent can resubmit t
 1. **Accept JSON POST body** — agents prefer structured JSON over form encoding
 2. **Bearer token auth** — accept `Authorization: Bearer <key>` as alternative to `?key=` param
 3. **OpenAPI spec** — publish spec for the check endpoint for agent discoverability
-4. **Response verbosity controls** — `max_chars` and clustering parameters (see Response Summarization section above)
+4. ~~**Response verbosity controls**~~ — the `verbosity` lever (see Response Size section above) ✓
 5. **Compact response mode** — a `?compact=true` flag that returns just recipe text + scores, no evidence (for agents that only need a relevance list)
 
 ### Do NOT change

@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { clusterResults, cosineDistance } from "./clustering.service";
+import {
+  adaptiveK,
+  clusterResults,
+  cosineDistance,
+  mmrClusters,
+  varianceLambda,
+} from "./clustering.service";
 
 // ── Test helpers ─────────────────────────────────────────────────────────────
 
@@ -165,6 +171,159 @@ describe("clusterResults", () => {
     expect(centroid[0]).toBeCloseTo(0.8, 1);
     expect(centroid[1]).toBeCloseTo(0.2, 1);
     expect(centroid[2]).toBeCloseTo(0, 1);
+  });
+});
+
+// ── Verbosity lever: adaptive k ──────────────────────────────────────────────
+
+describe("adaptiveK", () => {
+  it("cuts at a clear score cliff, plus the buffer", () => {
+    // Relevant head of 3, cliff, noise tail — the steep–flat–steep shape.
+    const sims = [0.92, 0.9, 0.89, 0.55, 0.53, 0.52, 0.51, 0.5, 0.49, 0.48, 0.47, 0.46];
+    expect(adaptiveK(sims)).toBe(4); // cut 3 + buffer 1
+  });
+
+  it("buffer is configurable and zero-able", () => {
+    const sims = [0.92, 0.9, 0.89, 0.55, 0.53, 0.52, 0.51, 0.5];
+    expect(adaptiveK(sims, { buffer: 0 })).toBe(3);
+  });
+
+  it("input order does not matter (sorted internally)", () => {
+    const sims = [0.5, 0.92, 0.53, 0.9, 0.55, 0.89, 0.52, 0.51, 0.49, 0.48];
+    expect(adaptiveK(sims)).toBe(adaptiveK([...sims].sort((a, b) => b - a)));
+  });
+
+  it("falls back to the knee on a smooth two-regime curve", () => {
+    // Steep head flattening into a plateau — no single dominant gap relative
+    // to the window's average step, but a clear knee where the curve turns.
+    const head = [0.9, 0.82, 0.74, 0.66];
+    const plateau = Array.from({ length: 10 }, (_, i) => 0.6 - i * 0.005);
+    const k = adaptiveK([...head, ...plateau]);
+    expect(k).toBeGreaterThanOrEqual(3);
+    expect(k).toBeLessThanOrEqual(6);
+  });
+
+  it("degenerate flat curve returns the pre-lever default of 3", () => {
+    const sims = Array.from({ length: 20 }, () => 0.7);
+    expect(adaptiveK(sims)).toBe(3);
+  });
+
+  it("clamps to maxK even when the gap sits deeper", () => {
+    // Head of 15 near-identical, cliff at 15 — beyond the clamp window, so
+    // the search never sees it; flat window → default 3.
+    const sims = [...Array.from({ length: 15 }, () => 0.9), 0.3, 0.29, 0.28];
+    expect(adaptiveK(sims)).toBeLessThanOrEqual(10);
+  });
+
+  it("respects a custom maxK", () => {
+    const sims = [0.92, 0.9, 0.89, 0.88, 0.87, 0.86, 0.4, 0.39, 0.38];
+    expect(adaptiveK(sims, { maxK: 4 })).toBeLessThanOrEqual(4);
+  });
+
+  it("tiny inputs return n", () => {
+    expect(adaptiveK([0.9])).toBe(1);
+    expect(adaptiveK([0.9, 0.4])).toBe(2);
+    expect(adaptiveK([])).toBe(0);
+  });
+
+  it("never exceeds n or the clamp bounds", () => {
+    for (const sims of [
+      [0.9, 0.8, 0.7],
+      Array.from({ length: 50 }, (_, i) => 1 - i * 0.01),
+      [0.99, 0.1, 0.09, 0.08],
+    ]) {
+      const k = adaptiveK(sims);
+      expect(k).toBeGreaterThanOrEqual(Math.min(2, sims.length));
+      expect(k).toBeLessThanOrEqual(Math.min(10, Math.max(1, sims.length)));
+    }
+  });
+});
+
+// ── Verbosity lever: variance-keyed λ ────────────────────────────────────────
+
+describe("varianceLambda", () => {
+  it("tight head → focus (λ 0.8)", () => {
+    expect(varianceLambda([0.9, 0.9, 0.9, 0.9, 0.89], 0.6)).toBeCloseTo(0.8, 5);
+  });
+
+  it("wide spread → diversify (λ 0.3)", () => {
+    const spread = [0.95, 0.8, 0.65, 0.5, 0.35, 0.2];
+    expect(varianceLambda(spread, 0.6)).toBeCloseTo(0.3, 5);
+  });
+
+  it("interpolates monotonically between the anchors", () => {
+    const mk = (s: number) => [0.7 - s, 0.7, 0.7 + s];
+    const lambdas = [0.03, 0.05, 0.08].map((s) => varianceLambda(mk(s), 0.6));
+    expect(lambdas[0]).toBeGreaterThan(lambdas[1]!);
+    expect(lambdas[1]).toBeGreaterThan(lambdas[2]!);
+    for (const l of lambdas) {
+      expect(l).toBeGreaterThanOrEqual(0.3);
+      expect(l).toBeLessThanOrEqual(0.8);
+    }
+  });
+
+  it("fewer than 3 scores returns the base λ unchanged", () => {
+    expect(varianceLambda([0.9, 0.2], 0.6)).toBe(0.6);
+    expect(varianceLambda([], 0.6)).toBe(0.6);
+  });
+});
+
+// ── Verbosity lever: resolveK precedence (observed through the public API) ───
+
+describe("size-steer precedence", () => {
+  // Query along the first axis; 3 vectors near it, 7 far — a clear cliff.
+  const queryVector = [1, 0, 0, 0];
+  const near = [
+    [0.99, 0.01, 0, 0],
+    [0.98, 0.02, 0, 0],
+    [0.97, 0.03, 0, 0],
+  ];
+  const far = [
+    [0.1, 0.9, 0, 0],
+    [0.1, 0, 0.9, 0],
+    [0.1, 0, 0, 0.9],
+    [0.05, 0.95, 0, 0],
+    [0.05, 0, 0.95, 0],
+    [0.05, 0, 0, 0.95],
+    [0.08, 0.5, 0.5, 0],
+  ];
+  const vectors = [...near, ...far];
+  const base = { vectors, queryVector, lambda: 0.6 };
+
+  it("verbosity levels map low/medium/high → 3/5/10 exemplars", () => {
+    expect(mmrClusters({ ...base, verbosity: "low" })).toHaveLength(3);
+    expect(mmrClusters({ ...base, verbosity: "medium" })).toHaveLength(5);
+    expect(mmrClusters({ ...base, verbosity: "high" })).toHaveLength(10);
+  });
+
+  it("explicit k (legacy clusters) wins over verbosity", () => {
+    expect(mmrClusters({ ...base, k: 2, verbosity: "high" })).toHaveLength(2);
+  });
+
+  it("verbosity wins over legacy maxChars", () => {
+    const resultTexts = vectors.map(() => "x".repeat(100));
+    expect(
+      mmrClusters({ ...base, verbosity: "medium", maxChars: 700, resultTexts }),
+    ).toHaveLength(5);
+  });
+
+  it("no steer + autoK fixed → the pre-lever default of 3", () => {
+    expect(mmrClusters({ ...base, autoK: "fixed" })).toHaveLength(3);
+    expect(mmrClusters({ ...base })).toHaveLength(3);
+  });
+
+  it("no steer + autoK adaptive → k from the similarity cliff", () => {
+    // Cliff after the 3 near vectors; gap cut 3 + buffer 1 = 4.
+    expect(mmrClusters({ ...base, autoK: "adaptive" })).toHaveLength(4);
+  });
+
+  it("any explicit steer disables the adaptive path", () => {
+    expect(mmrClusters({ ...base, autoK: "adaptive", verbosity: "low" })).toHaveLength(3);
+    expect(mmrClusters({ ...base, autoK: "adaptive", k: 6 })).toHaveLength(6);
+  });
+
+  it("k-means path honors verbosity the same way", () => {
+    expect(clusterResults({ vectors, verbosity: "medium" })).toHaveLength(5);
   });
 });
 

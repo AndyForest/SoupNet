@@ -304,7 +304,7 @@ export function renderCheckResponseMarkdown(
   // the tools), and field data showed zero agents paging anyway. When more
   // results exist beyond what's shown, point at the levers that do exist.
   if ((data.totalPages ?? 1) > 1) {
-    text += `\nMore recipes exist beyond these exemplars. Narrow with read_recipe_books=<slugs>, project with axes="concept A, concept B", or raise clusters for finer granularity.`;
+    text += `\nMore recipes exist beyond these exemplars. Narrow with read_recipe_books=<slugs>, project with axes="concept A, concept B", or re-check with verbosity=high for finer granularity.`;
   }
 
   if (data.sessionId) {

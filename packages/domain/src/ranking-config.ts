@@ -129,6 +129,16 @@ export interface DisplaySelectionConfig {
   mode: "cluster" | "mmr";
   /** MMR relevance↔diversity trade-off in [0,1]; ignored in "cluster" mode. */
   lambda: number;
+  /** λ realization (plumbed 2026-07-26 with the verbosity lever): "fixed"
+   *  uses `lambda` as-is; "variance" adapts per query from the pool's
+   *  similarity dispersion — higher spread → lower effective λ (more
+   *  diversification), the mean-variance risk logic of Wang & Zhu, SIGIR 2009
+   *  ("balancing the overall relevance (mean) of the ranked list against its
+   *  risk level (variance)"), with Santos et al. CIKM 2010 as the per-query
+   *  selective-diversification precedent. Ships "fixed"; "variance" is a
+   *  sweep arm, flipped only by a golden-corpus ruling. Optional — absent
+   *  means "fixed", so pre-existing arm literals stay valid. */
+  lambdaMode?: "fixed" | "variance";
 }
 
 /**
@@ -149,6 +159,15 @@ export interface RankingConfig {
   /** Display-selection mechanism (P8). Ships "cluster" (k-means, byte-stable);
    *  "mmr" is a prototype behind the lever seam. */
   displaySelection: DisplaySelectionConfig;
+  /** Automatic-k realization for the no-size-steer path (2026-07-26 verbosity
+   *  ruling: omitted verbosity = automatic, a behavioral steer whose
+   *  realization is server-side). "fixed" keeps the pre-lever default
+   *  (3 exemplars); "adaptive" resolves k per query from the pool's sorted
+   *  similarity curve — largest-gap rule (Weaviate autocut; Adaptive-k,
+   *  EMNLP 2025) with a knee fallback, clamped. Ships "fixed"; the flip to
+   *  adaptive follows a golden-corpus sweep, not this plumb. Optional —
+   *  absent means "fixed", so pre-existing arm literals stay valid. */
+  autoK?: "fixed" | "adaptive";
 }
 
 /** Shipped defaults. Flat results, pagination, and displayed scores are
@@ -167,7 +186,8 @@ export const DEFAULT_RANKING: RankingConfig = {
   // Version suffix "-mmr" disambiguates the second mint of 2026-07-20.
   clusterPool: { mode: "band", band: 0.15, size: 1500, minSize: 100, vectorDims: 768 },
   clusterOrdering: "max-similarity",
-  displaySelection: { mode: "mmr", lambda: 0.6 },
+  displaySelection: { mode: "mmr", lambda: 0.6, lambdaMode: "fixed" },
+  autoK: "fixed",
 };
 
 /**

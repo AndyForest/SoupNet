@@ -340,6 +340,48 @@ In high-dimensional spaces (our embeddings are 3072-dimensional), cosine similar
 
 ---
 
+## 7. Adaptive Ranked-List Truncation and Diversification (Verbosity Lever)
+
+### Problem
+
+How many of the ranked results should one response carry? A fixed k wastes context on weak tails for narrow queries and starves broad ones. The IR literature calls this **ranked-list truncation**, and the practical constraint was named exactly by Salvatore et al.: "relevance is inversely proportional to the distance between the query and candidate document, but what distance constitutes relevance varies from query to query and changes dynamically as more documents are added to the index." (Surprise, SIGIR 2023, https://dl.acm.org/doi/10.1145/3539618.3592066)
+
+### Our Implementation
+
+The `verbosity` lever (low/medium/high, omitted = automatic; docs/planning/response-verbosity-lever.md) maps levels to exemplar counts; the automatic path's adaptive realization (`adaptiveK`, behind the `autoK` ranking-config lever) cuts the sorted query-similarity curve at its largest gap, falls back to discrete knee detection when no gap stands out, and clamps to [2, 10]. Adaptive MMR λ (`lambdaMode: "variance"`, plumbed off-by-default) lowers λ — diversifying harder — as the pool's similarity dispersion grows.
+
+### Research Lineage
+
+**Largest-gap truncation:**
+- Weaviate `autocut` (production precedent): "The autocut function limits results based on discontinuities in the result set. Specifically, autocut looks for discontinuities, or jumps, in result metrics such as vector distance or search score." https://docs.weaviate.io/weaviate/api/graphql/additional-operators
+- Adaptive-k retrieval (EMNLP 2025): "a simple and effective single-pass method that adaptively selects the number of passages based on the distribution of the similarity scores between the query and the candidate passages … matches or outperforms fixed-k baselines while using up to 10x fewer tokens than full-context input, yet still retrieves 70% of relevant passages." Mechanism: "Sort the scores in descending order. Compute their first discrete differences and choose the index k where the similarity drop is the largest." https://arxiv.org/abs/2506.08479
+
+**Knee fallback:**
+- Satopää, V. et al. (2011). "Kneedle" — knee definition "for continuous functions using the mathematical concept of curvature." https://dl.acm.org/doi/abs/10.1109/icdcsw.2011.20
+- TAA-k (2026) characterizes why gap/knee detection fits dense retrieval: "Ranked similarity curves typically exhibit a characteristic steep–flat–steep pattern, corresponding to a relevance-dominated head, a transition region, and a noise-dominated tail." https://arxiv.org/html/2606.11907v1
+
+**Statistical ancestry (cited, deliberately not built — they need more scores per query than this corpus scale provides):**
+- Manmatha, Rath & Feng (SIGIR 2001): score distributions fit "an exponential distribution for the set of non-relevant documents and a normal distribution for the set of relevant documents." https://dl.acm.org/doi/10.1145/383952.384005
+- Arampatzis, Kamps & Robertson (SIGIR 2009), "Where to stop reading a ranked list?": "the task is essentially a score-distributional threshold optimization problem." https://dl.acm.org/doi/10.1145/1571941.1572031
+- Learned truncation: Choppy (SIGIR 2020), https://arxiv.org/abs/2004.13012
+
+**Adaptive diversification (λ):**
+- Carbonell & Goldstein (1998), the MMR source, gives the working λ range: "start with a small λ (e.g. λ = .3) in order to understand the information space in the region of the query, and then to focus on the most important parts … and a larger value of λ (e.g. λ = .7)." http://www.cs.cmu.edu/~jgc/publication/The_Use_MMR_Diversity_Based_LTMIR_1998.pdf
+- Santos, Macdonald & Ounis (CIKM 2010): "not all queries are equally ambiguous, and hence different queries could benefit from different diversification strategies … we propose to learn such a trade-off on a per-query basis." https://dl.acm.org/doi/10.1145/1871437.1871586
+- Wang & Zhu (SIGIR 2009), portfolio theory: "an optimal rank order is the one that balancing the overall relevance (mean) of the ranked list against its risk level (variance)." https://dl.acm.org/doi/10.1145/1571941.1571963
+- Ecosystem default for calibration: LangChain's `max_marginal_relevance_search` ships `lambda_mult: float = 0.5` with 5× overfetch (`k=4, fetch_k=20`). https://github.com/langchain-ai/langchain/blob/master/libs/core/langchain_core/vectorstores/base.py
+
+**Interface-shape precedent (numeric → enum with adaptive default):** OpenAI `text.verbosity` (low/medium/high output-length hint), Anthropic `output_config.effort` ("Effort is a behavioral signal, not a strict token budget." — https://platform.claude.com/docs/en/build-with-claude/effort.md) replacing numeric `budget_tokens`, Gemini `thinking_level` superseding `thinkingBudget` ("Gemini models engage in dynamic thinking by default" — https://ai.google.dev/gemini-api/docs/thinking).
+
+### Key Divergences
+
+- The gap search is restricted to cut positions inside the clamp window rather than Adaptive-k's top-90% window — at exemplar scale (k ≤ 10 of a ≥100-candidate pool) the clamp is the tighter constraint.
+- The buffer past the cut is 1 (Adaptive-k uses B=5 at passage scale; proportionally similar).
+- The gap-significance threshold (2× the window's average per-step drop) is ours — Weaviate exposes jump count as a user parameter instead; ours must be autonomous.
+- Variance-keyed λ uses a fixed linear map between anchor spreads rather than Santos et al.'s learned per-query model — anchors are sweep hypotheses pending golden-corpus measurement.
+
+---
+
 ## Summary of Research Relationships
 
 | Technique | Relationship to source | Key divergence |
@@ -351,6 +393,8 @@ In high-dimensional spaces (our embeddings are 3072-dimensional), cosine similar
 | Contextual Retrieval | **Direct application** of Anthropic (2024) | Raw parent text instead of LLM-generated context summary |
 | Stigmergic coordination | **Direct application** of Heylighen (2016) general framework | Knowledge coordination, not optimization (diverges from ACO) |
 | UMAP | **Standard usage** of McInnes et al. (2018) | Client-side only, secondary to concept axes, with documented limitations |
+| Adaptive-k truncation | **Direct application** of the largest-gap rule (Weaviate autocut; Adaptive-k, EMNLP 2025) with a Kneedle-style knee fallback | Gap search bounded by the display clamp instead of a top-90% window; buffer 1 instead of 5; autonomous gap-significance threshold |
+| Variance-keyed MMR λ | **Simplified variant of** per-query diversification (Santos et al. 2010) via the mean-variance logic of Wang & Zhu (2009) | Fixed linear spread→λ map instead of learned per-query trade-off; anchors pending sweep measurement — ships off-by-default |
 
 ---
 

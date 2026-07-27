@@ -95,9 +95,11 @@ describe("buildMcpJsonResponse actions hints", () => {
     expect(serialized).not.toContain("expand=true");
     expect(serialized).not.toContain("sort=recent");
     expect(serialized).not.toContain("filter=keyword");
-    // moreClusters survives — clusters IS a real tool param.
+    // moreClusters survives, phrased in verbosity terms — the one advertised
+    // size lever since the 2026-07-26 ruling (clusters is deprecated-but-
+    // honored and no longer advertised in hints).
     const actions = data["actions"] as Record<string, unknown>;
-    expect(String(actions["moreClusters"])).toContain("clusters");
+    expect(String(actions["moreClusters"])).toContain("verbosity");
   });
 
   it("known_recipes renders an id-only stub (id + similarity + cluster slot; no recipe text, no evidence body)", () => {
@@ -205,11 +207,12 @@ describe("buildMcpJsonResponse actions hints", () => {
     expect((without["data"] as Record<string, unknown>)["sessionId"]).toBeUndefined();
   });
 
-  it("drill-down hint references the clusters param, not expand", () => {
+  it("drill-down hint references the verbosity lever, not expand or the deprecated clusters", () => {
     const response = buildMcpJsonResponse(makeResult(), [makeEnriched("a", 9)], 1);
     const results = (response["data"] as Record<string, unknown>)["results"] as Array<Record<string, unknown>>;
     const drill = results[0]!["drillDown"] as Record<string, unknown>;
-    expect(String(drill["hint"])).toContain("clusters value");
+    expect(String(drill["hint"])).toContain("verbosity");
     expect(String(drill["hint"])).not.toContain("expand");
+    expect(String(drill["hint"])).not.toContain("clusters value");
   });
 });

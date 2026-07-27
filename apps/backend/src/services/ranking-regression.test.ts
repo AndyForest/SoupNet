@@ -1150,3 +1150,165 @@ describe.skipIf(!BASE)("ranking regression — seen accumulation across checks (
     }
   });
 });
+
+// ── 7: verbosity lever — monotonicity + legacy params (2026-07-26) ───────────
+//
+// The evals-side regression ask (finding-max-chars-mcp-contract.md §4): a
+// test that FAILS when a documented size parameter stops moving the response.
+// The defect class is "parameter silently ignored" — every stage was
+// individually correct while MCP's unconditional default cluster count made
+// resolveK's max_chars branch unreachable. Guards, per surface:
+//   - monotone non-decreasing exemplar count across the verbosity ladder,
+//   - byte spread between the smallest and largest steer on the same query,
+//   - legacy clusters / max_chars still move the response (deprecated ≠ inert),
+//   - the automatic path: fixed default today, adaptive cliff-cut behind the
+//     autoK lever (docs/planning/response-verbosity-lever.md).
+
+describe.skipIf(!BASE)("ranking regression — verbosity lever (7)", () => {
+  let agent: Agent;
+  // Cliff corpus: 3 near seeds (sims .95…) on distinct axes, 12 tail seeds
+  // (sims .55…) on distinct axes — the steep–flat–steep curve adaptive-k cuts.
+  beforeAll(async () => {
+    agent = await registerAgent("verb");
+    const old = "now() - interval '30 days'";
+    for (let i = 0; i < 3; i++) {
+      await seedTrace(agent, `VN${i}`, { sim: 0.95 - i * 0.005, axis: 2 + i, createdAtSql: old });
+    }
+    for (let i = 0; i < 12; i++) {
+      await seedTrace(agent, `VT${i}`, { sim: 0.55 - i * 0.005, axis: 6 + i, createdAtSql: old });
+    }
+  }, 120_000);
+
+  function runVerb(opts: {
+    verbosity?: "low" | "medium" | "high" | "auto";
+    k?: number;
+    maxChars?: number;
+    ranking?: RankingConfig;
+  }) {
+    return runSearchPipeline({
+      db: getDb(),
+      groupIds: [agent.groupId],
+      query: "unused — queryVectorStr provided",
+      queryVectorStr: Q,
+      verbosity: opts.verbosity,
+      k: opts.k,
+      maxChars: opts.maxChars,
+      perPage: 20,
+      ranking: opts.ranking,
+    });
+  }
+
+  it("(a) exemplar count is monotone non-decreasing across low → medium → high", async () => {
+    const [low, medium, high] = await Promise.all([
+      runVerb({ verbosity: "low" }),
+      runVerb({ verbosity: "medium" }),
+      runVerb({ verbosity: "high" }),
+    ]);
+    expect(low.clustered).toBe(true);
+    expect(low.results).toHaveLength(3);
+    expect(medium.results).toHaveLength(5);
+    expect(high.results).toHaveLength(10);
+  });
+
+  it("(b) automatic (no steer) under the shipped default keeps the pre-lever 3 exemplars", async () => {
+    const res = await runVerb({ verbosity: "auto" });
+    expect(res.clustered).toBe(true);
+    expect(res.results).toHaveLength(3);
+  });
+
+  it("(c) automatic under the autoK=adaptive arm cuts at the similarity cliff (3 near + buffer)", async () => {
+    const res = await runVerb({
+      verbosity: "auto",
+      ranking: { ...defaultArm(), autoK: "adaptive" },
+    });
+    expect(res.results).toHaveLength(4);
+  });
+
+  it("(d) legacy clusters gives exact-k control, beating verbosity when both are set", async () => {
+    const res = await runVerb({ k: 7, verbosity: "high" });
+    expect(res.results).toHaveLength(7);
+  });
+
+  it("(e) legacy max_chars alone still moves the response (deprecated, never inert)", async () => {
+    const [tight, roomy] = await Promise.all([
+      runVerb({ maxChars: 175 }),
+      runVerb({ maxChars: 1200 }),
+    ]);
+    expect(tight.clustered).toBe(true);
+    expect(roomy.clustered).toBe(true);
+    expect(tight.results.length).toBeLessThan(roomy.results.length);
+  });
+
+  it("(f) web surface: /check filter ladder is monotone with byte spread (no deposits)", async () => {
+    const bodies: string[] = [];
+    const counts: number[] = [];
+    for (const level of ["low", "medium", "high"] as const) {
+      const qs = new URLSearchParams({
+        key: agent.apiKey,
+        filter: `rankreg-${uid}`,
+        format: "json",
+        verbosity: level,
+      });
+      const raw = await (await fetch(`${BASE}/check?${qs.toString()}`, {
+        headers: { Accept: "application/json" },
+      })).text();
+      bodies.push(raw);
+      const parsed = JSON.parse(raw) as { ok: boolean; data?: { results: unknown[] } };
+      expect(parsed.ok).toBe(true);
+      counts.push(parsed.data!.results.length);
+    }
+    expect(counts[0]).toBeLessThanOrEqual(counts[1]!);
+    expect(counts[1]).toBeLessThanOrEqual(counts[2]!);
+    expect(counts[0]).toBeLessThan(counts[2]!);
+    expect(bodies[0]!.length).toBeLessThan(bodies[2]!.length);
+  });
+
+  it("(g) MCP surface: verbosity ladder is monotone with byte spread — the surface where max_chars was inert", async () => {
+    const ACCEPT_BOTH = "application/json, text/event-stream";
+    const exemplarCount = (raw: string): number => {
+      const m = /clustered to (\d+) exemplars/.exec(raw);
+      expect(m, `response advertises a clustered exemplar count: ${raw.slice(0, 300)}`).toBeTruthy();
+      return parseInt(m![1]!, 10);
+    };
+    const callCheck = async (args: Record<string, unknown>): Promise<string> => {
+      const res = await fetch(`${BASE}/mcp`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: ACCEPT_BOTH,
+          Authorization: `Bearer ${agent.apiKey}`,
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          method: "tools/call",
+          params: {
+            name: "check_recipe",
+            arguments: {
+              // Passes the format-adherence gate; the uid marker keeps it
+              // greppable alongside this suite's seeds.
+              recipe: `As a regression-test agent working on the rankreg-${uid} verbosity ladder, I prefer deterministic probe recipes so that exemplar counts are exactly assertable.`,
+              supporting_evidence: 'Fixture interpretation.\n> "fixture quote"\n-- ranking-regression test',
+              ...args,
+            },
+          },
+          id: 1,
+        }),
+      });
+      expect(res.status).toBe(200);
+      return res.text();
+    };
+
+    // Sequential on purpose: each MCP check deposits a trace, and the ladder
+    // tolerates the growing corpus (counts are exact k, pool ≥ 15 seeds).
+    const low = await callCheck({ verbosity: "low" });
+    const high = await callCheck({ verbosity: "high" });
+    expect(exemplarCount(low)).toBe(3);
+    expect(exemplarCount(high)).toBe(10);
+    expect(low.length).toBeLessThan(high.length);
+
+    // Legacy exact-k stays honored through the MCP schema (deprecated ≠ inert).
+    const legacy = await callCheck({ clusters: 7 });
+    expect(exemplarCount(legacy)).toBe(7);
+  });
+});
+

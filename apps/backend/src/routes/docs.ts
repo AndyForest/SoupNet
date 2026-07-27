@@ -342,7 +342,7 @@ http_headers = { Authorization = "Bearer ${escKey}" }</pre>
     <tr>
       <td><code>check_recipe</code></td>
       <td>Check a recipe against Soup.net. Logs your recipe and returns similar recipes with evidence.
-      Supports <code>clusters</code> and <code>max_chars</code> params for concise responses.</td>
+      Supports a <code>verbosity</code> param (low | medium | high; omit for automatic) to steer response detail.</td>
     </tr>
     <tr>
       <td><code>get_briefing</code></td>
@@ -508,7 +508,7 @@ bearer_token_env_var = "SOUPNET_API_KEY"</pre>
 
   <h2>Tips for agents</h2>
   <ul>
-    <li><code>max_chars: 2000</code> keeps responses compact when context is tight. The briefing covers the rest.</li>
+    <li><code>verbosity: "low"</code> keeps responses compact when context is tight; omit it for automatic sizing. The briefing covers the rest.</li>
   </ul>
 
   <h2>Bootstrap your corpus</h2>
