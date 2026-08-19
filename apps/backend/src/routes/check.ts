@@ -834,7 +834,7 @@ function renderPage(
     resultsHtml = `
   <section id="results">
     <h2>${headingLabel}</h2>
-    <p style="font-size:0.85em;color:#555;margin:0.25rem 0">${toolbarParts.join(" &middot; ")}</p>
+    <p class="toolbar">${toolbarParts.join(" &middot; ")}</p>
 
     ${result.results.length > 0 ? resultItems : emptyLine}
     ${paginationHtml}
@@ -949,10 +949,10 @@ function renderPage(
   const headerHtml = isSearchOnly
     ? `
   <header>
-    <p style="margin:0 0 0.35rem"><strong>Soup.net</strong> <small style="color:#777">recipe search</small></p>
-    <form method="get" action="/check" style="display:flex;gap:0.5rem;max-width:44rem;margin:0">
+    <p class="brandline"><strong>Soup.net</strong> <small>recipe search</small></p>
+    <form method="get" action="/check" class="searchbar">
       <input type="hidden" name="key" value="${esc(params.key)}">
-      <input type="search" name="filter" value="${esc(params.filter ?? "")}" style="flex:1;font-size:1.05em;padding:0.35rem 0.6rem" aria-label="Search recipes">
+      <input type="search" name="filter" value="${esc(params.filter ?? "")}" aria-label="Search recipes">
       <button type="submit">Search</button>
     </form>
   </header>`
@@ -965,9 +965,9 @@ function renderPage(
   // live here instead of a standing banner.
   const searchHelpHtml = isSearchOnly
     ? `
-  <details id="search-help" style="margin:0.75rem 0">
-    <summary style="cursor:pointer;font-size:0.9em">Search syntax &amp; tips</summary>
-    <ul style="font-size:0.85em;margin:0.4rem 0">
+  <details id="search-help" class="reveal">
+    <summary>Search syntax &amp; tips</summary>
+    <ul>
       <li>Bare words search by meaning. <code>"quoted terms"</code> match exactly (filenames, identifiers) &mdash; including inside evidence and its citations. Group with <code>("a" OR "b")</code>; exclude with <code>-"term"</code>.</li>
       <li><code>author:jane@example.com</code>, <code>author:me</code> &mdash; filter by who made the call. <code>after:2026-06-01</code> / <code>before:2026-06-14</code> bound the judgment date.</li>
       <li>Clustered results show one exemplar per group of similar recipes &mdash; &ldquo;Show all&rdquo; flattens them.</li>
@@ -1007,8 +1007,8 @@ function renderPage(
 
   ${searchHelpHtml}
 
-  ${wrapForm ? `<details id="check-form" style="margin:1rem 0">
-    <summary style="cursor:pointer">${formSummary}</summary>` : ""}
+  ${wrapForm ? `<details id="check-form" class="reveal">
+    <summary>${formSummary}</summary>` : ""}
   ${formOpenTag}
     <input type="hidden" name="key" value="${esc(params.key)}">
 
