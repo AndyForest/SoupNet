@@ -151,6 +151,7 @@ export const CHECK_PARAMS = [
   // "Re-check with file" form) would re-post the same feedback_* values and
   // double-log the row against a check that never mentioned it.
   { field: "feedbackTraceId",        wire: "feedback_trace_id",        aliases: [], roundTrip: "override-only" },
+  { field: "feedbackSearchId",       wire: "feedback_search_id",       aliases: [], roundTrip: "override-only" },
   { field: "feedbackKind",           wire: "feedback_kind",            aliases: [], roundTrip: "override-only" },
   { field: "feedbackImpact",         wire: "feedback_impact",          aliases: [], roundTrip: "override-only" },
   { field: "feedbackDisposition",    wire: "feedback_disposition",     aliases: [], roundTrip: "override-only" },
@@ -390,10 +391,18 @@ function buildSearchOnlyJsonResponse(
   if (response["ok"] !== true) return response;
   const data = response["data"] as Record<string, unknown>;
   delete data["checked"];
+  // Zero results carry the thinness signal explicitly (team-trial evidence
+  // §2.4: "nothing came back" was indistinguishable from a service outage) —
+  // the searched-corpus size makes genuine novelty triageable later, and the
+  // pointer closes the feedback loop on null results.
+  const zeroNotice = result.totalResults === 0
+    ? ` No matches${result.searchedCorpusSize !== undefined ? ` among the ${result.searchedCorpusSize} recipes in scope` : ""} — a thin-corpus signal worth a feedback row (story_fulfilled: no).`
+    : "";
   response["data"] = {
     searchOnly: true,
     filter,
-    notice: "Read-only search — no recipe was logged.",
+    notice: `Read-only search — no recipe was logged.${zeroNotice}`,
+    ...(result.searchId ? { searchId: result.searchId } : {}),
     ...data,
   };
   return response;
@@ -448,13 +457,13 @@ async function resolveRideAlongFeedback(
   db: PostgresJsDatabase,
   params: PageParams,
 ): Promise<FeedbackRowResult[] | undefined> {
-  if (!params.feedbackTraceId) return undefined;
+  if (!params.feedbackTraceId && !params.feedbackSearchId) return undefined;
   if (!params.key) {
     return [{
       index: 0,
       ok: false,
-      traceId: params.feedbackTraceId,
-      error: "feedback_trace_id requires an API key (?key=) to identify the submitting agent",
+      traceId: params.feedbackTraceId ?? "",
+      error: "feedback_trace_id / feedback_search_id requires an API key (?key=) to identify the submitting agent",
     }];
   }
   // A present-but-invalid key never reaches here — handleCheck's key-death
@@ -465,13 +474,14 @@ async function resolveRideAlongFeedback(
     return [{
       index: 0,
       ok: false,
-      traceId: params.feedbackTraceId,
+      traceId: params.feedbackTraceId ?? "",
       error: "invalid or expired API key",
     }];
   }
   const row: RawFeedbackRow = withCheckDefaults(
     {
       trace_id: params.feedbackTraceId,
+      search_id: params.feedbackSearchId,
       kind: params.feedbackKind,
       impact: params.feedbackImpact,
       disposition: params.feedbackDisposition,
@@ -484,6 +494,7 @@ async function resolveRideAlongFeedback(
   return ingestFeedback({
     db,
     apiKeyId: keyResult.keyId,
+    userId: keyResult.userId,
     readGroupIds: keyResult.readGroupIds,
     rows: [row],
   });
@@ -1160,6 +1171,14 @@ async function handleCheck(
       verbosity: verbositySteer,
       axes: params.axes,
       readGroups: params.readGroups,
+      // Structured-query extras (2026-08-19): session/known stub rendering and
+      // agent lineage, same semantics as the check path. excludeOwnDefault
+      // stays OFF here — the web filter path serves the human searching their
+      // own corpus (operator ruling 1, recipe 303e17cf); the MCP
+      // search_recipes tool is the surface that defaults to collaborators.
+      sessionId: params.sessionId,
+      knownRecipeIds: knownRecipeIds.size > 0 ? [...knownRecipeIds] : undefined,
+      agentId: params.agentId,
     });
   }
 

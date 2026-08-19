@@ -56,10 +56,18 @@ export const checkFeedback = claimnetSchema.table(
   {
     id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
 
-    /** The check (trace) this feedback is about. */
+    /** The check (trace) this feedback is about. NULL when the row is about
+     *  a read-only search instead — see searchAuditId; exactly one of the two
+     *  targets is present (check_feedback_one_target). */
     traceId: uuid("trace_id")
-      .notNull()
       .references(() => traces.id, { onDelete: "cascade" }),
+
+    /** The read-only search this feedback is about (2026-08-19): the
+     *  check.searched audit_log row's id, returned to callers as `searchId`
+     *  on search responses. Soft pointer — audit_log rows deliberately carry
+     *  no FKs (append-only forensics; see the backlog FK section). NULL for
+     *  check feedback. */
+    searchAuditId: uuid("search_audit_id"),
 
     /** The key that submitted the feedback (not necessarily the key that
      *  made the original check). No FK — matches trace_evidence.api_key_id.
@@ -134,11 +142,21 @@ export const checkFeedback = claimnetSchema.table(
       "check_feedback_one_actor",
       sql`(${t.apiKeyId} IS NULL) <> (${t.actorUserId} IS NULL)`,
     ),
+    // Exactly one target: a check's trace or a read-only search's audit row.
+    // Structural, so no write path can produce a target-less (or
+    // double-targeted) row.
+    check(
+      "check_feedback_one_target",
+      sql`(${t.traceId} IS NULL) <> (${t.searchAuditId} IS NULL)`,
+    ),
     // Identical agent resubmission (retry, prefetching link-preview bot,
     // re-clicked URL) lands on the conflict and returns the original row;
     // human-origin rows (NULL api_key_id) are deliberately excluded — each
     // human correction is its own event.
     unique("check_feedback_dedup_unique").on(t.apiKeyId, t.traceId, t.contentHash),
+    // Same idempotency for search-target rows (trace_id NULL never collides
+    // in the index above — Postgres treats NULLs as distinct).
+    unique("check_feedback_search_dedup_unique").on(t.apiKeyId, t.searchAuditId, t.contentHash),
   ],
 );
 

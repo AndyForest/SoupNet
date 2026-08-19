@@ -128,6 +128,7 @@ function readFeedbackQueryRow(c: Context): RawFeedbackRow {
   return {
     trace_id: q("trace_id"),
     recipe_id: q("recipe_id"),
+    search_id: q("search_id"),
     kind: q("kind"),
     impact: q("impact"),
     disposition: q("disposition"),
@@ -173,11 +174,14 @@ feedback.post("/", feedbackBodyLimit, feedbackRateLimit, async (c) => {
   let rows: RawFeedbackRow[];
   if (Array.isArray((body as { feedback?: unknown }).feedback)) {
     rows = (body as { feedback: RawFeedbackRow[] }).feedback;
-  } else if (body && typeof body === "object" && "trace_id" in (body as Record<string, unknown>)) {
+  } else if (
+    body && typeof body === "object" &&
+    ("trace_id" in (body as Record<string, unknown>) || "search_id" in (body as Record<string, unknown>))
+  ) {
     rows = [body as RawFeedbackRow];
   } else {
     return c.json(
-      { ok: false, error: "Body must be a feedback row object (with trace_id) or { \"feedback\": [rows] }" },
+      { ok: false, error: "Body must be a feedback row object (with trace_id or search_id) or { \"feedback\": [rows] }" },
       400,
     );
   }
@@ -190,6 +194,7 @@ feedback.post("/", feedbackBodyLimit, feedbackRateLimit, async (c) => {
   const results = await ingestFeedback({
     db,
     apiKeyId: keyResult.keyId,
+    userId: keyResult.userId,
     readGroupIds: keyResult.readGroupIds,
     rows,
   });
@@ -243,6 +248,7 @@ feedback.get("/", feedbackRateLimit, async (c) => {
   const results = await ingestFeedback({
     db,
     apiKeyId: keyResult.keyId,
+    userId: keyResult.userId,
     readGroupIds: keyResult.readGroupIds,
     rows: [row],
   });

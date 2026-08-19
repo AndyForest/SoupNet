@@ -40,8 +40,10 @@ import { scoreFormatAdherence } from "./format-adherence";
 import { runSearchPipeline } from "./search-pipeline";
 import { StageTimer } from "../lib/stage-timer";
 import { invalidKeyMessage } from "../lib/key-remediation";
-import { DEFAULT_RANKING, RANKING_ALGORITHM_VERSION } from "@soupnet/domain";
-import type { CandidateSignals, VerbositySteer } from "@soupnet/domain";
+import { DEFAULT_RANKING, RANKING_ALGORITHM_VERSION, parseSearchQuery, AUTHOR_ME } from "@soupnet/domain";
+import type { CandidateSignals, VerbositySteer, ParsedSearchQuery } from "@soupnet/domain";
+import type { StructuredTraceFilters } from "./vector-search.service";
+import { hasStructuredFilters } from "./vector-search.service";
 
 /** Session tokens are opaque and validation-free (they only compress the
  *  holder's own responses — zero security weight), but bounded so arbitrary
@@ -214,6 +216,14 @@ export interface SubmitAndSearchResult {
    *  Callers adopt it and pass it on subsequent checks (and optionally to
    *  sub-agents) for known-set stub rendering. */
   sessionId?: string | undefined;
+  /** Read-only search path only: the check.searched audit row's id — the
+   *  handle log_feedback's `search_id` accepts, closing the feedback loop
+   *  for searches the way trace ids do for checks (2026-08-19). */
+  searchId?: string | undefined;
+  /** Read-only search path, zero-result responses only: how many recipes the
+   *  key's effective scope holds — lets "nothing matched" distinguish a thin
+   *  corpus from a bad minute (team-trial evidence §2.4). */
+  searchedCorpusSize?: number | undefined;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -794,10 +804,71 @@ export async function submitAndSearch(
 
 // ── Read-only search (the /check `filter` path) ─────────────────────────────
 
+/** Bound on qualifier-only (corpus-mode) search matches: newest-first by
+ *  judgment date, honest totalResults still reported by the pipeline's count.
+ *  Display stays verbosity-shaped; this bounds enrichment + payload. */
+const SEARCH_CORPUS_LIMIT = 200;
+
+/**
+ * Resolve a parsed query's author selectors into concrete trace user_ids for
+ * the SQL layer. `me` resolves to the caller; emails resolve via one
+ * case-insensitive lookup — emails that match no user simply don't resolve
+ * (an all-unresolved positive filter matches nothing: honest zero results,
+ * no user-existence oracle beyond what shared-book membership already shows).
+ */
+async function resolveStructuredFilters(
+  db: PostgresJsDatabase,
+  parsed: ParsedSearchQuery,
+  ctx: { callerUserId: string; excludeOwnDefault: boolean },
+): Promise<StructuredTraceFilters> {
+  const emailValues = [
+    ...(parsed.authors.kind === "listed" ? parsed.authors.values : []),
+    ...parsed.authorsNegated,
+  ].filter((v) => v !== AUTHOR_ME);
+  const emailToUserId = new Map<string, string>();
+  if (emailValues.length > 0) {
+    const rows = await db.execute(sql`
+      SELECT id::text AS id, lower(email) AS email FROM claimnet.users
+      WHERE lower(email) IN (${sql.join([...new Set(emailValues)].map((e) => sql`${e}`), sql`, `)})
+    `);
+    for (const row of rows as unknown as Array<{ id: string; email: string }>) {
+      emailToUserId.set(row.email, row.id);
+    }
+  }
+  const resolve = (values: string[]): string[] =>
+    values
+      .map((v) => (v === AUTHOR_ME ? ctx.callerUserId : emailToUserId.get(v)))
+      .filter((id): id is string => id !== undefined);
+
+  const excludeUserIds = resolve(parsed.authorsNegated);
+  let includeUserIds: string[] | undefined;
+  if (parsed.authors.kind === "listed") {
+    includeUserIds = resolve(parsed.authors.values);
+  } else if (parsed.authors.kind === "surface-default" && ctx.excludeOwnDefault) {
+    excludeUserIds.push(ctx.callerUserId);
+  }
+  // authors.kind === "anyone": no author filter, and the surface default is
+  // explicitly overridden.
+
+  return {
+    lexicalGroups: parsed.lexicalGroups.length > 0 ? parsed.lexicalGroups : undefined,
+    lexicalNegated: parsed.lexicalNegated.length > 0 ? parsed.lexicalNegated : undefined,
+    includeUserIds,
+    excludeUserIds: excludeUserIds.length > 0 ? excludeUserIds : undefined,
+    decidedAfter: parsed.after,
+    decidedBefore: parsed.before,
+  };
+}
+
 export interface SearchOnlyParams {
   key: string;
-  /** Keyword text — becomes the semantic query (the same runSearchPipeline
-   *  query slot the briefing's filter/purpose params use). */
+  /** The structured search query (2026-08-19, docs/planning/recipe-search-design.md):
+   *  bare text is the semantic query (the same runSearchPipeline query slot
+   *  the briefing's filter/purpose params use — a plain-text filter behaves
+   *  exactly as before), "quoted terms" match lexically across claim +
+   *  evidence + reference text, and author:/after:/before: qualifiers filter
+   *  structurally. Parsed by @soupnet/domain parseSearchQuery; a grammar
+   *  error returns an error result with the parser's message. */
   filter: string;
   sort?: string | undefined;
   page?: number | undefined;
@@ -809,6 +880,18 @@ export interface SearchOnlyParams {
   axes?: string | undefined;
   readGroups?: string | undefined;
   surface?: string | undefined;
+  /** Exclude the calling key's own user from results unless the query says
+   *  otherwise (any positive author: qualifier, incl. author:me/anyone,
+   *  overrides). Set by the MCP search_recipes tool — search is for finding
+   *  collaborators' judgment; the web filter path keeps include-everything
+   *  (operator ruling 2026-08-19, recipe 303e17cf). */
+  excludeOwnDefault?: boolean | undefined;
+  /** Session token + client-declared known ids — same stub-rendering
+   *  semantics as the check path (rendering only, never ranking). */
+  sessionId?: string | undefined;
+  knownRecipeIds?: string[] | undefined;
+  /** Self-minted agent identity — stamped on the check.searched audit row. */
+  agentId?: string | undefined;
 }
 
 /**
@@ -857,11 +940,52 @@ export async function searchWithoutLogging(
     if (resolved.length > 0) effectiveReadGroupIds = resolved;
   }
 
+  // Parse the structured query (docs/planning/recipe-search-design.md).
+  // Grammar errors are loud and agent-readable — typos must not silently
+  // degrade into a semantic search for the typo text.
+  const parsed = parseSearchQuery(params.filter);
+  if (!parsed.ok) {
+    return {
+      error: `Search query error: ${parsed.error}`,
+      results: [],
+      totalResults: 0,
+      currentPage: page,
+      totalPages: 0,
+    };
+  }
+  const structured = await resolveStructuredFilters(db, parsed.query, {
+    callerUserId: keyResult.userId,
+    excludeOwnDefault: params.excludeOwnDefault ?? false,
+  });
+
+  // Session + known-set: identical rendering-only semantics to the check
+  // path's 5b — client-declared ids ∪ the session's deposits ∪ what the
+  // server already showed it. Never touches ranking.
+  const session = resolveSessionId(params.sessionId);
+  const knownIds = new Set<string>(params.knownRecipeIds ?? []);
+  if (!session.fresh) {
+    const ownRows = await db.execute(sql`
+      SELECT id::text AS id FROM claimnet.traces
+      WHERE session_id = ${session.sessionId}
+    `);
+    const shownRows = await db.execute(sql`
+      SELECT trace_id::text AS id FROM claimnet.session_shown
+      WHERE session_id = ${session.sessionId}
+    `);
+    for (const row of [...(ownRows as unknown as Array<{ id: string }>), ...(shownRows as unknown as Array<{ id: string }>)]) {
+      knownIds.add(row.id);
+    }
+  }
+
   const timer = new StageTimer();
   const pipelineResult = await runSearchPipeline({
     db,
     groupIds: effectiveReadGroupIds,
-    query: params.filter,
+    // Qualifier-only queries have no semantic text: corpus mode, judgment-date
+    // ordering, structured predicates applied in fetchCorpusTraces.
+    query: parsed.query.semanticText.length > 0 ? parsed.query.semanticText : undefined,
+    structured,
+    corpusLimit: SEARCH_CORPUS_LIMIT,
     k: params.clusters,
     maxChars: params.maxChars,
     verbosity: params.verbosity,
@@ -870,11 +994,28 @@ export async function searchWithoutLogging(
     perPage,
     axes: params.axes,
     includeVectors: !!params.axes,
+    knownIds: knownIds.size > 0 ? knownIds : undefined,
     timer,
   });
 
+  // Zero results: report the scope size so the caller (and later analysis)
+  // can tell a thin corpus from a service problem.
+  let searchedCorpusSize: number | undefined;
+  if (pipelineResult.totalResults === 0 && effectiveReadGroupIds.length > 0) {
+    try {
+      const scopeRows = await db.execute(sql`
+        SELECT count(*)::int AS n FROM claimnet.traces
+        WHERE group_id IN (${sql.join(effectiveReadGroupIds.map((g) => sql`${g}::uuid`), sql`, `)})
+      `);
+      searchedCorpusSize = Number((scopeRows as unknown as Array<{ n: number }>)[0]?.n ?? 0);
+    } catch (err) {
+      console.error("[trace.service] scope-size count failed (non-fatal):", err);
+    }
+  }
+
+  let searchId: string | undefined;
   try {
-    await db.insert(auditLog).values({
+    const inserted = await db.insert(auditLog).values({
       actorUserId: keyResult.userId,
       apiKeyId: keyResult.keyId,
       action: "check.searched",
@@ -885,11 +1026,47 @@ export async function searchWithoutLogging(
         resultCount: pipelineResult.totalResults,
         searchMode: pipelineResult.searchMode,
         surface: params.surface ?? "web",
+        // Measurement stamps (2026-08-19, team-trial instrumentation —
+        // mirrors recipe.checked): what the caller actually saw, so
+        // retrieval efficacy and cross-author analysis are derivable
+        // offline by joining result ids to trace authors.
+        resultTraceIds: pipelineResult.results.map((r) => r.id),
+        resultSimilarities: pipelineResult.results.map((r) => r.semanticScore ?? null),
+        sessionId: session.sessionId,
+        rankingVersion: RANKING_ALGORITHM_VERSION,
+        ...(params.agentId ? { agentId: params.agentId } : {}),
       },
-    });
+    }).returning({ id: auditLog.id });
+    // The audit row id doubles as the search's feedback handle (search_id).
+    searchId = inserted[0]?.id;
   } catch (err) {
     // Non-blocking — accounting must not fail the read.
     console.error("[trace.service] check.searched audit write failed:", err);
+  }
+
+  // Record display history for the session, mirroring the check path's 7b:
+  // full-text recipes this response carries become "shown", so later checks
+  // and searches in the same session stub them and walk to unseen content.
+  const searchShownIds = [
+    ...pipelineResult.results.filter((r) => !r.known).map((r) => r.id),
+    ...(pipelineResult.relatedEvidence ?? []).map((e) => e.parentTraceId),
+  ];
+  if (searchShownIds.length > 0) {
+    try {
+      const values = sql.join(
+        [...new Set(searchShownIds)].map(
+          (id) => sql`(${session.sessionId}, ${id}::uuid)`,
+        ),
+        sql`, `,
+      );
+      await db.execute(sql`
+        INSERT INTO claimnet.session_shown (session_id, trace_id)
+        VALUES ${values}
+        ON CONFLICT (session_id, trace_id) DO NOTHING
+      `);
+    } catch (err) {
+      console.error("[trace.service] session_shown record failed (non-fatal):", err);
+    }
   }
 
   return {
@@ -911,6 +1088,9 @@ export async function searchWithoutLogging(
       }
       : undefined,
     serverTiming: timer.toServerTimingHeader(),
+    sessionId: session.sessionId,
+    searchId,
+    searchedCorpusSize,
     // The read-only filter path never demotes (echo suppression applies to
     // the logging check path only) and uses legacy ordering — but it is still
     // a ranked response, so it reports the algorithm version it ran under.

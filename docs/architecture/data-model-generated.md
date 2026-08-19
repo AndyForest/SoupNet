@@ -1,9 +1,9 @@
 # ClaimNet Data Model — Generated Reference
 
-> **Auto-generated** from Drizzle migration snapshot `0034_snapshot.json`.
+> **Auto-generated** from Drizzle migration snapshot `0035_snapshot.json`.
 > Do not edit by hand. Regenerate with: `npx tsx scripts/generate-data-model-docs.ts`
 >
-> Schema as of migration `0034_feedback_content_hash` (2026-07-21).
+> Schema as of migration `0035_recipe_search_feedback_targets` (2026-08-19).
 > Tables: 29 | Schema: `claimnet`
 
 For design rationale, conventions, and context, see [data-model.md](data-model.md).
@@ -61,6 +61,7 @@ erDiagram
     check_feedback {
         uuid id PK
         uuid trace_id FK
+        uuid search_audit_id
         uuid api_key_id
         uuid actor_user_id FK
         text agent_id
@@ -557,6 +558,7 @@ These are created by raw SQL in migration files and are not captured in the snap
 - `traces_api_key_id_idx`: `(api_key_id)`
 - `traces_created_at_idx`: `(created_at)`
 - `traces_session_id_created_at_idx`: `(session_id, created_at)`
+- `traces_judgment_date_idx`: `((COALESCE("decided_at", "created_at")))`
 
 ---
 
@@ -676,7 +678,8 @@ These are created by raw SQL in migration files and are not captured in the snap
 | Column | Type | Nullable | Default | PK |
 |---|---|---|---|---|
 | `id` | `uuid` | NO | `gen_random_uuid()` | PK |
-| `trace_id` | `uuid` | NO |  |  |
+| `trace_id` | `uuid` | YES |  |  |
+| `search_audit_id` | `uuid` | YES |  |  |
 | `api_key_id` | `uuid` | YES |  |  |
 | `actor_user_id` | `uuid` | YES |  |  |
 | `agent_id` | `text` | YES |  |  |
@@ -701,6 +704,7 @@ These are created by raw SQL in migration files and are not captured in the snap
 
 **Unique constraints:**
 - `check_feedback_dedup_unique`: `(api_key_id, trace_id, content_hash)`
+- `check_feedback_search_dedup_unique`: `(api_key_id, search_audit_id, content_hash)`
 
 **Indexes:**
 - `check_feedback_trace_id_idx`: `(trace_id)`

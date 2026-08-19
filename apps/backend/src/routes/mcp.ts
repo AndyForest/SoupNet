@@ -331,6 +331,7 @@ function imageFromBase64(base64: string, filename: string, mimeTypeHint?: string
 // surface must never take down the check it rides on).
 const feedbackRowSchema = z.object({
   trace_id: z.string().optional(),
+  search_id: z.string().optional(),
   kind: z.string().optional(),
   impact: z.string().optional(),
   disposition: z.string().optional(),
@@ -616,6 +617,7 @@ function createMcpServer(backendUrl: string): McpServer {
             const results = await ingestFeedback({
               db,
               apiKeyId: keyResult.keyId,
+              userId: keyResult.userId,
               readGroupIds: keyResult.readGroupIds,
               rows,
             });
@@ -964,8 +966,11 @@ function createMcpServer(backendUrl: string): McpServer {
     "log_feedback",
     MCP_TOOL_DESCRIPTIONS.logFeedback,
     {
-      trace_id: z.string().describe(
-        "Recipe id of the prior check — the full UUID from the check response, or an unambiguous short-id prefix (8+ chars, e.g. '18912fbd'). Ambiguous prefixes are rejected naming the candidates."
+      trace_id: z.string().optional().describe(
+        "Recipe id of the prior check — the full UUID from the check response, or an unambiguous short-id prefix (8+ chars, e.g. '18912fbd'). Ambiguous prefixes are rejected naming the candidates. Give exactly one of trace_id or search_id."
+      ),
+      search_id: z.string().optional().describe(
+        "searchId of a prior search_recipes call (full UUID from its response) — feedback about what a search surfaced and what you did with it. Give exactly one of trace_id or search_id."
       ),
       kind: z.string().describe("check-feedback | operational | outcome"),
       impact: z.string().describe("none | new | subtle | big | operational"),
@@ -1014,6 +1019,7 @@ function createMcpServer(backendUrl: string): McpServer {
         const results = await ingestFeedback({
           db,
           apiKeyId: keyResult.keyId,
+          userId: keyResult.userId,
           readGroupIds: keyResult.readGroupIds,
           rows: [args as RawFeedbackRow],
         });

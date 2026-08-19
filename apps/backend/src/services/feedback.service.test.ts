@@ -244,6 +244,7 @@ describe("ingestFeedback short-id prefix resolution (stubbed db)", () => {
     const results = await ingestFeedback({
       db: stubDb([[{ id: T1 }]]),
       apiKeyId: "22222222-2222-2222-2222-222222222222",
+      userId: "99999999-9999-9999-9999-999999999999",
       readGroupIds: [GROUP],
       rows: [validRow({ trace_id: T1.slice(0, 8) })],
     });
@@ -256,6 +257,7 @@ describe("ingestFeedback short-id prefix resolution (stubbed db)", () => {
     const results = await ingestFeedback({
       db: stubDb([[{ id: T1 }, { id: T2 }]]),
       apiKeyId: "22222222-2222-2222-2222-222222222222",
+      userId: "99999999-9999-9999-9999-999999999999",
       readGroupIds: [GROUP],
       rows: [validRow({ trace_id: "7676e323" })],
     });
@@ -270,6 +272,7 @@ describe("ingestFeedback short-id prefix resolution (stubbed db)", () => {
     const results = await ingestFeedback({
       db: stubDb([[], []]),
       apiKeyId: "22222222-2222-2222-2222-222222222222",
+      userId: "99999999-9999-9999-9999-999999999999",
       readGroupIds: [GROUP],
       rows: [validRow({ trace_id: "ffffffff" }), validRow({ trace_id: T2 })],
     });
@@ -291,6 +294,7 @@ describe("ingestFeedback short-id prefix resolution (stubbed db)", () => {
     const results = await ingestFeedback({
       db,
       apiKeyId: "22222222-2222-2222-2222-222222222222",
+      userId: "99999999-9999-9999-9999-999999999999",
       readGroupIds: [],
       rows: [validRow({ trace_id: T1.slice(0, 8) })],
     });
@@ -332,6 +336,7 @@ describe("computeFeedbackContentHash", () => {
   function row(overrides: Partial<ValidatedFeedbackRow> = {}): ValidatedFeedbackRow {
     return {
       traceId: TRACE_ID,
+      searchId: null,
       kind: "check-feedback",
       impact: "subtle",
       disposition: "proceeded",
@@ -414,6 +419,7 @@ describe("ingestFeedback idempotency (stubbed db)", () => {
     const results = await ingestFeedback({
       db: stubDbWithConflict("existing-fb-id"),
       apiKeyId: KEY,
+      userId: "99999999-9999-9999-9999-999999999999",
       readGroupIds: [GROUP],
       rows: [validRow()],
     });
@@ -427,6 +433,7 @@ describe("ingestFeedback idempotency (stubbed db)", () => {
     const results = await ingestFeedback({
       db: stubDbWithConflict(undefined),
       apiKeyId: KEY,
+      userId: "99999999-9999-9999-9999-999999999999",
       readGroupIds: [GROUP],
       rows: [validRow()],
     });

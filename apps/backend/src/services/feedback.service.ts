@@ -76,6 +76,10 @@ export interface RawFeedbackRow {
   trace_id?: unknown;
   /** Alias for trace_id (canonical wire vocabulary prints recipeId). */
   recipe_id?: unknown;
+  /** Feedback about a read-only SEARCH instead of a check (2026-08-19): the
+   *  `searchId` a search response returned. Full UUID only; mutually
+   *  exclusive with trace_id/recipe_id. */
+  search_id?: unknown;
   kind?: unknown;
   impact?: unknown;
   disposition?: unknown;
@@ -92,7 +96,10 @@ export interface RawFeedbackRow {
 }
 
 export interface ValidatedFeedbackRow {
+  /** Empty string for search-target rows (searchId carries the target). */
   traceId: string;
+  /** Full search UUID for search-target rows; null for check feedback. */
+  searchId: string | null;
   kind: string;
   impact: string;
   disposition: string;
@@ -114,8 +121,11 @@ export interface FeedbackRowResult {
   ok: boolean;
   /** On success: the RESOLVED full trace UUID (a submitted short-id prefix
    *  is expanded). On rejection: the submitted trace_id (lowercased if it
-   *  validated) so markers are matchable. */
+   *  validated) so markers are matchable. Empty string for search-target
+   *  rows — see searchId. */
   traceId: string;
+  /** Search-target rows only: the search UUID the row is about. */
+  searchId?: string;
   /** Present on success. */
   feedbackId?: string;
   /** Present on rejection — validation, ACL, or budget. */
@@ -143,6 +153,12 @@ const UUID_TEMPLATE = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx";
 /** Uniform ACL marker — same text for unknown and unauthorized ids. */
 export const TRACE_NOT_READABLE =
   "trace_id not found or not readable with this key";
+
+/** Uniform marker for search targets — unknown ids and other users'
+ *  searches are indistinguishable (no existence oracle; feedback attaches
+ *  only to your own user's searches). */
+export const SEARCH_NOT_READABLE =
+  "search_id not found or not readable with this key";
 
 /** Session-token shape — same rule as trace.service's resolveSessionId
  *  (8-64 url-safe chars), but with capture-only leniency: a malformed or
@@ -215,10 +231,22 @@ export function validateFeedbackRow(
     ? raw.trace_id
     : typeof raw.recipe_id === "string" ? raw.recipe_id : "";
   const traceId = rawId.trim().toLowerCase();
-  if (!UUID_RE.test(traceId) && !isTraceIdPrefix(traceId)) {
+
+  // search_id: feedback about a read-only search (2026-08-19). Full UUID
+  // only — the id was just returned in the search response, so there's no
+  // short-id citation surface to honor. Exactly one target per row.
+  const rawSearchId = typeof raw.search_id === "string" ? raw.search_id.trim().toLowerCase() : "";
+  if (rawSearchId !== "" && traceId !== "") {
+    return { ok: false, error: "give exactly one of trace_id (a prior check's recipe) or search_id (a prior search) — not both" };
+  }
+  if (rawSearchId !== "") {
+    if (!UUID_RE.test(rawSearchId)) {
+      return { ok: false, error: "search_id must be the full searchId UUID a search response returned" };
+    }
+  } else if (!UUID_RE.test(traceId) && !isTraceIdPrefix(traceId)) {
     return {
       ok: false,
-      error: `trace_id (alias: recipe_id) must be the full recipe UUID from a prior check response, or an unambiguous prefix of at least ${MIN_TRACE_ID_PREFIX} characters (the short id check responses print)`,
+      error: `trace_id (alias: recipe_id) must be the full recipe UUID from a prior check response, or an unambiguous prefix of at least ${MIN_TRACE_ID_PREFIX} characters (the short id check responses print); for feedback about a read-only search, pass search_id instead`,
     };
   }
 
@@ -291,7 +319,8 @@ export function validateFeedbackRow(
   return {
     ok: true,
     row: {
-      traceId,
+      traceId: rawSearchId !== "" ? "" : traceId,
+      searchId: rawSearchId !== "" ? rawSearchId : null,
       kind: raw.kind as string,
       impact: raw.impact as string,
       disposition: raw.disposition as string,
@@ -370,6 +399,10 @@ export interface IngestFeedbackParams {
   db: PostgresJsDatabase;
   /** Validated key context (from validateKey). */
   apiKeyId: string;
+  /** The key's user — the ACL scope for search_id targets (feedback attaches
+   *  only to searches made under the same user; a shared fleet key = one
+   *  user, so sub-agents can reference each other's searches by design). */
+  userId: string;
   readGroupIds: string[];
   rows: RawFeedbackRow[];
 }
@@ -377,7 +410,7 @@ export interface IngestFeedbackParams {
 export async function ingestFeedback(
   params: IngestFeedbackParams,
 ): Promise<FeedbackRowResult[]> {
-  const { db, apiKeyId, readGroupIds, rows } = params;
+  const { db, apiKeyId, userId, readGroupIds, rows } = params;
   const results: FeedbackRowResult[] = [];
 
   if (rows.length === 0) return results;
@@ -411,11 +444,14 @@ export async function ingestFeedback(
   const validated: Array<{ index: number; row: ValidatedFeedbackRow } | { index: number; error: string; traceId: string }> = [];
   const idsToCheck = new Set<string>();
   const prefixesToResolve = new Set<string>();
+  const searchIdsToCheck = new Set<string>();
   rows.forEach((raw, index) => {
     const v = validateFeedbackRow(raw);
     if (v.ok) {
       validated.push({ index, row: v.row });
-      if (UUID_RE.test(v.row.traceId)) {
+      if (v.row.searchId) {
+        searchIdsToCheck.add(v.row.searchId);
+      } else if (UUID_RE.test(v.row.traceId)) {
         idsToCheck.add(v.row.traceId);
       } else {
         prefixesToResolve.add(v.row.traceId);
@@ -456,6 +492,22 @@ export async function ingestFeedback(
     }
   }
 
+  // ACL for search targets: the check.searched audit row must exist AND
+  // belong to this key's user. Unknown ids and other users' searches collapse
+  // into the same absent-set → uniform marker (no existence oracle).
+  const readableSearches = new Set<string>();
+  if (searchIdsToCheck.size > 0) {
+    const searchRows = await db.execute(sql`
+      SELECT id::text AS id FROM claimnet.audit_log
+      WHERE id IN (${sql.join([...searchIdsToCheck].map((id) => sql`${id}::uuid`), sql`, `)})
+        AND action = 'check.searched'
+        AND actor_user_id = ${userId}::uuid
+    `);
+    for (const r of searchRows as unknown as Array<{ id: string }>) {
+      readableSearches.add(r.id);
+    }
+  }
+
   // ACL: batch-resolve which of the referenced traces are readable by this
   // key. Unknown and unreadable collapse into the same absent-set → uniform
   // marker (no existence oracle).
@@ -477,6 +529,62 @@ export async function ingestFeedback(
       continue;
     }
     const { row, index } = entry;
+
+    // Search-target rows: full-UUID id, own-user ACL, own dedup index.
+    if (row.searchId) {
+      if (!readableSearches.has(row.searchId)) {
+        results.push({ index, ok: false, traceId: "", searchId: row.searchId, error: SEARCH_NOT_READABLE });
+        continue;
+      }
+      const searchHash = computeFeedbackContentHash(row.searchId, row);
+      const insertedSearch = await params.db
+        .insert(checkFeedback)
+        .values({
+          traceId: null,
+          searchAuditId: row.searchId,
+          apiKeyId,
+          agentId: row.agentId,
+          kind: row.kind,
+          impact: row.impact,
+          disposition: row.disposition,
+          storyFulfilled: row.storyFulfilled,
+          story: row.story,
+          note: row.note,
+          topSimilarity: row.topSimilarity,
+          model: row.model,
+          harness: row.harness,
+          harnessVersion: row.harnessVersion,
+          relatedTraceIds: row.relatedTraceIds,
+          sessionId: row.sessionId,
+          contentHash: searchHash,
+        })
+        .onConflictDoNothing({
+          target: [checkFeedback.apiKeyId, checkFeedback.searchAuditId, checkFeedback.contentHash],
+        })
+        .returning({ id: checkFeedback.id });
+      const searchFeedbackId = insertedSearch[0]?.id;
+      if (searchFeedbackId) {
+        results.push({ index, ok: true, traceId: "", searchId: row.searchId, feedbackId: searchFeedbackId });
+      } else {
+        const existing = await params.db
+          .select({ id: checkFeedback.id })
+          .from(checkFeedback)
+          .where(
+            sql`${checkFeedback.apiKeyId} = ${apiKeyId}::uuid
+              AND ${checkFeedback.searchAuditId} = ${row.searchId}::uuid
+              AND ${checkFeedback.contentHash} = ${searchHash}`,
+          )
+          .limit(1);
+        const existingId = existing[0]?.id;
+        if (existingId) {
+          results.push({ index, ok: true, traceId: "", searchId: row.searchId, feedbackId: existingId, dup: true });
+        } else {
+          results.push({ index, ok: false, traceId: "", searchId: row.searchId, error: "insert failed" });
+        }
+      }
+      continue;
+    }
+
     let effectiveTraceId = row.traceId;
     if (!UUID_RE.test(row.traceId)) {
       // Short-id prefix — consume the scope-filtered resolution.
@@ -571,10 +679,11 @@ export function summarizeFeedbackResults(results: FeedbackRowResult[]): string {
   const dupSuffix = dupCount > 0 ? ` (${dupCount} already recorded — identical resubmission)` : "";
   const lines = [`Feedback: ${okCount}/${results.length} row(s) recorded${dupSuffix}.`];
   for (const r of results) {
+    const target = r.searchId ? `search ${r.searchId}` : r.traceId || "no trace_id";
     if (!r.ok) {
-      lines.push(`  - row ${r.index + 1} (${r.traceId || "no trace_id"}): ${r.error}`);
+      lines.push(`  - row ${r.index + 1} (${target}): ${r.error}`);
     } else if (r.dup) {
-      lines.push(`  - row ${r.index + 1} (${r.traceId}): already recorded — feedback id ${r.feedbackId}`);
+      lines.push(`  - row ${r.index + 1} (${target}): already recorded — feedback id ${r.feedbackId}`);
     }
   }
   return lines.join("\n");
