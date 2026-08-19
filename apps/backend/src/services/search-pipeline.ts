@@ -310,7 +310,16 @@ async function fetchCorpusTraces(
     ORDER BY COALESCE(t.decided_at, t.created_at) DESC
     ${params.limit ? sql`LIMIT ${params.limit}` : sql``}
   `);
-  const traces = rows as unknown as CorpusTrace[];
+  // db.execute returns the COALESCE'd date as a raw value (string) — coerce
+  // to a real Date: downstream consumers (enrichResults on the search-only
+  // corpus path) call Date methods on it.
+  const traces = (rows as unknown as Array<{ id: string; claimText: string; createdAt: string | Date }>).map(
+    (r): CorpusTrace => ({
+      id: r.id,
+      claimText: r.claimText,
+      createdAt: r.createdAt instanceof Date ? r.createdAt : new Date(r.createdAt),
+    }),
+  );
 
   // Honest total when the bound bites — no silent caps (a capped fetch that
   // reported its own length as the total would read as "covered everything").
