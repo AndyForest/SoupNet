@@ -89,6 +89,14 @@ export interface CheckResponseData {
   searchOnly?: boolean;
   /** The keyword filter text of a search-only response. */
   filter?: string;
+  /** Search-only: the search's feedback handle (log_feedback search_id). */
+  searchId?: string;
+  /** Search-only: notice line from the server (read-only marker + any
+   *  zero-result thinness signal). */
+  notice?: string;
+  /** Search-only, zero results: recipes in the searched scope — thin-corpus
+   *  vs bad-minute triage signal. */
+  searchedCorpusSize?: number;
   searchMode?: string;
   clustered?: boolean;
   results?: CheckResultItem[];
@@ -237,6 +245,9 @@ export function renderCheckResponseMarkdown(
   let text = data.searchOnly
     ? `Read-only search${data.filter ? ` for "${data.filter}"` : ""} — no recipe was logged.\nSearch mode: ${data.searchMode ?? "semantic"}\n`
     : `Recipe checked as #${data.checked?.recipeId ?? "?"}\nSearch mode: ${data.searchMode ?? "semantic"}\n`;
+  if (data.searchOnly && data.searchId) {
+    text += `Search id: ${data.searchId} — log_feedback accepts it as search_id.\n`;
+  }
 
   const warning = data.formatWarning ?? response.formatWarning;
   if (warning) {
@@ -255,7 +266,17 @@ export function renderCheckResponseMarkdown(
 
   const results = data.results ?? [];
   if (results.length === 0) {
-    text += "\nNo similar recipes found.";
+    if (data.searchOnly) {
+      // Thinness is signal, not failure (team-trial evidence §2.4): the scope
+      // size distinguishes a thin corpus from a bad minute, and the pointer
+      // closes the feedback loop on null results.
+      const scope = data.searchedCorpusSize !== undefined
+        ? ` among the ${data.searchedCorpusSize} recipes in scope`
+        : "";
+      text += `\nNo matches${scope} — a thin-corpus signal worth a feedback row (story_fulfilled: no).`;
+    } else {
+      text += "\nNo similar recipes found.";
+    }
     if (data.sessionId) {
       text += `\nSession: ${data.sessionId} — pass session_id on your next check to keep responses lean.`;
     }

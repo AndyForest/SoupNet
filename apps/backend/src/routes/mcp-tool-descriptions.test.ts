@@ -167,8 +167,12 @@ describe("MCP tool description budget", () => {
     // params (check_recipe verbosity + get_briefing verbosity, operator-
     // ratified design, response-verbosity-lever.md) while clusters/max_chars
     // shrank to deprecation one-liners; prior total 4,391, new total ~4,590.
+    // 4,650 → 5,450 (2026-08-19): search_recipes is a genuinely new tool
+    // (operator-ratified design, recipe-search-design.md) — one tool
+    // description + one query grammar mini-spec, both individually inside the
+    // 420 affordance cap; prior total ~4,590, new total ~5,400.
     const total = Object.values(all).reduce((n, s) => n + s.length, 0);
-    expect(total).toBeLessThanOrEqual(4650);
+    expect(total).toBeLessThanOrEqual(5450);
   });
 });
 

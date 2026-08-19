@@ -403,6 +403,7 @@ function buildSearchOnlyJsonResponse(
     filter,
     notice: `Read-only search — no recipe was logged.${zeroNotice}`,
     ...(result.searchId ? { searchId: result.searchId } : {}),
+    ...(result.searchedCorpusSize !== undefined ? { searchedCorpusSize: result.searchedCorpusSize } : {}),
     ...data,
   };
   return response;
@@ -1172,10 +1173,14 @@ async function handleCheck(
       axes: params.axes,
       readGroups: params.readGroups,
       // Structured-query extras (2026-08-19): session/known stub rendering and
-      // agent lineage, same semantics as the check path. excludeOwnDefault
-      // stays OFF here — the web filter path serves the human searching their
-      // own corpus (operator ruling 1, recipe 303e17cf); the MCP
-      // search_recipes tool is the surface that defaults to collaborators.
+      // agent lineage, same semantics as the check path. excludeOwnDefault is
+      // an MCP-surface default (operator ruling 1, recipe 303e17cf): the
+      // stdio proxy forwards search_recipes here self-identified via
+      // X-SoupNet-Surface, so it inherits the same default as the HTTP MCP
+      // tool; the plain web filter path serves the human searching their own
+      // corpus and stays include-everything. A query-level author: qualifier
+      // overrides in every case.
+      excludeOwnDefault: surface === "mcp-stdio",
       sessionId: params.sessionId,
       knownRecipeIds: knownRecipeIds.size > 0 ? [...knownRecipeIds] : undefined,
       agentId: params.agentId,
