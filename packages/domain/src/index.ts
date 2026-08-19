@@ -12,3 +12,4 @@ export * from "./synthesis";
 export * from "./feedback";
 export * from "./trace-move";
 export * from "./verbosity";
+export * from "./search-query";
