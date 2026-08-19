@@ -123,15 +123,26 @@ export function rateLimit(opts: RateLimitOptions) {
 // to maintain or to drift after restart. The composite index
 // (api_key_id, occurred_at DESC) keeps the COUNT cheap.
 //
-// Defaults: 200 / hour, 1000 / day. Locked by Andy (2026-05-02). Override
-// via PER_KEY_RATE_LIMIT_HOURLY / PER_KEY_RATE_LIMIT_DAILY env vars.
+// Defaults: 600 / hour, 4000 / day. Originally 200/1000 (locked by Andy
+// 2026-05-02); raised by operator ruling 2026-08-19 — a whole sub-agent fleet
+// shares one daily key, and the caps were tripping during single-developer
+// bursts (team-trial evidence §2.4: 2 of 5 checks in a ~30s burst 429'd).
+// The caps' job is bounding leaked-key damage and embedding spend, both
+// small. Override via PER_KEY_RATE_LIMIT_HOURLY / PER_KEY_RATE_LIMIT_DAILY.
 //
 // Mounted on /check and /mcp after the per-IP limiter (defense in depth):
 // per-IP catches NAT'd attackers across many keys; per-key catches a single
 // noisy key behind any IP. See docs/security/security-audit-2026-04-09.md F29.
 
-export const PER_KEY_HOURLY_DEFAULT = 200;
-export const PER_KEY_DAILY_DEFAULT = 1000;
+export const PER_KEY_HOURLY_DEFAULT = 600;
+export const PER_KEY_DAILY_DEFAULT = 4000;
+
+/** Read an env-overridable cap at construction time (matches how the F29
+ *  limiter reads its env overrides). NaN/empty fall back to the default. */
+export function envCap(name: string, fallback: number): number {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
 
 /** SHA-256 a credential before using it as a limiter map key — raw keys
  *  should not sit in memory as map keys. Exported for keyFns that bucket
@@ -146,6 +157,12 @@ interface PerKeyDeps {
   /** Counts recipe.checked rows in audit_log for a given key within the
    *  trailing interval (e.g. "1 hour", "24 hours"). */
   countRecipeChecksSince: (apiKeyId: string, intervalSql: string) => Promise<number>;
+  /** Optional: the earliest counted recipe.checked in the interval — powers
+   *  an honest Retry-After (seconds until that row ages out of the sliding
+   *  window) instead of the flat full-window value, so a backoff-aware fleet
+   *  stalls minutes, not an hour (operator ruling 2026-08-19). Absent (test
+   *  stubs) ⇒ flat window. Queried only on the 429 path. */
+  oldestRecipeCheckSince?: (apiKeyId: string, intervalSql: string) => Promise<Date | null>;
 }
 
 /** Default deps query the live DB. Tests inject stubs. */
@@ -175,7 +192,39 @@ export function defaultPerKeyDeps(): PerKeyDeps {
       const row = (rows as unknown as Array<{ n: number }>)[0];
       return row?.n ?? 0;
     },
+    oldestRecipeCheckSince: async (apiKeyId: string, intervalSql: string) => {
+      // Same index walk as the COUNT; runs only when a 429 is being built.
+      const rows = await getDb().execute(sql`
+        SELECT MIN(occurred_at) AS t
+        FROM claimnet.audit_log
+        WHERE api_key_id = ${apiKeyId}::uuid
+          AND action = 'recipe.checked'
+          AND occurred_at > NOW() - ${sql.raw(`INTERVAL '${intervalSql}'`)}
+      `);
+      const t = (rows as unknown as Array<{ t: string | Date | null }>)[0]?.t;
+      return t ? new Date(t) : null;
+    },
   };
+}
+
+/** Seconds until the oldest counted event ages out of the sliding window —
+ *  the honest Retry-After. Falls back to the flat window when the optional
+ *  dep is absent or returns nothing. */
+async function honestRetryAfter(
+  deps: PerKeyDeps,
+  apiKeyId: string,
+  intervalSql: string,
+  windowSeconds: number,
+): Promise<number> {
+  if (!deps.oldestRecipeCheckSince) return windowSeconds;
+  try {
+    const oldest = await deps.oldestRecipeCheckSince(apiKeyId, intervalSql);
+    if (!oldest) return windowSeconds;
+    const secs = Math.ceil((oldest.getTime() + windowSeconds * 1000 - Date.now()) / 1000);
+    return Math.min(windowSeconds, Math.max(1, secs));
+  } catch {
+    return windowSeconds;
+  }
 }
 
 interface PerKeyRateLimitOptions {
@@ -252,7 +301,7 @@ export function perKeyRateLimit(opts: PerKeyRateLimitOptions) {
 
     const hourly = await deps.countRecipeChecksSince(apiKeyId, "1 hour");
     if (hourly >= hourlyMax) {
-      c.header("Retry-After", "3600");
+      c.header("Retry-After", String(await honestRetryAfter(deps, apiKeyId, "1 hour", 3600)));
       return c.json(
         { ok: false, error: "Too many requests for this API key (hourly limit)" },
         429,
@@ -261,7 +310,7 @@ export function perKeyRateLimit(opts: PerKeyRateLimitOptions) {
 
     const daily = await deps.countRecipeChecksSince(apiKeyId, "24 hours");
     if (daily >= dailyMax) {
-      c.header("Retry-After", "86400");
+      c.header("Retry-After", String(await honestRetryAfter(deps, apiKeyId, "24 hours", 86400)));
       return c.json(
         { ok: false, error: "Too many requests for this API key (daily limit)" },
         429,

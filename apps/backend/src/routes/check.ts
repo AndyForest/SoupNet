@@ -15,7 +15,7 @@ import { validateKey } from "../services/api-key.service";
 import { HTML_ACCEPT_TYPES, renderCheckResponseMarkdown, fenceCheckResponseMarkdown, parseVerbosity } from "@soupnet/domain";
 import type { CheckResponseJson } from "@soupnet/domain";
 import type { Recipe } from "@soupnet/contracts";
-import { rateLimit, perKeyRateLimit, extractCheckRequestKey, getClientIp, hashApiKey } from "../middleware/rate-limit";
+import { rateLimit, perKeyRateLimit, extractCheckRequestKey, getClientIp, hashApiKey, envCap } from "../middleware/rate-limit";
 import { parseLenientQuery, rawQueryOfUrl } from "../lib/lenient-query";
 import { invalidKeyMessage, keysPageUrl } from "../lib/key-remediation";
 import type { RawFeedbackRow, FeedbackRowResult } from "../services/feedback.service";
@@ -24,7 +24,11 @@ import { ingestFeedback, withCheckDefaults } from "../services/feedback.service"
 // Rate limit check/search:
 //   - per-IP: 1000 per hour (defense-in-depth, catches NAT'd attackers)
 //   - per-key: 200/hour and 1000/day (queried from audit_log; F29).
-const checkRateLimit = rateLimit({ max: 1000, windowMs: 60 * 60 * 1000 });
+// Per-IP: raised 1000 → 3000/h (operator ruling 2026-08-19) — a whole
+// sub-agent fleet shares one workstation IP with its human, and valid-key
+// traffic is already bounded per key (F29) and per credential (F43 covers
+// garbage floods). Env-overridable for hosted tuning without a deploy.
+const checkRateLimit = rateLimit({ max: envCap("CHECK_IP_RATE_LIMIT_HOURLY", 3000), windowMs: 60 * 60 * 1000 });
 const checkPerKeyRateLimit = perKeyRateLimit({ keyExtractor: extractCheckRequestKey });
 
 // Search-only requests (filter with no recipe) write no recipe.checked
@@ -36,7 +40,7 @@ const checkPerKeyRateLimit = perKeyRateLimit({ keyExtractor: extractCheckRequest
 // the per-IP limiter still bounds. GET only — the documented filter surface
 // is the query param.
 const searchOnlyRateLimit = rateLimit({
-  max: 600,
+  max: envCap("SEARCH_ONLY_RATE_LIMIT_HOURLY", 600),
   windowMs: 60 * 60 * 1000,
   keyFn: (c) => {
     const k = c.req.query("key");

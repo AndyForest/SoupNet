@@ -31,7 +31,7 @@ import {
 import type { CheckResponseJson } from "@soupnet/domain";
 import type { Recipe } from "@soupnet/contracts";
 import { composeBriefing, composeCorpusContext } from "../services/briefing";
-import { rateLimit, perKeyRateLimit, extractMcpBearerKey, getClientIp, hashApiKey } from "../middleware/rate-limit";
+import { rateLimit, perKeyRateLimit, extractMcpBearerKey, getClientIp, hashApiKey, envCap } from "../middleware/rate-limit";
 import type { SubmitAndSearchResult, ImageAttachment } from "../services/trace.service";
 import { submitAndSearch, searchWithoutLogging } from "../services/trace.service";
 import type { RegionMeta } from "../lib/image-roi";
@@ -76,7 +76,9 @@ function toolErrorText(err: unknown, tool: string): string {
 // Rate limit MCP:
 //   - per-IP: 1000 per hour (defense-in-depth)
 //   - per-key: 200/hour, 1000/day (queried from audit_log; F29).
-const mcpRateLimit = rateLimit({ max: 1000, windowMs: 60 * 60 * 1000 });
+// Per-IP: raised 1000 → 3000/h (operator ruling 2026-08-19, same fleet-on-
+// one-IP rationale as /check). Env-overridable for hosted tuning.
+const mcpRateLimit = rateLimit({ max: envCap("MCP_IP_RATE_LIMIT_HOURLY", 3000), windowMs: 60 * 60 * 1000 });
 const mcpPerKeyRateLimit = perKeyRateLimit({ keyExtractor: extractMcpBearerKey });
 
 // F43 (security-audit-2026-06-11): the audit-log-backed limiter above counts
@@ -86,8 +88,11 @@ const mcpPerKeyRateLimit = perKeyRateLimit({ keyExtractor: extractMcpBearerKey }
 // regardless of IP; 600/h sits well above the 200/h durable check cap, so
 // legitimate use never hits it first. Keyed by credential hash (raw keys
 // must not sit in memory as map keys).
+// Raised 600 → 1200/h (operator ruling 2026-08-19): this counts EVERY MCP
+// method for a key — briefings, lookups, feedback, checks, and now
+// search_recipes — and a fleet shares one key.
 const mcpPerBearerBackstop = rateLimit({
-  max: 600,
+  max: envCap("MCP_BEARER_RATE_LIMIT_HOURLY", 1200),
   windowMs: 60 * 60 * 1000,
   keyFn: (c) => {
     const token = extractMcpBearerKey(c);
