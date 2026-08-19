@@ -186,7 +186,7 @@ describe("renderCheckResponseMarkdown", () => {
     res.data!.searchOnly = true;
     res.data!.filter = "postgres migrations";
     const text = renderCheckResponseMarkdown(res);
-    expect(text.split("\n")[0]).toBe('Read-only search for "postgres migrations" — no recipe was logged.');
+    expect(text.split("\n")[0]).toBe('Read-only search for "postgres migrations" — nothing was written to the corpus.');
     expect(text).not.toContain("Recipe checked as #");
   });
 

@@ -152,6 +152,10 @@ describe.skipIf(!BASE)("structured recipe search (/check filter path)", () => {
     const ids = (body.data?.results ?? []).map((r) => r.recipeId);
     expect(ids).toContain(citingTrace);
     expect(ids).not.toContain(otherTrace);
+    // Quoted-only queries are exact matches with no query vector — the mode
+    // must say so instead of collapsing to the "semantic" default (operator
+    // report 2026-08-19: real matches read as unranked "similarity n/a").
+    expect((body.data as { searchMode?: string }).searchMode).toBe("lexical");
   });
 
   it("negates a quoted term with a leading minus", async () => {
@@ -291,6 +295,6 @@ describe.skipIf(!BASE)("structured recipe search (/check filter path)", () => {
     const body = await search(keyA, "retrieval integration seed recipes");
     expect(body.ok).toBe(true);
     expect(body.data?.searchOnly).toBe(true);
-    expect(body.data?.notice).toContain("no recipe was logged");
+    expect(body.data?.notice).toContain("nothing was written to the corpus");
   });
 });

@@ -405,7 +405,9 @@ function buildSearchOnlyJsonResponse(
   response["data"] = {
     searchOnly: true,
     filter,
-    notice: `Read-only search — no recipe was logged.${zeroNotice}`,
+    // "nothing was written", not "no recipe was logged" — the latter read as
+    // "no recipes were found in the log" (operator report 2026-08-19).
+    notice: `Read-only search — nothing was written to the corpus.${zeroNotice}`,
     ...(result.searchId ? { searchId: result.searchId } : {}),
     ...(result.searchedCorpusSize !== undefined ? { searchedCorpusSize: result.searchedCorpusSize } : {}),
     ...data,
@@ -661,7 +663,7 @@ function renderPage(
   if (result && !result.error && isSearchOnly) {
     nextStepsHtml = `
   <section id="search-only-notice" style="background:#f0efe3;padding:0.75rem 1rem;border-radius:4px;margin:0.5rem 0">
-    <p style="margin:0.25rem 0"><strong>Read-only search${params.filter ? ` for &ldquo;${esc(params.filter)}&rdquo;` : ""}</strong> &mdash; no recipe was logged.</p>
+    <p style="margin:0.25rem 0"><strong>Read-only search${params.filter ? ` for &ldquo;${esc(params.filter)}&rdquo;` : ""}</strong> &mdash; nothing was written to the corpus.</p>
     <p style="font-size:0.85em;color:#555;margin:0.25rem 0">To log a genuine taste/judgment call instead, submit a recipe with evidence below or add <code>recipe=</code> and <code>evidence=</code> params (keeping <code>filter=</code> narrows that check's results by keyword).</p>
   </section>`;
   }
@@ -713,6 +715,11 @@ function renderPage(
   let resultsHtml = "";
   if (result && !result.error && (hasSearch || isSearchOnly) && enriched) {
     const knownIdsForHtml = parseKnownRecipes(params.knownRecipes);
+    // Lexical search mode (quoted terms / qualifiers only, no semantic text):
+    // results are exact matches with no similarity by construction — label
+    // them as such instead of "similarity n/a" (2026-08-19 operator report:
+    // n/a under a semantic banner read as "not actually matched").
+    const exactMatchMode = isSearchOnly && result.searchMode === "lexical";
     const resultItems = enriched
       .map((r) => {
         // ONE similarity vocabulary (recipe ef245b63): the raw cosine as a
@@ -720,7 +727,7 @@ function renderPage(
         const scoreDetail =
           r.semanticScore !== null && r.semanticScore !== undefined
             ? `${Math.round(r.semanticScore * 100)}% similar`
-            : "similarity n/a";
+            : exactMatchMode ? "exact match" : "similarity n/a";
 
         // Known-set stub — one line: id + similarity, no recipe text (id-only
         // ruling; the caller already holds the body). Rendering only; the

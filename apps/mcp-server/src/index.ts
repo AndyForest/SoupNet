@@ -296,7 +296,7 @@ server.tool(
 
       if (response_format === "structured" && json.ok && json.data) {
         const data = json.data as unknown as Record<string, unknown>;
-        const stub = `Read-only search — ${String(json.data.totalResults ?? 0)} result(s), nothing logged${json.data.searchId ? `, searchId ${json.data.searchId}` : ""}. See structuredContent.`;
+        const stub = `Read-only search — ${String(json.data.totalResults ?? 0)} result(s), nothing written${json.data.searchId ? `, searchId ${json.data.searchId}` : ""}. See structuredContent.`;
         return {
           content: [{ type: "text" as const, text: stub }],
           structuredContent: data,

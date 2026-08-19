@@ -189,8 +189,13 @@ function renderReference(ref: CheckResultReference): string {
   return text;
 }
 
-function renderResultItem(r: CheckResultItem, index: number, known: boolean): string {
-  const head = `#${index + 1} (${similarityLabel(r.similarity)}) ${r.recipeId ?? "?"}`;
+function renderResultItem(r: CheckResultItem, index: number, known: boolean, exactMatch = false): string {
+  // Lexical search mode: matches are exact by construction and carry no
+  // similarity — "exact match" beats an "n/a" that reads as not-matched.
+  const score = r.similarity === null || r.similarity === undefined
+    ? exactMatch ? "exact match" : similarityLabel(r.similarity)
+    : similarityLabel(r.similarity);
+  const head = `#${index + 1} (${score}) ${r.recipeId ?? "?"}`;
 
   if (known) {
     // One-line id-only stub: the caller already holds this recipe, so the
@@ -242,9 +247,12 @@ export function renderCheckResponseMarkdown(
   const data = response.data;
   const known = new Set(opts.knownRecipeIds ?? []);
 
+  const modeLabel = data.searchMode === "lexical"
+    ? "lexical (exact matches, newest first)"
+    : data.searchMode ?? "semantic";
   let text = data.searchOnly
-    ? `Read-only search${data.filter ? ` for "${data.filter}"` : ""} — no recipe was logged.\nSearch mode: ${data.searchMode ?? "semantic"}\n`
-    : `Recipe checked as #${data.checked?.recipeId ?? "?"}\nSearch mode: ${data.searchMode ?? "semantic"}\n`;
+    ? `Read-only search${data.filter ? ` for "${data.filter}"` : ""} — nothing was written to the corpus.\nSearch mode: ${modeLabel}\n`
+    : `Recipe checked as #${data.checked?.recipeId ?? "?"}\nSearch mode: ${modeLabel}\n`;
   if (data.searchOnly && data.searchId) {
     text += `Search id: ${data.searchId} — log_feedback accepts it as search_id.\n`;
   }
@@ -290,7 +298,7 @@ export function renderCheckResponseMarkdown(
   text += ":\n";
 
   results.forEach((r, i) => {
-    text += `\n${renderResultItem(r, i, r.known === true || (r.recipeId !== undefined && known.has(r.recipeId)))}`;
+    text += `\n${renderResultItem(r, i, r.known === true || (r.recipeId !== undefined && known.has(r.recipeId)), data.searchOnly === true && data.searchMode === "lexical")}`;
   });
 
   const related = data.relatedEvidence ?? [];

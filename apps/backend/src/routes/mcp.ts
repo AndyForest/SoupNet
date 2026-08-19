@@ -668,7 +668,7 @@ function createMcpServer(backendUrl: string): McpServer {
 
   server.tool(
     "search_recipes",
-    lean ? "Read-only search over your readable recipe books — nothing is logged." : MCP_TOOL_DESCRIPTIONS.searchRecipes,
+    lean ? "Read-only search over your readable recipe books — nothing is written." : MCP_TOOL_DESCRIPTIONS.searchRecipes,
     {
       query: z.string().describe(MCP_PARAM_DESCRIPTIONS.searchQuery),
       verbosity: z.enum(VERBOSITY_LEVELS).optional().describe(MCP_PARAM_DESCRIPTIONS.verbosity),
@@ -735,7 +735,7 @@ function createMcpServer(backendUrl: string): McpServer {
           jsonResponse["data"] = {
             searchOnly: true,
             filter: query,
-            notice: `Read-only search — no recipe was logged.${zeroNotice}`,
+            notice: `Read-only search — nothing was written to the corpus.${zeroNotice}`,
             ...(result.searchId ? { searchId: result.searchId } : {}),
             ...(result.searchedCorpusSize !== undefined ? { searchedCorpusSize: result.searchedCorpusSize } : {}),
             ...data,
@@ -768,7 +768,7 @@ function createMcpServer(backendUrl: string): McpServer {
         if (response_format === "structured") {
           const data = jsonResponse["data"] as Record<string, unknown>;
           if (feedbackResults !== undefined) data["feedbackResults"] = feedbackResults;
-          const stub = `Read-only search — ${String(data["totalResults"])} result(s), nothing logged${result.searchId ? `, searchId ${result.searchId}` : ""}. See structuredContent.`;
+          const stub = `Read-only search — ${String(data["totalResults"])} result(s), nothing written${result.searchId ? `, searchId ${result.searchId}` : ""}. See structuredContent.`;
           return {
             content: [{ type: "text" as const, text: stub }],
             structuredContent: data,

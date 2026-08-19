@@ -1077,7 +1077,13 @@ export async function searchWithoutLogging(
     totalResults: pipelineResult.totalResults,
     currentPage: pipelineResult.page,
     totalPages: pipelineResult.totalPages,
-    searchMode: pipelineResult.searchMode === "corpus" ? undefined : pipelineResult.searchMode,
+    // A structured search with no semantic text runs corpus mode — matches
+    // are exact (lexical terms / qualifiers), newest-first. Report it as
+    // "lexical" rather than collapsing to the "semantic" default: results
+    // legitimately carry no similarity, and rendering "similarity n/a" under
+    // a "semantic" banner made real matches read as unranked leftovers
+    // (operator report, 2026-08-19).
+    searchMode: pipelineResult.searchMode === "corpus" ? "lexical" : pipelineResult.searchMode,
     clustered: pipelineResult.clustered || undefined,
     conceptAxes: pipelineResult.conceptAxes
       ? {

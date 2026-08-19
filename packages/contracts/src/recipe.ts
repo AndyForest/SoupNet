@@ -284,7 +284,7 @@ export const CheckResponseDataSchema = z
       .number()
       .optional()
       .describe("Search-only, zero results: recipes in the searched scope — distinguishes a thin corpus from a bad minute."),
-    searchMode: z.string().optional().describe("How candidates were retrieved (\"semantic\")."),
+    searchMode: z.string().optional().describe("How candidates were retrieved: \"semantic\" (vector similarity), or \"lexical\" for quoted/qualifier-only searches — exact matches, newest first, no similarity scores."),
     clustered: z.boolean().optional().describe("Whether results are clustered exemplars."),
     results: z
       .array(RecipeSchema)

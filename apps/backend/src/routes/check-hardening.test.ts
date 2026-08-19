@@ -495,7 +495,7 @@ describe("filter/f read-only search on /check", () => {
     expect(json.ok).toBe(true);
     expect(json.data?.searchOnly).toBe(true);
     expect(json.data?.filter).toBe("grapefruit clustering");
-    expect(json.data?.notice).toContain("no recipe was logged");
+    expect(json.data?.notice).toContain("nothing was written to the corpus");
     expect(json.data?.checked?.recipeId).toBeUndefined();
     expect((json.data?.results?.length ?? 0)).toBeGreaterThan(0);
 
@@ -522,7 +522,7 @@ describe("filter/f read-only search on /check", () => {
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("Read-only search");
-    expect(html).toContain("no recipe was logged");
+    expect(html).toContain("nothing was written to the corpus");
     // Not the check confirmation.
     expect(html).not.toContain("Your recipe was checked as #");
     expect(await traceCountForKey(apiKey)).toBe(1);
