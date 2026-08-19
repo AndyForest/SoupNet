@@ -143,7 +143,7 @@ Next evidence entry (interpretation of the next reference).
 
   <h2>Technical details</h2>
   <ul>
-    <li>Search: hybrid &mdash; full-text (tsvector) + <a href="https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-embedding-2/">gemini-embedding-2-preview</a> semantic vectors (SEMANTIC_SIMILARITY)</li>
+    <li>Search: pure semantic &mdash; <a href="https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-embedding-2/">gemini-embedding-2-preview</a> vectors, cosine similarity (raw scores near zero are normal &mdash; ranking is relative, not a percentage). "Quoted terms" in the read-only <code>filter</code> search match exact substrings across recipe, evidence, and reference text; <code>author:</code> / <code>after:</code> / <code>before:</code> qualifiers filter structurally</li>
     <li>Include file links in references &mdash; no upload needed, our system can fetch them</li>
     <li>Markdown encouraged in all text fields</li>
     <li><strong>MCP tools available:</strong> <a href="/docs/mcp-setup${kq}">Set up check_recipe and get_briefing</a> for Codex, Claude Code, Claude Desktop, and other MCP-compatible agents</li>

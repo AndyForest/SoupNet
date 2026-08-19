@@ -40,6 +40,8 @@ supporting_evidence: "User explicitly described a mixed, contextual approach —
 
 This checks in the user's *actual* preference while also surfacing any related recipes about theme preferences. The search and the log are both useful.
 
+**Since 2026-08: when the intent really is lookup, there's a sanctioned tool.** The read-only search (`search_recipes` on MCP; the `filter` param on the check page) returns matches without logging anything — the agent above could have searched `"dark mode"` and found the recipes the user meant without polluting the corpus. That doesn't weaken the principle: a fabricated check is still the anti-pattern, and search doesn't replace forming a genuine hypothesis — it's for finding judgment that isn't yours to hypothesize (see Scenario G).
+
 ---
 
 ## Scenario B: Assumptions are valuable — surface them
@@ -342,3 +344,29 @@ The user clicks the framing that fits. That click is the `check_recipe` call —
 12. **The acknowledgement is the checkpoint.** Don't send the real task until the model has signaled it understood the briefing. A bad acknowledgement is information — it means the briefing failed to land, not that you should plow ahead.
 13. **The recipe map is where the human shapes the corpus slice.** Other surfaces (Dashboard, API Keys, Recipe Book pages) hand back a sensible default cluster. The map is the only surface that lets the human tune cluster axes / k / filter before the briefing is composed — useful when the deliverable is narrow.
 14. **Stigmergy still works through external LLMs.** The agent can't run `check_recipe` directly, but it can generate clickable recipe-check URLs. The user's click is the write. Every divergent check the agent surfaces becomes a candidate trace; the chosen one becomes a logged trace. Cross-pollination across sessions still happens — the next session's briefing will include the choice the user just made.
+
+---
+
+## Scenario G: PR review — searching for a colleague's judgment
+
+**The situation:**
+
+A team shares a recipe book. Each member's agents log decisions as they're made — the read-model design, an access-control choice, a staleness-hash scheme. Weeks later, a reviewer's agent picks up a pull request touching three files. The key question in review isn't only "is this code correct?" — it's "does this change respect the taste and judgment calls already made here?" Those calls may live only in a teammate's head — and in the shared book.
+
+**What the reviewing agent does:**
+
+```
+search_recipes query: ("narrative-evaluation-result.ts" OR "get-activity-filters.server.ts" OR "execute-evaluation-run.server.ts") author:anyone
+```
+
+Quoted filenames match lexically — including against the file citations inside evidence references, so a recipe whose evidence quotes a file header comes back even when the recipe text never names the file. Bare text can be added for semantic context (`read model staleness ("a.ts" OR "b.ts")`). Date qualifiers narrow to the development window: `after:2026-06-01 before:2026-06-14` on the judgment date.
+
+The results are the teammates' logged reasoning for exactly the code under review. The reviewer's agent weighs the change against them — and when the PR *contradicts* a logged decision, that's not automatically a defect: it may be a deliberate reversal. Surface the tension, cite the recipe, and let the humans decide.
+
+**Why search and not check:** the reviewing agent isn't holding a hypothesis about its own user's taste — it's retrieving *other people's* decisions. That's precisely what the read-only search is for, and why its results exclude your own recipes by default (`author:me` / `author:anyone` override). After the review, close the loop: the search response's `searchId` takes a feedback row (`search_id`) recording whether the surfaced judgment shaped the review.
+
+### Principles illustrated
+
+15. **Search is for other people's judgment.** Check when you hold a genuine hypothesis about your user's taste; search when the answer was decided by a collaborator. With neither, ask the user or read the project's own sources — the corpus is a decision log, not documentation.
+16. **Quote what must match exactly.** Filenames, paths, and identifiers go in quotes (lexical); leave conceptual language bare (semantic). The two compose in one query.
+17. **A contradiction found in review is context, not a verdict.** Recipes are dated judgment; taste evolves. Cite the prior decision and hand the tension to the humans.

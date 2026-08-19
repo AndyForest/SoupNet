@@ -43,7 +43,6 @@ import { invalidKeyMessage } from "../lib/key-remediation";
 import { DEFAULT_RANKING, RANKING_ALGORITHM_VERSION, parseSearchQuery, AUTHOR_ME } from "@soupnet/domain";
 import type { CandidateSignals, VerbositySteer, ParsedSearchQuery } from "@soupnet/domain";
 import type { StructuredTraceFilters } from "./vector-search.service";
-import { hasStructuredFilters } from "./vector-search.service";
 
 /** Session tokens are opaque and validation-free (they only compress the
  *  holder's own responses — zero security weight), but bounded so arbitrary

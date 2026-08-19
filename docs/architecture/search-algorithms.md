@@ -636,6 +636,37 @@ The statistical ancestry of this problem is score-distributional threshold optim
 
 ---
 
+## Structured Recipe Search (shipped 2026-08-19)
+
+The read-only search path (`/check?filter=` without a recipe; MCP `search_recipes`) parses its query as a restricted structured grammar. Motivation and rulings: docs/planning/recipe-search-design.md — the PR-review use case over shared recipe books, scoped to two field-measured gaps (recipe `5db8edc5`): no MCP search surface, and no lexical join from a changed file to recipes whose evidence cites it.
+
+### The grammar and its precedent
+
+One query string, three layers — each aligned with a convention agents already know rather than a vocabulary we invented:
+
+| Construct | Behavior | Precedent |
+|-----------|----------|-----------|
+| bare text | One semantic query, embedded whole. No boolean operators — cosine over one vector has no AND/OR. | The pre-existing `filter` contract; unchanged, so every prior caller is byte-compatible. |
+| `"quoted term"` | Lexical substring match (ILIKE, escaped) across claim text, evidence content, and reference quotes/sources. `("a" OR "b")` groups; `-"term"` negates; terms AND by default. | Quotes-for-exact is the cross-product convention: Gmail — "Search for emails with an exact word or phrase." ([Gmail search operators](https://support.google.com/mail/answer/7190)); GitHub — "If your search query contains whitespace, you will need to surround it with quotation marks." ([GitHub search syntax](https://docs.github.com/en/search-github/getting-started-with-searching-on-github/understanding-the-search-syntax)) |
+| `author:` / `after:` / `before:` | Structural filters: author email (`me` / `anyone` reserved), and half-open judgment-date bounds on `COALESCE(decided_at, created_at)`. Unknown qualifier names are a loud parse error, never silent semantic fallback. | Gmail's `after:`/`before:` — "Search for emails received during a certain time period." — and `-` exclusion — "Exclude emails from your search criteria." (ibid.); GitHub's ISO dates — "Date formatting must follow the ISO8601 standard, which is `YYYY-MM-DD`." (ibid.) |
+
+The lexical layer is what closes the citation gap: `-- file citation` lines live in `references.source`, so a quoted filename reaches recipes whose *evidence* cites the file even when the recipe text never names it. The probe that motivated this measured only 1 of the top 3 semantic results citing the target path (recipe `5db8edc5`, 2026-08-19).
+
+### Parser: hand-rolled, secure by default
+
+The parser (`packages/domain/src/search-query.ts`, ~53 Layer-1 tests including an adversarial section) is deliberately not a Lucene-family library (liqe was the best candidate): every Lucene parser treats bare text as boolean term lists, while our bare text is one embedded string — a library would parse and we would spend the code un-parsing, plus rejection-mapping regex/wildcard/fuzzy grammar we don't support. The restricted grammar we implement is exactly the grammar we document.
+
+Security posture (operator directive, recipe `446bac9f`): the parser emits a typed IR only — no string in it ever becomes SQL text. The SQL layer (`buildStructuredTracePredicates`, vector-search.service.ts) binds every value as a parameter, escapes LIKE metacharacters, and selects among fixed predicate shapes; qualifier names are an allowlist; term counts, author counts, and query length are capped.
+
+### Semantics worth knowing
+
+- **Two execution modes.** With semantic text, filters apply inside `hybridSearch`'s SQL predicates (count/ANN/fallback agree, same placement as the legacy keyword filter). Qualifier/lexical-only queries have no query vector: corpus mode, newest-first by judgment date, bounded fetch with an honest total count.
+- **Exclude-own default, MCP only.** `search_recipes` (and the stdio proxy via its `X-SoupNet-Surface` identity) excludes the caller's own recipes unless the query says otherwise — search is for collaborators' judgment (operator ruling, recipe `303e17cf`); the web `filter` path keeps include-everything for the human searching their own corpus. The override lives in the query language (`author:me`, `author:anyone`), not a parameter.
+- **The feedback loop closes for searches.** Every search returns a `searchId` (its `check.searched` audit row), which `log_feedback` / `POST /feedback` accept as `search_id` — with the same uniform not-found/not-readable marker and own-user ACL. The audit row carries `resultTraceIds`/`resultSimilarities` (mirroring `recipe.checked`), so retrieval efficacy and cross-author analysis are derivable offline.
+- **Zero results are a signal.** An empty search reports the searched-scope size, distinguishing a thin corpus from a bad minute — the triage gap named in the 2026-08-19 team-trial field evidence.
+
+---
+
 ## Search Form Recommendations for AI Agents
 
 ### Implemented
