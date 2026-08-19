@@ -141,14 +141,16 @@ export interface RenderCheckMarkdownOptions {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /** ONE similarity vocabulary (recipe ef245b63): the raw cosine as a
- *  percentage, or an honest n/a. The lexical/combined fallbacks died with
- *  the vestigial score slots — nothing has produced them since the
- *  2026-04-11 pure-semantic simplification. */
+ *  percentage — or empty when no score exists (exact lexical/qualifier
+ *  matches carry none by construction). The lexical/combined score
+ *  fallbacks died with the 2026-04-11 pure-semantic simplification; the
+ *  "similarity n/a" placeholder died in the 2026-08-19 comprehensibility
+ *  pass (it read as "not actually matched"). */
 function similarityLabel(similarity: CheckResultItem["similarity"]): string {
   if (similarity !== null && similarity !== undefined) {
     return `${Math.round(similarity * 100)}% similar`;
   }
-  return "similarity n/a";
+  return "";
 }
 
 /** Compact percentage for known-member / known-parent lines. */
@@ -189,13 +191,13 @@ function renderReference(ref: CheckResultReference): string {
   return text;
 }
 
-function renderResultItem(r: CheckResultItem, index: number, known: boolean, exactMatch = false): string {
-  // Lexical search mode: matches are exact by construction and carry no
-  // similarity — "exact match" beats an "n/a" that reads as not-matched.
-  const score = r.similarity === null || r.similarity === undefined
-    ? exactMatch ? "exact match" : similarityLabel(r.similarity)
-    : similarityLabel(r.similarity);
-  const head = `#${index + 1} (${score}) ${r.recipeId ?? "?"}`;
+function renderResultItem(r: CheckResultItem, index: number, known: boolean): string {
+  // ONE similarity vocabulary (recipe ef245b63): the raw cosine as a
+  // percentage — and no chip at all when there is no score (exact
+  // lexical/qualifier matches; "similarity n/a" read as not-matched —
+  // 2026-08-19 comprehensibility pass, one unified search).
+  const score = similarityLabel(r.similarity);
+  const head = `#${index + 1}${score ? ` (${score})` : ""} ${r.recipeId ?? "?"}`;
 
   if (known) {
     // One-line id-only stub: the caller already holds this recipe, so the
@@ -247,12 +249,13 @@ export function renderCheckResponseMarkdown(
   const data = response.data;
   const known = new Set(opts.knownRecipeIds ?? []);
 
-  const modeLabel = data.searchMode === "lexical"
-    ? "lexical (exact matches, newest first)"
-    : data.searchMode ?? "semantic";
+  // No "Search mode:" line — one unified search guided by the query
+  // (2026-08-19 comprehensibility pass); machine consumers read the JSON
+  // searchMode field. "Read-only" in the header carries the no-write fact
+  // without a stated negative.
   let text = data.searchOnly
-    ? `Read-only search${data.filter ? ` for "${data.filter}"` : ""} — nothing was written to the corpus.\nSearch mode: ${modeLabel}\n`
-    : `Recipe checked as #${data.checked?.recipeId ?? "?"}\nSearch mode: ${modeLabel}\n`;
+    ? `Read-only search${data.filter ? ` for "${data.filter}"` : ""}.\n`
+    : `Recipe checked as #${data.checked?.recipeId ?? "?"}\n`;
   if (data.searchOnly && data.searchId) {
     text += `Search id: ${data.searchId} — log_feedback accepts it as search_id.\n`;
   }
@@ -298,7 +301,7 @@ export function renderCheckResponseMarkdown(
   text += ":\n";
 
   results.forEach((r, i) => {
-    text += `\n${renderResultItem(r, i, r.known === true || (r.recipeId !== undefined && known.has(r.recipeId)), data.searchOnly === true && data.searchMode === "lexical")}`;
+    text += `\n${renderResultItem(r, i, r.known === true || (r.recipeId !== undefined && known.has(r.recipeId)))}`;
   });
 
   const related = data.relatedEvidence ?? [];

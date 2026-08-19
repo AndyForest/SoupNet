@@ -555,7 +555,7 @@ ${webSetupSection}
 
 Further optional params live in your tool schema, each doing what its one-line description says: \`session_id\` (returned on every check — pass it back and recipes you've already been shown collapse to id-stubs while results walk to unseen ones), \`known_recipes\` (client-declared ids you still hold — same id-stub rendering), \`decided_at\` (backfill the original date of a historical decision), \`response_format\` (markdown report or structured JSON), \`agent_id\` (mint your own id so your checks form a joinable lineage), and \`feedback\` (close the loop on earlier checks while making this one).
 
-**Search vs check.** \`search_recipes\` (or the check page's \`filter\` param) is the read-only sibling: same corpus, same ranking, nothing written — and it's the tool to reach for when the judgment you need was made by OTHER people: reviewing a teammate's PR area (quote the changed filenames: \`("a.service.ts" OR "b.ts")\`), or joining a shared recipe book mid-project. Its results exclude your own recipes by default; \`author:me\` / \`author:anyone\` override, and \`after:\`/\`before:\` bound the judgment date. The division of labor: check when you hold a genuine hypothesis about your user's taste — that's the append path that grows the corpus; search when the answer lives in a collaborator's logged judgment. With neither, the corpus isn't the place to look — ask the user or read the project's own sources; Soup.net is a decision log, not documentation. Already hold recipe ids (frontmatter, prior results)? \`get_recipes\` fetches them directly, and \`get_briefing\`'s \`purpose\` param tailors the briefing's exemplars to your task.
+**Search vs check.** \`search_recipes\` (or the check page's \`filter\` param) is the read-only sibling: same corpus, same ranking — and it's the tool to reach for when the judgment you need was made by OTHER people: reviewing a teammate's PR area (quote the changed filenames: \`("a.service.ts" OR "b.ts")\`), or joining a shared recipe book mid-project. Its results exclude your own recipes by default; \`author:me\` / \`author:anyone\` override, and \`after:\`/\`before:\` bound the judgment date. The division of labor: check when you hold a genuine hypothesis about your user's taste — that's the append path that grows the corpus; search when the answer lives in a collaborator's logged judgment. With neither, the corpus isn't the place to look — ask the user or read the project's own sources; Soup.net is a decision log, not documentation. Already hold recipe ids (frontmatter, prior results)? \`get_recipes\` fetches them directly, and \`get_briefing\`'s \`purpose\` param tailors the briefing's exemplars to your task.
 
 If you auto-compact your context or otherwise no longer hold the recipes you've been shown, refresh your session by omitting \`session_id\` on your next check — a fresh session means full recipe text again.
 
@@ -788,7 +788,7 @@ export const MCP_TOOL_DESCRIPTIONS = {
 
   /** Shared by HTTP and stdio MCP (recipe search, 2026-08-19). */
   searchRecipes:
-    "Read-only search over your readable recipe books — nothing is written. For judgment made by " +
+    "Read-only search over your readable recipe books. For judgment made by " +
     "OTHER people (a teammate's PR, a shared book); results exclude your own recipes by " +
     "default. With a genuine hypothesis about your user's taste, use check_recipe; with neither, " +
     "ask the user — Soup.net is a decision log, not documentation. Results are context, not " +
