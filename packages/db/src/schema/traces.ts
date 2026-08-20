@@ -65,6 +65,10 @@ export const traces = claimnetSchema.table(
     index("traces_session_id_created_at_idx").on(t.sessionId, t.createdAt.desc()),
     // Idempotency: same agent + group + claim text = same trace
     unique("traces_api_key_group_claim_unique").on(t.apiKeyId, t.groupId, t.claimTextHash),
+    // Judgment-date range queries (recipe search after:/before:, 2026-08-19)
+    // and any future recency decay — the display-date convention everywhere
+    // is COALESCE(decided_at, created_at), so the index matches it.
+    index("traces_judgment_date_idx").using("btree", sql`(COALESCE(${t.decidedAt}, ${t.createdAt}))`),
     // tsvector GIN index defined in migration SQL
   ]
 );

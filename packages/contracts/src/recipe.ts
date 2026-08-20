@@ -271,8 +271,20 @@ export const CheckResponseDataSchema = z
       .boolean()
       .optional()
       .describe("True for the read-only `filter` search path — no recipe was logged."),
-    filter: z.string().optional().describe("The keyword filter of a search-only response."),
-    searchMode: z.string().optional().describe("How candidates were retrieved (\"semantic\")."),
+    filter: z.string().optional().describe("The structured query of a search-only response (bare text semantic, \"quoted\" lexical, author:/after:/before: qualifiers)."),
+    searchId: z
+      .string()
+      .optional()
+      .describe("Search-only: this search's feedback handle — log_feedback / POST /feedback accept it as search_id."),
+    notice: z
+      .string()
+      .optional()
+      .describe("Search-only: read-only marker, plus the thin-corpus signal on zero results."),
+    searchedCorpusSize: z
+      .number()
+      .optional()
+      .describe("Search-only, zero results: recipes in the searched scope — distinguishes a thin corpus from a bad minute."),
+    searchMode: z.string().optional().describe("How candidates were retrieved: \"semantic\" (vector similarity), or \"lexical\" for quoted/qualifier-only searches — exact matches, newest first, no similarity scores."),
     clustered: z.boolean().optional().describe("Whether results are clustered exemplars."),
     results: z
       .array(RecipeSchema)

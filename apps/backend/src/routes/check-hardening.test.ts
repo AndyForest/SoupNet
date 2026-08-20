@@ -495,7 +495,7 @@ describe("filter/f read-only search on /check", () => {
     expect(json.ok).toBe(true);
     expect(json.data?.searchOnly).toBe(true);
     expect(json.data?.filter).toBe("grapefruit clustering");
-    expect(json.data?.notice).toContain("no recipe was logged");
+    expect(json.data?.notice).toContain("nothing was written to the corpus");
     expect(json.data?.checked?.recipeId).toBeUndefined();
     expect((json.data?.results?.length ?? 0)).toBeGreaterThan(0);
 
@@ -513,7 +513,7 @@ describe("filter/f read-only search on /check", () => {
     expect(rows[0]?.metadata?.filter).toBe("grapefruit clustering");
   });
 
-  it("alias f works and renders the search-only HTML notice", async () => {
+  it("alias f works and renders the search page (query in the search box, no check confirmation)", async () => {
     const { apiKey } = await setupUserWithKey("filter2");
     const seeded = await fetch(checkUrl({ key: apiKey, format: "json", recipe: RECIPE("html filter notices"), evidence: EVIDENCE }));
     expect(((await seeded.json()) as CheckJson).ok).toBe(true);
@@ -521,8 +521,11 @@ describe("filter/f read-only search on /check", () => {
     const res = await fetch(checkUrl({ key: apiKey, f: "filter notices" }));
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain("Read-only search");
-    expect(html).toContain("no recipe was logged");
+    // 2026-08-19 comprehensibility pass: the search page leads with the query
+    // in a live search box; the read-only fact lives in the revealed help.
+    expect(html).toContain("recipe search");
+    expect(html).toContain('value="filter notices"');
+    expect(html).toContain("Search syntax");
     // Not the check confirmation.
     expect(html).not.toContain("Your recipe was checked as #");
     expect(await traceCountForKey(apiKey)).toBe(1);

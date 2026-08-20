@@ -58,6 +58,10 @@ export interface HybridSearchParams {
    *  the window start are skipped (already shown). Absent ⇒ plain slice
    *  (byte-stable). Ranking is untouched either way. */
   knownIds?: ReadonlySet<string> | undefined;
+  /** Structured filters from a parsed recipe-search query (lexical terms,
+   *  authors, judgment-date range). Applied inside the SQL predicates like
+   *  keywordFilter, so count/ANN/fallback agree. */
+  structured?: StructuredTraceFilters | undefined;
 }
 
 export interface HybridSearchResult {
@@ -82,6 +86,121 @@ export interface HybridSearchResponse {
   /** Clustering pool — the top candidates by rank down to the pool boundary
    *  (pre-pagination), only when HybridSearchParams.pool was set (non-page). */
   pool?: HybridSearchResult[] | undefined;
+}
+
+// ── Structured trace filters (recipe search, 2026-08-19) ────────────────────
+//
+// The SQL realization of the parsed structured query (@soupnet/domain
+// parseSearchQuery). SECURITY (recipe 446bac9f): every value below arrives as
+// a bind parameter through the sql tagged template — the parser's IR never
+// contributes SQL text. Lexical terms get LIKE-metacharacter escaping here;
+// author values arrive as UUIDs already resolved by the service layer (emails
+// are looked up before SQL); dates were strict-ISO-validated by the parser
+// and still bind as parameters. The only raw interpolation is the table
+// alias, a compile-time constant chosen by the calling query.
+
+export interface StructuredTraceFilters {
+  /** Lexical term groups: groups AND together, terms inside a group OR
+   *  together. Matched case-insensitively as substrings across claim text,
+   *  evidence content, and reference quotes/sources. */
+  lexicalGroups?: string[][] | undefined;
+  /** Lexical terms that must NOT match anywhere in the same field scope. */
+  lexicalNegated?: string[] | undefined;
+  /** Positive author filter (trace user_ids). Empty array = an author was
+   *  requested but resolved to nobody visible → matches nothing (honest
+   *  zero results, no oracle). Undefined = no positive filter. */
+  includeUserIds?: string[] | undefined;
+  /** Authors to exclude (trace user_ids) — the surface's exclude-own default
+   *  and/or explicit -author: values. */
+  excludeUserIds?: string[] | undefined;
+  /** Judgment-date bounds on COALESCE(decided_at, created_at) — inclusive
+   *  lower, exclusive upper (parser-validated ISO strings). */
+  decidedAfter?: string | undefined;
+  decidedBefore?: string | undefined;
+}
+
+/** True when any structured filter is present (drives the traces join). */
+export function hasStructuredFilters(f: StructuredTraceFilters | undefined): boolean {
+  return !!f && (
+    (f.lexicalGroups?.length ?? 0) > 0 ||
+    (f.lexicalNegated?.length ?? 0) > 0 ||
+    f.includeUserIds !== undefined ||
+    (f.excludeUserIds?.length ?? 0) > 0 ||
+    f.decidedAfter !== undefined ||
+    f.decidedBefore !== undefined
+  );
+}
+
+const escapeLikeTerm = (t: string) => t.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+
+/** One lexical term's multi-field match: claim text, evidence content, and
+ *  reference quote/source reachable from the trace (both link paths). This
+ *  field scope is what closes the measured citation gap — `-- file citation`
+ *  lines live in references.source (probe evidence: recipe 5db8edc5). */
+function lexicalTermMatch(alias: string, term: string) {
+  const a = sql.raw(alias); // compile-time constant ("tr" | "t"), never user input
+  const p = "%" + escapeLikeTerm(term) + "%";
+  return sql`(
+    ${a}.claim_text ILIKE ${p}
+    OR EXISTS (
+      SELECT 1 FROM claimnet.trace_evidence te
+      JOIN claimnet.evidence e ON e.id = te.evidence_id
+      WHERE te.trace_id = ${a}.id AND e.content ILIKE ${p})
+    OR EXISTS (
+      SELECT 1 FROM claimnet.trace_references trf
+      JOIN claimnet.references r ON r.id = trf.reference_id
+      WHERE trf.trace_id = ${a}.id AND (r.quote ILIKE ${p} OR r.source ILIKE ${p}))
+    OR EXISTS (
+      SELECT 1 FROM claimnet.trace_evidence te2
+      JOIN claimnet.evidence_references er ON er.evidence_id = te2.evidence_id
+      JOIN claimnet.references r2 ON r2.id = er.reference_id
+      WHERE te2.trace_id = ${a}.id AND (r2.quote ILIKE ${p} OR r2.source ILIKE ${p}))
+  )`;
+}
+
+/**
+ * Build the ANDed predicate fragment for a StructuredTraceFilters over the
+ * given traces alias. Returns an empty fragment when no filter is present.
+ * Every piece starts with `AND` so callers append it to an existing WHERE.
+ */
+export function buildStructuredTracePredicates(
+  filters: StructuredTraceFilters | undefined,
+  alias: "tr" | "t",
+) {
+  if (!hasStructuredFilters(filters) || !filters) return sql``;
+  const a = sql.raw(alias);
+  const parts = [];
+
+  for (const group of filters.lexicalGroups ?? []) {
+    if (group.length === 0) continue;
+    parts.push(sql`AND (${sql.join(group.map((t) => lexicalTermMatch(alias, t)), sql` OR `)})`);
+  }
+  for (const term of filters.lexicalNegated ?? []) {
+    parts.push(sql`AND NOT ${lexicalTermMatch(alias, term)}`);
+  }
+
+  if (filters.includeUserIds !== undefined) {
+    parts.push(
+      filters.includeUserIds.length > 0
+        ? sql`AND ${a}.user_id IN (${sql.join(filters.includeUserIds.map((id) => sql`${id}::uuid`), sql`, `)})`
+        // Requested authors resolved to nobody visible: match nothing.
+        : sql`AND FALSE`,
+    );
+  }
+  if ((filters.excludeUserIds?.length ?? 0) > 0) {
+    parts.push(
+      sql`AND ${a}.user_id NOT IN (${sql.join(filters.excludeUserIds!.map((id) => sql`${id}::uuid`), sql`, `)})`,
+    );
+  }
+
+  if (filters.decidedAfter !== undefined) {
+    parts.push(sql`AND COALESCE(${a}.decided_at, ${a}.created_at) >= ${filters.decidedAfter}::timestamptz`);
+  }
+  if (filters.decidedBefore !== undefined) {
+    parts.push(sql`AND COALESCE(${a}.decided_at, ${a}.created_at) < ${filters.decidedBefore}::timestamptz`);
+  }
+
+  return parts.length > 0 ? sql.join(parts, sql` `) : sql``;
 }
 
 // ── Main search function ─────────────────────────────────────────────────────
@@ -168,6 +287,11 @@ export async function hybridSearch(
         sql` `,
       )
       : sql``;
+    // Structured filters (recipe search): same in-SQL placement as the
+    // keyword predicate, so count/ANN/fallback agree. The traces join below
+    // activates for either mechanism.
+    const structuredPredicate = buildStructuredTracePredicates(params.structured, "tr");
+    const needsTraceJoin = keywordTerms.length > 0 || hasStructuredFilters(params.structured);
 
     const searchPredicates = sql`
         ev.status = 'complete'
@@ -178,13 +302,14 @@ export async function hybridSearch(
         AND es.source_type = 'trace'
         AND es.group_id IN (${groupIdsSql})
         ${excludeTraceId ? sql`AND es.source_id != ${excludeTraceId}::uuid` : sql``}
-        ${keywordPredicate}`;
+        ${keywordPredicate}
+        ${structuredPredicate}`;
     const searchJoins = sql`
       FROM claimnet.embedding_vectors ev
       JOIN claimnet.embedding_chunks ec ON ec.id = ev.embedding_chunk_id
       JOIN claimnet.embedding_chunk_strategies ecs ON ecs.id = ec.chunk_strategy_id
       JOIN claimnet.embedding_sources es ON es.id = ec.embedding_source_id
-      ${keywordTerms.length > 0 ? sql`JOIN claimnet.traces tr ON tr.id = es.source_id` : sql``}`;
+      ${needsTraceJoin ? sql`JOIN claimnet.traces tr ON tr.id = es.source_id` : sql``}`;
 
     // ── 1. Exact result count (no distance computations) ─────────────────
     const countRows = await db.execute(sql`

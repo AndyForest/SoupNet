@@ -89,6 +89,14 @@ export interface CheckResponseData {
   searchOnly?: boolean;
   /** The keyword filter text of a search-only response. */
   filter?: string;
+  /** Search-only: the search's feedback handle (log_feedback search_id). */
+  searchId?: string;
+  /** Search-only: notice line from the server (read-only marker + any
+   *  zero-result thinness signal). */
+  notice?: string;
+  /** Search-only, zero results: recipes in the searched scope — thin-corpus
+   *  vs bad-minute triage signal. */
+  searchedCorpusSize?: number;
   searchMode?: string;
   clustered?: boolean;
   results?: CheckResultItem[];
@@ -133,14 +141,16 @@ export interface RenderCheckMarkdownOptions {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /** ONE similarity vocabulary (recipe ef245b63): the raw cosine as a
- *  percentage, or an honest n/a. The lexical/combined fallbacks died with
- *  the vestigial score slots — nothing has produced them since the
- *  2026-04-11 pure-semantic simplification. */
+ *  percentage — or empty when no score exists (exact lexical/qualifier
+ *  matches carry none by construction). The lexical/combined score
+ *  fallbacks died with the 2026-04-11 pure-semantic simplification; the
+ *  "similarity n/a" placeholder died in the 2026-08-19 comprehensibility
+ *  pass (it read as "not actually matched"). */
 function similarityLabel(similarity: CheckResultItem["similarity"]): string {
   if (similarity !== null && similarity !== undefined) {
     return `${Math.round(similarity * 100)}% similar`;
   }
-  return "similarity n/a";
+  return "";
 }
 
 /** Compact percentage for known-member / known-parent lines. */
@@ -182,7 +192,12 @@ function renderReference(ref: CheckResultReference): string {
 }
 
 function renderResultItem(r: CheckResultItem, index: number, known: boolean): string {
-  const head = `#${index + 1} (${similarityLabel(r.similarity)}) ${r.recipeId ?? "?"}`;
+  // ONE similarity vocabulary (recipe ef245b63): the raw cosine as a
+  // percentage — and no chip at all when there is no score (exact
+  // lexical/qualifier matches; "similarity n/a" read as not-matched —
+  // 2026-08-19 comprehensibility pass, one unified search).
+  const score = similarityLabel(r.similarity);
+  const head = `#${index + 1}${score ? ` (${score})` : ""} ${r.recipeId ?? "?"}`;
 
   if (known) {
     // One-line id-only stub: the caller already holds this recipe, so the
@@ -234,9 +249,16 @@ export function renderCheckResponseMarkdown(
   const data = response.data;
   const known = new Set(opts.knownRecipeIds ?? []);
 
+  // No "Search mode:" line — one unified search guided by the query
+  // (2026-08-19 comprehensibility pass); machine consumers read the JSON
+  // searchMode field. "Read-only" in the header carries the no-write fact
+  // without a stated negative.
   let text = data.searchOnly
-    ? `Read-only search${data.filter ? ` for "${data.filter}"` : ""} — no recipe was logged.\nSearch mode: ${data.searchMode ?? "semantic"}\n`
-    : `Recipe checked as #${data.checked?.recipeId ?? "?"}\nSearch mode: ${data.searchMode ?? "semantic"}\n`;
+    ? `Read-only search${data.filter ? ` for "${data.filter}"` : ""}.\n`
+    : `Recipe checked as #${data.checked?.recipeId ?? "?"}\n`;
+  if (data.searchOnly && data.searchId) {
+    text += `Search id: ${data.searchId} — log_feedback accepts it as search_id.\n`;
+  }
 
   const warning = data.formatWarning ?? response.formatWarning;
   if (warning) {
@@ -255,7 +277,17 @@ export function renderCheckResponseMarkdown(
 
   const results = data.results ?? [];
   if (results.length === 0) {
-    text += "\nNo similar recipes found.";
+    if (data.searchOnly) {
+      // Thinness is signal, not failure (team-trial evidence §2.4): the scope
+      // size distinguishes a thin corpus from a bad minute, and the pointer
+      // closes the feedback loop on null results.
+      const scope = data.searchedCorpusSize !== undefined
+        ? ` among the ${data.searchedCorpusSize} recipes in scope`
+        : "";
+      text += `\nNo matches${scope} — a thin-corpus signal worth a feedback row (story_fulfilled: no).`;
+    } else {
+      text += "\nNo similar recipes found.";
+    }
     if (data.sessionId) {
       text += `\nSession: ${data.sessionId} — pass session_id on your next check to keep responses lean.`;
     }

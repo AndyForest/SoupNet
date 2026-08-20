@@ -85,8 +85,12 @@ The WT-3 tree of [docs/rough-notes/2026-07-05/next-improvements-worktree-plan.md
 
 - **Slimming levers stay sequenced behind WT-5 phase-1 specs** (per the plan): top-N evidence per exemplar with a `get_recipes` pointer, briefing `max_chars`, and the `exemplarCount: 0` fresh-book bug.
 - **Contracts/OpenAPI entry for `GET /recipes`** — validates inline like the other post-pivot routes; fold into the existing contracts-consolidation item. *(Partially advanced 2026-07-18: the canonical Recipe + check-response schemas now live in `packages/contracts/src/recipe.ts` and serve at `GET /schemas/*.json` — the first post-pivot shapes in contracts. Remaining: register them in the OpenAPI registry and consolidate the other post-pivot routes.)*
-- **Briefing copy pointer** — the briefing text doesn't yet mention `get_recipes`/`purpose` outside the tool descriptions and the sections that render when the params are used; a one-line mention in "How to check" is a briefing-content edit, so it waits for the regression-spec gate like other briefing copy.
+- ~~**Briefing copy pointer** — the briefing text doesn't yet mention `get_recipes`/`purpose` outside the tool descriptions and the sections that render when the params are used; a one-line mention in "How to check" is a briefing-content edit, so it waits for the regression-spec gate like other briefing copy.~~ Done 2026-08-19 (folded into feat/recipe-search's "Search vs check" paragraph, shipped under the declared-intent rule).
 - **Rate-limit note for the fresh audit** (plan §7): `/recipes` uses an in-memory 600/h per-credential cap + 1000/h per-IP (documented in `apps/backend/src/routes/recipes.ts` header); MCP `get_recipes` rides the F43 per-bearer backstop. The pending audit should confirm this is sufficient for an IDOR-class read surface.
+
+### `[IMPL]` Recipe search — structured queries over collaborators' judgment (in flight on `feat/recipe-search`)
+
+Design operator-ratified 2026-08-19: [planning/recipe-search-design.md](planning/recipe-search-design.md). Motivating case: PR review over shared recipe books — an agent retrieving the taste/judgment calls other collaborators made (validated by live-corpus probes, recipe `5db8edc5`). Scope: a restricted Gmail-shaped query grammar (bare text semantic, `"quoted"` lexical across claim + evidence + reference text, allowlisted `author:`/`after:`/`before:` qualifiers) parsed secure-by-default in `packages/domain`; MCP tool `search_recipes` (exclude-own default, `author:me`/`author:anyone` override); REST reuses the `/check` search-only branch's `filter` param backward-compatibly; response reuses the check pipeline (verbosity lever, MMR, canonical Recipe objects). Later same-day rulings folded in: `searchId` on search responses + `search_id` feedback targets (team-trial measurement instrumentation, incl. `resultTraceIds`/`resultSimilarities` on `check.searched` audit rows), and the agent-surface rate-limit raises (F29 600/h / 4000/day, per-IP 3000/h, MCP backstop 1200/h, honest Retry-After — env-overridable). Also folded: stale-tsvector guide copy + cosine-scale note, the briefing `get_recipes`/`purpose` pointer, search-side zero-result reassurance copy. Deliberately not folded: Bearer-on-`/check` (separate auth PR), audit retention, short-id extension, `decided_at` frontend surfacing, viewer-role sharing (composes; not foreclosed). Post-merge validation: re-run the 5db8edc5 probes through `search_recipes` on the deployed stack — the citation probe must hit via the quoted path.
 
 ### `[IMPL]` bcryptjs hashes on the main event loop — registration bursts convoy all requests
 
@@ -184,33 +188,6 @@ Goals for the cleanup pass: cut what's duplicated, sharpen what HowItWorks uniqu
 
 ---
 
-## Directory submission (Anthropic connectors directory)
-
-Foundation shipped 2026-05-14 (`a46636c`–`9c231ca`): OAuth 2.1 schema + metadata + DCR + authorize/grant + token/refresh + consent screen + MCP tool annotations + Origin-header validation + self-serve deletion. The non-code prep below is what remains before submitting.
-
-### `[IMPL]` Manual end-to-end test against real claude.ai
-
-Add Soup.net at `https://mcp.soup.net/mcp` via claude.ai's **Settings → Connectors → Add custom connector** against the deployed stack. Walk the full flow: OAuth redirect to `/oauth/authorize`, sign in, recipe-book scope picker, authorize, bounce back to claude.ai. Then exercise each of the three tools in a conversation. Expected to "just work" given the integration-test coverage, but real claude.ai may surface UX quirks (text wrapping in the consent screen, claude.ai's annotation display, refresh-on-stale-token behavior) that the test suite can't catch.
-
-### `[IMPL]` Connector branding assets
-
-- ~~Square logo on transparent background~~ — `apps/frontend/src/assets/soupnet-logo-square.png` (1322×1322, transparent). The wordmark is small relative to the canvas at directory-listing sizes (~64–128px). Consider a tighter icon-only mark for small displays before submission.
-- Favicon already exists (`apps/frontend/src/assets/favicon-192x192.png`); verify it renders cleanly in browser tab + bookmark previews.
-- For an MCP App listing with carousel screenshots (3–5 PNGs, ≥1000px wide, app response only with prompt text): `npm run screenshot` already captures `/info/connect` and the user-dashboard routes. Run against a populated dev stack, crop to the carousel template, choose the 3–5 that best tell the connector story.
-
-### `[IMPL]` Submit to the connectors directory
-
-Fill out the form at `claude.com/docs/connectors/building/submission` once branding is finalized:
-- Privacy policy URL: `https://www.soup.net/info/privacy` ✓
-- Public documentation URL: `https://www.soup.net/info/connect` ✓ (multi-client; Claude listed first for directory review. `/info/claude-connector` 308-redirects here.)
-- Test account with sample data: provision a `directory-review@soup.net` account with 3-5 example recipes spread across one personal book.
-- Logo, favicon, screenshots (see above).
-- Tool annotations (already shipped — `f9a35d5`).
-
-Common rejection reasons to double-check before submitting: missing tool annotations (30% of rejections), OAuth callback URL allowlist missing `claude.com` variant, incomplete privacy policy, server still in beta.
-
----
-
 ## OAuth follow-ups
 
 ### `[IMPL]` Rate-limit `/oauth/token` and `/oauth/authorize/grant`
@@ -292,7 +269,7 @@ The check-log-mock rejection (landing session) was predicted verbatim by documen
 
 ### `[IMPL]` Zero-result check reassurance copy
 
-Backend `/check` response copy for a new/thin recipe book returning zero results — owned by the parallel FF-1 tree (backend `/check` + `/mcp` surface), not this batch.
+Backend `/check` response copy for a new/thin recipe book returning zero results — owned by the parallel FF-1 tree (backend `/check` + `/mcp` surface), not this batch. Partially done 2026-08-19 (feat/recipe-search): the read-only SEARCH path now reports the searched-scope size + a thin-corpus-is-signal notice with a feedback pointer on zero results. Remaining: the same reassurance on the zero-result CHECK response.
 
 ## Data integrity and deletion
 
@@ -320,7 +297,7 @@ The schema deliberately left FKs loose during development (operator, 2026-07-09:
 
 **Non-FK constraints worth encoding:** the text-enum columns (`check_feedback.kind`/`impact`/`disposition`/`story_fulfilled`, `users.role`, `api_keys.key_type`, `group_members.role`, `embedding_*.status`) are all "text + service-level validation" by explicit choice, with the invariant named only in comments. `CHECK (col IN (...))` is cheap and encodes them. Also: `traces.claim_text_hash` is nullable "for pre-existing data" but the idempotency unique constraint depends on it — NULL hashes silently opt out of dedup. Backfill, then tighten to `NOT NULL`.
 
-**Also flagged:** `check.searched` audit rows store the user's raw search `filter` text in `metadata` (`trace.service.ts:700-704`), retained indefinitely. Free text the user typed. Include in the audit-log retention pass.
+**Also flagged:** `check.searched` audit rows store the user's raw search `filter` text in `metadata` (`trace.service.ts:700-704`), retained indefinitely. Free text the user typed. Include in the audit-log retention pass. Update 2026-08-19: the recipe-search feature routes structured queries through the same param, so retained filter text can now also carry `author:` emails and date qualifiers — same retention decision, slightly richer payload.
 
 ---
 
@@ -422,7 +399,7 @@ Observed 2026-07-21 (feat/feedback-web-surface, first gate run): 924/924 tests p
 Both journeys succeeded — zero hard blockers; short-id resolution and the import flow passed their naive evals outright. Remaining findings, worst first:
 
 - **Feedback is undiscoverable over the wire (soft blocker).** ~~The `/check` page, `recipe-check-guide`, and check JSON response never mention that feedback exists or that `POST /feedback` is the endpoint — a web-only agent not told the concept exists can never close the loop.~~ Mostly resolved 2026-07-21 (feat/feedback-web-surface, after a live GET-only agent 404'd on a hand-built `/feedback?key=...` URL): the gap was capability, not just copy — no GET-compatible feedback path existed at all. Shipped: flat `feedback_*` ride-along params on `/check` (override-only), `GET /feedback` (`?key=` or Bearer) as standalone backup, guide (CONNECTION_TIERS tier 2) + briefing §Closing the loop copy (declared-intent entry 2026-07-21). Still open: a one-line discovery pointer in the check JSON/HTML response itself for agents that never read the guide.
-- **Stale search description in the agent-facing guide (correction, trivial).** `recipe-check-guide` still says "Search: hybrid — full-text (tsvector) + … semantic vectors"; search has been pure semantic since 2026-04-11 (the same drift class fixed in data-flow.md on 2026-07-09). Also: raw cosine scores near zero read as "broken?" to a fresh agent — a one-line scale note would help.
+- ~~**Stale search description in the agent-facing guide (correction, trivial).** `recipe-check-guide` still says "Search: hybrid — full-text (tsvector) + … semantic vectors"; search has been pure semantic since 2026-04-11 (the same drift class fixed in data-flow.md on 2026-07-09). Also: raw cosine scores near zero read as "broken?" to a fresh agent — a one-line scale note would help.~~ Done 2026-08-19 (folded into feat/recipe-search): the guide's Technical details line now reads pure semantic + quoted-lexical with the cosine-scale note.
 - **`POST /feedback` validates one error per request** — six sequential 400s to learn six required fields. Collect-all-errors in one response.
 - **Unknown fields on feedback rows are silently dropped** (the eval agent's `outcome` field vanished without complaint) and the success response doesn't echo the stored row. Either echo the row or reject unknown keys.
 - **Re-import response points nowhere** — an all-skipped re-import returns `book: null` with no pointer to which book already holds the rows. Report the book(s) containing the matched ids.
@@ -449,7 +426,7 @@ The 2026-07-06 placeholder-mode change established the invariant (CI-enforced fo
 
 ~~Security audit documents missing from the repo~~ — resolved 2026-06-11: the audits live in the **private deployment repo's** `docs/security/` (confirmed by the observability survey). CLAUDE.md and `docs/workflows/security.md` now say so. Remaining work: the last general audit was 2026-04-09 and the route surface has grown substantially since (OAuth 2.1, /uploads, remote MCP, waitlist, email log, invite-status) — now that production is live behind real SES, run a fresh audit-agent scan. The operator runs this after the 2026-06-11 batch is committed, before push.
 
-~~Audit prep~~ — done 2026-06-11: the private repo's `docs/security/` now has a `README.md` (location policy, two-repo audit scope, audit history — moved out of the public workflow doc) and `audit-prep-2026-06-11.md` (the readiness brief the audit agent starts from: baseline, fix-verification queue, new-surface focus areas, known leads, pre-audit checklist incl. a gitleaks history scan before push). `docs/workflows/security.md` updated for the two-repo scope. Remaining: run the audit itself (read-only audit agent, both repos).
+~~Audit prep~~ — done 2026-06-11: the private repo's `docs/security/` now has a `README.md` (location policy, two-repo audit scope, audit history — moved out of the public workflow doc) and `audit-prep-2026-06-11.md` (the readiness brief the audit agent starts from: baseline, fix-verification queue, new-surface focus areas, known leads, pre-audit checklist incl. a gitleaks history scan before push). `docs/workflows/security.md` updated for the two-repo scope. Remaining: run the audit itself (read-only audit agent, both repos). New surface for the audit's focus list (2026-08-19): the recipe-search structured-query path (`packages/domain` parser → SQL predicates, MCP `search_recipes`) — confirm the secure-by-default posture in [planning/recipe-search-design.md](planning/recipe-search-design.md) §Security holds (parameterized binds, allowlist, caps) and that the searchOnly rate limits suffice for the widened read surface.
 
 ### `[IMPL]` Admin side-nav missing on most admin pages
 

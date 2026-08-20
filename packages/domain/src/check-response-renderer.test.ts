@@ -69,8 +69,9 @@ describe("renderCheckResponseMarkdown", () => {
     // Single line: rank, similarity, full UUID, timestamp, cluster size, book — together.
     expect(lineA).toBe(`#1 (87% similar) ${UUID_A} -- 2026-04-03T12:34Z (represents 12 similar recipes) [SoupNet]`);
     // ONE similarity vocabulary (recipe ef245b63): no lexical/combined
-    // fallbacks — a missing similarity is an honest n/a.
-    expect(lineB).toBe(`#2 (similarity n/a) ${UUID_B} -- 2026-05-10T08:00Z`);
+    // fallbacks — and no chip at all when the score is absent (exact
+    // lexical/qualifier matches; 2026-08-19 comprehensibility pass).
+    expect(lineB).toBe(`#2 ${UUID_B} -- 2026-05-10T08:00Z`);
   });
 
   it("renders timestamps as explicit UTC, never a bare date slice (2026-07-05: a minutes-old check read as tomorrow)", () => {
@@ -186,7 +187,7 @@ describe("renderCheckResponseMarkdown", () => {
     res.data!.searchOnly = true;
     res.data!.filter = "postgres migrations";
     const text = renderCheckResponseMarkdown(res);
-    expect(text.split("\n")[0]).toBe('Read-only search for "postgres migrations" — no recipe was logged.');
+    expect(text.split("\n")[0]).toBe('Read-only search for "postgres migrations".');
     expect(text).not.toContain("Recipe checked as #");
   });
 
@@ -207,15 +208,16 @@ describe("renderCheckResponseMarkdown", () => {
     expect(text).toContain("    [region x 10%–50%, y 20%–90%]");
   });
 
-  it("renders an honest n/a when similarity is absent — no lexical/combined fallbacks (recipe ef245b63)", () => {
+  it("omits the similarity chip when the score is absent — no lexical/combined fallbacks (recipe ef245b63), no n/a placeholder (2026-08-19)", () => {
     const res = baseResponse();
     res.data!.results = [
       { recipeId: UUID_A, recipe: "r", createdAt: "2026-01-01T00:00:00Z", similarity: null },
       { recipeId: UUID_B, recipe: "r2", createdAt: "2026-01-02T00:00:00Z" },
     ];
     const text = renderCheckResponseMarkdown(res);
-    expect(text).toContain(`#1 (similarity n/a) ${UUID_A}`);
-    expect(text).toContain(`#2 (similarity n/a) ${UUID_B}`);
+    expect(text).toContain(`#1 ${UUID_A}`);
+    expect(text).toContain(`#2 ${UUID_B}`);
+    expect(text).not.toContain("similarity n/a");
   });
 
   describe("premium synthesis", () => {

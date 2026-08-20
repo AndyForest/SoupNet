@@ -185,3 +185,19 @@ img { border-radius: var(--radius); }
   body { padding: 1rem; }
   h1 { font-size: 1.5rem; }
 }
+
+/* ── 2026-08-19 comprehensibility pass (query-first layout) ─────────────── */
+
+/* Search-page header: brand byline + live search box. */
+.brandline { margin: 0 0 0.35rem; }
+.brandline small { color: var(--text-variant); }
+.searchbar { display: flex; gap: 0.5rem; max-width: 44rem; margin: 0; }
+.searchbar input[type="search"] { flex: 1; font-size: 1.05em; padding: 0.35rem 0.6rem; }
+
+/* One results toolbar row (sort · show all · exemplars · evidence). */
+.toolbar { font-size: 0.85em; color: var(--text-variant); margin: 0.25rem 0; }
+
+/* Revealed-on-demand meta (search help, collapsed check form). */
+details.reveal { margin: 0.75rem 0; }
+details.reveal > summary { cursor: pointer; font-size: 0.9em; }
+details.reveal ul { font-size: 0.85em; margin: 0.4rem 0; }

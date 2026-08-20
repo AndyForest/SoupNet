@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Hono } from "hono";
-import { getClientIp, rateLimit, perKeyRateLimit } from "./rate-limit";
+import { getClientIp, rateLimit, perKeyRateLimit, PER_KEY_HOURLY_DEFAULT, PER_KEY_DAILY_DEFAULT } from "./rate-limit";
 
 // These tests exercise the rate limiter directly — no running server needed.
 // Integration tests run with DISABLE_RATE_LIMIT=true; these verify the actual limiting logic.
@@ -267,8 +267,8 @@ describe("perKeyRateLimit middleware (F29)", () => {
     const { app } = createApp({
       rawKey: "cn_d_test",
       apiKeyId: "00000000-0000-0000-0000-000000000001",
-      hourly: 199,
-      daily: 999,
+      hourly: PER_KEY_HOURLY_DEFAULT - 1,
+      daily: PER_KEY_DAILY_DEFAULT - 1,
     });
     const res = await app.request("/test");
     expect(res.status).toBe(200);
@@ -278,13 +278,14 @@ describe("perKeyRateLimit middleware (F29)", () => {
     const { app } = createApp({
       rawKey: "cn_d_test",
       apiKeyId: "00000000-0000-0000-0000-000000000001",
-      hourly: 200,
+      hourly: PER_KEY_HOURLY_DEFAULT,
       daily: 500,
     });
     const res = await app.request("/test");
     expect(res.status).toBe(429);
     const body = await res.json() as { error: string };
     expect(body.error).toContain("hourly");
+    // Stub deps carry no oldestRecipeCheckSince — flat-window fallback.
     expect(res.headers.get("Retry-After")).toBe("3600");
   });
 
@@ -293,13 +294,37 @@ describe("perKeyRateLimit middleware (F29)", () => {
       rawKey: "cn_d_test",
       apiKeyId: "00000000-0000-0000-0000-000000000001",
       hourly: 50,
-      daily: 1000,
+      daily: PER_KEY_DAILY_DEFAULT,
     });
     const res = await app.request("/test");
     expect(res.status).toBe(429);
     const body = await res.json() as { error: string };
     expect(body.error).toContain("daily");
     expect(res.headers.get("Retry-After")).toBe("86400");
+  });
+
+  // Honest Retry-After (operator ruling 2026-08-19): with the optional
+  // oldest-row dep present, the header counts down to when the oldest event
+  // ages out of the sliding window instead of the flat full window — a
+  // backoff-aware fleet stalls minutes, not an hour.
+  it("computes Retry-After from the oldest counted row when the dep is present", async () => {
+    const app = new Hono();
+    const oldest = new Date(Date.now() - 50 * 60 * 1000); // ages out in ~10 min
+    app.use("/*", perKeyRateLimit({
+      keyExtractor: () => "cn_d_test",
+      deps: {
+        resolveApiKeyId: async () => "00000000-0000-0000-0000-000000000001",
+        countRecipeChecksSince: async (_id, intervalSql) =>
+          intervalSql === "1 hour" ? PER_KEY_HOURLY_DEFAULT : 0,
+        oldestRecipeCheckSince: async () => oldest,
+      },
+    }));
+    app.get("/test", (c) => c.json({ ok: true }));
+    const res = await app.request("/test");
+    expect(res.status).toBe(429);
+    const retryAfter = Number(res.headers.get("Retry-After"));
+    expect(retryAfter).toBeGreaterThan(0);
+    expect(retryAfter).toBeLessThanOrEqual(10 * 60 + 5);
   });
 
   it("falls through (no 429) when no key is on the request", async () => {

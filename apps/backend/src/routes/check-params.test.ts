@@ -8,7 +8,7 @@ const empty: PageParams = {
   axes: undefined, group: undefined, readGroups: undefined, decidedAt: undefined,
   agentId: undefined, knownRecipes: undefined, sessionId: undefined, filter: undefined,
   synthesize: undefined,
-  feedbackTraceId: undefined, feedbackKind: undefined, feedbackImpact: undefined,
+  feedbackTraceId: undefined, feedbackSearchId: undefined, feedbackKind: undefined, feedbackImpact: undefined,
   feedbackDisposition: undefined, feedbackStoryFulfilled: undefined,
   feedbackStory: undefined, feedbackNote: undefined,
   imageFile: undefined,

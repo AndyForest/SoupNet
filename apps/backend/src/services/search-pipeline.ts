@@ -21,8 +21,8 @@ import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 
 import { PRODUCTION_SEARCH_STRATEGY_IDS, DEFAULT_RANKING, orderClusters } from "@soupnet/domain";
 import type { RankingConfig, ClusterOrderStat, VerbositySteer } from "@soupnet/domain";
-import { hybridSearch, evidenceSearch } from "./vector-search.service";
-import type { EvidenceSearchResult } from "./vector-search.service";
+import { hybridSearch, evidenceSearch, buildStructuredTracePredicates, hasStructuredFilters } from "./vector-search.service";
+import type { EvidenceSearchResult, StructuredTraceFilters } from "./vector-search.service";
 import type { SearchResultItem } from "./trace.service";
 import { clusterResults, mmrClusters } from "./clustering.service";
 import type { ClusterResult } from "./clustering.service";
@@ -59,6 +59,15 @@ export interface SearchPipelineParams {
    *  ANDed, case-insensitive substring). Applied in SQL by hybridSearch so
    *  counts and pagination stay exact. Only meaningful in query mode. */
   keywordFilter?: string | undefined;
+  /** Structured filters from a parsed recipe-search query (lexical terms,
+   *  authors, judgment-date range). Applied in SQL in BOTH modes: query mode
+   *  via hybridSearch's predicates, corpus mode (qualifier-only queries —
+   *  no semantic text) via fetchCorpusTraces' conditions. */
+  structured?: StructuredTraceFilters | undefined;
+  /** Corpus-mode row bound (newest-first by judgment date). totalResults
+   *  stays the honest full count (a COUNT query runs when the bound bites).
+   *  Set by the read-only search path; absent for the map (which wants all). */
+  corpusLimit?: number | undefined;
   /** Include raw vectors in response (for visualization). */
   includeVectors?: boolean | undefined;
   /** Two concept terms for TCAV-style axis projection (comma-separated).
@@ -270,11 +279,22 @@ async function fetchCorpusTraces(
   params: {
     groupIds: string[];
     traceIds?: string[] | undefined;
+    /** Structured recipe-search filters (qualifier-only queries land here —
+     *  no semantic text means corpus mode, ordered by judgment date). */
+    structured?: StructuredTraceFilters | undefined;
+    /** Newest-first row bound; `total` stays the honest full count. */
+    limit?: number | undefined;
   },
-): Promise<CorpusTrace[]> {
+): Promise<{ traces: CorpusTrace[]; total: number }> {
   const conditions = [
     sql`t.group_id IN (${sql.join(params.groupIds.map((g) => sql`${g}::uuid`), sql`, `)})`,
   ];
+
+  if (hasStructuredFilters(params.structured)) {
+    // The builder emits `AND ...`-prefixed pieces; wrap with TRUE so it
+    // composes as one condition in this AND-joined list.
+    conditions.push(sql`(TRUE ${buildStructuredTracePredicates(params.structured, "t")})`);
+  }
 
   if (params.traceIds && params.traceIds.length > 0) {
     conditions.push(
@@ -288,9 +308,31 @@ async function fetchCorpusTraces(
     FROM claimnet.traces t
     WHERE ${sql.join(conditions, sql` AND `)}
     ORDER BY COALESCE(t.decided_at, t.created_at) DESC
+    ${params.limit ? sql`LIMIT ${params.limit}` : sql``}
   `);
+  // db.execute returns the COALESCE'd date as a raw value (string) — coerce
+  // to a real Date: downstream consumers (enrichResults on the search-only
+  // corpus path) call Date methods on it.
+  const traces = (rows as unknown as Array<{ id: string; claimText: string; createdAt: string | Date }>).map(
+    (r): CorpusTrace => ({
+      id: r.id,
+      claimText: r.claimText,
+      createdAt: r.createdAt instanceof Date ? r.createdAt : new Date(r.createdAt),
+    }),
+  );
 
-  return rows as unknown as CorpusTrace[];
+  // Honest total when the bound bites — no silent caps (a capped fetch that
+  // reported its own length as the total would read as "covered everything").
+  let total = traces.length;
+  if (params.limit && traces.length === params.limit) {
+    const countRows = await db.execute(sql`
+      SELECT count(*)::int AS n FROM claimnet.traces t
+      WHERE ${sql.join(conditions, sql` AND `)}
+    `);
+    total = Number((countRows as unknown as Array<{ n: number }>)[0]?.n ?? traces.length);
+  }
+
+  return { traces, total };
 }
 
 // ── Main pipeline ────────────────────────────────────────────────────────────
@@ -333,6 +375,7 @@ export async function runSearchPipeline(
       excludeTraceId: params.excludeTraceId,
       queryVectorStr,
       keywordFilter: params.keywordFilter,
+      structured: params.structured,
       // P6 pool lever: cluster the top candidates down to the pool boundary
       // instead of the page window. "page" mode ⇒ byte-stable no-op.
       pool: ranking.clusterPool,
@@ -360,19 +403,21 @@ export async function runSearchPipeline(
     // Author-agnostic: shared-group traces from other members are in scope, which
     // is what the Recipe Map needs for the cross-collaborator view in
     // design-thinking.md §"Understanding group dynamics".
-    const corpusTraces = await fetchCorpusTraces(db, {
+    const corpus = await fetchCorpusTraces(db, {
       groupIds,
       traceIds: params.traceIds,
+      structured: params.structured,
+      limit: params.corpusLimit,
     });
 
-    results = corpusTraces.map((t) => ({
+    results = corpus.traces.map((t) => ({
       id: t.id,
       claimText: t.claimText,
       createdAt: t.createdAt,
       rank: 0, // no relevance score in corpus mode
     }));
 
-    totalResults = results.length;
+    totalResults = corpus.total;
     searchMode = "corpus";
   }
 

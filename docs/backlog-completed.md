@@ -4,6 +4,33 @@ Items moved here from `backlog.md` when finished. Date-stamped so we can see wha
 
 ---
 
+## 2026-08-19 — Anthropic Connectors Directory: APPROVED and listed
+
+Soup.net is officially listed in the [Anthropic Connectors Directory](https://claude.com/connectors) — searchable as "SoupNet", available on every Claude plan including Free (directory connectors are plan-universal per Anthropic's Connectors Directory FAQ; custom connectors are the path that plan-gates). The submission-prep section below is moved from backlog.md as completed; docs were updated the same day (README auth paths incl. OAuth 2.1 + DCR, docs/connectors/index.md directory-first Claude steps + Claude Code `.mcp.json` example, briefing chat-AI bullet, llms.txt + `.md` twins for agent readability of the client-rendered site — see the feat/recipe-search branch).
+
+### `[IMPL]` Manual end-to-end test against real claude.ai
+
+Add Soup.net at `https://mcp.soup.net/mcp` via claude.ai's **Settings → Connectors → Add custom connector** against the deployed stack. Walk the full flow: OAuth redirect to `/oauth/authorize`, sign in, recipe-book scope picker, authorize, bounce back to claude.ai. Then exercise each of the three tools in a conversation. Expected to "just work" given the integration-test coverage, but real claude.ai may surface UX quirks (text wrapping in the consent screen, claude.ai's annotation display, refresh-on-stale-token behavior) that the test suite can't catch.
+
+### `[IMPL]` Connector branding assets
+
+- ~~Square logo on transparent background~~ — `apps/frontend/src/assets/soupnet-logo-square.png` (1322×1322, transparent). The wordmark is small relative to the canvas at directory-listing sizes (~64–128px). Consider a tighter icon-only mark for small displays before submission.
+- Favicon already exists (`apps/frontend/src/assets/favicon-192x192.png`); verify it renders cleanly in browser tab + bookmark previews.
+- For an MCP App listing with carousel screenshots (3–5 PNGs, ≥1000px wide, app response only with prompt text): `npm run screenshot` already captures `/info/connect` and the user-dashboard routes. Run against a populated dev stack, crop to the carousel template, choose the 3–5 that best tell the connector story.
+
+### `[IMPL]` Submit to the connectors directory
+
+Fill out the form at `claude.com/docs/connectors/building/submission` once branding is finalized:
+- Privacy policy URL: `https://www.soup.net/info/privacy` ✓
+- Public documentation URL: `https://www.soup.net/info/connect` ✓ (multi-client; Claude listed first for directory review. `/info/claude-connector` 308-redirects here.)
+- Test account with sample data: provision a `directory-review@soup.net` account with 3-5 example recipes spread across one personal book.
+- Logo, favicon, screenshots (see above).
+- Tool annotations (already shipped — `f9a35d5`).
+
+Common rejection reasons to double-check before submitting: missing tool annotations (30% of rejections), OAuth callback URL allowlist missing `claude.com` variant, incomplete privacy policy, server still in beta.
+
+---
+
 ## 2026-07-19/20 — the ranking-lever program: P6 pool → P7 ordering → P8 MMR (PRs #42–#44)
 
 Three measured default flips in the sweep → report → ruling cadence, ending in the simplification that subsumed the first two on the check path: display selection is now **MMR λ0.6 over a score-banded reach** (`RANKING_ALGORITHM_VERSION 2026-07-20-mmr`), replacing per-check k-means, the fixed pool size, and the ordering permutation with one standard mechanism. Evidence: [p6](planning/ranking-research/p6-pool-sweep-report.md) / [p7](planning/ranking-research/p7-ordering-sweep-report.md) / [p8](planning/ranking-research/p8-mmr-sweep-report.md) sweep reports (real-scale graded golden set built from the evals side's 39,524-trace delivery + the operator's real 1,815-trace production corpus with real-recipe probes); rulings and old→new values in [ranking-changelog.md](architecture/ranking-changelog.md). Three backlog design items closed by the arc, moved verbatim below: the session-identity design (shipped as session/stub rendering 2026-07-17, recorded here with the arc that retired its demotion premise), the P6 pool decoupling (measured, flipped to fixed:100, then subsumed by the band reach), and the adaptive-depth hierarchical sketch (superseded by the ruled MMR direction — its revisit condition "only if the P8 MMR sweep fails to beat k-means on the real corpus" resolved: MMR won and shipped).

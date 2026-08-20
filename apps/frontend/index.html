@@ -23,6 +23,12 @@
     <meta name="twitter:title" content="Soup.net — your taste and judgment, in every AI agent you use" />
     <meta name="twitter:description" content="You make the calls. Your AI agents capture them as they work, then bring them back in your next session, on a different tool, or to a collaborator joining the project. The recipe book builds itself." />
     <meta name="twitter:image" content="%SITE_URL%/og-image.png" />
+    <!-- AI agents: this app is client-rendered — fetching any route returns
+         only this shell. One rule: append ".md" to a page URL for its markdown
+         source (/info/connect.md, /info/privacy.md, /info/terms.md). Full
+         machine-readable index: /llms.txt. Agent-facing API docs are
+         server-rendered at https://mcp.soup.net/docs/recipe-check-guide. -->
+    <link rel="alternate" type="text/plain" href="/llms.txt" title="Machine-readable content index" />
     <link rel="icon" type="image/png" sizes="192x192" href="/src/assets/favicon-192x192.png" />
     <link rel="apple-touch-icon" sizes="192x192" href="/src/assets/favicon-192x192.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -31,6 +37,14 @@
   </head>
   <body>
     <div id="root"></div>
+    <noscript>
+      <p>Soup.net is a client-rendered app. Reading this without JavaScript (or as an AI agent)?
+      Append <code>.md</code> to a page URL for its markdown source —
+      <a href="/info/connect.md">/info/connect.md</a>, <a href="/info/privacy.md">/info/privacy.md</a>,
+      <a href="/info/terms.md">/info/terms.md</a> — or start from the index at <a href="/llms.txt">/llms.txt</a>.
+      Agent-facing API docs are server-rendered at
+      <a href="https://mcp.soup.net/docs/recipe-check-guide">mcp.soup.net/docs/recipe-check-guide</a>.</p>
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

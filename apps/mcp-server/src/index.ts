@@ -8,6 +8,7 @@
  *
  * Tools:
  *   - check_recipe   → POST /check (or GET ?key=...&format=json)
+ *   - search_recipes → GET /check?filter=... (read-only structured search)
  *   - get_briefing   → GET /briefing (optional purpose + recipe_ids params)
  *   - get_recipes    → GET /recipes?ids=... (recipe lookup by id, WT-3)
  *
@@ -70,6 +71,7 @@ server.tool(
     synthesize: z.boolean().optional().describe(MCP_PARAM_DESCRIPTIONS.synthesize),
     feedback: z.array(z.object({
       trace_id: z.string().optional(),
+      search_id: z.string().optional(),
       kind: z.string().optional(),
       impact: z.string().optional(),
       disposition: z.string().optional(),
@@ -239,6 +241,76 @@ server.tool(
       const message = err instanceof Error ? err.message : String(err);
       return {
         content: [{ type: "text" as const, text: `Error checking recipe: ${message}` }],
+      };
+    }
+  },
+);
+
+// ── search_recipes tool ────────────────────────────────────────────────────────
+// Read-only structured search (2026-08-19) — forwards to the backend /check
+// filter path. The X-SoupNet-Surface header carries the mcp-stdio identity,
+// which the backend maps to the MCP exclude-own default (recipe 303e17cf).
+
+server.tool(
+  "search_recipes",
+  MCP_TOOL_DESCRIPTIONS.searchRecipes,
+  {
+    query: z.string().describe(MCP_PARAM_DESCRIPTIONS.searchQuery),
+    verbosity: z.enum(VERBOSITY_LEVELS).optional().describe(MCP_PARAM_DESCRIPTIONS.verbosity),
+    response_format: z.enum(["markdown", "structured"]).optional().describe(MCP_PARAM_DESCRIPTIONS.responseFormat),
+    known_recipes: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.knownRecipes),
+    session_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.sessionId),
+    agent_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.agentId),
+    read_recipe_books: z.string().optional().describe(
+      "Comma-separated recipe-book slugs to restrict result scope. Default: all readable books."
+    ),
+  },
+  {
+    title: "Recipe search",
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: true,
+  },
+  async ({ query, verbosity, response_format, known_recipes, session_id, agent_id, read_recipe_books }) => {
+    if (!apiKey) {
+      return {
+        content: [{ type: "text" as const, text: "Error: SOUPNET_API_KEY not configured. Get a key from your Soup.net dashboard." }],
+      };
+    }
+    try {
+      const params = new URLSearchParams();
+      params.set("key", apiKey);
+      params.set("filter", query);
+      if (verbosity) params.set("verbosity", verbosity);
+      if (agent_id) params.set("agent_id", agent_id);
+      if (known_recipes) params.set("known_recipes", known_recipes);
+      if (session_id) params.set("session_id", session_id);
+      if (read_recipe_books) params.set("read_recipe_books", read_recipe_books);
+      params.set("format", "json");
+
+      const response = await fetch(`${backendUrl}/check?${params.toString()}`, {
+        headers: { "Accept": "application/json", "X-SoupNet-Surface": "mcp-stdio" },
+      });
+      const json = (await response.json()) as CheckResponseJson;
+
+      if (response_format === "structured" && json.ok && json.data) {
+        const data = json.data as unknown as Record<string, unknown>;
+        const stub = `Read-only search — ${String(json.data.totalResults ?? 0)} result(s)${json.data.searchId ? `, searchId ${json.data.searchId}` : ""}. See structuredContent.`;
+        return {
+          content: [{ type: "text" as const, text: stub }],
+          structuredContent: data,
+        };
+      }
+
+      const text = renderCheckResponseMarkdown(json, {
+        knownRecipeIds: (known_recipes ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+      });
+      return { content: [{ type: "text" as const, text }] };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        content: [{ type: "text" as const, text: `Error searching recipes: ${message}` }],
       };
     }
   },

@@ -15,7 +15,7 @@ import { validateKey } from "../services/api-key.service";
 import { HTML_ACCEPT_TYPES, renderCheckResponseMarkdown, fenceCheckResponseMarkdown, parseVerbosity } from "@soupnet/domain";
 import type { CheckResponseJson } from "@soupnet/domain";
 import type { Recipe } from "@soupnet/contracts";
-import { rateLimit, perKeyRateLimit, extractCheckRequestKey, getClientIp, hashApiKey } from "../middleware/rate-limit";
+import { rateLimit, perKeyRateLimit, extractCheckRequestKey, getClientIp, hashApiKey, envCap } from "../middleware/rate-limit";
 import { parseLenientQuery, rawQueryOfUrl } from "../lib/lenient-query";
 import { invalidKeyMessage, keysPageUrl } from "../lib/key-remediation";
 import type { RawFeedbackRow, FeedbackRowResult } from "../services/feedback.service";
@@ -24,7 +24,11 @@ import { ingestFeedback, withCheckDefaults } from "../services/feedback.service"
 // Rate limit check/search:
 //   - per-IP: 1000 per hour (defense-in-depth, catches NAT'd attackers)
 //   - per-key: 200/hour and 1000/day (queried from audit_log; F29).
-const checkRateLimit = rateLimit({ max: 1000, windowMs: 60 * 60 * 1000 });
+// Per-IP: raised 1000 → 3000/h (operator ruling 2026-08-19) — a whole
+// sub-agent fleet shares one workstation IP with its human, and valid-key
+// traffic is already bounded per key (F29) and per credential (F43 covers
+// garbage floods). Env-overridable for hosted tuning without a deploy.
+const checkRateLimit = rateLimit({ max: envCap("CHECK_IP_RATE_LIMIT_HOURLY", 3000), windowMs: 60 * 60 * 1000 });
 const checkPerKeyRateLimit = perKeyRateLimit({ keyExtractor: extractCheckRequestKey });
 
 // Search-only requests (filter with no recipe) write no recipe.checked
@@ -36,7 +40,7 @@ const checkPerKeyRateLimit = perKeyRateLimit({ keyExtractor: extractCheckRequest
 // the per-IP limiter still bounds. GET only — the documented filter surface
 // is the query param.
 const searchOnlyRateLimit = rateLimit({
-  max: 600,
+  max: envCap("SEARCH_ONLY_RATE_LIMIT_HOURLY", 600),
   windowMs: 60 * 60 * 1000,
   keyFn: (c) => {
     const k = c.req.query("key");
@@ -151,6 +155,7 @@ export const CHECK_PARAMS = [
   // "Re-check with file" form) would re-post the same feedback_* values and
   // double-log the row against a check that never mentioned it.
   { field: "feedbackTraceId",        wire: "feedback_trace_id",        aliases: [], roundTrip: "override-only" },
+  { field: "feedbackSearchId",       wire: "feedback_search_id",       aliases: [], roundTrip: "override-only" },
   { field: "feedbackKind",           wire: "feedback_kind",            aliases: [], roundTrip: "override-only" },
   { field: "feedbackImpact",         wire: "feedback_impact",          aliases: [], roundTrip: "override-only" },
   { field: "feedbackDisposition",    wire: "feedback_disposition",     aliases: [], roundTrip: "override-only" },
@@ -390,10 +395,21 @@ function buildSearchOnlyJsonResponse(
   if (response["ok"] !== true) return response;
   const data = response["data"] as Record<string, unknown>;
   delete data["checked"];
+  // Zero results carry the thinness signal explicitly (team-trial evidence
+  // §2.4: "nothing came back" was indistinguishable from a service outage) —
+  // the searched-corpus size makes genuine novelty triageable later, and the
+  // pointer closes the feedback loop on null results.
+  const zeroNotice = result.totalResults === 0
+    ? ` No matches${result.searchedCorpusSize !== undefined ? ` among the ${result.searchedCorpusSize} recipes in scope` : ""} — a thin-corpus signal worth a feedback row (story_fulfilled: no).`
+    : "";
   response["data"] = {
     searchOnly: true,
     filter,
-    notice: "Read-only search — no recipe was logged.",
+    // "nothing was written", not "no recipe was logged" — the latter read as
+    // "no recipes were found in the log" (operator report 2026-08-19).
+    notice: `Read-only search — nothing was written to the corpus.${zeroNotice}`,
+    ...(result.searchId ? { searchId: result.searchId } : {}),
+    ...(result.searchedCorpusSize !== undefined ? { searchedCorpusSize: result.searchedCorpusSize } : {}),
     ...data,
   };
   return response;
@@ -448,13 +464,13 @@ async function resolveRideAlongFeedback(
   db: PostgresJsDatabase,
   params: PageParams,
 ): Promise<FeedbackRowResult[] | undefined> {
-  if (!params.feedbackTraceId) return undefined;
+  if (!params.feedbackTraceId && !params.feedbackSearchId) return undefined;
   if (!params.key) {
     return [{
       index: 0,
       ok: false,
-      traceId: params.feedbackTraceId,
-      error: "feedback_trace_id requires an API key (?key=) to identify the submitting agent",
+      traceId: params.feedbackTraceId ?? "",
+      error: "feedback_trace_id / feedback_search_id requires an API key (?key=) to identify the submitting agent",
     }];
   }
   // A present-but-invalid key never reaches here — handleCheck's key-death
@@ -465,13 +481,14 @@ async function resolveRideAlongFeedback(
     return [{
       index: 0,
       ok: false,
-      traceId: params.feedbackTraceId,
+      traceId: params.feedbackTraceId ?? "",
       error: "invalid or expired API key",
     }];
   }
   const row: RawFeedbackRow = withCheckDefaults(
     {
       trace_id: params.feedbackTraceId,
+      search_id: params.feedbackSearchId,
       kind: params.feedbackKind,
       impact: params.feedbackImpact,
       disposition: params.feedbackDisposition,
@@ -484,6 +501,7 @@ async function resolveRideAlongFeedback(
   return ingestFeedback({
     db,
     apiKeyId: keyResult.keyId,
+    userId: keyResult.userId,
     readGroupIds: keyResult.readGroupIds,
     rows: [row],
   });
@@ -641,14 +659,11 @@ function renderPage(
   // agent auto-submit flows — the agent sees confirmation + a Copy button for
   // the JSON response + an optional path to add a file attachment, without
   // having to re-submit the form manually.
+  // Search pages carry no banner (2026-08-19 comprehensibility pass, Google
+  // model: query on top, results immediately, meta revealed on demand). The
+  // read-only fact and the check-instead pointer live in the collapsed
+  // search-help and form sections below.
   let nextStepsHtml = "";
-  if (result && !result.error && isSearchOnly) {
-    nextStepsHtml = `
-  <section id="search-only-notice" style="background:#f0efe3;padding:0.75rem 1rem;border-radius:4px;margin:0.5rem 0">
-    <p style="margin:0.25rem 0"><strong>Read-only search${params.filter ? ` for &ldquo;${esc(params.filter)}&rdquo;` : ""}</strong> &mdash; no recipe was logged.</p>
-    <p style="font-size:0.85em;color:#555;margin:0.25rem 0">To log a genuine taste/judgment call instead, submit a recipe with evidence below or add <code>recipe=</code> and <code>evidence=</code> params (keeping <code>filter=</code> narrows that check's results by keyword).</p>
-  </section>`;
-  }
   if (result && !result.error && hasSearch && result.traceId) {
     const jsonQs = buildQs(params, { format: "json" });
     const hiddenCarryFields = renderHiddenCarryFields(params);
@@ -700,11 +715,14 @@ function renderPage(
     const resultItems = enriched
       .map((r) => {
         // ONE similarity vocabulary (recipe ef245b63): the raw cosine as a
-        // percentage, or an honest n/a — no combined/lexical fallbacks.
+        // percentage — and simply no chip when there is no score (exact
+        // lexical/qualifier matches). "similarity n/a" read as "not actually
+        // matched" (2026-08-19 comprehensibility pass) — one unified search,
+        // no mode taxonomy on the page.
         const scoreDetail =
           r.semanticScore !== null && r.semanticScore !== undefined
             ? `${Math.round(r.semanticScore * 100)}% similar`
-            : "similarity n/a";
+            : "";
 
         // Known-set stub — one line: id + similarity, no recipe text (id-only
         // ruling; the caller already holds the body). Rendering only; the
@@ -713,7 +731,7 @@ function renderPage(
         if (knownIdsForHtml.has(r.id) || r.known) {
           return `
     <article class="result">
-      <p><small><code>${esc(r.id)}</code> [known to you] ${esc(scoreDetail)}${r.clusterSize ? ` &mdash; represents ${r.clusterSize} similar recipes` : ""}</small></p>
+      <p><small><code>${esc(r.id)}</code> [known to you]${scoreDetail ? ` ${esc(scoreDetail)}` : ""}${r.clusterSize ? ` &mdash; represents ${r.clusterSize} similar recipes` : ""}</small></p>
     </article>`;
         }
 
@@ -764,7 +782,7 @@ function renderPage(
         return `
     <article class="result">
       <p>${groupHtml}${esc(r.claimText)}</p>
-      <span class="rank">${esc(scoreDetail)}</span>${clusterHtml}${knownMembersHtml}
+      ${scoreDetail ? `<span class="rank">${esc(scoreDetail)}</span>` : ""}${clusterHtml}${knownMembersHtml}
       ${evidenceHtml}
     </article>`;
       })
@@ -790,27 +808,35 @@ function renderPage(
     </nav>`;
     }
 
-    const searchModeLabel = `Search mode: ${result.searchMode ?? "semantic"}`;
+    // One heading, one toolbar line, then the results (2026-08-19
+    // comprehensibility pass): no mode taxonomy, cluster/sort/expand controls
+    // merged into a single row. "Similar recipes" is the CHECK framing
+    // (similar to *your* recipe); a search just has results.
+    const toolbarParts = [
+      `Sort: ${currentSort === "relevance" ? "<strong>relevance</strong>" : `<a href="/check${sortRelevanceQs}">relevance</a>`} | ${currentSort === "recent" ? "<strong>recent</strong>" : `<a href="/check${sortRecentQs}">recent</a>`}`,
+    ];
+    if (result.clustered) {
+      toolbarParts.push(`<a href="/check${buildQs(params, { expand: "true" })}" title="One entry per recipe instead of clustered exemplars">Show all ${result.totalResults}</a>`);
+      if (!(params.verbosity || params.clusters || params.maxChars)) {
+        toolbarParts.push(`<a href="/check${buildQs(params, { verbosity: "high" })}">More exemplars</a>`);
+      }
+      if (isCompact) {
+        toolbarParts.push(`<a href="/check${buildQs(params, { compact: "false" })}">Show all evidence</a>`);
+      }
+    }
+    const headingLabel = isSearchOnly
+      ? `Results (${result.totalResults}${result.clustered ? `, ${result.results.length} exemplars shown` : ""})`
+      : `Similar recipes (${result.totalResults} found${result.clustered ? `, ${result.results.length} exemplars shown` : ""})`;
+    const emptyLine = isSearchOnly && result.searchedCorpusSize !== undefined
+      ? `<p>No matches among the ${result.searchedCorpusSize} recipes in scope.</p>`
+      : "<p>No matching recipes found.</p>";
 
-    // Confirmation + Copy button moved to nextStepsHtml. This block renders
-    // only the matching recipes, their ranking, and related evidence.
     resultsHtml = `
   <section id="results">
-    <p><em>${esc(searchModeLabel)}</em></p>
+    <h2>${headingLabel}</h2>
+    <p class="toolbar">${toolbarParts.join(" &middot; ")}</p>
 
-    <h2>Similar recipes (${result.totalResults} found${result.clustered ? `, ${result.results.length} exemplars shown` : ""})</h2>
-    ${result.clustered ? `<p>Clustered by similarity. Each exemplar represents a group.
-      <a href="/check${buildQs(params, { expand: "true" })}">Show all</a>
-      ${!(params.verbosity || params.clusters || params.maxChars) ? ` | <a href="/check${buildQs(params, { verbosity: "high" })}">More exemplars</a>` : ""}
-      ${isCompact ? ` | <a href="/check${buildQs(params, { compact: "false" })}">Show all evidence</a>` : ""}
-    </p>` : ""}
-    <p>Sort:
-      ${currentSort === "relevance" ? "<strong>relevance</strong>" : `<a href="/check${sortRelevanceQs}">relevance</a>`}
-      |
-      ${currentSort === "recent" ? "<strong>recent</strong>" : `<a href="/check${sortRecentQs}">recent</a>`}
-    </p>
-
-    ${result.results.length > 0 ? resultItems : "<p>No matching recipes found.</p>"}
+    ${result.results.length > 0 ? resultItems : emptyLine}
     ${paginationHtml}
   </section>`;
 
@@ -874,9 +900,10 @@ function renderPage(
     : "";
 
   if (hasSearch || isSearchOnly) {
-    // Minimal: just links for returning agents
+    // THE one nav line (2026-08-19 comprehensibility pass): docs + the JSON
+    // view of this exact request. Everything else meta is revealed on demand.
     instructionsHtml = `
-  <p><small><a href="${guideUrl}">Recipe check guide</a> | <a href="${mcpSetupUrl}">MCP setup</a> | <a href="${bootstrapUrl}">Bootstrap</a> &mdash; <code>?format=json</code> for structured data</small></p>`;
+  <nav><small><a href="${guideUrl}">Guide</a> &middot; <a href="${mcpSetupUrl}">MCP setup</a> &middot; <a href="${bootstrapUrl}">Bootstrap</a> &middot; <a href="/check${buildQs(params, { format: "json" })}">JSON</a></small></nav>`;
   } else {
     // Full instructions for first-time visitors
     instructionsHtml = `${noKeyNotice}
@@ -915,18 +942,56 @@ function renderPage(
   </section>`;
   }
 
+  // Header (2026-08-19 comprehensibility pass, Google model): a search page
+  // leads with the query in a live search box — refine and resubmit is the
+  // primary affordance; the brand shrinks to a byline. Check pages keep the
+  // recipe-check identity.
+  const headerHtml = isSearchOnly
+    ? `
+  <header>
+    <p class="brandline"><strong>Soup.net</strong> <small>recipe search</small></p>
+    <form method="get" action="/check" class="searchbar">
+      <input type="hidden" name="key" value="${esc(params.key)}">
+      <input type="search" name="filter" value="${esc(params.filter ?? "")}" aria-label="Search recipes">
+      <button type="submit">Search</button>
+    </form>
+  </header>`
+    : `
+  <header>
+    <h1>Soup.net &mdash; Check a Recipe</h1>
+  </header>`;
+
+  // Search syntax, revealed on demand — the read-only fact and the JSON hint
+  // live here instead of a standing banner.
+  const searchHelpHtml = isSearchOnly
+    ? `
+  <details id="search-help" class="reveal">
+    <summary>Search syntax &amp; tips</summary>
+    <ul>
+      <li>Bare words search by meaning. <code>"quoted terms"</code> match exactly (filenames, identifiers) &mdash; including inside evidence and its citations. Group with <code>("a" OR "b")</code>; exclude with <code>-"term"</code>.</li>
+      <li><code>author:jane@example.com</code>, <code>author:me</code> &mdash; filter by who made the call. <code>after:2026-06-01</code> / <code>before:2026-06-14</code> bound the judgment date.</li>
+      <li>Clustered results show one exemplar per group of similar recipes &mdash; &ldquo;Show all&rdquo; flattens them.</li>
+      <li>Searching is read-only; checking a recipe (below) is what adds to the corpus. <code>?format=json</code> returns structured data.</li>
+    </ul>
+  </details>`
+    : "";
+
+  // With results on screen, the check form is secondary — collapse it.
+  const formOpenTag = `<form method="post" action="/check" enctype="multipart/form-data">`;
+  const wrapForm = hasSearch || isSearchOnly;
+  const formSummary = isSearchOnly
+    ? "Check a recipe &mdash; log a genuine taste/judgment call with evidence"
+    : "Check another recipe";
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Soup.net &mdash; Check a Recipe</title>
+  <title>${isSearchOnly && params.filter ? `${esc(params.filter)} &mdash; Soup.net` : "Soup.net &mdash; Check a Recipe"}</title>
   <link rel="stylesheet" href="/check-style.css">
 </head>
-<body>
-  <header>
-    <h1>Soup.net &mdash; Check a Recipe</h1>
-  </header>
+<body>${headerHtml}
 
   ${instructionsHtml}
 
@@ -940,7 +1005,11 @@ function renderPage(
 
   ${resultsHtml}
 
-  <form method="post" action="/check" enctype="multipart/form-data">
+  ${searchHelpHtml}
+
+  ${wrapForm ? `<details id="check-form" class="reveal">
+    <summary>${formSummary}</summary>` : ""}
+  ${formOpenTag}
     <input type="hidden" name="key" value="${esc(params.key)}">
 
     <label for="recipe">Recipe with evidence</label>
@@ -992,6 +1061,7 @@ function renderPage(
 
     <button type="submit">Check Recipe</button>
   </form>
+  ${wrapForm ? "</details>" : ""}
 </body>
 </html>`;
 }
@@ -1160,6 +1230,18 @@ async function handleCheck(
       verbosity: verbositySteer,
       axes: params.axes,
       readGroups: params.readGroups,
+      // Structured-query extras (2026-08-19): session/known stub rendering and
+      // agent lineage, same semantics as the check path. excludeOwnDefault is
+      // an MCP-surface default (operator ruling 1, recipe 303e17cf): the
+      // stdio proxy forwards search_recipes here self-identified via
+      // X-SoupNet-Surface, so it inherits the same default as the HTTP MCP
+      // tool; the plain web filter path serves the human searching their own
+      // corpus and stays include-everything. A query-level author: qualifier
+      // overrides in every case.
+      excludeOwnDefault: surface === "mcp-stdio",
+      sessionId: params.sessionId,
+      knownRecipeIds: knownRecipeIds.size > 0 ? [...knownRecipeIds] : undefined,
+      agentId: params.agentId,
     });
   }
 

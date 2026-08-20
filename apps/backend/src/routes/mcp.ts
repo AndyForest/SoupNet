@@ -31,9 +31,9 @@ import {
 import type { CheckResponseJson } from "@soupnet/domain";
 import type { Recipe } from "@soupnet/contracts";
 import { composeBriefing, composeCorpusContext } from "../services/briefing";
-import { rateLimit, perKeyRateLimit, extractMcpBearerKey, getClientIp, hashApiKey } from "../middleware/rate-limit";
+import { rateLimit, perKeyRateLimit, extractMcpBearerKey, getClientIp, hashApiKey, envCap } from "../middleware/rate-limit";
 import type { SubmitAndSearchResult, ImageAttachment } from "../services/trace.service";
-import { submitAndSearch } from "../services/trace.service";
+import { submitAndSearch, searchWithoutLogging } from "../services/trace.service";
 import type { RegionMeta } from "../lib/image-roi";
 import type { EnrichedResult } from "../services/result-enricher";
 import { enrichResults, clusterEvidenceInResults } from "../services/result-enricher";
@@ -76,7 +76,9 @@ function toolErrorText(err: unknown, tool: string): string {
 // Rate limit MCP:
 //   - per-IP: 1000 per hour (defense-in-depth)
 //   - per-key: 200/hour, 1000/day (queried from audit_log; F29).
-const mcpRateLimit = rateLimit({ max: 1000, windowMs: 60 * 60 * 1000 });
+// Per-IP: raised 1000 → 3000/h (operator ruling 2026-08-19, same fleet-on-
+// one-IP rationale as /check). Env-overridable for hosted tuning.
+const mcpRateLimit = rateLimit({ max: envCap("MCP_IP_RATE_LIMIT_HOURLY", 3000), windowMs: 60 * 60 * 1000 });
 const mcpPerKeyRateLimit = perKeyRateLimit({ keyExtractor: extractMcpBearerKey });
 
 // F43 (security-audit-2026-06-11): the audit-log-backed limiter above counts
@@ -86,8 +88,11 @@ const mcpPerKeyRateLimit = perKeyRateLimit({ keyExtractor: extractMcpBearerKey }
 // regardless of IP; 600/h sits well above the 200/h durable check cap, so
 // legitimate use never hits it first. Keyed by credential hash (raw keys
 // must not sit in memory as map keys).
+// Raised 600 → 1200/h (operator ruling 2026-08-19): this counts EVERY MCP
+// method for a key — briefings, lookups, feedback, checks, and now
+// search_recipes — and a fleet shares one key.
 const mcpPerBearerBackstop = rateLimit({
-  max: 600,
+  max: envCap("MCP_BEARER_RATE_LIMIT_HOURLY", 1200),
   windowMs: 60 * 60 * 1000,
   keyFn: (c) => {
     const token = extractMcpBearerKey(c);
@@ -331,6 +336,7 @@ function imageFromBase64(base64: string, filename: string, mimeTypeHint?: string
 // surface must never take down the check it rides on).
 const feedbackRowSchema = z.object({
   trace_id: z.string().optional(),
+  search_id: z.string().optional(),
   kind: z.string().optional(),
   impact: z.string().optional(),
   disposition: z.string().optional(),
@@ -616,6 +622,7 @@ function createMcpServer(backendUrl: string): McpServer {
             const results = await ingestFeedback({
               db,
               apiKeyId: keyResult.keyId,
+              userId: keyResult.userId,
               readGroupIds: keyResult.readGroupIds,
               rows,
             });
@@ -646,6 +653,135 @@ function createMcpServer(backendUrl: string): McpServer {
         return { content: [{ type: "text" as const, text }] };
       } catch (err) {
         return { content: [{ type: "text" as const, text: toolErrorText(err, "check_recipe") }] };
+      }
+    },
+  );
+
+  // ── search_recipes tool ───────────────────────────────────────────────────
+  //
+  // Read-only structured search (2026-08-19, docs/planning/recipe-search-design.md):
+  // the MCP twin of the /check filter path, with the exclude-own default that
+  // steers search toward collaborators' judgment (recipe 303e17cf). Calls
+  // searchWithoutLogging directly — no trace, no recipe.checked; a
+  // check.searched audit row carries the measurement stamps and its id is
+  // returned as searchId (the log_feedback search_id handle).
+
+  server.tool(
+    "search_recipes",
+    lean ? "Read-only search over your readable recipe books." : MCP_TOOL_DESCRIPTIONS.searchRecipes,
+    {
+      query: z.string().describe(MCP_PARAM_DESCRIPTIONS.searchQuery),
+      verbosity: z.enum(VERBOSITY_LEVELS).optional().describe(MCP_PARAM_DESCRIPTIONS.verbosity),
+      response_format: z.enum(["markdown", "structured"]).optional().describe(MCP_PARAM_DESCRIPTIONS.responseFormat),
+      known_recipes: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.knownRecipes),
+      session_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.sessionId),
+      agent_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.agentId),
+      feedback: z.array(feedbackRowSchema).optional().describe(MCP_PARAM_DESCRIPTIONS.feedbackParam),
+      read_recipe_books: z.string().optional().describe(
+        "Comma-separated recipe-book slugs to restrict result scope. Default: all readable books."
+      ),
+    },
+    {
+      title: "Recipe search",
+      // Genuinely read-only: no trace row, no corpus write. The check.searched
+      // audit row is call bookkeeping, same as every read surface's accounting.
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    async ({ query, verbosity, response_format, known_recipes, session_id, agent_id, feedback, read_recipe_books }, extra) => {
+      const apiKey = (extra.authInfo as Record<string, unknown> | undefined)?.["token"] as string | undefined;
+      if (!apiKey) {
+        return { content: [{ type: "text" as const, text: "Error: No API key in auth context." }] };
+      }
+
+      const knownRecipeIds = new Set(
+        (known_recipes ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+      );
+
+      try {
+        const result = await searchWithoutLogging({
+          key: apiKey,
+          filter: query,
+          verbosity: verbosity ?? ("auto" as const),
+          readGroups: read_recipe_books ?? undefined,
+          surface: "mcp-http",
+          excludeOwnDefault: true,
+          sessionId: session_id ?? undefined,
+          knownRecipeIds: knownRecipeIds.size > 0 ? [...knownRecipeIds] : undefined,
+          agentId: agent_id ?? undefined,
+        });
+
+        if (result.error) {
+          console.warn(`[mcp] search_recipes: service error — ${result.error}`);
+          return { content: [{ type: "text" as const, text: `Error: ${result.error}` }] };
+        }
+
+        const db = getDb();
+        let enriched = await enrichResults(db, result.results);
+        enriched = await clusterEvidenceInResults(db, enriched);
+
+        const jsonResponse = buildMcpJsonResponse(result, enriched, 1, knownRecipeIds);
+        // Search-only reshaping — same fields as the web builder
+        // (buildSearchOnlyJsonResponse): drop `checked`, add the marker,
+        // query echo, notice, and the feedback handle.
+        if (jsonResponse["ok"] === true) {
+          const data = jsonResponse["data"] as Record<string, unknown>;
+          delete data["checked"];
+          const zeroNotice = result.totalResults === 0
+            ? ` No matches${result.searchedCorpusSize !== undefined ? ` among the ${result.searchedCorpusSize} recipes in scope` : ""} — a thin-corpus signal worth a feedback row (story_fulfilled: no).`
+            : "";
+          jsonResponse["data"] = {
+            searchOnly: true,
+            filter: query,
+            notice: `Read-only search — nothing was written to the corpus.${zeroNotice}`,
+            ...(result.searchId ? { searchId: result.searchId } : {}),
+            ...(result.searchedCorpusSize !== undefined ? { searchedCorpusSize: result.searchedCorpusSize } : {}),
+            ...data,
+          };
+        }
+        console.warn(`[mcp] search_recipes: success — ${result.results.length} results (${response_format ?? "markdown"})`);
+
+        // Ride-along feedback about PRIOR checks/searches — same assembly as
+        // check_recipe's feedback param.
+        let feedbackSummary = "";
+        let feedbackResults: unknown;
+        if (feedback && feedback.length > 0) {
+          const keyResult = await validateKey(db, apiKey);
+          if (keyResult) {
+            const rows: RawFeedbackRow[] = feedback.map((row) =>
+              withCheckDefaults(row, { agentId: agent_id, sessionId: session_id }),
+            );
+            const results = await ingestFeedback({
+              db,
+              apiKeyId: keyResult.keyId,
+              userId: keyResult.userId,
+              readGroupIds: keyResult.readGroupIds,
+              rows,
+            });
+            feedbackSummary = summarizeFeedbackResults(results);
+            feedbackResults = results;
+          }
+        }
+
+        if (response_format === "structured") {
+          const data = jsonResponse["data"] as Record<string, unknown>;
+          if (feedbackResults !== undefined) data["feedbackResults"] = feedbackResults;
+          const stub = `Read-only search — ${String(data["totalResults"])} result(s)${result.searchId ? `, searchId ${result.searchId}` : ""}. See structuredContent.`;
+          return {
+            content: [{ type: "text" as const, text: stub }],
+            structuredContent: data,
+          };
+        }
+
+        let text = renderCheckResponseMarkdown(jsonResponse as unknown as CheckResponseJson, {
+          knownRecipeIds: [...knownRecipeIds],
+        });
+        if (feedbackSummary) text += `\n\n${feedbackSummary}`;
+        return { content: [{ type: "text" as const, text }] };
+      } catch (err) {
+        return { content: [{ type: "text" as const, text: toolErrorText(err, "search_recipes") }] };
       }
     },
   );
@@ -964,8 +1100,11 @@ function createMcpServer(backendUrl: string): McpServer {
     "log_feedback",
     MCP_TOOL_DESCRIPTIONS.logFeedback,
     {
-      trace_id: z.string().describe(
-        "Recipe id of the prior check — the full UUID from the check response, or an unambiguous short-id prefix (8+ chars, e.g. '18912fbd'). Ambiguous prefixes are rejected naming the candidates."
+      trace_id: z.string().optional().describe(
+        "Recipe id of the prior check — the full UUID from the check response, or an unambiguous short-id prefix (8+ chars, e.g. '18912fbd'). Ambiguous prefixes are rejected naming the candidates. Give exactly one of trace_id or search_id."
+      ),
+      search_id: z.string().optional().describe(
+        "searchId of a prior search_recipes call (full UUID from its response) — feedback about what a search surfaced and what you did with it. Give exactly one of trace_id or search_id."
       ),
       kind: z.string().describe("check-feedback | operational | outcome"),
       impact: z.string().describe("none | new | subtle | big | operational"),
@@ -1014,6 +1153,7 @@ function createMcpServer(backendUrl: string): McpServer {
         const results = await ingestFeedback({
           db,
           apiKeyId: keyResult.keyId,
+          userId: keyResult.userId,
           readGroupIds: keyResult.readGroupIds,
           rows: [args as RawFeedbackRow],
         });
