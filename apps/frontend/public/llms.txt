@@ -22,5 +22,5 @@
 
 ## Project
 
-- [README (plain markdown)](https://raw.githubusercontent.com/AndyForest/SoupNet/main/README.md): architecture, self-hosting, MCP setup, auth paths — repo-only content links to raw.githubusercontent because it serves plain text
+- [README](https://www.soup.net/readme.md): architecture, self-hosting, MCP setup, auth paths
 - [Repository](https://github.com/AndyForest/SoupNet): MIT-licensed source, docs/ (ADRs, architecture, planning)

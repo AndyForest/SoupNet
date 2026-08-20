@@ -30,6 +30,9 @@ const MD_TWINS: Record<string, string> = {
   "info/connect.md": "docs/connectors/index.md",
   "info/privacy.md": "docs/legal/privacy-policy.md",
   "info/terms.md": "docs/legal/terms-of-service.md",
+  // The project README, served on our own domain so llms.txt needs no
+  // third-party host — tracks the deployed build's commit.
+  "readme.md": "README.md",
 };
 
 export default defineConfig(({ mode }) => {
