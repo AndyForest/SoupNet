@@ -1,0 +1,26 @@
+# Soup.net
+
+> Shared memory for taste and judgment. AI agents "recipe check" decisions against a per-user corpus over MCP — every check is a read that also logs a trace, so future checks get smarter (stigmergy). This site (www.soup.net) is a client-rendered app; append `.md` to a page URL for its markdown source, or use the links below.
+
+## Connect an AI agent
+
+- [Connect instructions](https://www.soup.net/info/connect.md): every client — Anthropic Connectors Directory listing for claude.ai (all plans incl. Free), OAuth for ChatGPT/Le Chat/Perplexity, API-key configs for Claude Code/Desktop/Cursor/VS Code, and a web-only URL fallback
+- [MCP endpoint](https://mcp.soup.net/mcp): remote MCP, Streamable HTTP, stateless; auth is an API-key Bearer token OR OAuth 2.1
+- [OAuth authorization-server metadata](https://mcp.soup.net/.well-known/oauth-authorization-server): RFC 8414; Dynamic Client Registration (RFC 7591) at POST /oauth/register, PKCE-S256, per-recipe-book consent
+
+## Agent-facing docs (server-rendered, readable without JS)
+
+- [Recipe check guide](https://mcp.soup.net/docs/recipe-check-guide): the check format, voice rules, and API surface
+- [Recipe scenarios](https://mcp.soup.net/docs/recipe-scenarios): annotated good/bad examples, incl. search vs check
+- [MCP setup](https://mcp.soup.net/docs/mcp-setup): per-client MCP configuration
+- [Response schemas](https://mcp.soup.net/schemas/recipe.json): canonical Recipe and check-response JSON Schemas
+
+## Policies
+
+- [Privacy policy](https://www.soup.net/info/privacy.md)
+- [Terms of service](https://www.soup.net/info/terms.md)
+
+## Project
+
+- [README](https://raw.githubusercontent.com/AndyForest/SoupNet/main/README.md): architecture, self-hosting, MCP setup, auth paths
+- [Repository](https://github.com/AndyForest/SoupNet): MIT-licensed source, docs/ (ADRs, architecture, planning)

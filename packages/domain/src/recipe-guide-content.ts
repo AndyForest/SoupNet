@@ -496,7 +496,7 @@ Same shape, different details for other clients (you can reason from the Claude 
 - **VS Code** (\`.vscode/mcp.json\`): top-level key is \`servers\` (not \`mcpServers\`); add \`"inputs": []\` at the top level.
 - **Google Antigravity** (\`~/.gemini/antigravity/mcp_config.json\`; Windows: \`%USERPROFILE%\\.gemini\\antigravity\\mcp_config.json\`): use \`serverUrl\` instead of \`url\`. Restart Antigravity after saving.
 - **Claude Desktop** and other stdio-only clients: bridge via \`mcp-remote\` or install the \`.mcpb\` extension — see ${backendUrl}/docs/mcp-setup?key=${apiKey} for the full configs.
-- **claude.ai, ChatGPT, Mistral, Perplexity, and other chat-style AIs:** connect via OAuth, not a pasteable key. Add \`${backendUrl}/mcp\` as a custom connector; you sign in to Soup.net and choose which recipe books to share (and read vs. write for each) in the consent screen. Full per-client steps: ${frontendUrl}/info/connect`;
+- **claude.ai, ChatGPT, Mistral, Perplexity, and other chat-style AIs:** connect via OAuth, not a pasteable key. On Claude, search **SoupNet** in the Anthropic Connectors Directory (Settings → Connectors; all plans); elsewhere add \`${backendUrl}/mcp\` as a custom connector. Either way you sign in to Soup.net and choose which recipe books to share (and read vs. write for each) in the consent screen. Full per-client steps: ${frontendUrl}/info/connect (markdown: ${frontendUrl}/info/connect.md)`;
 
     const webSetupSection = oauthConnection
       ? `## Setup — web-only agents

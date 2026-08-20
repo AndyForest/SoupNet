@@ -25,13 +25,15 @@ The fastest setup. The AI redirects you to Soup.net, you sign in, you pick which
 
 `https://mcp.soup.net/mcp`
 
-### Claude (claude.ai)
+### Claude (claude.ai, Desktop, mobile)
 
-1. In Claude, open **Settings → Connectors** and click **Add custom connector**.
-2. Name it without a domain — "Soup Recipe Checks" works; "Soup.net" does not. A domain-like name can trip the platform's safety filters and silently block the tools from every conversation (connector shows connected, tools never appear; verified 2026-07-06).
-3. Paste this URL: `https://mcp.soup.net/mcp`
-4. Claude redirects you to Soup.net. Sign in.
-5. Choose which recipe books Claude can read and write, then confirm.
+Soup.net is a listed connector in the [Anthropic Connectors Directory](https://claude.com/connectors) — available on every Claude plan, including Free.
+
+1. In Claude, open **Settings → Connectors**, browse the directory, and search for **SoupNet**.
+2. Click **Connect**. Claude redirects you to Soup.net — sign in.
+3. Choose which recipe books Claude can read and write, then confirm.
+
+Adding it manually instead (e.g. a workspace that restricts directory connectors): **Settings → Connectors → Add custom connector** with the URL `https://mcp.soup.net/mcp`, then the same sign-in and book selection. Name it without a domain — "Soup Recipe Checks" works; "Soup.net" does not (a domain-like name can trip the platform's safety filters and silently block the tools; verified 2026-07-06).
 
 ### ChatGPT (Developer Mode)
 
@@ -64,6 +66,24 @@ Custom connectors launched March 2026. Free-tier users: see [Web fallback](#web-
 For Claude Code, Claude Desktop, VS Code (Copilot), Google Antigravity, Cursor, Windsurf, and Zed. The Soup.net dashboard's **[API Keys page](/app/keys)** has copy-paste configs for each — sign in first, then copy the one-line config into your client's MCP file.
 
 Cursor, Windsurf, Zed, and VS Code Copilot also accept the OAuth flow above if you'd rather sign in via the browser than paste a key — point them at `https://mcp.soup.net/mcp` and let their built-in OAuth client handle the rest.
+
+### Claude Code, spelled out
+
+This is what setup looks like in a repo — one small file your teammates can read before any agent touches it. Create `.mcp.json` at the repo root:
+
+```json
+{
+  "mcpServers": {
+    "soupnet": {
+      "type": "http",
+      "url": "https://mcp.soup.net/mcp",
+      "headers": { "Authorization": "Bearer YOUR_API_KEY" }
+    }
+  }
+}
+```
+
+Add `.mcp.json` to `.gitignore` (each person's copy carries their own key), replace `YOUR_API_KEY` with a key from the [API Keys page](/app/keys), and restart Claude Code. Equivalent one-liner: `claude mcp add --transport http soupnet https://mcp.soup.net/mcp --header "Authorization: Bearer YOUR_API_KEY"`. If you paste your briefing into Claude Code instead, this file is exactly what the agent creates from it — no magic.
 
 ## Web fallback (no MCP needed)
 

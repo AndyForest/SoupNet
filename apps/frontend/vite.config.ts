@@ -1,6 +1,7 @@
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "node:path";
+import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 
 // envDir points at the SoupNet repo root so a single .env at the top of the
@@ -18,6 +19,19 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "../..");
 
+// Machine-readable ".md twins" (2026-08-19): the SPA is client-rendered, so
+// an AI agent fetching a page gets only the HTML shell. Every page whose
+// prose is ?raw-imported markdown gets its SOURCE file served at the same
+// route + ".md" — DRY by construction (the twin IS the source), one rule to
+// teach ("append .md"), indexed at /llms.txt. A page gains a twin by getting
+// a markdown source and a row here; component-built pages (landing,
+// how-it-works) have no twin until their prose moves to markdown.
+const MD_TWINS: Record<string, string> = {
+  "info/connect.md": "docs/connectors/index.md",
+  "info/privacy.md": "docs/legal/privacy-policy.md",
+  "info/terms.md": "docs/legal/terms-of-service.md",
+};
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, ROOT, "");
   // Social preview meta tags (og:url, og:image) need an absolute URL baked
@@ -32,6 +46,28 @@ export default defineConfig(({ mode }) => {
         name: "inject-site-url",
         transformIndexHtml(html: string) {
           return html.replaceAll("%SITE_URL%", siteUrl);
+        },
+      },
+      {
+        name: "md-twins",
+        // Build: emit each source file into dist at its twin path.
+        generateBundle() {
+          for (const [fileName, source] of Object.entries(MD_TWINS)) {
+            this.emitFile({
+              type: "asset",
+              fileName,
+              source: fs.readFileSync(path.resolve(ROOT, source), "utf8"),
+            });
+          }
+        },
+        // Dev: serve the same twins so the behavior is testable locally.
+        configureServer(server) {
+          server.middlewares.use((req, res, next) => {
+            const twin = MD_TWINS[(req.url ?? "").replace(/^\//, "").split("?")[0] ?? ""];
+            if (!twin) return next();
+            res.setHeader("Content-Type", "text/markdown; charset=utf-8");
+            res.end(fs.readFileSync(path.resolve(ROOT, twin), "utf8"));
+          });
         },
       },
     ],

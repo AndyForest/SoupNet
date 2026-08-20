@@ -188,33 +188,6 @@ Goals for the cleanup pass: cut what's duplicated, sharpen what HowItWorks uniqu
 
 ---
 
-## Directory submission (Anthropic connectors directory)
-
-Foundation shipped 2026-05-14 (`a46636c`–`9c231ca`): OAuth 2.1 schema + metadata + DCR + authorize/grant + token/refresh + consent screen + MCP tool annotations + Origin-header validation + self-serve deletion. The non-code prep below is what remains before submitting.
-
-### `[IMPL]` Manual end-to-end test against real claude.ai
-
-Add Soup.net at `https://mcp.soup.net/mcp` via claude.ai's **Settings → Connectors → Add custom connector** against the deployed stack. Walk the full flow: OAuth redirect to `/oauth/authorize`, sign in, recipe-book scope picker, authorize, bounce back to claude.ai. Then exercise each of the three tools in a conversation. Expected to "just work" given the integration-test coverage, but real claude.ai may surface UX quirks (text wrapping in the consent screen, claude.ai's annotation display, refresh-on-stale-token behavior) that the test suite can't catch.
-
-### `[IMPL]` Connector branding assets
-
-- ~~Square logo on transparent background~~ — `apps/frontend/src/assets/soupnet-logo-square.png` (1322×1322, transparent). The wordmark is small relative to the canvas at directory-listing sizes (~64–128px). Consider a tighter icon-only mark for small displays before submission.
-- Favicon already exists (`apps/frontend/src/assets/favicon-192x192.png`); verify it renders cleanly in browser tab + bookmark previews.
-- For an MCP App listing with carousel screenshots (3–5 PNGs, ≥1000px wide, app response only with prompt text): `npm run screenshot` already captures `/info/connect` and the user-dashboard routes. Run against a populated dev stack, crop to the carousel template, choose the 3–5 that best tell the connector story.
-
-### `[IMPL]` Submit to the connectors directory
-
-Fill out the form at `claude.com/docs/connectors/building/submission` once branding is finalized:
-- Privacy policy URL: `https://www.soup.net/info/privacy` ✓
-- Public documentation URL: `https://www.soup.net/info/connect` ✓ (multi-client; Claude listed first for directory review. `/info/claude-connector` 308-redirects here.)
-- Test account with sample data: provision a `directory-review@soup.net` account with 3-5 example recipes spread across one personal book.
-- Logo, favicon, screenshots (see above).
-- Tool annotations (already shipped — `f9a35d5`).
-
-Common rejection reasons to double-check before submitting: missing tool annotations (30% of rejections), OAuth callback URL allowlist missing `claude.com` variant, incomplete privacy policy, server still in beta.
-
----
-
 ## OAuth follow-ups
 
 ### `[IMPL]` Rate-limit `/oauth/token` and `/oauth/authorize/grant`
