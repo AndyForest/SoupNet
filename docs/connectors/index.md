@@ -29,7 +29,7 @@ The fastest setup. The AI redirects you to Soup.net, you sign in, you pick which
 
 Soup.net is a listed connector in the [Anthropic Connectors Directory](https://claude.com/connectors) — available on every Claude plan, including Free.
 
-1. In Claude, open **Settings → Connectors**, browse the directory, and search for **SoupNet**.
+1. Open Soup.net's directory listing: **[claude.ai/directory/soupnet](https://claude.ai/directory/soupnet)** (or find it in Claude under **Settings → Connectors**).
 2. Click **Connect**. Claude redirects you to Soup.net — sign in.
 3. Choose which recipe books Claude can read and write, then confirm.
 

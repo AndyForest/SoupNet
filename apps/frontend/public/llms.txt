@@ -4,7 +4,7 @@
 
 ## Connect an AI agent
 
-- [Connect instructions](https://www.soup.net/info/connect.md): every client — Anthropic Connectors Directory listing for claude.ai (all plans incl. Free), OAuth for ChatGPT/Le Chat/Perplexity, API-key configs for Claude Code/Desktop/Cursor/VS Code, and a web-only URL fallback
+- [Connect instructions](https://www.soup.net/info/connect.md): every client — the claude.ai Connectors Directory listing (https://claude.ai/directory/soupnet, all plans incl. Free), OAuth for ChatGPT/Le Chat/Perplexity, API-key configs for Claude Code/Desktop/Cursor/VS Code, and a web-only URL fallback
 - [MCP endpoint](https://mcp.soup.net/mcp): remote MCP, Streamable HTTP, stateless; auth is an API-key Bearer token OR OAuth 2.1. An endpoint for MCP clients to connect to — a plain GET returns an error, not a page
 - [OAuth authorization-server metadata](https://mcp.soup.net/.well-known/oauth-authorization-server): RFC 8414; Dynamic Client Registration (RFC 7591) at POST /oauth/register, PKCE-S256, per-recipe-book consent
 
