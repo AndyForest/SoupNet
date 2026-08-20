@@ -186,11 +186,12 @@ workspaces.post("/:recipeBookId/expiry", async (c) => {
     return c.json({ ok: false, error: "Invalid input", details: parsed.error.issues }, 400);
   }
 
-  // "now" is the expire-now shorthand; otherwise an ISO-8601 timestamp.
+  // "now" is the expire-now shorthand (stamped as NOW() in SQL so the expiry
+  // and every DB-clock comparison agree); otherwise an ISO-8601 timestamp.
   const raw = parsed.data.expiresAt.trim();
-  let when: Date;
+  let when: Date | "now";
   if (raw.toLowerCase() === "now") {
-    when = new Date();
+    when = "now";
   } else {
     when = new Date(raw);
     if (Number.isNaN(when.getTime())) {

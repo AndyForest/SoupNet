@@ -204,27 +204,33 @@ export async function setEphemeralExpiry(
   db: PostgresJsDatabase,
   groupId: string,
   keyId: string,
-  expiresAt: Date,
+  expiresAt: Date | "now",
 ): Promise<SetExpiryResult> {
   // Update only when the row exists AND this key created it — a single guarded
   // statement, so "not ephemeral", "not creator", and "doesn't exist" are
   // indistinguishable (zero rows updated → uniform 404).
+  //
+  // Expire-now stamps NOW() inside the statement, and tombstoned is computed in
+  // the same RETURNING clause: every consumer of expires_at compares against
+  // Postgres NOW() (briefing scope, deposit refusal, the reaper), so the stamp
+  // and the verdict must come from the DB clock too. Stamping from the app
+  // clock made expire-now racy whenever the host and DB clocks disagreed
+  // (hundreds of ms of skew observed under Docker Desktop/WSL2).
   const rows = await db.execute(sql`
     UPDATE claimnet.ephemeral_books
-    SET expires_at = ${expiresAt.toISOString()}::timestamptz
+    SET expires_at = ${expiresAt === "now" ? sql`NOW()` : sql`${expiresAt.toISOString()}::timestamptz`}
     WHERE group_id = ${groupId}::uuid
       AND created_by_key_id = ${keyId}::uuid
-    RETURNING expires_at
+    RETURNING expires_at, (expires_at <= NOW()) AS tombstoned
   `);
-  const row = (rows as unknown as Array<{ expires_at: string }>)[0];
+  const row = (rows as unknown as Array<{ expires_at: string; tombstoned: boolean }>)[0];
   if (!row) {
     throw new EphemeralWorkspaceError(404, "Workspace not found.");
   }
-  const effective = new Date(row.expires_at);
   return {
     recipeBookId: groupId,
-    expiresAt: effective.toISOString(),
-    tombstoned: effective.getTime() <= Date.now(),
+    expiresAt: new Date(row.expires_at).toISOString(),
+    tombstoned: row.tombstoned,
   };
 }
 
