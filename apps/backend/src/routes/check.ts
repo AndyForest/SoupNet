@@ -3,7 +3,7 @@ import type { Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { Next } from "hono";
 import type { SubmitAndSearchResult } from "../services/trace.service";
-import { submitAndSearch, searchWithoutLogging } from "../services/trace.service";
+import { submitAndSearch, searchWithoutLogging, buildSearchOnlyNotice } from "../services/trace.service";
 import { enrichResults, clusterEvidenceInResults } from "../services/result-enricher";
 import type { EnrichedResult, EnrichedEvidence, EnrichedReference } from "../services/result-enricher";
 import { maybeSynthesize, SYNTHESIS_INELIGIBLE_NOTICE } from "../services/synthesis.service";
@@ -398,18 +398,17 @@ function buildSearchOnlyJsonResponse(
   // Zero results carry the thinness signal explicitly (team-trial evidence
   // §2.4: "nothing came back" was indistinguishable from a service outage) —
   // the searched-corpus size makes genuine novelty triageable later, and the
-  // pointer closes the feedback loop on null results.
-  const zeroNotice = result.totalResults === 0
-    ? ` No matches${result.searchedCorpusSize !== undefined ? ` among the ${result.searchedCorpusSize} recipes in scope` : ""} — a thin-corpus signal worth a feedback row (story_fulfilled: no).`
-    : "";
+  // pointer closes the feedback loop on null results. Copy lives in ONE
+  // builder shared with the MCP tool (buildSearchOnlyNotice) so the surfaces
+  // can't drift; "nothing was written", not "no recipe was logged" — the
+  // latter read as "no recipes were found in the log" (operator, 2026-08-19).
   response["data"] = {
     searchOnly: true,
     filter,
-    // "nothing was written", not "no recipe was logged" — the latter read as
-    // "no recipes were found in the log" (operator report 2026-08-19).
-    notice: `Read-only search — nothing was written to the corpus.${zeroNotice}`,
+    notice: buildSearchOnlyNotice(result),
     ...(result.searchId ? { searchId: result.searchId } : {}),
     ...(result.searchedCorpusSize !== undefined ? { searchedCorpusSize: result.searchedCorpusSize } : {}),
+    ...(result.searchedOwnExcluded !== undefined ? { searchedOwnExcluded: result.searchedOwnExcluded } : {}),
     ...data,
   };
   return response;

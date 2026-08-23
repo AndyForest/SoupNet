@@ -99,7 +99,25 @@ export async function fetchBriefingExemplars(
 
   const clusters = result.clusters ?? [];
   if (clusters.length === 0) {
-    return { exemplars: [], mapContext };
+    // Clustering-unavailable fallback (cold-start v2 Phase A; backlog
+    // "exemplarCount: 0" bug): the pipeline clusters only when >1 vectors
+    // exist (search-pipeline's `>1` gates), so a book with a single fresh
+    // trace — or a scope where all but one vector is still pending — used to
+    // return zero exemplars, silently dropping a small book's only recipe
+    // from the briefing. Degrade to the top pipeline results as 1-member
+    // exemplars instead. Deliberately fixed HERE, not in the shared
+    // clustering service or the pipeline gates, which the check path also
+    // consumes (backlog blast-radius note).
+    if (result.results.length === 0) {
+      return { exemplars: [], mapContext };
+    }
+    const fallbackRows = result.results.slice(0, Math.max(1, options.k)).map((r) => ({
+      traceId: r.id,
+      claimText: r.claimText,
+      createdAt: r.createdAt as unknown,
+      memberCount: 1,
+    }));
+    return enrichExemplarRows(db, fallbackRows, mapContext);
   }
 
   // Purpose-biased exemplar choice (WT-3): keep the cluster structure exactly
@@ -218,6 +236,8 @@ async function enrichExemplarRows(
   const traceMetaRows = await db.execute(sql`
     SELECT
       t.id AS "traceId",
+      t.created_at AS "loggedAt",
+      t.decided_at AS "decidedAt",
       u.email AS "authorEmail",
       u.display_name AS "authorDisplayName",
       g.slug AS "groupSlug"
@@ -260,7 +280,7 @@ async function enrichExemplarRows(
     WHERE te.trace_id IN (${idList})
   `);
 
-  interface TraceMetaRow { traceId: string; authorEmail: string | null; authorDisplayName: string | null; groupSlug: string | null }
+  interface TraceMetaRow { traceId: string; loggedAt: unknown; decidedAt: unknown; authorEmail: string | null; authorDisplayName: string | null; groupSlug: string | null }
   interface EvRow { traceId: string; evidenceId: string; content: string }
   interface RefRow { traceId: string; referenceId: string; quote: string | null; source: string | null }
   interface ErRow { traceId: string; evidenceId: string; referenceId: string }
@@ -304,10 +324,19 @@ async function enrichExemplarRows(
     const evidenceBlocks: string[] = evList.map((ev) => formatEvidenceBlock(ev.content, erMap.get(ev.id) ?? new Set(), refMap))
       .filter((b) => b.length > 0);
 
+    // Date labels (cold-start v2 Phase A): the pipeline's createdAt is the
+    // COALESCED judgment date, which the old code printed under "Logged:" —
+    // a mislabel that also erased the backfill distinction. Use the trace's
+    // raw append time for Logged: and add Decided: only when the judgment
+    // date differs (decision-archaeology backfills), matching
+    // recipe-lookup.service's renderRecipeEntries.
+    const loggedDate = meta ? formatLoggedDate(meta.loggedAt) : formatLoggedDate(row.createdAt);
+    const decidedDate = meta?.decidedAt ? formatLoggedDate(meta.decidedAt) : "";
     const exemplar: BriefingExemplar = {
       recipeId: row.traceId,
       recipeBookSlug: meta?.groupSlug ?? "(unknown)",
-      loggedDate: formatLoggedDate(row.createdAt),
+      loggedDate,
+      ...(decidedDate && decidedDate !== loggedDate ? { decidedDate } : {}),
       memberCount: row.memberCount,
       claimText: row.claimText,
       evidenceBlocks,

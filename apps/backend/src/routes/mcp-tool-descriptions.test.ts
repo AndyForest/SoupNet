@@ -171,8 +171,14 @@ describe("MCP tool description budget", () => {
     // (operator-ratified design, recipe-search-design.md) — one tool
     // description + one query grammar mini-spec, both individually inside the
     // 420 affordance cap; prior total ~4,590, new total ~5,400.
+    // 5,450 → 5,500 (2026-08-23): get_recipes gained short-id prefix
+    // resolution (cold-start v2 Phase A — the twice-independently-reported
+    // pointer-following friction, recipe 507d3c9c pattern); the capability
+    // note lives in the recipeIds param description only, tightened, with the
+    // getRecipes tool description reverted to its prior text. Prior total
+    // ~5,408, new total ~5,474.
     const total = Object.values(all).reduce((n, s) => n + s.length, 0);
-    expect(total).toBeLessThanOrEqual(5450);
+    expect(total).toBeLessThanOrEqual(5500);
   });
 });
 

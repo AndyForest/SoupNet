@@ -220,6 +220,36 @@ describe.skipIf(!BASE)("structured recipe search (/check filter path)", () => {
     expect(body.data?.totalResults).toBe(0);
     expect(body.data?.notice).toContain("thin-corpus");
     expect(body.data?.searchedCorpusSize).toBeGreaterThanOrEqual(3);
+    // The web path includes own recipes — no exclusion, no disclosure.
+    expect(body.data?.notice).not.toContain("your own recipes");
+  });
+
+  it("exclude-own surfaces disclose the own-author exclusion on zero results (cold-start v2 Phase A)", async () => {
+    // The stdio-surface header flips the exclude-own default on the same
+    // /check filter path (check.ts) — the exact solo-corpus trap: every
+    // in-scope recipe is the caller's own, so the search matches nothing and
+    // "no matches among N in scope" used to read as an empty corpus.
+    const url = `${BASE}/check?key=${encodeURIComponent(keyA)}&filter=${encodeURIComponent(`"${CITED_FILE}"`)}&format=json`;
+    const res = await fetch(url, {
+      headers: { Accept: "application/json", "X-SoupNet-Surface": "mcp-stdio" },
+    });
+    const body = (await res.json()) as SearchResponse;
+    expect(body.ok).toBe(true);
+    expect(body.data?.totalResults).toBe(0);
+    const data = body.data as SearchData & { searchedOwnExcluded?: number };
+    expect(data.searchedOwnExcluded).toBeGreaterThanOrEqual(3);
+    expect(data.notice).toContain("your own recipes, excluded by default");
+    expect(data.notice).toContain("author:anyone");
+    // An explicit author: qualifier overrides the default — the disclosure
+    // must NOT appear when the caller already asked for author:me.
+    const overrideUrl = `${BASE}/check?key=${encodeURIComponent(keyA)}&filter=${encodeURIComponent(`author:me "zzz-nonexistent-term-xyzzy"`)}&format=json`;
+    const overrideRes = await fetch(overrideUrl, {
+      headers: { Accept: "application/json", "X-SoupNet-Surface": "mcp-stdio" },
+    });
+    const overrideBody = (await overrideRes.json()) as SearchResponse;
+    expect(overrideBody.ok).toBe(true);
+    expect(overrideBody.data?.totalResults).toBe(0);
+    expect(overrideBody.data?.notice).not.toContain("your own recipes");
   });
 
   // ── searchId + feedback loop ─────────────────────────────────────────────
