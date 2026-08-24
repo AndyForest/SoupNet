@@ -1042,13 +1042,20 @@ export async function searchWithoutLogging(
   const session = resolveSessionId(params.sessionId);
   const knownIds = new Set<string>(params.knownRecipeIds ?? []);
   if (!session.fresh) {
+    // 7-day window on both legs — the same expiry the check path's 5b uses.
+    // Until 2026-08-23 the search path queried unwindowed (latent asymmetry,
+    // found during the Phase C intent work): a >7-day-old session stubbed
+    // here but rendered full on checks. Rendering-only either way; the fix
+    // makes the two paths agree and lets session_shown rows actually expire.
     const ownRows = await db.execute(sql`
       SELECT id::text AS id FROM claimnet.traces
       WHERE session_id = ${session.sessionId}
+        AND created_at > now() - interval '7 days'
     `);
     const shownRows = await db.execute(sql`
       SELECT trace_id::text AS id FROM claimnet.session_shown
       WHERE session_id = ${session.sessionId}
+        AND shown_at > now() - interval '7 days'
     `);
     for (const row of [...(ownRows as unknown as Array<{ id: string }>), ...(shownRows as unknown as Array<{ id: string }>)]) {
       knownIds.add(row.id);
