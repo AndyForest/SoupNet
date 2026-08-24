@@ -8,11 +8,16 @@ import { groups, groupMembers } from "@soupnet/db";
 import { writeAudit } from "../services/audit-log.service";
 import { normalizeEmail } from "../lib/normalize-email";
 
+// Description cap is 2000 on every surface — the MCP
+// update_recipe_book_description tool already accepted 2000, and the REST cap
+// sitting at 1000 made agent-written descriptions un-editable from the web
+// (cold-start v2 Phase A, 2026-08-23; descriptions are agent-maintained
+// orientation surfaces, incl. the nightly-scribe digest experiment).
 const createGroupSchema = z.object({
   name: z.string().min(1).max(100),
   slug: z.string().min(1).max(100).regex(/^[a-z0-9-]+$/),
   organizationId: z.string().uuid(),
-  description: z.string().max(1000).optional(),
+  description: z.string().max(2000).optional(),
 });
 
 // Slug is intentionally omitted — it stays stable across renames so existing
@@ -21,7 +26,7 @@ const createGroupSchema = z.object({
 // artifact of the original group name.
 const updateGroupSchema = z.object({
   name: z.string().min(1).max(100).optional(),
-  description: z.string().max(1000).nullable().optional(),
+  description: z.string().max(2000).nullable().optional(),
 });
 
 const groupsRouter = new Hono<AppEnv>();

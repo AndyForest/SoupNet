@@ -427,7 +427,9 @@ server.tool(
       if (verbosity) params.set("verbosity", verbosity);
       const qs = params.toString();
       const res = await fetch(`${backendUrl}/briefing${qs ? `?${qs}` : ""}`, {
-        headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+        // X-SoupNet-Surface: same self-identification the proxy sends on
+        // /check — briefing.issued audit rows record surface=mcp-stdio.
+        headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "X-SoupNet-Surface": "mcp-stdio" },
       });
       const json = (await res.json()) as { ok: boolean; error?: string; data?: { text: string } };
       if (!json.ok || !json.data) {
@@ -457,7 +459,9 @@ interface LookupReference {
 
 interface LookupEntry {
   recipeId: string;
-  status: "ok" | "not_found_or_unreadable";
+  status: "ok" | "not_found_or_unreadable" | "ambiguous_prefix";
+  /** ambiguous_prefix only: the (readable) candidate ids the prefix matched. */
+  candidates?: string[];
   recipe?: string;
   recipeBook?: { recipeBookId: string; slug: string; name: string } | null;
   author?: { email: string; displayName?: string } | null;
@@ -470,6 +474,9 @@ interface LookupEntry {
 
 function formatLookupEntries(entries: LookupEntry[]): string {
   return entries.map((entry) => {
+    if (entry.status === "ambiguous_prefix") {
+      return `### ${entry.recipeId}\nStatus: ambiguous_prefix — this short id matches more than one readable recipe (${(entry.candidates ?? []).join(", ")}). Re-request with a longer prefix or a full id.`;
+    }
     if (entry.status !== "ok") {
       return `### ${entry.recipeId}\nStatus: not_found_or_unreadable — this id does not exist or is not readable by this API key (the two cases are deliberately indistinguishable).`;
     }

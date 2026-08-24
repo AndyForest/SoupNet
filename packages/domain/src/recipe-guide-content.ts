@@ -652,8 +652,11 @@ export interface BriefingExemplar {
   recipeBookSlug: string;
   /** Author identity. Omitted if the row couldn't be resolved. */
   author?: BriefingMember;
-  /** Date string from the trace's createdAt (e.g. "2026-04-12"); empty for none. */
+  /** Append date — the trace's raw created_at (e.g. "2026-04-12"); empty for none. */
   loggedDate?: string;
+  /** Judgment date (decided_at), present only when it differs from loggedDate —
+   *  backfilled decisions (decision archaeology) carry their original date. */
+  decidedDate?: string;
   /** k-means cluster member count (>=1). */
   memberCount: number;
   /** Full claim text. */
@@ -686,6 +689,9 @@ export function buildExemplarsSection(
       `Recipe book: ${ex.recipeBookSlug}`,
       ...(ex.author ? [`Author: ${identityLabel(ex.author)}`] : []),
       ...(ex.loggedDate ? [`Logged: ${ex.loggedDate}`] : []),
+      // Judgment date, only when it differs from the append time — same rule
+      // as the Requested-recipes renderer (recipe-lookup.service.ts).
+      ...(ex.decidedDate ? [`Decided: ${ex.decidedDate}`] : []),
       `Cluster size: ${ex.memberCount}`,
     ].join("\n");
 
@@ -911,8 +917,9 @@ export const MCP_PARAM_DESCRIPTIONS = {
 
   /** get_recipes — the id list (WT-3 retrieval API). */
   recipeIds:
-    "Recipe ids (UUIDs, comma- or whitespace-separated, up to 20). Each resolves independently; " +
-    "unresolvable ids return a not_found_or_unreadable marker without failing the batch.",
+    "Recipe ids — full UUIDs or 8+ char short-id prefixes (comma- or whitespace-separated, up " +
+    "to 20). Each resolves independently; unresolvable ids return a not_found_or_unreadable " +
+    "marker, an ambiguous prefix names its candidates; the batch never fails.",
 
   /** get_briefing recipe_ids — same lookup, phrased for the onboarding call. */
   briefingRecipeIds:

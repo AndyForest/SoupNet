@@ -240,6 +240,9 @@ keys.post("/briefing", async (c) => {
     userId: user.id,
     backendUrl,
     frontendUrl,
+    // JWT-authed dashboard copy buttons + recipe-map pass-through (cold-start
+    // v2 Phase A: every briefing.issued row carries a real surface).
+    surface: "web",
     options: {
       k: k !== undefined && !Number.isNaN(k) ? k : undefined,
       axes: asString("axes"),

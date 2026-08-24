@@ -97,6 +97,10 @@ export interface CheckResponseData {
   /** Search-only, zero results: recipes in the searched scope — thin-corpus
    *  vs bad-minute triage signal. */
   searchedCorpusSize?: number;
+  /** Search-only, zero results, exclude-own surfaces: how many in-scope
+   *  recipes are the caller's own (structurally excluded by the surface
+   *  default) — a solo corpus must never read as empty. */
+  searchedOwnExcluded?: number;
   searchMode?: string;
   clustered?: boolean;
   results?: CheckResultItem[];
@@ -284,7 +288,7 @@ export function renderCheckResponseMarkdown(
       const scope = data.searchedCorpusSize !== undefined
         ? ` among the ${data.searchedCorpusSize} recipes in scope`
         : "";
-      text += `\nNo matches${scope} — a thin-corpus signal worth a feedback row (story_fulfilled: no).`;
+      text += `\nNo matches${scope}${buildOwnExcludedNote(data.searchedOwnExcluded, data.searchedCorpusSize)} — a thin-corpus signal worth a feedback row (story_fulfilled: no).`;
     } else {
       text += "\nNo similar recipes found.";
     }
@@ -354,4 +358,23 @@ export function renderCheckResponseMarkdown(
  */
 export function fenceCheckResponseMarkdown(markdown: string): string {
   return "```markdown soup-net-check-result.md\n" + markdown + "\n```";
+}
+
+/**
+ * Own-author exclusion disclosure for zero-result searches (cold-start v2
+ * Phase A). On surfaces with the exclude-own default, "no matches among N
+ * recipes in scope" can describe a solo corpus whose every recipe was
+ * structurally excluded — this note names the exclusion at the moment it
+ * bites. ONE phrasing, used by both the JSON notice builder
+ * (trace.service.buildSearchOnlyNotice) and the markdown renderer above.
+ * Returns "" when no own-exclusion applied.
+ */
+export function buildOwnExcludedNote(
+  ownExcluded: number | undefined,
+  corpusSize: number | undefined,
+): string {
+  if (!ownExcluded || ownExcluded <= 0) return "";
+  return ownExcluded === corpusSize
+    ? ` (all ${ownExcluded} are your own recipes, excluded by default on this surface — add author:anyone or author:me to search them)`
+    : ` (${ownExcluded} of them are your own recipes, excluded by default on this surface — add author:anyone or author:me to include them)`;
 }

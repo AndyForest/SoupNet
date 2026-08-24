@@ -63,12 +63,12 @@ recipes.get("/", recipesIpRateLimit, recipesPerKeyRateLimit, async (c) => {
 
   const idsParam = c.req.query("ids");
   if (!idsParam || idsParam.trim().length === 0) {
-    return c.json({ ok: false, error: "ids parameter is required (comma-separated recipe UUIDs)" }, 400);
+    return c.json({ ok: false, error: "ids parameter is required (comma-separated recipe UUIDs or 8+ char short-id prefixes)" }, 400);
   }
 
   const ids = parseRecipeIds(idsParam);
   if (ids.length === 0) {
-    return c.json({ ok: false, error: "ids parameter is required (comma-separated recipe UUIDs)" }, 400);
+    return c.json({ ok: false, error: "ids parameter is required (comma-separated recipe UUIDs or 8+ char short-id prefixes)" }, 400);
   }
   if (ids.length > RECIPE_LOOKUP_MAX_IDS) {
     return c.json(

@@ -40,7 +40,7 @@ import { scoreFormatAdherence } from "./format-adherence";
 import { runSearchPipeline } from "./search-pipeline";
 import { StageTimer } from "../lib/stage-timer";
 import { invalidKeyMessage } from "../lib/key-remediation";
-import { DEFAULT_RANKING, RANKING_ALGORITHM_VERSION, parseSearchQuery, AUTHOR_ME } from "@soupnet/domain";
+import { DEFAULT_RANKING, RANKING_ALGORITHM_VERSION, parseSearchQuery, AUTHOR_ME, buildOwnExcludedNote } from "@soupnet/domain";
 import type { CandidateSignals, VerbositySteer, ParsedSearchQuery } from "@soupnet/domain";
 import type { StructuredTraceFilters } from "./vector-search.service";
 
@@ -223,6 +223,34 @@ export interface SubmitAndSearchResult {
    *  key's effective scope holds — lets "nothing matched" distinguish a thin
    *  corpus from a bad minute (team-trial evidence §2.4). */
   searchedCorpusSize?: number | undefined;
+  /** Zero-result responses where the surface's exclude-own default applied:
+   *  how many of the in-scope recipes are the caller's own (and therefore
+   *  structurally excluded). On a solo corpus this is the whole story — the
+   *  notice discloses it so "no matches among N" can't read as an outage
+   *  (cold-start v2 Phase A, honesty gap). */
+  searchedOwnExcluded?: number | undefined;
+}
+
+/**
+ * Zero/low-result notice for the read-only search surfaces — ONE builder so
+ * the web /check filter path and the MCP search_recipes tool can't drift
+ * (they carried identical inline copies before). Also the seam the intent
+ * mechanism's stub-count disclosure extends (cold-start v2 Phase C).
+ */
+export function buildSearchOnlyNotice(result: {
+  totalResults: number;
+  searchedCorpusSize?: number | undefined;
+  searchedOwnExcluded?: number | undefined;
+}): string {
+  let zeroNotice = "";
+  if (result.totalResults === 0) {
+    const scope = result.searchedCorpusSize !== undefined
+      ? ` among the ${result.searchedCorpusSize} recipes in scope`
+      : "";
+    const own = buildOwnExcludedNote(result.searchedOwnExcluded, result.searchedCorpusSize);
+    zeroNotice = ` No matches${scope}${own} — a thin-corpus signal worth a feedback row (story_fulfilled: no).`;
+  }
+  return `Read-only search — nothing was written to the corpus.${zeroNotice}`;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -956,6 +984,10 @@ export async function searchWithoutLogging(
     callerUserId: keyResult.userId,
     excludeOwnDefault: params.excludeOwnDefault ?? false,
   });
+  // Whether the surface default (not an explicit author: qualifier) excluded
+  // the caller's own recipes — drives the zero-result honesty disclosure.
+  const ownExcludedByDefault =
+    parsed.query.authors.kind === "surface-default" && (params.excludeOwnDefault ?? false);
 
   // Session + known-set: identical rendering-only semantics to the check
   // path's 5b — client-declared ids ∪ the session's deposits ∪ what the
@@ -1000,6 +1032,7 @@ export async function searchWithoutLogging(
   // Zero results: report the scope size so the caller (and later analysis)
   // can tell a thin corpus from a service problem.
   let searchedCorpusSize: number | undefined;
+  let searchedOwnExcluded: number | undefined;
   if (pipelineResult.totalResults === 0 && effectiveReadGroupIds.length > 0) {
     try {
       const scopeRows = await db.execute(sql`
@@ -1007,6 +1040,19 @@ export async function searchWithoutLogging(
         WHERE group_id IN (${sql.join(effectiveReadGroupIds.map((g) => sql`${g}::uuid`), sql`, `)})
       `);
       searchedCorpusSize = Number((scopeRows as unknown as Array<{ n: number }>)[0]?.n ?? 0);
+      // Own-author honesty (cold-start v2 Phase A): the scope count includes
+      // recipes the surface's exclude-own default structurally filtered out.
+      // On a solo corpus "no matches among the N recipes in scope" is the
+      // whole corpus reading as empty — disclose the exclusion at the moment
+      // it bites instead of only in static tool copy.
+      if (ownExcludedByDefault && searchedCorpusSize > 0) {
+        const ownRows = await db.execute(sql`
+          SELECT count(*)::int AS n FROM claimnet.traces
+          WHERE group_id IN (${sql.join(effectiveReadGroupIds.map((g) => sql`${g}::uuid`), sql`, `)})
+            AND user_id = ${keyResult.userId}::uuid
+        `);
+        searchedOwnExcluded = Number((ownRows as unknown as Array<{ n: number }>)[0]?.n ?? 0);
+      }
     } catch (err) {
       console.error("[trace.service] scope-size count failed (non-fatal):", err);
     }
@@ -1096,6 +1142,7 @@ export async function searchWithoutLogging(
     sessionId: session.sessionId,
     searchId,
     searchedCorpusSize,
+    searchedOwnExcluded,
     // The read-only filter path never demotes (echo suppression applies to
     // the logging check path only) and uses legacy ordering — but it is still
     // a ranked response, so it reports the algorithm version it ran under.

@@ -17,6 +17,11 @@
  * content, never distinct statuses, never a request-killing error. A caller
  * holding someone else's trace id must not be able to learn whether it exists.
  *
+ * Short-id prefixes (≥8 chars, cold-start v2 Phase A) resolve within the
+ * key's read scope with the feedback resolver's exact semantics — see the
+ * comment inside lookupRecipes. The one added status, "ambiguous_prefix",
+ * names only candidates the key can already read.
+ *
  * Wire shape: canonical Recipe (packages/contracts/src/recipe.ts) plus a
  * per-entry `status`. As on check results, `createdAt` is the JUDGMENT date
  * (COALESCE(decided_at, created_at)); this full-detail surface additionally
@@ -27,6 +32,7 @@ import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { enrichResults } from "./result-enricher";
 import { excludeTombstoned } from "./ephemeral-workspace.service";
+import { isTraceIdPrefix, uuidPrefixRange } from "./feedback.service";
 import type { SearchResultItem } from "./trace.service";
 
 /** Hard cap on ids per lookup call. Routes reject above this; the briefing
@@ -69,7 +75,16 @@ export interface RecipeLookupMarker {
   status: "not_found_or_unreadable";
 }
 
-export type RecipeLookupEntry = RecipeLookupFound | RecipeLookupMarker;
+/** A short-id prefix matching two or more readable traces. Candidates are all
+ *  within the key's read scope, so naming them leaks nothing (mirrors the
+ *  feedback resolver's ambiguous-prefix error, recipe 507d3c9c). */
+export interface RecipeLookupAmbiguous {
+  recipeId: string;
+  status: "ambiguous_prefix";
+  candidates: string[];
+}
+
+export type RecipeLookupEntry = RecipeLookupFound | RecipeLookupMarker | RecipeLookupAmbiguous;
 
 // ── Id parsing ───────────────────────────────────────────────────────────────
 
@@ -107,7 +122,6 @@ export async function lookupRecipes(
   readGroupIds: string[],
 ): Promise<RecipeLookupEntry[]> {
   const capped = [...new Set(ids)].slice(0, RECIPE_LOOKUP_MAX_IDS);
-  const validIds = capped.filter((id) => UUID_RE.test(id));
 
   const foundById = new Map<string, RecipeLookupFound>();
 
@@ -115,6 +129,48 @@ export async function lookupRecipes(
   // the read scope, so a by-id read of a tombstoned book's trace resolves to
   // the uniform not_found_or_unreadable marker like any out-of-scope id.
   const liveReadGroupIds = await excludeTombstoned(db, readGroupIds);
+
+  // Short-id prefixes (≥8 chars, cold-start v2 Phase A): docs, PR bodies, and
+  // check responses cite recipes by 8-char short id, and agents reliably
+  // retain the prefix rather than the full UUID — the same finding that gave
+  // the feedback surface its resolver (recipe 507d3c9c). Same semantics here:
+  // resolution runs strictly WITHIN the key's readable scope (an out-of-scope
+  // match is indistinguishable from no match — uniform marker, no existence
+  // oracle), and a prefix matching two readable traces reports both candidates
+  // rather than guessing. Pkey range scan per prefix; LIMIT 2 detects
+  // ambiguity without counting.
+  type PrefixResolution =
+    | { kind: "resolved"; id: string }
+    | { kind: "ambiguous"; candidates: [string, string] }
+    | { kind: "none" };
+  const prefixResolutions = new Map<string, PrefixResolution>();
+  const prefixes = capped.filter((id) => !UUID_RE.test(id) && isTraceIdPrefix(id));
+  if (liveReadGroupIds.length > 0) {
+    for (const prefix of prefixes) {
+      const { lo, hi } = uuidPrefixRange(prefix);
+      const matchRows = await db.execute(sql`
+        SELECT id FROM claimnet.traces
+        WHERE id >= ${lo}::uuid AND id <= ${hi}::uuid
+          AND group_id IN (${sql.join(liveReadGroupIds.map((id) => sql`${id}::uuid`), sql`, `)})
+        LIMIT 2
+      `);
+      const matches = (matchRows as unknown as Array<{ id: string }>).map((r) => r.id);
+      if (matches.length === 1) {
+        prefixResolutions.set(prefix, { kind: "resolved", id: matches[0]! });
+      } else if (matches.length >= 2) {
+        prefixResolutions.set(prefix, { kind: "ambiguous", candidates: [matches[0]!, matches[1]!] });
+      } else {
+        prefixResolutions.set(prefix, { kind: "none" });
+      }
+    }
+  }
+
+  const validIds = [
+    ...capped.filter((id) => UUID_RE.test(id)),
+    ...[...prefixResolutions.values()]
+      .filter((r): r is { kind: "resolved"; id: string } => r.kind === "resolved")
+      .map((r) => r.id),
+  ];
 
   if (validIds.length > 0 && liveReadGroupIds.length > 0) {
     // ACL is enforced IN the query: a trace outside the key's read scope is
@@ -187,9 +243,16 @@ export async function lookupRecipes(
   }
 
   // Input order preserved; every unresolved id (unknown, unreadable, or
-  // malformed alike) gets the same marker.
+  // malformed alike) gets the same marker. Resolved prefixes report the FULL
+  // UUID as their recipeId (matching the feedback resolver's expansion) so
+  // agents holding a short id learn the canonical one.
   return capped.map((id) => {
-    const found = foundById.get(id.toLowerCase()) ?? foundById.get(id);
+    const prefixRes = prefixResolutions.get(id);
+    if (prefixRes?.kind === "ambiguous") {
+      return { recipeId: id, status: "ambiguous_prefix" as const, candidates: prefixRes.candidates };
+    }
+    const resolvedId = prefixRes?.kind === "resolved" ? prefixRes.id : id;
+    const found = foundById.get(resolvedId.toLowerCase()) ?? foundById.get(resolvedId);
     return found ?? { recipeId: id, status: "not_found_or_unreadable" as const };
   });
 }
@@ -208,6 +271,9 @@ function shortDate(iso: string): string {
  */
 export function renderRecipeEntries(entries: RecipeLookupEntry[]): string {
   return entries.map((entry) => {
+    if (entry.status === "ambiguous_prefix") {
+      return `### ${entry.recipeId}\nStatus: ambiguous_prefix — this short id matches more than one readable recipe (${entry.candidates.join(", ")}). Re-request with a longer prefix or a full id.`;
+    }
     if (entry.status !== "ok") {
       return `### ${entry.recipeId}\nStatus: not_found_or_unreadable — this id does not exist or is not readable by this API key (the two cases are deliberately indistinguishable).`;
     }

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   renderCheckResponseMarkdown,
   fenceCheckResponseMarkdown,
+  buildOwnExcludedNote,
 } from "./check-response-renderer";
 import type { CheckResponseJson } from "./check-response-renderer";
 
@@ -354,5 +355,41 @@ describe("fenceCheckResponseMarkdown", () => {
   it("wraps in a fenced markdown block with a filename hint", () => {
     const fenced = fenceCheckResponseMarkdown("hello");
     expect(fenced).toBe("```markdown soup-net-check-result.md\nhello\n```");
+  });
+});
+
+describe("buildOwnExcludedNote (cold-start v2 Phase A)", () => {
+  it("returns empty when no own-exclusion applied", () => {
+    expect(buildOwnExcludedNote(undefined, 10)).toBe("");
+    expect(buildOwnExcludedNote(0, 10)).toBe("");
+  });
+
+  it("names a partial exclusion with the override pointer", () => {
+    const note = buildOwnExcludedNote(3, 10);
+    expect(note).toContain("3 of them are your own recipes");
+    expect(note).toContain("author:anyone");
+  });
+
+  it("says 'all N' when the whole scope is the caller's own (solo-corpus trap)", () => {
+    const note = buildOwnExcludedNote(10, 10);
+    expect(note).toContain("all 10 are your own recipes");
+    expect(note).toContain("author:anyone");
+  });
+
+  it("renders inside the zero-result search markdown", () => {
+    const text = renderCheckResponseMarkdown({
+      ok: true,
+      data: {
+        searchOnly: true,
+        filter: "test",
+        results: [],
+        totalResults: 0,
+        searchedCorpusSize: 5,
+        searchedOwnExcluded: 5,
+      },
+    });
+    expect(text).toContain("No matches among the 5 recipes in scope");
+    expect(text).toContain("all 5 are your own recipes");
+    expect(text).toContain("thin-corpus signal");
   });
 });

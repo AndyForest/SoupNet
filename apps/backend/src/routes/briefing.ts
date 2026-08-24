@@ -55,11 +55,19 @@ briefing.get("/", async (c) => {
   const recipeIdsParam = c.req.query("recipe_ids");
   const recipeIds = recipeIdsParam ? parseRecipeIds(recipeIdsParam) : undefined;
 
+  // Connection surface (cold-start v2 Phase A): the stdio MCP proxy
+  // self-identifies via the same X-SoupNet-Surface header it sends on /check;
+  // any other Bearer caller of this REST endpoint records "rest". The HTTP
+  // MCP tool stamps "mcp-http" itself and the JWT dashboard path stamps
+  // "web" — every briefing.issued row now carries a real surface.
+  const surface = c.req.header("x-soupnet-surface") === "mcp-stdio" ? "mcp-stdio" : "rest";
+
   const result = await composeBriefing({
     db,
     rawKey,
     backendUrl,
     frontendUrl,
+    surface,
     options: {
       k: k && !Number.isNaN(k) ? k : verbosityK,
       axes: c.req.query("axes"),

@@ -231,6 +231,43 @@ describe.skipIf(!BASE)("GET /recipes — recipe lookup by id", () => {
     const normalize = (e: LookupEntry) => JSON.stringify({ ...e, recipeId: "X" });
     expect(normalize(entries[0]!)).toBe(normalize(unknownBody.data!.recipes[0]!));
   });
+
+  // ── Short-id prefixes (cold-start v2 Phase A, recipe 507d3c9c pattern) ───
+
+  it("resolves an 8-char short-id prefix within read scope and reports the full UUID", async () => {
+    const prefix = traceA.slice(0, 8);
+    const res = await fetch(`${BASE}/recipes?ids=${prefix}`, {
+      headers: { Authorization: `Bearer ${keyA}` },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as LookupResponse;
+    const entry = body.data?.recipes?.[0];
+    expect(entry).toBeDefined();
+    // Fresh isolated user/book per run, so the prefix is unambiguous within
+    // this key's read scope by construction.
+    expect(entry!.status).toBe("ok");
+    expect(entry!.recipeId).toBe(traceA);
+    expect(entry!.recipe).toContain("seeding one canonical trace");
+  });
+
+  it("cross-scope prefix probes get the uniform marker (no existence oracle)", async () => {
+    const prefix = traceA.slice(0, 8);
+    const res = await fetch(`${BASE}/recipes?ids=${prefix}`, {
+      headers: { Authorization: `Bearer ${keyB}` },
+    });
+    const body = (await res.json()) as LookupResponse;
+    const entry = body.data?.recipes?.[0];
+    expect(entry!.status).toBe("not_found_or_unreadable");
+    expect(JSON.stringify(body)).not.toContain("seeding one canonical trace");
+  });
+
+  it("prefixes shorter than 8 chars stay markers (below the citation format any surface emits)", async () => {
+    const res = await fetch(`${BASE}/recipes?ids=${traceA.slice(0, 7)}`, {
+      headers: { Authorization: `Bearer ${keyA}` },
+    });
+    const body = (await res.json()) as LookupResponse;
+    expect(body.data?.recipes?.[0]!.status).toBe("not_found_or_unreadable");
+  });
 });
 
 describe.skipIf(!BASE)("GET /briefing — recipe_ids + purpose params (WT-3)", () => {
@@ -303,5 +340,46 @@ describe.skipIf(!BASE)("GET /briefing — recipe_ids + purpose params (WT-3)", (
     });
     const body = (await res.json()) as { ok: boolean; data?: { text: string } };
     expect(body.data?.text).not.toContain("Briefing purpose (biased exemplar selection)");
+  });
+
+  // ── Cold-start v2 Phase A: exemplarCount:0 fix + Logged/Decided labels ────
+
+  it("a fresh book with a single trace still yields an exemplar (exemplarCount:0 fix)", async () => {
+    // keyA's fresh default book holds exactly one trace — the pipeline's `>1`
+    // clustering gates used to drop it, briefing a small book as empty.
+    const res = await fetch(`${BASE}/briefing`, {
+      headers: { Authorization: `Bearer ${keyA}` },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; data?: { text: string; exemplarCount: number } };
+    expect(body.ok).toBe(true);
+    expect(body.data?.exemplarCount).toBeGreaterThanOrEqual(1);
+    expect(body.data?.text).toContain("## Context from");
+    expect(body.data?.text).toContain("one canonical requested-recipe fixture");
+  });
+
+  it("briefing exemplars label the append date Logged and add Decided only for backfills", async () => {
+    // keyB's fresh book gets one backfilled decision; its briefing exemplar
+    // must carry both dates — the old rendering printed the judgment date
+    // under "Logged:", erasing the backfill distinction.
+    const recipeText =
+      "As a test engineer working on briefing date labels, I chose a backfilled historical decision so that the exemplar date assertions are deterministic.";
+    const ef = `Test evidence interpretation.\n> "verbatim test quote"\n-- integration test, 2026-08-23`;
+    const url = `${BASE}/check?key=${encodeURIComponent(keyB)}&trace=${encodeURIComponent(recipeText)}&ef=${encodeURIComponent(ef)}&format=json&decided_at=2024-03-15`;
+    const checkRes = await fetch(url, { headers: { Accept: "application/json" } });
+    const checkBody = (await checkRes.json()) as { ok: boolean };
+    expect(checkBody.ok).toBe(true);
+
+    const res = await fetch(`${BASE}/briefing`, {
+      headers: { Authorization: `Bearer ${keyB}` },
+    });
+    const body = (await res.json()) as { ok: boolean; data?: { text: string; exemplarCount: number } };
+    expect(body.data?.exemplarCount).toBeGreaterThanOrEqual(1);
+    const text = body.data?.text ?? "";
+    const exemplarBlock = text.slice(text.indexOf("## Context from"));
+    expect(exemplarBlock).toContain("Decided: 2024-03-15");
+    // Logged is the append time (today), never the backfilled judgment date.
+    expect(exemplarBlock).toMatch(/Logged: 202\d-\d\d-\d\d/);
+    expect(exemplarBlock).not.toContain("Logged: 2024-03-15");
   });
 });

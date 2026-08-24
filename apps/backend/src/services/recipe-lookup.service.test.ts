@@ -87,6 +87,22 @@ describe("renderRecipeEntries", () => {
     const out = renderRecipeEntries([marker, found]);
     expect(out.indexOf("### zzz")).toBeLessThan(out.indexOf(`### ${found.recipeId}`));
   });
+
+  it("renders an ambiguous short-id prefix with its candidates", () => {
+    const entries: RecipeLookupEntry[] = [
+      {
+        recipeId: "11111111",
+        status: "ambiguous_prefix",
+        candidates: ["11111111-2222-3333-4444-555555555555", "11111111-9999-8888-7777-666666666666"],
+      },
+    ];
+    const out = renderRecipeEntries(entries);
+    expect(out).toContain("### 11111111");
+    expect(out).toContain("ambiguous_prefix");
+    expect(out).toContain("11111111-2222-3333-4444-555555555555");
+    expect(out).toContain("11111111-9999-8888-7777-666666666666");
+    expect(out).toContain("longer prefix");
+  });
 });
 
 describe("RECIPE_LOOKUP_MAX_IDS", () => {

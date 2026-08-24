@@ -33,7 +33,7 @@ import type { Recipe } from "@soupnet/contracts";
 import { composeBriefing, composeCorpusContext } from "../services/briefing";
 import { rateLimit, perKeyRateLimit, extractMcpBearerKey, getClientIp, hashApiKey, envCap } from "../middleware/rate-limit";
 import type { SubmitAndSearchResult, ImageAttachment } from "../services/trace.service";
-import { submitAndSearch, searchWithoutLogging } from "../services/trace.service";
+import { submitAndSearch, searchWithoutLogging, buildSearchOnlyNotice } from "../services/trace.service";
 import type { RegionMeta } from "../lib/image-roi";
 import type { EnrichedResult } from "../services/result-enricher";
 import { enrichResults, clusterEvidenceInResults } from "../services/result-enricher";
@@ -729,15 +729,17 @@ function createMcpServer(backendUrl: string): McpServer {
         if (jsonResponse["ok"] === true) {
           const data = jsonResponse["data"] as Record<string, unknown>;
           delete data["checked"];
-          const zeroNotice = result.totalResults === 0
-            ? ` No matches${result.searchedCorpusSize !== undefined ? ` among the ${result.searchedCorpusSize} recipes in scope` : ""} — a thin-corpus signal worth a feedback row (story_fulfilled: no).`
-            : "";
+          // Shared notice builder (cold-start v2 Phase A): on this surface the
+          // exclude-own default applies, so a zero-result notice additionally
+          // discloses how many in-scope recipes were the caller's own — a solo
+          // corpus must never read as empty.
           jsonResponse["data"] = {
             searchOnly: true,
             filter: query,
-            notice: `Read-only search — nothing was written to the corpus.${zeroNotice}`,
+            notice: buildSearchOnlyNotice(result),
             ...(result.searchId ? { searchId: result.searchId } : {}),
             ...(result.searchedCorpusSize !== undefined ? { searchedCorpusSize: result.searchedCorpusSize } : {}),
+            ...(result.searchedOwnExcluded !== undefined ? { searchedOwnExcluded: result.searchedOwnExcluded } : {}),
             ...data,
           };
         }
@@ -1159,9 +1161,12 @@ function createMcpServer(backendUrl: string): McpServer {
         });
         const r = results[0];
         if (r?.ok) {
+          // Search-target rows carry searchId and an empty traceId — name the
+          // right target so the confirmation never reads "for check " (blank).
+          const target = r.traceId ? `check ${r.traceId}` : `search ${r.searchId ?? "(unknown)"}`;
           const text = r.dup
-            ? `Feedback already recorded for check ${r.traceId} (feedback id ${r.feedbackId}) — identical resubmission.`
-            : `Feedback recorded for check ${r.traceId} (feedback id ${r.feedbackId}).`;
+            ? `Feedback already recorded for ${target} (feedback id ${r.feedbackId}) — identical resubmission.`
+            : `Feedback recorded for ${target} (feedback id ${r.feedbackId}).`;
           return { content: [{ type: "text" as const, text }] };
         }
         return { content: [{ type: "text" as const, text: `Feedback rejected: ${r?.error ?? "unknown error"}` }] };
