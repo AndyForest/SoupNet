@@ -75,6 +75,9 @@ briefing.get("/", async (c) => {
       vectorStrategy: c.req.query("strategy"),
       recipeBookIdOrSlug: c.req.query("recipe_book"),
       purpose: c.req.query("purpose"),
+      // Declared intent (Phase C): text registers, int_… id joins — the
+      // stdio proxy forwards its tool param here.
+      intent: c.req.query("intent"),
       ...(recipeIds && recipeIds.length > 0 ? { recipeIds } : {}),
     },
   });

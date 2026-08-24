@@ -436,6 +436,10 @@ traces.get("/:id/feedback", async (c) => {
       cf.harness_version AS "harnessVersion",
       cf.related_trace_ids AS "relatedTraceIds",
       cf.session_id AS "sessionId",
+      -- Declared intent (Phase C): the intent→recipe→feedback graph's edge,
+      -- exposed so humans and agents can discover uses (operator direction
+      -- 2026-08-23: expose the graph before designing features on it).
+      cf.intent_id AS "intentId",
       cf.created_at AS "createdAt",
       ak.label AS "apiKeyLabel",
       -- Human-origin rows (a re-filing correction) carry actor_user_id and a

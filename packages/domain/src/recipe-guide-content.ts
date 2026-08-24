@@ -459,6 +459,10 @@ export interface BriefingBuildInput {
   /** Pre-rendered "## Requested recipes\n…" section (get_briefing recipe_ids).
    *  Appended at the end of the briefing body, inside the fenced artifact. */
   requestedRecipesSection?: string;
+  /** Declared-intent echo/notice line (cold-start v2 Phase C) — server-built
+   *  by intentEchoLine; rendered verbatim under the header, beside the
+   *  purpose acknowledgment. */
+  intentNotice?: string;
   /** True when the caller authenticated with an OAuth access token
    *  (api_keys.key_type = 'oauth'). OAuth access tokens expire within the
    *  hour and the client refreshes them automatically, so a pasteable-key
@@ -479,7 +483,7 @@ export interface BriefingBuildInput {
 
 export const BRIEFING = {
   title: "Soup.net agent briefing",
-  build: ({ user, backendUrl, frontendUrl, groups, exemplarsSection, purpose, requestedRecipesSection, oauthConnection, surface }: BriefingBuildInput) => {
+  build: ({ user, backendUrl, frontendUrl, groups, exemplarsSection, purpose, requestedRecipesSection, oauthConnection, surface, intentNotice }: BriefingBuildInput) => {
     const mcpProfile = surface === "mcp";
     // Placeholder mode is the only non-OAuth mode: every key interpolation
     // renders the literal placeholder, never a raw credential (see
@@ -504,6 +508,10 @@ export const BRIEFING = {
         ? `\n\nBriefing purpose (noted; biases exemplar choice when exemplars are opted in via verbosity): ${purpose.trim()}`
         : `\n\nBriefing purpose (biased exemplar selection): ${purpose.trim()}`
       : "";
+
+    // Declared-intent echo (Phase C) — registration ack + carry-the-id
+    // protocol, or why the call ran untracked. Server-built line, verbatim.
+    const intentLine = intentNotice?.trim() ? `\n\n${intentNotice.trim()}` : "";
 
     const requestedRecipesBlock = requestedRecipesSection?.trim()
       ? `\n\n${requestedRecipesSection.trim()}`
@@ -601,7 +609,7 @@ You may not know your UI's capabilities, but you do know your system identity. U
 The deciding factor is technical URL support, not a presentational choice. This principle ("agents don't know their UI capabilities but do know their system identity, so use identity as a proxy") applies beyond links.`;
 
     const body = `# Soup.net Agent Briefing
-You already work to understand your user's taste and judgment — and you lose that understanding every time the session ends. Soup.net makes it persistent: recipe checks are read-only semantic searches with an append-only side effect — your recipe is compared against the corpus, and the trace you leave makes future checks smarter for every agent this user works with. There are no destructive operations. Check freely and often. One honest mechanic: every check submission logs a real trace (there is no dry run), so explore the system itself on the docs pages, and when you only want a lookup, use the read-only search — the \`search_recipes\` tool if you have MCP tools, else the check page's \`filter\` (alias \`f\`) parameter — it returns matches without logging a recipe.${purposeLine}
+You already work to understand your user's taste and judgment — and you lose that understanding every time the session ends. Soup.net makes it persistent: recipe checks are read-only semantic searches with an append-only side effect — your recipe is compared against the corpus, and the trace you leave makes future checks smarter for every agent this user works with. There are no destructive operations. Check freely and often. One honest mechanic: every check submission logs a real trace (there is no dry run), so explore the system itself on the docs pages, and when you only want a lookup, use the read-only search — the \`search_recipes\` tool if you have MCP tools, else the check page's \`filter\` (alias \`f\`) parameter — it returns matches without logging a recipe.${purposeLine}${intentLine}
 
 ## Principles
 ${PRINCIPLES}
@@ -1008,6 +1016,16 @@ export const MCP_PARAM_DESCRIPTIONS = {
     "Free-text description of the task this briefing is for. Within each cluster, the exemplar most " +
     "semantically similar to your purpose is chosen — tailored examples, stable corpus map. Echoed " +
     "back so you can confirm it applied.",
+
+  /** Declared intent (cold-start v2 Phase C) — shared by get_briefing,
+   *  check_recipe, and search_recipes. Registration is ALWAYS-NEW by ruling
+   *  (recipe 363e3e0c); the feedback surface is join-only. */
+  intent:
+    "Declared intent: your task story, or the int_… id a prior response returned. Text ALWAYS " +
+    "registers a NEW intent (identical wording never merges sessions); carry the id on later " +
+    "checks/searches/feedback, and recipes already delivered to it render as id-stubs (rendering " +
+    "only, never ranking). Lost the id? Re-send the story — fresh intent, stubs reset. Sub-agents " +
+    "with their own goals send their own text.",
 } as const;
 
 /** Compose the full check_recipe tool description, optionally with the file-attachment sentence. */

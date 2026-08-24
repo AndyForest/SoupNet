@@ -34,6 +34,7 @@ import { composeBriefing, composeCorpusContext } from "../services/briefing";
 import { rateLimit, perKeyRateLimit, extractMcpBearerKey, getClientIp, hashApiKey, envCap } from "../middleware/rate-limit";
 import type { SubmitAndSearchResult, ImageAttachment } from "../services/trace.service";
 import { submitAndSearch, searchWithoutLogging, buildSearchOnlyNotice } from "../services/trace.service";
+import { intentEchoLine } from "../services/intent.service";
 import type { RegionMeta } from "../lib/image-roi";
 import type { EnrichedResult } from "../services/result-enricher";
 import { enrichResults, clusterEvidenceInResults } from "../services/result-enricher";
@@ -350,6 +351,7 @@ const feedbackRowSchema = z.object({
   harness_version: z.string().optional(),
   related_trace_ids: z.array(z.string()).optional(),
   session_id: z.string().optional(),
+  intent_id: z.string().optional(),
 });
 
 function createMcpServer(backendUrl: string): McpServer {
@@ -398,6 +400,7 @@ function createMcpServer(backendUrl: string): McpServer {
       response_format: z.enum(["markdown", "structured"]).optional().describe(MCP_PARAM_DESCRIPTIONS.responseFormat),
       known_recipes: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.knownRecipes),
       session_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.sessionId),
+      intent: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.intent),
       agent_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.agentId),
       synthesize: z.boolean().optional().describe(MCP_PARAM_DESCRIPTIONS.synthesize),
       feedback: z.array(feedbackRowSchema).optional().describe(MCP_PARAM_DESCRIPTIONS.feedbackParam),
@@ -462,7 +465,7 @@ function createMcpServer(backendUrl: string): McpServer {
       idempotentHint: true,
       openWorldHint: true,
     },
-    async ({ recipe, supporting_evidence, verbosity, clusters, max_chars, decided_at, axes, recipe_book, read_recipe_books, file_url, file_base64, file_name, file_mime_type, region, response_format, known_recipes, session_id, agent_id, synthesize, feedback }, extra) => {
+    async ({ recipe, supporting_evidence, verbosity, clusters, max_chars, decided_at, axes, recipe_book, read_recipe_books, file_url, file_base64, file_name, file_mime_type, region, response_format, known_recipes, session_id, intent, agent_id, synthesize, feedback }, extra) => {
       // Get API key from auth info (passed by the transport middleware)
       const apiKey = (extra.authInfo as Record<string, unknown> | undefined)?.["token"] as string | undefined;
       if (!apiKey) {
@@ -571,6 +574,7 @@ function createMcpServer(backendUrl: string): McpServer {
           agentId: agent_id ?? undefined,
           surface: "mcp-http",
           sessionId: session_id ?? undefined,
+          intent: intent ?? undefined,
           knownRecipeIds: knownRecipeIds.size > 0 ? [...knownRecipeIds] : undefined,
         });
 
@@ -617,7 +621,14 @@ function createMcpServer(backendUrl: string): McpServer {
           const keyResult = await validateKey(db, apiKey);
           if (keyResult) {
             const rows: RawFeedbackRow[] = feedback.map((row) =>
-              withCheckDefaults(row, { agentId: agent_id, sessionId: session_id }),
+              // Rows inherit the RESOLVED intent id (text sent on this check
+              // was registered by the service, so the rows join the intent
+              // the check just minted) — join-only, like session inheritance.
+              withCheckDefaults(row, {
+                agentId: agent_id,
+                sessionId: session_id,
+                intentId: result.intent?.intentId ?? undefined,
+              }),
             );
             const results = await ingestFeedback({
               db,
@@ -675,6 +686,7 @@ function createMcpServer(backendUrl: string): McpServer {
       response_format: z.enum(["markdown", "structured"]).optional().describe(MCP_PARAM_DESCRIPTIONS.responseFormat),
       known_recipes: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.knownRecipes),
       session_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.sessionId),
+      intent: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.intent),
       agent_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.agentId),
       feedback: z.array(feedbackRowSchema).optional().describe(MCP_PARAM_DESCRIPTIONS.feedbackParam),
       read_recipe_books: z.string().optional().describe(
@@ -690,7 +702,7 @@ function createMcpServer(backendUrl: string): McpServer {
       idempotentHint: true,
       openWorldHint: true,
     },
-    async ({ query, verbosity, response_format, known_recipes, session_id, agent_id, feedback, read_recipe_books }, extra) => {
+    async ({ query, verbosity, response_format, known_recipes, session_id, intent, agent_id, feedback, read_recipe_books }, extra) => {
       const apiKey = (extra.authInfo as Record<string, unknown> | undefined)?.["token"] as string | undefined;
       if (!apiKey) {
         return { content: [{ type: "text" as const, text: "Error: No API key in auth context." }] };
@@ -709,6 +721,7 @@ function createMcpServer(backendUrl: string): McpServer {
           surface: "mcp-http",
           excludeOwnDefault: true,
           sessionId: session_id ?? undefined,
+          intent: intent ?? undefined,
           knownRecipeIds: knownRecipeIds.size > 0 ? [...knownRecipeIds] : undefined,
           agentId: agent_id ?? undefined,
         });
@@ -753,7 +766,11 @@ function createMcpServer(backendUrl: string): McpServer {
           const keyResult = await validateKey(db, apiKey);
           if (keyResult) {
             const rows: RawFeedbackRow[] = feedback.map((row) =>
-              withCheckDefaults(row, { agentId: agent_id, sessionId: session_id }),
+              withCheckDefaults(row, {
+                agentId: agent_id,
+                sessionId: session_id,
+                intentId: result.intent?.intentId ?? undefined,
+              }),
             );
             const results = await ingestFeedback({
               db,
@@ -800,6 +817,7 @@ function createMcpServer(backendUrl: string): McpServer {
     lean ? "Get the Soup.net briefing: recipe format, this user's recipe books, and sample recipes." : MCP_TOOL_DESCRIPTIONS.getBriefing,
     {
       purpose: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.briefingPurpose),
+      intent: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.intent),
       recipe_ids: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.briefingRecipeIds),
       verbosity: z.enum(VERBOSITY_LEVELS).optional().describe(MCP_PARAM_DESCRIPTIONS.briefingVerbosity),
     },
@@ -809,7 +827,7 @@ function createMcpServer(backendUrl: string): McpServer {
       idempotentHint: true,
       openWorldHint: false,
     },
-    async ({ purpose, recipe_ids, verbosity }, extra) => {
+    async ({ purpose, intent, recipe_ids, verbosity }, extra) => {
       const apiKey = (extra.authInfo as Record<string, unknown> | undefined)?.["token"] as string | undefined;
       if (!apiKey) {
         return { content: [{ type: "text" as const, text: "Error: No API key in auth context." }] };
@@ -826,8 +844,10 @@ function createMcpServer(backendUrl: string): McpServer {
           surface: "mcp-http",
           options: {
             purpose: purpose ?? undefined,
-            // Verbosity → exemplar count; omitted leaves the briefing's
-            // preference-driven default untouched (decision 3, 2026-07-26).
+            intent: intent ?? undefined,
+            // Verbosity → exemplar count; on the MCP surface the omitted
+            // default is 0 (thin index, Phase B); explicit verbosity opts
+            // the clustered sample back in.
             k: verbosity ? VERBOSITY_EXEMPLAR_K[verbosity] : undefined,
             ...(recipeIds.length > 0 ? { recipeIds } : {}),
           },
@@ -1131,6 +1151,9 @@ function createMcpServer(backendUrl: string): McpServer {
       session_id: z.string().optional().describe(
         "The session token from your check responses — joins your feedback to that session's check lineage. Capture only."
       ),
+      intent_id: z.string().optional().describe(
+        "The int_… id from a prior response — joins this row to that declared intent (declared-intent → fulfillment). Join-only: this surface never registers; send intent TEXT on a check/search/briefing instead."
+      ),
     },
     {
       title: "Log feedback",
@@ -1282,6 +1305,11 @@ export function buildMcpJsonResponse(
     // was presented (self-healing). Callers pass it back as session_id so
     // recipes this session already deposited render as id-only stubs.
     ...(result.sessionId ? { sessionId: result.sessionId } : {}),
+    // Declared intent (Phase C) — mirrors check.ts.
+    ...(result.intent?.intentId ? { intentId: result.intent.intentId } : {}),
+    ...(result.intent && intentEchoLine(result.intent)
+      ? { intentNotice: intentEchoLine(result.intent) }
+      : {}),
     // Which ranking served this response (mirrors check.ts) — structured
     // metadata only; the default markdown format stays token-lean.
     ...(result.ranking ? { ranking: result.ranking } : {}),

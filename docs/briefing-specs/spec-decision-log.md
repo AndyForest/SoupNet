@@ -4,6 +4,28 @@ Every PR that touches briefing copy (`packages/domain/src/recipe-guide-content.t
 
 (Renamed from declared-intent-log.md on 2026-08-23: "intent" now names the runtime intent-registration mechanism — cold-start v2 Phase C — so the discipline's log takes an unambiguous name. The discipline itself is unchanged.)
 
+## 2026-08-23 — Cold-start v2 Phase C: declared intents (param + echo line + tool descriptions)
+
+Operator-approved plan (always-new registration ruling, recipe `363e3e0c`; session-supersession direction, `5c55327d`; rendering-only ledger per `9067ca1b`/`4d25aec9`).
+
+### Edits
+
+1. **New shared param description `MCP_PARAM_DESCRIPTIONS.intent`** on get_briefing / check_recipe / search_recipes (HTTP + stdio), plus a short join-only `intent_id` description on log_feedback and the feedback row schema. Tool-description budget dated raise 5,500 → 5,950 (the session_id/search_recipes class of raise).
+2. **Briefing gains one conditional echo line** (`intentNotice`, rendered under the header beside the purpose acknowledgment) — registration ack + carry-the-id protocol, or the untracked-state notice. Absent when no intent param is sent, so intent-less briefings are byte-identical on both profiles.
+3. No other briefing copy changed. The session_id copy is deliberately untouched — deprecation-steering copy is backlogged behind the intent mechanism proving out, not bundled here.
+
+### Scenarios intended to move
+
+- **`intent-registration.feature`** (added in this PR) — all six scenarios.
+
+### Scenarios watched, with rationale for holding
+
+- **`known-recipes-dedup.feature` / session scenarios** — session semantics, copy, and params untouched; intent is an additive second key into the same rendering mechanism, and the ranking-purity invariants (identical inputs → identical ranking; sibling visibility) are re-asserted by ranking-regression.test.ts unchanged.
+- **`feedback-loop.feature`** — carrier guidance unchanged; intent_id is a capture/join field like session_id (precedent: the 2026-07-17 entry).
+- **`briefing-surfaces.feature`** — the echo line renders on both profiles only when the param is sent; the thin/full section structure is untouched.
+- **All others** — principles, voice, format, routing, divergence, setup copy untouched.
+- Suite re-run: harness not yet wired; the .feature files remain the manual checklist.
+
 ## 2026-08-23 — Cold-start v2 Phase B: surface-profiled briefing — thin MCP index, full web artifact
 
 The largest structural briefing change since unification, operator-approved 2026-08-23 (plan + rulings in soupnet-oss recipes `ef844c32` thin-MCP-default, `401998c5` index-not-summary; field grounding: retrieval-at-initialization measurably loses to retrieve-when-needed, arXiv 2604.20572 / 2607.08716).

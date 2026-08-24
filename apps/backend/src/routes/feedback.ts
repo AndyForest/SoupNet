@@ -141,6 +141,7 @@ function readFeedbackQueryRow(c: Context): RawFeedbackRow {
     harness: q("harness"),
     harness_version: q("harness_version"),
     session_id: q("session_id"),
+    intent_id: q("intent_id"),
     related_trace_ids: relatedRaw
       ? relatedRaw.split(",").map((s) => s.trim()).filter(Boolean)
       : undefined,

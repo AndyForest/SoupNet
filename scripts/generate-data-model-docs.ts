@@ -135,6 +135,8 @@ const tableGroups: Record<string, string[]> = {
     "check_feedback_stars",
     "trace_reactions",
     "session_shown",
+    "intents",
+    "intent_shown",
   ],
   "Auth & Admin": [
     "api_keys",

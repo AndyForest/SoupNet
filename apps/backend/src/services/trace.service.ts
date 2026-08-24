@@ -43,6 +43,8 @@ import { invalidKeyMessage } from "../lib/key-remediation";
 import { DEFAULT_RANKING, RANKING_ALGORITHM_VERSION, parseSearchQuery, AUTHOR_ME, buildOwnExcludedNote } from "@soupnet/domain";
 import type { CandidateSignals, VerbositySteer, ParsedSearchQuery } from "@soupnet/domain";
 import type { StructuredTraceFilters } from "./vector-search.service";
+import { resolveIntent, fetchIntentShownIds, recordIntentShown } from "./intent.service";
+import type { IntentResolution } from "./intent.service";
 
 /** Session tokens are opaque and validation-free (they only compress the
  *  holder's own responses — zero security weight), but bounded so arbitrary
@@ -123,6 +125,14 @@ export interface SubmitAndSearchParams {
   /** Client-declared known recipe ids (the known_recipes param) — merged
    *  with this session's deposits into the known-set for stub rendering. */
   knownRecipeIds?: string[] | undefined;
+  /** Declared intent (cold-start v2 Phase C): an `int_…` id joins that
+   *  intent; any other text ALWAYS registers a new one (never dedup — two
+   *  sessions phrasing an intent identically must not merge ledgers, recipe
+   *  363e3e0c) and the response echoes the id. Recipes already delivered to
+   *  the intent render as id-stubs — rendering only, never ranking. Optional
+   *  and self-healing; supersedes session_id's role over time (deprecation
+   *  intent, recipe 5c55327d). */
+  intent?: string | undefined;
 }
 
 export interface SearchResultItem {
@@ -215,6 +225,9 @@ export interface SubmitAndSearchResult {
    *  Callers adopt it and pass it on subsequent checks (and optionally to
    *  sub-agents) for known-set stub rendering. */
   sessionId?: string | undefined;
+  /** Declared-intent resolution for this call (Phase C) — the id to carry
+   *  forward, or the untracked-state flags the response notices render. */
+  intent?: IntentResolution | undefined;
   /** Read-only search path only: the check.searched audit row's id — the
    *  handle log_feedback's `search_id` accepts, closing the feedback loop
    *  for searches the way trace ids do for checks (2026-08-19). */
@@ -519,6 +532,18 @@ export async function submitAndSearch(
   // adopts it; drives known-set stub rendering only — never ranking.
   const session = resolveSessionId(params.sessionId);
 
+  // 1e. Resolve the declared intent (cold-start v2 Phase C): id → join,
+  // text → always-new registration, absent → untracked. Never fails the
+  // check — unresolved states (unknown id, budget, oversize) surface as
+  // response notices instead (capture-only leniency, recipe abddb65d's
+  // posture applied to the carrying call).
+  const intent = await resolveIntent(db, {
+    value: params.intent,
+    userId,
+    apiKeyId: keyId,
+    agentId: params.agentId,
+  });
+
   // 2. Parse evidence
   const forEntries = parseEvidenceMarkdown(params.evidenceFor);
   // evidence_against removed from ingest — see docs/architecture/embedding-test-results.md
@@ -673,6 +698,15 @@ export async function submitAndSearch(
       knownIds.add(row.id);
     }
   }
+  // Intent-delivered recipes stub-render exactly like session-known ones —
+  // a second key into the same RENDERING-ONLY mechanism (never ranking;
+  // recipes 9067ca1b/4d25aec9). Surviving context compaction is the point:
+  // the intent id re-supplied after a wipe still stubs what was delivered.
+  if (intent.intentId) {
+    for (const id of await fetchIntentShownIds(db, intent.intentId)) {
+      if (id !== traceId) knownIds.add(id);
+    }
+  }
 
   // 6. Run unified search pipeline
   // See docs/architecture/search-algorithms.md for the full algorithm description.
@@ -729,6 +763,8 @@ export async function submitAndSearch(
       // algorithm version (brief §3c) — and which session deposited it.
       rankingVersion: RANKING_ALGORITHM_VERSION,
       sessionId: session.sessionId,
+      // Declared intent (Phase C) — joins this check into its intent lineage.
+      ...(intent.intentId ? { intentId: intent.intentId } : {}),
       // OAuth client identity — segmentable cross-vendor column the day a
       // connector check arrives. Null for daily/scoped keys.
       ...(keyType === "oauth" && oauthClientId ? { oauthClientId } : {}),
@@ -785,6 +821,14 @@ export async function submitAndSearch(
       console.error("[trace.service] session_shown record failed (non-fatal):", err);
     }
   }
+  // Intent delivery ledger (Phase C) — same awaited/idempotent posture.
+  if (intent.intentId && shownIds.length > 0) {
+    try {
+      await recordIntentShown(db, intent.intentId, [...new Set(shownIds)]);
+    } catch (err) {
+      console.error("[trace.service] intent_shown record failed (non-fatal):", err);
+    }
+  }
 
   // One structured timing line per check — the per-stage attribution the
   // 2026-07-01 investigation had to reconstruct by black-box measurement.
@@ -820,6 +864,7 @@ export async function submitAndSearch(
       : undefined,
     serverTiming: timer.toServerTimingHeader(),
     sessionId: session.sessionId,
+    intent: params.intent !== undefined ? intent : undefined,
     ranking: {
       version: RANKING_ALGORITHM_VERSION,
       clusterPool: clusterPoolLabel(DEFAULT_RANKING.clusterPool),
@@ -919,6 +964,8 @@ export interface SearchOnlyParams {
   knownRecipeIds?: string[] | undefined;
   /** Self-minted agent identity — stamped on the check.searched audit row. */
   agentId?: string | undefined;
+  /** Declared intent — same semantics as SubmitAndSearchParams.intent. */
+  intent?: string | undefined;
 }
 
 /**
@@ -1007,6 +1054,19 @@ export async function searchWithoutLogging(
       knownIds.add(row.id);
     }
   }
+  // Declared intent (Phase C): resolve + union its delivery ledger into the
+  // known-set — same rendering-only stub semantics as the check path.
+  const intent = await resolveIntent(db, {
+    value: params.intent,
+    userId: keyResult.userId,
+    apiKeyId: keyResult.keyId,
+    agentId: params.agentId,
+  });
+  if (intent.intentId) {
+    for (const id of await fetchIntentShownIds(db, intent.intentId)) {
+      knownIds.add(id);
+    }
+  }
 
   const timer = new StageTimer();
   const pipelineResult = await runSearchPipeline({
@@ -1078,6 +1138,7 @@ export async function searchWithoutLogging(
         resultTraceIds: pipelineResult.results.map((r) => r.id),
         resultSimilarities: pipelineResult.results.map((r) => r.semanticScore ?? null),
         sessionId: session.sessionId,
+        ...(intent.intentId ? { intentId: intent.intentId } : {}),
         rankingVersion: RANKING_ALGORITHM_VERSION,
         ...(params.agentId ? { agentId: params.agentId } : {}),
       },
@@ -1113,6 +1174,14 @@ export async function searchWithoutLogging(
       console.error("[trace.service] session_shown record failed (non-fatal):", err);
     }
   }
+  // Intent delivery ledger (Phase C) — same awaited/idempotent posture.
+  if (intent.intentId && searchShownIds.length > 0) {
+    try {
+      await recordIntentShown(db, intent.intentId, [...new Set(searchShownIds)]);
+    } catch (err) {
+      console.error("[trace.service] intent_shown record failed (non-fatal):", err);
+    }
+  }
 
   return {
     // No traceId — nothing was logged. Routes key their "search-only"
@@ -1140,6 +1209,7 @@ export async function searchWithoutLogging(
       : undefined,
     serverTiming: timer.toServerTimingHeader(),
     sessionId: session.sessionId,
+    intent: params.intent !== undefined ? intent : undefined,
     searchId,
     searchedCorpusSize,
     searchedOwnExcluded,
