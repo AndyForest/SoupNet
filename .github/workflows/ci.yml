@@ -3,8 +3,11 @@ name: CI/CD
 on:
   push:
     branches: [main]
+  # No base-branch filter on pull_request: the filter matches the PR's BASE
+  # branch, so stacked PRs (base = another feature branch) silently got no CI
+  # (found 2026-08-23 on the cold-start v2 stack, PRs #77/#78). Quality gates
+  # now run on every PR; deploy stays workflow_dispatch-only below.
   pull_request:
-    branches: [main]
   workflow_dispatch:  # manual trigger from GitHub Actions UI
 
 env:
