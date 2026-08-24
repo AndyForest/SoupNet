@@ -21,12 +21,14 @@ import {
   mergeUserPreferences,
 } from "@soupnet/domain";
 import type {
+  BriefingBookStats,
   BriefingMapContext,
   BriefingGroup,
   BriefingMember,
   BriefingUser,
 } from "@soupnet/domain";
 import { fetchBriefingExemplars } from "./briefing-exemplars";
+import { fetchBookStats } from "./book-stats.service";
 import { listTombstonedGroupIds } from "./ephemeral-workspace.service";
 import { writeAudit } from "./audit-log.service";
 import {
@@ -104,6 +106,12 @@ interface ResolvedScope {
   /** api_keys.key_type — 'daily' | 'scoped' | 'oauth'. OAuth access tokens
    *  must never be rendered as pasteable credentials in the briefing. */
   keyType: string;
+  /** True for MCP surfaces (mcp-http / mcp-stdio) — the thin-briefing profile
+   *  (cold-start v2 Phase B): per-book index stats render, exemplars default
+   *  to zero (explicit k / verbosity opts back in), and BRIEFING.build drops
+   *  the setup/link/pasted-JSON sections. Non-MCP surfaces are byte-identical
+   *  to the pre-profile briefing. */
+  mcpSurface: boolean;
 }
 
 /** Compose the full unified briefing markdown. */
@@ -160,6 +168,9 @@ ${renderRecipeEntries(entries)}${truncated}`;
     backendUrl: input.backendUrl,
     frontendUrl: input.frontendUrl,
     groups: scope.groups,
+    // Thin profile for MCP surfaces (cold-start v2 Phase B) — composes with
+    // the OAuth branch (OAuth key-section note wins; mcp drops setup anyway).
+    surface: scope.mcpSurface ? "mcp" : "full",
     ...(isOAuth ? { oauthConnection: true } : {}),
     ...(exemplarsSection ? { exemplarsSection } : {}),
     ...(scope.options.purpose ? { purpose: scope.options.purpose } : {}),
@@ -288,6 +299,17 @@ async function resolveScope(
     membersByGroup.set(row.group_id, list);
   }
 
+  // Thin-briefing profile applies to MCP surfaces only (cold-start v2 Phase
+  // B): stats computed here, exemplar default zeroed below. Everything else
+  // (rest, web, absent) keeps the pre-profile behavior byte-for-byte.
+  const mcpSurface = input.surface === "mcp-http" || input.surface === "mcp-stdio";
+
+  // Per-book index stats — MCP surfaces only, so the web copy-briefing path
+  // pays nothing and its output stays byte-identical.
+  const statsByGroup: Map<string, BriefingBookStats> = mcpSurface
+    ? await fetchBookStats(db, allIds)
+    : new Map();
+
   const groups: BriefingGroup[] = groupRowList.map((g) => {
     const members = membersByGroup.get(g.id) ?? [];
     const base: BriefingGroup = {
@@ -300,6 +322,8 @@ async function resolveScope(
     // Only attach members when there's more than one (the user themselves) —
     // solo books skip the Members line entirely in renderRecipeBooks.
     if (members.length > 1) base.members = members;
+    const stats = statsByGroup.get(g.id);
+    if (stats) base.stats = stats;
     return base;
   });
 
@@ -328,7 +352,11 @@ async function resolveScope(
     scopeLabel = groupRowList[0]!.name;
   }
 
-  const k = opts.k ?? prefs.briefing.clusterCount;
+  // Exemplar count: explicit k (incl. verbosity-mapped) always wins; the
+  // MCP default is ZERO (thin index instead of a pushed sample — retrieval
+  // arrives task-keyed via checks/searches; operator ruling 2026-08-23,
+  // recipe ef844c32); other surfaces keep the preference-driven default.
+  const k = opts.k ?? (mcpSurface ? 0 : prefs.briefing.clusterCount);
 
   return {
     user,
@@ -341,6 +369,7 @@ async function resolveScope(
     keyId: keyRow.id,
     userId: keyRow.user_id,
     keyType: keyRow.key_type,
+    mcpSurface,
   };
 }
 
@@ -348,6 +377,12 @@ async function renderExemplars(
   db: PostgresJsDatabase,
   scope: ResolvedScope,
 ): Promise<{ exemplarsSection: string; exemplarCount: number }> {
+  // k=0 (the MCP-surface default): no exemplars section, and no search
+  // pipeline / clustering cost at all — the index lines carry the corpus
+  // shape instead.
+  if (scope.k <= 0) {
+    return { exemplarsSection: "", exemplarCount: 0 };
+  }
   const { exemplars, mapContext } = await fetchBriefingExemplars(db, scope.exemplarGroupIds, {
     k: scope.k,
     ...(scope.options.axes !== undefined ? { axes: scope.options.axes } : {}),

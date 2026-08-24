@@ -939,6 +939,10 @@ function createMcpServer(backendUrl: string): McpServer {
           rawKey: apiKey,
           backendUrl,
           frontendUrl,
+          // Thin profile (cold-start v2 Phase B): index lines instead of a
+          // clustered sample — the mid-session corpus refresh this tool
+          // exists for is exactly the index's job.
+          surface: "mcp-http",
         });
 
         if (!result.ok) {
