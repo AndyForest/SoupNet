@@ -67,6 +67,7 @@ server.tool(
     response_format: z.enum(["markdown", "structured"]).optional().describe(MCP_PARAM_DESCRIPTIONS.responseFormat),
     known_recipes: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.knownRecipes),
     session_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.sessionId),
+    intent: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.intent),
     agent_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.agentId),
     synthesize: z.boolean().optional().describe(MCP_PARAM_DESCRIPTIONS.synthesize),
     feedback: z.array(z.object({
@@ -85,6 +86,7 @@ server.tool(
       harness_version: z.string().optional(),
       related_trace_ids: z.array(z.string()).optional(),
       session_id: z.string().optional(),
+      intent_id: z.string().optional(),
     })).optional().describe(MCP_PARAM_DESCRIPTIONS.feedbackParam),
     file: z.string().optional().describe(
       "Optional file to attach as reference evidence (multimodal embedding). " +
@@ -100,7 +102,7 @@ server.tool(
     idempotentHint: false,
     openWorldHint: true,
   },
-  async ({ recipe, supporting_evidence, verbosity, clusters, max_chars, decided_at, response_format, known_recipes, session_id, agent_id, synthesize, feedback, file }) => {
+  async ({ recipe, supporting_evidence, verbosity, clusters, max_chars, decided_at, response_format, known_recipes, session_id, intent, agent_id, synthesize, feedback, file }) => {
     if (!apiKey) {
       return {
         content: [{ type: "text" as const, text: "Error: SOUPNET_API_KEY not configured. Get a key from your Soup.net dashboard." }],
@@ -147,6 +149,7 @@ server.tool(
         if (agent_id) formData.set("agent_id", agent_id);
         if (known_recipes) formData.set("known_recipes", known_recipes);
         if (session_id) formData.set("session_id", session_id);
+        if (intent) formData.set("intent", intent);
         if (synthesize) formData.set("synthesize", "true");
         formData.set("format", "json");
         // Wrap in a fresh Uint8Array so the BlobPart type is Uint8Array<ArrayBuffer>
@@ -172,6 +175,7 @@ server.tool(
         if (agent_id) params.set("agent_id", agent_id);
         if (known_recipes) params.set("known_recipes", known_recipes);
         if (session_id) params.set("session_id", session_id);
+        if (intent) params.set("intent", intent);
         if (synthesize) params.set("synthesize", "true");
         params.set("format", "json");
 
@@ -192,6 +196,11 @@ server.tool(
           const rows = feedback.map((row) => ({
             ...(agent_id ? { agent_id } : {}),
             ...(session_id ? { session_id } : {}),
+            // The check response's resolved intent id (text sent on this
+            // check was registered server-side) — join-only inheritance.
+            ...((json.data as { intentId?: string } | undefined)?.intentId
+              ? { intent_id: (json.data as { intentId?: string }).intentId }
+              : {}),
             ...row,
           }));
           const fbRes = await fetch(`${backendUrl}/feedback`, {
@@ -260,6 +269,7 @@ server.tool(
     response_format: z.enum(["markdown", "structured"]).optional().describe(MCP_PARAM_DESCRIPTIONS.responseFormat),
     known_recipes: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.knownRecipes),
     session_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.sessionId),
+    intent: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.intent),
     agent_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.agentId),
     read_recipe_books: z.string().optional().describe(
       "Comma-separated recipe-book slugs to restrict result scope. Default: all readable books."
@@ -272,7 +282,7 @@ server.tool(
     idempotentHint: true,
     openWorldHint: true,
   },
-  async ({ query, verbosity, response_format, known_recipes, session_id, agent_id, read_recipe_books }) => {
+  async ({ query, verbosity, response_format, known_recipes, session_id, intent, agent_id, read_recipe_books }) => {
     if (!apiKey) {
       return {
         content: [{ type: "text" as const, text: "Error: SOUPNET_API_KEY not configured. Get a key from your Soup.net dashboard." }],
@@ -286,6 +296,7 @@ server.tool(
       if (agent_id) params.set("agent_id", agent_id);
       if (known_recipes) params.set("known_recipes", known_recipes);
       if (session_id) params.set("session_id", session_id);
+      if (intent) params.set("intent", intent);
       if (read_recipe_books) params.set("read_recipe_books", read_recipe_books);
       params.set("format", "json");
 
@@ -355,6 +366,9 @@ server.tool(
     session_id: z.string().optional().describe(
       "The session token from your check responses — joins your feedback to that session's check lineage. Capture only."
     ),
+    intent_id: z.string().optional().describe(
+      "The int_… id from a prior response — joins this row to that declared intent. Join-only: this surface never registers; send intent TEXT on a check/search/briefing instead."
+    ),
   },
   {
     title: "Log feedback",
@@ -404,6 +418,7 @@ server.tool(
   MCP_TOOL_DESCRIPTIONS.getBriefing,
   {
     purpose: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.briefingPurpose),
+    intent: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.intent),
     recipe_ids: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.briefingRecipeIds),
     verbosity: z.enum(VERBOSITY_LEVELS).optional().describe(MCP_PARAM_DESCRIPTIONS.briefingVerbosity),
   },
@@ -413,7 +428,7 @@ server.tool(
     idempotentHint: true,
     openWorldHint: false,
   },
-  async ({ purpose, recipe_ids, verbosity }) => {
+  async ({ purpose, intent, recipe_ids, verbosity }) => {
     if (!apiKey) {
       return {
         content: [{ type: "text" as const, text: "Error: SOUPNET_API_KEY not configured. Get a key from your Soup.net dashboard." }],
@@ -423,6 +438,7 @@ server.tool(
     try {
       const params = new URLSearchParams();
       if (purpose) params.set("purpose", purpose);
+      if (intent) params.set("intent", intent);
       if (recipe_ids) params.set("recipe_ids", recipe_ids);
       if (verbosity) params.set("verbosity", verbosity);
       const qs = params.toString();

@@ -93,6 +93,10 @@ export interface RawFeedbackRow {
   harness_version?: unknown;
   related_trace_ids?: unknown;
   session_id?: unknown;
+  /** Declared-intent id (`int_…`, cold-start v2 Phase C). JOIN-ONLY on this
+   *  surface (recipe abddb65d posture): feedback never registers an intent;
+   *  malformed shapes store NULL. */
+  intent_id?: unknown;
 }
 
 export interface ValidatedFeedbackRow {
@@ -113,6 +117,7 @@ export interface ValidatedFeedbackRow {
   harnessVersion: string | null;
   relatedTraceIds: string[] | null;
   sessionId: string | null;
+  intentId: string | null;
 }
 
 export interface FeedbackRowResult {
@@ -166,6 +171,9 @@ export const SEARCH_NOT_READABLE =
  *  a check response already named; it never starts one — and never a row
  *  rejection, so a mangled token can't cost the feedback it rides with. */
 const SESSION_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
+
+// Intent-id shape (Phase C) — join-only here; see intent.service.ts.
+import { INTENT_ID_RE } from "./intent.service";
 
 // ── Short-id prefixes (pure helpers — Layer 1 tested) ────────────────────────
 
@@ -316,6 +324,11 @@ export function validateFeedbackRow(
   const sessionIdCandidate = typeof raw.session_id === "string" ? raw.session_id.trim() : "";
   const sessionId = SESSION_ID_RE.test(sessionIdCandidate) ? sessionIdCandidate : null;
 
+  // Declared intent (Phase C): same capture-only leniency, join-only — the
+  // feedback path never registers (text here is a shape mismatch → NULL).
+  const intentIdCandidate = typeof raw.intent_id === "string" ? raw.intent_id.trim() : "";
+  const intentId = INTENT_ID_RE.test(intentIdCandidate) ? intentIdCandidate : null;
+
   return {
     ok: true,
     row: {
@@ -334,6 +347,7 @@ export function validateFeedbackRow(
       harnessVersion,
       relatedTraceIds,
       sessionId,
+      intentId,
     },
   };
 }
@@ -350,11 +364,14 @@ export function validateFeedbackRow(
  */
 export function withCheckDefaults(
   row: RawFeedbackRow,
-  defaults: { agentId?: string | undefined; sessionId?: string | undefined },
+  defaults: { agentId?: string | undefined; sessionId?: string | undefined; intentId?: string | undefined },
 ): RawFeedbackRow {
   return {
     ...(defaults.agentId ? { agent_id: defaults.agentId } : {}),
     ...(defaults.sessionId ? { session_id: defaults.sessionId } : {}),
+    // The carrying call's RESOLVED intent id (join-only; text the call sent
+    // was already registered by the service before rows assemble).
+    ...(defaults.intentId ? { intent_id: defaults.intentId } : {}),
     ...row,
   };
 }
@@ -556,6 +573,7 @@ export async function ingestFeedback(
           harnessVersion: row.harnessVersion,
           relatedTraceIds: row.relatedTraceIds,
           sessionId: row.sessionId,
+          intentId: row.intentId,
           contentHash: searchHash,
         })
         .onConflictDoNothing({
@@ -636,6 +654,7 @@ export async function ingestFeedback(
         harnessVersion: row.harnessVersion,
         relatedTraceIds: row.relatedTraceIds,
         sessionId: row.sessionId,
+        intentId: row.intentId,
         contentHash,
       })
       .onConflictDoNothing({

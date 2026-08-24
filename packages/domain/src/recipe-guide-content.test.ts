@@ -162,6 +162,120 @@ describe("BRIEFING.build — OAuth connections", () => {
   });
 });
 
+/** Thin-profile input: mcp surface, no exemplars section (the server skips
+ *  exemplar fetching entirely at the MCP default k=0). Omission — not an
+ *  explicit undefined — because exactOptionalPropertyTypes distinguishes them. */
+function thinInput(overrides: Partial<BriefingBuildInput> = {}): BriefingBuildInput {
+  const { exemplarsSection: _omit, ...base } = buildInput();
+  return { ...base, surface: "mcp", ...overrides };
+}
+
+describe("BRIEFING.build — surface profiles (cold-start v2 Phase B)", () => {
+  const fullText = BRIEFING.build(buildInput());
+  const mcpText = BRIEFING.build(thinInput());
+
+  it("full profile is byte-identical whether surface is omitted or 'full'", () => {
+    expect(BRIEFING.build(buildInput({ surface: "full" }))).toBe(fullText);
+  });
+
+  it("mcp profile drops the setup cluster, link formatting, and pasted-JSON sections", () => {
+    for (const heading of [
+      "## Setup — MCP-capable agents",
+      "## Setup — web-only agents",
+      "## Formatting recipe-check links",
+      "## When the user copies JSON results back",
+    ]) {
+      expect(mcpText).not.toContain(heading);
+      expect(fullText).toContain(heading); // the guard proving full keeps them
+    }
+    // Setup payloads gone with their headings.
+    expect(mcpText).not.toContain("bearer_token_env_var");
+    expect(mcpText).not.toContain("URL_ENCODED_RECIPE");
+    expect(mcpText).not.toContain("fenced code block with the");
+  });
+
+  it("mcp profile keeps the norms: principles, format, when/how-to-check, feedback, divergence", () => {
+    for (const heading of [
+      "## Principles",
+      "## When to check",
+      "## Recipe format",
+      "## Your user",
+      "## Your recipe books",
+      "## How to check",
+      "## Closing the loop — feedback",
+      "## Annotating creative output",
+      "## Divergent recipe checks",
+    ]) {
+      expect(mcpText).toContain(heading);
+    }
+    // The divergent section keeps the MCP guidance but drops the web-only
+    // link-emission paragraph (its cross-reference target is gone).
+    expect(mcpText).toContain("MCP-capable agents: present the options as text");
+    expect(mcpText).not.toContain("see the link-formatting guidance below");
+  });
+
+  it("mcp profile shrinks the key section to a truthful note, placeholder in key position", () => {
+    expect(mcpText).toContain("## Your API key");
+    expect(mcpText).toContain(`\n${BRIEFING_KEY_PLACEHOLDER}\n`);
+    expect(mcpText).toContain("this session's tools already authenticate with");
+    expect(mcpText).toContain(`${FRONTEND}/info/connect`);
+    expectNoRawKey(mcpText);
+  });
+
+  it("mcp + OAuth composes: connection note wins the key section, setup still dropped", () => {
+    const text = BRIEFING.build(thinInput({ oauthConnection: true }));
+    expect(text).toContain("## Your connection");
+    expect(text).not.toContain("## Your API key");
+    expect(text).not.toContain("## Setup — MCP-capable agents");
+    expectNoRawKey(text);
+  });
+
+  it("holds the thin briefing under its size ceiling (fixed fixture, no exemplars)", () => {
+    // The point of the profile: the always-pushed layer stays an index.
+    // Fixture floor measured ~16.5KB at introduction; ceiling leaves modest
+    // headroom — growth past it should be a deliberate, dated raise, exactly
+    // like the tool-description budget.
+    expect(mcpText.length).toBeLessThanOrEqual(18_000);
+    expect(mcpText.length).toBeLessThan(fullText.length);
+  });
+
+  it("renders per-book index stats when provided, and none otherwise", () => {
+    const statGroups: BriefingGroup[] = [
+      {
+        ...groups[0]!,
+        stats: {
+          recipeCount: 128,
+          newestJudgment: "2026-08-21",
+          lastLogged: "2026-08-22",
+          authorCount: 2,
+          feedbackCount: 12,
+          feedbackFulfilled: 9,
+          reactionsStillTrue: 3,
+          reactionsStale: 1,
+        },
+      },
+      groups[1]!,
+    ];
+    const text = BRIEFING.build(thinInput({ groups: statGroups }));
+    expect(text).toContain("    Index: 128 recipes · newest judgment 2026-08-21 · last logged 2026-08-22 · 2 authors · 12 feedback rows (9 fulfilled) · reactions: 3 still-true / 1 stale");
+    // The stat-less book renders exactly as before — no Index line.
+    const projectLine = text.split("\n").find((l) => l.includes("project-x"));
+    expect(projectLine).toBeTruthy();
+    expect(mcpText).not.toContain("    Index: ");
+  });
+
+  it("omits zero-value stat parts and singularizes counts", () => {
+    const statGroups: BriefingGroup[] = [
+      { ...groups[0]!, stats: { recipeCount: 1, authorCount: 1, newestJudgment: "2026-08-23", lastLogged: "2026-08-23" } },
+    ];
+    const text = BRIEFING.build(thinInput({ groups: statGroups }));
+    // Same-day lastLogged collapses; solo author and zero feedback add
+    // nothing — the whole line is exactly the two surviving parts.
+    const indexLine = text.split("\n").find((l) => l.startsWith("    Index: "));
+    expect(indexLine).toBe("    Index: 1 recipe · newest judgment 2026-08-23");
+  });
+});
+
 describe("buildCorpusContextSection", () => {
   it("takes no credential input and renders none (list_my_recipe_books surface)", () => {
     const text = buildCorpusContextSection({

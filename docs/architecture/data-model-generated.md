@@ -1,10 +1,10 @@
 # ClaimNet Data Model — Generated Reference
 
-> **Auto-generated** from Drizzle migration snapshot `0035_snapshot.json`.
+> **Auto-generated** from Drizzle migration snapshot `0036_snapshot.json`.
 > Do not edit by hand. Regenerate with: `npx tsx scripts/generate-data-model-docs.ts`
 >
-> Schema as of migration `0035_recipe_search_feedback_targets` (2026-08-19).
-> Tables: 29 | Schema: `claimnet`
+> Schema as of migration `0036_intents_and_feedback_intent_id` (2026-08-24).
+> Tables: 31 | Schema: `claimnet`
 
 For design rationale, conventions, and context, see [data-model.md](data-model.md).
 
@@ -13,7 +13,7 @@ For design rationale, conventions, and context, see [data-model.md](data-model.m
 **Identity & Access:** [`users`](#claimnetusers) · [`organizations`](#claimnetorganizations) · [`groups`](#claimnetgroups) · [`group_members`](#claimnetgroup_members) · [`ephemeral_books`](#claimnetephemeral_books)
 **Core Content:** [`traces`](#claimnettraces) · [`evidence`](#claimnetevidence) · [`references`](#claimnetreferences) · [`uploads`](#claimnetuploads)
 **Linking:** [`trace_evidence`](#claimnettrace_evidence) · [`trace_references`](#claimnettrace_references) · [`evidence_references`](#claimnetevidence_references)
-**Feedback & Reactions:** [`check_feedback`](#claimnetcheck_feedback) · [`check_feedback_stars`](#claimnetcheck_feedback_stars) · [`trace_reactions`](#claimnettrace_reactions) · [`session_shown`](#claimnetsession_shown)
+**Feedback & Reactions:** [`check_feedback`](#claimnetcheck_feedback) · [`check_feedback_stars`](#claimnetcheck_feedback_stars) · [`trace_reactions`](#claimnettrace_reactions) · [`session_shown`](#claimnetsession_shown) · [`intents`](#claimnetintents) · [`intent_shown`](#claimnetintent_shown)
 **Auth & Admin:** [`api_keys`](#claimnetapi_keys) · [`oauth_clients`](#claimnetoauth_clients) · [`oauth_authorization_codes`](#claimnetoauth_authorization_codes) · [`invitations`](#claimnetinvitations) · [`system_settings`](#claimnetsystem_settings) · [`audit_log`](#claimnetaudit_log) · [`email_log`](#claimnetemail_log)
 **Embedding Pipeline:** [`embedding_sources`](#claimnetembedding_sources) · [`embedding_chunk_strategies`](#claimnetembedding_chunk_strategies) · [`embedding_chunks`](#claimnetembedding_chunks) · [`embedding_vectors`](#claimnetembedding_vectors)
 **Caching:** [`reference_source_cache`](#claimnetreference_source_cache) · [`vector_cache`](#claimnetvector_cache)
@@ -66,6 +66,7 @@ erDiagram
         uuid actor_user_id FK
         text agent_id
         text session_id
+        text intent_id
         text kind
         text impact
         text disposition
@@ -183,6 +184,23 @@ erDiagram
         text description
         timestamptz created_at
         timestamptz updated_at
+    }
+
+    intent_shown {
+        uuid id PK
+        text intent_id FK
+        uuid trace_id
+        timestamptz shown_at
+    }
+
+    intents {
+        text id PK
+        uuid user_id FK
+        uuid api_key_id
+        text agent_id
+        text story
+        timestamptz created_at
+        timestamptz last_used_at
     }
 
     invitations {
@@ -371,6 +389,8 @@ erDiagram
     group_members }o--|| groups : "group_id"
     group_members }o--|| users : "user_id"
     groups }o--|| organizations : "organization_id"
+    intent_shown }o--|| intents : "intent_id"
+    intents }o--|| users : "user_id"
     invitations }o--|| users : "inviter_id"
     invitations }o--|| groups : "group_id"
     organizations }o--|| users : "owner_id"
@@ -684,6 +704,7 @@ These are created by raw SQL in migration files and are not captured in the snap
 | `actor_user_id` | `uuid` | YES |  |  |
 | `agent_id` | `text` | YES |  |  |
 | `session_id` | `text` | YES |  |  |
+| `intent_id` | `text` | YES |  |  |
 | `kind` | `text` | NO |  |  |
 | `impact` | `text` | NO |  |  |
 | `disposition` | `text` | NO |  |  |
@@ -770,6 +791,46 @@ These are created by raw SQL in migration files and are not captured in the snap
 
 **Indexes:**
 - `session_shown_session_id_shown_at_idx`: `(session_id, shown_at)`
+
+---
+
+### `claimnet.intents`
+
+| Column | Type | Nullable | Default | PK |
+|---|---|---|---|---|
+| `id` | `text` | NO |  | PK |
+| `user_id` | `uuid` | NO |  |  |
+| `api_key_id` | `uuid` | YES |  |  |
+| `agent_id` | `text` | YES |  |  |
+| `story` | `text` | NO |  |  |
+| `created_at` | `timestamptz` | NO | `now()` |  |
+| `last_used_at` | `timestamptz` | NO | `now()` |  |
+
+**Foreign keys:**
+- `user_id` → `users.id`
+
+**Indexes:**
+- `intents_user_created_idx`: `(user_id, created_at)`
+
+---
+
+### `claimnet.intent_shown`
+
+| Column | Type | Nullable | Default | PK |
+|---|---|---|---|---|
+| `id` | `uuid` | NO | `gen_random_uuid()` | PK |
+| `intent_id` | `text` | NO |  |  |
+| `trace_id` | `uuid` | NO |  |  |
+| `shown_at` | `timestamptz` | NO | `now()` |  |
+
+**Foreign keys:**
+- `intent_id` → `intents.id`
+
+**Unique constraints:**
+- `intent_shown_intent_trace_unique`: `(intent_id, trace_id)`
+
+**Indexes:**
+- `intent_shown_intent_id_shown_at_idx`: `(intent_id, shown_at)`
 
 ---
 

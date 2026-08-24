@@ -1,6 +1,56 @@
-# Declared-intent log — briefing-copy changes
+# Spec-decision log — briefing-copy changes
 
 Every PR that touches briefing copy (`packages/domain/src/recipe-guide-content.ts`, the briefing composer, MCP tool descriptions) appends an entry here **before** merging: the date, each edit, the scenarios it intends to move, and the rationale for why every other scenario holds. See [README.md](README.md) §The regression rule. Newest entry first.
+
+(Renamed from declared-intent-log.md on 2026-08-23: "intent" now names the runtime intent-registration mechanism — cold-start v2 Phase C — so the discipline's log takes an unambiguous name. The discipline itself is unchanged.)
+
+## 2026-08-23 — Cold-start v2 Phase C: declared intents (param + echo line + tool descriptions)
+
+Operator-approved plan (always-new registration ruling, recipe `363e3e0c`; session-supersession direction, `5c55327d`; rendering-only ledger per `9067ca1b`/`4d25aec9`).
+
+### Edits
+
+1. **New shared param description `MCP_PARAM_DESCRIPTIONS.intent`** on get_briefing / check_recipe / search_recipes (HTTP + stdio), plus a short join-only `intent_id` description on log_feedback and the feedback row schema. Tool-description budget dated raise 5,500 → 5,950 (the session_id/search_recipes class of raise).
+2. **Briefing gains one conditional echo line** (`intentNotice`, rendered under the header beside the purpose acknowledgment) — registration ack + carry-the-id protocol, or the untracked-state notice. Absent when no intent param is sent, so intent-less briefings are byte-identical on both profiles.
+3. No other briefing copy changed. The session_id copy is deliberately untouched — deprecation-steering copy is backlogged behind the intent mechanism proving out, not bundled here.
+
+### Scenarios intended to move
+
+- **`intent-registration.feature`** (added in this PR) — all six scenarios.
+
+### Scenarios watched, with rationale for holding
+
+- **`known-recipes-dedup.feature` / session scenarios** — session semantics, copy, and params untouched; intent is an additive second key into the same rendering mechanism, and the ranking-purity invariants (identical inputs → identical ranking; sibling visibility) are re-asserted by ranking-regression.test.ts unchanged.
+- **`feedback-loop.feature`** — carrier guidance unchanged; intent_id is a capture/join field like session_id (precedent: the 2026-07-17 entry).
+- **`briefing-surfaces.feature`** — the echo line renders on both profiles only when the param is sent; the thin/full section structure is untouched.
+- **All others** — principles, voice, format, routing, divergence, setup copy untouched.
+- Suite re-run: harness not yet wired; the .feature files remain the manual checklist.
+
+## 2026-08-23 — Cold-start v2 Phase B: surface-profiled briefing — thin MCP index, full web artifact
+
+The largest structural briefing change since unification, operator-approved 2026-08-23 (plan + rulings in soupnet-oss recipes `ef844c32` thin-MCP-default, `401998c5` index-not-summary; field grounding: retrieval-at-initialization measurably loses to retrieve-when-needed, arXiv 2604.20572 / 2607.08716).
+
+### Edits
+
+1. **`BRIEFING.build` gains a `surface` profile** (`"mcp" | "full"`, default full). The **full profile is byte-identical to the pre-profile briefing** except edit 4 below — the web/paste artifact keeps setup, link formatting, exemplars, and pasted-JSON guidance because its receiver is unknown. The **mcp profile** drops `## Setup — MCP-capable agents`, `## Setup — web-only agents`, `## Formatting recipe-check links`, `## When the user copies JSON results back`, and the divergent-checks section's web-only paragraph (its cross-reference target is gone); the key section shrinks to a one-line placeholder note with an `/info/connect` pointer. Surviving headings are never retitled.
+2. **Per-book Index lines** (`renderBookStatsLine`): deterministic SQL aggregates — recipe count, newest judgment date (COALESCE cascade), last logged, author count, feedback/reaction rollups — render under each book's bullet on MCP surfaces. Stats-less groups render byte-identically to before, so `list_my_recipe_books` and the web briefing are unchanged unless stats are supplied.
+3. **MCP exemplar default is ZERO** — the clustered sample no longer front-loads; explicit `verbosity` (low/medium/high → 3/5/10) or raw `k` opts back in. Web/REST surfaces keep the preference-driven default (5).
+4. **"Refreshing this context" wording** (shared corpus-context block): "identity + recipe-books + exemplars block" → "corpus-context block", and the static-sections aside drops "setup" — the old enumeration was false on the mcp profile. This is the one full-profile byte change; scenario-neutral (no scenario asserts the enumeration).
+5. **Tool descriptions**: `getBriefing` and `listMyRecipeBooks` say "per-book index" instead of "clustered sample"; `briefingVerbosity` documents the new default ("Omit for the default thin briefing — per-book index, no exemplar sample"). Net length within the existing 5,500 budget (no raise).
+
+### Scenarios intended to move
+
+- **`briefing-surfaces.feature`** (added in this PR) — all six scenarios: the thin-MCP shape, verbosity opt-in, retrieval-not-bigger-briefing, index short-id resolution, full web artifact, index-not-sample corpus refresh.
+- **`subagent-purpose-briefing.feature`** — sub-agent briefings via MCP `purpose` now arrive thin by default; the purpose param still biases exemplars only when exemplars are opted in. Watch on the next harness run; the scenario's observable (purpose-scoped briefing) still holds, its payload is smaller.
+
+### Scenarios watched, with rationale for holding
+
+- **`web-only-agents.feature` (all)** — that population receives the paste artifact = full profile; byte-identical except edit 4, which no scenario asserts. The per-surface snapshot tests in recipe-guide-content.test.ts are the mechanical guard.
+- **`recipe-voice` / `evidence-integrity` / `comprehension-quiz`** — the format canon, examples, ROLE_PATTERNS, and principles are shared verbatim across profiles; no fed copy changed for these concerns. Risk noted: thin-briefed agents no longer see exemplar recipes as implicit voice models; the format section's two annotated examples remain, and the token-matched control eval (verification plan) is the tripwire before any "v2 is better" claim.
+- **`checking-behavior.feature`** — when-to-check and check-freely copy untouched; the thin profile arguably strengthens the task-keyed retrieval behavior these scenarios want.
+- **`divergent-checks.feature`** — MCP guidance intact; the dropped web-only paragraph only ever applied to the population that still receives it (full profile).
+- **`feedback-loop.feature` / `known-recipes-dedup.feature` / `frontmatter-recipe-lookup.feature`** — how-to-check, closing-the-loop, and requested-recipes copy shared verbatim across profiles.
+- Suite re-run: harness not yet wired (README §regression rule "once wired"); the .feature files remain the manual checklist.
 
 ## 2026-07-21 — Feedback over URLs: feedback_* ride-along check params + GET /feedback
 

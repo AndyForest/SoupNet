@@ -101,6 +101,11 @@ export interface CheckResponseData {
    *  recipes are the caller's own (structurally excluded by the surface
    *  default) — a solo corpus must never read as empty. */
   searchedOwnExcluded?: number;
+  /** Declared intent (cold-start v2 Phase C): the resolved/registered id. */
+  intentId?: string;
+  /** One-line intent echo/notice (registration ack, carry-the-id protocol,
+   *  or the untracked-state explanation) — server-built, rendered verbatim. */
+  intentNotice?: string;
   searchMode?: string;
   clustered?: boolean;
   results?: CheckResultItem[];
@@ -295,6 +300,9 @@ export function renderCheckResponseMarkdown(
     if (data.sessionId) {
       text += `\nSession: ${data.sessionId} — pass session_id on your next check to keep responses lean.`;
     }
+    if (data.intentNotice) {
+      text += `\n${data.intentNotice}`;
+    }
     return text;
   }
 
@@ -345,6 +353,9 @@ export function renderCheckResponseMarkdown(
 
   if (data.sessionId) {
     text += `\nSession: ${data.sessionId} — pass session_id on your next check to keep responses lean.`;
+  }
+  if (data.intentNotice) {
+    text += `\n${data.intentNotice}`;
   }
 
   return text;

@@ -92,6 +92,13 @@ export const checkFeedback = claimnetSchema.table(
      *  sessionless or human-origin rows. */
     sessionId: text("session_id"),
 
+    /** Declared-intent id (`int_…`, cold-start v2 Phase C) — joins the row
+     *  to the intent whose fulfillment it reports, closing the declared-
+     *  intent → outcome loop against a forward-declared denominator. Same
+     *  capture-only posture as session_id (recipe abddb65d): join-only —
+     *  the feedback path never REGISTERS an intent; malformed → NULL. */
+    intentId: text("intent_id"),
+
     // ── Schema v1 enums (see @soupnet/domain FEEDBACK_* for vocabulary) ──
     kind: text("kind").notNull(),               // check-feedback | operational | outcome
     impact: text("impact").notNull(),           // none | new | subtle | big | operational

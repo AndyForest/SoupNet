@@ -6,11 +6,11 @@ const empty: PageParams = {
   ea: undefined, sort: undefined, page: undefined, format: undefined,
   verbosity: undefined, clusters: undefined, maxChars: undefined, expand: undefined, compact: undefined,
   axes: undefined, group: undefined, readGroups: undefined, decidedAt: undefined,
-  agentId: undefined, knownRecipes: undefined, sessionId: undefined, filter: undefined,
+  agentId: undefined, knownRecipes: undefined, sessionId: undefined, intent: undefined, filter: undefined,
   synthesize: undefined,
   feedbackTraceId: undefined, feedbackSearchId: undefined, feedbackKind: undefined, feedbackImpact: undefined,
   feedbackDisposition: undefined, feedbackStoryFulfilled: undefined,
-  feedbackStory: undefined, feedbackNote: undefined,
+  feedbackStory: undefined, feedbackNote: undefined, feedbackIntentId: undefined,
   imageFile: undefined,
 };
 

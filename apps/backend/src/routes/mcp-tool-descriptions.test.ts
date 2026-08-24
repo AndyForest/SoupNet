@@ -177,8 +177,13 @@ describe("MCP tool description budget", () => {
     // note lives in the recipeIds param description only, tightened, with the
     // getRecipes tool description reverted to its prior text. Prior total
     // ~5,408, new total ~5,474.
+    // 5,500 → 5,950 (2026-08-23): the declared-intent mechanism (cold-start
+    // v2 Phase C, operator-approved plan; always-new registration per recipe
+    // 363e3e0c) adds one genuinely new shared param used by three tools —
+    // the same class of raise as session_id (2026-07-17) and search_recipes
+    // (2026-08-19). Prior total ~5,474, new total ~5,890.
     const total = Object.values(all).reduce((n, s) => n + s.length, 0);
-    expect(total).toBeLessThanOrEqual(5500);
+    expect(total).toBeLessThanOrEqual(5950);
   });
 });
 
