@@ -350,6 +350,7 @@ describe("computeFeedbackContentHash", () => {
       harnessVersion: null,
       relatedTraceIds: null,
       sessionId: null,
+      intentId: null,
       ...overrides,
     };
   }

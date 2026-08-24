@@ -4,6 +4,7 @@ import { bodyLimit } from "hono/body-limit";
 import type { Next } from "hono";
 import type { SubmitAndSearchResult } from "../services/trace.service";
 import { submitAndSearch, searchWithoutLogging, buildSearchOnlyNotice } from "../services/trace.service";
+import { intentEchoLine } from "../services/intent.service";
 import { enrichResults, clusterEvidenceInResults } from "../services/result-enricher";
 import type { EnrichedResult, EnrichedEvidence, EnrichedReference } from "../services/result-enricher";
 import { maybeSynthesize, SYNTHESIS_INELIGIBLE_NOTICE } from "../services/synthesis.service";
@@ -130,6 +131,12 @@ export const CHECK_PARAMS = [
   // Copy-URL round-trips; the response echoes the effective (possibly freshly
   // minted) token as data.sessionId.
   { field: "sessionId",  wire: "session_id",         aliases: [],              roundTrip: "carry" },
+  // Declared intent (cold-start v2 Phase C). override-only ON PURPOSE: the
+  // first submission may carry intent TEXT, and registration is always-new
+  // (never dedup) — if the text carried into the re-check form / Copy-URL,
+  // every resubmit would mint another intent row. Agents carry the returned
+  // int_… id explicitly instead.
+  { field: "intent",     wire: "intent",             aliases: [],              roundTrip: "override-only" },
   { field: "sort",       wire: "sort",               aliases: [],              roundTrip: "carry" },
   // Premium opt-in behavior flag — carries like the other intent-preserving
   // params (agent_id, decided_at) so an opted-in caller keeps synthesis on
@@ -162,6 +169,7 @@ export const CHECK_PARAMS = [
   { field: "feedbackStoryFulfilled", wire: "feedback_story_fulfilled", aliases: [], roundTrip: "override-only" },
   { field: "feedbackStory",          wire: "feedback_story",           aliases: [], roundTrip: "override-only" },
   { field: "feedbackNote",           wire: "feedback_note",            aliases: [], roundTrip: "override-only" },
+  { field: "feedbackIntentId",       wire: "feedback_intent_id",       aliases: [], roundTrip: "override-only" },
 ] as const satisfies readonly ParamSpec[];
 
 // PageParams is derived from CHECK_PARAMS. Adding a row grants the field;
@@ -305,6 +313,13 @@ function buildJsonResponse(
       // was presented (self-healing). Callers pass it back as session_id so
       // recipes this session already deposited render as id-only stubs.
       ...(result.sessionId ? { sessionId: result.sessionId } : {}),
+      // Declared intent (Phase C): the id to carry + the shared echo/notice
+      // line the markdown renderer prints (registration ack, or why the call
+      // ran untracked).
+      ...(result.intent?.intentId ? { intentId: result.intent.intentId } : {}),
+      ...(result.intent && intentEchoLine(result.intent)
+        ? { intentNotice: intentEchoLine(result.intent) }
+        : {}),
       // Which ranking served this response — dated algorithm version +
       // effective switches (docs/architecture/ranking-changelog.md). JSON
       // metadata only; the markdown surfaces stay token-lean.
@@ -494,8 +509,12 @@ async function resolveRideAlongFeedback(
       story_fulfilled: params.feedbackStoryFulfilled,
       story: params.feedbackStory,
       note: params.feedbackNote,
+      intent_id: params.feedbackIntentId,
     },
-    { agentId: params.agentId, sessionId: params.sessionId },
+    // The check-level intent param inherits only when id-shaped — text would
+    // be a registration, and the feedback path is join-only (validation
+    // NULLs any non-id shape regardless).
+    { agentId: params.agentId, sessionId: params.sessionId, intentId: params.intent },
   );
   return ingestFeedback({
     db,
@@ -1209,6 +1228,7 @@ async function handleCheck(
       // the check itself logs normally.
       keywordFilter: params.filter,
       sessionId: params.sessionId,
+      intent: params.intent,
       knownRecipeIds: knownRecipeIds.size > 0 ? [...knownRecipeIds] : undefined,
     });
   } else if (params.key && params.filter && !params.trace) {
@@ -1239,6 +1259,7 @@ async function handleCheck(
       // overrides in every case.
       excludeOwnDefault: surface === "mcp-stdio",
       sessionId: params.sessionId,
+      intent: params.intent,
       knownRecipeIds: knownRecipeIds.size > 0 ? [...knownRecipeIds] : undefined,
       agentId: params.agentId,
     });

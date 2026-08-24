@@ -36,6 +36,7 @@ import {
   lookupRecipes,
   renderRecipeEntries,
 } from "./recipe-lookup.service";
+import { resolveIntent, intentEchoLine } from "./intent.service";
 
 export interface BriefingOptions {
   /** Override cluster count. Falls back to user preference, then default 5. */
@@ -58,6 +59,11 @@ export interface BriefingOptions {
    *  default; no public surface sets it yet — the eval harness passes it
    *  directly). See ExemplarFetchOptions.selection for semantics. */
   selection?: "corpus-kmeans" | "goal-mmr" | undefined;
+  /** Declared intent (cold-start v2 Phase C): task story text (always
+   *  registers a new intent) or an int_… id (joins). Registration at
+   *  briefing time is the canonical cold-start move — the id seeds the whole
+   *  session's checks/searches/feedback. Supersedes `purpose` over time. */
+  intent?: string | undefined;
 }
 
 export interface BriefingComposeInput {
@@ -121,6 +127,19 @@ export async function composeBriefing(input: BriefingComposeInput): Promise<Brie
 
   const { exemplarsSection, exemplarCount } = await renderExemplars(input.db, scope);
 
+  // Declared intent (cold-start v2 Phase C): registration at briefing time
+  // is the canonical cold-start move — the returned id seeds the session's
+  // checks, searches, and feedback. Same always-new/join semantics as the
+  // check path; never fails the briefing.
+  const intent = scope.options.intent !== undefined
+    ? await resolveIntent(input.db, {
+        value: scope.options.intent,
+        userId: scope.userId,
+        apiKeyId: scope.keyId,
+      })
+    : undefined;
+  const intentNotice = intent ? intentEchoLine(intent) : null;
+
   // UVP Layer 1: briefing.issued makes the survivorship denominator visible —
   // get_briefing calls with zero subsequent checks are the null cohort no
   // local log could see. Awaited like the recipe.checked audit write —
@@ -134,7 +153,11 @@ export async function composeBriefing(input: BriefingComposeInput): Promise<Brie
     targetType: "api_key",
     targetId: scope.keyId,
     apiKeyId: scope.keyId,
-    metadata: { surface: input.surface ?? null, exemplarCount },
+    metadata: {
+      surface: input.surface ?? null,
+      exemplarCount,
+      ...(intent?.intentId ? { intentId: intent.intentId } : {}),
+    },
   });
 
   // No raw credential ever reaches the template: BRIEFING.build takes no key
@@ -174,6 +197,7 @@ ${renderRecipeEntries(entries)}${truncated}`;
     ...(isOAuth ? { oauthConnection: true } : {}),
     ...(exemplarsSection ? { exemplarsSection } : {}),
     ...(scope.options.purpose ? { purpose: scope.options.purpose } : {}),
+    ...(intentNotice ? { intentNotice } : {}),
     ...(requestedRecipesSection ? { requestedRecipesSection } : {}),
   });
 
