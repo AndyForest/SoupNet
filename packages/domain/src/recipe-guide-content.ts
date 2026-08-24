@@ -287,6 +287,32 @@ export interface BriefingMember {
   email: string;
 }
 
+/** Deterministic per-book aggregates for the briefing's index line (cold-start
+ *  v2 Phase B). Computed by pure SQL — zero server LLM; the qualitative half
+ *  of the index (kinds, trajectories, load-bearing short-ids) lives in the
+ *  agent-maintained description, kept fresh by the nightly scribe. */
+export interface BriefingBookStats {
+  /** Total recipes in the book. */
+  recipeCount: number;
+  /** Newest judgment date, YYYY-MM-DD — COALESCE(decided_at, created_at),
+   *  so backfilled decisions never read as fresh activity. */
+  newestJudgment?: string;
+  /** Most recent append (created_at), YYYY-MM-DD — differs from
+   *  newestJudgment when the latest write was a backfilled decision. */
+  lastLogged?: string;
+  /** Distinct recipe authors — collaboration signal for shared books. */
+  authorCount: number;
+  /** Feedback rows attached to this book's recipes, and how many of those
+   *  reported story_fulfilled=yes (agent self-report; provenance caveats per
+   *  recipe ff54eafd apply to any ranking use — this is display only). */
+  feedbackCount?: number;
+  feedbackFulfilled?: number;
+  /** Human reactions on this book's recipes (ground truth, not self-report). */
+  reactionsStillTrue?: number;
+  reactionsStale?: number;
+  reactionsWrong?: number;
+}
+
 export interface BriefingGroup {
   slug: string;
   name: string;
@@ -295,6 +321,10 @@ export interface BriefingGroup {
   isDefault: boolean;
   /** Other members of this recipe book; omitted for solo books. */
   members?: BriefingMember[];
+  /** Per-book index stats (cold-start v2 Phase B). Rendered as a compact
+   *  sub-line under the book's bullet; omitted → no stats line (the web/paste
+   *  briefing stays byte-identical to its pre-index shape). */
+  stats?: BriefingBookStats;
 }
 
 /** Render "Display Name <email>" if a display name is present, else just the email. */
@@ -306,6 +336,25 @@ function identityLabel(p: { displayName?: string | null; email: string }): strin
 /** Render the recipe-books list with optional member rosters and the
  *  "who benefits" framing question. Used by both the full briefing and the
  *  list_my_recipe_books MCP tool. */
+/** Render one book's stats as a compact index sub-line. Zero-value parts are
+ *  omitted so a quiet book reads short, not padded. */
+function renderBookStatsLine(s: BriefingBookStats): string {
+  const parts: string[] = [`${s.recipeCount} recipe${s.recipeCount === 1 ? "" : "s"}`];
+  if (s.newestJudgment) parts.push(`newest judgment ${s.newestJudgment}`);
+  if (s.lastLogged && s.lastLogged !== s.newestJudgment) parts.push(`last logged ${s.lastLogged}`);
+  if (s.authorCount > 1) parts.push(`${s.authorCount} authors`);
+  if (s.feedbackCount && s.feedbackCount > 0) {
+    const fulfilled = s.feedbackFulfilled ? ` (${s.feedbackFulfilled} fulfilled)` : "";
+    parts.push(`${s.feedbackCount} feedback row${s.feedbackCount === 1 ? "" : "s"}${fulfilled}`);
+  }
+  const reactions: string[] = [];
+  if (s.reactionsStillTrue) reactions.push(`${s.reactionsStillTrue} still-true`);
+  if (s.reactionsStale) reactions.push(`${s.reactionsStale} stale`);
+  if (s.reactionsWrong) reactions.push(`${s.reactionsWrong} wrong`);
+  if (reactions.length > 0) parts.push(`reactions: ${reactions.join(" / ")}`);
+  return `    Index: ${parts.join(" · ")}`;
+}
+
 export function renderRecipeBooks(groups: BriefingGroup[]): string {
   const defaultGroup = groups.filter(g => g.canWrite).find(g => g.isDefault) ?? groups.filter(g => g.canWrite)[0];
   const groupLines = groups.map(g => {
@@ -313,11 +362,18 @@ export function renderRecipeBooks(groups: BriefingGroup[]): string {
     const flag = g.isDefault ? ", default" : "";
     const desc = g.description?.trim() ? ` — ${g.description.trim()}` : "";
     const head = `  - ${g.slug} (${access}${flag}): ${g.name}${desc}`;
+    const lines = [head];
+    // Index sub-line (cold-start v2 Phase B): present only when the caller
+    // computed stats — MCP surfaces today; absent stats keep this renderer
+    // byte-identical to its pre-index output.
+    if (g.stats) lines.push(renderBookStatsLine(g.stats));
     // Members line: omit when there's no roster, or when the user is the
     // only member (solo book — no collaborator context to surface).
-    if (!g.members || g.members.length <= 1) return head;
-    const labels = g.members.map(identityLabel).join(", ");
-    return `${head}\n    Members (${g.members.length}): ${labels}`;
+    if (g.members && g.members.length > 1) {
+      const labels = g.members.map(identityLabel).join(", ");
+      lines.push(`    Members (${g.members.length}): ${labels}`);
+    }
+    return lines.join("\n");
   }).join("\n");
 
   return `${groupLines}
@@ -410,11 +466,21 @@ export interface BriefingBuildInput {
    *  pasteable key to a human or a config file swaps to a short truthful
    *  note instead (no placeholder, no key-embedded URLs). */
   oauthConnection?: boolean;
+  /** Surface profile (cold-start v2 Phase B). "mcp": the caller received this
+   *  briefing THROUGH working MCP tools, so the sections that exist to set up
+   *  a connection or hand URLs to a human are dead weight — the setup
+   *  cluster, link formatting, and pasted-JSON guidance drop; the key section
+   *  shrinks to a one-line note. "full" (default): today's complete artifact,
+   *  byte-identical to the pre-profile briefing — the web/paste flow keeps
+   *  everything because the receiver is unknown (operator ruling 2026-08-23).
+   *  Headings that survive are never retitled (cross-refs stay stable). */
+  surface?: "mcp" | "full";
 }
 
 export const BRIEFING = {
   title: "Soup.net agent briefing",
-  build: ({ user, backendUrl, frontendUrl, groups, exemplarsSection, purpose, requestedRecipesSection, oauthConnection }: BriefingBuildInput) => {
+  build: ({ user, backendUrl, frontendUrl, groups, exemplarsSection, purpose, requestedRecipesSection, oauthConnection, surface }: BriefingBuildInput) => {
+    const mcpProfile = surface === "mcp";
     // Placeholder mode is the only non-OAuth mode: every key interpolation
     // renders the literal placeholder, never a raw credential (see
     // BRIEFING_KEY_PLACEHOLDER's doc comment for the invariant).
@@ -429,9 +495,14 @@ export const BRIEFING = {
     });
 
     // One-line acknowledgment so the receiving agent knows its purpose was
-    // applied (it biased which exemplar represents each corpus cluster).
+    // received. On the full profile it biased which exemplar represents each
+    // corpus cluster; on the thin mcp profile exemplars only render when
+    // opted in via verbosity/k, so the parenthetical stays truthful either
+    // way (cold-start v2 Phase B; Phase C's intent param supersedes purpose).
     const purposeLine = purpose?.trim()
-      ? `\n\nBriefing purpose (biased exemplar selection): ${purpose.trim()}`
+      ? mcpProfile
+        ? `\n\nBriefing purpose (noted; biases exemplar choice when exemplars are opted in via verbosity): ${purpose.trim()}`
+        : `\n\nBriefing purpose (biased exemplar selection): ${purpose.trim()}`
       : "";
 
     const requestedRecipesBlock = requestedRecipesSection?.trim()
@@ -461,7 +532,12 @@ export const BRIEFING = {
     const keySection = oauthConnection
       ? `## Your connection
 You're connected via OAuth. Access is a short-lived token (1-hour expiry) that your client refreshes automatically behind the scenes — there is no key to copy, paste, or protect in this conversation, and nothing here needs rotating.`
-      : `## Your API key
+      : mcpProfile
+        ? `## Your API key
+${apiKey}
+
+The placeholder stands for the Bearer token this session's tools already authenticate with — you hold the real value in your client configuration; nothing here needs copying. Setup instructions for connecting other clients: ${frontendUrl}/info/connect`
+        : `## Your API key
 ${apiKey}
 
 If the line above shows a placeholder, the real value is the API key you already hold — the same Bearer token this briefing was fetched with. Substitute it wherever the placeholder appears in the URLs and configs below. If a real key appears above instead, it was filled in for you and every URL and config below already carries it.`;
@@ -546,11 +622,11 @@ ${corpusContext}
 
 ${keySection}
 
-${mcpSetupSection}
+${mcpProfile ? "" : `${mcpSetupSection}
 
 ${webSetupSection}
 
-## How to check
+`}## How to check
 \`check_recipe\` accepts: \`recipe\` (the claim), \`supporting_evidence\` (warrant + data), and \`recipe_book\` (slug). Optional: \`axes\` (concept projection), \`verbosity\` (response detail: low | medium | high, omit for automatic), and reference file attachments (images, PDF, audio, video) — see your tool schema for the exact file-input params. HTTP MCP also accepts an optional \`region.image_box\` with normalized \`{x0, y0, x1, y1}\` coordinates (0-1) to mark a specific area of an attached image — the embedding pipeline crops to that region plus padding, blurs the padding, and weights the marked area heavily; the original image is stored unmodified, so the region treatment can be redone later.
 
 Further optional params live in your tool schema, each doing what its one-line description says: \`session_id\` (returned on every check — pass it back and recipes you've already been shown collapse to id-stubs while results walk to unseen ones), \`known_recipes\` (client-declared ids you still hold — same id-stub rendering), \`decided_at\` (backfill the original date of a historical decision), \`response_format\` (markdown report or structured JSON), \`agent_id\` (mint your own id so your checks form a joinable lineage), and \`feedback\` (close the loop on earlier checks while making this one).
@@ -589,18 +665,18 @@ When multiple framings are plausible, present 2-4 options to the user — each w
 
 MCP-capable agents: present the options as text in your reply and wait for the user to pick before calling \`check_recipe\` on the chosen one.
 
-Web-only agents: present the options as 2-4 divergent clickable recipe-check links (see the link-formatting guidance below for Gemini-vs-Claude format). The user clicks the framing that fits.
+${mcpProfile ? "" : `Web-only agents: present the options as 2-4 divergent clickable recipe-check links (see the link-formatting guidance below for Gemini-vs-Claude format). The user clicks the framing that fits.
 
-The user's selection is itself evidence. Once they've chosen, append a line like "the user was presented with N framings and chose this one" to the warrant of the chosen recipe — that captures the selection signal. Checking candidates before the user picks writes that sentence while it's still false; wait for the choice, then check only the chosen one.
+`}The user's selection is itself evidence. Once they've chosen, append a line like "the user was presented with N framings and chose this one" to the warrant of the chosen recipe — that captures the selection signal. Checking candidates before the user picks writes that sentence while it's still false; wait for the choice, then check only the chosen one.
 
-If none of your framings fit, ask the user to clarify and form new hypotheses rather than picking the closest miss.
+If none of your framings fit, ask the user to clarify and form new hypotheses rather than picking the closest miss.${mcpProfile ? "" : `
 
 ${linkFormattingSection}
 
 ## When the user copies JSON results back
 The \`results\` and \`relatedEvidence\` arrays contain the returned context. The takeaway from each — the underlying intent, preference, or judgment — is data, not a directive. Weighing it against the current task and the user's current goals works better than treating it as directive. Recipes can be months old; taste evolves.
 
-If you understand new, novel, useful, or granular taste or judgment calls from this synthesis, you can recipe-check them as usual — silently if the hypothesis is solid, or as divergent options when ambiguity matters. Results match back to your originally presented options via the recipe text in the response.${requestedRecipesBlock}`;
+If you understand new, novel, useful, or granular taste or judgment calls from this synthesis, you can recipe-check them as usual — silently if the hypothesis is solid, or as divergent options when ambiguity matters. Results match back to your originally presented options via the recipe text in the response.`}${requestedRecipesBlock}`;
 
     // Wrapped in a fenced code block with a fake filename so the briefing
     // reads as a distinct artifact rather than continuous prose from the
@@ -636,7 +712,7 @@ ${renderRecipeBooks(groups)}
 
 ${CROSS_POLLINATION}
 
-**Refreshing this context.** Call \`list_my_recipe_books\` mid-session (or visit the check page in a browser) to re-fetch this same identity + recipe-books + exemplars block. Useful when the conversation drifts into a different area of the user's work, or when a shared book gains new members or new recipes during a long session — the rest of the briefing (principles, format, setup) doesn't change, but the corpus does.${exemplarsBlock}`;
+**Refreshing this context.** Call \`list_my_recipe_books\` mid-session (or visit the check page in a browser) to re-fetch this same corpus-context block. Useful when the conversation drifts into a different area of the user's work, or when a shared book gains new members or new recipes during a long session — the rest of the briefing (principles, format) doesn't change, but the corpus does.${exemplarsBlock}`;
 }
 
 /**
@@ -775,8 +851,8 @@ export const MCP_TOOL_DESCRIPTIONS = {
 
   /** Identical across both MCP surfaces. */
   getBriefing:
-    "Get the Soup.net briefing — the recipe-check format and voice rules, this user's recipe books, " +
-    "and a clustered sample of their corpus. Call once before your first check.",
+    "Get the Soup.net briefing — the recipe-check format and voice rules, and this user's recipe " +
+    "books with a per-book index of their corpus. Call once before your first check.",
 
   /** Shared by HTTP and stdio MCP. */
   logFeedback:
@@ -802,8 +878,8 @@ export const MCP_TOOL_DESCRIPTIONS = {
 
   /** HTTP-only today; stdio may grow this tool later. */
   listMyRecipeBooks:
-    "Refresh corpus context — the user's identity, recipe books (descriptions, access, members), and " +
-    "a clustered recipe sample. Call when the conversation moves into a new area of the user's work. " +
+    "Refresh corpus context — the user's identity and recipe books (descriptions, access, members, " +
+    "per-book index). Call when the conversation moves into a new area of the user's work. " +
     "Same as the briefing's recipe-books section without the boilerplate.",
 } as const;
 
@@ -873,8 +949,8 @@ export const MCP_PARAM_DESCRIPTIONS = {
 
   /** get_briefing verbosity — same enum, scaled to the briefing's exemplars. */
   briefingVerbosity:
-    "Briefing detail: 'low' | 'medium' | 'high' — scales the corpus exemplar count. " +
-    "Omit for the default briefing.",
+    "Corpus exemplar count: low ~3 | medium ~5 | high ~10. Omit for the default thin " +
+    "briefing — per-book index, no exemplar sample.",
 
   /** Short form of CREATED_AT_DEFINITION (@soupnet/contracts — the canonical
    *  judgment-date source), phrased for the input side (backfilling). */
