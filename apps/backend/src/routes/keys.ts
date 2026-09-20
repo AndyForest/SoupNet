@@ -7,6 +7,7 @@ import { generateDailyKey, generateScopedKey, listKeys, revokeKey } from "../ser
 import { rateLimit } from "../middleware/rate-limit";
 import { sql } from "drizzle-orm";
 import { composeBriefing } from "../services/briefing";
+import { authenticateKey } from "../authz";
 import { parseRecipeIds } from "../services/recipe-lookup.service";
 
 // C1 — recipe-book rename. Wire-format field names use the new "recipe book"
@@ -247,10 +248,18 @@ keys.post("/briefing", async (c) => {
   const recipeIdsParam = asString("recipe_ids");
   const recipeIds = recipeIdsParam ? parseRecipeIds(recipeIdsParam) : undefined;
 
+  // The key in the body goes through the same authentication as a Bearer key,
+  // narrowed to the signed-in user: a user may only brief their OWN keys (F33).
+  // Another user's key, an expired key, and an unknown key are all the same
+  // 404.
+  const principal = await authenticateKey(getDb(), rawKey, { ownerUserId: user.id });
+  if (!principal) {
+    return c.json({ ok: false, error: "Key not found or expired" }, 404);
+  }
+
   const result = await composeBriefing({
     db: getDb(),
-    rawKey,
-    userId: user.id,
+    principal,
     backendUrl,
     frontendUrl,
     // JWT-authed dashboard copy buttons + recipe-map pass-through (cold-start
@@ -268,9 +277,6 @@ keys.post("/briefing", async (c) => {
   });
 
   if (!result.ok) {
-    if (result.code === "key_not_found") {
-      return c.json({ ok: false, error: "Key not found or expired" }, 404);
-    }
     return c.json({ ok: false, error: "Briefing unavailable" }, 400);
   }
 

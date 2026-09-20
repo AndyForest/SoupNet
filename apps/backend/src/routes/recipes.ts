@@ -21,7 +21,7 @@
 import { Hono } from "hono";
 import { getDb } from "../db";
 import type { AppEnv } from "../types";
-import { validateKey } from "../services/api-key.service";
+import { authenticateKey } from "../authz";
 import {
   RECIPE_LOOKUP_MAX_IDS,
   lookupRecipes,
@@ -56,7 +56,7 @@ recipes.get("/", recipesIpRateLimit, recipesPerKeyRateLimit, async (c) => {
   const rawKey = match[1]!.trim();
 
   const db = getDb();
-  const validated = await validateKey(db, rawKey);
+  const validated = await authenticateKey(db, rawKey);
   if (!validated) {
     return c.json({ ok: false, error: "Invalid or expired API key" }, 401);
   }

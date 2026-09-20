@@ -22,6 +22,11 @@ let groupId: string;
 let apiKeyId: string;
 let rawKey: string;
 let rawKey2: string;
+// The service takes an authenticated Principal, not a raw key.
+// eslint-disable-next-line @typescript-eslint/consistent-type-imports
+let principal: import("../authz").Principal;
+// eslint-disable-next-line @typescript-eslint/consistent-type-imports
+let principal2: import("../authz").Principal;
 
 function hashKey(key: string): string {
   return crypto.createHash("sha256").update(key).digest("hex");
@@ -131,11 +136,17 @@ describe.skipIf(!canConnect())("trace.service integration", () => {
       )
       RETURNING id
     `);
+
+    const { authenticateKey } = await import("../authz");
+    const [p1, p2] = await Promise.all([authenticateKey(db, rawKey), authenticateKey(db, rawKey2)]);
+    if (!p1 || !p2) throw new Error("Setup failed: test keys did not authenticate");
+    principal = p1;
+    principal2 = p2;
   });
 
   it("submits a trace and returns results", async () => {
     const result = await submitAndSearch({
-      key: rawKey,
+      principal,
       traceText: `Integration test trace ${uid} — first submission`,
       evidenceFor: `Test evidence for integration.\n> "Test quote"\n— Test source, ${uid}`,
     });
@@ -151,13 +162,13 @@ describe.skipIf(!canConnect())("trace.service integration", () => {
     const evidenceFor = `Idempotent evidence.\n> "Same quote"\n— Same source`;
 
     const result1 = await submitAndSearch({
-      key: rawKey,
+      principal,
       traceText,
       evidenceFor,
     });
 
     const result2 = await submitAndSearch({
-      key: rawKey,
+      principal,
       traceText,
       evidenceFor,
     });
@@ -184,13 +195,13 @@ describe.skipIf(!canConnect())("trace.service integration", () => {
     const evidenceFor = `Different key evidence.\n> "Quote"\n— Source`;
 
     const result1 = await submitAndSearch({
-      key: rawKey,
+      principal,
       traceText,
       evidenceFor,
     });
 
     const result2 = await submitAndSearch({
-      key: rawKey2,
+      principal: principal2,
       traceText,
       evidenceFor,
     });
@@ -207,7 +218,7 @@ describe.skipIf(!canConnect())("trace.service integration", () => {
 
     // Submit a trace with a unique marker word
     const firstResult = await submitAndSearch({
-      key: rawKey,
+      principal,
       traceText: `As a musician, I prefer the xylophone instrument ${marker} because it produces clear tones for orchestral arrangements.`,
       evidenceFor: `Preference for xylophone tones.\n> "The xylophone cuts through the mix"\n— Rehearsal notes`,
     });
@@ -218,7 +229,7 @@ describe.skipIf(!canConnect())("trace.service integration", () => {
     // Submit a second trace with similar meaning to the first.
     // Pure semantic search should find the first trace via vector similarity.
     const searchResult = await submitAndSearch({
-      key: rawKey,
+      principal,
       traceText: `As a musician, I prefer the xylophone instrument for clear orchestral tones.`,
       evidenceFor: `Xylophone preference.\n> "Clear tones"\n— Notes`,
     });
@@ -233,16 +244,12 @@ describe.skipIf(!canConnect())("trace.service integration", () => {
     expect(matched).toBe(true);
   });
 
-  it("returns error for invalid API key", async () => {
-    const result = await submitAndSearch({
-      key: "cn_d_totallyinvalidkey_doesnotexist",
-      traceText: "This should fail.",
-      evidenceFor: "No evidence needed.",
-    });
-
-    expect(result.error).toBeDefined();
-    expect(result.error).toContain("Invalid");
-    expect(result.traceId).toBeUndefined();
+  it("an invalid API key never reaches the service: authentication yields no Principal", async () => {
+    // The service takes a Principal, not a raw key, so a dead key cannot be
+    // submitted at all — the refusal lives in authz.authenticateKey (see
+    // authz/key-auth.test.ts) and each surface's own 401.
+    const { authenticateKey } = await import("../authz");
+    expect(await authenticateKey(getDb(), "cn_d_totallyinvalidkey_doesnotexist")).toBeNull();
   });
 
   // ── decided_at (decision archaeology — backfilled judgment dates) ─────────
@@ -250,7 +257,7 @@ describe.skipIf(!canConnect())("trace.service integration", () => {
   it("stores decided_at and keeps created_at as the insertion time", async () => {
     const decidedAt = "2024-03-15T14:30:00.000Z";
     const result = await submitAndSearch({
-      key: rawKey,
+      principal,
       traceText: `As a backend developer, I chose pg-boss for queueing so that jobs live in Postgres — archaeology test ${uid}`,
       evidenceFor: `Decision found in commit history.\n> "switch to pg-boss, keeps ops in postgres"\n— commit abc1234, 2024-03-15`,
       decidedAt,
@@ -276,7 +283,7 @@ describe.skipIf(!canConnect())("trace.service integration", () => {
 
   it("leaves decided_at null for contemporaneous checks", async () => {
     const result = await submitAndSearch({
-      key: rawKey,
+      principal,
       traceText: `As a test engineer, I prefer contemporaneous checks to carry no decided_at so that null means "judged when logged" — test ${uid}`,
       evidenceFor: `Contemporaneous evidence.\n> "no backdate"\n— Test source`,
     });
@@ -292,7 +299,7 @@ describe.skipIf(!canConnect())("trace.service integration", () => {
 
   it("rejects an unparseable decided_at without inserting", async () => {
     const result = await submitAndSearch({
-      key: rawKey,
+      principal,
       traceText: `As a test engineer, I prefer strict date validation so that malformed backdates never enter the corpus — test ${uid}`,
       evidenceFor: `Validation evidence.\n> "strict dates"\n— Test source`,
       decidedAt: "not-a-date",
@@ -305,7 +312,7 @@ describe.skipIf(!canConnect())("trace.service integration", () => {
 
   it("rejects a future decided_at without inserting", async () => {
     const result = await submitAndSearch({
-      key: rawKey,
+      principal,
       traceText: `As a test engineer, I prefer rejecting future judgment dates so that backdating can only make recipes older — test ${uid}`,
       evidenceFor: `Validation evidence.\n> "no freshness gaming"\n— Test source`,
       decidedAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),

@@ -282,6 +282,17 @@ describe.skipIf(!canConnect() || !BASE)("authz seam — API-key authentication",
         expect(first!.writeGroupIds).toEqual([member.personalBookId]);
         expect(first!.storedDefaultWriteGroupId).toBe(member.personalBookId);
         expect(await authz.consumeRefreshToken(getDb(), hash)).toBeNull();
+
+        // The consumed row carries BOTH stamps: the compare-and-swap marker,
+        // and the epoch expiry that kills the old access token for every
+        // reader of `expires_at > NOW()`. If rotation ever stops writing the
+        // sentinel, this is the assertion that says so.
+        const rows = (await getDb().execute(sql`
+          SELECT consumed_at, extract(epoch FROM expires_at)::float8 AS expires_epoch
+          FROM claimnet.api_keys WHERE refresh_token_hash = ${hash}
+        `)) as unknown as Array<{ consumed_at: string | null; expires_epoch: number }>;
+        expect(rows[0]?.consumed_at).not.toBeNull();
+        expect(rows[0]?.expires_epoch).toBe(0);
       } finally {
         await addMember();
       }

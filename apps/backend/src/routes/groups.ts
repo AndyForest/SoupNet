@@ -490,7 +490,25 @@ groupsRouter.delete("/:id/members/:userId", async (c) => {
     return c.json({ ok: false, error: "Cannot remove the last owner of a recipe book" }, 400);
   }
 
-  // Removing someone who is not a member stays a 200 no-op, as before.
+  // Deleting the membership row is ALL that removal has to do: the removed
+  // user's existing API keys and OAuth connections lose the book on their next
+  // request, because key authentication intersects a key's grant with the
+  // membership table every time (authz/key-auth.ts, F67). There is no sweep
+  // over keys to remember here or at any future removal path.
+
+  // Removal changes who can read and write the book, so it belongs on the
+  // audit trail. Only when there was a membership to remove; removing someone
+  // who is not a member stays a 200 no-op, as before.
+  if (outcome === "removed") {
+    await writeAudit(db, {
+      actorUserId: user.id,
+      action: "group.member_removed",
+      targetType: "group",
+      targetId: groupId,
+      metadata: { removedUserId: targetUserId },
+    });
+  }
+
   return c.json({ ok: true });
 });
 

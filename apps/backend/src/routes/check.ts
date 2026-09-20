@@ -12,7 +12,8 @@ import type { SynthesisResult } from "../services/synthesis.service";
 import { getDb } from "../db";
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { validateKey } from "../services/api-key.service";
+import { authenticateKey } from "../authz";
+import type { Principal } from "../authz";
 import { HTML_ACCEPT_TYPES, renderCheckResponseMarkdown, fenceCheckResponseMarkdown, parseVerbosity } from "@soupnet/domain";
 import type { CheckResponseJson } from "@soupnet/domain";
 import type { Recipe } from "@soupnet/contracts";
@@ -434,22 +435,22 @@ function buildSearchOnlyJsonResponse(
 /**
  * Resolve the premium synthesis result for a completed check — only when the
  * caller opted in via synthesize=true and the request logged a recipe (never
- * the search-only path, per the brief's scope). The userId comes from a
- * dedicated validateKey lookup performed only on this branch, so non-synthesize
- * requests never pay for it and the audited api-key seam stays untouched
- * (recipe 5c33168b). Returns undefined when synthesis wasn't requested — the
- * response then stays byte-identical to today.
+ * the search-only path, per the brief's scope). The userId comes from the
+ * request's Principal; premium eligibility itself is still resolved by
+ * maybeSynthesize's own lookup, only on this branch, so the authentication
+ * seam carries no premium attribute (recipe 5c33168b). Returns undefined when
+ * synthesis wasn't requested — the response then stays byte-identical.
  */
 async function resolveSynthesis(
   db: PostgresJsDatabase,
   params: PageParams,
+  keyResult: Principal | null,
   result: SubmitAndSearchResult,
   enriched: EnrichedResult[],
   searchOnly: boolean,
 ): Promise<SynthesisResult | undefined> {
   if (searchOnly || params.synthesize !== "true") return undefined;
-  const keyResult = params.key ? await validateKey(db, params.key) : null;
-  // A completed check implies a valid key; the null branch is defensive and
+  // A completed check implies a Principal; the null branch is defensive and
   // degrades to the ineligible notice rather than surfacing an error.
   if (!keyResult) return { synthesisNotice: SYNTHESIS_INELIGIBLE_NOTICE };
   return maybeSynthesize({
@@ -477,6 +478,7 @@ async function resolveSynthesis(
 async function resolveRideAlongFeedback(
   db: PostgresJsDatabase,
   params: PageParams,
+  keyResult: Principal | null,
 ): Promise<FeedbackRowResult[] | undefined> {
   if (!params.feedbackTraceId && !params.feedbackSearchId) return undefined;
   if (!params.key) {
@@ -488,9 +490,8 @@ async function resolveRideAlongFeedback(
     }];
   }
   // A present-but-invalid key never reaches here — handleCheck's key-death
-  // gate already returned. This lookup is defensive (kept independent so a
-  // future reordering can't make feedback silently vanish).
-  const keyResult = await validateKey(db, params.key);
+  // gate already returned. The null branch is defensive, so a future
+  // reordering can't make feedback silently vanish.
   if (!keyResult) {
     return [{
       index: 0,
@@ -1091,7 +1092,7 @@ function renderPage(
 // became a documentation page and agents abandoned the tool). The no-key
 // anonymous page is untouched — it's a legitimate zero-setup surface.
 //
-// Anti-enumeration: validateKey collapses "expired" and "never existed" to
+// Anti-enumeration: authenticateKey collapses "expired" and "never existed" to
 // the same null, and this page renders identically for both. It also never
 // echoes the presented key.
 
@@ -1132,12 +1133,17 @@ async function handleCheck(
 ) {
   const jsonMode = wantsJson(c, params);
 
+  // The key is authenticated ONCE per request, here, and the Principal is
+  // handed to everything below (the services, ride-along feedback, synthesis,
+  // the form's book list) — none of them sees the raw key or looks it up again.
+  //
   // Key-death gate: a present-but-invalid key gets an explicit 401 state on
   // both content types — never the anonymous fallback page. Runs before any
   // service work so nothing downstream sees a dead key.
+  let principal: Principal | null = null;
   if (params.key) {
-    const keyCheck = await validateKey(getDb(), params.key);
-    if (!keyCheck) {
+    principal = await authenticateKey(getDb(), params.key);
+    if (!principal) {
       if (jsonMode) {
         return c.json(
           {
@@ -1161,7 +1167,7 @@ async function handleCheck(
   // check, or a search-only `filter` request — gets the same treatment; no
   // branch can silently drop a feedback param. Never affects what follows:
   // a bad or unreadable row only ever produces a per-row marker.
-  const feedbackResults = await resolveRideAlongFeedback(getDb(), params);
+  const feedbackResults = await resolveRideAlongFeedback(getDb(), params, principal);
 
   // Default to clustered results unless explicitly expanded or the caller
   // already gave a size steer. With no steer, the automatic verbosity path
@@ -1205,10 +1211,10 @@ async function handleCheck(
 
   let result: SubmitAndSearchResult | undefined;
   let searchOnly = false;
-  if (params.trace && params.ef && params.key) {
+  if (params.trace && params.ef && principal) {
     result = await submitAndSearch({
       surface,
-      key: params.key,
+      principal,
       traceText: params.trace,
       evidenceFor: params.ef,
       // evidence_against removed from ingest (negation problem — embeddings can't
@@ -1231,7 +1237,7 @@ async function handleCheck(
       intent: params.intent,
       knownRecipeIds: knownRecipeIds.size > 0 ? [...knownRecipeIds] : undefined,
     });
-  } else if (params.key && params.filter && !params.trace) {
+  } else if (principal && params.filter && !params.trace) {
     // The sanctioned no-logging path: filter (alias f) with no recipe runs a
     // read-only keyword search over the key's read scope. No trace, no
     // recipe.checked audit row — searchWithoutLogging writes a check.searched
@@ -1240,7 +1246,7 @@ async function handleCheck(
     searchOnly = true;
     result = await searchWithoutLogging({
       surface,
-      key: params.key,
+      principal,
       filter: params.filter,
       sort: params.sort,
       page: params.page ? parseInt(params.page, 10) : undefined,
@@ -1302,7 +1308,7 @@ async function handleCheck(
     let enriched = await enrichResults(db, result.results);
     enriched = await clusterEvidenceInResults(db, enriched);
     const page = params.page ? parseInt(params.page, 10) : 1;
-    const synthesis = await resolveSynthesis(db, params, result, enriched, searchOnly);
+    const synthesis = await resolveSynthesis(db, params, principal, result, enriched, searchOnly);
     return c.json(withFeedbackField(searchOnly
       ? buildSearchOnlyJsonResponse(result, enriched, page, params.filter ?? "", knownRecipeIds)
       : buildJsonResponse(result, enriched, page, knownRecipeIds, synthesis), feedbackResults));
@@ -1320,32 +1326,30 @@ async function handleCheck(
   // JSON path runs). Only fires when synthesize=true and a recipe was logged.
   let synthesisResult: SynthesisResult | undefined;
   if (result && !result.error && enriched) {
-    synthesisResult = await resolveSynthesis(getDb(), params, result, enriched, searchOnly);
+    synthesisResult = await resolveSynthesis(getDb(), params, principal, result, enriched, searchOnly);
   }
 
   // Look up key's groups for the form dropdown (if key is provided)
   let keyGroups: KeyGroup[] | undefined;
-  if (params.key) {
+  if (principal) {
     try {
       const db = getDb();
-      const keyResult = await validateKey(db, params.key);
-      if (keyResult) {
-        const allIds = [...new Set([...keyResult.readGroupIds, ...keyResult.writeGroupIds])];
-        if (allIds.length > 0) {
-          const rows = await db.execute(sql`
-            SELECT id, slug, name, description FROM claimnet.groups
-            WHERE id IN (${sql.join(allIds.map((id: string) => sql`${id}::uuid`), sql`, `)})
-            ORDER BY name
-          `);
-          keyGroups = (rows as unknown as Array<{ id: string; slug: string; name: string; description: string | null }>).map((g) => ({
-            id: g.id,
-            slug: g.slug,
-            name: g.name,
-            description: g.description,
-            canWrite: keyResult.writeGroupIds.includes(g.id),
-            isDefault: g.id === keyResult.defaultWriteGroupId,
-          }));
-        }
+      const keyResult = principal;
+      const allIds = [...new Set([...keyResult.readGroupIds, ...keyResult.writeGroupIds])];
+      if (allIds.length > 0) {
+        const rows = await db.execute(sql`
+          SELECT id, slug, name, description FROM claimnet.groups
+          WHERE id IN (${sql.join(allIds.map((id: string) => sql`${id}::uuid`), sql`, `)})
+          ORDER BY name
+        `);
+        keyGroups = (rows as unknown as Array<{ id: string; slug: string; name: string; description: string | null }>).map((g) => ({
+          id: g.id,
+          slug: g.slug,
+          name: g.name,
+          description: g.description,
+          canWrite: keyResult.writeGroupIds.includes(g.id),
+          isDefault: g.id === keyResult.defaultWriteGroupId,
+        }));
       }
     } catch { /* non-blocking — form works without group data */ }
   }

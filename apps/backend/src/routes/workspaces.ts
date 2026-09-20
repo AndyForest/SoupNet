@@ -34,7 +34,7 @@ import type { Context, Next } from "hono";
 import { z } from "zod";
 import { getDb } from "../db";
 import type { AppEnv } from "../types";
-import { validateKey } from "../services/api-key.service";
+import { authenticateKey } from "../authz";
 import { writeAudit } from "../services/audit-log.service";
 import {
   createEphemeralWorkspace,
@@ -96,7 +96,7 @@ workspaces.post("/", async (c) => {
     return c.json({ ok: false, error: "Authorization: Bearer <api-key> required" }, 401);
   }
   const db = getDb();
-  const validated = await validateKey(db, rawKey);
+  const validated = await authenticateKey(db, rawKey);
   if (!validated) {
     return c.json({ ok: false, error: "Invalid or expired API key" }, 401);
   }
@@ -164,7 +164,7 @@ workspaces.post("/:recipeBookId/expiry", async (c) => {
     return c.json({ ok: false, error: "Authorization: Bearer <api-key> required" }, 401);
   }
   const db = getDb();
-  const validated = await validateKey(db, rawKey);
+  const validated = await authenticateKey(db, rawKey);
   if (!validated) {
     return c.json({ ok: false, error: "Invalid or expired API key" }, 401);
   }

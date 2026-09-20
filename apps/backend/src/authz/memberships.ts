@@ -38,6 +38,33 @@ export async function listMembers(db: PostgresJsDatabase, bookId: string): Promi
   return rows as unknown as BookMember[];
 }
 
+export interface BookMemberIdentity {
+  group_id: string;
+  display_name: string | null;
+  email: string;
+}
+
+/**
+ * Members of several books in one query, ordered by book then email — for the
+ * agent briefing, which names collaborators per shared book. The caller passes
+ * books it is already entitled to see (a Principal's effective scope); this
+ * lists rows and decides nothing. No books → no query.
+ */
+export async function listMembersOfBooks(
+  db: PostgresJsDatabase,
+  bookIds: string[],
+): Promise<BookMemberIdentity[]> {
+  if (bookIds.length === 0) return [];
+  const rows = await db.execute(sql`
+    SELECT gm.group_id, u.display_name, u.email
+    FROM claimnet.group_members gm
+    JOIN claimnet.users u ON u.id = gm.user_id
+    WHERE gm.group_id IN (${sql.join(bookIds.map((id) => sql`${id}::uuid`), sql`, `)})
+    ORDER BY gm.group_id, u.email
+  `);
+  return rows as unknown as BookMemberIdentity[];
+}
+
 /**
  * Make the creator of a new book its owner, opted in to daily-link read and
  * write. The "new books default to excluded" rule applies to memberships

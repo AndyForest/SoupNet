@@ -31,7 +31,6 @@
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { enrichResults } from "./result-enricher";
-import { excludeTombstoned } from "./ephemeral-workspace.service";
 import { isTraceIdPrefix, uuidPrefixRange } from "./feedback.service";
 import type { SearchResultItem } from "./trace.service";
 
@@ -125,10 +124,12 @@ export async function lookupRecipes(
 
   const foundById = new Map<string, RecipeLookupFound>();
 
-  // Tombstone seam (audit F57): drop born-ephemeral books past their TTL from
-  // the read scope, so a by-id read of a tombstoned book's trace resolves to
-  // the uniform not_found_or_unreadable marker like any out-of-scope id.
-  const liveReadGroupIds = await excludeTombstoned(db, readGroupIds);
+  // `readGroupIds` is a Principal's effective read scope (authz/key-auth.ts):
+  // a book the key's owner has left, or a born-ephemeral book past its TTL
+  // (F57), is already absent — so a by-id read of such a book's trace
+  // resolves to the uniform not_found_or_unreadable marker like any other
+  // out-of-scope id, with nothing to re-check here.
+  const liveReadGroupIds = readGroupIds;
 
   // Short-id prefixes (≥8 chars, cold-start v2 Phase A): docs, PR bodies, and
   // check responses cite recipes by 8-char short id, and agents reliably

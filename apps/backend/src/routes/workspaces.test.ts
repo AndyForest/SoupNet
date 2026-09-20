@@ -183,6 +183,20 @@ async function deposit(
   return { ok: res.ok && body.ok !== false, recipeId: body.data?.checked?.recipeId, error: body.error };
 }
 
+/** Call a remote MCP tool and return the raw response text. */
+async function mcpTool(key: string, name: string, args: Record<string, unknown>): Promise<string> {
+  const res = await fetch(`${BASE}/mcp`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+      Authorization: `Bearer ${key}`,
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
+  });
+  return res.text();
+}
+
 async function briefingBookSlugs(jwt: string, key: string): Promise<string[]> {
   const res = await fetch(`${BASE}/keys/briefing`, {
     method: "POST",
@@ -355,14 +369,57 @@ describe.skipIf(!BASE)("ephemeral workspaces — eval-reset destructive tier", (
       expect(text).not.toContain(recipeId);
     });
 
-    // Known gap at the time this test was written: the read-only search path
-    // resolved read scope without the tombstone. Recorded as an expected
-    // failure so the suite stays green; it becomes a plain `it` when scope is
-    // resolved in one place.
-    it.fails("a read-only search no longer surfaces its recipes", async () => {
+    // First written as an expected failure (F68): the read-only search path
+    // resolved read scope without the tombstone. Scope is now resolved in one
+    // place (authz/key-auth.ts), so no consumer can receive a tombstoned book.
+    it("a read-only search no longer surfaces its recipes", async () => {
       const url = `${BASE}/check?key=${encodeURIComponent(A.scopedKey)}&f=${encodeURIComponent(`"${MARKER}"`)}&format=json`;
       const text = await (await fetch(url, { headers: { Accept: "application/json" } })).text();
       expect(text).not.toContain(recipeId);
+    });
+
+    it("the MCP search tool no longer surfaces its recipes", async () => {
+      const res = await mcpTool(A.scopedKey, "search_recipes", { query: `"${MARKER}" author:anyone` });
+      expect(res).not.toContain(recipeId);
+    });
+
+    it("a feedback row about one of its recipes gets the uniform not-readable marker", async () => {
+      const row = {
+        trace_id: recipeId,
+        kind: "check-feedback",
+        impact: "none",
+        disposition: "proceeded",
+        story_fulfilled: "unknown",
+        story: "As a tombstone test, I wanted feedback on a disposed workspace refused so that nothing is deposited there.",
+      };
+      const unknownRow = { ...row, trace_id: "00000000-0000-4000-8000-000000000000" };
+      const post = async (body: unknown) => {
+        const res = await fetch(`${BASE}/feedback`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${A.scopedKey}` },
+          body: JSON.stringify(body),
+        });
+        return JSON.stringify(((await res.json()) as { data?: { results?: Array<{ ok: boolean; error?: string }> } }).data?.results?.map(
+          (r) => ({ ok: r.ok, error: r.error }),
+        ));
+      };
+      const tombstoned = await post(row);
+      expect(tombstoned).toContain('"ok":false');
+      // Indistinguishable from a recipe that does not exist.
+      expect(tombstoned).toBe(await post(unknownRow));
+    });
+
+    it("update_recipe_book_description refuses the disposed book", async () => {
+      const res = await mcpTool(A.scopedKey, "update_recipe_book_description", {
+        recipe_book_id_or_slug: recipeBookId,
+        description: "should not be written",
+      });
+      expect(res).toContain("not found in your key's write recipe books");
+      const { sql } = getSql();
+      const row = (await sql`SELECT description FROM claimnet.groups WHERE id = ${recipeBookId}::uuid`)[0] as
+        | { description: string | null }
+        | undefined;
+      expect(row?.description ?? null).not.toBe("should not be written");
     });
   });
 

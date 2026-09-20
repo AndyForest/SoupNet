@@ -332,14 +332,18 @@ describe.skipIf(!canConnect() || !BASE)("API-key authentication (characterizatio
   let dave: Actor; // the owner who becomes unverified
 
   let liveKey = "";
-  const deadKeys: Record<"malformed" | "unknown" | "expired" | "consumed" | "unverified-owner", string> = {
+  const deadKeys: Record<
+    "malformed" | "unknown" | "expired" | "consumed" | "consumed-marker-only" | "unverified-owner",
+    string
+  > = {
     malformed: "not-a-key",
     unknown: `cn_s_${"0".repeat(32)}`,
     expired: "",
-    consumed: "",
+    consumed: "", // a real rotated-away OAuth access token
+    "consumed-marker-only": "", // consumed_at set, expiry left in the future
     "unverified-owner": "",
   };
-  const DEAD_CASES = ["malformed", "expired", "consumed", "unverified-owner"] as const;
+  const DEAD_CASES = ["malformed", "expired", "consumed", "consumed-marker-only", "unverified-owner"] as const;
 
   beforeAll(async () => {
     sql = dbConn();
@@ -355,6 +359,15 @@ describe.skipIf(!canConnect() || !BASE)("API-key authentication (characterizatio
 
     const oauth = await mintAndRotateOAuth(carol);
     deadKeys.consumed = oauth.oldAccess;
+
+    // The consumption marker on its own, with the expiry sentinel NOT written:
+    // "consumed ⇒ dead" must hold on every surface independently of how
+    // rotation happens to stamp the row.
+    deadKeys["consumed-marker-only"] = await mintScopedKey(carol, [carol.personalBookId]);
+    await sql`
+      UPDATE claimnet.api_keys SET consumed_at = NOW()
+      WHERE key = ${sha256hex(deadKeys["consumed-marker-only"])}
+    `;
 
     // The only user-state predicate that exists today: a verified email.
     // Nothing in the product clears it, so the fixture does.
@@ -387,28 +400,40 @@ describe.skipIf(!canConnect() || !BASE)("API-key authentication (characterizatio
 
   // ── Dead keys, remote MCP ─────────────────────────────────────────────────
 
-  /**
-   * Today two tools resolve the key through the briefing service's own lookup,
-   * which does not consult the owning user. Those two cells are recorded as
-   * expected failures (`it.fails`) so the gap is visible and the suite stays
-   * green; the change that routes MCP through the one authentication path
-   * turns them into plain `it`.
-   */
-  const KNOWN_GAP_TODAY = new Set(["get_briefing:unverified-owner", "list_my_recipe_books:unverified-owner"]);
-
+  // When these tests were first written, get_briefing and list_my_recipe_books
+  // with an unverified owner were recorded as expected failures (F65): those
+  // two tools resolved the key through a lookup of their own. The key is now
+  // authenticated once in the /mcp route handler, before any tool exists, so
+  // every cell is a plain test.
   describe.each(Object.keys(MCP_TOOL_ARGS))("MCP tool %s", (tool) => {
-    it("refuses an unknown key with the invalid-key message", async () => {
+    it("refuses an unknown key with 401 and the invalid-key message", async () => {
       const res = await mcpToolCall(deadKeys.unknown, tool);
+      expect(res.status).toBe(401);
       expect(res.body).toContain("Invalid or expired API key");
     });
 
-    for (const deadCase of DEAD_CASES) {
-      const test = KNOWN_GAP_TODAY.has(`${tool}:${deadCase}`) ? it.fails : it;
-      test(`answers a ${deadCase} key byte-for-byte like an unknown one`, { timeout: 30_000 }, async () => {
-        const unknown = await mcpToolCall(deadKeys.unknown, tool);
-        expect(await mcpToolCall(deadKeys[deadCase], tool)).toEqual(unknown);
+    it.each(DEAD_CASES)("answers a %s key byte-for-byte like an unknown one", { timeout: 30_000 }, async (deadCase) => {
+      const unknown = await mcpToolCall(deadKeys.unknown, tool);
+      expect(await mcpToolCall(deadKeys[deadCase], tool)).toEqual(unknown);
+    });
+  });
+
+  it.each(["initialize", "tools/list"])("MCP %s is refused for a dead key too, with the OAuth challenge", async (method) => {
+    const params = method === "initialize"
+      ? { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "characterization", version: "0.0.1" } }
+      : {};
+    for (const deadCase of ["unknown", ...DEAD_CASES] as const) {
+      const res = await fetch(`${BASE}/mcp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: ACCEPT_BOTH, ...bearer(deadKeys[deadCase]) },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
       });
+      expect(res.status, deadCase).toBe(401);
+      // A 401 is what tells an OAuth client to refresh; it must carry the
+      // protected-resource challenge like the missing-header 401 does.
+      expect(res.headers.get("www-authenticate") ?? "", deadCase).toContain("/.well-known/oauth-protected-resource");
     }
+    expect((await mcpRequest(liveKey, method, params)).status).toBe(200);
   });
 
   it("every tool in tools/list is covered, including ones added later", { timeout: 60_000 }, async () => {
@@ -433,19 +458,12 @@ describe.skipIf(!canConnect() || !BASE)("API-key authentication (characterizatio
     }
   });
 
-  // ── Rotation kills the old access token through expires_at ────────────────
-
-  it("a rotated-away OAuth row carries both the consumed stamp and the epoch expiry sentinel", async () => {
-    const rows = await sql`
-      SELECT consumed_at, expires_at FROM claimnet.api_keys WHERE key = ${sha256hex(deadKeys.consumed)}
-    `;
-    const row = rows[0] as { consumed_at: Date | null; expires_at: Date } | undefined;
-    expect(row).toBeTruthy();
-    expect(row!.consumed_at).not.toBeNull();
-    // Every liveness reader checks expires_at > NOW(); the sentinel is what
-    // lets all of them inherit the revocation.
-    expect(new Date(row!.expires_at).getTime()).toBe(0);
-  });
+  // The two stamps rotation leaves on the old row (consumed_at, and the epoch
+  // expiry sentinel every liveness reader inherits) are asserted where they
+  // can be read deterministically: authz/key-auth.test.ts, straight after
+  // consumeRefreshToken. Here the row may already be gone — the OAuth artifact
+  // sweep deletes consumed rows from the token endpoint's hot path — which is
+  // why the "consumed" case above is compared by response, not by row.
 
   // ── Call-time parameters only narrow ──────────────────────────────────────
 
@@ -513,7 +531,13 @@ describe.skipIf(!canConnect() || !BASE)("API-key authentication (characterizatio
       `;
       const res = await check(brokenKey, recipe("broken-default"));
       expect(res.status).toBe(400);
-      expect(res.body.error).toBe("API key has no write access to its default group.");
+      // The first sentence is the wording pinned before the seam move; the
+      // remediation after it was added with it (a deliberate copy change).
+      expect(res.body.error).toBe(
+        "API key has no write access to its default group. " +
+          "Pass recipe_book with one of this key's writable recipe books (the briefing and list_my_recipe_books show them), " +
+          "or ask your human to mint a new key.",
+      );
     });
   });
 });

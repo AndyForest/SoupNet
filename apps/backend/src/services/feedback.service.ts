@@ -414,7 +414,10 @@ export function computeFeedbackContentHash(
 
 export interface IngestFeedbackParams {
   db: PostgresJsDatabase;
-  /** Validated key context (from validateKey). */
+  /** The authenticated caller (from authz `authenticateKey`). `readGroupIds`
+   *  is the Principal's effective read scope, so a recipe in a book the key's
+   *  owner has left, or in a disposed workspace, gets the uniform
+   *  not-readable marker like any other out-of-scope id (F68). */
   apiKeyId: string;
   /** The key's user — the ACL scope for search_id targets (feedback attaches
    *  only to searches made under the same user; a shared fleet key = one

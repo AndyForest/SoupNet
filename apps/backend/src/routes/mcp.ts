@@ -8,7 +8,9 @@
  * See: https://modelcontextprotocol.io/specification/2025-03-26/basic/transports
  *
  * Auth: Bearer token in Authorization header. The token is a Soup.net API key
- * (daily or scoped). Same keys used for the /check endpoint.
+ * (daily, scoped, or an OAuth access token). It is authenticated once, in the
+ * route handler, before any tool exists for the request; tools receive the
+ * resulting Principal and never the token. See authz/key-auth.ts.
  */
 
 import { Hono } from "hono";
@@ -39,8 +41,9 @@ import type { RegionMeta } from "../lib/image-roi";
 import type { EnrichedResult } from "../services/result-enricher";
 import { enrichResults, clusterEvidenceInResults } from "../services/result-enricher";
 import { getDb } from "../db";
-import { validateKey } from "../services/api-key.service";
-import { maybeSynthesize, SYNTHESIS_INELIGIBLE_NOTICE } from "../services/synthesis.service";
+import { authenticateKey, isOwnerOrAdmin, roleIn } from "../authz";
+import type { Principal } from "../authz";
+import { maybeSynthesize } from "../services/synthesis.service";
 import type { SynthesisResult } from "../services/synthesis.service";
 import {
   RECIPE_LOOKUP_MAX_IDS,
@@ -354,7 +357,17 @@ const feedbackRowSchema = z.object({
   intent_id: z.string().optional(),
 });
 
-function createMcpServer(backendUrl: string): McpServer {
+/**
+ * Build the per-request MCP server for an ALREADY AUTHENTICATED caller.
+ *
+ * `principal` is required: the route handler authenticates the Bearer key once,
+ * before this is called, and no server (so no tool) exists for a request whose
+ * key did not authenticate. Tools close over the Principal — they never see
+ * the raw token and never authenticate for themselves — so a tool added later
+ * cannot be unauthenticated by omission, and cannot resolve scope some other
+ * way (F65). The Principal's arrays are effective scope; tools only narrow it.
+ */
+function createMcpServer(backendUrl: string, principal: Principal): McpServer {
   const server = new McpServer({
     name: "soupnet",
     version: "0.4.0",
@@ -465,13 +478,7 @@ function createMcpServer(backendUrl: string): McpServer {
       idempotentHint: true,
       openWorldHint: true,
     },
-    async ({ recipe, supporting_evidence, verbosity, clusters, max_chars, decided_at, axes, recipe_book, read_recipe_books, file_url, file_base64, file_name, file_mime_type, region, response_format, known_recipes, session_id, intent, agent_id, synthesize, feedback }, extra) => {
-      // Get API key from auth info (passed by the transport middleware)
-      const apiKey = (extra.authInfo as Record<string, unknown> | undefined)?.["token"] as string | undefined;
-      if (!apiKey) {
-        return { content: [{ type: "text" as const, text: "Error: No API key in auth context." }] };
-      }
-
+    async ({ recipe, supporting_evidence, verbosity, clusters, max_chars, decided_at, axes, recipe_book, read_recipe_books, file_url, file_base64, file_name, file_mime_type, region, response_format, known_recipes, session_id, intent, agent_id, synthesize, feedback }) => {
       // Size steer: explicit verbosity wins; with NO steer at all, the
       // internal "auto" sentinel takes the automatic path (ranking-config
       // autoK — ships as the fixed 3-exemplar default). Legacy clusters /
@@ -495,13 +502,9 @@ function createMcpServer(backendUrl: string): McpServer {
           // on inline base64. See docs/planning/uploads-endpoint.md.
           const ownUpload = parseOwnHostnameUpload(file_url, getOwnHostname());
           if (ownUpload) {
-            // Validate the api key first so we know which key owns the upload.
-            const keyResult = await validateKey(getDb(), apiKey);
-            if (!keyResult) {
-              return { content: [{ type: "text" as const, text: `Error: ${invalidKeyMessage()}` }] };
-            }
+            // Uploads resolve only for the key that made them.
             try {
-              const resolved = await resolveUpload(getDb(), keyResult.keyId, file_url);
+              const resolved = await resolveUpload(getDb(), principal.keyId, file_url);
               image = {
                 buffer: resolved.buffer,
                 mimeType: resolved.mimeType,
@@ -559,7 +562,7 @@ function createMcpServer(backendUrl: string): McpServer {
         // Call the service directly — no HTTP roundtrip needed since we're in the same process
         console.warn(`[mcp] check_recipe: calling submitAndSearch directly${image ? ` (with ${image.mimeType} attachment${regionMeta ? " + ROI" : ""})` : ""}`);
         const result = await submitAndSearch({
-          key: apiKey,
+          principal,
           traceText: recipe,
           evidenceFor: supporting_evidence,
           clusters: clusters ?? undefined,
@@ -588,23 +591,20 @@ function createMcpServer(backendUrl: string): McpServer {
         let enriched = await enrichResults(db, result.results);
         enriched = await clusterEvidenceInResults(db, enriched);
 
-        // Premium synthesis (opt-in). Resolve the user via a dedicated
-        // validateKey lookup only on this branch, mirroring the web /check
-        // path — non-synthesize calls never pay for it and the audited
-        // api-key seam stays untouched (recipe 5c33168b).
+        // Premium synthesis (opt-in). Eligibility is resolved inside
+        // maybeSynthesize, only on this branch, mirroring the web /check path —
+        // the authentication seam carries no premium attribute (recipe
+        // 5c33168b).
         let synthesis: SynthesisResult | undefined;
         if (synthesize) {
-          const keyResult = await validateKey(db, apiKey);
-          synthesis = keyResult
-            ? await maybeSynthesize({
-                db,
-                userId: keyResult.userId,
-                requested: true,
-                checkedRecipe: result.traceText ?? recipe,
-                results: enriched,
-                relatedEvidence: result.relatedEvidence,
-              })
-            : { synthesisNotice: SYNTHESIS_INELIGIBLE_NOTICE };
+          synthesis = await maybeSynthesize({
+            db,
+            userId: principal.userId,
+            requested: true,
+            checkedRecipe: result.traceText ?? recipe,
+            results: enriched,
+            relatedEvidence: result.relatedEvidence,
+          });
         }
 
         const jsonResponse = buildMcpJsonResponse(result, enriched, 1, knownRecipeIds, synthesis);
@@ -618,28 +618,25 @@ function createMcpServer(backendUrl: string): McpServer {
         let feedbackSummary = "";
         let feedbackResults: unknown;
         if (feedback && feedback.length > 0) {
-          const keyResult = await validateKey(db, apiKey);
-          if (keyResult) {
-            const rows: RawFeedbackRow[] = feedback.map((row) =>
-              // Rows inherit the RESOLVED intent id (text sent on this check
-              // was registered by the service, so the rows join the intent
-              // the check just minted) — join-only, like session inheritance.
-              withCheckDefaults(row, {
-                agentId: agent_id,
-                sessionId: session_id,
-                intentId: result.intent?.intentId ?? undefined,
-              }),
-            );
-            const results = await ingestFeedback({
-              db,
-              apiKeyId: keyResult.keyId,
-              userId: keyResult.userId,
-              readGroupIds: keyResult.readGroupIds,
-              rows,
-            });
-            feedbackSummary = summarizeFeedbackResults(results);
-            feedbackResults = results;
-          }
+          const rows: RawFeedbackRow[] = feedback.map((row) =>
+            // Rows inherit the RESOLVED intent id (text sent on this check
+            // was registered by the service, so the rows join the intent
+            // the check just minted) — join-only, like session inheritance.
+            withCheckDefaults(row, {
+              agentId: agent_id,
+              sessionId: session_id,
+              intentId: result.intent?.intentId ?? undefined,
+            }),
+          );
+          const results = await ingestFeedback({
+            db,
+            apiKeyId: principal.keyId,
+            userId: principal.userId,
+            readGroupIds: principal.readGroupIds,
+            rows,
+          });
+          feedbackSummary = summarizeFeedbackResults(results);
+          feedbackResults = results;
         }
 
         // One format per response (operator review 2026-07-05): markdown is
@@ -702,19 +699,14 @@ function createMcpServer(backendUrl: string): McpServer {
       idempotentHint: true,
       openWorldHint: true,
     },
-    async ({ query, verbosity, response_format, known_recipes, session_id, intent, agent_id, feedback, read_recipe_books }, extra) => {
-      const apiKey = (extra.authInfo as Record<string, unknown> | undefined)?.["token"] as string | undefined;
-      if (!apiKey) {
-        return { content: [{ type: "text" as const, text: "Error: No API key in auth context." }] };
-      }
-
+    async ({ query, verbosity, response_format, known_recipes, session_id, intent, agent_id, feedback, read_recipe_books }) => {
       const knownRecipeIds = new Set(
         (known_recipes ?? "").split(",").map((s) => s.trim()).filter(Boolean),
       );
 
       try {
         const result = await searchWithoutLogging({
-          key: apiKey,
+          principal,
           filter: query,
           verbosity: verbosity ?? ("auto" as const),
           readGroups: read_recipe_books ?? undefined,
@@ -763,25 +755,22 @@ function createMcpServer(backendUrl: string): McpServer {
         let feedbackSummary = "";
         let feedbackResults: unknown;
         if (feedback && feedback.length > 0) {
-          const keyResult = await validateKey(db, apiKey);
-          if (keyResult) {
-            const rows: RawFeedbackRow[] = feedback.map((row) =>
-              withCheckDefaults(row, {
-                agentId: agent_id,
-                sessionId: session_id,
-                intentId: result.intent?.intentId ?? undefined,
-              }),
-            );
-            const results = await ingestFeedback({
-              db,
-              apiKeyId: keyResult.keyId,
-              userId: keyResult.userId,
-              readGroupIds: keyResult.readGroupIds,
-              rows,
-            });
-            feedbackSummary = summarizeFeedbackResults(results);
-            feedbackResults = results;
-          }
+          const rows: RawFeedbackRow[] = feedback.map((row) =>
+            withCheckDefaults(row, {
+              agentId: agent_id,
+              sessionId: session_id,
+              intentId: result.intent?.intentId ?? undefined,
+            }),
+          );
+          const results = await ingestFeedback({
+            db,
+            apiKeyId: principal.keyId,
+            userId: principal.userId,
+            readGroupIds: principal.readGroupIds,
+            rows,
+          });
+          feedbackSummary = summarizeFeedbackResults(results);
+          feedbackResults = results;
         }
 
         if (response_format === "structured") {
@@ -827,18 +816,13 @@ function createMcpServer(backendUrl: string): McpServer {
       idempotentHint: true,
       openWorldHint: false,
     },
-    async ({ purpose, intent, recipe_ids, verbosity }, extra) => {
-      const apiKey = (extra.authInfo as Record<string, unknown> | undefined)?.["token"] as string | undefined;
-      if (!apiKey) {
-        return { content: [{ type: "text" as const, text: "Error: No API key in auth context." }] };
-      }
-
+    async ({ purpose, intent, recipe_ids, verbosity }) => {
       try {
         const frontendUrl = process.env["FRONTEND_URL"] ?? "http://localhost:5273";
         const recipeIds = recipe_ids ? parseRecipeIds(recipe_ids) : [];
         const result = await composeBriefing({
           db: getDb(),
-          rawKey: apiKey,
+          principal,
           backendUrl,
           frontendUrl,
           surface: "mcp-http",
@@ -854,9 +838,6 @@ function createMcpServer(backendUrl: string): McpServer {
         });
 
         if (!result.ok) {
-          if (result.code === "key_not_found") {
-            return { content: [{ type: "text" as const, text: `Error: ${invalidKeyMessage()}` }] };
-          }
           return { content: [{ type: "text" as const, text: "Error: Briefing unavailable." }] };
         }
 
@@ -892,19 +873,9 @@ function createMcpServer(backendUrl: string): McpServer {
       // (book shared, key rescoped) between calls.
       openWorldHint: true,
     },
-    async ({ recipe_ids }, extra) => {
-      const apiKey = (extra.authInfo as Record<string, unknown> | undefined)?.["token"] as string | undefined;
-      if (!apiKey) {
-        return { content: [{ type: "text" as const, text: "Error: No API key in auth context." }] };
-      }
-
+    async ({ recipe_ids }) => {
       try {
         const db = getDb();
-        const keyResult = await validateKey(db, apiKey);
-        if (!keyResult) {
-          return { content: [{ type: "text" as const, text: `Error: ${invalidKeyMessage()}` }] };
-        }
-
         const ids = parseRecipeIds(recipe_ids);
         if (ids.length === 0) {
           return { content: [{ type: "text" as const, text: "Error: recipe_ids is required — pass one or more recipe UUIDs, comma- or whitespace-separated." }] };
@@ -913,7 +884,7 @@ function createMcpServer(backendUrl: string): McpServer {
           return { content: [{ type: "text" as const, text: `Error: too many ids (${ids.length}; max ${RECIPE_LOOKUP_MAX_IDS} per call). Split into multiple calls.` }] };
         }
 
-        const entries = await lookupRecipes(db, ids, keyResult.readGroupIds);
+        const entries = await lookupRecipes(db, ids, principal.readGroupIds);
         const found = entries.filter((e) => e.status === "ok").length;
         const text = `Requested recipes — ${found} of ${entries.length} resolved. Entries marked not_found_or_unreadable either don't exist or aren't readable by this API key (deliberately indistinguishable).\n\n${renderRecipeEntries(entries)}`;
         return { content: [{ type: "text" as const, text }] };
@@ -946,17 +917,12 @@ function createMcpServer(backendUrl: string): McpServer {
       // openWorldHint: true because shared books may gain new recipes between calls.
       openWorldHint: true,
     },
-    async (_params, extra) => {
-      const apiKey = (extra.authInfo as Record<string, unknown> | undefined)?.["token"] as string | undefined;
-      if (!apiKey) {
-        return { content: [{ type: "text" as const, text: "Error: No API key in auth context." }] };
-      }
-
+    async () => {
       try {
         const frontendUrl = process.env["FRONTEND_URL"] ?? "http://localhost:5273";
         const result = await composeCorpusContext({
           db: getDb(),
-          rawKey: apiKey,
+          principal,
           backendUrl,
           frontendUrl,
           // Thin profile (cold-start v2 Phase B): index lines instead of a
@@ -966,9 +932,6 @@ function createMcpServer(backendUrl: string): McpServer {
         });
 
         if (!result.ok) {
-          if (result.code === "key_not_found") {
-            return { content: [{ type: "text" as const, text: `Error: ${invalidKeyMessage()}` }] };
-          }
           return { content: [{ type: "text" as const, text: "Error: Corpus context unavailable." }] };
         }
 
@@ -1016,28 +979,21 @@ function createMcpServer(backendUrl: string): McpServer {
       idempotentHint: true,
       openWorldHint: false,
     },
-    async ({ recipe_book_id_or_slug, description }, extra) => {
-      const apiKey = (extra.authInfo as Record<string, unknown> | undefined)?.["token"] as string | undefined;
-      if (!apiKey) {
-        return { content: [{ type: "text" as const, text: "Error: No API key in auth context." }] };
-      }
-
+    async ({ recipe_book_id_or_slug, description }) => {
       try {
         const db = getDb();
-        const keyResult = await validateKey(db, apiKey);
-        if (!keyResult) {
-          return { content: [{ type: "text" as const, text: `Error: ${invalidKeyMessage()}` }] };
-        }
-
+        const keyResult = principal;
         const { userId, writeGroupIds } = keyResult;
 
-        // Resolve slug or UUID to a group_id within the key's write scope.
-        // No write access → no mutation, even if the user is an owner.
+        // Resolve slug or UUID to a group_id within the key's write scope —
+        // effective scope, so a disposed workspace or a book the owner has
+        // left is not reachable here (F68). No write access → no mutation,
+        // even if the user is an owner.
         const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
         let groupId: string | null = null;
         if (uuidRe.test(recipe_book_id_or_slug)) {
           if (writeGroupIds.includes(recipe_book_id_or_slug)) groupId = recipe_book_id_or_slug;
-        } else {
+        } else if (writeGroupIds.length > 0) {
           const slugRows = await db.execute(sql`
             SELECT id FROM claimnet.groups
             WHERE slug = ${recipe_book_id_or_slug}
@@ -1055,12 +1011,7 @@ function createMcpServer(backendUrl: string): McpServer {
 
         // Owner/admin gate — same as the JWT PUT /recipe-books/:id route,
         // scoped to the API key's underlying user.
-        const roleRows = await db.execute(sql`
-          SELECT role FROM claimnet.group_members
-          WHERE group_id = ${groupId}::uuid AND user_id = ${userId}::uuid
-        `);
-        const role = (roleRows as unknown as Array<{ role: string }>)[0]?.role;
-        if (role !== "owner" && role !== "admin") {
+        if (!isOwnerOrAdmin(await roleIn(db, userId, groupId))) {
           return {
             content: [{ type: "text" as const, text: "Error: This API key's user is not an owner or admin of the target recipe book. Description edits require owner/admin role." }],
           };
@@ -1168,17 +1119,10 @@ function createMcpServer(backendUrl: string): McpServer {
       idempotentHint: true,
       openWorldHint: false,
     },
-    async (args, extra) => {
-      const apiKey = (extra.authInfo as Record<string, unknown> | undefined)?.["token"] as string | undefined;
-      if (!apiKey) {
-        return { content: [{ type: "text" as const, text: "Error: No API key in auth context." }] };
-      }
+    async (args) => {
       try {
         const db = getDb();
-        const keyResult = await validateKey(db, apiKey);
-        if (!keyResult) {
-          return { content: [{ type: "text" as const, text: `Error: ${invalidKeyMessage()}` }] };
-        }
+        const keyResult = principal;
         const results = await ingestFeedback({
           db,
           apiKeyId: keyResult.keyId,
@@ -1442,12 +1386,29 @@ mcpRouter.all("/", mcpBodyLimit, mcpRateLimit, mcpPerBearerBackstop, mcpPerKeyRa
   }
   const apiKey = authHeader.slice(7);
 
-  // Build auth info for the MCP transport
-  const authInfo = {
-    token: apiKey,
-    clientId: "remote",
-    scopes: ["mcp:tools"],
-  };
+  // Authenticate ONCE, here, before a server or any tool exists for this
+  // request (F65). Every MCP method is covered — initialize and tools/list
+  // included — because nothing past this point runs without a Principal, and
+  // a tool registered later inherits that without its author doing anything.
+  //
+  // A dead key gets HTTP 401 with the same WWW-Authenticate challenge as a
+  // missing one: the MCP authorization spec requires 401 for an invalid or
+  // expired token, and it is what tells an OAuth client to refresh. The body
+  // carries the shared remediation copy, identical for every kind of dead key
+  // (unknown, expired, consumed, owner fails the user-state predicate) — the
+  // error path is never an existence oracle.
+  const principal = await authenticateKey(getDb(), apiKey);
+  if (!principal) {
+    const base = process.env["BACKEND_URL"] ?? `http://localhost:${process.env["PORT"] ?? "3101"}`;
+    c.header(
+      "WWW-Authenticate",
+      `Bearer error="invalid_token", resource_metadata="${base}/.well-known/oauth-protected-resource"`,
+    );
+    return c.json(
+      { jsonrpc: "2.0", error: { code: -32001, message: invalidKeyMessage() }, id: null },
+      401,
+    );
+  }
 
   const backendUrl = process.env["BACKEND_URL"] ?? `http://localhost:${process.env["PORT"] ?? "3101"}`;
 
@@ -1458,9 +1419,11 @@ mcpRouter.all("/", mcpBodyLimit, mcpRateLimit, mcpPerBearerBackstop, mcpPerKeyRa
   // Empty options object → SDK treats as stateless (sessionIdGenerator absent).
   // Avoids TS exactOptionalPropertyTypes issue with explicitly setting undefined.
   const transport = new WebStandardStreamableHTTPServerTransport({});
-  const server = createMcpServer(backendUrl);
+  const server = createMcpServer(backendUrl, principal);
   await server.connect(transport);
-  return transport.handleRequest(c.req.raw, { authInfo });
+  // No authInfo is handed to the transport: tools read the Principal their
+  // server was built with, and the raw token goes no further than this handler.
+  return transport.handleRequest(c.req.raw);
 });
 
 export { mcpRouter as mcpRoutes };
