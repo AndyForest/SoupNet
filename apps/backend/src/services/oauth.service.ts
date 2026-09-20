@@ -449,8 +449,8 @@ export async function mintOAuthTokenBundle(
   const accessExpiresAt = new Date(Date.now() + ACCESS_TOKEN_TTL_SECONDS * 1000);
   const refreshExpiresAt = new Date(Date.now() + REFRESH_TOKEN_TTL_SECONDS * 1000);
 
-  // The scope arrays carry explicit ::uuid[] casts: rotation re-derives scope,
-  // so one of the two can legitimately be empty, and a bare ARRAY[] has no type.
+  // The scope arrays carry explicit ::uuid[] casts: a grant can be read-only,
+  // so the write array can legitimately be empty, and a bare ARRAY[] has no type.
   await db.execute(sql`
     INSERT INTO claimnet.api_keys (
       id, key, key_prefix, user_id, read_group_ids, write_group_ids,
@@ -539,18 +539,13 @@ export async function refreshOAuthTokenBundle(
       throw new RefreshTokenError("invalid_grant", "client_id does not match the refresh token");
     }
 
-    // Scope is RE-DERIVED, not copied forward (F50): the new bundle carries the
-    // old grant intersected with the owner's memberships right now, through the
-    // same computation that authenticates a key. A connection whose books have
-    // ALL fallen away is not given an empty credential — it is refused with the
-    // uniform invalid_grant, which sends the client back through consent, where
-    // the user picks from the books they have today. The throw rolls the
-    // consumption back, so the refusal is reversible: if the owner rejoins a
-    // book before the refresh token expires, the same token rotates again.
-    if (consumed.readGroupIds.length === 0 && consumed.writeGroupIds.length === 0) {
-      throw new RefreshTokenError("invalid_grant", "refresh token is invalid, expired, or revoked");
-    }
-
+    // The grant is carried forward unchanged. Rotation is not where reach is
+    // decided (F50): every presented key, this connection's next access token
+    // included, is authenticated against the owner's memberships at that
+    // moment, so a book they have left is already unreachable and a book they
+    // rejoin comes back, the same reversible rule scoped and daily keys get.
+    // Narrowing the stored grant here would make OAuth the one credential
+    // that loses a book permanently.
     return mintOAuthTokenBundle(tx, {
       userId: consumed.userId,
       clientId: consumed.oauthClientId,

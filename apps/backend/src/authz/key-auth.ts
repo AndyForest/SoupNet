@@ -254,8 +254,12 @@ export async function authenticateKey(
 export interface ConsumedRefreshToken {
   userId: string;
   oauthClientId: string;
-  /** Effective scope at the moment of rotation — the new bundle is minted
-   *  with these, so a book the owner has left is not carried forward (F50). */
+  /** The connection's GRANT, carried forward unchanged. Rotation does not
+   *  narrow it: what the new token can actually reach is decided where every
+   *  key is decided, at authentication, by intersecting the grant with the
+   *  owner's memberships at that moment (F67/F50). So a book the owner has
+   *  left is unreachable the instant they leave, and comes back if they are
+   *  re-added, exactly as it does for a scoped or daily key. */
   readGroupIds: string[];
   writeGroupIds: string[];
   /** The stored default pointer, carried forward unchanged (the column is NOT
@@ -310,15 +314,21 @@ export async function consumeRefreshToken(
       AND u.id = k.user_id
       AND ${activeUserPredicate()}
     RETURNING k.user_id, k.oauth_client_id, k.default_write_group_id,
-              ${effectiveScopeColumns()}
+              k.read_group_ids, k.write_group_ids
   `);
-  const row = (rows as unknown as Array<ScopeRow & { user_id: string; oauth_client_id: string }>)[0];
+  const row = (rows as unknown as Array<{
+    user_id: string;
+    oauth_client_id: string;
+    default_write_group_id: string;
+    read_group_ids: string[];
+    write_group_ids: string[];
+  }>)[0];
   if (!row) return null;
   return {
     userId: row.user_id,
     oauthClientId: row.oauth_client_id,
-    readGroupIds: row.effective_read_ids,
-    writeGroupIds: row.effective_write_ids,
+    readGroupIds: row.read_group_ids,
+    writeGroupIds: row.write_group_ids,
     storedDefaultWriteGroupId: row.default_write_group_id,
   };
 }

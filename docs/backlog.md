@@ -47,10 +47,6 @@ API keys freeze their read scope at mint time, so a key created before an import
 
 Since 2026-09-19 a key's scope follows live membership: when its owner leaves a recipe book (or is removed), the key stops reading and writing that book on its next request, and gets it back if they rejoin. The agent sees the book vanish from its briefing, and a deposit that relied on a now-missing default is refused with a message naming `recipe_book`. The human sees nothing: the API Keys page still lists the key with its original books. Show granted-versus-effective books on the keys page (and the OAuth connections view, once that exists), so "my agent can't see the team book any more" has an answer in the UI.
 
-### `[DECISION NEEDED]` OAuth refresh narrows a connection's grant permanently; scoped keys narrow reversibly
-
-OAuth refresh re-derives scope from live membership, so a connection refreshed while its owner is out of a book is minted without that book and does not regain it on rejoin (re-consent does). A scoped or daily key's stored grant is never rewritten, so it regains the book. Both fail safe; they differ in what re-adding a member restores. Decide whether refresh should instead carry the stored grant forward unchanged and rely on the per-request intersection alone, which would make the two behave the same.
-
 ---
 
 ## Evidence ingestion

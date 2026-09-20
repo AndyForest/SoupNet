@@ -367,39 +367,48 @@ describe.skipIf(!canConnect() || !BASE)("key scope follows live membership and a
   });
 
   describe("OAuth refresh after a membership change", () => {
-    it("does not carry a book the owner has left into the new bundle", async () => {
+    it("a refreshed token cannot reach a book the owner has left, and gets it back when they are re-added", { timeout: 60_000 }, async () => {
       const bundle = await mintBundle(member, [member.personalBookId, shared.id]);
-      expect((await grantedBooks(bundle.access)).read).toContain(shared.id);
+      const before = await visibleOn(bundle.access);
+      expect(before).toEqual(allSurfaces(true, before));
 
+      let refreshed = "";
       await removeMember();
       try {
         const res = await refresh(bundle.refresh);
         expect(res.status).toBe(200);
-        const next = (await res.json()) as TokenBody;
-        const granted = await grantedBooks(next.access_token!);
-        expect(granted.read).toEqual([member.personalBookId]);
-        expect(granted.write).toEqual([member.personalBookId]);
+        refreshed = ((await res.json()) as TokenBody).access_token!;
+
+        // Reach is decided at authentication, not at rotation: the new token
+        // is a good token that simply cannot see the book.
+        const gone = await visibleOn(refreshed);
+        expect(gone).toEqual(allSurfaces(false, gone));
       } finally {
         await addMember();
       }
+
+      // The grant itself was carried forward, so rejoining restores the book
+      // on the same connection with no new consent, as it does for a scoped key.
+      const back = await visibleOn(refreshed);
+      expect(back).toEqual(allSurfaces(true, back));
+      expect((await grantedBooks(refreshed)).read).toContain(shared.id);
     });
 
-    it("refuses, without burning the token, when every granted book has fallen away", async () => {
+    it("still rotates when every granted book has fallen away; the token reaches nothing until they are back", { timeout: 60_000 }, async () => {
       const bundle = await mintBundle(member, [shared.id]);
+      let refreshed = "";
       await removeMember();
-      let before = 0;
       try {
-        before = await keyCountFor(member.userId);
         const res = await refresh(bundle.refresh);
-        expect(res.status).toBe(400);
-        expect(((await res.json()) as TokenBody).error).toBe("invalid_grant");
-        expect(await keyCountFor(member.userId)).toBe(before);
+        expect(res.status).toBe(200);
+        refreshed = ((await res.json()) as TokenBody).access_token!;
+        const gone = await visibleOn(refreshed);
+        expect(gone).toEqual(allSurfaces(false, gone));
       } finally {
         await addMember();
       }
-      // Reversible: once they are a member again the same token rotates.
-      const res = await refresh(bundle.refresh);
-      expect(res.status).toBe(200);
+      const back = await visibleOn(refreshed);
+      expect(back).toEqual(allSurfaces(true, back));
     });
   });
 

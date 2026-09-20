@@ -271,15 +271,15 @@ describe.skipIf(!canConnect() || !BASE)("authz seam — API-key authentication",
       return sha256hex(bundle.refreshToken);
     }
 
-    it("is single-use and returns effective scope, not the stored grant", async () => {
+    it("is single-use and returns the stored grant unchanged (reach is decided at authentication)", async () => {
       const hash = await mintBundle([sharedBookId, member.personalBookId]);
       await removeMember();
       try {
         const first = await authz.consumeRefreshToken(getDb(), hash);
         expect(first).not.toBeNull();
         expect(first!.userId).toBe(member.userId);
-        expect(first!.readGroupIds).toEqual([member.personalBookId]);
-        expect(first!.writeGroupIds).toEqual([member.personalBookId]);
+        expect([...first!.readGroupIds].sort()).toEqual([sharedBookId, member.personalBookId].sort());
+        expect([...first!.writeGroupIds].sort()).toEqual([sharedBookId, member.personalBookId].sort());
         expect(first!.storedDefaultWriteGroupId).toBe(member.personalBookId);
         expect(await authz.consumeRefreshToken(getDb(), hash)).toBeNull();
 
