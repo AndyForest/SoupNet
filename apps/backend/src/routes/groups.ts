@@ -4,9 +4,22 @@ import { getDb } from "../db";
 import { requireAuth, requireVerifiedEmail } from "../auth";
 import type { AppEnv } from "../types";
 import { sql } from "drizzle-orm";
-import { groups, groupMembers } from "@soupnet/db";
+import { groups } from "@soupnet/db";
 import { writeAudit } from "../services/audit-log.service";
 import { normalizeEmail } from "../lib/normalize-email";
+import {
+  roleIn,
+  isMember,
+  isOwner,
+  isOwnerOrAdmin,
+  booksFor,
+  listMembers,
+  addCreatorAsOwner,
+  addMember,
+  countOwners,
+  removeMember,
+  updateDailyPrefs,
+} from "../authz";
 
 // Description cap is 2000 on every surface — the MCP
 // update_recipe_book_description tool already accepted 2000, and the REST cap
@@ -38,16 +51,7 @@ groupsRouter.use("/*", requireAuth, requireVerifiedEmail);
 // GET /groups — list user's groups (with per-user daily-link prefs)
 groupsRouter.get("/", async (c) => {
   const user = c.get("user");
-  const rows = await getDb().execute(sql`
-    SELECT g.id, g.name, g.slug, g.description, g.organization_id, g.created_at,
-           gm.role as member_role,
-           gm.daily_read as daily_read,
-           gm.daily_write as daily_write
-    FROM claimnet.groups g
-    JOIN claimnet.group_members gm ON gm.group_id = g.id
-    WHERE gm.user_id = ${user.id}::uuid
-    ORDER BY g.created_at DESC
-  `);
+  const rows = await booksFor(getDb(), user.id);
   return c.json({ ok: true, data: rows });
 });
 
@@ -83,13 +87,7 @@ groupsRouter.post("/", async (c) => {
   // Add creator as owner, auto-opted-in for daily-link read + write. The
   // "new groups default to excluded" rule applies to memberships gained
   // via invite accept (see invitations.ts), not to groups you create.
-  await db.insert(groupMembers).values({
-    groupId: group.id,
-    userId: user.id,
-    role: "owner",
-    dailyRead: true,
-    dailyWrite: true,
-  });
+  await addCreatorAsOwner(db, group.id, user.id);
 
   return c.json({ ok: true, data: { id: group.id, name, slug } }, 201);
 });
@@ -111,12 +109,7 @@ groupsRouter.put("/:id", async (c) => {
   const db = getDb();
 
   // Owner-only. The same pattern DELETE /:id/members/:userId uses.
-  const roleRows = await db.execute(sql`
-    SELECT role FROM claimnet.group_members
-    WHERE group_id = ${groupId}::uuid AND user_id = ${user.id}::uuid
-  `);
-  const role = (roleRows as unknown as Array<{ role: string }>)[0]?.role;
-  if (role !== "owner") {
+  if (!isOwner(await roleIn(db, user.id, groupId))) {
     return c.json({ ok: false, error: "Only recipe-book owners can edit recipe-book details" }, 403);
   }
 
@@ -203,21 +196,11 @@ groupsRouter.get("/:id/members", async (c) => {
   const db = getDb();
 
   // Verify requester is a member of the group
-  const membership = await db.execute(sql`
-    SELECT role FROM claimnet.group_members
-    WHERE group_id = ${groupId}::uuid AND user_id = ${user.id}::uuid
-  `);
-  if ((membership as unknown[]).length === 0) {
+  if (!(await isMember(db, user.id, groupId))) {
     return c.json({ ok: false, error: "Not a member of this recipe book" }, 403);
   }
 
-  const members = await db.execute(sql`
-    SELECT gm.user_id, u.email, gm.role, gm.joined_at
-    FROM claimnet.group_members gm
-    JOIN claimnet.users u ON u.id = gm.user_id
-    WHERE gm.group_id = ${groupId}::uuid
-    ORDER BY gm.joined_at ASC
-  `);
+  const members = await listMembers(db, groupId);
 
   return c.json({ ok: true, data: members });
 });
@@ -235,12 +218,7 @@ groupsRouter.post("/:id/members", async (c) => {
   const db = getDb();
 
   // Verify requester is owner or admin of the group
-  const requesterRole = await db.execute(sql`
-    SELECT role FROM claimnet.group_members
-    WHERE group_id = ${groupId}::uuid AND user_id = ${user.id}::uuid
-  `);
-  const role = (requesterRole as unknown as Array<{ role: string }>)[0]?.role;
-  if (role !== "owner" && role !== "admin") {
+  if (!isOwnerOrAdmin(await roleIn(db, user.id, groupId))) {
     return c.json({ ok: false, error: "Only recipe-book owners and admins can add members" }, 403);
   }
 
@@ -259,11 +237,7 @@ groupsRouter.post("/:id/members", async (c) => {
   // Add to group (ON CONFLICT = already a member, no-op). Directly-added
   // members default to excluded from daily-link read/write — same anti-spam
   // posture as invite-accept. The new member can opt in on the Groups page.
-  await db.execute(sql`
-    INSERT INTO claimnet.group_members (group_id, user_id, role)
-    VALUES (${groupId}::uuid, ${target.id}::uuid, ${parsed.data.role})
-    ON CONFLICT (group_id, user_id) DO NOTHING
-  `);
+  await addMember(db, groupId, target.id, parsed.data.role);
 
   return c.json({
     ok: true,
@@ -298,12 +272,7 @@ groupsRouter.post("/:id/invite", async (c) => {
   const db = getDb();
 
   // Verify requester is owner or admin
-  const requesterRole = await db.execute(sql`
-    SELECT role FROM claimnet.group_members
-    WHERE group_id = ${groupId}::uuid AND user_id = ${user.id}::uuid
-  `);
-  const role = (requesterRole as unknown as Array<{ role: string }>)[0]?.role;
-  if (role !== "owner" && role !== "admin") {
+  if (!isOwnerOrAdmin(await roleIn(db, user.id, groupId))) {
     return c.json({ ok: false, error: "Only recipe-book owners and admins can send invitations" }, 403);
   }
 
@@ -403,12 +372,7 @@ groupsRouter.get("/:id/invitations", async (c) => {
   const groupId = c.req.param("id");
   const db = getDb();
 
-  const requesterRole = await db.execute(sql`
-    SELECT role FROM claimnet.group_members
-    WHERE group_id = ${groupId}::uuid AND user_id = ${user.id}::uuid
-  `);
-  const role = (requesterRole as unknown as Array<{ role: string }>)[0]?.role;
-  if (role !== "owner" && role !== "admin") {
+  if (!isOwnerOrAdmin(await roleIn(db, user.id, groupId))) {
     return c.json({ ok: false, error: "Only recipe-book owners and admins can view invitations" }, 403);
   }
 
@@ -462,12 +426,7 @@ groupsRouter.delete("/:id/invitations/:inviteId", async (c) => {
   const inviteId = c.req.param("inviteId");
   const db = getDb();
 
-  const requesterRole = await db.execute(sql`
-    SELECT role FROM claimnet.group_members
-    WHERE group_id = ${groupId}::uuid AND user_id = ${user.id}::uuid
-  `);
-  const role = (requesterRole as unknown as Array<{ role: string }>)[0]?.role;
-  if (role !== "owner" && role !== "admin") {
+  if (!isOwnerOrAdmin(await roleIn(db, user.id, groupId))) {
     return c.json({ ok: false, error: "Only recipe-book owners and admins can revoke invitations" }, 403);
   }
 
@@ -497,31 +456,18 @@ groupsRouter.delete("/:id/members/:userId", async (c) => {
   const db = getDb();
 
   // Verify requester is owner
-  const requesterRole = await db.execute(sql`
-    SELECT role FROM claimnet.group_members
-    WHERE group_id = ${groupId}::uuid AND user_id = ${user.id}::uuid
-  `);
-  const role = (requesterRole as unknown as Array<{ role: string }>)[0]?.role;
-  if (role !== "owner") {
+  if (!isOwner(await roleIn(db, user.id, groupId))) {
     return c.json({ ok: false, error: "Only recipe-book owners can remove members" }, 403);
   }
 
   // Prevent removing self if last owner
   if (targetUserId === user.id) {
-    const ownerCount = await db.execute(sql`
-      SELECT count(*)::int AS total FROM claimnet.group_members
-      WHERE group_id = ${groupId}::uuid AND role = 'owner'
-    `);
-    const count = ((ownerCount as unknown as Array<{ total: number }>)[0]?.total) ?? 0;
-    if (count <= 1) {
+    if ((await countOwners(db, groupId)) <= 1) {
       return c.json({ ok: false, error: "Cannot remove the last owner of a recipe book" }, 400);
     }
   }
 
-  await db.execute(sql`
-    DELETE FROM claimnet.group_members
-    WHERE group_id = ${groupId}::uuid AND user_id = ${targetUserId}::uuid
-  `);
+  await removeMember(db, groupId, targetUserId);
 
   return c.json({ ok: true });
 });
@@ -549,16 +495,9 @@ groupsRouter.put("/:id/daily-prefs", async (c) => {
   const db = getDb();
 
   // Membership is the only required check — any role can manage their own
-  // prefs for groups they're a member of.
-  const result = await db.execute(sql`
-    UPDATE claimnet.group_members
-    SET
-      daily_read = COALESCE(${parsed.data.dailyRead ?? null}::boolean, daily_read),
-      daily_write = COALESCE(${parsed.data.dailyWrite ?? null}::boolean, daily_write)
-    WHERE group_id = ${groupId}::uuid AND user_id = ${user.id}::uuid
-    RETURNING daily_read AS "dailyRead", daily_write AS "dailyWrite"
-  `);
-  const row = (result as unknown as Array<{ dailyRead: boolean; dailyWrite: boolean }>)[0];
+  // prefs for groups they're a member of. The UPDATE is its own gate: a
+  // non-member matches no row and comes back null.
+  const row = await updateDailyPrefs(db, groupId, user.id, parsed.data);
   if (!row) {
     return c.json({ ok: false, error: "Not a member of this recipe book" }, 403);
   }
