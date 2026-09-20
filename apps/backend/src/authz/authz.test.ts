@@ -279,7 +279,7 @@ describe.skipIf(!canConnect() || !BASE)("authz seam (DB-bound)", () => {
   describe("removeMember", () => {
     it("removes the row: role, membership, book list, and trace read all close", async () => {
       const db = getDb();
-      await authz.removeMember(db, bookId, member.userId);
+      expect(await authz.removeMember(db, bookId, member.userId)).toBe("removed");
 
       expect(await authz.roleIn(db, member.userId, bookId)).toBeNull();
       expect(await authz.isMember(db, member.userId, bookId)).toBe(false);
@@ -290,17 +290,29 @@ describe.skipIf(!canConnect() || !BASE)("authz seam (DB-bound)", () => {
 
     it("is a no-op for a non-member", async () => {
       const db = getDb();
-      await authz.removeMember(db, bookId, outsider.userId);
+      expect(await authz.removeMember(db, bookId, outsider.userId)).toBe("not_a_member");
       expect(await authz.countOwners(db, bookId)).toBe(1);
       expect((await authz.listMembers(db, bookId)).length).toBe(1);
     });
 
+    it("refuses to remove the book's only owner (concurrency: last-owner.test.ts)", async () => {
+      const db = getDb();
+      expect(await authz.removeMember(db, bookId, owner.userId)).toBe("last_owner");
+      expect(await authz.removeMember(db, bookId, owner.userId.toUpperCase())).toBe("last_owner");
+      expect(await authz.countOwners(db, bookId)).toBe(1);
+      expect(await authz.roleIn(db, owner.userId, bookId)).toBe("owner");
+    });
+
     it("the author keeps read access to their own recipe after leaving the book", async () => {
       const db = getDb();
-      // The module does not enforce the last-owner rule — the route does, using
-      // countOwners. Removing the sole owner here is what makes this case
-      // reachable, and is the last thing this suite does to the book.
-      await authz.removeMember(db, bookId, owner.userId);
+      // The module will not remove a sole owner, so the row is taken out
+      // directly to make this case reachable. It is the last thing this suite
+      // does to the book.
+      const { sql } = await import("drizzle-orm");
+      await db.execute(sql`
+        DELETE FROM claimnet.group_members
+        WHERE group_id = ${bookId}::uuid AND user_id = ${owner.userId}::uuid
+      `);
       expect(await authz.countOwners(db, bookId)).toBe(0);
       expect(await authz.roleIn(db, owner.userId, bookId)).toBeNull();
       expect(await authz.canReadTrace(db, traceId, owner.userId)).toBe(true);

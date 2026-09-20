@@ -75,7 +75,7 @@ export async function addMember(
   `);
 }
 
-/** How many owners a book has. The last-owner rule reads this. */
+/** How many owners a book has. (The last-owner rule itself lives in `removeMember`.) */
 export async function countOwners(db: PostgresJsDatabase, bookId: string): Promise<number> {
   const rows = await db.execute(sql`
     SELECT count(*)::int AS total FROM claimnet.group_members gm
@@ -85,19 +85,55 @@ export async function countOwners(db: PostgresJsDatabase, bookId: string): Promi
 }
 
 /**
- * Remove a user's membership row. Not a member → no-op. Addresses the stored
- * row by its key rather than through the membership condition: a row that no
- * longer counts as a membership must still be removable.
+ * What `removeMember` did:
+ *   - `removed`      — the row is gone
+ *   - `not_a_member` — there was no row; nothing changed
+ *   - `last_owner`   — refused: the user is the book's only owner; nothing changed
+ */
+export type RemoveMemberResult = "removed" | "not_a_member" | "last_owner";
+
+/**
+ * Remove a user's membership row — unless that would leave the book with no
+ * owner. The rule is part of the removal itself, so no caller can forget it
+ * or get it subtly wrong:
+ *
+ *   - Ids are compared by the database as uuids, never as strings, so however
+ *     the caller's copy of an id is written it names the same member.
+ *   - The book's owner rows are locked (in a fixed order) before the decision.
+ *     Two owners leaving at the same moment are serialized: the second waits,
+ *     then decides on what the first left behind, and is refused.
+ *
+ * Pass a transaction handle as `db` to make the removal part of a larger unit;
+ * the locks are then held until that transaction ends.
+ *
+ * The DELETE addresses the stored row by its key rather than through the
+ * membership condition: a row that no longer counts as a membership must still
+ * be removable.
  */
 export async function removeMember(
   db: PostgresJsDatabase,
   bookId: string,
   userId: string,
-): Promise<void> {
-  await db.execute(sql`
-    DELETE FROM claimnet.group_members
-    WHERE group_id = ${bookId}::uuid AND user_id = ${userId}::uuid
-  `);
+): Promise<RemoveMemberResult> {
+  return db.transaction(async (tx) => {
+    const ownerRows = await tx.execute(sql`
+      SELECT ${membershipOf("gm", userId)} AS "isTarget"
+      FROM claimnet.group_members gm
+      WHERE gm.group_id = ${bookId}::uuid AND gm.role = 'owner' AND ${countsAsMembership("gm")}
+      ORDER BY gm.id
+      FOR UPDATE OF gm
+    `);
+    const owners = ownerRows as unknown as Array<{ isTarget: boolean }>;
+    const targetIsOwner = owners.some((o) => o.isTarget === true);
+    if (targetIsOwner && owners.length <= 1) return "last_owner";
+
+    const deleted = await tx.execute(sql`
+      DELETE FROM claimnet.group_members
+      WHERE group_id = ${bookId}::uuid AND user_id = ${userId}::uuid
+      RETURNING id
+    `);
+    return (deleted as unknown as unknown[]).length > 0 ? "removed" : "not_a_member";
+  });
 }
 
 /**
