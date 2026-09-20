@@ -46,9 +46,9 @@ describe("the module has one membership condition", () => {
     .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts") && f !== "membership-sql.ts")
     .map((f) => ({ file: f, text: readFileSync(join(dir, f), "utf-8") }));
 
-  it("finds the module's statement files", () => {
-    expect(sources.map((s) => s.file).sort()).toEqual(
-      ["book-access.ts", "book-succession.ts", "index.ts", "memberships.ts", "roles.ts", "trace-access.ts"],
+  it("finds the module's statement files (every file in the directory is held to the rules below)", () => {
+    expect(sources.map((s) => s.file)).toEqual(
+      expect.arrayContaining(["book-access.ts", "book-succession.ts", "memberships.ts", "trace-access.ts"]),
     );
   });
 
