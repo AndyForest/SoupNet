@@ -19,27 +19,9 @@ import {
 } from "../services/trace-move.service";
 import { writeAudit } from "../services/audit-log.service";
 import { TRACE_REACTIONS, vocab, authorizeTraceMove } from "@soupnet/domain";
+import { bookIdsFor, roleIn, canReadTrace, mayReadTrace, isOwnerOrAdmin } from "../authz";
 
 const traces = new Hono<AppEnv>();
-
-/** Shared read-access gate for a trace: the requester owns it or is a member
- *  of its recipe book. Returns true when readable. Same predicate as
- *  GET /traces/:id. */
-async function canReadTrace(
-  db: ReturnType<typeof getDb>,
-  traceId: string,
-  userId: string,
-): Promise<boolean> {
-  const rows = await db.execute(sql`
-    SELECT t.id
-    FROM claimnet.traces t
-    LEFT JOIN claimnet.group_members gm
-      ON gm.group_id = t.group_id AND gm.user_id = ${userId}::uuid
-    WHERE t.id = ${traceId}::uuid
-      AND (t.user_id = ${userId}::uuid OR gm.user_id IS NOT NULL)
-  `);
-  return (rows as unknown as Array<{ id: string }>).length > 0;
-}
 
 // Secure-by-default: every JWT-authed route also requires email verification.
 // See routes/auth.ts for the (very small) opt-out list.
@@ -53,12 +35,7 @@ traces.get("/map", async (c) => {
   const db = getDb();
 
   // Get user's group IDs
-  const groupRows = await db.execute(sql`
-    SELECT group_id AS "groupId"
-    FROM claimnet.group_members
-    WHERE user_id = ${user.id}::uuid
-  `);
-  const groupIds = (groupRows as unknown as Array<{ groupId: string }>).map((r) => r.groupId);
+  const groupIds = await bookIdsFor(db, user.id);
 
   if (groupIds.length === 0) {
     return c.json({ ok: true, data: { clusters: [], unclustered: [], meta: { totalTraces: 0, tracesInScope: 0, k: 0 } } });
@@ -313,15 +290,11 @@ traces.get("/", async (c) => {
   const groupId = c.req.query("groupId");
 
   if (groupId) {
-    const memberRows = await db.execute(sql`
-      SELECT role FROM claimnet.group_members
-      WHERE group_id = ${groupId}::uuid AND user_id = ${user.id}::uuid
-    `);
-    const role = (memberRows as unknown as Array<{ role: string }>)[0]?.role;
+    const role = await roleIn(db, user.id, groupId);
     if (!role) {
       return c.json({ ok: false, error: "Not a member of that group" }, 403);
     }
-    const isGroupAdmin = role === "owner" || role === "admin";
+    const isGroupAdmin = isOwnerOrAdmin(role);
     const isSystem = user.role === "system";
 
     const rows = await db.execute(sql`
@@ -550,16 +523,14 @@ traces.put("/feedback/:feedbackId/star", async (c) => {
 
   // ACL through the feedback row's trace — reader access required. Missing
   // feedback row and unreadable trace collapse to the same 404.
+  // (A feedback row about a search has no trace, and is a 404 here too.)
   const rows = await db.execute(sql`
-    SELECT cf.id
+    SELECT cf.trace_id AS "traceId"
     FROM claimnet.check_feedback cf
-    JOIN claimnet.traces t ON t.id = cf.trace_id
-    LEFT JOIN claimnet.group_members gm
-      ON gm.group_id = t.group_id AND gm.user_id = ${user.id}::uuid
     WHERE cf.id = ${feedbackId}::uuid
-      AND (t.user_id = ${user.id}::uuid OR gm.user_id IS NOT NULL)
   `);
-  if ((rows as unknown as Array<{ id: string }>).length === 0) {
+  const feedbackTraceId = (rows as unknown as Array<{ traceId: string | null }>)[0]?.traceId;
+  if (!feedbackTraceId || !(await canReadTrace(db, feedbackTraceId, user.id))) {
     return c.json({ ok: false, error: "Feedback not found" }, 404);
   }
 
@@ -604,16 +575,12 @@ traces.get("/:id", async (c) => {
       t.updated_at AS "updatedAt",
       g.name AS "groupName",
       ak.label AS "apiKeyLabel",
-      u.email AS "userEmail",
-      gm.role AS "viewerGroupRole"
+      u.email AS "userEmail"
     FROM claimnet.traces t
     LEFT JOIN claimnet.groups g ON g.id = t.group_id
     LEFT JOIN claimnet.api_keys ak ON ak.id = t.api_key_id
     LEFT JOIN claimnet.users u ON u.id = t.user_id
-    LEFT JOIN claimnet.group_members gm
-      ON gm.group_id = t.group_id AND gm.user_id = ${user.id}::uuid
     WHERE t.id = ${traceId}::uuid
-      AND (t.user_id = ${user.id}::uuid OR gm.user_id IS NOT NULL)
   `);
 
   const trace = (traceRows as unknown as Record<string, unknown>[])[0];
@@ -621,9 +588,16 @@ traces.get("/:id", async (c) => {
     return c.json({ ok: false, error: "Trace not found" }, 404);
   }
 
-  const viewerGroupRole = trace["viewerGroupRole"] as string | null;
+  // Read gate: the author, or a member of the trace's book. An unreadable
+  // trace gets the same 404 as a missing one. The viewer's role drives the
+  // flags below and is not part of the payload.
+  const viewerGroupRole = await roleIn(db, user.id, trace["groupId"] as string);
   const isTraceOwner = trace["userId"] === user.id;
-  const isGroupAdmin = viewerGroupRole === "owner" || viewerGroupRole === "admin";
+  if (!mayReadTrace({ isAuthor: isTraceOwner, role: viewerGroupRole })) {
+    return c.json({ ok: false, error: "Trace not found" }, 404);
+  }
+
+  const isGroupAdmin = isOwnerOrAdmin(viewerGroupRole);
   const isSystem = user.role === "system";
   const canDelete = isTraceOwner || isGroupAdmin || isSystem;
   // Source gate only. Whether a given DESTINATION book will accept the recipe
@@ -680,13 +654,10 @@ traces.get("/:id", async (c) => {
     )
   `);
 
-  // viewerGroupRole was used to derive canDelete; don't leak it in the payload.
-  const { viewerGroupRole: _viewerGroupRole, ...tracePayload } = trace;
-
   return c.json({
     ok: true,
     data: {
-      ...tracePayload,
+      ...trace,
       canDelete,
       canMove,
       evidence: evidenceRows,
@@ -732,35 +703,32 @@ traces.patch("/:id", async (c) => {
     SELECT
       t.user_id AS "userId",
       t.group_id AS "groupId",
-      t.claim_text AS "claimText",
-      gm.role AS "sourceRole"
+      t.claim_text AS "claimText"
     FROM claimnet.traces t
-    LEFT JOIN claimnet.group_members gm
-      ON gm.group_id = t.group_id AND gm.user_id = ${user.id}::uuid
     WHERE t.id = ${traceId}::uuid
   `);
   const access = (accessRows as unknown as Array<{
-    userId: string; groupId: string; claimText: string; sourceRole: string | null;
+    userId: string; groupId: string; claimText: string;
   }>)[0];
 
   if (!access) return c.json({ ok: false, error: "Trace not found" }, 404);
+  const sourceRole = await roleIn(db, user.id, access.groupId);
 
   // Destination side: the user's role there, and the book's name for the
   // feedback row. A destination the user can't see resolves to no role, which
   // authorizeTraceMove rejects — so this never confirms a book's existence.
   const destRows = await db.execute(sql`
-    SELECT g.name AS "name", gm.role AS "role"
+    SELECT g.name AS "name"
     FROM claimnet.groups g
-    LEFT JOIN claimnet.group_members gm
-      ON gm.group_id = g.id AND gm.user_id = ${user.id}::uuid
     WHERE g.id = ${destGroupId}::uuid
   `);
-  const dest = (destRows as unknown as Array<{ name: string; role: string | null }>)[0];
+  const dest = (destRows as unknown as Array<{ name: string }>)[0];
+  const destRole = dest ? await roleIn(db, user.id, destGroupId) : null;
 
   const authz = authorizeTraceMove({
     isTraceOwner: access.userId === user.id,
-    sourceRole: access.sourceRole,
-    destRole: dest?.role ?? null,
+    sourceRole,
+    destRole,
     isSystem: user.role === "system",
   });
 
@@ -844,16 +812,13 @@ traces.delete("/:id", async (c) => {
     SELECT
       t.user_id AS "userId",
       t.group_id AS "groupId",
-      t.claim_text AS "claimText",
-      gm.role AS "viewerGroupRole"
+      t.claim_text AS "claimText"
     FROM claimnet.traces t
-    LEFT JOIN claimnet.group_members gm
-      ON gm.group_id = t.group_id AND gm.user_id = ${user.id}::uuid
     WHERE t.id = ${traceId}::uuid
   `);
 
   const access = (accessRows as unknown as Array<{
-    userId: string; groupId: string; claimText: string; viewerGroupRole: string | null;
+    userId: string; groupId: string; claimText: string;
   }>)[0];
 
   if (!access) {
@@ -861,7 +826,7 @@ traces.delete("/:id", async (c) => {
   }
 
   const isTraceOwner = access.userId === user.id;
-  const isGroupAdmin = access.viewerGroupRole === "owner" || access.viewerGroupRole === "admin";
+  const isGroupAdmin = isOwnerOrAdmin(await roleIn(db, user.id, access.groupId));
   const isSystem = user.role === "system";
 
   if (!isTraceOwner && !isGroupAdmin && !isSystem) {
