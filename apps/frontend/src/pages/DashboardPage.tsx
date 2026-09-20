@@ -7,6 +7,8 @@ import { Icon } from "../components/Icon.js";
 import { AgentTypePicker } from "../components/AgentTypePicker.js";
 import { CopyBriefingButton } from "../components/CopyBriefingButton.js";
 import { describeDailyReadScope } from "../lib/daily-scope.js";
+import { dailyKeyErrorCode } from "../lib/daily-key-error.js";
+import { DailyKeyError } from "../components/DailyKeyError.js";
 
 // Note: the email-verification banner that used to live here has been
 // replaced by the /verify-pending route, which is the only authed route an
@@ -142,8 +144,8 @@ export function DashboardPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const json = (await res.json()) as { ok: boolean; data?: { searchUrl: string } };
-      if (!json.ok || !json.data) throw new Error("Failed to generate key");
+      const json = (await res.json()) as { ok: boolean; error?: string; data?: { searchUrl: string } };
+      if (!json.ok || !json.data) throw new Error(dailyKeyErrorCode(json));
       return json.data;
     },
     onSuccess: (data) => {
@@ -399,7 +401,7 @@ export function DashboardPage() {
               <>
                 <p className="text-xs" style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-xs)" }}>
                   {/* Scope label mirrors the actual POST /keys/daily resolution
-                      (daily_read set, falling back to all) — see lib/daily-scope.ts. */}
+                      (exactly the daily_read set; none included means no key) — see lib/daily-scope.ts. */}
                   Generates a 24-hour key: reads {describeDailyReadScope(groups)}, writes to <strong>{selectedGroup?.name ?? "your recipe book"}</strong>.
                 </p>
                 <p className="text-xs" style={{ marginBottom: "var(--space-md)" }}>
@@ -422,6 +424,7 @@ export function DashboardPage() {
                     <Icon name="external-link" size={14} />
                     {dailyOpened ? "Opened!" : dailyGoMutation.isPending ? "Opening..." : "Open recipe check page"}
                   </button>
+                  <DailyKeyError error={dailyGoMutation.error?.message} />
                 </div>
               </>
             )}

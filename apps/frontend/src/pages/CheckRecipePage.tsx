@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { authFetch, API_BASE } from "../auth.js";
+import { dailyKeyErrorCode } from "../lib/daily-key-error.js";
+import { DailyKeyError } from "../components/DailyKeyError.js";
 import { Icon } from "../components/Icon.js";
 import { RecipeInstructions } from "../components/RecipeInstructions.js";
 
@@ -89,8 +91,8 @@ export function CheckRecipePage() {
     queryKey: ["check-key"],
     queryFn: async () => {
       const res = await authFetch("/keys/daily", { method: "POST" });
-      const json = (await res.json()) as { ok: boolean; data?: { key: string } };
-      if (!json.ok || !json.data) throw new Error("Failed to get API key");
+      const json = (await res.json()) as { ok: boolean; error?: string; data?: { key: string } };
+      if (!json.ok || !json.data) throw new Error(dailyKeyErrorCode(json, "Failed to get API key"));
       return json.data.key;
     },
     staleTime: 1000 * 60 * 60,
@@ -127,8 +129,8 @@ export function CheckRecipePage() {
   const agentLinkMutation = useMutation({
     mutationFn: async () => {
       const res = await authFetch("/keys/daily", { method: "POST" });
-      const json = (await res.json()) as { ok: boolean; data?: { searchUrl: string } };
-      if (!json.ok || !json.data) throw new Error("Failed to generate link");
+      const json = (await res.json()) as { ok: boolean; error?: string; data?: { searchUrl: string } };
+      if (!json.ok || !json.data) throw new Error(dailyKeyErrorCode(json, "Failed to generate link"));
       return json.data;
     },
     onSuccess: (data) => {
@@ -188,6 +190,13 @@ export function CheckRecipePage() {
           {agentLinkOpened ? "Opened!" : agentLinkMutation.isPending ? "Generating..." : "Go to daily recipe check link for agents"}
         </button>
       </div>
+      {/* This page mints a daily key on load (keyQuery) and again for the
+          agent link; both fail the same way when no book is included in
+          daily reads/writes, so say so here rather than only after Submit. */}
+      <DailyKeyError
+        error={keyQuery.error?.message ?? agentLinkMutation.error?.message}
+        style={{ fontSize: "0.875rem", marginBottom: "var(--space-md)" }}
+      />
 
       <form onSubmit={handleSubmit} style={{ marginBottom: "var(--space-2xl)" }}>
         <div style={{ marginBottom: "var(--space-md)" }}>

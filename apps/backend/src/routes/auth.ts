@@ -535,10 +535,13 @@ auth.get("/me/export", requireAuth, requireVerifiedEmail, async (c) => {
 // required (defends against stolen-session takeover deleting the account).
 // Hard-deletes everything attributable to the user via deleteUserCascade
 // (user-delete.service.ts — the single teardown path, see its header for
-// the full table list): traces with their evidence/references and the
-// embedding_sources/chunks/vectors that hold recipe + evidence text in
-// cleartext, check_feedback authored by the user's keys, uploads, api_keys,
-// oauth codes, owned orgs/groups, memberships, then the users row.
+// the full table list): the traces they authored with their
+// evidence/references and the embedding_sources/chunks/vectors that hold
+// recipe + evidence text in cleartext, check_feedback authored by the
+// user's keys, uploads, api_keys, oauth codes, memberships, their
+// organizations and the books in them that nobody else belongs to, then the
+// users row. A book they own that other people still belong to is handed on
+// to a remaining member with everyone else's recipes intact [F70].
 //
 // Deliberately retained (documented):
 //   - audit_log entries with actor_user_id=this user are left in place so the
@@ -581,11 +584,17 @@ auth.delete("/me", authRateLimit, requireAuth, async (c) => {
     return c.json({ ok: false, error: "incorrect password" }, 401);
   }
 
-  // Guard: shared (non-personal) organizations the user owns and that have
-  // other members can't be auto-cleaned by self-serve — destroying them
-  // would take other users' content with it. The user has to transfer
-  // ownership (admin work for now) before we can proceed. Personal orgs
-  // and shared orgs that are now sole-member are fine to cascade-delete.
+  // Guard: a shared (non-personal) organization the user owns that still has
+  // other members is not dissolved by self-serve deletion. This guard
+  // protects the ORGANIZATION, not recipes — deleteUserCascade on its own
+  // never removes another author's recipe and hands shared books on to a
+  // remaining member [F70]. But handing a shared organization's books into
+  // one member's personal organization is the wrong outcome for an
+  // organization other people rely on; who inherits an organization is a
+  // decision for its owner (transfer first — admin-assisted today, see
+  // docs/backlog.md) rather than a side effect of leaving. Dormant until a
+  // route can create non-personal organizations. Books in the user's
+  // PERSONAL organization never block: they are handed on by the cascade.
   const blockingOrgs = await db.execute(sql`
     SELECT o.id, o.name FROM claimnet.organizations o
     WHERE o.owner_id = ${user.id}::uuid
@@ -602,7 +611,7 @@ auth.delete("/me", authRateLimit, requireAuth, async (c) => {
       ok: false,
       error: "owned_shared_orgs_exist",
       message:
-        "You own organizations with other members. Transfer ownership or remove the other members before deleting your account.",
+        "You own a shared organization that other people still belong to. Transfer its ownership or remove the other members before deleting your account.",
       organizations: blockingOrgList,
     }, 409);
   }

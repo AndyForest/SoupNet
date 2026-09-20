@@ -39,10 +39,13 @@ keys.use("/*", requireAuth, requireVerifiedEmail);
 // scopes write to a single group (explicit override); label is a short
 // human-facing name (e.g. "Dashboard briefing — 2026-07-05") so the trace
 // attribution and API Keys list show something more useful than
-// "(unlabeled)". Without writeGroupId, the user's configured daily_read /
-// daily_write group_members flags determine the defaults. New groups
-// default to excluded from both; existing memberships were grandfathered to
-// included by migration 0016. See design-thinking.md §Configurable defaults
+// "(unlabeled)". Without writeGroupId, the user's configured daily_write
+// group_members flags determine the write set; the read set is always the
+// configured daily_read flags. With nothing configured for either, the mint
+// is refused (no_write_… / no_read_recipe_books_configured) rather than
+// defaulted. New groups default to excluded from both; existing memberships
+// were grandfathered to included by migration 0016. See design-thinking.md
+// §Configurable defaults
 // for the "daily agent link" buttons.
 keys.post("/daily", keyGenRateLimit, async (c) => {
   const user = c.get("user");
@@ -98,11 +101,21 @@ keys.post("/daily", keyGenRateLimit, async (c) => {
     }, 400);
   }
 
-  // Read scope: configured daily_read set, or fall back to all memberships
-  // when the user has none configured. The fallback matters only for users
-  // created before migration 0016 who then toggled everything off; new users
-  // get grandfathered state.
-  const readGroupIds = configuredReadGroupIds.length > 0 ? configuredReadGroupIds : allGroupIds;
+  // Read scope: exactly the configured daily_read set — never wider [F71].
+  // An empty set means the user has included nothing in daily reads (every
+  // book unticked, or only memberships gained by invite, which default to
+  // excluded). That is not "read everything": the key is refused with the
+  // same shape as the write side above, so the UI can point the user at the
+  // Recipe Books page to choose. There is deliberately no read override in
+  // the body — picking read books per key is what POST /keys/scoped is for.
+  if (configuredReadGroupIds.length === 0) {
+    return c.json({
+      ok: false,
+      error: "no_read_recipe_books_configured",
+      message: "No recipe books are included in daily-agent reads. Open the Recipe Books page and include at least one in reads, or create a scoped key to choose its books explicitly.",
+    }, 400);
+  }
+  const readGroupIds = configuredReadGroupIds;
 
   // Optional label (schema already supports it for scoped keys — see
   // POST /keys/scoped below). Trimmed and capped to match scopedKeySchema's

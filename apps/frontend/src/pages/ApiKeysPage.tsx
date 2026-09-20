@@ -2,6 +2,8 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { authFetch } from "../auth.js";
+import { dailyKeyErrorCode } from "../lib/daily-key-error.js";
+import { DailyKeyError } from "../components/DailyKeyError.js";
 import { Icon } from "../components/Icon.js";
 import { RecipeBookScopePicker } from "../components/RecipeBookScopePicker.js";
 import { useClipboard } from "../hooks/useClipboard.js";
@@ -85,7 +87,7 @@ export function ApiKeysPage() {
     mutationFn: async () => {
       const res = await authFetch("/keys/daily", { method: "POST" });
       const json = (await res.json()) as KeyResponse;
-      if (!json.ok) throw new Error(json.error ?? "Failed to generate key");
+      if (!json.ok) throw new Error(dailyKeyErrorCode(json));
       return json.data!;
     },
     onSuccess: (data) => {
@@ -207,11 +209,10 @@ export function ApiKeysPage() {
           {dailyKeyMutation.isPending ? "Generating..." : "Generate Link"}
         </button>
 
-        {dailyKeyMutation.isError && (
-          <p style={{ color: "var(--color-error)", fontSize: "0.875rem", marginTop: "var(--space-sm)" }}>
-            {dailyKeyMutation.error.message}
-          </p>
-        )}
+        <DailyKeyError
+          error={dailyKeyMutation.error?.message}
+          style={{ fontSize: "0.875rem", marginTop: "var(--space-sm)" }}
+        />
 
         {dailyKey && (
           <div style={{ marginTop: "var(--space-md)" }}>
