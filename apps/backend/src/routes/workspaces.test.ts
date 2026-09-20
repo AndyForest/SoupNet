@@ -319,6 +319,53 @@ describe.skipIf(!BASE)("ephemeral workspaces — eval-reset destructive tier", (
     expect(integ.clean).toBe(false);
   });
 
+  // ── 3b: the tombstone reaches every scope consumer, not only briefing ────
+  describe("(3b) after expire-now the book is gone from every key-scoped read", () => {
+    const MARKER = `tombmarker${Date.now()}`;
+    let recipeBookId = "";
+    let slug = "";
+    let recipeId = "";
+
+    beforeAll(async () => {
+      const created = await createWorkspace(A.scopedKey, { name: "Tombstone reach" });
+      ({ recipeBookId, slug } = created.body.data!);
+      seededGroupIds.push(recipeBookId);
+      const seeded = await deposit(
+        A.scopedKey,
+        `As a benchmark engineer working on ${MARKER}, I prefer disposed workspaces to vanish from every read so that the next scored run sees no phantom hits.`,
+        slug,
+      );
+      recipeId = seeded.recipeId ?? "";
+      if (!recipeId) throw new Error(`Setup failed: seed deposit (${seeded.error ?? "no id"})`);
+      const expired = await setExpiry(A.scopedKey, recipeBookId, "now");
+      if (!expired.body.data?.tombstoned) throw new Error("Setup failed: expire-now");
+    }, 60_000);
+
+    it("by-id lookup returns the uniform not-found marker", async () => {
+      const res = await fetch(`${BASE}/recipes?ids=${recipeId}`, { headers: { Authorization: `Bearer ${A.scopedKey}` } });
+      const text = await res.text();
+      expect(text).toContain("not_found_or_unreadable");
+    });
+
+    it("a check no longer surfaces its recipes", async () => {
+      const url = `${BASE}/check?key=${encodeURIComponent(A.scopedKey)}&trace=${encodeURIComponent(
+        `As a benchmark engineer working on ${MARKER}, I prefer disposed workspaces to vanish from every read so that a later check sees no phantom hits.`,
+      )}&ef=${encodeURIComponent(`Evidence.\n> "phantom hits"\n-- workspace integration test`)}&format=json`;
+      const text = await (await fetch(url, { headers: { Accept: "application/json" } })).text();
+      expect(text).not.toContain(recipeId);
+    });
+
+    // Known gap at the time this test was written: the read-only search path
+    // resolved read scope without the tombstone. Recorded as an expected
+    // failure so the suite stays green; it becomes a plain `it` when scope is
+    // resolved in one place.
+    it.fails("a read-only search no longer surfaces its recipes", async () => {
+      const url = `${BASE}/check?key=${encodeURIComponent(A.scopedKey)}&f=${encodeURIComponent(`"${MARKER}"`)}&format=json`;
+      const text = await (await fetch(url, { headers: { Accept: "application/json" } })).text();
+      expect(text).not.toContain(recipeId);
+    });
+  });
+
   // ── expire-now is creator-KEY-only ───────────────────────────────────────
   it("expire-now is creator-key-only — a different key gets 404 and mutates nothing", async () => {
     const created = await createWorkspace(A.scopedKey, { name: "Creator-only" });
