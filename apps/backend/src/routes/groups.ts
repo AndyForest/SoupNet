@@ -233,14 +233,25 @@ groupsRouter.post("/:id/members", async (c) => {
     }, 404);
   }
 
-  // Add to group (ON CONFLICT = already a member, no-op). Directly-added
-  // members default to excluded from daily-link read/write — same anti-spam
-  // posture as invite-accept. The new member can opt in on the Groups page.
-  await addMember(db, groupId, target.id, parsed.data.role);
+  // Add to group. Directly-added members default to excluded from daily-link
+  // read/write — same anti-spam posture as invite-accept. The new member can
+  // opt in on the Groups page.
+  const added = await addMember(db, groupId, target.id, parsed.data.role);
+
+  // Already a member: nothing was written, and this endpoint never changes an
+  // existing member's role. Say so (409, as other "already exists" answers
+  // are), naming the role they actually hold rather than the one asked for.
+  if (!added.created) {
+    return c.json({
+      ok: false,
+      error: "Already a member of this recipe book",
+      member: { userId: target.id, email: target.email, role: added.role },
+    }, 409);
+  }
 
   return c.json({
     ok: true,
-    data: { userId: target.id, email: target.email, role: parsed.data.role },
+    data: { userId: target.id, email: target.email, role: added.role },
   }, 201);
 });
 

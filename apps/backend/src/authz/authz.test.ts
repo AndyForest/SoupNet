@@ -158,7 +158,8 @@ describe.skipIf(!canConnect() || !BASE)("authz seam (DB-bound)", () => {
   describe("addMember", () => {
     it("adds with the given role and the excluded-by-default daily prefs", async () => {
       const db = getDb();
-      await authz.addMember(db, bookId, member.userId, "member");
+      expect(await authz.addMember(db, bookId, member.userId, "member"))
+        .toEqual({ created: true, role: "member" });
 
       expect(await authz.roleIn(db, member.userId, bookId)).toBe("member");
       expect(await authz.isMember(db, member.userId, bookId)).toBe(true);
@@ -167,11 +168,13 @@ describe.skipIf(!canConnect() || !BASE)("authz seam (DB-bound)", () => {
       expect(theirs?.daily_write).toBe(false);
     });
 
-    it("is a no-op for an existing member — the stored role is kept", async () => {
+    it("writes nothing for an existing member, and reports the role they actually hold", async () => {
       const db = getDb();
-      await authz.addMember(db, bookId, member.userId, "admin");
+      expect(await authz.addMember(db, bookId, member.userId, "admin"))
+        .toEqual({ created: false, role: "member" });
       expect(await authz.roleIn(db, member.userId, bookId)).toBe("member");
-      await authz.addMember(db, bookId, owner.userId, "member");
+      expect(await authz.addMember(db, bookId, owner.userId, "member"))
+        .toEqual({ created: false, role: "owner" });
       expect(await authz.roleIn(db, owner.userId, bookId)).toBe("owner");
       expect(await authz.countOwners(db, bookId)).toBe(1);
     });

@@ -57,22 +57,50 @@ export async function addCreatorAsOwner(
   });
 }
 
+/** What `addMember` found or made: the stored role, and whether this call created the row. */
+export interface AddMemberResult {
+  created: boolean;
+  /** The role the row actually holds — NOT necessarily the role that was asked for. */
+  role: string;
+}
+
 /**
- * Add a user to a book. Already a member → no-op; their existing role is
- * kept. Daily-link read/write take the column defaults (excluded) — the same
- * anti-spam posture as accepting an invitation; the new member opts in.
+ * Add a user to a book. Already a member → nothing is written and their
+ * existing role is kept; this function adds, it never changes a role. Either
+ * way it returns the row as stored, so a caller reports what is true rather
+ * than what it asked for. Daily-link read/write take the column defaults
+ * (excluded) — the same anti-spam posture as accepting an invitation; the new
+ * member opts in.
+ *
+ * Both statements address the stored row by its key (see membership-sql.ts on
+ * rows versus "is a member").
  */
 export async function addMember(
   db: PostgresJsDatabase,
   bookId: string,
   userId: string,
   role: "member" | "admin",
-): Promise<void> {
-  await db.execute(sql`
-    INSERT INTO claimnet.group_members (group_id, user_id, role)
-    VALUES (${bookId}::uuid, ${userId}::uuid, ${role})
-    ON CONFLICT (group_id, user_id) DO NOTHING
-  `);
+): Promise<AddMemberResult> {
+  // Two passes at most: the second only runs if the row that blocked the
+  // insert was removed before we could read it.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const inserted = await db.execute(sql`
+      INSERT INTO claimnet.group_members (group_id, user_id, role)
+      VALUES (${bookId}::uuid, ${userId}::uuid, ${role})
+      ON CONFLICT (group_id, user_id) DO NOTHING
+      RETURNING role
+    `);
+    const made = (inserted as unknown as Array<{ role: string }>)[0];
+    if (made) return { created: true, role: made.role };
+
+    const existing = await db.execute(sql`
+      SELECT role FROM claimnet.group_members
+      WHERE group_id = ${bookId}::uuid AND user_id = ${userId}::uuid
+    `);
+    const found = (existing as unknown as Array<{ role: string }>)[0];
+    if (found) return { created: false, role: found.role };
+  }
+  throw new Error("addMember: membership row changed repeatedly while adding");
 }
 
 /** How many owners a book has. (The last-owner rule itself lives in `removeMember`.) */
