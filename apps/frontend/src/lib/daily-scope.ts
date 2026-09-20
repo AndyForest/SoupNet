@@ -2,8 +2,10 @@
  * Client-side mirror of the daily-key read-scope resolution in
  * apps/backend/src/routes/keys.ts (POST /keys/daily):
  *
- *   readGroupIds = configured daily_read set, or fall back to ALL
- *   memberships when the user has none configured.
+ *   readGroupIds = exactly the configured daily_read set. With none
+ *   configured the backend refuses to mint the key
+ *   (no_read_recipe_books_configured) — it never widens to every
+ *   membership [F71].
  *
  * The dashboard uses this to label the "Copy agent briefing" / daily-key
  * buttons with the books the key will actually read, instead of a static
@@ -19,20 +21,17 @@ export interface DailyReadBook {
 }
 
 export interface ResolvedDailyReadScope<T extends DailyReadBook> {
-  /** The books the daily key will read, after applying the fallback rule. */
+  /** The books the daily key will read: exactly the daily_read-flagged ones. */
   books: T[];
-  /** True when zero books are flagged daily_read, so the backend falls back to all memberships. */
-  usedFallback: boolean;
+  /** True when zero books are flagged daily_read — the backend will refuse to mint a daily key. */
+  noneConfigured: boolean;
 }
 
 export function resolveDailyReadBooks<T extends DailyReadBook>(
   allBooks: T[],
 ): ResolvedDailyReadScope<T> {
   const configured = allBooks.filter((b) => b.daily_read);
-  if (configured.length > 0) {
-    return { books: configured, usedFallback: false };
-  }
-  return { books: allBooks, usedFallback: true };
+  return { books: configured, noneConfigured: configured.length === 0 };
 }
 
 /**
@@ -54,17 +53,15 @@ export function formatBookList(names: string[], maxNamed = 3): string {
 
 /**
  * The full scope sentence fragment after "reads ". Kept pure so the exact
- * wording — including the honest fallback case — is unit-testable.
+ * wording — including the honest nothing-included case — is unit-testable.
  */
 export function describeDailyReadScope(
   allBooks: DailyReadBook[],
 ): string {
   if (allBooks.length === 0) return "your recipe books";
-  const { books, usedFallback } = resolveDailyReadBooks(allBooks);
-  if (usedFallback) {
-    return allBooks.length === 1
-      ? `your recipe book ${allBooks[0]!.name}`
-      : `all ${allBooks.length} of your recipe books (none are marked for daily reads yet, so all are included)`;
+  const { books, noneConfigured } = resolveDailyReadBooks(allBooks);
+  if (noneConfigured) {
+    return "no recipe books yet (include at least one in daily reads before generating a key)";
   }
   if (books.length === allBooks.length) {
     return allBooks.length === 1

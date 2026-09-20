@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
 import { authFetch } from "../auth.js";
 import { useClipboard } from "../hooks/useClipboard.js";
 import { substituteBriefingKey } from "../lib/briefing-key.js";
+import { dailyKeyErrorCode } from "../lib/daily-key-error.js";
+import { DailyKeyError } from "./DailyKeyError.js";
 import { Icon } from "./Icon.js";
 
 interface CopyBriefingButtonProps {
@@ -60,7 +61,7 @@ export function CopyBriefingButton({ writeRecipeBookId, label, style }: CopyBrie
       data?: { key: string; searchUrl: string };
     };
     if (!keyJson.ok || !keyJson.data) {
-      throw new Error(keyJson.error ?? "Failed to generate key");
+      throw new Error(dailyKeyErrorCode(keyJson));
     }
 
     const briefRes = await authFetch("/keys/briefing", {
@@ -97,18 +98,7 @@ export function CopyBriefingButton({ writeRecipeBookId, label, style }: CopyBrie
         <Icon name="copy" size={14} />
         {copied === "briefing" ? "Copied!" : pending ? "Generating..." : "Copy agent briefing"}
       </button>
-      {error && (
-        <p className="text-xs" style={{ color: "var(--color-error, #b3261e)", marginTop: "var(--space-xs)" }}>
-          {error === "no_write_recipe_books_configured" ? (
-            <>
-              No recipe book is set for daily writes yet — include one on the{" "}
-              <Link to="/app/recipe-books" style={{ color: "inherit" }}>Recipe Books page</Link>, then try again.
-            </>
-          ) : (
-            error
-          )}
-        </p>
-      )}
+      <DailyKeyError error={error} />
     </>
   );
 }
