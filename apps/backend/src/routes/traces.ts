@@ -9,19 +9,35 @@ import {
   getCachedMapLayout,
   setCachedMapLayout,
 } from "../services/map-layout-cache";
-import { deleteTraceCascade } from "../services/trace-delete.service";
+import { deleteTraceCascade, TraceDeleteSourceChangedError } from "../services/trace-delete.service";
 import {
   moveTraceToBook,
   TraceMoveNotFoundError,
+  TraceMoveSourceChangedError,
   TraceMoveSameBookError,
   TraceMoveDuplicateError,
   TraceMoveEvidenceNotFoundError,
 } from "../services/trace-move.service";
 import { writeAudit } from "../services/audit-log.service";
 import { TRACE_REACTIONS, vocab, authorizeTraceMove } from "@soupnet/domain";
-import { bookIdsFor, roleIn, canReadTrace, mayReadTrace, isOwnerOrAdmin } from "../authz";
+import {
+  bookIdsFor,
+  roleIn,
+  canReadTrace,
+  canReadTraceOfFeedback,
+  readableTraceFor,
+  roleInBookOfTrace,
+  isOwnerOrAdmin,
+} from "../authz";
 
 const traces = new Hono<AppEnv>();
+
+// Move and delete decide on the book the recipe was in when they looked. If it
+// has left that book by the time the service holds the row lock, nothing is
+// changed and the caller is asked to look again (409, the same status a
+// duplicate in the destination gets).
+const SOURCE_CHANGED_MESSAGE =
+  "This recipe changed recipe books while the request was in progress. Reload it and try again.";
 
 // Secure-by-default: every JWT-authed route also requires email verification.
 // See routes/auth.ts for the (very small) opt-out list.
@@ -524,13 +540,8 @@ traces.put("/feedback/:feedbackId/star", async (c) => {
   // ACL through the feedback row's trace — reader access required. Missing
   // feedback row and unreadable trace collapse to the same 404.
   // (A feedback row about a search has no trace, and is a 404 here too.)
-  const rows = await db.execute(sql`
-    SELECT cf.trace_id AS "traceId"
-    FROM claimnet.check_feedback cf
-    WHERE cf.id = ${feedbackId}::uuid
-  `);
-  const feedbackTraceId = (rows as unknown as Array<{ traceId: string | null }>)[0]?.traceId;
-  if (!feedbackTraceId || !(await canReadTrace(db, feedbackTraceId, user.id))) {
+  // One statement: feedback row → its trace → the caller's standing on it.
+  if (!(await canReadTraceOfFeedback(db, feedbackId, user.id))) {
     return c.json({ ok: false, error: "Feedback not found" }, 404);
   }
 
@@ -562,42 +573,18 @@ traces.get("/:id", async (c) => {
   const traceId = c.req.param("id");
   const db = getDb();
 
-  const traceRows = await db.execute(sql`
-    SELECT
-      t.id,
-      t.claim_text AS "claimText",
-      t.user_id AS "userId",
-      t.group_id AS "groupId",
-      t.api_key_id AS "apiKeyId",
-      t.format_adherence_score AS "formatAdherenceScore",
-      t.decided_at AS "decidedAt",
-      t.created_at AS "createdAt",
-      t.updated_at AS "updatedAt",
-      g.name AS "groupName",
-      ak.label AS "apiKeyLabel",
-      u.email AS "userEmail"
-    FROM claimnet.traces t
-    LEFT JOIN claimnet.groups g ON g.id = t.group_id
-    LEFT JOIN claimnet.api_keys ak ON ak.id = t.api_key_id
-    LEFT JOIN claimnet.users u ON u.id = t.user_id
-    WHERE t.id = ${traceId}::uuid
-  `);
-
-  const trace = (traceRows as unknown as Record<string, unknown>[])[0];
-  if (!trace) {
+  // Read gate and detail row in one statement: the author, or a member of the
+  // trace's book. An unreadable trace is the same null — and the same 404 — as
+  // a missing one. The viewer's role drives the flags below and is not part of
+  // the payload.
+  const found = await readableTraceFor(db, user.id, traceId);
+  if (!found) {
     return c.json({ ok: false, error: "Trace not found" }, 404);
   }
+  const { access, trace } = found;
+  const isTraceOwner = access.isAuthor;
 
-  // Read gate: the author, or a member of the trace's book. An unreadable
-  // trace gets the same 404 as a missing one. The viewer's role drives the
-  // flags below and is not part of the payload.
-  const viewerGroupRole = await roleIn(db, user.id, trace["groupId"] as string);
-  const isTraceOwner = trace["userId"] === user.id;
-  if (!mayReadTrace({ isAuthor: isTraceOwner, role: viewerGroupRole })) {
-    return c.json({ ok: false, error: "Trace not found" }, 404);
-  }
-
-  const isGroupAdmin = isOwnerOrAdmin(viewerGroupRole);
+  const isGroupAdmin = isOwnerOrAdmin(access.role);
   const isSystem = user.role === "system";
   const canDelete = isTraceOwner || isGroupAdmin || isSystem;
   // Source gate only. Whether a given DESTINATION book will accept the recipe
@@ -698,21 +685,10 @@ traces.patch("/:id", async (c) => {
     ? body.dropEvidenceIds.filter((id): id is string => typeof id === "string")
     : [];
 
-  // Source side: does the trace exist, and may this user move it out?
-  const accessRows = await db.execute(sql`
-    SELECT
-      t.user_id AS "userId",
-      t.group_id AS "groupId",
-      t.claim_text AS "claimText"
-    FROM claimnet.traces t
-    WHERE t.id = ${traceId}::uuid
-  `);
-  const access = (accessRows as unknown as Array<{
-    userId: string; groupId: string; claimText: string;
-  }>)[0];
-
+  // Source side, one statement: does the trace exist, which book is it in,
+  // and what is this user's standing on it?
+  const access = await roleInBookOfTrace(db, user.id, traceId);
   if (!access) return c.json({ ok: false, error: "Trace not found" }, 404);
-  const sourceRole = await roleIn(db, user.id, access.groupId);
 
   // Destination side: the user's role there, and the book's name for the
   // feedback row. A destination the user can't see resolves to no role, which
@@ -726,8 +702,8 @@ traces.patch("/:id", async (c) => {
   const destRole = dest ? await roleIn(db, user.id, destGroupId) : null;
 
   const authz = authorizeTraceMove({
-    isTraceOwner: access.userId === user.id,
-    sourceRole,
+    isTraceOwner: access.isAuthor,
+    sourceRole: access.role,
     destRole,
     isSystem: user.role === "system",
   });
@@ -743,6 +719,9 @@ traces.patch("/:id", async (c) => {
     const result = await moveTraceToBook({
       db,
       traceId,
+      // The book the source gate above was decided on. The service refuses if
+      // the recipe has left it by the time it holds the row lock.
+      authorizedSourceGroupId: access.bookId,
       destGroupId,
       destBookName: dest.name,
       actorUserId: user.id,
@@ -758,7 +737,7 @@ traces.patch("/:id", async (c) => {
       metadata: {
         fromGroupId: result.fromGroupId,
         toGroupId: result.toGroupId,
-        traceUserId: access.userId,
+        traceUserId: access.authorId,
         claimText: access.claimText,
         actorRelation: authz.actorRelation,
         evidenceRedacted: result.evidenceRedacted,
@@ -770,6 +749,9 @@ traces.patch("/:id", async (c) => {
   } catch (err) {
     if (err instanceof TraceMoveNotFoundError) {
       return c.json({ ok: false, error: "Trace not found" }, 404);
+    }
+    if (err instanceof TraceMoveSourceChangedError) {
+      return c.json({ ok: false, error: SOURCE_CHANGED_MESSAGE }, 409);
     }
     if (err instanceof TraceMoveSameBookError) {
       return c.json({ ok: false, error: "Trace is already in that recipe book" }, 400);
@@ -808,37 +790,38 @@ traces.delete("/:id", async (c) => {
     reason = undefined;
   }
 
-  const accessRows = await db.execute(sql`
-    SELECT
-      t.user_id AS "userId",
-      t.group_id AS "groupId",
-      t.claim_text AS "claimText"
-    FROM claimnet.traces t
-    WHERE t.id = ${traceId}::uuid
-  `);
-
-  const access = (accessRows as unknown as Array<{
-    userId: string; groupId: string; claimText: string;
-  }>)[0];
-
+  // One statement: does the trace exist, which book is it in, and what is
+  // this user's standing on it?
+  const access = await roleInBookOfTrace(db, user.id, traceId);
   if (!access) {
     return c.json({ ok: false, error: "Trace not found" }, 404);
   }
 
-  const isTraceOwner = access.userId === user.id;
-  const isGroupAdmin = isOwnerOrAdmin(await roleIn(db, user.id, access.groupId));
+  const isTraceOwner = access.isAuthor;
+  const isGroupAdmin = isOwnerOrAdmin(access.role);
   const isSystem = user.role === "system";
 
   if (!isTraceOwner && !isGroupAdmin && !isSystem) {
     return c.json({ ok: false, error: "Forbidden" }, 403);
   }
 
-  const result = await deleteTraceCascade({
-    db,
-    traceId,
-    actorUserId: user.id,
-    ...(reason ? { reason } : {}),
-  });
+  let result;
+  try {
+    result = await deleteTraceCascade({
+      db,
+      traceId,
+      actorUserId: user.id,
+      // The book the gate above was decided on. The service refuses if the
+      // recipe has left it by the time it holds the row lock.
+      authorizedGroupId: access.bookId,
+      ...(reason ? { reason } : {}),
+    });
+  } catch (err) {
+    if (err instanceof TraceDeleteSourceChangedError) {
+      return c.json({ ok: false, error: SOURCE_CHANGED_MESSAGE }, 409);
+    }
+    throw err;
+  }
 
   await writeAudit(db, {
     actorUserId: user.id,
@@ -846,8 +829,8 @@ traces.delete("/:id", async (c) => {
     targetType: "trace",
     targetId: traceId,
     metadata: {
-      groupId: access.groupId,
-      traceUserId: access.userId,
+      groupId: access.bookId,
+      traceUserId: access.authorId,
       claimText: access.claimText,
       actorRelation: isTraceOwner ? "owner" : isSystem ? "system" : "group_admin",
       ...(reason ? { reason } : {}),

@@ -16,7 +16,6 @@ import {
   listMembers,
   addCreatorAsOwner,
   addMember,
-  countOwners,
   removeMember,
   updateDailyPrefs,
 } from "../authz";
@@ -234,14 +233,25 @@ groupsRouter.post("/:id/members", async (c) => {
     }, 404);
   }
 
-  // Add to group (ON CONFLICT = already a member, no-op). Directly-added
-  // members default to excluded from daily-link read/write — same anti-spam
-  // posture as invite-accept. The new member can opt in on the Groups page.
-  await addMember(db, groupId, target.id, parsed.data.role);
+  // Add to group. Directly-added members default to excluded from daily-link
+  // read/write — same anti-spam posture as invite-accept. The new member can
+  // opt in on the Groups page.
+  const added = await addMember(db, groupId, target.id, parsed.data.role);
+
+  // Already a member: nothing was written, and this endpoint never changes an
+  // existing member's role. Say so (409, as other "already exists" answers
+  // are), naming the role they actually hold rather than the one asked for.
+  if (!added.created) {
+    return c.json({
+      ok: false,
+      error: "Already a member of this recipe book",
+      member: { userId: target.id, email: target.email, role: added.role },
+    }, 409);
+  }
 
   return c.json({
     ok: true,
-    data: { userId: target.id, email: target.email, role: parsed.data.role },
+    data: { userId: target.id, email: target.email, role: added.role },
   }, 201);
 });
 
@@ -449,10 +459,23 @@ groupsRouter.delete("/:id/invitations/:inviteId", async (c) => {
 });
 
 // DELETE /groups/:id/members/:userId — remove member
+const removeMemberParamsSchema = z.object({
+  id: z.string().uuid(),
+  userId: z.string().uuid(),
+});
+
 groupsRouter.delete("/:id/members/:userId", async (c) => {
   const user = c.get("user");
-  const groupId = c.req.param("id");
-  const targetUserId = c.req.param("userId");
+  // Ids that are not uuids are refused here, with the same 400 "Invalid input"
+  // a malformed id in a request body gets, instead of failing inside a query.
+  const params = removeMemberParamsSchema.safeParse({
+    id: c.req.param("id"),
+    userId: c.req.param("userId"),
+  });
+  if (!params.success) {
+    return c.json({ ok: false, error: "Invalid input", details: params.error.issues }, 400);
+  }
+  const { id: groupId, userId: targetUserId } = params.data;
   const db = getDb();
 
   // Verify requester is owner
@@ -460,15 +483,14 @@ groupsRouter.delete("/:id/members/:userId", async (c) => {
     return c.json({ ok: false, error: "Only recipe-book owners can remove members" }, 403);
   }
 
-  // Prevent removing self if last owner
-  if (targetUserId === user.id) {
-    if ((await countOwners(db, groupId)) <= 1) {
-      return c.json({ ok: false, error: "Cannot remove the last owner of a recipe book" }, 400);
-    }
+  // "A book always keeps an owner" is part of the removal itself (see
+  // removeMember): this handler compares no ids and counts no owners.
+  const outcome = await removeMember(db, groupId, targetUserId);
+  if (outcome === "last_owner") {
+    return c.json({ ok: false, error: "Cannot remove the last owner of a recipe book" }, 400);
   }
 
-  await removeMember(db, groupId, targetUserId);
-
+  // Removing someone who is not a member stays a 200 no-op, as before.
   return c.json({ ok: true });
 });
 
