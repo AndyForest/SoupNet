@@ -12,6 +12,7 @@
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { groupMembers } from "@soupnet/db";
+import { countsAsMembership, membershipOf } from "./membership-sql";
 
 export interface BookMember {
   user_id: string;
@@ -31,7 +32,7 @@ export async function listMembers(db: PostgresJsDatabase, bookId: string): Promi
     SELECT gm.user_id, u.email, gm.role, gm.joined_at
     FROM claimnet.group_members gm
     JOIN claimnet.users u ON u.id = gm.user_id
-    WHERE gm.group_id = ${bookId}::uuid
+    WHERE gm.group_id = ${bookId}::uuid AND ${countsAsMembership("gm")}
     ORDER BY gm.joined_at ASC
   `);
   return rows as unknown as BookMember[];
@@ -77,13 +78,17 @@ export async function addMember(
 /** How many owners a book has. The last-owner rule reads this. */
 export async function countOwners(db: PostgresJsDatabase, bookId: string): Promise<number> {
   const rows = await db.execute(sql`
-    SELECT count(*)::int AS total FROM claimnet.group_members
-    WHERE group_id = ${bookId}::uuid AND role = 'owner'
+    SELECT count(*)::int AS total FROM claimnet.group_members gm
+    WHERE gm.group_id = ${bookId}::uuid AND gm.role = 'owner' AND ${countsAsMembership("gm")}
   `);
   return (rows as unknown as Array<{ total: number }>)[0]?.total ?? 0;
 }
 
-/** Remove a user's membership row. Not a member → no-op. */
+/**
+ * Remove a user's membership row. Not a member → no-op. Addresses the stored
+ * row by its key rather than through the membership condition: a row that no
+ * longer counts as a membership must still be removable.
+ */
 export async function removeMember(
   db: PostgresJsDatabase,
   bookId: string,
@@ -108,12 +113,12 @@ export async function updateDailyPrefs(
   prefs: { dailyRead?: boolean | undefined; dailyWrite?: boolean | undefined },
 ): Promise<DailyPrefs | null> {
   const rows = await db.execute(sql`
-    UPDATE claimnet.group_members
+    UPDATE claimnet.group_members gm
     SET
-      daily_read = COALESCE(${prefs.dailyRead ?? null}::boolean, daily_read),
-      daily_write = COALESCE(${prefs.dailyWrite ?? null}::boolean, daily_write)
-    WHERE group_id = ${bookId}::uuid AND user_id = ${userId}::uuid
-    RETURNING daily_read AS "dailyRead", daily_write AS "dailyWrite"
+      daily_read = COALESCE(${prefs.dailyRead ?? null}::boolean, gm.daily_read),
+      daily_write = COALESCE(${prefs.dailyWrite ?? null}::boolean, gm.daily_write)
+    WHERE gm.group_id = ${bookId}::uuid AND ${membershipOf("gm", userId)}
+    RETURNING gm.daily_read AS "dailyRead", gm.daily_write AS "dailyWrite"
   `);
   return (rows as unknown as DailyPrefs[])[0] ?? null;
 }
