@@ -15,8 +15,9 @@
  *
  *   - a file that is not on the list        → FAIL
  *   - a listed file whose count went UP     → FAIL
- *   - a listed file whose count went DOWN   → pass, with a note asking you to
- *     lower the number (or delete the entry at zero) so the gain is locked in
+ *   - a listed file whose count went DOWN   → FAIL until you lower the number
+ *     (or delete the entry at zero) in the same change, so a stale entry never
+ *     leaves headroom for references to creep back
  *
  * A "reference" is any occurrence of either name, comments included: the check
  * is textual on purpose, so it stays static (no DB, no build), deterministic,
@@ -107,9 +108,14 @@ for (const [file, allowed] of Object.entries(NOT_YET_MIGRATED)) {
 const thisScript = relative(projectRoot, fileURLToPath(import.meta.url)).split(sep).join("/");
 
 if (shrunk.length > 0) {
+  // A stale entry is headroom: references could be added back up to the old
+  // number without this check noticing. So a lowered count fails until the
+  // allowlist is lowered with it, the same way check:data-model fails on a
+  // stale tableGroups entry.
   const lines = [
-    "authz seam: nice — these files reference the membership table less than the allowlist records.",
-    `Lock the gain in by editing NOT_YET_MIGRATED in ${thisScript}:`,
+    "authz seam check FAILED: the allowlist is stale. These files reference the membership table",
+    "less than the allowlist records, which is good. Lock the gain in the same change by editing",
+    `NOT_YET_MIGRATED in ${thisScript}:`,
     "",
     ...shrunk.map(({ file, n, allowed }) =>
       n === 0
@@ -117,7 +123,8 @@ if (shrunk.length > 0) {
         : `  ${file}: ${allowed} → ${n}`,
     ),
   ];
-  console.log(`\n${lines.join("\n")}\n`);
+  console.error(`\n${lines.join("\n")}\n`);
+  if (newFiles.length === 0 && grown.length === 0) process.exit(1);
 }
 
 if (newFiles.length > 0 || grown.length > 0) {
