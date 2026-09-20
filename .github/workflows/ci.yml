@@ -101,6 +101,13 @@ jobs:
       - name: Check data-model doc is up to date
         run: npm run check:data-model
 
+      # Fails if a source file outside apps/backend/src/authz/ starts reading
+      # or writing recipe-book memberships (group_members) — book-access and
+      # role checks go through the authz module (engineering-principles.md §7).
+      # Static (no DB needed). Mirrored in scripts/test-ci-local.mjs.
+      - name: Check authz seam
+        run: npm run check:authz-seam
+
       - name: Start backend for integration tests
         run: |
           node apps/backend/dist/index.js &

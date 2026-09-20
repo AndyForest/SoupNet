@@ -187,6 +187,7 @@ The only anti-pattern is checking a recipe you don't genuinely believe — that 
 - **Tracer bullets** — Build complete thin slices end-to-end before adding breadth.
 - **Service layer** — Business logic lives in `services/` and `packages/domain/`, not in route handlers or components.
 - **Composable modules** — Rich internal functionality behind clean interfaces. The vector pipeline is the canonical example.
+- **Book access goes through the authz module** — Recipe-book membership and role checks for JWT routes live in `apps/backend/src/authz/` (`roleIn`, `isMember`, `booksFor`, `canReadTrace`, …), so access rules stay in one reviewable place. `npm run check:authz-seam` (part of `test:ci`) fails on a new `group_members` reference outside it; see engineering-principles.md §7 for the allowlist ratchet.
 - **ACID writes, async side-effects** — Embeddings never block primary writes (pg-boss queues).
 - **Agents are first-class** — The web `/check` page is the primary agent interface (zero setup — any web-browsing agent can use it). Remote MCP at `POST /mcp` is the lower-friction path for MCP-capable clients. Stdio MCP (`apps/mcp-server`) for Claude Desktop via `.mcpb`.
 - **System doesn't make judgments** — Stance is whatever the LLM author asserted at write time. Vector-similarity surfaces (related evidence from other recipes, the recipe map) are presented neutrally — cosine over gemini-embedding-2-preview encodes topic, not stance (the negation problem; see ADR-0015). The LLM consumer interprets stance against current context.
