@@ -174,6 +174,49 @@ A collaborator a power-user invites into a shared decision — a non-technical f
 
 **Real-world example.** Andy with his son brainstorming a game mod on ChatGPT mobile. His son is a free-tier ChatGPT user with no Soup.net account. The StoryCarousel on the landing page demonstrates this archetype in action, though it isn't named there.
 
+### 6. The Organization Member
+**"My company uses this. I signed in with my work account and it was just there."**
+
+Someone whose Soup.net account belongs to their employer. They may be an experienced developer, or one of the growing number of people close to the customer who are starting to build software with AI agents and have never thought of themselves as developers. The second group matters most: they learn from the judgment calls colleagues have logged, and their own decisions become visible to colleagues who can help.
+
+(Aspirational, not yet implemented. Plan: [planning/org-accounts-program.md](planning/org-accounts-program.md). Requirements from a first prospective organization: [customers/c01-requirements.md](customers/c01-requirements.md).)
+
+**A managed account, with no mixing.** An account on a company's verified domain belongs wholly to the company. A person who wants recipe books under their own control keeps a separate personal account and shares a personal book with their work account. People bring their personal context to work all the time; ordinary sharing is how they do it here.
+
+**Key needs:** Sign in with the company's identity provider and land in the organization with no invitation to find. A shared org-wide recipe book from the first minute. A private default book that colleagues and admins can't browse. A plain answer to "what can my employer see?". A way in that doesn't assume a developer's vocabulary.
+
+**User stories:**
+- **First day.** *"I sign in with my work Google account. I'm already in my company's organization, I can see the company recipe book, and my agent's first briefing shows me how my colleagues tend to decide things. Nobody had to invite me."*
+- **Private by default.** *"My default recipe book is mine. My admin can see that I have one and roughly how much I use Soup.net, not what's in it or what my books are called. There's a page that tells me exactly that in plain language, including the one way the company could get to my data (taking over my account) and that I'd be able to see it happened."*
+- **Private or org-wide.** *"When I create a recipe book I choose: private to me, or open to everyone at the company. I can still share a private book with specific people, inside the limits my company has set."*
+- **Learning from colleagues.** *"I'm new to building software. When my agent faces a decision, it shows me how two experienced colleagues handled something similar, with their reasons. When I decide something, they can find it too."*
+- **Bringing my own context.** *"I share a book from my personal account into my work account. My company's rule against sharing outward doesn't stop me bringing my own context in."*
+- **Drafts written about me.** *"A colleague's agent swept our old repositories and drafted recipes about decisions I made years ago. Only I and my agents can see them, along with the colleague who ran the sweep. I review them in one place, confirm the ones that are right, fix or discard the rest. My own agent can confirm them for me, since it can ask me. Only then can anyone else find them."*
+- **Work tied to what it's about.** *"When my agent declares what it's working on, it attaches the pull request and the ticket. Later a reviewer asks for every judgment call tied to that PR and gets them."*
+- **Leaving.** *"When I leave the company and my work account is switched off, my API keys stop working within the hour. Nobody had to remember Soup.net."*
+- **Already had an account.** *"I'd signed up with my work email before my company joined. When they did, my account moved into the organization and my books came with me, and I was told it happened."*
+
+**Deliberate exception to "no auto-accept".** Archetype 2's anti-spam rule says verifying an email never joins you to anything. An organization is the exception, and only because it has proven it owns the domain: a company that controls the address space you signed up under isn't a stranger planting an invite. Everything short of that proof stays an offer you click.
+
+### 7. The Org Admin
+**"I'm responsible for our company's account. I need oversight, not surveillance."**
+
+A role, usually held by whoever already administers the company's identity provider. They set policy and manage people. They don't read anyone's private judgment.
+
+(Aspirational, not yet implemented.)
+
+**Key needs:** Prove the company owns its domains. Decide whether people on those domains join automatically. See who is in the organization and how much each person uses it. Switch a person off and on again. Oversee every org-wide recipe book. Control sharing outside the company. Get all of the organization's data out.
+
+**User stories:**
+- **Setup.** *"I add a DNS record to prove we own our domain, turn on automatic joining, and require Google sign-in. I connect our Google Workspace once so that anyone suspended there is switched off here within the hour."*
+- **Seeing my users.** *"I see every member: when they were last active, how many recipes and API keys they have. For private books I see counts, never contents or names."*
+- **Switching someone off.** *"I disable a person. Their sign-in and every one of their API keys stop working immediately, including keys their agents made for sub-agents. If I re-enable them, the same keys work again. If I need it faster than the hourly sync, I do it here by hand."*
+- **Sharing policy.** *"I decide whether members can share recipe books with people outside the company. I can always set sharing on any org-wide book myself."*
+- **Data out.** *"I download everything in our organization's books in one export."*
+- **Not mine to set.** *"How many seats we have and whether they're premium is set by Soup.net, not by me."*
+
+**What the admin deliberately can't do:** browse private books, see their names, read free-text audit detail about members' searches, or act on a member's account without the member being able to see that it happened.
+
 ---
 
 ## Agent Archetypes
@@ -257,6 +300,28 @@ Organized by capability, not by product. Specific AI products are listed as exam
 **User stories:**
 - *"A CI pipeline checks a recipe after each deploy: 'As a team, we deployed version X with changes Y.' The recipe logs the deployment decision with evidence, building a searchable history of why each deploy happened."* (Aspirational — not yet implemented)
 - *"A scheduled script checks a daily summary recipe that captures the team's key decisions, so the Monday morning standup agent has context from the previous week."* (Aspirational)
+
+### Agent Type D: Autonomous (unattended)
+**"Nobody is watching me work. I act for the company, not for one person."**
+
+**Examples:** Automated pull-request reviewers, scheduled documentation sweeps, agents that prepare an overview for leadership.
+
+**Interface:** The same MCP and REST surfaces as Types A and C, authenticated with a static credential the organization owns rather than one belonging to a person. These tools generally can't complete an interactive OAuth sign-in, so a long-lived organization-owned key is what lets them connect at all.
+
+(Aspirational, not yet implemented. Research: [planning/org-accounts-research/pr-review-integration.md](planning/org-accounts-research/pr-review-integration.md).)
+
+**What's different:** Soup.net's core loop assumes a human is close enough to oversee what gets deposited. An unattended agent has no such human, and a reviewer reads text an outsider may have written, which makes anything it writes a possible carrier for injected instructions. So this type starts read-mostly: it declares intents, searches, fetches recipes, and logs feedback, and it makes no recipe checks. The restriction is enforced by the credential on the server, not by asking the agent nicely.
+
+**User stories:**
+- *"Our automated reviewer opens a pull request, declares what it's reviewing with the PR attached as a reference, and searches for the judgment calls the author and their colleagues logged around that work. Its review cites them. It deposits nothing."*
+- *"The reviewer logs feedback on which recipes informed its review, so the people who wrote them can see their judgment earning its keep."*
+- *"An org admin creates the reviewer's credential, chooses which org-wide books it can read, and can switch it off like any member. It doesn't use up a person's seat."*
+
+### Orchestrators and the agents they run
+
+An orchestrating agent of any type already passes its own credential down to the sub-agents it spawns. The least-privilege version of that is for the orchestrator to ask Soup.net for a new API key derived from its own, the same way its human would make a key for it: read and write chosen per recipe book, a short lifetime, never reaching beyond the parent key. The derived key is an ordinary API key that stops working when its parent does, and it appears nested under the parent in the human's key list. See [Agent Fleets](#agent-fleets-orchestration-observability-and-alignment) for how judgment flows in a fleet. (Aspirational. Design: [planning/derived-agent-keys.md](planning/derived-agent-keys.md).)
+
+- *"Before launching six research sub-agents, my orchestrator makes each a one-hour key that can read the project book and write only to a scratch book. I can see all six under its key on my keys page, and they're gone within the hour."*
 
 ---
 
