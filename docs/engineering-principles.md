@@ -139,6 +139,14 @@ Rules — **JWT-protected (human SPA) routes:**
 - Service functions accept `userId` from the verified JWT — never trust client-supplied IDs.
 - JWT payload carries `sub` + `role` as the authorization inputs. Do not base authorization on `c.user.email` — the email is a staleness hazard (a 7-day-old token still carries the user's old address if they changed it).
 
+Rules — **recipe-book access goes through the authz module:**
+
+- Whether a human can see a recipe book, what role they hold in it, and whether they can read a recipe are answered by `apps/backend/src/authz/` (`roleIn`, `isMember`, `booksFor`, `bookIdsFor`, `canReadTrace`, and the role predicates `isOwner` / `isOwnerOrAdmin`). The statements that create, change, and remove membership rows live there too. A route handler reads as "ask the module, then act"; it does not join `claimnet.group_members` itself.
+- The reason is review and change cost. Access rules re-derived by hand in each handler have to be re-derived correctly every time, and a rule that spans all of them (a new membership source, a deactivated membership) becomes a hunt through every file. In one module, the rule is one reviewable change with its own tests, and a lookup that finds no membership answers `null` / `false`, so a caller that forgets a case fails closed.
+- `npm run check:authz-seam` enforces it (in CI and in `npm run test:ci`). It fails when a non-test source file under `apps/backend/src` outside the module mentions `group_members` or `groupMembers`. Files that predate the module are listed in the script's `NOT_YET_MIGRATED` allowlist with their current reference count; the check also fails if one of those counts goes up.
+- The allowlist ratchets down only. When you migrate a file, the check prints the new, lower count: set that number in `scripts/check-authz-seam.mjs` (delete the entry at zero) in the same commit. `node scripts/check-authz-seam.mjs --counts` prints the current counts. If the question you need answered is new, add a function to the module with a test instead of raising a number.
+- Scope today: the JWT-path routes for recipe books and traces. API-key validation is a separate mechanism (scope is frozen on the key at mint time) and has not moved.
+
 Rules — **API-key-protected (agent) routes:**
 
 - API key validation checks expiry, revocation, and recipe-book scope on every request. (At the schema level, scope is stored as `read_group_ids` / `write_group_ids` arrays per the deferred Group → Recipe Book schema rename — see ADR-0016.)

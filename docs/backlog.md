@@ -360,6 +360,10 @@ The actual bootstrap primitive behind read-only sharing: a reader who finds a us
 
 `groups.ts:8-12` documents exactly three roles — `owner`, `admin`, `member` — and states `member` "can read/write traces within the group." Read-only sharing needs a fourth that reads but cannot write (or a `can_write boolean`, which composes better with the existing `daily_read`/`daily_write` machinery). Blocking dependency for read-only book sharing; harmless to defer until that's decided. Whoever adds it must audit every `group_members` join for role-blind authorization — there are several.
 
+### `[IMPL]` Finish moving `group_members` access into the authz module (slice 1 landed 2026-09-19)
+
+Slice 1 created `apps/backend/src/authz/` and moved every membership read and write in `routes/groups.ts` and `routes/traces.ts` into it, behavior-preserving, behind characterization tests (`routes/book-access-gates.test.ts`). `npm run check:authz-seam` now fails on any new reference outside the module. Remaining: the twelve files on the `NOT_YET_MIGRATED` allowlist in `scripts/check-authz-seam.mjs` (`routes/keys.ts`, `oauth.ts`, `invitations.ts`, `auth.ts`, `mcp.ts`, `admin.ts`, `auth.ts` at the src root, and five services). Migrate a file, lower its number in the same commit. The key-minting and OAuth files wait on the key-validation audit; invitations, import, ephemeral workspaces, and user-delete are membership writes and teardown that can move independently. The role-blind read gate the `viewer` item above worries about is now two functions, `canReadTrace` and `mayReadTrace`, so that audit is one file. Rule and ratchet instructions: `docs/engineering-principles.md` §7.
+
 ### `[IMPL]` Corpus-version key for the Recipe Map cache (hardening, not a live bug)
 
 The map's layout cache derives a corpus-version key from `count(*)` and `max(created_at)` **aggregated across the union of the requested books** (`apps/backend/src/routes/traces.ts`). Aggregating over the union destroys per-book information: a trace moving *between* two books inside the union leaves both statistics unchanged.
