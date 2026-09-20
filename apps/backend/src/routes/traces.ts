@@ -9,10 +9,11 @@ import {
   getCachedMapLayout,
   setCachedMapLayout,
 } from "../services/map-layout-cache";
-import { deleteTraceCascade } from "../services/trace-delete.service";
+import { deleteTraceCascade, TraceDeleteSourceChangedError } from "../services/trace-delete.service";
 import {
   moveTraceToBook,
   TraceMoveNotFoundError,
+  TraceMoveSourceChangedError,
   TraceMoveSameBookError,
   TraceMoveDuplicateError,
   TraceMoveEvidenceNotFoundError,
@@ -30,6 +31,13 @@ import {
 } from "../authz";
 
 const traces = new Hono<AppEnv>();
+
+// Move and delete decide on the book the recipe was in when they looked. If it
+// has left that book by the time the service holds the row lock, nothing is
+// changed and the caller is asked to look again (409, the same status a
+// duplicate in the destination gets).
+const SOURCE_CHANGED_MESSAGE =
+  "This recipe changed recipe books while the request was in progress. Reload it and try again.";
 
 // Secure-by-default: every JWT-authed route also requires email verification.
 // See routes/auth.ts for the (very small) opt-out list.
@@ -711,6 +719,9 @@ traces.patch("/:id", async (c) => {
     const result = await moveTraceToBook({
       db,
       traceId,
+      // The book the source gate above was decided on. The service refuses if
+      // the recipe has left it by the time it holds the row lock.
+      authorizedSourceGroupId: access.bookId,
       destGroupId,
       destBookName: dest.name,
       actorUserId: user.id,
@@ -738,6 +749,9 @@ traces.patch("/:id", async (c) => {
   } catch (err) {
     if (err instanceof TraceMoveNotFoundError) {
       return c.json({ ok: false, error: "Trace not found" }, 404);
+    }
+    if (err instanceof TraceMoveSourceChangedError) {
+      return c.json({ ok: false, error: SOURCE_CHANGED_MESSAGE }, 409);
     }
     if (err instanceof TraceMoveSameBookError) {
       return c.json({ ok: false, error: "Trace is already in that recipe book" }, 400);
@@ -791,12 +805,23 @@ traces.delete("/:id", async (c) => {
     return c.json({ ok: false, error: "Forbidden" }, 403);
   }
 
-  const result = await deleteTraceCascade({
-    db,
-    traceId,
-    actorUserId: user.id,
-    ...(reason ? { reason } : {}),
-  });
+  let result;
+  try {
+    result = await deleteTraceCascade({
+      db,
+      traceId,
+      actorUserId: user.id,
+      // The book the gate above was decided on. The service refuses if the
+      // recipe has left it by the time it holds the row lock.
+      authorizedGroupId: access.bookId,
+      ...(reason ? { reason } : {}),
+    });
+  } catch (err) {
+    if (err instanceof TraceDeleteSourceChangedError) {
+      return c.json({ ok: false, error: SOURCE_CHANGED_MESSAGE }, 409);
+    }
+    throw err;
+  }
 
   await writeAudit(db, {
     actorUserId: user.id,
