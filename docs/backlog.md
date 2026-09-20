@@ -200,6 +200,38 @@ Goals for the cleanup pass: cut what's duplicated, sharpen what HowItWorks uniqu
 
 ---
 
+## Organization accounts program
+
+### `[DESIGN]` Organization accounts — multi-employee orgs, Google SSO, verified domains, org admin console (idea capture 2026-09-19; research + decisions next)
+
+Customer-driven program; the customer's needs are segmented anonymously in [customers/c01-requirements.md](customers/c01-requirements.md) (conventions and the requirement → user story → spec → test workflow in [customers/README.md](customers/README.md), proposed 2026-09-19). Decisions so far are tabled in the program doc §0 with recipe links. Plans: [planning/org-accounts-program.md](planning/org-accounts-program.md) (feature set, reflections, proposed phasing), [planning/org-accounts-research-plan.md](planning/org-accounts-research-plan.md) (operator questions, research fleet, next-session order). Pre-research: industry claims in those docs are tagged **[verify]** until the sweep sources them. Scope: org membership + roles, private/org-scoped recipe books + org default book, DNS domain verification + auto-join, Google SSO (including the MCP OAuth path and the overdue ADR-0022), disable-user via fail-safe join in `validateKey`, offboarding sync from the SSO source, sharing restrictions, org admin console sharing components with a refactored site admin, end-user "what admins can see" doc, schema-driven org/user export. Related tracks listed there: repo/branch context + rich human search page, backfill on behalf of org members, service accounts for autonomous agents, briefing refresh, image viewing, LLM features by org tier, seats/billing. Touches existing items: ownership transfer for shared orgs, user-delete cascade, export drift, viewer-role sharing. First deliverable next session: `docs/architecture/agent-context-seams.md` (session / intent / feedback / key seams). Auth-touching phases follow `docs/workflows/security.md`.
+
+### `[DESIGN]` Derived API keys — an orchestrator mints scoped-down keys for its sub-agents (direction decided 2026-09-19; optional, separate track)
+
+Design: [planning/derived-agent-keys.md](planning/derived-agent-keys.md) (recipe `eb4b77eb`, superseding the same-day "session" lean `7835c60d`). Ordinary API keys in every respect plus one nullable `parent_key_id`: subset-only scope, one-hour default lifetime, dead whenever the parent is (join at validation, no sweep), nested under the parent in the keys UI, available to OAuth-connected clients. No new concept on the intent / check / search / feedback surfaces. Needs: a named, tested exception to the CI-enforced "raw keys never in agent-readable responses" ruling (`f1543441`) — a response may carry a key only when strictly weaker than the credential that authenticated the request; a decision on OAuth parents, which rotate hourly (re-point children in the refresh transaction, recommended); one shared scope-validation function with the human key form. Auth code: security workflow applies; the research doc has the invariant list and test checklist.
+
+### `[DESIGN]` Authorization seam — consolidate authentication and book-access rules before org work
+
+From the org-accounts code map (2026-09-19; recipe `8486b345`, operator lean): book access is ~32 inline `group_members` SQL checks with one shared helper, API-key validation has more than one path, and the admin list-query pattern is hand-written three times. Proposal in [planning/org-accounts-program.md](planning/org-accounts-program.md) §3.0: one in-process module (`authenticate`, `booksFor`, `roleIn`, `can`), characterization tests first so the refactor is behavior-preserving, and a fail-loud CI guard (in the style of `check:data-model`) against auth SQL outside the module. No external relationship-graph service. Phase 0 of the org program; verify the privately filed leads with an audit pass first.
+
+### `[DESIGN]` Test-coverage recipe books — judging coverage gaps and overlaps by intent (idea stage, not for the first org release)
+
+Operator idea, 2026-09-19 (recipe `0760205a`). A different kind of recipe book: an agent role-plays an end user in the design-thinking style, starting from a declared intent ("as a site admin, I want to add a new user"), walks the site with browser automation while capturing screenshots and video, and deposits how it went. Clustering over those walkthrough recipes shows whether an intent is already covered, so a team can decide where new walkthroughs and new automated tests are needed, aimed at the proliferation of test cases with no way to judge gaps or overlaps. Builds on things that exist: intents, multimodal evidence (uploads), the recipe map's clustering, and the agent-run persona pattern from the briefing regression harness (`89e712e5`). Open: what the recipe's claim is for a walkthrough (the user's expectation of the flow?), whether screenshots and video fit the evidence model as-is, and how a coverage view differs from the existing map.
+
+### `[IMPL]` Minor web UI improvements (parking list)
+
+Small items the operator parks as they come up. Add to this list rather than creating separate entries.
+
+- **Copy API key button gets a persistent format drop-down.** Beyond the raw key: a ready-to-paste Claude Code `.mcp.json` entry, and the equivalents for VS Code's agent mode, Codex, Cursor, Antigravity, and other popular MCP clients. The chosen format persists per user. Take the client list and config shapes from the public connect page so there is one source for them. (2026-09-19)
+- **OAuth-connected clients in the API keys list.** They aren't presented there today. `listKeys` doesn't filter by key type, so check whether the rows are returned and simply not shown as connections. Because OAuth access rows rotate hourly, show one entry per connected client (grouped by `oauth_client_id`) rather than raw rows, with revoke. (2026-09-19)
+- **Nested derived keys.** When derived API keys ship, show them under their parent with the same controls. (2026-09-19)
+
+### `[IMPL]` ChatGPT compatibility for the remote MCP endpoint
+
+Operator note 2026-09-19: ChatGPT plugins are MCP-based now (since July, per operator — verify against OpenAI's current docs). Check that `POST /mcp` + the OAuth 2.1 connector flow work as a ChatGPT connector/app, note any gaps (tool-shape requirements, auth quirks, directory listing), and add ChatGPT to the public connect page's client list if it works.
+
+---
+
 ## OAuth follow-ups
 
 ### `[IMPL]` Rate-limit `/oauth/token` and `/oauth/authorize/grant`
