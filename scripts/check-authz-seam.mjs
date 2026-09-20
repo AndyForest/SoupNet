@@ -58,7 +58,6 @@ const NOT_YET_MIGRATED = {
   "apps/backend/src/services/ephemeral-workspace.service.ts": 2,
   "apps/backend/src/services/import-validate.ts": 2,
   "apps/backend/src/services/import.service.ts": 4,
-  "apps/backend/src/services/user-delete.service.ts": 3,
 };
 
 /** Repo-relative, forward-slash paths of every file under `dir`. */

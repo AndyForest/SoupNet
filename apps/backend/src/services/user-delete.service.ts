@@ -1,6 +1,14 @@
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { deleteTraceCascade } from "./trace-delete.service";
+import {
+  sharedBooksOwnedBy,
+  pickSuccessor,
+  promoteToOwner,
+  traceIdsInSoleMemberBooksOwnedBy,
+  removeMembershipsInOrgsOwnedBy,
+  removeAllMembershipsOf,
+} from "../authz";
 
 export interface UserDeleteResult {
   ok: true;
@@ -206,15 +214,7 @@ export async function deleteUserCascade(
            OR default_write_group_id = ${groupId}::uuid
       `);
     }
-    await tx.execute(sql`
-      DELETE FROM claimnet.group_members
-      WHERE group_id IN (
-        SELECT g.id FROM claimnet.groups g
-        WHERE g.organization_id IN (
-          SELECT id FROM claimnet.organizations WHERE owner_id = ${userId}::uuid
-        )
-      )
-    `);
+    await removeMembershipsInOrgsOwnedBy(tx, userId);
     await tx.execute(sql`
       DELETE FROM claimnet.groups
       WHERE organization_id IN (
@@ -227,7 +227,7 @@ export async function deleteUserCascade(
 
     // Remaining memberships (orgs the user doesn't own) — must go before
     // the users delete because of the FK.
-    await tx.execute(sql`DELETE FROM claimnet.group_members WHERE user_id = ${userId}::uuid`);
+    await removeAllMembershipsOf(tx, userId);
 
     // invitations.inviter_id, trace_reactions.user_id, and
     // check_feedback_stars.user_id are FKs with ON DELETE CASCADE (F18 for
@@ -251,20 +251,12 @@ async function collectUserTraceIds(
   db: PostgresJsDatabase,
   userId: string,
 ): Promise<string[]> {
-  const rows = await db.execute(sql`
+  const authoredRows = await db.execute(sql`
     SELECT id FROM claimnet.traces WHERE user_id = ${userId}::uuid
-    UNION
-    SELECT t.id FROM claimnet.traces t
-    JOIN claimnet.groups g ON g.id = t.group_id
-    WHERE g.organization_id IN (
-      SELECT id FROM claimnet.organizations WHERE owner_id = ${userId}::uuid
-    )
-    AND NOT EXISTS (
-      SELECT 1 FROM claimnet.group_members gm
-      WHERE gm.group_id = g.id AND gm.user_id <> ${userId}::uuid
-    )
   `);
-  return (rows as unknown as Array<{ id: string }>).map((r) => r.id);
+  const authored = (authoredRows as unknown as Array<{ id: string }>).map((r) => r.id);
+  const inSoleMemberBooks = await traceIdsInSoleMemberBooksOwnedBy(db, userId);
+  return [...new Set([...authored, ...inSoleMemberBooks])];
 }
 
 /**
@@ -301,44 +293,11 @@ async function handOverSharedBooks(
   db: PostgresJsDatabase,
   userId: string,
 ): Promise<BookHandover[]> {
-  const bookRows = await db.execute(sql`
-    SELECT g.id, g.slug, g.organization_id AS "organizationId",
-           (o.owner_id = ${userId}::uuid) AS "inOwnedOrg"
-    FROM claimnet.groups g
-    JOIN claimnet.organizations o ON o.id = g.organization_id
-    WHERE (
-        o.owner_id = ${userId}::uuid
-        OR EXISTS (
-          SELECT 1 FROM claimnet.group_members me
-          WHERE me.group_id = g.id AND me.user_id = ${userId}::uuid AND me.role = 'owner'
-        )
-      )
-      AND EXISTS (
-        SELECT 1 FROM claimnet.group_members other
-        WHERE other.group_id = g.id AND other.user_id <> ${userId}::uuid
-      )
-    ORDER BY g.created_at ASC, g.id ASC
-    FOR UPDATE OF g
-  `);
-  const books = bookRows as unknown as Array<{
-    id: string;
-    slug: string;
-    organizationId: string;
-    inOwnedOrg: boolean;
-  }>;
+  const books = await sharedBooksOwnedBy(db, userId);
 
   const handovers: BookHandover[] = [];
   for (const book of books) {
-    const successorRows = await db.execute(sql`
-      SELECT gm.user_id AS "userId", gm.role
-      FROM claimnet.group_members gm
-      WHERE gm.group_id = ${book.id}::uuid AND gm.user_id <> ${userId}::uuid
-      ORDER BY CASE gm.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END,
-               gm.joined_at ASC, gm.id ASC
-      LIMIT 1
-      FOR UPDATE OF gm
-    `);
-    const successor = (successorRows as unknown as Array<{ userId: string; role: string }>)[0];
+    const successor = await pickSuccessor(db, book.id, userId);
     if (!successor) continue; // the last other member left since the select above
 
     const successionRule: SuccessionRule =
@@ -353,10 +312,7 @@ async function handOverSharedBooks(
     if (successionRule === "existing_owner" && !book.inOwnedOrg) continue;
 
     if (successor.role !== "owner") {
-      await db.execute(sql`
-        UPDATE claimnet.group_members SET role = 'owner'
-        WHERE group_id = ${book.id}::uuid AND user_id = ${successor.userId}::uuid
-      `);
+      await promoteToOwner(db, book.id, successor.userId);
     }
 
     let newOrganizationId = book.organizationId;
