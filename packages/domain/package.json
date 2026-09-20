@@ -17,7 +17,7 @@
   "dependencies": {
     "@soupnet/contracts": "*",
     "@soupnet/db": "*",
-    "zod": "^3.23.0"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@soupnet/config": "*",
