@@ -1066,8 +1066,15 @@ function MemberRemovalConfirm({
         <p role="alert" className="text-xs" style={{ color: "var(--color-error)", margin: 0 }}>{error}</p>
       )}
       <div style={{ display: "flex", gap: "var(--space-sm)", marginTop: "var(--space-xs)" }}>
-        <button type="button" className="btn-danger" onClick={onConfirm} disabled={pending} style={{ fontSize: "0.8rem" }}>
-          {pending ? "Removing…" : "Remove"}
+        <button
+          type="button"
+          className="btn-danger"
+          onClick={onConfirm}
+          disabled={pending}
+          aria-label={pending ? undefined : prompt.confirmAccessibleName}
+          style={{ fontSize: "0.8rem" }}
+        >
+          {pending ? "Removing…" : prompt.confirmLabel}
         </button>
         <button type="button" className="btn-secondary" onClick={onCancel} disabled={pending} autoFocus style={{ fontSize: "0.8rem" }}>
           Cancel
