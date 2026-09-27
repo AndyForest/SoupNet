@@ -52,7 +52,7 @@ The orchestrator then reads the results against the screenshots and relays them 
 - One set of accounts per test, so concurrent runs never collide on per-user pages.
 - Fixture setup through the API is limited to what the expectations allow. The steps under test go through the UI.
 - Recipe checks spend embedding quota, so seed at most a couple per scenario. Or run the backend with `EMBEDDINGS_PROVIDER=stub` when the scenario doesn't depend on search quality.
-- Clean up with `npx tsx scripts/cleanup-test-data.mts --dry-run`, then without `--dry-run`. Seeded accounts carry a run timestamp, which is what the cleanup deletes; long-lived eval accounts share the domain but not the timestamp, and are kept (testing-plan, Test Data Isolation).
+- Clean up with `npx tsx scripts/cleanup-test-data.mts --dry-run`, then without `--dry-run`. Seeded accounts carry a run timestamp, which is what the cleanup deletes; long-lived eval accounts share the domain but not the timestamp, and are kept (testing-plan, Test Data Isolation). From a worktree without its own `.env`, point it at the main checkout's: `npx tsx --env-file=../../../.env scripts/cleanup-test-data.mts --dry-run`.
 
 ## The spec afterwards
 
