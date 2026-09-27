@@ -237,6 +237,10 @@ Design: [planning/drafts-and-triage.md](planning/drafts-and-triage.md) (recipes 
 
 Build: [planning/drafts-and-triage-build.md](planning/drafts-and-triage-build.md), seven slices on `feat/drafts-and-triage`. ~~Slice 1: triage ratings on every check surface and the tool-roster trim~~ built 2026-09-27 (served remote `tools/list` 18,090 → 15,864 bytes), accepted. ~~Slice 2: drafts for the key's own user~~ built 2026-09-27 (draft visibility in `authz/draft-sql.ts`, the `TRACE_READS` seam register, `verify_draft` and `POST /recipes/:id/verify`), awaiting verification and the read-only security audit. Slices 3 to 7 remain.
 
+### `[DECISION NEEDED]` Import tells an importer whether a recipe id already exists (F81, accepted for now)
+
+Corpus import gives an id owned by another user a fresh id and reports the remap, while an unused id is inserted as given, so an importer holding an id can tell whether it exists, a hidden draft's id included. Accepted on 2026-09-27 (orchestrator ruling on the drafts slice-2 audit): it needs the id first, and hidden draft ids no longer reach collaborators through feedback lineage (F82). The alternative, always minting a new id for any id the importer does not own whether or not it exists, closes it but breaks citation stability across instances (a recipe cited by id in one instance keeps that id when its author imports it elsewhere only if unused ids are kept). Revisit if another channel starts handing out hidden ids, or when org accounts make shared-instance imports common.
+
 ### `[IMPL]` ChatGPT compatibility for the remote MCP endpoint
 
 Operator note 2026-09-19: ChatGPT plugins are MCP-based now (since July, per operator — verify against OpenAI's current docs). Check that `POST /mcp` + the OAuth 2.1 connector flow work as a ChatGPT connector/app, note any gaps (tool-shape requirements, auth quirks, directory listing), and add ChatGPT to the public connect page's client list if it works.
