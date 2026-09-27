@@ -35,12 +35,12 @@ export function isOwnerOrAdmin(role: string | null | undefined): boolean {
 }
 
 /**
- * The trace read rule, for callers that already hold the trace row and the
- * viewer's role in its book: the author can always read their own recipe, and
- * so can anyone with a membership row in the book it lives in. Any role counts
- * — this is "a membership exists", deliberately not an allowlist, because it
- * mirrors the SQL form in `canReadTrace` (book-access.ts). The two are tested
- * against each other; change them together.
+ * THE trace read rule — the only copy. The author can always read their own
+ * recipe, and so can anyone with a membership in the book it lives in. Any
+ * role counts: this is "a membership exists", deliberately not an allowlist.
+ *
+ * The DB-bound functions in trace-access.ts fetch the two facts and call this;
+ * none of them restates the rule in SQL, so there is nothing to keep in step.
  */
 export function mayReadTrace(viewer: { isAuthor: boolean; role: string | null | undefined }): boolean {
   return viewer.isAuthor || (viewer.role !== null && viewer.role !== undefined);

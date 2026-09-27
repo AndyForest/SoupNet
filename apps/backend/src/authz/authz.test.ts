@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { mayReadTrace } from "./roles";
 
 /**
  * Integration tests for the DB-bound half of the authorization seam
@@ -159,7 +158,8 @@ describe.skipIf(!canConnect() || !BASE)("authz seam (DB-bound)", () => {
   describe("addMember", () => {
     it("adds with the given role and the excluded-by-default daily prefs", async () => {
       const db = getDb();
-      await authz.addMember(db, bookId, member.userId, "member");
+      expect(await authz.addMember(db, bookId, member.userId, "member"))
+        .toEqual({ created: true, role: "member" });
 
       expect(await authz.roleIn(db, member.userId, bookId)).toBe("member");
       expect(await authz.isMember(db, member.userId, bookId)).toBe(true);
@@ -168,11 +168,13 @@ describe.skipIf(!canConnect() || !BASE)("authz seam (DB-bound)", () => {
       expect(theirs?.daily_write).toBe(false);
     });
 
-    it("is a no-op for an existing member — the stored role is kept", async () => {
+    it("writes nothing for an existing member, and reports the role they actually hold", async () => {
       const db = getDb();
-      await authz.addMember(db, bookId, member.userId, "admin");
+      expect(await authz.addMember(db, bookId, member.userId, "admin"))
+        .toEqual({ created: false, role: "member" });
       expect(await authz.roleIn(db, member.userId, bookId)).toBe("member");
-      await authz.addMember(db, bookId, owner.userId, "member");
+      expect(await authz.addMember(db, bookId, owner.userId, "member"))
+        .toEqual({ created: false, role: "owner" });
       expect(await authz.roleIn(db, owner.userId, bookId)).toBe("owner");
       expect(await authz.countOwners(db, bookId)).toBe(1);
     });
@@ -223,20 +225,64 @@ describe.skipIf(!canConnect() || !BASE)("authz seam (DB-bound)", () => {
       expect(await authz.canReadTrace(db, NONEXISTENT_ID, owner.userId)).toBe(false);
     });
 
-    it("agrees with the pure mayReadTrace rule for every viewer", async () => {
+  });
+
+  // That the read rule exists once (mayReadTrace, applied in JS) is proved
+  // without a database in trace-access.test.ts and membership-sql.test.ts.
+  // Here: the one statement reports the right facts from real rows.
+  describe("roleInBookOfTrace / readableTraceFor", () => {
+    it("reports book, authorship and role for every viewer — including one with no access", async () => {
+      const db = getDb();
+      const asOwner = await authz.roleInBookOfTrace(db, owner.userId, traceId);
+      expect(asOwner).toMatchObject({ traceId, bookId, authorId: owner.userId, isAuthor: true, role: "owner" });
+      expect(asOwner?.claimText).toContain("authz-seam test author");
+
+      expect(await authz.roleInBookOfTrace(db, member.userId, traceId))
+        .toMatchObject({ bookId, authorId: owner.userId, isAuthor: false, role: "member" });
+      // Facts, not a verdict: the outsider's row says "no standing", and move /
+      // delete turn that into 403 where a missing trace is 404.
+      expect(await authz.roleInBookOfTrace(db, outsider.userId, traceId))
+        .toMatchObject({ bookId, isAuthor: false, role: null });
+
+      expect(await authz.roleInBookOfTrace(db, owner.userId, NONEXISTENT_ID)).toBeNull();
+      expect(await authz.roleInBookOfTrace(db, NONEXISTENT_ID, traceId))
+        .toMatchObject({ isAuthor: false, role: null });
+    });
+
+    it("its role is the same fact roleIn reports for the trace's book", async () => {
       const db = getDb();
       for (const viewer of [owner, member, outsider]) {
-        const role = await authz.roleIn(db, viewer.userId, bookId);
-        const pure = mayReadTrace({ isAuthor: viewer.userId === owner.userId, role });
-        expect(await authz.canReadTrace(db, traceId, viewer.userId)).toBe(pure);
+        const facts = await authz.roleInBookOfTrace(db, viewer.userId, traceId);
+        expect(facts?.role ?? null).toBe(await authz.roleIn(db, viewer.userId, bookId));
       }
+    });
+
+    it("readableTraceFor: detail row for author and member; one null for outsider and missing", async () => {
+      const db = getDb();
+      const forMember = await authz.readableTraceFor(db, member.userId, traceId);
+      expect(forMember?.access).toMatchObject({ isAuthor: false, role: "member", bookId });
+      expect(forMember?.trace).toMatchObject({
+        id: traceId,
+        userId: owner.userId,
+        groupId: bookId,
+        groupName: `Authz Seam ${uid}`,
+        userEmail: owner.email,
+      });
+      expect((await authz.readableTraceFor(db, owner.userId, traceId))?.access.isAuthor).toBe(true);
+
+      expect(await authz.readableTraceFor(db, outsider.userId, traceId)).toBeNull();
+      expect(await authz.readableTraceFor(db, owner.userId, NONEXISTENT_ID)).toBeNull();
+    });
+
+    it("canReadTraceOfFeedback is false for a feedback id that does not exist", async () => {
+      expect(await authz.canReadTraceOfFeedback(getDb(), NONEXISTENT_ID, owner.userId)).toBe(false);
     });
   });
 
   describe("removeMember", () => {
     it("removes the row: role, membership, book list, and trace read all close", async () => {
       const db = getDb();
-      await authz.removeMember(db, bookId, member.userId);
+      expect(await authz.removeMember(db, bookId, member.userId)).toBe("removed");
 
       expect(await authz.roleIn(db, member.userId, bookId)).toBeNull();
       expect(await authz.isMember(db, member.userId, bookId)).toBe(false);
@@ -247,21 +293,34 @@ describe.skipIf(!canConnect() || !BASE)("authz seam (DB-bound)", () => {
 
     it("is a no-op for a non-member", async () => {
       const db = getDb();
-      await authz.removeMember(db, bookId, outsider.userId);
+      expect(await authz.removeMember(db, bookId, outsider.userId)).toBe("not_a_member");
       expect(await authz.countOwners(db, bookId)).toBe(1);
       expect((await authz.listMembers(db, bookId)).length).toBe(1);
     });
 
+    it("refuses to remove the book's only owner (concurrency: last-owner.test.ts)", async () => {
+      const db = getDb();
+      expect(await authz.removeMember(db, bookId, owner.userId)).toBe("last_owner");
+      expect(await authz.removeMember(db, bookId, owner.userId.toUpperCase())).toBe("last_owner");
+      expect(await authz.countOwners(db, bookId)).toBe(1);
+      expect(await authz.roleIn(db, owner.userId, bookId)).toBe("owner");
+    });
+
     it("the author keeps read access to their own recipe after leaving the book", async () => {
       const db = getDb();
-      // The module does not enforce the last-owner rule — the route does, using
-      // countOwners. Removing the sole owner here is what makes this case
-      // reachable, and is the last thing this suite does to the book.
-      await authz.removeMember(db, bookId, owner.userId);
+      // The module will not remove a sole owner, so the row is taken out
+      // directly to make this case reachable. It is the last thing this suite
+      // does to the book.
+      const { sql } = await import("drizzle-orm");
+      await db.execute(sql`
+        DELETE FROM claimnet.group_members
+        WHERE group_id = ${bookId}::uuid AND user_id = ${owner.userId}::uuid
+      `);
       expect(await authz.countOwners(db, bookId)).toBe(0);
       expect(await authz.roleIn(db, owner.userId, bookId)).toBeNull();
       expect(await authz.canReadTrace(db, traceId, owner.userId)).toBe(true);
-      expect(mayReadTrace({ isAuthor: true, role: null })).toBe(true);
+      expect(await authz.roleInBookOfTrace(db, owner.userId, traceId))
+        .toMatchObject({ isAuthor: true, role: null });
     });
   });
 });

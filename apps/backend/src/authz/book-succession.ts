@@ -10,11 +10,16 @@
  * row locks below are held until that transaction ends.
  *
  * Posture matches book-access.ts: fail closed, bound parameters only, no
- * caching.
+ * caching. "Is a member" comes from membership-sql.ts throughout, so the books
+ * handed on (`sharedBooksOwnedBy`) and the books deleted with the account
+ * (`traceIdsInSoleMemberBooksOwnedBy`) can never disagree about who counts as
+ * another member. The two DELETEs at the bottom act on stored rows, not on
+ * "is a member": every row goes, whatever it counts as.
  */
 
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
+import { membershipOf, membershipOfSomeoneElse } from "./membership-sql";
 
 /** A shared book the departing user is responsible for. */
 export interface BookToHandOver {
@@ -49,12 +54,12 @@ export async function sharedBooksOwnedBy(
         o.owner_id = ${userId}::uuid
         OR EXISTS (
           SELECT 1 FROM claimnet.group_members me
-          WHERE me.group_id = g.id AND me.user_id = ${userId}::uuid AND me.role = 'owner'
+          WHERE me.group_id = g.id AND ${membershipOf("me", userId)} AND me.role = 'owner'
         )
       )
       AND EXISTS (
         SELECT 1 FROM claimnet.group_members other
-        WHERE other.group_id = g.id AND other.user_id <> ${userId}::uuid
+        WHERE other.group_id = g.id AND ${membershipOfSomeoneElse("other", userId)}
       )
     ORDER BY g.created_at ASC, g.id ASC
     FOR UPDATE OF g
@@ -76,7 +81,7 @@ export async function pickSuccessor(
   const rows = await db.execute(sql`
     SELECT gm.user_id AS "userId", gm.role
     FROM claimnet.group_members gm
-    WHERE gm.group_id = ${bookId}::uuid AND gm.user_id <> ${departingUserId}::uuid
+    WHERE gm.group_id = ${bookId}::uuid AND ${membershipOfSomeoneElse("gm", departingUserId)}
     ORDER BY CASE gm.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END,
              gm.joined_at ASC, gm.id ASC
     LIMIT 1
@@ -92,8 +97,8 @@ export async function promoteToOwner(
   userId: string,
 ): Promise<void> {
   await db.execute(sql`
-    UPDATE claimnet.group_members SET role = 'owner'
-    WHERE group_id = ${bookId}::uuid AND user_id = ${userId}::uuid
+    UPDATE claimnet.group_members gm SET role = 'owner'
+    WHERE gm.group_id = ${bookId}::uuid AND ${membershipOf("gm", userId)}
   `);
 }
 
@@ -116,7 +121,7 @@ export async function traceIdsInSoleMemberBooksOwnedBy(
     )
     AND NOT EXISTS (
       SELECT 1 FROM claimnet.group_members gm
-      WHERE gm.group_id = g.id AND gm.user_id <> ${userId}::uuid
+      WHERE gm.group_id = g.id AND ${membershipOfSomeoneElse("gm", userId)}
     )
   `);
   return (rows as unknown as Array<{ id: string }>).map((r) => r.id);

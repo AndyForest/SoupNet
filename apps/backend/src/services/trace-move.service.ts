@@ -31,6 +31,17 @@ export class TraceMoveNotFoundError extends Error {
   }
 }
 
+/**
+ * The trace is no longer in the book the caller was authorized to take it out
+ * of. Nothing was changed; the caller should look again and decide afresh.
+ */
+export class TraceMoveSourceChangedError extends Error {
+  constructor() {
+    super("Trace is no longer in the recipe book this move was authorized for");
+    this.name = "TraceMoveSourceChangedError";
+  }
+}
+
 export class TraceMoveSameBookError extends Error {
   constructor() {
     super("Trace is already in that recipe book");
@@ -55,6 +66,12 @@ export class TraceMoveEvidenceNotFoundError extends Error {
 export interface TraceMoveOptions {
   db: PostgresJsDatabase;
   traceId: string;
+  /**
+   * The book the caller checked the actor's authority against. Required: the
+   * move only proceeds if the locked trace row is still in this book, so the
+   * authorization and the action are about the same book.
+   */
+  authorizedSourceGroupId: string;
   destGroupId: string;
   /** Rendered into the human-origin feedback row. Never the SOURCE book name. */
   destBookName: string;
@@ -117,7 +134,12 @@ export async function moveTraceToBook(
       const trace = (traceRows as unknown as Array<{ groupId: string }>)[0];
       if (!trace) throw new TraceMoveNotFoundError();
 
+      // Under the row lock, the book cannot change again before we commit —
+      // so this is the moment to confirm it is the book the caller authorized
+      // against. Checked before the same-book guard: a caller whose facts are
+      // out of date learns only that, not where the recipe is now.
       const fromGroupId = trace.groupId;
+      if (fromGroupId !== opts.authorizedSourceGroupId) throw new TraceMoveSourceChangedError();
       if (fromGroupId === destGroupId) throw new TraceMoveSameBookError();
 
       // Every evidence row linked to this trace.
