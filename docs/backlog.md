@@ -226,6 +226,10 @@ Small items the operator parks as they come up. Add to this list rather than cre
 - **OAuth-connected clients in the API keys list.** They aren't presented there today. `listKeys` doesn't filter by key type, so check whether the rows are returned and simply not shown as connections. Because OAuth access rows rotate hourly, show one entry per connected client (grouped by `oauth_client_id`) rather than raw rows, with revoke. (2026-09-19)
 - **Nested derived keys.** When derived API keys ship, show them under their parent with the same controls. (2026-09-19)
 
+### `[DESIGN]` Drafts, triage ratings, deciding by building both, and headless keys (direction set 2026-09-20 / 09-27)
+
+Design: [planning/drafts-and-triage.md](planning/drafts-and-triage.md) (recipes `0e3cb40e`, `ea930c3d`, `e263dc40`, `84e6bc9f`). "Draft" and "on behalf of" become independent properties of a check; `impact` and `uncertainty` ratings on every check for triage (never ranking); drafts hidden from everyone but the person, their agents, and the depositor until verified; a review queue on the human search page; linked option drafts under one intent with a rubric set in advance, resolved by measurement into verified and not-chosen; a headless key setting that forces drafts. Depends on the authz seam, the recipe-to-intent link, and capability flags on keys. Lands with a tool-description trim so the new parameters are net-negative in context size. Supersedes the single "draft on behalf of" parameter in the org program §4.4.
+
 ### `[IMPL]` ChatGPT compatibility for the remote MCP endpoint
 
 Operator note 2026-09-19: ChatGPT plugins are MCP-based now (since July, per operator — verify against OpenAI's current docs). Check that `POST /mcp` + the OAuth 2.1 connector flow work as a ChatGPT connector/app, note any gaps (tool-shape requirements, auth quirks, directory listing), and add ChatGPT to the public connect page's client list if it works.
