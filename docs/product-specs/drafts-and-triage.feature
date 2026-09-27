@@ -535,7 +535,7 @@ Feature: Drafts, triage ratings, and deciding by building both
       # idempotency key is unchanged).
       When Dana's key checks the identical text in the same book on Pat's behalf, then on Sam's behalf
       Then one draft is stored, about Pat
-      And the second response returns that draft as an existing recipe, with a notice saying whom it is about and that nothing new was stored
+      And the second response returns that draft as an identical repeat, as for any repeat, and nothing new is stored
 
     @DT-OBO-11 @slice-4
     Scenario: The depositor's link is the subject's review link

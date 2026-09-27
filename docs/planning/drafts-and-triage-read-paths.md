@@ -133,7 +133,7 @@ Rubric: build log §Slice 4 rubric (ids `S4-*`). From slice 4 a draft's subject 
 | RP-01, RP-13 | Deposit takes `on_behalf_of`; forced draft; the notice; labels name the other party | results: labelled "deposited by Dana" | results: labelled "about Pat" | unchanged (absent) | S4-W1 to W5, S4-L1, S4-L3 |
 | RP-02, RP-14 | Labels; `is:draft` reads the subject; `author:` still the depositor | `is:draft` lists it | `author:me` lists it, `is:draft` does not | unchanged | S4-Q3, S4-Q4 |
 | RP-03 | Scope counts include the viewer's own unresolved drafts as subject or depositor | counted | counted under `author:me` | unchanged | S4-V1 |
-| RP-04 | Idempotency key unchanged (amended, `b89db1f0`); a repeat about someone else returns the existing recipe with a notice naming whom it is about | | one recipe; the notice | n/a | S4-S2, S4-L4 |
+| RP-04 | Idempotency key unchanged (amended, `b89db1f0`); a repeat about someone else returns the existing recipe as any repeat does | | one recipe | n/a | S4-S2, S4-L4 |
 | RP-06, RP-08, RP-16 | By-id reads admit subject and depositor while unpublished; labels; after verification an ordinary recipe of the subject's, no label (amended, `b89db1f0`) | labelled | labelled | uniform; after verification, Pat's ordinary recipe | S4-L1, S4-L2, S4-U2 |
 | RP-09, RP-15, RP-17 | The Drafts line counts drafts about the viewer from any depositor | counts it | does not count it | unchanged | S4-Q1, S4-Z5 |
 | RP-11, RP-18 | Feedback targets follow the by-id rule | may attach | may attach | uniform | S4-U2 |
