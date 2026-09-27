@@ -244,6 +244,108 @@ The checklist is [drafts-and-triage-read-paths.md](drafts-and-triage-read-paths.
 
 **Briefing-copy declaration.** Slice 2 adds the `draft` parameter description and the verify tool description (tool copy, so declared under the regression rule) with a new `@unreleased` briefing-spec scenario: a briefed agent drafts only when it cannot ask and the call clears the impact and uncertainty bar, and says why it couldn't ask in the first evidence interpretation. The full when-to-draft guidance in the briefing body stays in slice 7.
 
+### Slice 2 verification record
+
+Verifier: agent `a-drafts-verify-s2-2026-09-27`, 2026-09-27, which did not build the slice. Verified at `a0be3b7` in a throwaway detached worktree after `npm ci` and `build:packages`; the pre-slice comparison point is `eb29acb`, the parent of `eba35fe`. Isolated stack: compose project `soupnet-ci-5624` (postgres on 5624), the slice backend on 3191 with `test-ci-local.mjs`'s env (stub embeddings, auto-setup, rate limits off), and a second, deliberately mutated backend on 3192 for the seam plants. The evidence comes from the verifier's own probe scripts: JSON-RPC to `/mcp`, fetches to `/check`, `/recipes`, `/feedback`, `/briefing`, `/traces`, `/auth/me/export`, `/import`, `/admin`, and `/health/integrity`, a spawned stdio server, and `psql` reads. Verdicts were formed before reading the builder's commit messages and build notes; nothing in them contradicts the evidence, with the one qualification under S2-M2.
+
+Cast: Pat (member of a shared book, with two full keys, a key without the shared book, and a JWT), Sam (the book's owner), an outsider with no membership, and the system user. Pat's drafts: DU (unverified, rated `high`/`medium`, a unique marker in its text and evidence), DV (verified by Pat's `still_true`), DR (rejected by Pat's `wrong`), DA (verified with `verify_draft`), DA2 and DS (verified with `POST /recipes/:id/verify`, by a different key and by the depositing key), DX (export and import), DD (dates and map cache), and further drafts from the stdio server and the check page. A published recipe was planted (by SQL, no route can choose ids) whose id shares DU's 8-character prefix.
+
+**Verdict: accepted with follow-ups.** Nothing fails. S2-M2 is partial; the security-property row stays open until the audit role reports.
+
+| Criterion | Result | Evidence |
+|---|---|---|
+| S2-M1 the rule written once | pass | `authz/draft-sql.ts` (fragments) and `mayReadTrace` in `roles.ts` (facts from `trace-access.ts`) are the only expressions. `draft-sql.test.ts` passes; with a hand-written `draft_state` condition planted in `book-stats.service.ts`, its "no file but authz/draft-sql.ts compares or tests draft_state in SQL" case fails. |
+| S2-M2 the seam register | partial | `TRACE_READS` has 26 files, 7 composing. `npm run check:authz-seam` exits 0 at the tip. Planted, each in the throwaway worktree then reverted: a new file with an unregistered `claimnet.traces` read fails; deleting the draft line from the `lookupRecipes` main select, the evidence-search `publishedTrace`, the feedback prefix scan, and the search-only scope count each fails ("lines … changed in a registered file"); deleting `fetchCorpusTraces`' only fragment fails ("registered as composing … references none"). **Not caught:** deleting `traceIdVisibleTo` from `hybridSearch`'s `searchPredicates`, because that fragment sits on a line before the statement's table mention and the fingerprint window only runs forward; the file still references `publishedTrace`, so the composes check passes too. The Layer 3 suite catches that mutation (three DT-VIS-02/03 tests fail on a backend built with it), so the gate as a whole holds, but the static guard alone does not. A call site's choice of audience is also outside the guard's view (see follow-up 2). |
+| S2-M3 the viewer reaches the pipeline | pass | `runSearchPipeline` takes `audience` (a viewer or `SHARED_AUDIENCE`, default shared) and passes it to `hybridSearch` and `fetchCorpusTraces`. `evidenceSearch` takes no viewer: it applies `publishedTrace` for every viewer, stricter than the rubric's wording and the builder's declared interpretation 1, which the verifier accepts (an own draft quoted there would carry no label). |
+| S2-M4 condition in `searchPredicates`, read from `traces` | pass | `EXISTS (SELECT 1 FROM claimnet.traces dv WHERE dv.id = es.source_id AND …)` in the shared predicates, so count, ANN, and fallback agree; no copy on `embedding_sources`. Measurement below. |
+| S2-B1 deposit | pass | Stored `unverified` with the key's user and key, and labelled with the notice, via remote MCP (structured and markdown), `GET /check?format=json`, `POST /check` urlencoded (`draft=on`), multipart with an HTML response (the form's checkbox comes back checked, `<p id="check-draft">` carries the notice), and the stdio server. `draft: "maybe"` on MCP deposits a draft with a notice rather than failing. |
+| S2-B2 collaborators see nothing | pass | Sam's check with DU's exact text, the same text as a search, a quoted phrase from its evidence, `author:<Pat>`, and `author:anyone`, over JSON, HTML, and MCP both formats: no hidden draft id and no marker in any response; `totalResults`, cluster sizes, and related-evidence parents are the published-only figures (3 → 4 after the prefix twin, 7 after DV, DA, DA2 were verified); no related-evidence entry quotes a draft. The outsider sees nothing either. |
+| S2-B3 by-id uniform absence | pass | See the uniform-response results. The prefix shared with the planted twin resolves, for Sam, to the twin alone (`get_recipes`, `GET /recipes`, `POST /feedback`, `verify_draft` all name only the twin); for Pat it is `ambiguous_prefix` naming both. |
+| S2-B4 own agents see own drafts, labelled | pass | Pat's `draftState` appears on results and stubs in JSON and structured; `[unverified draft: …]` in markdown results, stubs (`[known to you] [unverified draft …]`), `get_recipes` (`Draft: …`), and the HTML page. Pat's second key sees DU; the key without the shared book gets the uniform marker and finds nothing by quoted marker or check. DS's similarity (0.0057258) and position were identical before and after verification, and equal in Sam's list afterwards. |
+| S2-B5 aggregates | pass | With the book's published recipes back-dated to 2026-01-01, Sam's Index line stayed "7 recipes · newest judgment 2026-01-01 · …" after a new draft landed, then moved to 8 and 2026-09-27 only when Pat verified it. Pat's line carries a separate "Drafts: N unverified drafts about your user await their review" (8, then 4, then 5). No draft in exemplars for anyone, including Pat's own briefing at `verbosity: high` and `POST /keys/briefing`. The map (Sam and Pat, default, `query`, and `traceIds` modes) counts published only; the cached layout was byte-identical before and after a draft landed and refreshed on verification. `GET /traces?groupId=` shows Sam no drafts and Pat his own, labelled. Integrity names no draft. |
+| S2-B6 export and import | pass | Pat's export carries `draftState` and ratings; Sam's and the outsider's exports hold none of Pat's drafts. DX deleted by Pat, then his export re-imported: DX comes back `unverified`, `low`/`high`. For import uniformity see RP-35. |
+| S2-B7 re-check as non-draft | pass | Same key, same text, no flag: same id, `existingRecipe`, `draftState: unverified`, "…it is still a draft: checking it again does not verify it…". A rejected draft's text reports "rejected … nothing new was stored" and stays out of results. A published recipe re-checked with `draft=true` stays published with a notice. A different key of Pat's inserts a new ordinary recipe (accepted in open question 5). |
+| S2-B8 move and delete | pass | Pat moved DU to his personal book and back: still `unverified`, `embedding_sources.group_id` followed, Sam found it in neither book. Sam (the book owner), the outsider, and the system user get byte-identical 404s for move and delete of DU and DR against a random id, and nothing changed. |
+| S2-B9 reactions | pass | Pat's `still_true` → `verified` (resolver Pat, key null); `wrong` → `rejected`; `stale` → nothing. Clearing DV's reaction, then setting it to `wrong`: still `verified`, reaction row `wrong`. `still_true` on the rejected DR: still `rejected`. Sam's reactions on DU and DR are the uniform 404 and write no row. |
+| S2-B10 agent verification | pass | Refused, nothing stored: empty evidence, a quote with no citation, a citation with no quote, a quote the draft already carries (also with different case and spacing), a bad JSON body. A repeat quote plus a new one verifies and attaches only the new entry (`evidenceAdded: 1`). `verifiedByDepositingKey` is true for DS (depositing key) and false for DA2 (Pat's other key); the key is stored and the detail page shows it. On a non-draft: 409 "not a draft", nothing stored; on DR (rejected): "already resolved"; on a verified draft: "not a draft". MCP, REST, and stdio. |
+| S2-B11 no ranking input changes | pass | Across verification, claim text, hash, `decided_at`, `created_at`, `impact`, and `uncertainty` are unchanged and the trace vectors hash identically; only the four draft columns and `updated_at` move. |
+| Uniform responses | pass | Below. |
+| Must NOT change | pass | No diff to `mmr.ts`, `ranking-config.ts`, `clustering.service.ts`, or `ranking-regression.test.ts`; the `hybridSearch` diff adds only the predicate. Idempotency key, `session_shown` / `intent_shown`, reaction vocabulary, and `api_keys` are untouched. Index reaction and feedback counts are published-only, per the ruling. `ranking-isolation.test.ts` now also forbids the draft and verification columns in the five ranking files. |
+| Security properties | pass, one open | Every inventory row walked (table below); one place (S2-M1); static guard partial (S2-M2); no existence oracle on the rubric's surfaces; ranking isolation extended. **Open:** this log does not yet record that the audit role reviewed the slice. |
+| Briefing-copy declaration | pass | `spec-decision-log.md` 2026-09-27 slice 2 entry: the `draft` and `verify_draft` copy, the Drafts line, the new `@unreleased` scenario (present in `checking-behavior.feature`), watched scenarios with rationale, bytes before and after. |
+
+**Read paths.** "Own" means Pat's own drafts. Pat sees his unverified drafts labelled in result sets, and his drafts in any state by id; Sam and the outsider see only published recipes (including drafts once verified).
+
+| RP | Pat | Sam | Outsider | Result |
+|---|---|---|---|---|
+| 01 `/check` deposit (JSON, HTML, form) | own unverified, labelled; rejected gone | none; counts published-only | none | pass |
+| 02 `/check?filter=` | own labelled | none (text, quoted, `author:`) | none | pass |
+| 03 zero-result scope counts | own unverified counted (code review) | "No matches among the 2 recipes in scope" before and after a draft landed, REST and MCP | own book only | pass |
+| 04 idempotency hit | state reported, never published | n/a (key-scoped) | n/a | pass |
+| 05 known-set and intent ledgers | stubs labelled | stubs only of rows already shown | same | pass (irrelevant) |
+| 06 `GET /recipes` (id, prefix) | labelled; `ambiguous_prefix` names both | uniform; prefix resolves to twin alone | uniform | pass |
+| 07 `/briefing` | composes 08–10 | composes | composes | pass |
+| 08 briefing `recipe_ids` | labelled | uniform | uniform | pass |
+| 09 Index lines, Drafts line | published figures + own Drafts line | published only, dates held | no line | pass |
+| 10 exemplars | no drafts | no drafts | own book | pass |
+| 11 `POST`/`GET /feedback` | accepted on own drafts | uniform `TRACE_NOT_READABLE`; prefix to twin | uniform | pass |
+| 12 `/health/integrity` | no draft ids | none | none | pass |
+| 13 `check_recipe` (incl. synthesis) | labelled, both formats | none | none | pass (synthesis labelling by unit test, stub provider) |
+| 14 `search_recipes` | labelled | none | none | pass |
+| 15 `get_briefing` | as 07–10 | as 07–10 | as 07–10 | pass |
+| 16 `get_recipes` | labelled | uniform | uniform | pass |
+| 17 `list_my_recipe_books` | Index + Drafts line | published only | no line | pass |
+| 18 `log_feedback` (+ ride-alongs) | accepted | uniform on MCP, check ride-along, search ride-along, URL form | uniform | pass |
+| 19 `GET /traces/:id` | draft state, `canResolveDraft` | uniform 404 | uniform 404 | pass |
+| 20 `GET /traces/:id/feedback` | readable | uniform 404 | uniform 404 | pass |
+| 21 reaction `PUT`/`DELETE` | resolves (one-way) | uniform 404, no row | uniform 404 | pass |
+| 22 star | readable | uniform 404, no row | uniform 404 | pass |
+| 23 move, delete | allowed, state kept | uniform 404 (owner) | uniform 404; system user too | pass |
+| 24 map (default, `query`, `traceIds`) | no drafts | no drafts | 403 (non-member, as before) | pass |
+| 25 `GET /traces?groupId=` | own labelled | published only | 403 | pass |
+| 26 `POST /keys/briefing` | no drafts | n/a | n/a | pass |
+| 27 `GET /traces` | own, labelled | own | own | pass |
+| 28 `GET /traces/count` | counts own drafts (as ruled) | own | own | pass |
+| 29 `GET /traces/checks` | own deposits | only ids shown to Sam | own | pass |
+| 30 export | own, with state | own only | own only | pass |
+| 31–34 admin | operator totals include drafts | n/a | n/a | irrelevant (as inventoried) |
+| 35 import | restores state | see note | see note | partial: state round trip passes; uniformity, see private note |
+| 36 move/delete services | as 23 | as 23 | as 23 | pass |
+| 37, 38 account deletion, reaper | n/a | n/a | n/a | irrelevant (registered) |
+| 39 `hybridSearch` | own unverified | published | published | pass |
+| 40 `evidenceSearch` | published only | published only | published only | pass |
+| 41 `fetchCorpusTraces` | own unverified | published | published | pass |
+| 42 by-id enrichers | callers pass filtered ids | same | same | pass (callers checked) |
+| 43 embedding pipeline | drafts embedded, vectors unchanged by verification | n/a | n/a | pass |
+| 44 map layout cache | pool filtered before clustering, bytes identical across a draft deposit | same | n/a | pass |
+| 45 offline evals | n/a | n/a | n/a | irrelevant (registered) |
+| 46 `verify_draft`, `POST /recipes/:id/verify` | verifies with new evidence | uniform (MCP text, REST 404) | uniform | pass |
+
+**Uniform responses.** For Sam, the outsider, and (JWT routes only) the system user, each surface was called with DU (unverified) and DR (unverified, then again after rejection), and with a random UUID, and the status plus body compared byte for byte after replacing the id and its 8-character prefix. 27 surfaces for key holders: `GET /recipes` (id, prefix), `get_recipes` (id, prefix), `GET /briefing?recipe_ids=`, `get_briefing recipe_ids`, `POST /feedback` (id, prefix), `GET /feedback`, `log_feedback`, the feedback ride-along on `check_recipe`, `search_recipes`, and the `/check` URL form, `verify_draft` (id, prefix), `POST /recipes/:id/verify` (with and without evidence), `GET /traces/:id`, `GET /traces/:id/feedback`, reaction `PUT` (`still_true`, `wrong`) and `DELETE`, star `PUT`/`DELETE`, move to a personal book, move to the shared book, delete. Result: identical in every pair except, for Sam and DU, the four prefix surfaces, where the prefix resolves to the planted published twin instead of "not found" (the DT-VIS-05 behavior; no candidate list names DU). No reaction, star, or state change was written. Response headers were not compared.
+
+**Verification** results are in rows S2-B9 and S2-B10 above. After resolution Sam finds DV, DA, and DA2 on check and search (JSON, HTML, MCP both formats), the map, the book list, and the Index count, and DS and DD in later check totals; a separate pair showed a draft going from `not_found_or_unreadable` for the collaborator to `ok` (no `draftState` on the wire) by id once verified, with `GET /traces/:id` and feedback accepted. Sam never finds DU, DR, DX, or the other unverified drafts.
+
+**Measurement (S2-M4).** The builder's `bench-draft-condition.mjs`, re-pointed at 5624, run once at 20,000 synthetic recipes (4% drafts): count p50 15.7 ms (none), 29.3 ms (A, the shipped `EXISTS`), 28.5 ms (B); ANN top-60 p50 52.2 / 52.1 / 51.1 ms; HNSW used in all three. The builder reported 16.6 / 32.0 / 29.9 and 51.8 / 51.6 / 51.7. The numbers agree: no ANN cost, the exact count roughly doubles (+14 ms here, +15 ms there). The bench replays the predicates by hand rather than calling `hybridSearch`; the verifier checked that its variant A matches the SQL `traceIdVisibleTo` emits for a viewer.
+
+**Gate.** `TESTCI_PGPORT=5624 npm run test:ci` in the verification worktree: exit code **0** on the first run. Typecheck, lint, the data-model drift check, the authz seam check, and the golden-set ranking eval passed; tests 1,526 passed and 10 skipped across 114 files (3 skipped), `drafts.test.ts` and `ranking-regression.test.ts` included.
+
+**Deviations.**
+
+- The prefix twin was planted by SQL, since no route lets a caller choose an id.
+- The uniform comparison covers status and body, not headers.
+- RP-13's synthesis labelling was checked by the unit test and code review; the stub synthesis provider cannot show the prompt.
+- Layer 4 (the detail page's draft status and reaction prompt in a browser) was not run; it stays on the operator's handoff list.
+- The build-log notes and commit messages were read after the verdicts. The builder's statement that the seam guard fingerprints "the whole statement around each mention" is accurate, but it does not cover a fragment built before the mention (S2-M2).
+
+**Follow-ups** (none blocks the slice):
+
+1. S2-M2: make the guard see predicate fragments assembled above the table mention (for example fingerprint the enclosing function, or require each composing file to keep a registered count of fragment calls), so that removing `hybridSearch`'s draft condition fails statically as well as in Layer 3.
+2. Test strength on DT-VIS-08 and RP-44: strengthen the Pat-map assertion; see the private note.
+3. RP-35: see the private note (pre-existing, already filed by the orchestrator; the verifier confirmed it applies to drafts as to any recipe).
+4. A verified draft carries `draftState: "verified"` on `GET /traces?groupId=` and the detail page (with who verified it and the verifying key's id) for collaborators too, while the agent surfaces render a verified draft as an ordinary recipe. Likely intended (the audit display of open question 14), but the design says "a verified draft reads as an ordinary recipe everywhere"; worth a one-line ruling.
+5. The security-property row stays open until the audit role's review is recorded here.
+6. The shared-description cap rose 5,550 → 6,000 in this slice (declared in the spec log, recipe `8dd573b4`); the orchestrator rulings mention only the `tools/list` cap. Noted for completeness.
+
 ## Open design questions
 
 Found on contact with the code (`feat/authz-seam-keys`, 2026-09-27). Each has a recommendation; the slice that meets it gets a ruling first. Scenarios marked `# Pending decision:` in the feature file, and `decide` rows in the read-path inventory, point here.
