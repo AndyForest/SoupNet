@@ -225,8 +225,9 @@ Integration tests hit the running Docker backend, so keep `docker compose up -d`
 **Integration tests create test data** in the live database (users with `@test.local` emails, in their own recipe books). Test traces are recipe-book-scoped and don't appear in your personal search results. To clean up accumulated test data:
 
 ```bash
-npx tsx scripts/cleanup-test-data.ts           # clean up
-npx tsx scripts/cleanup-test-data.ts --status  # just show counts
+npx tsx scripts/cleanup-test-data.mts --dry-run # what a cleanup would delete and keep
+npx tsx scripts/cleanup-test-data.mts           # clean up throwaway test accounts (keeps long-lived eval accounts)
+npx tsx scripts/cleanup-test-data.mts --status  # just show counts
 ```
 
 See [`docs/testing-plan.md`](docs/testing-plan.md) for coverage expectations and test categories.
