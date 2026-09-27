@@ -57,9 +57,9 @@ export function SettingsAccountPage() {
         <h3 style={{ marginBottom: "var(--space-md)" }}>Account</h3>
         {meQuery.isLoading && <p style={{ color: "var(--color-on-surface-variant)" }}>Loading...</p>}
         {meQuery.data && (
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div>
-              <p style={{ fontFamily: "var(--font-headline)", fontWeight: 600 }}>{meQuery.data.email}</p>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "var(--space-sm)" }}>
+            <div style={{ minWidth: 0 }}>
+              <p style={{ fontFamily: "var(--font-headline)", fontWeight: 600, overflowWrap: "anywhere" }}>{meQuery.data.email}</p>
               <p className="text-xs" style={{ color: "var(--color-on-surface-variant)", marginTop: "var(--space-xs)" }}>
                 Role: {meQuery.data.role}
               </p>
