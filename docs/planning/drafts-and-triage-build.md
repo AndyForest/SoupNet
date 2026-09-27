@@ -201,3 +201,14 @@ Found on contact with the code (`feat/authz-seam-keys`, 2026-09-27). Each has a 
 18. **"Reachable through the winner's evidence" (slice 6).** A not-chosen draft stays hidden, so a collaborator following its id from the winner's evidence gets not-found. **Recommendation:** accept for now (DT-OPT-03); the winner's evidence carries the measurement, which is what a collaborator needs.
 19. **The review queue's "human search page" is an API-key surface (slice 3).** `CheckRecipePage` mints the person's daily key and calls `/check`, so the search page is the person's own agent surface (RP-01, RP-02), not a JWT route. That fits: drafts appear there under the label-own rule with no new visibility path. The queue actions (confirm, reject, not chosen) are human-only and belong on JWT routes. **Recommendation:** the queue lists through `/check` search with a drafts qualifier, and acts through JWT routes; name both in the slice 3 rubric.
 20. **C01-R15's wording predates the depositor rule.** It says drafts are "visible only to the attributed person until verified"; the ratified rule (recipe `94e0e682`) adds the person whose agent deposited it. **Recommendation:** the operator updates R15 when slice 4 lands; the feature file follows the ratified rule.
+
+## Orchestrator rulings on the open questions (2026-09-27)
+
+The operator's standing instruction is to take the obvious, standard answer and escalate only what is both high impact and genuinely uncertain (recipes `061a7926`, `eb4b77eb`). On that basis:
+
+- **Accepted as recommended:** 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 17, 18, 19. For 1, the design doc's "removed from the tool schemas" line is corrected in the same commit. For 3, the check-level ratings keep the operator's words (`impact`, `uncertainty`); the descriptions say plainly that a feedback row's `impact` is a different field, and S1-B6 tests that they never cross.
+- **15:** amend design-thinking §8 in slice 2, citing the operator's 2026-09-19 correction that agents may update some surfaces and are encouraged to keep book descriptions current (recipe `94e0e682`).
+- **16:** decided at the start of slice 4, not now; nothing before it depends on the answer.
+- **20:** C01-R15 corrected in the same commit to include the depositor.
+
+No question is escalated to the operator at this point. Anything that turns out to need him during a slice is raised then, with the evidence.

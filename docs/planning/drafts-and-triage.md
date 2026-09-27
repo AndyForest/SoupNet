@@ -89,7 +89,7 @@ New optional parameters on `check_recipe` (and its REST twin): `draft` (boolean,
 
 Many MCP clients load every tool's description and parameter schema into the model's context on every turn. (Claude Code can defer them behind tool search when a session has many tools, but other clients don't.) The current descriptions are roughly 6,000 characters of tool and parameter text, plus the full feedback-row schema repeated on both `check_recipe` and `search_recipes`. Four new parameters can be net-negative in size if they land with:
 
-- the deprecated `session_id`, `clusters`, and `max_chars` removed from the tool schemas (still honored when sent, per the existing deprecation posture);
+- the deprecated `clusters` and `max_chars` cut to a one-line pointer to `verbosity` (they stay declared, because the MCP SDK drops undeclared parameters before the handler sees them, and they are still honored; `session_id` is intended for deprecation but not yet deprecated, so it stays as is);
 - the inline feedback-row schema on `check_recipe` and `search_recipes` replaced by a short pointer to `log_feedback`'s fields;
 - the repeated shared parameters (`intent`, `agent_id`, `known_recipes`) cut to one line each, with the detail living once in the briefing.
 
