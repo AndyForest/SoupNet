@@ -472,6 +472,117 @@ Terms: an **unresolved draft** is a recipe whose draft state is `unverified`. **
 
 **Briefing-copy declaration.** The `searchQuery` description, the unknown-qualifier error text, the deposit notice, and the draft label's ratings are agent-facing copy under [../briefing-specs/README.md](../briefing-specs/README.md) §The regression rule. The slice 3 PR appends a `spec-decision-log.md` entry that declares a new `@unreleased` scenario (a briefed agent that has deposited drafts hands its human the queue link for them rather than listing ids in prose), names any watched scenarios with a rationale, and records the bytes before and after for `tools/list`, the shared descriptions, and the notice.
 
+### Slice 3 verification record
+
+Written 2026-09-27 by the functional verifier (agent `a-drafts-verify-s3-2026-09-27`, Soup.net intent `int_1OMwBzYblR3eIWTgcWx6d3xC`), who did not build the slice and changed no application code. Verified at code tip `09d122b` (branch tip `a8e7a1e`) in a throwaway detached worktree after `npm ci` and `npm run build:packages`. Verdicts were formed from the verifier's own probes before the builder's commits and build notes were read; the notes were then checked against that evidence (see "Builder's flagged rows" below).
+
+**Verdict: accepted with minor follow-ups.** 44 rows pass, 2 are partial (S3-L1, and S3-Q5 by an edge the row does not name), 0 fail; the 4 accessibility rows and the browser halves of S3-Q4, Q6 to Q8, A5, and L5 belong to the separate browser verification run and are not judged here.
+
+**How it was verified.**
+
+- **Gate:** `TESTCI_PGPORT=5624 npm run test:ci`, one run, **exit code 0**: 118 test files passed and 3 skipped, 1,654 tests passed and 10 skipped; the golden-set ranking eval reported "All 9 thresholds green."
+- **Targeted re-run** against the verifier's own stack (below): the 15 files that carry this slice's criteria (`routes/draft-queue.test.ts`, `routes/drafts.test.ts`, `authz/seam-guard.test.ts`, `authz/draft-sql.test.ts`, `ranking-isolation.test.ts`, `ranking-regression.test.ts`, `search-query.test.ts`, `triage-ratings.test.ts`, `drafts.test.ts`, the frontend `return-target.test.ts` and `draft-queue.test.ts`, the stdio `server.test.ts`, `mcp-tools-list-size.test.ts`, `mcp-tool-descriptions.test.ts`, `schemas.test.ts`): 354 tests passed, none skipped.
+- **Independent probe:** a script of the verifier's own (94 assertions) against the built backend on a throwaway stack (compose project `soupnet-ci-5624`, backend on a spare port with the test-ci environment, stub embeddings), torn down afterwards. Cast: Pat; Sam (owner of the shared, quiet, and left books); Mo and Cal (shared-book members with no drafts); Olive (outsider); the system user. Pat deposited through three keys (A: all his books; B: shared and quiet; RO: reads shared, quiet, and personal, writes only personal), with daily reads switched off for the quiet book, and was then removed from the left book. Remote MCP, `/check?filter=` (JSON and HTML), `/check` deposits, and the stdio server (`createStdioServer` over an in-memory transport, with real `fetch` to the stack) were all exercised. Two follow-up probes measured S3-G7 (below).
+- **Code review** of the slice's diff (`30e4efe..09d122b`), plus seam-guard mutations in the throwaway tree (reverted).
+
+**Carried in**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S3-F1 | pass | Pat's draft in the shared book through key RO (reads, cannot write): MCP and stdio `verify_draft` answer "…needs write access to this recipe book…" naming the book and the queue link; REST answers 403 `needs_write_access`; the draft stays `unverified` and its evidence count is unchanged. A published recipe the key reads: "not a draft" (MCP) and 409 (REST). Sam's draft, a random UUID, an 8-character prefix of Sam's hidden draft, a random 8-character prefix, and an outsider's published recipe: one byte-identical answer per surface after replacing the id (MCP 1 variant, REST 1 variant (404), stdio 1 variant). |
+| S3-F2 | pass | `seam-guard.test.ts` (slice 2 plants plus seven F84 forms and the two split-name cases) passed in the gate and in the targeted run; F84 is closed. |
+| S3-F3 | pass | `docs/backlog.md` gains the `[IMPL]` item naming the purge in `maybeCleanupOAuthArtifacts` as the suspected cause. |
+
+**Where it lives**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S3-M1 | pass | The queue listing, the dashboard count, and `is:draft` all compose `draftAwaitingReviewBy`; no new file compares `draft_state` (remaining mentions outside `authz/` are pre-slice select lists); `draft-sql.test.ts` passes. |
+| S3-M2 | pass | `check:authz-seam` passes unmodified (29 registered files, 8 composing). Deleting the draft fragment from the listing statement, from the count statement, or the by-id rule from the item loader each made the guard fail, naming `draft-queue.service.ts`. The id-list resolution statement lives inside `authz/trace-access.ts`. |
+| S3-M3 | pass | `ranking-isolation.test.ts` and `ranking-regression.test.ts` have no diff in `30e4efe..09d122b` and pass. `vector-search.service.ts` gains only an opaque `selections` hook that names no rating or draft column; the predicates and `triageOrderSql` live in `services/search-selection.ts`. Ranking eval green. |
+| S3-M4 | pass | One parser: the queue route, `search_recipes`, and `/check?filter=` all call `parseSearchQuery`; the new qualifiers are allowlist entries and the unknown-qualifier error lists them. |
+
+**Grammar**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S3-G1 | pass | `is:draft` through `/check?filter=` with key A, paged flat, returns exactly Pat's 45 unresolved drafts in its scope; key B returns exactly the 10 in shared and quiet, from both keys. `IS:DRAFT` works. `is:drafts`, `is:published`, and a bare `is:` are errors naming `is:draft` on the queue, MCP, `/check`, and stdio. |
+| S3-G2 | pass | `-is:draft author:anyone` drops every one of Pat's unresolved drafts and keeps his published recipe; for Mo, with no drafts, `-is:draft` returns the same ids as the plain query. |
+| S3-G3 | pass | `is:draft` lifts the exclude-own default on remote MCP and stdio; without it or `author:`, Pat's own recipes stay excluded on both. `/check?filter=` still lists Pat's own draft without any qualifier. |
+| S3-G4 | pass | Over published recipes rated high, rated low, and unrated: `impact:high` matches rated-high only (never unrated, never a hidden draft); `-impact:low` keeps unrated and high; `-impact:high` drops high and keeps unrated; `uncertainty:LOW` is case-insensitive. A repeated positive qualifier and `extreme`, `'high'`, `high,low`, a homoglyph `hіgh`, and a 5,000-character value are errors naming the vocabulary. |
+| S3-G5 | pass | Injection-shaped values (quotes, `;DROP TABLE …--`, `)`, percent-encoding, `<script>`) fail with the parser's message on every surface; the `/check` HTML error escapes them; the table was intact afterwards. The adversarial Layer 1 cases passed. |
+| S3-G6 | pass | `is:draft impact:high after:2026-01-01 "shared hh"` on the queue returns exactly the one matching draft; `after:2099-01-01` empties it. |
+| S3-G7 | pass, wording to amend | On the flat semantic listing (the queue's path), three queries × `impact:high`, `-impact:low`, `uncertainty:low` over 44 drafts each gave an exact order-preserving subsequence. On agent surfaces the automatic verbosity collapse always clusters, and a qualifier filters before exemplar selection, so the displayed exemplars and their cluster order change while every similarity stays identical (measured, 40 recipes, `/check` JSON with `clusters=100` and MCP `high`/default). That is the same filter-before-selection behavior as `author:` and `after:`, and it is not a ranking input (S3-M3). Recipe `a428352c`. |
+
+**What the queue shows, and to whom**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S3-Q1 | pass (Layer 3) | The listing holds all 11 unresolved drafts: shared (keys A and B), quiet (daily reads off), and personal. No duplicates. |
+| S3-Q2 | pass | Absent: Sam's drafts (shared and personal), Pat's published recipe, his rejected and not-chosen drafts, and his draft in the book he was removed from. Olive's queue is empty. |
+| S3-Q3 | pass | Queue total 11 = `/traces/drafts/count` 11 = the Drafts lines of remote MCP `get_briefing` 11 = stdio `get_briefing` 11 (key A after the removal covers the same books). REST `/briefing` without the stdio header is the full profile, which has no per-book Index by design. |
+| S3-Q4 | pass (Layer 3) | Item carries text, book, `impact`/`uncertainty` (null when unrated), deposit time, key label, the first evidence interpretation, state, and `canResolve`. Rendering belongs to the browser run. |
+| S3-Q5 | partial (out-of-rubric edge) | 45 drafts: total 45, three pages of 20/20/5, a fourth page empty, union exactly 45 ids with no duplicates, and the order across pages equals `compareForTriage`. Pages 0, -1, `abc`, 2.7, and 1e9 are handled; a page number past the bigint range (`99999999999999999999`, `1e308`) answers 500 from the qualifier-only listing's OFFSET. Follow-up: clamp the page. |
+| S3-Q6 | pass (Layer 3) | `q=impact:high` narrows to high-impact drafts; `author:<Sam>` gives 0 and `author:anyone` still only Pat's; `-is:draft` is a 400 naming the page's rule; every invalid query is a 400 carrying the parser's message. The frontend fetches before navigating, so a bad query keeps the last list (code review; browser run). |
+| S3-Q7 | pass (code, unit) | A member with no drafts gets count 0 and an empty list; the page's empty state renders no actions. |
+| S3-Q8 | pass (code, unit) | `dashboardDraftsEntry` returns nothing for 0; the dashboard entry links to `/app/drafts`. |
+
+**Ordering**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S3-O1 | pass | The feature file's cast lists as (high, high), not rated, (high, low), (low, high); the whole 11- and 45-draft listings equal a sort by the domain comparator; `order` is `triage`. |
+| S3-O2 | pass | Semantic text gives `order: similarity`, still drafts only. |
+| S3-O3 | pass | DT-RAT-06/07 tests unchanged and passing; ranking eval green. |
+
+**Actions**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S3-A1 | pass | Confirm: `verified`, resolver Pat, no key, one reaction row. Reject: `rejected` plus a reaction row. Not chosen: `not_chosen`, resolver Pat, no reaction row. |
+| S3-A2 | pass | A repeat confirm reports `alreadyResolved`; a repeat not chosen, and not chosen on a rejected draft, answer 409 `already_resolved`; confirm on a not-chosen draft leaves it not chosen. 18 concurrent confirm/reject/not-chosen requests on one draft: exactly one resolution won, no 5xx, one resolution audit row; 10 concurrent not-chosen: one 200, nine 409, one audit row. Authority is checked at action time: a draft listed, then its book membership removed, then confirmed, is refused. A role change cannot be staged (see below). |
+| S3-A3 | pass | For Sam (the book owner), Mo, Olive, and the system user, not chosen and the reaction route on Pat's draft answer byte-for-byte what a random UUID, an 8-character prefix, and a malformed id get (404 "Trace not found"); nothing is written. An outsider on a published recipe she cannot read gets the same 404; a reader gets 409 "not a draft". |
+| S3-A4 | pass | After removal from the book, Pat's confirm and not chosen answer 403 `needs_write_access` naming the book, nothing written; Sam still gets the uniform 404 on that draft; the id-list shows it with `canResolve: false` and a reason naming the book. |
+| S3-A5 | pass (Layer 3) | The confirmed draft appears, unlabelled and without ratings, in Sam's agent search. List update, focus, and count refresh are in the page's code (the browser run judges them). |
+| S3-A6 | pass | Audit rows `recipe.draft_not_chosen` `{via: "queue"}` beside `recipe.draft_rejected` `{via: "reaction", …}`; the not-chosen draft reads by id for Pat with "[draft not chosen]", is out of his results, and Sam's `get_recipes` for it equals a random id's. |
+| S3-A7 | pass | Served tools and their properties are the pre-slice set (no new tool or parameter on remote or stdio); only descriptions changed. |
+
+**The id-list link**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S3-L1 | partial | Order kept (two drafts then two published recipes), repeats and upper-case copies collapse to one, 8- and 12-character prefixes resolve, a 7-character prefix does not. But a link naming the same readable recipe by prefix and by full id shows it once and still reports `notShown: 1`, so the page says a recipe "does not exist or you cannot see it" while it is on screen. Follow-up: count distinct resolved recipes, not references. |
+| S3-L2 | pass | Sam's hidden draft, a random UUID, their 8-character prefixes, an outsider's recipe, a malformed id, and a one-character-off id all produce the identical body; Sam and the system user opening a link to Pat's draft get a random id's body; mixed links give one reason-free count. |
+| S3-L3 | pass | Rejected, not chosen, verified, and published recipes are listed with their state and no actions. |
+| S3-L4 | pass | 25 ids: the first 20 in order, `truncated: true`. 300 ids: 20 resolved, `truncated: true`, 26 ms. |
+| S3-L5 | pass (unit) | `safeReturnTarget` rejects `//host`, backslash forms, absolute and `javascript:` URLs, `..` and `%2e%2e` escapes out of `/app/`, whitespace and control characters, full-width slashes, `/app` without a slash, `/apps/…`, and over-long values; it keeps `/app/drafts?ids=…`. The redirect uses TanStack's `location.href`, which is path-only. Real navigation is the browser run's. |
+| S3-L6 | pass | MCP (structured and markdown) and `/check` deposits carry `<FRONTEND_URL>/app/drafts?ids=<full id>`; an identical repeat of an unresolved draft carries it too. |
+
+**Agent side and budgets**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S3-AG1 | pass | The qualifiers work on remote `search_recipes`, stdio `search_recipes`, and `/check?filter=` JSON and HTML (the HTML label reads "…; impact high, uncertainty low]"). |
+| S3-AG2 | pass | Own-draft rows carry `impact`/`uncertainty` (null when unrated) in structured MCP, stdio, and `/check` JSON; published rows carry neither; the markdown label names ratings only when one is set. `/schemas/recipe.json` and `check-response.json` describe the fields. |
+| S3-AG3 | pass | Mo's `is:draft` before and after Pat's drafts landed in the shared book, Sam's before he had a draft of his own, and Cal's are identical on MCP markdown, MCP structured, `/check` JSON, `/check` HTML, and stdio, after replacing search/session ids and the key echoed into the HTML form. |
+| S3-Z1 | pass | Remote `tools/list` **16,853** bytes (cap 17,000); stdio **13,063** (cap 13,670). |
+| S3-Z2 | pass | Shared descriptions **5,968** characters (cap 6,000); `searchQuery` **415** (cap 420). |
+| S3-Z3 | pass | The notice grows by 60 characters with a 73-character URL, for a new draft and for a repeat. |
+| S3-Z4 | pass | A rated label adds at most 38 bytes; unrated and non-draft labels add 0. |
+| S3-Z5 | pass | No briefing source changed; no queue pointer on the Drafts line. |
+| S3-UI1 to UI4 | not judged here | Browser verification run. The queue CSS sets `overflow-wrap: anywhere` and 32-pixel action targets. |
+
+**Security properties.** Each is shown above: enumeration through the listing, the id form, prefixes, and `is:draft` (S3-M1, L2, AG3); resolution by write authority at that moment, subject only, one-way, uniform 404 for everyone else (A2, A3); honest refusals only to a caller who can already read (F1, A4); ratings only on the viewer's own draft rows and never in ranking (AG2, M3); no off-app return target and at most 20 ids resolved (L5, L4). The unverified-email account gets 403 `email_not_verified` on all three routes, no credential gets 401 on all three, and an API key presented to the listing gets 401. The security audit is a separate role; its findings go to the private repo.
+
+**Builder's flagged rows** (build notes, interpretations 1, 5, 6, and 7). The verifier agrees with all four.
+
+- **S3-A4 / S3-A2 role-change step:** there is no member-role route, and every role (owner, admin, member) is in `WRITE_ROLES`, so the only reachable loss of write authority is removal. Since S3-Q2 keeps a left book's drafts out of the queue, S3-A4's "sees the draft in the queue" can only mean the id-list view, which is what was verified. Amend S3-A4 to "through the id-list link" and S3-A2's step to "a removal between listing and acting".
+- **E16 (long URL wrapping on the queue page):** citations are not on the queue page (only the first interpretation), so a citation URL cannot be the test there. The wrap still matters for a long unbroken URL inside the recipe text or the interpretation; retarget E16 to that rather than drop it.
+- **S3-AG3's comparison actor:** with a draft of his own in the shared book, Sam's `is:draft` rightly lists it, so he is not a "member with no drafts". The stronger comparison is one collaborator before and after Pat's drafts land, which is what was verified; amend the row to that.
+- **S3-G7 observability:** confirmed by measurement (above). Amend the row to "on the flat listing; on clustered surfaces the qualifier filters before exemplar selection and leaves similarities unchanged".
+
+**Follow-ups** (none blocking): clamp the queue's `page` so an out-of-range number cannot reach SQL as an overflowing OFFSET (S3-Q5); count distinct resolved recipes for `notShown` (S3-L1); the four rubric wording amendments above. Informational: agent `search_recipes` shows clustered exemplars of `is:draft` (3 of 45 at the default verbosity, 10 at `high`) with no page parameter, so an agent cannot enumerate a large backlog there; `/check?filter=` pages, and the queue link is the intended hand-off.
+
 ## Open design questions
 
 Found on contact with the code (`feat/authz-seam-keys`, 2026-09-27). Each has a recommendation; the slice that meets it gets a ruling first. Scenarios marked `# Pending decision:` in the feature file, and `decide` rows in the read-path inventory, point here.
