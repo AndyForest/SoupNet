@@ -39,6 +39,16 @@ Design: [../planning/drafts-and-triage.md](../planning/drafts-and-triage.md) §T
 - **All others** — principles, voice, format, routing, divergence, and setup copy untouched; `session_id` copy untouched (open question 2).
 - Suite re-run: the agent-run harness is not yet wired; per README the .feature files remain the manual checklist.
 
+### Addendum (2026-09-27, after verification): slice 1 follow-ups
+
+Rulings: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 1: rulings on the verification follow-ups.
+
+1. **Briefing "How to check", `intent` paragraph.** Restores the meaning the one-line `intent` description dropped ("stubs reset"): the paragraph now says recipes already delivered to an intent render as id-stubs, and that a re-sent story "starts with no stubs, and recipes render in full again". The awkward "say to context compaction" becomes "for example to context compaction". Thin fixture grows by about 60 characters, inside the 18,200 ceiling; pinned by `recipe-guide-content.test.ts`.
+2. **Not copy, listed for completeness:** a rating of the wrong JSON type (`impact: 3`) and a non-object feedback row no longer fail the whole MCP call on either server; the rating is stored as not rated with the notice, and the row gets a per-row error. The served schemas are byte-identical (remote `tools/list` still 15,864 bytes). The notice takes a plural verb when both ratings are unrecognized.
+3. **DT-RAT-02 edited, not the code:** the markdown report stays silent when the agent sent no rating; JSON and structured responses carry `null`.
+
+Scenarios intended to move: none. Watched: `intent-registration.feature` (all), which the restored sentence strengthens rather than changes; `known-recipes-dedup.feature` "Known ids render as compact stubs" (stub rendering unchanged).
+
 ## 2026-08-23 — Cold-start v2 Phase C: declared intents (param + echo line + tool descriptions)
 
 Operator-approved plan (always-new registration ruling, recipe `363e3e0c`; session-supersession direction, `5c55327d`; rendering-only ledger per `9067ca1b`/`4d25aec9`).

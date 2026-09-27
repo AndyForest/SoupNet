@@ -35,10 +35,13 @@ Feature: Drafts, triage ratings, and deciding by building both
 
     @DT-RAT-02 @slice-1
     Scenario: Omitted ratings mean not rated
+      # Decided: build log §Slice 1: rulings on the verification follow-ups
+      # (silence in agent-facing text is the thin-context default, recipe ef844c32).
       When Pat's agent checks a recipe without impact or uncertainty
       Then the check succeeds
       And the stored recipe's impact and uncertainty are both not rated (null), not "medium"
-      And the response reports both as not rated
+      And the JSON and structured responses report both as null, which the published schema defines as not rated
+      And the markdown report says nothing about ratings
 
     @DT-RAT-03 @slice-1
     Scenario: Ratings are independent of each other and of draft
@@ -53,6 +56,10 @@ Feature: Drafts, triage ratings, and deciding by building both
       Then the check succeeds and the recipe is deposited
       And the stored impact is not rated
       And the response carries a notice naming the accepted values "low | medium | high"
+      When Pat's agent checks a recipe on MCP with impact sent as the number 3
+      Then the check succeeds, the stored impact is not rated, and the notice names the value
+      When a ride-along feedback row on the same call is not an object
+      Then that row gets a per-row error and the check still succeeds
 
     @DT-RAT-05 @slice-1
     Scenario Outline: Ratings are accepted on every check surface

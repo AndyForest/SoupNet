@@ -230,6 +230,14 @@ describe("BRIEFING.build — surface profiles (cold-start v2 Phase B)", () => {
     expectNoRawKey(text);
   });
 
+  it("the intent paragraph says a re-sent story starts with no stubs (slice 1 follow-up: 'stubs reset')", () => {
+    // The one-line intent param dropped "stubs reset"; the ruling restores
+    // its meaning here: losing or omitting the intent means recipes render
+    // in full again.
+    expect(mcpText).toContain("the fresh intent starts with no stubs, and recipes render in full again");
+    expect(mcpText).not.toContain("say to context compaction");
+  });
+
   it("holds the thin briefing under its size ceiling (fixed fixture, no exemplars)", () => {
     // The point of the profile: the always-pushed layer stays an index.
     // Fixture floor measured ~16.5KB at introduction; ceiling leaves modest
