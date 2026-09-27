@@ -36,6 +36,7 @@ export {
   traceVisibleTo,
   traceIdVisibleTo,
   traceReadableById,
+  traceReadableByPerson,
   draftAwaitingReviewBy,
   draftStateShownTo,
   SHARED_AUDIENCE,

@@ -9,6 +9,7 @@ import {
   traceVisibleTo,
   traceIdVisibleTo,
   traceReadableById,
+  traceReadableByPerson,
   SHARED_AUDIENCE,
 } from "./draft-sql";
 import { mayReadTrace, isPublishedDraftState, mayResolveDraft, hasWriteAuthority } from "./roles";
@@ -210,5 +211,32 @@ describe.skipIf(!canConnect)("the SQL fragments and mayReadTrace agree on every 
         expect(row.viewer, `viewer state=${String(draftState)} own=${own}`).toBe(published || (own && draftState === "unverified"));
       }
     }
+  });
+
+  it("[F85] the person-level read rule in SQL equals mayReadTrace, membership included", async () => {
+    const { getDb } = await import("../db");
+    const db = getDb();
+    const BOOK = "33333333-3333-4333-8333-333333333333";
+    const ELSEWHERE = "44444444-4444-4444-8444-444444444444";
+    for (const draftState of states) {
+      for (const owner of owners) {
+        for (const member of [true, false]) {
+          const rows = await db.execute(sql`
+            SELECT ${traceReadableByPerson("t", VIEWER, member ? [BOOK] : [ELSEWHERE])} AS ok
+            FROM (VALUES (${owner}::uuid, ${draftState}::text, ${BOOK}::uuid)) AS t(user_id, draft_state, group_id)
+          `);
+          const sqlSays = (rows as unknown as Array<{ ok: boolean }>)[0]?.ok === true;
+          const own = owner === VIEWER;
+          const jsSays = mayReadTrace({ isAuthor: own, role: member ? "member" : null, draftState, isDraftSubject: own, isDraftDepositor: own });
+          expect(sqlSays, `state=${String(draftState)} own=${own} member=${member}`).toBe(jsSays);
+        }
+      }
+    }
+    // No live books at all: only the viewer's own rows.
+    const none = await db.execute(sql`
+      SELECT ${traceReadableByPerson("t", VIEWER, [])} AS ok
+      FROM (VALUES (${OTHER}::uuid, ${null}::text, ${BOOK}::uuid)) AS t(user_id, draft_state, group_id)
+    `);
+    expect((none as unknown as Array<{ ok: boolean }>)[0]?.ok).toBe(false);
   });
 });

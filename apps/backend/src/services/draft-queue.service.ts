@@ -46,13 +46,22 @@ import { RECIPE_LOOKUP_MAX_IDS } from "./recipe-lookup.service";
 
 /** Drafts per page of the queue. */
 export const DRAFT_QUEUE_PAGE_SIZE = 20;
+/** Highest page number served: past it the page is empty, and no page number
+ *  can overflow the OFFSET (fix pass after the slice 3 verification). */
+export const DRAFT_QUEUE_MAX_PAGE = 100_000;
+
+const DRAFT_ITEM_STATES = ["unverified", "verified", "rejected", "not_chosen"] as const;
 /** At most this many ids in a link: the /recipes batch size (S3-L1, S3-L4). */
 export const DRAFT_QUEUE_MAX_IDS = RECIPE_LOOKUP_MAX_IDS;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Where a listed recipe stands. `published` covers ordinary and verified recipes. */
-export type QueueItemState = "unverified" | "rejected" | "not_chosen" | "published";
+/**
+ * Where a listed recipe stands. `verified` is shown only to the draft's own
+ * person (`draftStateShownTo`); to anyone else a verified draft is an
+ * ordinary recipe, `published` ([F83]).
+ */
+export type QueueItemState = "unverified" | "verified" | "rejected" | "not_chosen" | "published";
 
 export interface DraftQueueItem {
   id: string;
@@ -153,7 +162,8 @@ export async function listDraftQueue(
   const parsed = parseQueueQuery(params.q);
   if (!parsed.ok) return parsed;
   const perPage = DRAFT_QUEUE_PAGE_SIZE;
-  const page = Math.max(1, Math.floor(params.page ?? 1));
+  const requested = Math.floor(params.page ?? 1);
+  const page = Number.isFinite(requested) ? Math.min(Math.max(1, requested), DRAFT_QUEUE_MAX_PAGE) : 1;
   const { bookIds, roleOf } = await scopeFor(db, userId);
   const structured = await resolveStructuredFilters(db, parsed.query, { callerUserId: userId, excludeOwnDefault: false });
   const semantic = parsed.query.semanticText.length > 0;
@@ -241,7 +251,11 @@ export async function listLinkedRecipes(
   const ids = [...new Set(resolved.filter((id): id is string => id !== null))];
   const { roleOf } = await scopeFor(db, userId);
   const items = await loadItems(db, userId, ids, roleOf);
-  return { items, notShown: refs.length - items.length, truncated };
+  // Not shown: every reference that did not lead to a shown recipe (a
+  // malformed one included). Two references to one shown recipe are both shown.
+  const shown = new Set(items.map((i) => i.id));
+  const notShown = refs.length - valid.filter((_, i) => resolved[i] !== null && shown.has(resolved[i]!)).length;
+  return { items, notShown, truncated };
 }
 
 /**
@@ -292,8 +306,11 @@ async function loadItems(
   for (const id of ids) {
     const r = byId.get(id);
     if (!r) continue;
-    const state: QueueItemState =
-      r.draftState === "unverified" || r.draftState === "rejected" || r.draftState === "not_chosen" ? r.draftState : "published";
+    // The state as draftStateShownTo gave it: a draft state for the draft's
+    // own person, NULL (published) for everyone else.
+    const state: QueueItemState = (DRAFT_ITEM_STATES as readonly string[]).includes(r.draftState ?? "")
+      ? (r.draftState as QueueItemState)
+      : "published";
     const writable = hasWriteAuthority({ kind: "member", role: roleOf.get(r.bookId) ?? null }, r.bookId);
     const canResolve = state === "unverified" && writable;
     out.push({

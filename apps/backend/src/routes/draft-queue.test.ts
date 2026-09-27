@@ -532,8 +532,10 @@ describe.skipIf(!BASE || !canConnect())("the review queue (drafts-and-triage sli
     expect(l.data.notShown).toBe(0);
     const p = await link(pat, a.slice(0, 8));
     expect(p.data.items.map((i) => i.id)).toEqual([a]);
-    // A prefix and its full id name one recipe once.
-    expect((await link(pat, `${a},${a.slice(0, 10)}`)).data.items.map((i) => i.id)).toEqual([a]);
+    // A prefix and its full id name one recipe: shown once, and nothing counted as not shown (fix pass, S3-L1).
+    const both = await link(pat, `${a},${a.slice(0, 10)}`);
+    expect(both.data.items.map((i) => i.id)).toEqual([a]);
+    expect(both.data.notShown).toBe(0);
   });
 
   it("S3-L2 / DT-QUE-04: Sam's draft id and a random UUID produce the same response; malformed ids are omitted with the same note", async () => {
@@ -566,8 +568,11 @@ describe.skipIf(!BASE || !canConnect())("the review queue (drafts-and-triage sli
     await call(pat, "POST", `/traces/${c}/not-chosen`);
     const l = await link(pat, `${v},${r},${c},${patPublished}`);
     expect(l.data.items.map((i) => [i.id, i.state, i.canResolve])).toEqual([
-      [v, "published", false], [r, "rejected", false], [c, "not_chosen", false], [patPublished, "published", false],
+      [v, "verified", false], [r, "rejected", false], [c, "not_chosen", false], [patPublished, "published", false],
     ]);
+    // The subject sees that it was verified (E10); a collaborator's link shows an ordinary recipe ([F83]).
+    const samView = await link(sam, v);
+    expect(samView.data.items.map((i) => [i.id, i.state])).toEqual([[v, "published"]]);
   });
 
   it("S3-L4: more than 20 ids: the first 20 are resolved and the response says the link was cut", async () => {
@@ -578,6 +583,54 @@ describe.skipIf(!BASE || !canConnect())("the review queue (drafts-and-triage sli
     expect(l.data.truncated).toBe(true);
     expect(l.data.items.map((i) => i.id)).toEqual([listed["shared"]]);
     expect(l.data.notShown).toBe(19);
+  });
+
+  /** Import rows at chosen ids (import keeps an unused id as given, accepted F81). */
+  async function plant(actor: Actor, bookId: string, ids: string[], label: string): Promise<void> {
+    const file = {
+      schemaVersion: 1,
+      traces: ids.map((id, i) => ({ id, claimText: recipe(`${label} ${i}`), createdAt: new Date().toISOString() })),
+      evidence: [], references: [], traceEvidence: [], traceReferences: [], evidenceReferences: [],
+    };
+    const res = await fetch(`${BASE}/import?book=${bookId}`, {
+      method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${actor.jwt}` }, body: JSON.stringify(file),
+    });
+    if (res.status !== 200) throw new Error(`import failed: ${res.status} ${await res.text()}`);
+  }
+  const inRange = (prefix: string, n: number) => `${prefix}-0000-4000-8000-${String(n).padStart(12, "0")}`;
+
+  it("[F85] a crowded prefix range: unreadable rows never decide the answer, and the person's own prefix still resolves", async () => {
+    const mal = await registerAndVerify("mal");
+    // Pat's own draft, crowded from below by 60 rows he cannot read.
+    const d = await draft(patKeyA, "crowded own prefix");
+    const p = d.slice(0, 8);
+    await plant(mal, mal.personalBookId, Array.from({ length: 60 }, (_, i) => inRange(p, i + 1)), "crowd own");
+    const own = await link(pat, p);
+    expect(own.data.items.map((i) => i.id)).toEqual([d]);
+    expect(own.data.notShown).toBe(0);
+
+    // Sam's answer for a range must not depend on a hidden draft of Pat's in it.
+    const hidden = await draft(patKeyA, "hidden draft in a probed range", { recipe_book: shared.slug });
+    const q = hidden.slice(0, 8);
+    const samRow = `${q}-ffff-4fff-bfff-ffffffffffff`;
+    await plant(mal, mal.personalBookId, Array.from({ length: 49 }, (_, i) => inRange(q, i + 1)), "crowd probe");
+    await plant(sam, sam.personalBookId, [samRow], "sam probe row");
+    const withDraft = await link(sam, q);
+    expect(withDraft.data.items.map((i) => i.id)).toEqual([samRow]);
+    expect((await call(pat, "DELETE", `/traces/${hidden}`)).status).toBe(200);
+    const withoutDraft = await link(sam, q);
+    expect(withoutDraft.text).toBe(withDraft.text);
+  }, 120_000);
+
+  it("the queue's page number is clamped: out-of-range pages answer an empty page, never a server error", async () => {
+    for (const page of ["1e308", "99999999999999999999", "9007199254740993"]) {
+      const r = await queue(pat, { page });
+      expect(r.status, page).toBe(200);
+      expect(r.body.data!.items, page).toEqual([]);
+      expect(r.body.data!.total, page).toBeGreaterThan(0);
+      const sem = await queue(pat, { page, q: "review queue" });
+      expect(sem.status, `${page} semantic`).toBe(200);
+    }
   });
 
   it("S3-L6: the draft deposit notice gives the queue link, on MCP and /check, for a new draft and an identical repeat", async () => {
@@ -763,5 +816,27 @@ describe.skipIf(!BASE || !canConnect())("the review queue (drafts-and-triage sli
         expect(all).not.toContain(id.slice(0, 8));
       }
     }
+  });
+
+  it("S3-AG3 (as amended): a member with no drafts sees the same is:draft answer before and after Pat's drafts land in the book", async () => {
+    const book = await newBook(sam, "queue-ag3", [pat, mo]);
+    const moKey = await mintKey(mo, [book.id], [book.id], book.id);
+    const patKey = await mintKey(pat, [book.id], [book.id], book.id);
+    await deposit(patKey, recipe("ag3 published"));
+    const volatile = (t: string) => t
+      .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, "<UUID>")
+      .replace(/"serverTiming":"[^"]*"/g, "")
+      .replace(/int_[A-Za-z0-9]+/g, "<INT>");
+    const view = async () => [
+      (await mcp(moKey, "search_recipes", { query: "is:draft" })).text,
+      JSON.stringify((await mcp(moKey, "search_recipes", { query: "is:draft", response_format: "structured" })).structured),
+      await (await fetch(`${BASE}/check?${new URLSearchParams({ key: moKey, format: "json", filter: "is:draft" }).toString()}`, { headers: { Accept: "application/json" } })).text(),
+      (await (await fetch(`${BASE}/check?${new URLSearchParams({ key: moKey, filter: "is:draft" }).toString()}`)).text()).split(moKey).join("<KEY>"),
+    ].map(volatile);
+    const before = await view();
+    const drafts = [await draft(patKey, "ag3 draft one"), await draft(patKey, "ag3 draft two", { impact: "high" })];
+    const after = await view();
+    expect(after).toEqual(before);
+    for (const id of drafts) expect(after.join(" ")).not.toContain(id.slice(0, 8));
   });
 });

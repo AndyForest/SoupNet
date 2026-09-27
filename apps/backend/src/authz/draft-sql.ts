@@ -40,6 +40,7 @@
 
 import { sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
+import { inBooks } from "./scope-sql";
 
 /**
  * The aliases the fragments may be applied to: `t` and `tr` for statements
@@ -119,6 +120,23 @@ export function traceVisibleTo(alias: TraceAlias, audience: DraftAudience): SQL 
 /** The row may be read by id by this viewer (see the header). */
 export function traceReadableById(alias: TraceAlias, viewerUserId: string): SQL {
   return sql`(${publishedTrace(alias)} OR ${ownDraft(alias, viewerUserId)})`;
+}
+
+/**
+ * The whole read rule for a signed-in person, in SQL: the SQL form of
+ * `mayReadTrace` (roles.ts) for a viewer whose live books are `memberBookIds`.
+ * A published recipe: its author, or a member of its book. An unpublished
+ * draft: its subject or depositor, whatever their membership.
+ *
+ * For a statement that must decide readability before it limits rows, so a
+ * row the viewer cannot read never takes a slot (the review queue's id-list
+ * prefixes, [F85]; the house LIMIT 2 ambiguity pattern, recipe b1b747d5).
+ * draft-sql.test.ts proves it equals `mayReadTrace` on every combination.
+ */
+export function traceReadableByPerson(alias: TraceAlias, viewerUserId: string, memberBookIds: readonly string[]): SQL {
+  const a = aliasSql(alias);
+  return sql`((${publishedTrace(alias)} AND (${a}.user_id = ${viewerUserId}::uuid OR ${inBooks(sql`${a}.group_id`, memberBookIds)}))
+    OR (NOT ${publishedTrace(alias)} AND ${ownDraft(alias, viewerUserId)}))`;
 }
 
 /**

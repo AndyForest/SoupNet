@@ -23,7 +23,8 @@ import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { mayReadTrace, isPublishedDraftState } from "./roles";
 import type { BookRole } from "./roles";
 import { membershipOf } from "./membership-sql";
-import { subjectOf, depositorOf } from "./draft-sql";
+import { subjectOf, depositorOf, traceReadableByPerson } from "./draft-sql";
+import { bookIdsFor } from "./book-access";
 
 /** The facts about one viewer and one trace. */
 export interface TraceAccess {
@@ -318,41 +319,35 @@ export type TraceRef = { kind: "id"; id: string } | { kind: "range"; lo: string;
  * person is not in), and a prefix that matches no readable recipe or more
  * than one are the same null, so the link is never an existence oracle
  * (recipe 507d3c9c: prefixes resolve within the viewer's readable scope
- * only). The rule is `mayReadTrace`, applied in JS to facts fetched in one
- * statement per reference, the pattern of `readableTraceIds`.
+ * only).
+ *
+ * Readability is decided inside the statement, before the row limit
+ * ([F85]): the read rule's SQL form (`traceReadableByPerson`, proven equal to
+ * `mayReadTrace` in draft-sql.test.ts) is in the WHERE, and LIMIT 2 detects
+ * ambiguity among readable rows only (recipe b1b747d5). Rows the person
+ * cannot read, however many share the prefix, never take a slot.
  */
-const REF_CANDIDATES_MAX = 50;
-
 export async function resolveReadableTraceRefs(
   db: PostgresJsDatabase,
   userId: string,
   refs: readonly TraceRef[],
 ): Promise<Array<string | null>> {
+  if (refs.length === 0) return [];
+  const memberBookIds = await bookIdsFor(db, userId);
   const out: Array<string | null> = [];
   for (const ref of refs) {
     const where = ref.kind === "id"
       ? sql`t.id = ${ref.id}::uuid`
       : sql`t.id >= ${ref.lo}::uuid AND t.id <= ${ref.hi}::uuid`;
-    // The facts for every row the reference names (a full id names one; an
-    // 8-character prefix names about one in four billion ids), decided in JS
-    // by the one rule. The bound keeps a crowded prefix range cheap; past it
-    // the reference is not resolved, which reads as "not shown".
     const rows = await db.execute(sql`
-      SELECT
-        t.id AS "traceId",
-        (t.user_id = ${userId}::uuid) AS "isAuthor",
-        gm.role AS "role",
-        t.draft_state AS "draftState",
-        (${subjectOf("t")} = ${userId}::uuid) AS "isDraftSubject",
-        (${depositorOf("t")} = ${userId}::uuid) AS "isDraftDepositor"
+      SELECT t.id AS "traceId"
       FROM claimnet.traces t
-      LEFT JOIN claimnet.group_members gm
-        ON gm.group_id = t.group_id AND ${membershipOf("gm", userId)}
       WHERE ${where}
-      LIMIT ${REF_CANDIDATES_MAX}
+        AND ${traceReadableByPerson("t", userId, memberBookIds)}
+      LIMIT 2
     `);
-    const readable = (rows as unknown as Row[]).map(toAccess).filter((a) => mayReadTrace(a));
-    out.push(readable.length === 1 ? readable[0]!.traceId : null);
+    const found = rows as unknown as Array<{ traceId: string }>;
+    out.push(found.length === 1 ? found[0]!.traceId : null);
   }
   return out;
 }
