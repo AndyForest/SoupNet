@@ -471,3 +471,14 @@ From the functional verifier's record (`a512631`), handled in the same pass: the
 - F82: `readableTraceIds` in `authz/trace-access.ts` fetches the facts in one statement and applies `mayReadTrace`; `GET /traces/:id/feedback` filters every row's `relatedTraceIds` through it.
 - F83: `readableTraceFor` returns draft state and resolution details only to the subject, with `draftResolvedByViewer`; list rows use `draftStateShownTo`; the frontend says "by you" only when `draftResolvedByViewer`. Import ignores `draftResolvedAt` from the file, attributes a resolved state to the importer at import time, and leaves an unverified draft with no resolution fields; `resolveDraft` writes the resolution columns outright instead of keeping an earlier value.
 - Map cache: `mapLayoutCacheKey` takes the audience typed as `SharedAudience` and throws on any other; the map route runs the pipeline and builds the key from one `MAP_AUDIENCE` constant. A cold-cache Layer 3 test (the draft's own person loads a new book's map first, then the collaborator gets the cached layout) fails when the pipeline is switched to a viewer audience (shown by mutation).
+
+### Slice 2 accepted (2026-09-27)
+
+The functional verification (`a512631`) accepted slice 2 with follow-ups, and a separate read-only security audit found one P2 and five P3 findings (F78 to F83, private repo). The implementation agent fixed them (`eb5542c`, `d006de8`, `d5d84e8`), and the audit's live fix-verification at `d5d84e8` recommends merging: every fix held, and no break attempt on the new write-authority rule succeeded (concurrency, scope changes between read and resolve, OAuth keys, removed members). The security-properties row is now closed. **Slice 2 is accepted.**
+
+Carried into the next slice as follow-ups:
+
+- **Honest refusal where the key can already read.** The uniform not-found answer exists so an unreadable recipe is indistinguishable from a missing one. When the key can read the recipe (a published recipe, or its own draft) but lacks write authority on the book, a specific refusal with the way forward leaks nothing and serves the agent better, per the operator's rulings that dead-end errors carry their recovery path (`50824e4d`) and that the uniform marker is for what the key cannot read (`507d3c9c`). Change `verify_draft` / `POST /recipes/:id/verify` to answer "not a draft" or "needs write access to this recipe book" in those cases, keeping the uniform answer for everything the key cannot read.
+- **F84 (P3, guard hardening):** match statements as a whole rather than line by line, and add the remaining forms and `embedding_chunks` (private detail).
+- **Suspected flaky test:** `oauth-flow.test.ts` "legacy epoch-stamped consumed rows" sometimes reads back nothing, possibly because the OAuth service's purge of long-dead rows runs in between. Unconfirmed; backlog item.
+
