@@ -13,7 +13,13 @@ const BOOK = "33333333-3333-4333-8333-333333333333";
 const AUTHOR = "44444444-4444-4444-8444-444444444444";
 const VIEWER = "55555555-5555-4555-8555-555555555555";
 
-function row(facts: { isAuthor: boolean; role: string | null }): Record<string, unknown> {
+function row(facts: {
+  isAuthor: boolean;
+  role: string | null;
+  draftState?: string | null;
+  isDraftSubject?: boolean;
+  isDraftDepositor?: boolean;
+}): Record<string, unknown> {
   return {
     traceId: TRACE,
     bookId: BOOK,
@@ -21,6 +27,9 @@ function row(facts: { isAuthor: boolean; role: string | null }): Record<string, 
     claimText: "As a test author, I prefer one rule.",
     isAuthor: facts.isAuthor,
     role: facts.role,
+    draftState: facts.draftState ?? null,
+    isDraftSubject: facts.isDraftSubject ?? facts.isAuthor,
+    isDraftDepositor: facts.isDraftDepositor ?? facts.isAuthor,
     // detail-only columns
     apiKeyId: null,
     formatAdherenceScore: null,
@@ -30,6 +39,11 @@ function row(facts: { isAuthor: boolean; role: string | null }): Record<string, 
     groupName: "Book",
     apiKeyLabel: null,
     userEmail: "author@test.local",
+    impact: null,
+    uncertainty: null,
+    draftResolvedAt: null,
+    draftResolvedByKeyId: null,
+    draftResolvedByEmail: null,
   };
 }
 
@@ -54,12 +68,26 @@ describe("roleInBookOfTrace", () => {
       claimText: "As a test author, I prefer one rule.",
       isAuthor: false,
       role: "admin",
+      draftState: null,
+      isDraftSubject: false,
+      isDraftDepositor: false,
     });
     expect(found.statements()).toBe(1);
 
     const missing = fakeDb([]);
     expect(await roleInBookOfTrace(missing.db, VIEWER, TRACE)).toBeNull();
     expect(missing.statements()).toBe(1);
+  });
+
+  it("DT-VIS-15: an unpublished draft is null (the route's missing-id 404) to anyone but the person it is about, book owners included", async () => {
+    for (const draftState of ["unverified", "rejected", "not_chosen"]) {
+      const owner = fakeDb([row({ isAuthor: false, role: "owner", draftState })]);
+      expect(await roleInBookOfTrace(owner.db, VIEWER, TRACE), draftState).toBeNull();
+      const subject = fakeDb([row({ isAuthor: true, role: "member", draftState })]);
+      expect((await roleInBookOfTrace(subject.db, VIEWER, TRACE))?.draftState).toBe(draftState);
+    }
+    const verified = fakeDb([row({ isAuthor: false, role: "owner", draftState: "verified" })]);
+    expect((await roleInBookOfTrace(verified.db, VIEWER, TRACE))?.role).toBe("owner");
   });
 
   it("returns facts for a viewer with no access too — it reports, it does not decide", async () => {
@@ -78,11 +106,16 @@ describe("roleInBookOfTrace", () => {
 });
 
 describe("the read rule is applied in one place", () => {
-  const cases: Array<{ name: string; facts: { isAuthor: boolean; role: string | null }; readable: boolean }> = [
+  const cases: Array<{ name: string; facts: { isAuthor: boolean; role: string | null; draftState?: string }; readable: boolean }> = [
     { name: "author, no membership", facts: { isAuthor: true, role: null }, readable: true },
     { name: "member", facts: { isAuthor: false, role: "member" }, readable: true },
     { name: "a role this module has never seen", facts: { isAuthor: false, role: "viewer" }, readable: true },
     { name: "neither author nor member", facts: { isAuthor: false, role: null }, readable: false },
+    // Drafts (slice 2): only the person it is about, or its depositor.
+    { name: "unverified draft, book owner", facts: { isAuthor: false, role: "owner", draftState: "unverified" }, readable: false },
+    { name: "unverified draft, its subject", facts: { isAuthor: true, role: null, draftState: "unverified" }, readable: true },
+    { name: "rejected draft, member", facts: { isAuthor: false, role: "member", draftState: "rejected" }, readable: false },
+    { name: "verified draft, member", facts: { isAuthor: false, role: "member", draftState: "verified" }, readable: true },
   ];
 
   for (const { name, facts, readable } of cases) {
@@ -111,6 +144,9 @@ describe("the read rule is applied in one place", () => {
       claimText: "As a test author, I prefer one rule.",
       isAuthor: false,
       role: "owner",
+      draftState: null,
+      isDraftSubject: false,
+      isDraftDepositor: false,
     });
     expect(found?.trace).toEqual({
       id: TRACE,
@@ -125,6 +161,12 @@ describe("the read rule is applied in one place", () => {
       groupName: "Book",
       apiKeyLabel: null,
       userEmail: "author@test.local",
+      impact: null,
+      uncertainty: null,
+      draftState: null,
+      draftResolvedAt: null,
+      draftResolvedByKeyId: null,
+      draftResolvedByEmail: null,
     });
     // The viewer's role drives the route's flags; it is not part of the payload.
     expect("role" in (found?.trace ?? {})).toBe(false);

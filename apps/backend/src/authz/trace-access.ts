@@ -20,9 +20,10 @@
 import { sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { mayReadTrace } from "./roles";
+import { mayReadTrace, isPublishedDraftState } from "./roles";
 import type { BookRole } from "./roles";
 import { membershipOf } from "./membership-sql";
+import { subjectOf, depositorOf } from "./draft-sql";
 
 /** The facts about one viewer and one trace. */
 export interface TraceAccess {
@@ -35,6 +36,12 @@ export interface TraceAccess {
   isAuthor: boolean;
   /** The viewer's role in the trace's book, or null without a membership. */
   role: BookRole;
+  /** The recipe's draft state; null when it was never a draft. */
+  draftState: string | null;
+  /** The viewer is the person the draft is about (slice 2: its author). */
+  isDraftSubject: boolean;
+  /** The viewer is the person whose agent deposited it (always its author). */
+  isDraftDepositor: boolean;
 }
 
 /** The trace columns GET /traces/:id returns. Column names are its wire shape. */
@@ -51,6 +58,19 @@ export interface TraceDetail {
   groupName: string | null;
   apiKeyLabel: string | null;
   userEmail: string | null;
+  /** Triage ratings (slice 1): the depositing agent's, null = not rated. */
+  impact: string | null;
+  uncertainty: string | null;
+  /** Draft state (slice 2); null when the recipe was never a draft. Readable
+   *  here only by someone `mayReadTrace` admits, so an unpublished state
+   *  reaches only the draft's own people. */
+  draftState: string | null;
+  /** When and by whom the draft was resolved; the key is null when the
+   *  person resolved it themselves, and equals `apiKeyId` when the key that
+   *  deposited the draft also verified it. */
+  draftResolvedAt: string | null;
+  draftResolvedByKeyId: string | null;
+  draftResolvedByEmail: string | null;
 }
 
 export interface ReadableTrace {
@@ -71,12 +91,18 @@ const DETAIL_COLUMNS: SQL = sql`,
       t.updated_at AS "updatedAt",
       g.name AS "groupName",
       ak.label AS "apiKeyLabel",
-      u.email AS "userEmail"`;
+      u.email AS "userEmail",
+      t.impact AS "impact",
+      t.uncertainty AS "uncertainty",
+      t.draft_resolved_at AS "draftResolvedAt",
+      t.draft_resolved_by_key_id AS "draftResolvedByKeyId",
+      ru.email AS "draftResolvedByEmail"`;
 
 const DETAIL_JOINS: SQL = sql`
     LEFT JOIN claimnet.groups g ON g.id = t.group_id
     LEFT JOIN claimnet.api_keys ak ON ak.id = t.api_key_id
-    LEFT JOIN claimnet.users u ON u.id = t.user_id`;
+    LEFT JOIN claimnet.users u ON u.id = t.user_id
+    LEFT JOIN claimnet.users ru ON ru.id = t.draft_resolved_by_user_id`;
 
 /**
  * The one statement. `(group_id, user_id)` is unique on the membership table,
@@ -107,7 +133,10 @@ async function fetchAccess(
       t.user_id AS "authorId",
       t.claim_text AS "claimText",
       (t.user_id = ${userId}::uuid) AS "isAuthor",
-      gm.role AS "role"${withDetail ? DETAIL_COLUMNS : sql``}
+      gm.role AS "role",
+      t.draft_state AS "draftState",
+      (${subjectOf("t")} = ${userId}::uuid) AS "isDraftSubject",
+      (${depositorOf("t")} = ${userId}::uuid) AS "isDraftDepositor"${withDetail ? DETAIL_COLUMNS : sql``}
     ${from}
     LEFT JOIN claimnet.group_members gm
       ON gm.group_id = t.group_id AND ${membershipOf("gm", userId)}${withDetail ? DETAIL_JOINS : sql``}
@@ -125,16 +154,23 @@ function toAccess(row: Row): TraceAccess {
     // Strictly `true`: anything else the driver might hand back is "not the author".
     isAuthor: row.isAuthor === true,
     role: row.role ?? null,
+    draftState: row.draftState ?? null,
+    isDraftSubject: row.isDraftSubject === true,
+    isDraftDepositor: row.isDraftDepositor === true,
   };
 }
 
 /**
- * The viewer's standing on a trace, or null when the trace does not exist.
+ * The viewer's standing on a trace, or null when the trace does not exist —
+ * or is an unpublished draft this viewer may not manage. Move and delete of a
+ * draft belong to the person it is about alone (build log open question 11,
+ * DT-VIS-15): for anyone else, a book owner or a system user included, the
+ * draft is the same null, and the route's uniform 404, as a missing id.
  *
- * Returns facts for a viewer with NO access as well — move and delete need to
- * tell "not yours" from "not there", and a system user acts without a
- * membership. Callers that only need "may they read it" use `canReadTrace` or
- * `readableTraceFor`, which apply the rule for them.
+ * Returns facts for a viewer with NO access to a published recipe as well —
+ * move and delete need to tell "not yours" from "not there" there, and a
+ * system user acts without a membership. Callers that only need "may they
+ * read it" use `canReadTrace` or `readableTraceFor`, which apply the rule.
  */
 export async function roleInBookOfTrace(
   db: PostgresJsDatabase,
@@ -142,7 +178,10 @@ export async function roleInBookOfTrace(
   traceId: string,
 ): Promise<TraceAccess | null> {
   const row = await fetchAccess(db, userId, { traceId }, false);
-  return row ? toAccess(row) : null;
+  if (!row) return null;
+  const access = toAccess(row);
+  if (!isPublishedDraftState(access.draftState) && !access.isDraftSubject) return null;
+  return access;
 }
 
 /**
@@ -203,6 +242,12 @@ export async function readableTraceFor(
       groupName: row.groupName ?? null,
       apiKeyLabel: row.apiKeyLabel ?? null,
       userEmail: row.userEmail ?? null,
+      impact: row.impact ?? null,
+      uncertainty: row.uncertainty ?? null,
+      draftState: access.draftState,
+      draftResolvedAt: row.draftResolvedAt ?? null,
+      draftResolvedByKeyId: row.draftResolvedByKeyId ?? null,
+      draftResolvedByEmail: row.draftResolvedByEmail ?? null,
     },
   };
 }

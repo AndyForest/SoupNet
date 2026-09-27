@@ -45,6 +45,24 @@ describe("ranking code never reads triage ratings (S1-B8 b, DT-RAT-07)", () => {
     });
   }
 
+  // Slice 2 (rubric "Security properties": ratings and draft state are never
+  // read by ranking). These files FILTER on the draft rule through the authz
+  // module's fragments (traceIdVisibleTo, traceVisibleTo, publishedTrace),
+  // which keep the columns out of this code; what they must never do is read
+  // the draft or verification columns themselves, to score, order, or
+  // cluster by them.
+  const DRAFT_TERMS = /(draft_state|draftState|draft_resolved_\w+|draftResolved\w*)/;
+  for (const file of RANKING_FILES) {
+    it(`${file} does not reference the draft or verification columns (slice 2)`, () => {
+      const source = readFileSync(join(repo, file), "utf-8");
+      const hits = source
+        .split("\n")
+        .map((line, i) => ({ line: i + 1, text: line }))
+        .filter(({ text }) => DRAFT_TERMS.test(text));
+      expect(hits, `${file} mentions a draft column: ${JSON.stringify(hits)}`).toEqual([]);
+    });
+  }
+
   it("the scan list covers files that exist (a rename must update this test, not silently skip)", () => {
     for (const file of RANKING_FILES) {
       expect(() => readFileSync(join(repo, file), "utf-8"), file).not.toThrow();

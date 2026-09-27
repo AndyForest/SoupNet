@@ -19,6 +19,23 @@
  *      lookup, cascade deletion, and the reaper. Each such file is registered
  *      below with the reason it qualifies.
  *
+ *   3. RECIPES — `claimnet.traces`, and `claimnet.embedding_sources` (whose
+ *      trace rows resolve to recipes) — drafts-and-triage slice 2. The draft
+ *      visibility condition is written once in the module
+ *      (authz/draft-sql.ts). Every file outside it that names either table is
+ *      registered in TRACE_READS: either it COMPOSES the module's draft
+ *      fragments (the check also requires the file to reference one of them),
+ *      or it carries a one-line reason the draft rule does not apply (a
+ *      write, a cascade, a by-id helper fed an already-filtered id list, the
+ *      caller's own rows, operator-only totals). This register fingerprints
+ *      the whole STATEMENT around each mention, not just the line naming the
+ *      table: the line after `FROM claimnet.traces t` is where a draft
+ *      condition sits, and a line fingerprint would let it be deleted
+ *      silently (the F77 lesson). A statement runs from the mentioning line
+ *      to the first following line that starts with a backtick (the end of
+ *      the tagged template), at most 40 lines; a mention in a comment line
+ *      is fingerprinted alone.
+ *
  * HOW A FILE IS REGISTERED. Each entry records `n`, the number of lines in the
  * file that mention the table, and `fp`, a fingerprint of exactly those lines
  * (whitespace-normalized, in order). The check fails when:
@@ -153,6 +170,126 @@ const NON_AUTHORIZING_KEY_SQL = {
   },
 };
 
+/**
+ * Files outside the seam that name `claimnet.traces` or
+ * `claimnet.embedding_sources` (drafts-and-triage slice 2). `composes: true`
+ * claims every result-set, count, or aggregate statement in the file applies
+ * the module's draft fragments (publishedTrace, traceVisibleTo,
+ * traceIdVisibleTo, traceReadableById, draftAwaitingReviewBy); the check
+ * verifies the file references at least one. `composes: false` needs a `why`
+ * saying why the draft rule does not apply. The read-path inventory
+ * (docs/planning/drafts-and-triage-read-paths.md) maps each RP row here.
+ */
+const TRACE_READS = {
+  "apps/backend/src/embedding-worker/jobs/chunking.ts": {
+    n: 1, fp: "101d223d2ec3", composes: false,
+    why: "embedding worker: embeds every recipe, drafts included, so verification needs no re-embed (RP-43); returns nothing to a caller",
+  },
+  "apps/backend/src/embedding-worker/jobs/strategy-check.ts": {
+    n: 4, fp: "6032c6dd86ae", composes: false,
+    why: "embedding worker: strategy coverage bookkeeping (RP-43)",
+  },
+  "apps/backend/src/embedding-worker/jobs/strategy-sweep.ts": {
+    n: 2, fp: "ca8cf0babdc5", composes: false,
+    why: "embedding worker: finds recipes missing a strategy and embeds them, drafts included (RP-43)",
+  },
+  "apps/backend/src/eval/grading-dump.ts": {
+    n: 1, fp: "0b111b34f75e", composes: false,
+    why: "offline eval, run by an operator against an eval stack; never served (RP-45)",
+  },
+  "apps/backend/src/eval/ranking-eval.ts": {
+    n: 3, fp: "e3c745861691", composes: false,
+    why: "offline eval, run by an operator against an eval stack; never served (RP-45)",
+  },
+  "apps/backend/src/lib/embeddings/enqueue.ts": {
+    n: 1, fp: "5157be7a5f35", composes: false,
+    why: "writes embedding rows for a recipe being deposited (RP-43)",
+  },
+  "apps/backend/src/routes/admin.ts": {
+    n: 6, fp: "2bd49c06a20d", composes: false,
+    why: "system-role totals and embedding coverage counts for the operator (RP-31 to RP-34)",
+  },
+  "apps/backend/src/routes/auth.ts": {
+    n: 7, fp: "1b00e328466e", composes: false,
+    why: "data export of the signed-in user's own recipes, draft state included (RP-30); account deletion guard",
+  },
+  "apps/backend/src/routes/integrity.ts": {
+    n: 3, fp: "8551ff5bd83f", composes: false,
+    why: "reports embedding sources whose recipe no longer exists; a live draft is never an orphan, and no recipe content or count leaves (RP-12)",
+  },
+  "apps/backend/src/routes/traces.ts": {
+    n: 5, fp: "436dd87f605e", composes: true,
+    why: "map version counts and the book list compose the fragments (RP-24, RP-25); own list, own count, and own check log are the caller's rows (RP-27 to RP-29)",
+  },
+  "apps/backend/src/services/book-stats.service.ts": {
+    n: 4, fp: "20c7ebafa58a", composes: true,
+    why: "briefing Index figures: published only, plus the person's own drafts awaiting review (RP-09, RP-17)",
+  },
+  "apps/backend/src/services/briefing-exemplars.ts": {
+    n: 1, fp: "76e76ae311f3", composes: false,
+    why: "loads author, evidence, and references by id for exemplars the pipeline chose under SHARED_AUDIENCE (RP-10, RP-42)",
+  },
+  "apps/backend/src/services/ephemeral-workspace.service.ts": {
+    n: 3, fp: "94c52b0109bd", composes: false,
+    why: "the reaper: deletes an expired workspace's recipes (RP-38)",
+  },
+  "apps/backend/src/services/feedback.service.ts": {
+    n: 2, fp: "0ee41eb4a772", composes: true,
+    why: "feedback target ACL: prefix scan and readable set use traceReadableById (RP-11, RP-18)",
+  },
+  "apps/backend/src/services/import.service.ts": {
+    n: 6, fp: "356d3eb72069", composes: false,
+    why: "import writes the importer's own recipes and reads rows by id to classify skip / conflict / remap (RP-35)",
+  },
+  "apps/backend/src/services/integrity-repair.service.ts": {
+    n: 5, fp: "31e62d75fe05", composes: false,
+    why: "deletes orphaned embedding rows whose recipe no longer exists; operator-only",
+  },
+  "apps/backend/src/services/recipe-lookup.service.ts": {
+    n: 2, fp: "523be2ce45e7", composes: true,
+    why: "by-id lookup: prefix scan and main select use traceReadableById (RP-06, RP-08, RP-16)",
+  },
+  "apps/backend/src/services/result-enricher.ts": {
+    n: 2, fp: "c04c01958fcc", composes: false,
+    why: "loads book, draft label, evidence, and references by id for results a filtered statement already chose (RP-42)",
+  },
+  "apps/backend/src/services/search-pipeline.ts": {
+    n: 3, fp: "ed5a12ef6b2a", composes: true,
+    why: "corpus mode rows and honest total use traceVisibleTo (RP-41); vector loads are by id for filtered results (RP-42)",
+  },
+  "apps/backend/src/services/trace.service.ts": {
+    n: 6, fp: "bb06ce7f11e3", composes: true,
+    why: "deposit INSERT, the depositing key's own idempotency row (RP-04), session ledger ids (RP-05), and zero-result scope counts that use traceVisibleTo (RP-03)",
+  },
+  "apps/backend/src/services/trace-delete.service.ts": {
+    n: 6, fp: "e3fb6a60eda9", composes: false,
+    why: "deletes one recipe under lock after the route's access check (RP-36)",
+  },
+  "apps/backend/src/services/trace-move.service.ts": {
+    n: 4, fp: "f5f97796f636", composes: false,
+    why: "moves one recipe under lock after the route's access check; draft state rides along unchanged (RP-36)",
+  },
+  "apps/backend/src/services/user-delete.service.ts": {
+    n: 1, fp: "b65f37f7f3f2", composes: false,
+    why: "account-deletion cascade over the user's own recipes (RP-37)",
+  },
+  "apps/backend/src/services/vector-search.service.ts": {
+    n: 5, fp: "c4cacae19c30", composes: true,
+    why: "semantic search predicates use traceIdVisibleTo, related evidence publishedTrace (RP-39, RP-40); the trace load is by id for filtered results",
+  },
+  "scripts/cleanup-test-data.ts": {
+    n: 7, fp: "e2f06ed030cb", composes: false,
+    why: "dev-only cleanup of test users: deletes their recipes",
+  },
+  "scripts/repair-orphaned-user-data.mjs": {
+    n: 5, fp: "26a5ec753e3f", composes: false,
+    why: "operator repair script: deletes recipes whose owner no longer exists",
+  },
+};
+
+/** The module's draft fragments; a `composes: true` file must reference one. */
+const DRAFT_FRAGMENT = /\b(publishedTrace|traceVisibleTo|traceIdVisibleTo|traceReadableById|draftAwaitingReviewBy)\(/;
+
 const RULES = [
   {
     table: "the membership table (group_members / groupMembers)",
@@ -183,6 +320,23 @@ const RULES = [
       "revoking, counting, deleting — register it in NON_AUTHORIZING_KEY_SQL with a one-line reason.",
     ],
     newFileHint: "use the Principal you were given, or move the statement into apps/backend/src/authz/key-auth.ts.",
+  },
+  {
+    table: "claimnet.traces / claimnet.embedding_sources",
+    pattern: /claimnet"?\s*\.\s*"?(traces|embedding_sources)\b|\.(from|update|insert|delete|innerJoin|leftJoin|rightJoin|fullJoin|join)\(\s*(traces|embeddingSources)\b/i,
+    window: "statement",
+    lists: { TRACE_READS },
+    failure: [
+      "a file outside apps/backend/src/authz/ reads recipes (claimnet.traces or embedding_sources) and is not registered.",
+      "",
+      "Drafts (drafts-and-triage slice 2) are visible only to the person they are about, their agents, and",
+      "the depositor. The condition lives once in authz/draft-sql.ts: compose publishedTrace, traceVisibleTo,",
+      "traceIdVisibleTo, or traceReadableById into every statement that returns, counts, clusters, or",
+      "aggregates recipes, then register the file in TRACE_READS with composes: true. If the draft rule",
+      "genuinely does not apply (a write, a cascade, a by-id helper fed an already-filtered list, the",
+      "caller's own rows), register it with composes: false and a one-line reason.",
+    ],
+    newFileHint: "compose the draft fragment from apps/backend/src/authz/ and register the file in TRACE_READS.",
   },
 ];
 
@@ -222,21 +376,43 @@ const sources = scanRoots()
   .filter((file) => SOURCE_FILE.test(file) && !isExempt(file))
   .map((file) => ({ file, lines: readFileSync(join(projectRoot, file), "utf-8").split(/\r?\n/) }));
 
+const COMMENT_LINE = /^\s*(\*|\/\/|\/\*)/;
+const STATEMENT_MAX_LINES = 40;
+
+/**
+ * The lines a mention's fingerprint covers. "line": the mentioning line only.
+ * "statement": the mentioning line through the first following line that
+ * starts with a backtick (the tagged template's end), at most
+ * STATEMENT_MAX_LINES; a comment line is covered alone.
+ */
+function coveredLineIndexes(lines, index, window) {
+  if (window !== "statement" || COMMENT_LINE.test(lines[index])) return [index];
+  const out = [index];
+  for (let j = index + 1; j < lines.length && j <= index + STATEMENT_MAX_LINES; j++) {
+    out.push(j);
+    if (lines[j].trimStart().startsWith("`")) break;
+  }
+  return out;
+}
+
 /** For each file with at least one matching line: how many, and their fingerprint. */
-function measure(pattern) {
+function measure(pattern, window = "line") {
   const found = new Map();
   for (const { file, lines } of sources) {
-    const matching = lines.filter((line) => pattern.test(line)).map((line) => line.trim().replace(/\s+/g, " "));
-    if (matching.length === 0) continue;
+    const mentions = [];
+    lines.forEach((line, i) => { if (pattern.test(line)) mentions.push(i); });
+    if (mentions.length === 0) continue;
+    const covered = [...new Set(mentions.flatMap((i) => coveredLineIndexes(lines, i, window)))].sort((a, b) => a - b);
+    const matching = covered.map((i) => lines[i].trim().replace(/\s+/g, " "));
     const fp = createHash("sha256").update(matching.join("\n")).digest("hex").slice(0, 12);
-    found.set(file, { n: matching.length, fp });
+    found.set(file, { n: mentions.length, fp, text: lines.join("\n") });
   }
   return found;
 }
 
 if (process.argv.includes("--counts")) {
   for (const rule of RULES) {
-    const found = measure(rule.pattern);
+    const found = measure(rule.pattern, rule.window);
     const registered = Object.assign({}, ...Object.values(rule.lists));
     for (const listName of Object.keys(rule.lists)) {
       console.log(`\n${listName}:`);
@@ -261,10 +437,11 @@ const thisScript = relative(projectRoot, fileURLToPath(import.meta.url)).split(s
 let failed = false;
 
 for (const rule of RULES) {
-  const found = measure(rule.pattern);
+  const found = measure(rule.pattern, rule.window);
   const newFiles = [];
   const changed = [];
   const stale = [];
+  const notComposing = [];
 
   const registered = new Map();
   for (const [listName, list] of Object.entries(rule.lists)) {
@@ -275,6 +452,8 @@ for (const rule of RULES) {
     const entry = registered.get(file);
     if (!entry) newFiles.push({ file, now });
     else if (entry.fp !== now.fp) changed.push({ file, now, entry });
+    if (entry && entry.composes === true && !DRAFT_FRAGMENT.test(now.text)) notComposing.push({ file });
+    if (entry && entry.composes === false && !(entry.why ?? "").trim()) notComposing.push({ file, noReason: true });
   }
   for (const [file, entry] of registered) {
     if (!found.has(file)) stale.push({ file, entry });
@@ -315,6 +494,21 @@ for (const rule of RULES) {
     );
   }
 
+  if (notComposing.length > 0) {
+    failed = true;
+    console.error(
+      `\n${[
+        `authz seam check FAILED: registered ${rule.table} files do not keep their claim.`,
+        "",
+        ...notComposing.map(({ file, noReason }) =>
+          noReason
+            ? `  ${file}: composes: false needs a one-line reason in \`why\`.`
+            : `  ${file}: registered as composing the draft fragments, but references none of them.`,
+        ),
+      ].join("\n")}\n`,
+    );
+  }
+
   if (stale.length > 0) {
     // A stale entry is headroom: a reference could come back without this
     // check noticing a NEW file. Deleting it in the same change locks the gain
@@ -336,6 +530,7 @@ if (failed) process.exit(1);
 console.log(
   `authz seam holds: outside ${SEAM_DIR}/, the membership table is referenced only by the ` +
     `${Object.keys(NOT_YET_MIGRATED).length} not-yet-migrated files (+${Object.keys(MEMBERSHIP_MENTIONS).length} registered mentions), ` +
-    `and claimnet.api_keys only by the ${Object.keys(NON_AUTHORIZING_KEY_SQL).length} registered non-authorizing files — ` +
+    `claimnet.api_keys only by the ${Object.keys(NON_AUTHORIZING_KEY_SQL).length} registered non-authorizing files, ` +
+    `and recipes are read only by the ${Object.keys(TRACE_READS).length} registered files (${Object.values(TRACE_READS).filter((e) => e.composes).length} composing the draft condition) — ` +
     "every matching line fingerprinted.",
 );
