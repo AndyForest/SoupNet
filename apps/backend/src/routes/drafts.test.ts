@@ -258,17 +258,25 @@ describe.skipIf(!BASE || !canConnect())("drafts for the key's own user (drafts-a
     expect(JSON.stringify(map)).not.toContain(draftId);
   });
 
-  it("S2-B2 / DT-VIS-03: the draft's evidence never surfaces as related evidence for Sam", { timeout: 90_000 }, async () => {
-    // Wait for the evidence embedding (the async worker), so a leak would show.
-    for (let i = 0; i < 120; i++) {
+  it("S2-B2 / DT-VIS-03: the draft's evidence never surfaces as related evidence for Sam", { timeout: 120_000 }, async () => {
+    // Wait for the evidence embeddings (the async worker, busy under the full
+    // suite): the draft's, so a leak would show, and every other evidence
+    // entry in the shared book, so the channel is live for the check below.
+    for (let i = 0; i < 160; i++) {
       const rows = await sql`
-        SELECT count(*)::int AS n FROM claimnet.embedding_sources es
+        SELECT
+          count(*) FILTER (WHERE te.trace_id = ${draftId}::uuid AND ev.id IS NOT NULL)::int AS draft_done,
+          count(*) FILTER (WHERE te.trace_id <> ${draftId}::uuid AND ev.id IS NULL)::int AS others_pending,
+          count(*) FILTER (WHERE te.trace_id <> ${draftId}::uuid AND ev.id IS NOT NULL)::int AS others_done
+        FROM claimnet.embedding_sources es
         JOIN claimnet.trace_evidence te ON te.evidence_id = es.source_id
+        JOIN claimnet.traces t ON t.id = te.trace_id AND t.group_id = ${shared.id}::uuid
         JOIN claimnet.embedding_chunk_strategies ecs ON ecs.embedding_source_id = es.id
         JOIN claimnet.embedding_chunks ec ON ec.chunk_strategy_id = ecs.id
-        JOIN claimnet.embedding_vectors ev ON ev.embedding_chunk_id = ec.id AND ev.status = 'complete'
-        WHERE te.trace_id = ${draftId}::uuid AND es.source_type = 'evidence'`;
-      if (Number(rows[0]?.["n"]) > 0) break;
+        LEFT JOIN claimnet.embedding_vectors ev ON ev.embedding_chunk_id = ec.id AND ev.status = 'complete'
+        WHERE es.source_type = 'evidence'`;
+      const w = rows[0] as { draft_done: number; others_pending: number; others_done: number } | undefined;
+      if (w && w.draft_done > 0 && w.others_pending === 0 && w.others_done > 0) break;
       await new Promise((r) => setTimeout(r, 500));
     }
     const r = await mcp(samKey, "check_recipe", {
