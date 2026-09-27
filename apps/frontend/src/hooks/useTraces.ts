@@ -82,6 +82,9 @@ export interface TraceDetail extends Trace {
   updatedAt: string;
   /** Original judgment date for backfilled decisions (decision archaeology); null when contemporaneous. */
   decidedAt?: string | null;
+  /** The depositing agent's triage ratings (low | medium | high); null = not rated. */
+  impact?: string | null;
+  uncertainty?: string | null;
   userId: string;
   userEmail: string | null;
   groupName?: string | null;

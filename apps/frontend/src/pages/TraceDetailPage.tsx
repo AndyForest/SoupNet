@@ -14,6 +14,7 @@ import { UserBadge } from "../components/UserBadge.js";
 import { ApiKeyBadge } from "../components/ApiKeyBadge.js";
 import { DeleteTraceConfirmModal } from "../components/DeleteTraceConfirmModal.js";
 import { MoveTraceModal } from "../components/MoveTraceModal.js";
+import { triageRatingsLabel, TRIAGE_RATINGS_TITLE } from "../lib/triage-ratings-label.js";
 
 export function TraceDetailPage() {
   const { traceId } = useParams({ strict: false }) as { traceId: string };
@@ -35,6 +36,7 @@ export function TraceDetailPage() {
   }
 
   const createdAt = new Date(trace.createdAt);
+  const ratingsLabel = triageRatingsLabel(trace);
 
   return (
     <div>
@@ -71,6 +73,14 @@ export function TraceDetailPage() {
           {trace.formatAdherenceScore !== null && trace.formatAdherenceScore !== undefined && (
             <span className="text-xs" style={{ color: "var(--color-on-surface-variant)" }}>
               Format score: {Math.round(trace.formatAdherenceScore * 100)}%
+            </span>
+          )}
+          {/* The depositing agent's triage ratings (drafts-and-triage slice 1),
+              labelled as the agent's so they never read as the person's own
+              assessment. Absent when the agent rated neither. */}
+          {ratingsLabel && (
+            <span className="text-xs" title={TRIAGE_RATINGS_TITLE} style={{ color: "var(--color-on-surface-variant)" }}>
+              {ratingsLabel}
             </span>
           )}
           {trace.groupName && (
