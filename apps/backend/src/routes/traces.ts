@@ -593,6 +593,16 @@ traces.get("/:id", async (c) => {
   // it here, and asking would leak which books the trace could be moved into.
   const canMove = canDelete;
 
+  // Triage ratings (drafts-and-triage slice 1): the depositing agent's own
+  // impact and uncertainty, null = not rated. Read only after the gate above
+  // passed, so they are visible exactly where the recipe already is. The
+  // detail row itself comes from the authz module, which slice 1 leaves
+  // untouched, hence the separate read.
+  const ratingRows = await db.execute(sql`
+    SELECT impact, uncertainty FROM claimnet.traces WHERE id = ${traceId}::uuid
+  `);
+  const ratings = (ratingRows as unknown as Array<{ impact: string | null; uncertainty: string | null }>)[0];
+
   // Get evidence. The trace_evidence.stance column is preserved for legacy
   // rows but no longer surfaced — the LLM author's stance assertion at write
   // time is what justifies stance, not anything the system can infer. Per
@@ -646,6 +656,8 @@ traces.get("/:id", async (c) => {
     ok: true,
     data: {
       ...trace,
+      impact: ratings?.impact ?? null,
+      uncertainty: ratings?.uncertainty ?? null,
       canDelete,
       canMove,
       evidence: evidenceRows,

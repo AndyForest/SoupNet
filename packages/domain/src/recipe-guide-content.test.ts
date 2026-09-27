@@ -235,7 +235,14 @@ describe("BRIEFING.build — surface profiles (cold-start v2 Phase B)", () => {
     // Fixture floor measured ~16.5KB at introduction; ceiling leaves modest
     // headroom — growth past it should be a deliberate, dated raise, exactly
     // like the tool-description budget.
-    expect(mcpText.length).toBeLessThanOrEqual(18_000);
+    // 18,000 → 18,200 (2026-09-27, drafts-and-triage slice 1): the intent
+    // param's depth (always-new registration, lost-id recovery, rendering-
+    // only stubs) moved out of three tool schemas, which every connected
+    // client loads on every turn, into one "How to check" paragraph here,
+    // which loads once per session; the feedback pointer names log_feedback's
+    // fields. Served tools/list fell 18,090 → 15,864 bytes; this text grew
+    // ~17,685 → 18,111 chars.
+    expect(mcpText.length).toBeLessThanOrEqual(18_200);
     expect(mcpText.length).toBeLessThan(fullText.length);
   });
 

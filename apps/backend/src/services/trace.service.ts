@@ -39,8 +39,8 @@ import type { EvidenceSearchResult } from "./vector-search.service";
 import { scoreFormatAdherence } from "./format-adherence";
 import { runSearchPipeline } from "./search-pipeline";
 import { StageTimer } from "../lib/stage-timer";
-import { DEFAULT_RANKING, RANKING_ALGORITHM_VERSION, parseSearchQuery, AUTHOR_ME, buildOwnExcludedNote } from "@soupnet/domain";
-import type { CandidateSignals, VerbositySteer, ParsedSearchQuery } from "@soupnet/domain";
+import { DEFAULT_RANKING, RANKING_ALGORITHM_VERSION, parseSearchQuery, AUTHOR_ME, buildOwnExcludedNote, parseTriageRating, parseTriageRatings, repeatRatingsNotice } from "@soupnet/domain";
+import type { CandidateSignals, VerbositySteer, ParsedSearchQuery, TriageRatings } from "@soupnet/domain";
 import type { StructuredTraceFilters } from "./vector-search.service";
 import { resolveIntent, fetchIntentShownIds, recordIntentShown } from "./intent.service";
 import type { IntentResolution } from "./intent.service";
@@ -145,6 +145,13 @@ export interface SubmitAndSearchParams {
    *  and self-healing; supersedes session_id's role over time (deprecation
    *  intent, recipe 5c55327d). */
   intent?: string | undefined;
+  /** Triage ratings (drafts-and-triage slice 1): the agent's raw `impact` and
+   *  `uncertainty` values, each low | medium | high. Omitted = not rated
+   *  (NULL, never a default); an unrecognized value is stored as NULL with a
+   *  ratingsNotice, never a rejected check (recipe 4cfd166e). Stored on the
+   *  recipe for display and triage; never passed to the search pipeline. */
+  impact?: unknown;
+  uncertainty?: unknown;
 }
 
 export interface SearchResultItem {
@@ -208,6 +215,14 @@ export interface SubmitAndSearchResult {
   traceId?: string;
   /** The checked recipe text — echoed in JSON responses so agents can match results to divergent checks. */
   traceText?: string;
+  /** The deposit's triage ratings as stored (slice 1): on a repeat of an
+   *  identical check, the first check's ratings. Null = not rated. */
+  ratings?: TriageRatings | undefined;
+  /** True when this check repeated an identical earlier one (same key, book,
+   *  text) and returned that recipe instead of storing a new one. */
+  existingRecipe?: boolean | undefined;
+  /** Why a rating sent on this check was not applied. */
+  ratingsNotice?: string | undefined;
   formatWarning?: string | undefined;
   results: SearchResultItem[];
   /** Evidence from other recipes that's topically related to the checked recipe */
@@ -534,6 +549,11 @@ export async function submitAndSearch(
     agentId: params.agentId,
   });
 
+  // 1f. Triage ratings (slice 1): capture-only. An unrecognized value
+  // becomes NULL plus a notice; nothing here can fail the check.
+  const requestedRatings = parseTriageRatings({ impact: params.impact, uncertainty: params.uncertainty });
+  let storedRatings: TriageRatings = requestedRatings.ratings;
+
   // 2. Parse evidence
   const forEntries = parseEvidenceMarkdown(params.evidenceFor);
   // evidence_against removed from ingest — see docs/architecture/embedding-test-results.md
@@ -571,8 +591,8 @@ export async function submitAndSearch(
     // Try to insert — unique constraint on (api_key_id, group_id, claim_text_hash)
     // prevents duplicates from the same agent + group
     const traceRows = await tx.execute(sql`
-      INSERT INTO claimnet.traces (user_id, group_id, api_key_id, claim_text, claim_text_hash, format_adherence_score, decided_at, session_id)
-      VALUES (${userId}::uuid, ${groupId}::uuid, ${keyId}::uuid, ${params.traceText}, ${claimTextHash}, ${adherence.score}, ${decidedAt ? decidedAt.toISOString() : null}::timestamptz, ${session.sessionId})
+      INSERT INTO claimnet.traces (user_id, group_id, api_key_id, claim_text, claim_text_hash, format_adherence_score, decided_at, session_id, impact, uncertainty)
+      VALUES (${userId}::uuid, ${groupId}::uuid, ${keyId}::uuid, ${params.traceText}, ${claimTextHash}, ${adherence.score}, ${decidedAt ? decidedAt.toISOString() : null}::timestamptz, ${session.sessionId}, ${requestedRatings.ratings.impact}, ${requestedRatings.ratings.uncertainty})
       ON CONFLICT (api_key_id, group_id, claim_text_hash) DO NOTHING
       RETURNING id
     `);
@@ -646,14 +666,26 @@ export async function submitAndSearch(
     } else {
       // Duplicate — find the existing trace
       isExisting = true;
+      // Its ratings come back too: first write wins, so the repeat's
+      // ratings are reported as not applied rather than written over the
+      // stored ones (build log open question 4; DT-RAT-08).
       const existingRows = await tx.execute(sql`
-        SELECT id FROM claimnet.traces
+        SELECT id, impact, uncertainty FROM claimnet.traces
         WHERE api_key_id = ${keyId}::uuid
           AND group_id = ${groupId}::uuid
           AND claim_text_hash = ${claimTextHash}
         LIMIT 1
       `);
-      traceId = (existingRows as unknown as Array<{ id: string }>)[0]?.id;
+      const existing = (existingRows as unknown as Array<{ id: string; impact: string | null; uncertainty: string | null }>)[0];
+      traceId = existing?.id;
+      if (existing) {
+        // Stored values went through the same parser on the way in; parsing
+        // again keeps the type honest without trusting the column blindly.
+        storedRatings = {
+          impact: parseTriageRating(existing.impact).value,
+          uncertainty: parseTriageRating(existing.uncertainty).value,
+        };
+      }
     }
   }));
 
@@ -755,6 +787,12 @@ export async function submitAndSearch(
       sessionId: session.sessionId,
       // Declared intent (Phase C) — joins this check into its intent lineage.
       ...(intent.intentId ? { intentId: intent.intentId } : {}),
+      // Triage ratings as sent on THIS call (slice 1). The recipe keeps its
+      // first ratings on an identical repeat, so this row is the per-call
+      // history (build log open question 4). Absent when nothing was rated.
+      ...(requestedRatings.ratings.impact !== null || requestedRatings.ratings.uncertainty !== null
+        ? { impact: requestedRatings.ratings.impact, uncertainty: requestedRatings.ratings.uncertainty }
+        : {}),
       // OAuth client identity — segmentable cross-vendor column the day a
       // connector check arrives. Null for daily/scoped keys.
       ...(keyType === "oauth" && oauthClientId ? { oauthClientId } : {}),
@@ -833,9 +871,17 @@ export async function submitAndSearch(
     ...timer.toLogObject(),
   })}`);
 
+  const ratingsNotice = [
+    requestedRatings.notice,
+    isExisting ? repeatRatingsNotice(requestedRatings.ratings, storedRatings) : undefined,
+  ].filter(Boolean).join(" ") || undefined;
+
   return {
     traceId,
     traceText: params.traceText,
+    ratings: storedRatings,
+    existingRecipe: isExisting || undefined,
+    ratingsNotice,
     formatWarning,
     results: pipelineResult.results,
     relatedEvidence: pipelineResult.relatedEvidence,

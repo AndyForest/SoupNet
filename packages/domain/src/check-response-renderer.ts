@@ -27,6 +27,9 @@
  *     gist is an ossification risk; fetch bodies via get_recipes).
  */
 
+import type { TriageRating } from "@soupnet/contracts";
+import { renderRatingsMarkdown } from "./triage-ratings";
+
 // ── Response shape (tolerant — both builders' outputs satisfy it) ───────────
 
 export interface CheckResultReference {
@@ -84,7 +87,19 @@ export interface CheckRelatedEvidence {
 export interface CheckResponseData {
   /** The caller's own deposit as a Recipe fill ({recipeId, recipe}). Absent
    *  on the read-only filter path. */
-  checked?: { recipeId?: string; recipe?: string };
+  checked?: {
+    recipeId?: string;
+    recipe?: string;
+    /** Triage ratings on the deposit (slice 1); null = not rated. */
+    impact?: TriageRating | null;
+    uncertainty?: TriageRating | null;
+  };
+  /** True when the check repeated an identical earlier one (same key, book,
+   *  text): `checked` is that earlier recipe; nothing new was stored. */
+  existingRecipe?: boolean;
+  /** Why a rating sent on this check was not applied (unrecognized value,
+   *  or an identical repeat keeping the first ratings). */
+  ratingsNotice?: string;
   /** True for the /check `filter` read-only search path — no trace logged. */
   searchOnly?: boolean;
   /** The keyword filter text of a search-only response. */
@@ -265,6 +280,15 @@ export function renderCheckResponseMarkdown(
   let text = data.searchOnly
     ? `Read-only search${data.filter ? ` for "${data.filter}"` : ""}.\n`
     : `Recipe checked as #${data.checked?.recipeId ?? "?"}\n`;
+  if (!data.searchOnly && data.checked) {
+    // Triage ratings echo (drafts-and-triage slice 1): a line only when the
+    // agent rated or a rating needs explaining, so agents that never rate
+    // see no change. JSON consumers read checked.impact / checked.uncertainty.
+    text += renderRatingsMarkdown(
+      { impact: data.checked.impact ?? null, uncertainty: data.checked.uncertainty ?? null },
+      data.ratingsNotice,
+    );
+  }
   if (data.searchOnly && data.searchId) {
     text += `Search id: ${data.searchId} — log_feedback accepts it as search_id.\n`;
   }

@@ -54,7 +54,7 @@ describe("MCP tool registrations — WT-3 retrieval API", () => {
 
   it("the stdio mirror registers get_recipes too", () => {
     const stdioSource = readFileSync(
-      join(here, "..", "..", "..", "mcp-server", "src", "index.ts"),
+      join(here, "..", "..", "..", "mcp-server", "src", "server.ts"),
       "utf-8",
     );
     expect(stdioSource).toContain('"get_recipes"');
@@ -73,7 +73,7 @@ describe("MCP tool registrations — WP2 premium synthesize", () => {
 
   it("the stdio mirror registers the synthesize param too", () => {
     const stdioSource = readFileSync(
-      join(here, "..", "..", "..", "mcp-server", "src", "index.ts"),
+      join(here, "..", "..", "..", "mcp-server", "src", "server.ts"),
       "utf-8",
     );
     expect(stdioSource).toContain("synthesize: z.boolean().optional()");
@@ -83,24 +83,28 @@ describe("MCP tool registrations — WP2 premium synthesize", () => {
 // Session-token feedback capture (2026-07-17): feedback rows accept an
 // optional session_id joining them to the check lineage their session
 // produced. Same drift guard as WT-3/WP2 — if one surface drops the field,
-// the other keeps advertising it.
+// the other keeps advertising it. Since drafts-and-triage slice 1 the
+// ride-along row schema is an open record pointing at log_feedback (every
+// field still accepted; mcp-tools-list-size.test.ts and the stdio
+// server.test.ts pin that), so the declared session_id params counted here
+// are the check-level and log_feedback ones.
 describe("MCP tool registrations — feedback session_id capture", () => {
   it("the HTTP MCP registers session_id on both feedback surfaces", () => {
     // feedbackRowSchema (check_recipe ride-along) + log_feedback flat params.
     const matches = mcpSource.match(/session_id: z\.string\(\)\.optional\(\)/g) ?? [];
-    // ≥ 3: check_recipe's own session_id param, the feedback row schema, and
-    // the log_feedback tool.
+    // ≥ 3: check_recipe's and search_recipes' own session_id params, and the
+    // log_feedback tool.
     expect(matches.length).toBeGreaterThanOrEqual(3);
   });
 
   it("the stdio mirror registers session_id on both feedback surfaces too", () => {
     const stdioSource = readFileSync(
-      join(here, "..", "..", "..", "mcp-server", "src", "index.ts"),
+      join(here, "..", "..", "..", "mcp-server", "src", "server.ts"),
       "utf-8",
     );
     const matches = stdioSource.match(/session_id: z\.string\(\)\.optional\(\)/g) ?? [];
-    // ≥ 2: the feedback row schema and the log_feedback tool (the stdio
-    // check_recipe has no check-level session_id param yet — see backlog).
+    // ≥ 2: the check-level session_id params (check_recipe, search_recipes)
+    // and the log_feedback tool.
     expect(matches.length).toBeGreaterThanOrEqual(2);
   });
 });
@@ -112,7 +116,7 @@ describe("MCP tool registrations — feedback session_id capture", () => {
 // parameter-silently-ignored defect the lever fixed (finding doc, 2026-07-26).
 describe("MCP tool registrations — verbosity lever", () => {
   const stdioSource = readFileSync(
-    join(here, "..", "..", "..", "mcp-server", "src", "index.ts"),
+    join(here, "..", "..", "..", "mcp-server", "src", "server.ts"),
     "utf-8",
   );
 
@@ -126,7 +130,7 @@ describe("MCP tool registrations — verbosity lever", () => {
     expect(matches.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("legacy clusters/max_chars stay in both schemas — honored, not silently stripped", () => {
+  it("legacy clusters/max_chars stay in both schemas — honored, not silently stripped (S1-Z6)", () => {
     for (const source of [mcpSource, stdioSource]) {
       expect(source).toContain("clusters: z.number().optional()");
       expect(source).toContain("max_chars: z.number().optional()");
@@ -182,8 +186,26 @@ describe("MCP tool description budget", () => {
     // 363e3e0c) adds one genuinely new shared param used by three tools —
     // the same class of raise as session_id (2026-07-17) and search_recipes
     // (2026-08-19). Prior total ~5,474, new total ~5,890.
+    // 5,950 → 5,550 (2026-09-27), DOWN: drafts-and-triage slice 1 (rubric
+    // S1-Z3) added impact + uncertainty and paid for them by cutting intent,
+    // agent_id, and known_recipes to one line each (depth moved to the
+    // briefing's "How to check" paragraph), the feedback param to a pointer
+    // at log_feedback, and clusters/max_chars to a pointer at verbosity.
+    // Prior total 5,884, new total 5,510.
     const total = Object.values(all).reduce((n, s) => n + s.length, 0);
-    expect(total).toBeLessThanOrEqual(5950);
+    expect(total).toBeLessThanOrEqual(5550);
+  });
+
+  it("keeps the shared params that repeat across tools to one line (≤ 120 chars) — S1-Z5", () => {
+    // intent rides three tools, agent_id three, known_recipes two: every
+    // extra character is paid several times per tools/list. Their depth
+    // lives in the briefing (How to check), not here (drafts-and-triage
+    // slice 1, 2026-09-27).
+    for (const name of ["intent", "agentId", "knownRecipes"] as const) {
+      const text = MCP_PARAM_DESCRIPTIONS[name];
+      expect(text.length, `${name} is ${text.length} chars`).toBeLessThanOrEqual(120);
+      expect(text, `${name} is one line`).not.toContain("\n");
+    }
   });
 });
 

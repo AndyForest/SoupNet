@@ -641,7 +641,9 @@ ${webSetupSection}
 `}## How to check
 \`check_recipe\` accepts: \`recipe\` (the claim), \`supporting_evidence\` (warrant + data), and \`recipe_book\` (slug). Optional: \`axes\` (concept projection), \`verbosity\` (response detail: low | medium | high, omit for automatic), and reference file attachments (images, PDF, audio, video) — see your tool schema for the exact file-input params. HTTP MCP also accepts an optional \`region.image_box\` with normalized \`{x0, y0, x1, y1}\` coordinates (0-1) to mark a specific area of an attached image — the embedding pipeline crops to that region plus padding, blurs the padding, and weights the marked area heavily; the original image is stored unmodified, so the region treatment can be redone later.
 
-Further optional params live in your tool schema, each doing what its one-line description says: \`session_id\` (returned on every check — pass it back and recipes you've already been shown collapse to id-stubs while results walk to unseen ones), \`known_recipes\` (client-declared ids you still hold — same id-stub rendering), \`decided_at\` (backfill the original date of a historical decision), \`response_format\` (markdown report or structured JSON), \`agent_id\` (mint your own id so your checks form a joinable lineage), and \`feedback\` (close the loop on earlier checks while making this one).
+Further optional params live in your tool schema, each doing what its one-line description says: \`session_id\` (returned on every check — pass it back and recipes you've already been shown collapse to id-stubs while results walk to unseen ones), \`known_recipes\` (client-declared ids you still hold — same id-stub rendering, never ranking), \`decided_at\` (backfill the original date of a historical decision), \`response_format\` (markdown report or structured JSON), \`agent_id\` (mint your own id so your checks form a joinable lineage), and \`feedback\` (close the loop on earlier checks or searches while making this one; each row takes the same fields as \`log_feedback\`).
+
+\`intent\` takes your task story or an \`int_…\` id, and each response says how to carry the id. Story text always registers a new intent (identical wording never merges sessions), so if you lose the id, say to context compaction, re-send the story for a fresh one. Recipes already delivered to it render as id-stubs: rendering only, never ranking.
 
 **Search vs check.** \`search_recipes\` (or the check page's \`filter\` param) is the read-only sibling: same corpus, same ranking — and it's the tool to reach for when the judgment you need was made by OTHER people: reviewing a teammate's PR area (quote the changed filenames: \`("a.service.ts" OR "b.ts")\`), or joining a shared recipe book mid-project. Its results exclude your own recipes by default; \`author:me\` / \`author:anyone\` override, and \`after:\`/\`before:\` bound the judgment date. The division of labor: check when you hold a genuine hypothesis about your user's taste — that's the append path that grows the corpus; search when the answer lives in a collaborator's logged judgment. With neither, the corpus isn't the place to look — ask the user or read the project's own sources; Soup.net is a decision log, not documentation. Already hold recipe ids (frontmatter, prior results)? \`get_recipes\` fetches them directly, and \`get_briefing\`'s \`purpose\` param tailors the briefing's exemplars to your task.
 
@@ -953,11 +955,9 @@ export const MCP_PARAM_DESCRIPTIONS = {
   /** Deprecated legacy levers — kept in schema so existing callers stay
    *  honored (the SDK strips unknown keys silently, which would recreate the
    *  parameter-silently-ignored defect the verbosity ruling fixed). */
-  clusters:
-    "Deprecated — use verbosity. Exact exemplar count, still honored (harness/sweep use).",
+  clusters: "Deprecated: use verbosity (still honored).",
 
-  maxChars:
-    "Deprecated — use verbosity. Approximate size target in characters, still honored.",
+  maxChars: "Deprecated: use verbosity (still honored).",
 
   /** get_briefing verbosity — same enum, scaled to the briefing's exemplars. */
   briefingVerbosity:
@@ -975,16 +975,15 @@ export const MCP_PARAM_DESCRIPTIONS = {
     "'markdown' (default): readable report with recipe UUIDs and similarity inline. 'structured': the " +
     "same data as structuredContent JSON plus a one-line text stub. One format per response, never both.",
 
+  /** One line (drafts-and-triage slice 1, S1-Z5); the briefing's "How to
+   *  check" paragraph carries the rest. */
   agentId:
-    "Free-text agent id you mint for yourself (e.g. 'a-refactor-2026-07'), stamped on audit records " +
-    "so check lineages are joinable. Capture only.",
+    "An id you mint for yourself (e.g. 'a-refactor-2026-07') so your calls join into one lineage.",
 
   /** Short form of KNOWN_DEFINITION (@soupnet/contracts — the canonical
    *  known-stub source), phrased for the declaring side. */
   knownRecipes:
-    "Comma-separated recipe UUIDs you still hold in context; matching results render as id-only " +
-    "stubs. Client-declared sibling of session_id. Rendering only — logging, ranking, and " +
-    "clustering are unchanged.",
+    "Comma-separated ids of recipes you still hold; they render as id stubs. Rendering only, never ranking.",
 
   /** Short form of SESSION_ID_DEFINITION (@soupnet/contracts — the canonical
    *  session-token source). */
@@ -994,10 +993,11 @@ export const MCP_PARAM_DESCRIPTIONS = {
     "unseen ones — each check surfaces new text; ranking never changes. Share it with sub-agents " +
     "to share your known-set. Compacted your context? Omit it next check for full text again.",
 
+  /** A pointer, not a schema (slice 1, S1-Z4): the row fields are
+   *  log_feedback's, declared once there instead of inline on two tools. */
   feedbackParam:
-    "Feedback rows about PRIOR checks, riding along with this one. Each row: trace_id of the earlier " +
-    "check (full UUID or 8+ char short id) plus the fields in this schema (see log_feedback). Rows " +
-    "validate independently — a rejected row never blocks the check.",
+    "Feedback rows about PRIOR checks or searches, riding along with this call; each row takes " +
+    "log_feedback's fields. A rejected row never blocks this call.",
 
   synthesize:
     "Premium opt-in: distil results into one short preference profile (newest wins, ids cited). " +
@@ -1023,13 +1023,26 @@ export const MCP_PARAM_DESCRIPTIONS = {
 
   /** Declared intent (cold-start v2 Phase C) — shared by get_briefing,
    *  check_recipe, and search_recipes. Registration is ALWAYS-NEW by ruling
-   *  (recipe 363e3e0c); the feedback surface is join-only. */
+   *  (recipe 363e3e0c); the feedback surface is join-only. One line since
+   *  drafts-and-triage slice 1 (S1-Z5): always-new registration, id-stub
+   *  rendering, lost-id recovery, and sub-agent text moved to the briefing's
+   *  "How to check" paragraph, and every response's intent echo line repeats
+   *  the carry-the-id protocol. */
   intent:
-    "Declared intent: your task story, or the int_… id a prior response returned. Text ALWAYS " +
-    "registers a NEW intent (identical wording never merges sessions); carry the id on later " +
-    "checks/searches/feedback, and recipes already delivered to it render as id-stubs (rendering " +
-    "only, never ranking). Lost the id? Re-send the story — fresh intent, stubs reset. Sub-agents " +
-    "with their own goals send their own text.",
+    "Your task story, or the int_… id an earlier response returned; carry the id on later calls. The briefing explains.",
+
+  /** Triage ratings on check_recipe (drafts-and-triage slice 1). Plain
+   *  strings on the wire so an unrecognized value becomes a notice, never a
+   *  rejected call (recipe 4cfd166e). The check-level impact is NOT a
+   *  feedback row's impact (none | new | subtle | big | operational); the
+   *  description says so, and DT-RAT-10 pins that the two never cross. */
+  impact:
+    "Your triage rating of how much rides on this call: low | medium | high. Omit it if you have " +
+    "no view. Not a feedback row's impact.",
+
+  uncertainty:
+    "Your triage rating of how unsure you are of the person's position: low | medium | high. Omit " +
+    "it if you have no view.",
 } as const;
 
 /** Compose the full check_recipe tool description, optionally with the file-attachment sentence. */

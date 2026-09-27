@@ -1,0 +1,185 @@
+/**
+ * The stdio MCP server as a client sees it (drafts-and-triage slice 1).
+ *
+ * Built with createStdioServer and driven over an in-memory transport, so the
+ * served tools/list is measured byte for byte (S1-Z2) and what the proxy
+ * forwards to the backend is observed with a stubbed fetch (S1-B1, S1-Z4,
+ * S1-Z6). The backend-side behavior of the forwarded params is covered by the
+ * backend's /check integration tests.
+ *
+ * Measured served tools/list (build log §Slice 1 baseline):
+ *   before slice 1 (2026-09-27): 13,670 bytes
+ *   after slice 1 (2026-09-27):  12,074 bytes, with impact and uncertainty added
+ */
+import { describe, it, expect, afterEach, vi } from "vitest";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { MCP_PARAM_DESCRIPTIONS } from "@soupnet/domain";
+import { createStdioServer } from "./server.js";
+import { servedToolsList } from "./served-tools-list.js";
+
+/** S1-Z2: the stdio roster may not grow past its pre-slice-1 size. */
+const STDIO_TOOLS_LIST_MAX_BYTES = 13_670;
+
+const BACKEND = "http://backend.test";
+
+function newServer() {
+  return createStdioServer({ backendUrl: BACKEND, apiKey: "test-key" });
+}
+
+/** A backend stub that records every request and answers like /check and
+ *  /feedback do. */
+function stubBackend() {
+  const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+  const fetchStub = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    calls.push({ url, init });
+    if (url.startsWith(`${BACKEND}/feedback`)) {
+      return new Response(JSON.stringify({ ok: true, data: { recorded: 1, results: [{ index: 0, ok: true, traceId: "t" }] } }));
+    }
+    return new Response(JSON.stringify({
+      ok: true,
+      data: { checked: { recipeId: "11111111-1111-4111-8111-111111111111", impact: "low", uncertainty: null }, results: [], totalResults: 0 },
+    }));
+  });
+  vi.stubGlobal("fetch", fetchStub);
+  return calls;
+}
+
+async function callTool(name: string, args: Record<string, unknown>) {
+  const server = newServer();
+  const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: "stdio-test", version: "0" });
+  await server.connect(serverSide);
+  await client.connect(clientSide);
+  try {
+    return await client.callTool({ name, arguments: args });
+  } finally {
+    await client.close();
+    await server.close();
+  }
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe("stdio MCP tools/list as served", () => {
+  it(`S1-Z2: the served payload does not grow past ${STDIO_TOOLS_LIST_MAX_BYTES} bytes, ratings included`, async () => {
+    const { bytes } = await servedToolsList(newServer());
+    expect(bytes, `served tools/list is ${bytes} bytes`).toBeLessThanOrEqual(STDIO_TOOLS_LIST_MAX_BYTES);
+  });
+
+  it("S1-B1: check_recipe lists impact and uncertainty as plain strings", async () => {
+    const { tools } = await servedToolsList(newServer());
+    const props = tools.find((t) => t.name === "check_recipe")?.inputSchema.properties ?? {};
+    for (const name of ["impact", "uncertainty"]) {
+      expect(props[name]?.["type"], name).toBe("string");
+      expect(String(props[name]?.["description"])).toContain("low | medium | high");
+    }
+  });
+
+  it("S1-Z6 / DT-TOOL-02: clusters and max_chars stay declared with a one-line pointer to verbosity", async () => {
+    const { tools } = await servedToolsList(newServer());
+    const props = tools.find((t) => t.name === "check_recipe")?.inputSchema.properties ?? {};
+    for (const name of ["clusters", "max_chars"]) {
+      expect(props[name]?.["type"], name).toBe("number");
+      expect(String(props[name]?.["description"])).toContain("verbosity");
+      expect(String(props[name]?.["description"]).length).toBeLessThanOrEqual(60);
+    }
+  });
+
+  it("S1-Z4 / DT-TOOL-03: check_recipe's feedback points to log_feedback instead of inlining the row schema", async () => {
+    const { tools } = await servedToolsList(newServer());
+    const feedback = tools.find((t) => t.name === "check_recipe")?.inputSchema.properties?.["feedback"] ?? {};
+    const items = feedback["items"] as { properties?: unknown; additionalProperties?: unknown };
+    expect(items.properties).toBeUndefined();
+    expect(items.additionalProperties).not.toBe(false);
+    expect(String(feedback["description"])).toContain("log_feedback");
+  });
+});
+
+describe("DT-TOOL-04: the stdio server's shared descriptions are the remote server's constants", () => {
+  it("check_recipe's shared params carry MCP_PARAM_DESCRIPTIONS verbatim", async () => {
+    const { tools } = await servedToolsList(newServer());
+    const props = tools.find((t) => t.name === "check_recipe")?.inputSchema.properties ?? {};
+    const shared: Record<string, string> = {
+      intent: MCP_PARAM_DESCRIPTIONS.intent,
+      agent_id: MCP_PARAM_DESCRIPTIONS.agentId,
+      known_recipes: MCP_PARAM_DESCRIPTIONS.knownRecipes,
+      impact: MCP_PARAM_DESCRIPTIONS.impact,
+      uncertainty: MCP_PARAM_DESCRIPTIONS.uncertainty,
+      feedback: MCP_PARAM_DESCRIPTIONS.feedbackParam,
+      clusters: MCP_PARAM_DESCRIPTIONS.clusters,
+      max_chars: MCP_PARAM_DESCRIPTIONS.maxChars,
+    };
+    for (const [name, text] of Object.entries(shared)) {
+      expect(props[name]?.["description"], name).toBe(text);
+    }
+  });
+});
+
+describe("stdio check_recipe proxy forwarding", () => {
+  const recipe = "As a tester working on the stdio proxy, I prefer forwarded params so that the backend decides.";
+  const evidence = "Interpretation.\n> \"quote\"\n-- source";
+
+  it("S1-B1 / DT-RAT-05: forwards impact and uncertainty to /check", async () => {
+    const calls = stubBackend();
+    await callTool("check_recipe", { recipe, supporting_evidence: evidence, impact: "low", uncertainty: "high" });
+    const url = new URL(calls[0]!.url);
+    expect(url.pathname).toBe("/check");
+    expect(url.searchParams.get("impact")).toBe("low");
+    expect(url.searchParams.get("uncertainty")).toBe("high");
+  });
+
+  it("S1-B3 / DT-RAT-04: forwards an unrecognized rating untouched, so the backend can store not rated with a notice", async () => {
+    const calls = stubBackend();
+    const result = await callTool("check_recipe", { recipe, supporting_evidence: evidence, impact: "urgent" });
+    expect(result.isError).not.toBe(true);
+    expect(new URL(calls[0]!.url).searchParams.get("impact")).toBe("urgent");
+  });
+
+  it("S1-B2: sends no rating params when none were given", async () => {
+    const calls = stubBackend();
+    await callTool("check_recipe", { recipe, supporting_evidence: evidence });
+    const params = new URL(calls[0]!.url).searchParams;
+    expect(params.has("impact")).toBe(false);
+    expect(params.has("uncertainty")).toBe(false);
+  });
+
+  it("S1-Z6 / DT-TOOL-02: still honors clusters and max_chars by forwarding them", async () => {
+    const calls = stubBackend();
+    await callTool("check_recipe", { recipe, supporting_evidence: evidence, clusters: 7, max_chars: 4000 });
+    const params = new URL(calls[0]!.url).searchParams;
+    expect(params.get("clusters")).toBe("7");
+    expect(params.get("max_chars")).toBe("4000");
+  });
+
+  it("S1-Z4 / DT-TOOL-03, S1-B6 / DT-RAT-10: every log_feedback field on a ride-along row reaches /feedback, and the row's impact stays apart from the check's", async () => {
+    const calls = stubBackend();
+    const row = {
+      trace_id: "22222222-2222-4222-8222-222222222222",
+      kind: "check-feedback",
+      impact: "new",
+      disposition: "proceeded",
+      story_fulfilled: "yes",
+      story: "As a tester, I wanted every field forwarded.",
+      note: "all fields",
+      agent_id: "a-row",
+      top_similarity: 0.5,
+      model: "m",
+      harness: "h",
+      harness_version: "1",
+      related_trace_ids: ["33333333-3333-4333-8333-333333333333"],
+      session_id: "sess-row-1234",
+      intent_id: "int_abcdefghijklmnopqrstuvwx",
+    };
+    await callTool("check_recipe", { recipe, supporting_evidence: evidence, impact: "high", feedback: [row] });
+    const checkUrl = new URL(calls.find((c) => c.url.includes("/check"))!.url);
+    expect(checkUrl.searchParams.get("impact")).toBe("high");
+    expect(checkUrl.searchParams.get("feedback_impact")).toBeNull();
+    const fb = calls.find((c) => c.url === `${BACKEND}/feedback`);
+    const sent = JSON.parse(String(fb?.init?.body)) as { feedback: Array<Record<string, unknown>> };
+    expect(sent.feedback[0]).toEqual(row);
+  });
+});

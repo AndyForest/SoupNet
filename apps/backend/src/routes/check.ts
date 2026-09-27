@@ -14,9 +14,10 @@ import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { authenticateKey } from "../authz";
 import type { Principal } from "../authz";
-import { HTML_ACCEPT_TYPES, renderCheckResponseMarkdown, fenceCheckResponseMarkdown, parseVerbosity } from "@soupnet/domain";
+import { HTML_ACCEPT_TYPES, renderCheckResponseMarkdown, fenceCheckResponseMarkdown, parseVerbosity, renderRatingsMarkdown } from "@soupnet/domain";
 import type { CheckResponseJson } from "@soupnet/domain";
 import type { Recipe } from "@soupnet/contracts";
+import { TRIAGE_RATING_VALUES } from "@soupnet/contracts";
 import { rateLimit, perKeyRateLimit, extractCheckRequestKey, getClientIp, hashApiKey, envCap } from "../middleware/rate-limit";
 import { parseLenientQuery, rawQueryOfUrl } from "../lib/lenient-query";
 import { invalidKeyMessage, keysPageUrl } from "../lib/key-remediation";
@@ -139,6 +140,12 @@ export const CHECK_PARAMS = [
   // int_… id explicitly instead.
   { field: "intent",     wire: "intent",             aliases: [],              roundTrip: "override-only" },
   { field: "sort",       wire: "sort",               aliases: [],              roundTrip: "carry" },
+  // Triage ratings (drafts-and-triage slice 1): low | medium | high, omitted =
+  // not rated. Properties of the recipe being checked, so they carry like
+  // decided_at. Wire names never collide with a ride-along feedback row's
+  // impact, which travels as feedback_impact (DT-RAT-10).
+  { field: "impact",      wire: "impact",            aliases: [],              roundTrip: "carry" },
+  { field: "uncertainty", wire: "uncertainty",       aliases: [],              roundTrip: "carry" },
   // Premium opt-in behavior flag — carries like the other intent-preserving
   // params (agent_id, decided_at) so an opted-in caller keeps synthesis on
   // across the page's re-check form and Copy-URL round-trips, rather than
@@ -248,9 +255,19 @@ function buildJsonResponse(
     data: {
       // The caller's own deposit as a Recipe fill (canonical schema, recipe
       // 7945fd8a): {recipeId, recipe}.
+      // Triage ratings ride on the deposit (slice 1): null = not rated.
       ...(result.traceId
-        ? { checked: { recipeId: result.traceId, recipe: result.traceText } satisfies Recipe }
+        ? {
+          checked: {
+            recipeId: result.traceId,
+            recipe: result.traceText,
+            impact: result.ratings?.impact ?? null,
+            uncertainty: result.ratings?.uncertainty ?? null,
+          } satisfies Recipe,
+        }
         : {}),
+      ...(result.existingRecipe ? { existingRecipe: true } : {}),
+      ...(result.ratingsNotice ? { ratingsNotice: result.ratingsNotice } : {}),
       searchMode: result.searchMode ?? "semantic",
       clustered: result.clustered ?? false,
       results: enriched.map((r): Recipe => {
@@ -565,6 +582,15 @@ function renderHiddenCarryFields(params: PageParams): string {
   return fields.join("\n        ");
 }
 
+/** Options for a triage-rating select: "not rated" plus the vocabulary. */
+function renderRatingOptions(current: string | undefined): string {
+  const value = current?.trim().toLowerCase() ?? "";
+  return [
+    `<option value=""${value === "" ? " selected" : ""}>not rated</option>`,
+    ...TRIAGE_RATING_VALUES.map((v) => `<option value="${v}"${value === v ? " selected" : ""}>${v}</option>`),
+  ].join("\n        ");
+}
+
 // ── Evidence HTML renderer ──────────────────────────────────────────────────
 
 function renderReferenceMedia(_ref: EnrichedReference): string {
@@ -702,11 +728,18 @@ function renderPage(
       ),
     );
 
+    // Triage ratings echo (slice 1): the agent's own ratings, shown only when
+    // it rated or a rating needs explaining.
+    const ratingsText = renderRatingsMarkdown(result.ratings, result.ratingsNotice).trim();
+    const ratingsHtml = ratingsText
+      ? `\n    <p id="check-ratings" style="margin:0.25rem 0;font-size:0.9em">${esc(ratingsText).replace(/\n/g, "<br>")}</p>`
+      : "";
+
     nextStepsHtml = `
   <section id="next-steps" style="background:#f0efe3;padding:0.75rem 1rem;border-radius:4px;margin:0.5rem 0">
     <p style="margin:0.25rem 0"><strong>Your recipe was checked as #${esc(result.traceId)}</strong>
     <button id="copy-md-btn" style="font-size:0.85em;padding:3px 10px;margin-left:1em;cursor:pointer">Copy results for AI agent</button>
-    <button id="copy-json-btn" style="font-size:0.85em;padding:3px 10px;margin-left:0.5em;cursor:pointer">Copy as JSON</button></p>
+    <button id="copy-json-btn" style="font-size:0.85em;padding:3px 10px;margin-left:0.5em;cursor:pointer">Copy as JSON</button></p>${ratingsHtml}
     <script nonce="${nonce ?? ""}">
     document.getElementById('copy-md-btn').addEventListener('click',function(){var btn=this;var txt=document.getElementById('md-result').textContent;function ok(){btn.textContent='Copied!';setTimeout(function(){btn.textContent='Copy results for AI agent'},2000)}try{navigator.clipboard.writeText(txt).then(ok).catch(function(){var ta=document.createElement('textarea');ta.value=txt;ta.style.position='fixed';ta.style.left='-9999px';document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);ok()})}catch(e){console.error(e);btn.textContent='Copy failed: '+e.message}});
     document.getElementById('copy-json-btn').addEventListener('click',function(){var btn=this;btn.textContent='Fetching...';var url='/check${jsonQs.replace(/'/g, "\\'")}';try{var blob=fetch(url).then(function(r){return r.text()}).then(function(t){return new Blob([t],{type:'text/plain'})});navigator.clipboard.write([new ClipboardItem({'text/plain':blob})]).then(function(){btn.textContent='Copied!';setTimeout(function(){btn.textContent='Copy as JSON'},2000)}).catch(function(e){fetch(url).then(function(r){return r.text()}).then(function(j){var ta=document.createElement('textarea');ta.value=j;ta.style.position='fixed';ta.style.left='-9999px';document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);btn.textContent='Copied!';setTimeout(function(){btn.textContent='Copy as JSON'},2000)}).catch(function(e2){console.error(e2);btn.textContent='Copy failed: '+e2.message})})}catch(e){console.error(e);btn.textContent='Copy failed: '+e.message}});
@@ -1074,6 +1107,16 @@ function renderPage(
         <option value="high"${params.verbosity === "high" ? " selected" : ""}>high (~10)</option>
       </select>
 
+      <label for="impact">Impact &mdash; your rating of how much rides on this call (optional)</label>
+      <select id="impact" name="impact">
+        ${renderRatingOptions(params.impact)}
+      </select>
+
+      <label for="uncertainty">Uncertainty &mdash; your rating of how unsure you are of the person's position (optional)</label>
+      <select id="uncertainty" name="uncertainty">
+        ${renderRatingOptions(params.uncertainty)}
+      </select>
+
       <label for="mix">Mix traces (trace_id:weight, comma-separated)</label>
       <input type="text" id="mix" name="mix" placeholder="4821:1.0, 3102:0.5, 3450:-0.3">
     </details>
@@ -1236,6 +1279,8 @@ async function handleCheck(
       sessionId: params.sessionId,
       intent: params.intent,
       knownRecipeIds: knownRecipeIds.size > 0 ? [...knownRecipeIds] : undefined,
+      impact: params.impact,
+      uncertainty: params.uncertainty,
     });
   } else if (principal && params.filter && !params.trace) {
     // The sanctioned no-logging path: filter (alias f) with no recipe runs a

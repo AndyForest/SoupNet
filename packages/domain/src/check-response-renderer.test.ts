@@ -393,3 +393,32 @@ describe("buildOwnExcludedNote (cold-start v2 Phase A)", () => {
     expect(text).toContain("thin-corpus signal");
   });
 });
+
+// drafts-and-triage slice 1: the deposit's triage ratings in the markdown
+// report (MCP default format and the web copy-back).
+describe("renderCheckResponseMarkdown — triage ratings", () => {
+  const base = (checked: Record<string, unknown>, extra: Record<string, unknown> = {}): CheckResponseJson => ({
+    ok: true,
+    data: { checked: { recipeId: "r-1", recipe: "x", ...checked }, results: [], ...extra },
+  });
+
+  it("S1-B1 / DT-RAT-01: echoes the ratings as the agent's own, right under the checked line", () => {
+    const text = renderCheckResponseMarkdown(base({ impact: "high", uncertainty: "medium" }));
+    expect(text.startsWith("Recipe checked as #r-1\nYour ratings: impact high, uncertainty medium (triage only, never ranking).\n")).toBe(true);
+  });
+
+  it("S1-B2: agents that never rate see no ratings line (JSON carries the nulls)", () => {
+    expect(renderCheckResponseMarkdown(base({ impact: null, uncertainty: null }))).not.toContain("Your ratings");
+    expect(renderCheckResponseMarkdown(base({}))).not.toContain("Your ratings");
+  });
+
+  it("S1-B3 / S1-B5: a ratings notice renders with the stored ratings", () => {
+    const text = renderCheckResponseMarkdown(base({ impact: "low", uncertainty: null }, { ratingsNotice: "First ratings stand." }));
+    expect(text).toContain("Your ratings: impact low, uncertainty not rated (triage only, never ranking).\nFirst ratings stand.\n");
+  });
+
+  it("read-only searches carry no ratings line", () => {
+    const text = renderCheckResponseMarkdown({ ok: true, data: { searchOnly: true, checked: { recipeId: "r", impact: "high" }, results: [] } });
+    expect(text).not.toContain("Your ratings");
+  });
+});

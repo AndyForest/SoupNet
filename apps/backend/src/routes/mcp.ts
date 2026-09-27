@@ -334,28 +334,16 @@ function imageFromBase64(base64: string, filename: string, mimeTypeHint?: string
 
 // ── MCP server factory ──────────────────────────────────────────────────────
 
-// Loose zod shape for feedback rows — presence-level only. Strict enum/uuid
-// validation happens per-row in the feedback service so one bad row gets a
-// marker instead of a zod error killing the whole call (the ride-along
-// surface must never take down the check it rides on).
-const feedbackRowSchema = z.object({
-  trace_id: z.string().optional(),
-  search_id: z.string().optional(),
-  kind: z.string().optional(),
-  impact: z.string().optional(),
-  disposition: z.string().optional(),
-  story_fulfilled: z.string().optional(),
-  story: z.string().optional(),
-  note: z.string().optional(),
-  agent_id: z.string().optional(),
-  top_similarity: z.number().optional(),
-  model: z.string().optional(),
-  harness: z.string().optional(),
-  harness_version: z.string().optional(),
-  related_trace_ids: z.array(z.string()).optional(),
-  session_id: z.string().optional(),
-  intent_id: z.string().optional(),
-});
+// Ride-along feedback rows: an open object per row. The row's fields are
+// log_feedback's, and the feedback param's description points there rather
+// than repeating the per-field schema on two tools (drafts-and-triage slice
+// 1, S1-Z4: ~570 bytes of item schema per tool). The item schema must still
+// admit every field — a bare z.object({}) would let the SDK strip them all
+// before the handler — so it is a record of unknown values. Validation was
+// already per-row in the feedback service (strict enums, uuids, types), so
+// one bad row gets a marker instead of a zod error killing the whole call
+// (the ride-along surface must never take down the check it rides on).
+const feedbackRowSchema = z.record(z.unknown());
 
 /**
  * Build the per-request MCP server for an ALREADY AUTHENTICATED caller.
@@ -367,7 +355,7 @@ const feedbackRowSchema = z.object({
  * cannot be unauthenticated by omission, and cannot resolve scope some other
  * way (F65). The Principal's arrays are effective scope; tools only narrow it.
  */
-function createMcpServer(backendUrl: string, principal: Principal): McpServer {
+export function createMcpServer(backendUrl: string, principal: Principal): McpServer {
   const server = new McpServer({
     name: "soupnet",
     version: "0.4.0",
@@ -416,6 +404,11 @@ function createMcpServer(backendUrl: string, principal: Principal): McpServer {
       intent: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.intent),
       agent_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.agentId),
       synthesize: z.boolean().optional().describe(MCP_PARAM_DESCRIPTIONS.synthesize),
+      // Triage ratings (slice 1). Plain strings, not enums: an unrecognized
+      // value must reach the service and become a not-rated notice instead of
+      // an SDK validation error that costs the check (recipe 4cfd166e).
+      impact: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.impact),
+      uncertainty: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.uncertainty),
       feedback: z.array(feedbackRowSchema).optional().describe(MCP_PARAM_DESCRIPTIONS.feedbackParam),
       axes: z.string().optional().describe(
         "Two comma-separated concept terms; each result gets x/y similarity positions (0-1) against them (semantic projection)."
@@ -478,7 +471,7 @@ function createMcpServer(backendUrl: string, principal: Principal): McpServer {
       idempotentHint: true,
       openWorldHint: true,
     },
-    async ({ recipe, supporting_evidence, verbosity, clusters, max_chars, decided_at, axes, recipe_book, read_recipe_books, file_url, file_base64, file_name, file_mime_type, region, response_format, known_recipes, session_id, intent, agent_id, synthesize, feedback }) => {
+    async ({ recipe, supporting_evidence, verbosity, clusters, max_chars, decided_at, axes, recipe_book, read_recipe_books, file_url, file_base64, file_name, file_mime_type, region, response_format, known_recipes, session_id, intent, agent_id, synthesize, impact, uncertainty, feedback }) => {
       // Size steer: explicit verbosity wins; with NO steer at all, the
       // internal "auto" sentinel takes the automatic path (ranking-config
       // autoK — ships as the fixed 3-exemplar default). Legacy clusters /
@@ -579,6 +572,8 @@ function createMcpServer(backendUrl: string, principal: Principal): McpServer {
           sessionId: session_id ?? undefined,
           intent: intent ?? undefined,
           knownRecipeIds: knownRecipeIds.size > 0 ? [...knownRecipeIds] : undefined,
+          impact,
+          uncertainty,
         });
 
         if (result.error) {
@@ -1170,10 +1165,20 @@ export function buildMcpJsonResponse(
 ): Record<string, unknown> {
   const data: Record<string, unknown> = {
     // The caller's own deposit as a Recipe fill (canonical schema, recipe
-    // 7945fd8a): {recipeId, recipe}.
+    // 7945fd8a): {recipeId, recipe}, plus its triage ratings (slice 1; null
+    // = not rated).
     ...(result.traceId
-      ? { checked: { recipeId: result.traceId, recipe: result.traceText } satisfies Recipe }
+      ? {
+        checked: {
+          recipeId: result.traceId,
+          recipe: result.traceText,
+          impact: result.ratings?.impact ?? null,
+          uncertainty: result.ratings?.uncertainty ?? null,
+        } satisfies Recipe,
+      }
       : {}),
+    ...(result.existingRecipe ? { existingRecipe: true } : {}),
+    ...(result.ratingsNotice ? { ratingsNotice: result.ratingsNotice } : {}),
     searchMode: result.searchMode ?? "lexical",
     clustered: result.clustered ?? false,
     results: enriched.map((r) => {
