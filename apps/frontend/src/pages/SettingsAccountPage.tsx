@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { authFetch, clearToken } from "../auth.js";
 import { useNavigate } from "@tanstack/react-router";
+import { ACCOUNT_DELETED_SEARCH } from "../lib/login-notice.js";
 
 /**
  * /app/settings/account — identity, sign-out, data export.
@@ -57,9 +58,9 @@ export function SettingsAccountPage() {
         <h3 style={{ marginBottom: "var(--space-md)" }}>Account</h3>
         {meQuery.isLoading && <p style={{ color: "var(--color-on-surface-variant)" }}>Loading...</p>}
         {meQuery.data && (
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div>
-              <p style={{ fontFamily: "var(--font-headline)", fontWeight: 600 }}>{meQuery.data.email}</p>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "var(--space-sm)" }}>
+            <div style={{ minWidth: 0 }}>
+              <p style={{ fontFamily: "var(--font-headline)", fontWeight: 600, overflowWrap: "anywhere" }}>{meQuery.data.email}</p>
               <p className="text-xs" style={{ color: "var(--color-on-surface-variant)", marginTop: "var(--space-xs)" }}>
                 Role: {meQuery.data.role}
               </p>
@@ -103,7 +104,8 @@ export function SettingsAccountPage() {
       <DeleteAccountSection
         onDeleted={() => {
           clearToken();
-          void navigate({ to: "/auth/login" });
+          // The sign-in page confirms the deletion (lib/login-notice.ts).
+          void navigate({ href: `/auth/login?${ACCOUNT_DELETED_SEARCH}` });
         }}
       />
     </div>
@@ -149,8 +151,9 @@ function DeleteAccountSection({ onDeleted }: { onDeleted: () => void }) {
       {!confirming ? (
         <button
           type="button"
+          className="btn-danger"
           onClick={() => setConfirming(true)}
-          style={{ fontSize: "0.85rem", color: "var(--color-error, #c0392b)" }}
+          style={{ fontSize: "0.85rem" }}
         >
           Delete my account…
         </button>
@@ -173,22 +176,16 @@ function DeleteAccountSection({ onDeleted }: { onDeleted: () => void }) {
           <div style={{ display: "flex", gap: "var(--space-sm)" }}>
             <button
               type="button"
+              className="btn-danger"
               onClick={() => deleteMutation.mutate()}
               disabled={!password || deleteMutation.isPending}
-              style={{
-                background: "var(--color-error, #c0392b)",
-                color: "white",
-                border: "none",
-                padding: "var(--space-sm) var(--space-md)",
-                borderRadius: "var(--radius-sm)",
-                cursor: "pointer",
-                fontSize: "0.85rem",
-              }}
+              style={{ fontSize: "0.85rem" }}
             >
               {deleteMutation.isPending ? "Deleting…" : "Permanently delete"}
             </button>
             <button
               type="button"
+              className="btn-secondary"
               onClick={() => {
                 setConfirming(false);
                 setPassword("");
