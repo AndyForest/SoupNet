@@ -27,5 +27,5 @@ If a run fails oddly, run `npx playwright test smoke` first. It proves a seeded 
 - Screenshots go through `shot(page, testInfo, "<fixed name>")` from `helpers/evidence.ts`, using the names the expectations file fixed, so the report and the results file refer to the same image.
 - Accounts come from `seedUser(request, "<label>")` in `helpers/accounts.ts`, fresh per test. Sign in with `signIn(page, user, path)`. The real login form is only for specs about login itself.
 - Tag a test `@mobile` to also run it on the phone project.
-- `axeScan(page, testInfo, name)` attaches the full axe result and returns the serious and critical violations.
+- `axeScan(page, testInfo, name)` attaches the full axe result and returns the serious and critical violations. `axeFindings(...)` returns all of them grouped as `{ blocking, moderate, minor }`, for specs that record moderate findings.
 - Not part of `test:ci`: it needs the dev stack and a browser.

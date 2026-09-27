@@ -15,17 +15,32 @@ export async function shot(page: Page, testInfo: TestInfo, name: string, fullPag
   await testInfo.attach(name, { path: file, contentType: "image/png" });
 }
 
+export interface AxeFindings {
+  /** serious and critical: what a spec usually asserts on. */
+  blocking: string[];
+  moderate: string[];
+  minor: string[];
+}
+
+const describeViolation = (v: { id: string; impact?: string | null; nodes: unknown[]; help: string }) =>
+  `${v.id} (${v.impact}, ${v.nodes.length} node${v.nodes.length === 1 ? "" : "s"}): ${v.help}`;
+
 /**
- * Run an axe accessibility scan, attach the full result, and return the
- * serious and critical violations for the caller to assert on or record.
+ * Run an axe accessibility scan, attach the full result, and return every
+ * violation grouped by impact, so a spec can record the moderate and minor
+ * ones (for example as annotations) without parsing the attachment.
  */
-export async function axeScan(page: Page, testInfo: TestInfo, name: string) {
+export async function axeFindings(page: Page, testInfo: TestInfo, name: string): Promise<AxeFindings> {
   const results = await new AxeBuilder({ page }).analyze();
   await testInfo.attach(`${name}-axe.json`, {
     body: JSON.stringify(results.violations, null, 2),
     contentType: "application/json",
   });
-  return results.violations
-    .filter((v) => v.impact === "serious" || v.impact === "critical")
-    .map((v) => `${v.id} (${v.impact}, ${v.nodes.length} node${v.nodes.length === 1 ? "" : "s"}): ${v.help}`);
+  const by = (...impacts: string[]) => results.violations.filter((v) => impacts.includes(v.impact ?? "")).map(describeViolation);
+  return { blocking: by("serious", "critical"), moderate: by("moderate"), minor: by("minor") };
+}
+
+/** The serious and critical violations only (see axeFindings for the rest). */
+export async function axeScan(page: Page, testInfo: TestInfo, name: string): Promise<string[]> {
+  return (await axeFindings(page, testInfo, name)).blocking;
 }
