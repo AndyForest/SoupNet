@@ -98,7 +98,7 @@ This isolates imported content from the operator's real books (recipe-pollution 
 
 - `deleteUserCascade` (`user-delete.service.ts`) lists `vector_cache` under "Deliberately preserved."
 - `deleteEmbeddingChainForSource` (`trace-delete.service.ts`) removes the four-table embedding chain (sources → strategies → chunks → vectors) for a source but never the cache.
-- `scripts/cleanup-test-data.ts` deletes the embedding chain, not the cache.
+- `scripts/cleanup-test-data.mts` deletes the embedding chain, not the cache.
 
 Regression test: `apps/backend/src/services/import-cache-survival.test.ts` — create user → import → embed → delete user → assert the `vector_cache` row **survives byte-for-byte** (same id + `created_at`, not re-created) → re-import the identical content as another user → assert the re-embed is a cache **hit** (0 provider calls: the surviving row is returned unchanged, never re-inserted).
 

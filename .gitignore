@@ -202,3 +202,8 @@ apps/mcp-server/.bundle/
 .claude/settings.local.json
 .vscode/mcp.json
 .claude/worktrees/
+
+# Playwright browser verification (tests/e2e) — evidence may show local dev data
+test-results/
+playwright-report/
+blob-report/
