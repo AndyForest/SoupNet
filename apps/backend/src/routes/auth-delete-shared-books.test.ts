@@ -10,7 +10,8 @@ import postgres from "postgres";
  *   - the book keeps its id, so other members' recipes, memberships and
  *     already-issued API keys keep working
  *   - ownership passes to an existing co-owner, else the longest-standing
- *     admin, else the longest-standing member
+ *     admin, else the longest-standing member, preferring accounts that can
+ *     act (verified, not waitlisted) [F75]
  *   - the book is re-homed into the new owner's personal organization (the
  *     departing user's organization is removed), with the slug de-duplicated
  *     only when the new organization already uses it
@@ -76,6 +77,27 @@ async function provisionUser(sql: Sql, suffix: string): Promise<TestUser> {
   const row = rows[0];
   if (!row?.personal_organization_id) throw new Error("Setup: user has no personal organization");
   return { token, userId: row.id, email, password, personalOrgId: row.personal_organization_id };
+}
+
+/**
+ * An account that exists but cannot act: registered and never verified (no
+ * session, no key). Only the id and personal organization are meaningful.
+ */
+async function provisionUnverifiedUser(sql: Sql, suffix: string): Promise<TestUser> {
+  const email = `handover-${Date.now()}-${userCounter++}-${suffix}@test.local`;
+  const password = "handover-test-password-123";
+  const reg = await fetch(`${BASE}/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password, tosAccepted: true }),
+  });
+  if (!reg.ok) throw new Error(`Setup: register failed (status ${reg.status})`);
+  const rows: Array<{ id: string; personal_organization_id: string | null }> = await sql`
+    SELECT id, personal_organization_id FROM claimnet.users WHERE email = ${email}
+  `;
+  const row = rows[0];
+  if (!row?.personal_organization_id) throw new Error("Setup: user has no personal organization");
+  return { token: "", userId: row.id, email, password, personalOrgId: row.personal_organization_id };
 }
 
 /** Create a recipe book owned by `owner` in their personal org. Returns its id. */
@@ -482,6 +504,61 @@ describe.skipIf(!BASE)("DELETE /auth/me — shared recipe books are handed on, n
           SELECT COUNT(*)::int AS n FROM claimnet.group_members WHERE group_id = ${id}::uuid AND role = 'owner'
         `)).toBeGreaterThan(0);
       }
+    } finally {
+      await sql.end();
+    }
+  });
+
+  it("succession skips accounts that cannot act: an unverified and a waitlisted member are passed over for an active one [F75]", { timeout: 90_000 }, async () => {
+    const sql = makeSql();
+    try {
+      const owner = await provisionUser(sql, "act-owner");
+      const unverified = await provisionUnverifiedUser(sql, "act-unverified");
+      const waitlisted = await provisionUser(sql, "act-waitlisted");
+      const active = await provisionUser(sql, "act-active");
+      // Verified but waitlisted: the state a queued sign-up is in before
+      // promotion. Login refuses it a session.
+      await sql`UPDATE claimnet.users SET waitlisted_at = NOW() WHERE id = ${waitlisted.userId}::uuid`;
+      const stamp = Date.now().toString(36);
+
+      // Members only: both accounts that cannot act joined before the active one.
+      const memberBook = await createBook(owner, `act-members-${stamp}`);
+      await addMember(sql, memberBook, unverified, "member", "2026-01-01T00:00:00Z");
+      await addMember(sql, memberBook, waitlisted, "member", "2026-02-01T00:00:00Z");
+      await addMember(sql, memberBook, active, "member", "2026-03-01T00:00:00Z");
+
+      // Role outranks tenure only among accounts that can act: an unverified
+      // admin does not beat an active member.
+      const adminBook = await createBook(owner, `act-admin-${stamp}`);
+      await addMember(sql, adminBook, unverified, "admin", "2026-01-01T00:00:00Z");
+      await addMember(sql, adminBook, active, "member", "2026-03-01T00:00:00Z");
+
+      expect((await deleteAccount(owner)).status).toBe(200);
+
+      for (const bookId of [memberBook, adminBook]) {
+        expect((await bookRow(sql, bookId))?.organization_id).toBe(active.personalOrgId);
+        expect(await roleOf(sql, bookId, active.userId)).toBe("owner");
+      }
+      expect(await roleOf(sql, memberBook, unverified.userId)).toBe("member");
+      expect(await roleOf(sql, memberBook, waitlisted.userId)).toBe("member");
+      expect(await roleOf(sql, adminBook, unverified.userId)).toBe("admin");
+    } finally {
+      await sql.end();
+    }
+  });
+
+  it("when nobody who can act remains, an account that cannot act still inherits rather than the book being lost [F75]", { timeout: 60_000 }, async () => {
+    const sql = makeSql();
+    try {
+      const owner = await provisionUser(sql, "fallback-owner");
+      const unverified = await provisionUnverifiedUser(sql, "fallback-unverified");
+      const bookId = await createBook(owner, `fallback-${Date.now().toString(36)}`);
+      await addMember(sql, bookId, unverified, "member", "2026-01-01T00:00:00Z");
+
+      expect((await deleteAccount(owner)).status).toBe(200);
+
+      expect((await bookRow(sql, bookId))?.organization_id).toBe(unverified.personalOrgId);
+      expect(await roleOf(sql, bookId, unverified.userId)).toBe("owner");
     } finally {
       await sql.end();
     }

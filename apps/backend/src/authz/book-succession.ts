@@ -20,6 +20,7 @@
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { membershipOf, membershipOfSomeoneElse } from "./membership-sql";
+import { activeUserPredicate } from "./key-auth";
 
 /** A shared book the departing user is responsible for. */
 export interface BookToHandOver {
@@ -72,6 +73,13 @@ export async function sharedBooksOwnedBy(
  * owner if there is one; else the longest-standing admin; else the
  * longest-standing member (joined_at, then id, as the tie-break). Null when no
  * other member remains. Locks the chosen membership row.
+ *
+ * Accounts that can act come first [F75]: the order above is applied to
+ * members whose account passes the same user-state predicate key
+ * authentication uses (`activeUserPredicate`: verified, not waitlisted, and
+ * whatever account-disable condition later lands there), and falls back to
+ * the other members only when none does, so a book is never lost for want of
+ * an active heir.
  */
 export async function pickSuccessor(
   db: PostgresJsDatabase,
@@ -81,8 +89,10 @@ export async function pickSuccessor(
   const rows = await db.execute(sql`
     SELECT gm.user_id AS "userId", gm.role
     FROM claimnet.group_members gm
+    JOIN claimnet.users u ON u.id = gm.user_id
     WHERE gm.group_id = ${bookId}::uuid AND ${membershipOfSomeoneElse("gm", departingUserId)}
-    ORDER BY CASE gm.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END,
+    ORDER BY ${activeUserPredicate()} DESC,
+             CASE gm.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END,
              gm.joined_at ASC, gm.id ASC
     LIMIT 1
     FOR UPDATE OF gm

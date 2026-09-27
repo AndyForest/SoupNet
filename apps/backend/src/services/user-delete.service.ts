@@ -270,8 +270,10 @@ async function collectUserTraceIds(
  *
  * Succession: another existing owner if there is one; else the
  * longest-standing admin; else the longest-standing member (joined_at, id
- * as the tie-break). The successor is promoted to 'owner' unless they
- * already are one.
+ * as the tie-break), preferring accounts that can act (verified, not
+ * waitlisted) and falling back to the rest only when none can [F75]; see
+ * pickSuccessor. The successor is promoted to 'owner' unless they already
+ * are one.
  *
  * Re-homing: books live inside an organization and the departing user's
  * organizations are removed with the account, so a book in one of them moves
