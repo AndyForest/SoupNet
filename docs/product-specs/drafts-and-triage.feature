@@ -435,45 +435,149 @@ Feature: Drafts, triage ratings, and deciding by building both
   # ─────────────────────────────────────────────────────────────────────────
   @unreleased
   Rule: A draft may be deposited on behalf of another person, and is always a draft
-    # Guards: drafts-and-triage.md §The model (table); recipe 94e0e682;
-    # design-thinking.md §6 The Organization Member ("Drafts written about me"),
-    # §Decision Archaeology.
+    # Guards: drafts-and-triage.md §The model (table); recipes 94e0e682 and
+    # 9e663b62 (the author is always the depositing key's owner; the subject
+    # is a separate field); design-thinking.md §6 The Organization Member
+    # ("Drafts written about me"), §Decision Archaeology. Rubric and open
+    # questions 28 to 39: build log §Slice 4 rubric.
     # Requirement: C01-R15
+    # In this rule Pat is the subject and Dana the depositor; both write the book.
 
     @DT-OBO-01 @slice-4
     Scenario: On behalf of someone else forces draft
       When Dana's agent checks a recipe with on_behalf_of set to Pat's email and draft false
-      Then the recipe is stored as a draft about Pat, deposited by Dana's key
+      Then the recipe is stored as a draft about Pat, authored by Dana and deposited by Dana's key
       And the response says draft was forced because the recipe is on Pat's behalf
+      And the response says only Pat can confirm it, and gives the review link to hand Pat
 
     @DT-OBO-02 @slice-4
-    Scenario: The target must hold write access to the book
-      When Dana's agent checks a recipe on behalf of an email that is not a member with write access to the target book
-      Then the check is refused with one error that reads the same whether or not that email has an account
+    Scenario Outline: The named person must be able to review the draft in the target book
+      # Decided: build log open question 28 (email matched case-insensitively;
+      # a live, able writer of the target book; one uniform refusal).
+      When Dana's agent checks a recipe with on_behalf_of set to <email>
+      Then the check is refused and nothing is deposited
+      And the refusal is identical, apart from the email, for every row of this table
+      Examples:
+        | email                                                   |
+        | an address with no account                              |
+        | the email of an account with no membership anywhere     |
+        | the email of a member of a different book only          |
+        | the email of a book member whose account cannot act     |
+        | a malformed address                                     |
 
     @DT-OBO-03 @slice-4
     Scenario: A draft on someone's behalf is visible to them, their agents, and the depositor only
       Given Dana's agent deposited a draft on Pat's behalf
-      Then Pat, Pat's agents, Dana, and Dana's agents can see it
-      And Sam and Sam's agents find it uniformly absent
+      Then Pat, Pat's agents with read scope on the book, Dana, and Dana's agents with read scope on the book can see it
+      And Pat's agents see it labelled as deposited by Dana, and Dana's agents see it labelled as about Pat
+      And Sam, Sam's agents, and keys of Pat or Dana without read scope on the book find it uniformly absent
 
     @DT-OBO-04 @slice-4
     Scenario: The depositor cannot verify a draft about someone else
       Given Dana's agent deposited a draft on Pat's behalf
-      When Dana reacts still_true, or Dana's agent calls the verify operation with evidence
-      Then the recipe is still a draft
+      When Dana reacts still_true, or marks it not chosen, or Dana's agent calls the verify operation with evidence
+      Then the recipe is still a draft and no reaction is recorded
+      And each refusal says only Pat can review it, since Dana can already read the draft
 
     @DT-OBO-06 @slice-4
     Scenario: The person's review queue lists drafts deposited about them by someone else
       Given Dana's agent deposited a draft on Pat's behalf
       When Pat opens the review queue
-      Then Pat sees the draft about Pat that Dana's agent deposited
+      Then Pat sees the draft about Pat that Dana's agent deposited, showing that Dana deposited it
       And Dana's own queue does not list it, since it is not about Dana
+
+    @DT-OBO-07 @slice-4
+    Scenario: is:draft is about me; author: finds what I deposited
+      # Moved here from DT-QUE-01 (build log ruling 24).
+      Given Dana's agent deposited a draft on Pat's behalf
+      When Dana's agent searches with is:draft
+      Then the draft is not listed, since it is not about Dana
+      When Dana's agent searches with author:me
+      Then the draft is listed, labelled as an unverified draft about Pat
+      When Pat searches his queue with is:draft author:<Dana's email>
+      Then exactly the drafts Dana deposited about Pat are listed
 
     @DT-OBO-05 @slice-4
     Scenario: On behalf of yourself is an ordinary check
-      When Pat's agent checks a recipe with on_behalf_of set to Pat's own email
-      Then the recipe is stored exactly as a check without on_behalf_of
+      When Pat's agent checks a recipe with on_behalf_of set to Pat's own email, in any letter case
+      Then the recipe is stored and answered exactly as a check without on_behalf_of
+
+    @DT-OBO-08 @slice-4
+    Scenario: The depositor may withdraw an on-behalf draft but not move it
+      # Decided: build log open question 30.
+      Given Dana's agent deposited a draft on Pat's behalf, and Sam owns the book
+      When Dana deletes it from its detail page
+      Then it is gone, and Pat's queue no longer lists it
+      When Dana tries to move another such draft
+      Then the response is the 404 returned for an id that never existed, and nothing changes
+      When Sam, a non-member, or the system user tries to move or delete such a draft
+      Then the response is the 404 returned for an id that never existed, and nothing changes
+
+    @DT-OBO-09 @slice-4
+    Scenario Outline: on_behalf_of is accepted on every check surface
+      When Dana's agent checks a recipe on Pat's behalf through <surface>
+      Then the recipe is stored as a draft about Pat
+      Examples:
+        | surface                                   |
+        | the remote MCP check_recipe tool          |
+        | GET /check with format=json               |
+        | POST /check with a form body              |
+        | the /check HTML form                      |
+        | the stdio MCP server's check_recipe proxy |
+
+    @DT-OBO-10 @slice-4
+    Scenario: The same text about two people is two claims
+      # Decided: build log open question 29 (the subject joins the idempotency key).
+      When Dana's key checks the identical text in the same book on Pat's behalf, then on Sam's behalf
+      Then two drafts are stored, one about each
+      And repeating either check returns that draft and reports it as existing
+
+    @DT-OBO-11 @slice-4
+    Scenario: The depositor's link is the subject's review link
+      Given Dana's agent deposited a draft on Pat's behalf and received its review link
+      When Dana opens the link
+      Then she sees the draft with its state and no confirm or reject actions, with a reason naming who can review it
+      When Pat opens the same link
+      Then he sees the draft with the confirm, reject, and not chosen actions
+
+    @DT-OBO-12 @slice-4
+    Scenario: Leaving the book takes nothing away from the other party
+      Given Dana's agent deposited a draft on Pat's behalf
+      When Dana is removed from the book
+      Then Pat can still confirm or reject the draft
+      And Dana's agents no longer find it, while Dana can still open and delete it
+      When Pat is removed from the book instead
+      Then his queue no longer lists it, and through its link he sees it with the actions unavailable and the reason naming the book
+
+    @DT-OBO-13 @slice-4
+    Scenario: Account deletion follows authorship
+      # Decided: build log open question 35; recipes 52bbbdc8 and f46cfc50.
+      Given Dana's agent deposited drafts on Pat's behalf
+      When Dana deletes her account
+      Then every recipe her keys wrote is gone, and Pat's queue no longer lists them
+      When instead Pat deletes his account
+      Then nothing Dana wrote is deleted, and the unresolved drafts about Pat are visible to Dana alone
+      And a new account later registered with Pat's email sees none of them
+
+    @DT-OBO-14 @slice-4
+    Scenario: Export and import keep an on-behalf draft a draft about its subject
+      # Decided: build log open question 36.
+      Given Dana's agent deposited a draft on Pat's behalf, and Pat verified it
+      When Dana exports her data
+      Then the export carries the recipe with Pat as its subject
+      And Pat's export does not carry it, since Dana wrote it
+      When Dana imports that export into a book where Pat can write
+      Then the imported recipe is an unverified draft about Pat, whatever state the file carried
+      When the target book has no writer with Pat's email
+      Then that row is refused with the same answer an unknown email gets
+
+    @DT-OBO-15 @slice-4
+    Scenario: A published on-behalf recipe names both people
+      # Decided: build log open question 33.
+      Given Dana's agent deposited a draft on Pat's behalf, and Pat confirmed it
+      When Sam's agent finds it, or Sam opens its detail page
+      Then it shows Dana as author and Pat as the person it is on behalf of
+      And it shows no draft state, verifier, or verification date
 
   # ─────────────────────────────────────────────────────────────────────────
   @unreleased

@@ -124,6 +124,38 @@ Changed by slice 3, no new path: RP-02 and RP-14 (and the stdio `search_recipes`
 
 Frontend mapping: `DraftQueuePage` (`/app/drafts`) uses RP-47 and RP-48 and acts through RP-21 and RP-50; `DashboardPage` adds RP-49.
 
+### Touched by slice 4 (drafts on behalf of another person)
+
+Rubric: build log §Slice 4 rubric (ids `S4-*`). From slice 4 a draft's subject (who it is about, a new column) and its depositor (its author, `user_id`) can differ, so every row that says "the viewer's own" now means "the viewer is the subject or the depositor", and every row that counts "drafts about the viewer" reads the subject. For drafts about oneself nothing changes. Rows not listed keep their slice 2 and 3 disposition unchanged. "Pat" is the subject and "Dana" the depositor, as in the rubric.
+
+| # | What slice 4 changes | Subject (Pat) | Depositor (Dana) | Everyone else | Rubric |
+|---|---|---|---|---|---|
+| RP-01, RP-13 | Deposit takes `on_behalf_of`; forced draft; the notice; labels name the other party | results: labelled "deposited by Dana" | results: labelled "about Pat" | unchanged (absent) | S4-W1 to W5, S4-L1, S4-L3 |
+| RP-02, RP-14 | Labels; `is:draft` reads the subject; `author:` still the depositor | `is:draft` lists it | `author:me` lists it, `is:draft` does not | unchanged | S4-Q3, S4-Q4 |
+| RP-03 | Scope counts include the viewer's own unresolved drafts as subject or depositor | counted | counted under `author:me` | unchanged | S4-V1 |
+| RP-04 | Idempotency key gains the subject | | same text about two people is two recipes | n/a | S4-S2, S4-L4 |
+| RP-06, RP-08, RP-16 | By-id reads admit subject and depositor; labels; published rows name the subject | labelled | labelled | uniform; published rows show "on behalf of" | S4-L1, S4-L2, S4-U2 |
+| RP-09, RP-15, RP-17 | The Drafts line counts drafts about the viewer from any depositor | counts it | does not count it | unchanged | S4-Q1, S4-Z5 |
+| RP-11, RP-18 | Feedback targets follow the by-id rule | may attach | may attach | uniform | S4-U2 |
+| RP-19, RP-20 | Detail page: depositor sees unpublished states; both see the other party; published rows name the subject | full, with actions | state, no actions, with delete | 404; after verification, author and subject shown | S4-M3, S4-L2, S4-Q5 |
+| RP-21, RP-50 | Depositor's reaction and not-chosen get an honest refusal, no row | resolves | 403, nothing written | uniform 404 | S4-R2, S4-U3 |
+| RP-23, RP-36 | Move and delete decided in the module on subject and depositor, not `isAuthor` | move and delete | delete only | uniform 404 | S4-M5, S4-D1 to D4 |
+| RP-25 | Book list: depositor sees her deposits labelled; published ones name the subject | own drafts labelled | her deposits labelled | unchanged; published name the subject | S4-M3, S4-L2 |
+| RP-27, RP-28, RP-29 | Own list, count, and check log are by author, so they hold Dana's deposits, labelled "about Pat" | not listed (not his authored) | listed, labelled | n/a | S4-M3 |
+| RP-30 | Export by author, carrying the subject's email | does not carry Dana's recipe | carries it | n/a | S4-E1 |
+| RP-31 to RP-33 | Admin counts by author | | counts for Dana | n/a | S4-C1 |
+| RP-35 | Import applies the naming rule; on-behalf rows restore as unverified | | row restored or uniformly refused | n/a | S4-E2, S4-E3 |
+| RP-37 | Account deletion collects by author; F73 counts drafts as another author's recipes | his deletion removes nothing of Dana's | her deletion takes her deposits | n/a | S4-A3 to A5 |
+| RP-39 to RP-41 | Fragments read the subject column (`subjectOf`) | own drafts in results | deposits in results | unchanged | S4-M2 |
+| RP-46 | Depositor's `verify_draft` gets an honest refusal naming who can verify | verifies | refused, nothing stored | uniform | S4-R2 |
+| RP-47 to RP-49 | Queue and count by subject; item shows the depositor's email | listed | not in her queue; id-list view without actions | unchanged | S4-Q1 to Q5 |
+
+Added by slice 4:
+
+| # | Path | file (function) | Returns / counts | Who can call | Trace filtering | Draft disposition |
+|---|---|---|---|---|---|---|
+| RP-51 | The naming lookup inside a deposit (and import) | `apps/backend/src/authz/` (the S4-M1 function) | the subject's user id, or nothing | reached only through a check or import by a key or person who can write the target book | module: one statement over `users` by `lower(email)`, `membershipOf`, `WRITE_ROLES`, `activeUserPredicate`; reads no recipe | `irrelevant` for recipes; the answer is uniform for every refused email so it is not an account-existence oracle (S4-U1) |
+
 ## Admin (system role only, `routes/admin.ts`)
 
 | # | Path | file:line | Returns / counts | Trace filtering today | Draft disposition |
