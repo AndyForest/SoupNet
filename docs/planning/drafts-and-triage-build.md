@@ -288,3 +288,18 @@ No question is escalated to the operator at this point. Anything that turns out 
 - **DT-RAT-05's "POST /check with a JSON body" was a rubric error.** The spec assumed a surface that doesn't exist: `POST /check` takes urlencoded and multipart bodies. No client has asked for JSON bodies, and adding them would widen the primary agent surface and its rate-limit key extraction for no current need. The row now reads "POST /check with a form body", which the slice covers; the implementing agent's `[DECISION NEEDED]` backlog item is withdrawn. Revisit only if a client needs JSON bodies.
 - **Thin-briefing ceiling raised 18,000 → 18,200 characters** (the `intent` depth moved from the tool schema into the briefing's "How to check"). Accepted: the always-loaded tool list fell by 2,226 bytes on the remote server, so the net per-turn context still went down, and the briefing stays the one home for the concept (recipe `d0a661f1`, under the thin-index ruling `ef844c32`).
 - **Test-first held only for the domain tests**; the Layer 3 and budget tests were written alongside the code. Recorded as a process deviation; the verifier checks that each test fails against the pre-slice code where that is cheap to show.
+
+### Slice 1: rulings on the verification follow-ups (2026-09-27)
+
+Slice 1 is **accepted**. Follow-ups, handled at the start of slice 2 as their own commits:
+
+- **DT-RAT-02 (partial):** the scenario is edited, not the code. The markdown report stays silent about ratings the agent didn't send; the structured and JSON forms carry `null`, which the published schema defines as "not rated". Silence in the agent-facing text is the thin-context default the operator has ruled for repeatedly (`ef844c32`), and "not rated" on every check would be noise on every response.
+- **Dropped phrases:** restore the meaning of "stubs reset" (losing or omitting the intent means recipes render in full again) in the briefing's new intent paragraph, and fix its awkward "say to context compaction" phrasing. "Capture only" on `agent_id` stays dropped: the short description says it labels the lineage, and nothing reads it for authorization.
+- **Wrong-type rating on MCP fails the whole check:** fix it so a non-string rating is treated like any unrecognized value (stored unrated, with the notice, the check deposits), matching S1-B3's intent on every surface.
+- **Plural notice** when both ratings are invalid.
+- **Repeated wire parameter** (`impact=low&impact=high`) keeps taking the first value, as other `/check` parameters do; documented, not changed.
+- **Open-record feedback items** letting the `recipe_id` alias and string `top_similarity` through on MCP: accepted, since it matches REST and the service validates each row.
+- **A non-object feedback row fails the whole call** despite the "a rejected row never blocks this call" description: pre-existing; fix it in the same commit as the wrong-type rating, since it is the same class.
+- **Export doesn't carry the ratings:** folds into slice 2's export work (open question 12).
+- **Layer 4 detail-page check:** on the operator's handoff list.
+
