@@ -193,10 +193,13 @@ describe.skipIf(!BASE)("DELETE /auth/me — shared recipe books are handed on, n
       expect(coEvidenceIds.length).toBeGreaterThan(0);
       expect(coReferenceIds.length).toBeGreaterThan(0);
       const coEntityIds = [coAuthorTrace, ...coEvidenceIds, ...coReferenceIds];
-      const coSourcesBefore = await count(sql`
-        SELECT COUNT(*)::int AS n FROM claimnet.embedding_sources WHERE source_id IN ${sql(coEntityIds)}
-      `);
-      expect(coSourcesBefore).toBeGreaterThan(0);
+      // The embedding sweep can add a source row for another chunking strategy
+      // at any moment, so what must hold is that none of these rows is lost,
+      // not that the count stays still.
+      const coSourceIdsBefore = (await sql`
+        SELECT id FROM claimnet.embedding_sources WHERE source_id IN ${sql(coEntityIds)}
+      ` as Array<{ id: string }>).map((r) => r.id);
+      expect(coSourceIdsBefore.length).toBeGreaterThan(0);
 
       const ownerEvidenceIds = (await sql`
         SELECT evidence_id AS id FROM claimnet.trace_evidence WHERE trace_id = ${ownerTrace}::uuid
@@ -221,8 +224,8 @@ describe.skipIf(!BASE)("DELETE /auth/me — shared recipe books are handed on, n
       expect(await count(sql`SELECT COUNT(*)::int AS n FROM claimnet.evidence WHERE id IN ${sql(coEvidenceIds)}`)).toBe(coEvidenceIds.length);
       expect(await count(sql`SELECT COUNT(*)::int AS n FROM claimnet.references WHERE id IN ${sql(coReferenceIds)}`)).toBe(coReferenceIds.length);
       expect(await count(sql`
-        SELECT COUNT(*)::int AS n FROM claimnet.embedding_sources WHERE source_id IN ${sql(coEntityIds)}
-      `)).toBe(coSourcesBefore);
+        SELECT COUNT(*)::int AS n FROM claimnet.embedding_sources WHERE id IN ${sql(coSourceIdsBefore)}
+      `)).toBe(coSourceIdsBefore.length);
 
       // The book survives under the same id, now owned by the co-author and
       // living in the co-author's personal organization.
