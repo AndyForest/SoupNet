@@ -11,6 +11,7 @@
  *   before slice 1 (2026-09-27): 13,670 bytes
  *   after slice 1 (2026-09-27):  12,074 bytes, with impact and uncertainty added
  *   after slice 2 (2026-09-27):  13,064 bytes, with draft and verify_draft added (still under the cap)
+ *   after slice 3 (2026-09-27):  13,063 bytes (the search query description names the new qualifiers)
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";

@@ -14,6 +14,7 @@
  *   before slice 1 (2026-09-27): 18,090 bytes
  *   after slice 1 (2026-09-27):  15,864 bytes, with impact and uncertainty added
  *   after slice 2 (2026-09-27):  16,854 bytes, with draft and verify_draft added
+ *   after slice 3 (2026-09-27):  16,853 bytes (search_recipes query names is:draft, impact:, uncertainty:; cap not raised)
  * The stdio twin lives in apps/mcp-server/src/server.test.ts.
  */
 import { describe, it, expect } from "vitest";

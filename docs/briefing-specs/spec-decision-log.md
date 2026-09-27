@@ -4,6 +4,38 @@ Every PR that touches briefing copy (`packages/domain/src/recipe-guide-content.t
 
 (Renamed from declared-intent-log.md on 2026-08-23: "intent" now names the runtime intent-registration mechanism — cold-start v2 Phase C — so the discipline's log takes an unambiguous name. The discipline itself is unchanged.)
 
+## 2026-09-27 — Drafts-and-triage slice 3: the review queue's qualifiers, the queue link in the deposit notice, and ratings on own-draft labels
+
+Design: [../planning/drafts-and-triage.md](../planning/drafts-and-triage.md) §Verifying a draft ("Links"). Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 3 rubric, rulings 21 to 27.
+
+### Edits
+
+1. **`search_recipes` `query` description (both MCP servers):** names `is:draft (your unresolved drafts)` and `impact:/uncertainty: (low|medium|high)`, and says "author: or is:draft lifts the exclude-own default". To stay inside the unchanged budgets, "searches semantically as one phrase (no boolean operators)" became "is one semantic phrase", "across recipe, evidence, and reference citations — quote filenames for PR review" became "of recipe, evidence, and citations (quote filenames for PR review)", the example group lost its `.ts` suffixes, "(ISO date, judgment date)" became "(ISO judgment date)", and "Qualifier-only queries return newest first" became "Qualifier-only: newest first". Dropped: "no boolean operators" (the unknown-qualifier and group errors still teach the shape). 412 → 415 characters (cap 420); shared total 5,965 → 5,968 (cap 6,000, not raised).
+2. **Unknown-qualifier error text:** now lists every qualifier and value ("valid qualifiers are author:, after:, before:, is:draft, impact: and uncertainty: (low, medium, or high)"), so the description can stay terse. New errors for `is:` and the rating qualifiers name their vocabulary.
+3. **Draft deposit notice:** "(or they confirm it with still true on the recipe's page)" becomes "(or they confirm it in their review queue: <FRONTEND_URL>/app/drafts?ids=<id>)", on a new draft and on an identical repeat of an unresolved one. 284 → 344 characters for a new draft and 280 → 340 for a repeat, with a 73-character URL (the rubric's cap is the URL plus 20).
+4. **Own-draft result labels (markdown):** when the agent rated a draft, its label gains "; impact X, uncertainty Y" (at most 38 bytes; 0 for an unrated draft and for any published row). JSON and structured rows that carry `draftState` also carry `impact` and `uncertainty` (null when unrated); the published schema says so.
+5. **`/check` HTML search tips:** one new line for `is:draft`, `impact:`, and `uncertainty:`.
+6. **`verify_draft` refusals (not description copy):** "is not a draft" for a published recipe the key can read, and a refusal naming the book and the ways forward ("needs write access to this recipe book … or ask the person to confirm it in their review queue: <link>") for the key's own draft in a book it cannot write. The tool description is unchanged.
+
+`/briefing` output is unchanged (no queue pointer on the Drafts line; rubric S3-Z5).
+
+### Scenarios intended to move
+
+- **New `@unreleased` scenario** in `checking-behavior.feature`: "An agent that deposited drafts hands its person the queue link rather than listing ids" (added in this PR). It stays `@unreleased` until the briefing body teaches drafting (slice 7) and the harness can run it.
+
+### Scenarios watched, with rationale for holding
+
+- **`checking-behavior.feature` "Probing the system does not log junk recipes"** and the search-vs-check scenarios: the search description still carries the grammar's shape (semantic phrase, quoted terms, groups, negation, author/date qualifiers) and the PR-review hint; only "no boolean operators" left, and the grammar's error for a bare OR or a mixed group still says so at the moment it matters.
+- **`checking-behavior.feature` "An agent drafts only when it cannot ask …"** (slice 2): the notice now gives a link instead of "the recipe's page"; the when-to-draft guidance is untouched.
+- **`feedback-loop.feature`, `known-recipes-dedup.feature`, `intent-registration.feature`:** no copy they rely on changed.
+
+### Served `tools/list` bytes
+
+| Server | Before (slice 2) | After (slice 3) | Cap |
+|---|---|---|---|
+| Remote | 16,854 | 16,853 | 17,000 |
+| Stdio | 13,064 | 13,063 | 13,670 |
+
 ## 2026-09-27 — Drafts-and-triage slice 2: the draft parameter, verify_draft, and the briefing's Drafts line
 
 Design: [../planning/drafts-and-triage.md](../planning/drafts-and-triage.md) §The model and §Verifying a draft. Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 2 rubric (this entry is its briefing-copy declaration). Rulings: open questions 5 to 15 as accepted; the separate tool is recipe `6ae9a299`.

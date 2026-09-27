@@ -625,3 +625,34 @@ All seven accepted as recommended. Reasons where the call was not mechanical:
 - **24, `is:draft` lifts search's exclude-own default** the way `author:` does and means "unresolved drafts about me"; the on-behalf-of case in DT-QUE-01 moves to slice 4.
 - **23, 25, 26, 27** as recommended (rating filter as a fragment outside the ranking-guarded files; honest refusal for the draft's own subject, uniform 404 for everyone else; the deposit notice carries the queue link and sign-in returns only to same-origin `/app/` paths; one click, with labels and accessible names that say exactly what each action does).
 
+
+### Slice 3 build notes (implementing agent, 2026-09-27)
+
+Written by the builder (agent `a-drafts-slice3-2026-09-27`) for the verifier; the verification record is the verifier's to write. Soup.net intent `int_CaW1LC8BJKBgxa1iS2wdDQxx`.
+
+**Shape.**
+
+- **Carried in:** S3-F1 (`7819f77`): `verify_draft` and its REST twin check "not a draft" and "already resolved" before write authority, and refuse the key's own draft outside its write scope with a 403 naming the book and the way forward; what the key cannot read keeps the uniform answer. S3-F2 (`053b034`): F84 is closed. S3-F3 (`807f314`): the oauth-flow flake is a backlog item with its suspected cause, unconfirmed.
+- **Grammar** (`packages/domain/src/search-query.ts`): `is:` (value `draft`), `impact:`, `uncertainty:` join the allowlist; the IR gains `isDraft` and two rating selectors from a closed vocabulary.
+- **Selections outside the ranking files** (`services/search-selection.ts`): the draft qualifier composes `draftAwaitingReviewBy` (with `IS NOT TRUE` for the negation, so recipes that were never drafts are kept); rating qualifiers are plain column comparisons. They reach `hybridSearch` and `fetchCorpusTraces` as `StructuredTraceFilters.selections`, opaque functions of the alias, so `ranking-isolation.test.ts` is unchanged. The same file holds `triageOrderSql`, the SQL twin of `compareForTriage` in `triage-ratings.ts`.
+- **The queue** (`services/draft-queue.service.ts`, routes in `routes/traces.ts`): `GET /traces/drafts` (queue and `?ids=` forms), `GET /traces/drafts/count`, `POST /traces/:id/not-chosen`. Page size 20. Book scope is `booksFor` (live memberships). The id form resolves each reference through the new `resolveReadableTraceRefs` in `authz/trace-access.ts`, which applies `mayReadTrace` in JS (no SQL copy of the rule, as `membership-sql.test.ts` requires).
+- **Frontend:** `pages/DraftQueuePage.tsx` with pure view logic in `lib/draft-queue.ts` and the sign-in return target in `lib/return-target.ts`; the dashboard entry; `AdminPagination` is reused for paging.
+
+**Interpretations the verifier should check.**
+
+1. **S3-A4 is reachable only through leaving a book.** Every membership role can write (`WRITE_ROLES` is owner, admin, member), and the queue lists only books the person belongs to now (S3-Q2), so a person without write authority on a draft's book is one who has left it. That draft is still theirs to read, so it appears through the id-list link with the actions unavailable and the reason naming the book, and the reaction and not-chosen routes answer them with the 403. The browser expectation E8 asks for a role change "if the app offers such a role"; it does not, and the reachable equivalent is removal plus the link.
+2. **The id form folds an ambiguous prefix into the "not shown" count** rather than naming candidates: the note is reason-free by design (S3-L2), and prefixes resolve only among recipes the viewer may read.
+3. **In the id-link view an acted-on item stays, showing its new state**, since it is still a recipe the link named; in the queue view it leaves the list (S3-A5). Focus moves to the next item in both.
+4. **A repeated confirm or reject on one's own resolved draft** records the reaction as before (DT-VER-03) and now reports `alreadyResolved` with the state; not chosen answers 409 `already_resolved`.
+5. **S3-G7's Layer 3 test calls the search service directly** with no size lever: the JSON and MCP surfaces always apply the automatic verbosity collapse, so the flat pipeline order is only observable below them.
+6. **S3-AG3's collaborator is Mo**, a member with no drafts, compared with another member with no drafts; the fixture's Sam owns a draft of his own, which his `is:draft` rightly lists. Sam's view is also checked to name none of Pat's ids or prefixes.
+7. **The queue shows the first evidence interpretation, not citations**, so a long citation URL in a draft's evidence does not appear on the queue page (it does on the detail page).
+8. **No navigation item for the queue**; the dashboard entry and agents' links reach it.
+9. **The cookie notice's privacy link is now underlined:** axe reported it as a serious `link-in-text-block` on every signed-in page, which would have failed S3-UI1 on the queue and dashboard.
+10. `/briefing` is unchanged (no queue pointer on the Drafts line, S3-Z5).
+
+**Budgets:** remote `tools/list` 16,854 → 16,853 bytes (cap 17,000); stdio 13,064 → 13,063 (cap 13,670); shared descriptions 5,965 → 5,968 characters (cap 6,000); `searchQuery` 412 → 415 (cap 420); the deposit notice +60 characters with a 73-character URL; a rated draft label at most +38 bytes.
+
+**Test-first:** not held strictly. The Layer 1 tests were written alongside their functions; the Layer 3 suite (`routes/draft-queue.test.ts`, 31 tests) after the routes. The F1 tests assert statuses the pre-slice code could not produce (409 and 403 where it answered 404).
+
+**Build-both:** not used. The rulings settled every fork this slice met (route shape, order, the exclude-own default, where the rating filter lives, refusal wording), and the remaining choices (page size, whether an acted-on item stays in the link view) were cheap to change later rather than worth building twice.

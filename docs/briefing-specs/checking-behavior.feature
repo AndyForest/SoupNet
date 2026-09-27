@@ -69,3 +69,11 @@ Feature: Checking behavior — genuine hypotheses, autonomous timing
     When the person cannot be asked now and the agent has to proceed
     Then it checks the recipe with draft set to true
     And the first evidence entry's interpretation says why the person could not be asked and what would settle it
+
+  @unreleased
+  Scenario: An agent that deposited drafts hands its person the queue link rather than listing ids
+    # Guards: draftDepositNotice (packages/domain/src/drafts.ts), the queue link it carries; docs/planning/drafts-and-triage.md §Verifying a draft ("Links"); spec-decision-log.md 2026-09-27 (drafts-and-triage slice 3). The link ships in slice 3; the scenario stays @unreleased until the briefing body teaches drafting (slice 7) and the harness can run it.
+    Given the agent deposited drafts during a session its person was away for
+    When the person returns and the agent reports what it left open
+    Then it gives the person one review-queue link naming those drafts (/app/drafts?ids=…)
+    And it does not ask the person to look the drafts up by id in prose

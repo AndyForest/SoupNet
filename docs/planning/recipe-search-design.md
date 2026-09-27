@@ -39,6 +39,8 @@ narrative read model "evaluation-run.server.ts" author:jane@example.com after:20
 | `-"term"`, `-author:x` | Negation. |
 | `author:` | Author email; values `me` and `anyone` reserved. `author:(a@x.com OR b@y.com)` unions. Any `author:` qualifier replaces the exclude-own default; `author:anyone` means no author filter. |
 | `after:` / `before:` | Judgment date, half-open: `after:D` ⇒ date ≥ D, `before:D` ⇒ date < D. Strict ISO (`YYYY-MM-DD` or full ISO datetime). Operates on `COALESCE(decided_at, created_at)` — the established judgment-date cascade. Duplicate `after:`/`before:` is an error. |
+| `is:draft`, `-is:draft` | The viewer's own unresolved drafts (drafts-and-triage slice 3), or everything but them. `is:draft` replaces the exclude-own default as `author:` does, since every draft a viewer can list is their own. Any other value, and a bare `is:`, is an error naming `is:draft`. |
+| `impact:`, `uncertainty:` | `low`, `medium`, or `high` (case-insensitive), matched against the triage ratings the depositing agent stored. Unrated recipes never match a positive value; `-impact:low` drops rows rated low and keeps unrated ones. A repeated positive value and an unknown one are errors naming the vocabulary. A selection, never a ranking input: built in `services/search-selection.ts`, outside the ranking files. |
 | unknown `name:value` | Error naming the valid qualifiers (typos must not silently degrade into semantic text). Carve-outs: `scheme://` URLs and `name:`-with-no-attached-value pass through as semantic text. |
 
 Behavior notes:
