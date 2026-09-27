@@ -237,10 +237,6 @@ Design: [planning/drafts-and-triage.md](planning/drafts-and-triage.md) (recipes 
 
 Build: [planning/drafts-and-triage-build.md](planning/drafts-and-triage-build.md), seven slices on `feat/drafts-and-triage`. ~~Slice 1: triage ratings on every check surface and the tool-roster trim~~ built 2026-09-27 (served remote `tools/list` 18,090 → 15,864 bytes), awaiting verification. Slices 2 to 7 remain.
 
-### `[DECISION NEEDED]` Should `POST /check` accept a JSON body?
-
-Found 2026-09-27 building drafts-and-triage slice 1. Scenario DT-RAT-05 lists "POST /check with a JSON body" as a check surface, but `POST /check` parses only urlencoded and multipart bodies (`routes/check.ts`), so a JSON body arrives with no parameters. Accepting JSON would be a new input format on the primary agent surface, and the per-key rate-limit key extractor (`extractCheckRequestKey`) would have to learn it too, or JSON posts would skip the per-key budget. Slice 1 covered `POST /check` with urlencoded and multipart bodies (JSON and HTML responses) and did not add JSON bodies. Decide whether JSON bodies are wanted; if not, reword DT-RAT-05's row.
-
 ### `[IMPL]` ChatGPT compatibility for the remote MCP endpoint
 
 Operator note 2026-09-19: ChatGPT plugins are MCP-based now (since July, per operator — verify against OpenAI's current docs). Check that `POST /mcp` + the OAuth 2.1 connector flow work as a ChatGPT connector/app, note any gaps (tool-shape requirements, auth quirks, directory listing), and add ChatGPT to the public connect page's client list if it works.

@@ -212,3 +212,9 @@ The operator's standing instruction is to take the obvious, standard answer and 
 - **20:** C01-R15 corrected in the same commit to include the depositor.
 
 No question is escalated to the operator at this point. Anything that turns out to need him during a slice is raised then, with the evidence.
+
+## Slice 1: orchestrator rulings after implementation (2026-09-27)
+
+- **DT-RAT-05's "POST /check with a JSON body" was a rubric error.** The spec assumed a surface that doesn't exist: `POST /check` takes urlencoded and multipart bodies. No client has asked for JSON bodies, and adding them would widen the primary agent surface and its rate-limit key extraction for no current need. The row now reads "POST /check with a form body", which the slice covers; the implementing agent's `[DECISION NEEDED]` backlog item is withdrawn. Revisit only if a client needs JSON bodies.
+- **Thin-briefing ceiling raised 18,000 → 18,200 characters** (the `intent` depth moved from the tool schema into the briefing's "How to check"). Accepted: the always-loaded tool list fell by 2,226 bytes on the remote server, so the net per-turn context still went down, and the briefing stays the one home for the concept (recipe `d0a661f1`, under the thin-index ruling `ef844c32`).
+- **Test-first held only for the domain tests**; the Layer 3 and budget tests were written alongside the code. Recorded as a process deviation; the verifier checks that each test fails against the pre-slice code where that is cheap to show.

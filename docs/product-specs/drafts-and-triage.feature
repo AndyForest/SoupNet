@@ -62,7 +62,7 @@ Feature: Drafts, triage ratings, and deciding by building both
         | surface                                   |
         | the remote MCP check_recipe tool          |
         | GET /check with format=json               |
-        | POST /check with a JSON body              |
+        | POST /check with a form body              |
         | the /check HTML form                      |
         | the stdio MCP server's check_recipe proxy |
 
