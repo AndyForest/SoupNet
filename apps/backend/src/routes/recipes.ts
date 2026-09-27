@@ -132,6 +132,10 @@ recipes.post("/:id/verify", recipesIpRateLimit, recipesPerKeyRateLimit, async (c
     case "not_a_draft":
     case "already_resolved":
       return c.json({ ok: false, error: describeVerifyResult(result), recipeId: result.recipeId, status: result.status }, 409);
+    case "needs_write_access":
+      // The key can read this draft (S3-F1), so the refusal is honest: it
+      // names the book and the way forward.
+      return c.json({ ok: false, error: describeVerifyResult(result), recipeId: result.recipeId, status: result.status, recipeBook: result.recipeBook }, 403);
     case "refused":
       return c.json({ ok: false, error: result.error, recipeId: result.recipeId, status: result.status }, 400);
   }

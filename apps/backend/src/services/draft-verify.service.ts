@@ -19,8 +19,12 @@
  *     `not_found_or_unreadable`, byte-for-byte what get_recipes answers for a
  *     random id (DT-VER-07);
  *   - the draft's book must be in the key's effective write scope ([F78]):
- *     publishing is a write. A readable draft in a book the key cannot write
- *     gets the same uniform marker as a missing id;
+ *     publishing is a write. The key can already read the recipe here, so the
+ *     answer is honest rather than uniform (slice 3, S3-F1; recipes 50824e4d,
+ *     507d3c9c): a published recipe is "not a draft", and the key's own draft
+ *     in a book it cannot write is refused with the way forward ("needs write
+ *     access to this recipe book"). Only what the key cannot read gets the
+ *     uniform marker;
  *   - only the person the draft is about may resolve it; that check, and the
  *     write-authority check again, live in the resolving UPDATE itself
  *     (authz/draft-resolution.ts).
@@ -38,6 +42,7 @@ import { parseEvidenceMarkdown } from "./evidence-parser";
 import { insertEvidenceEntries } from "./trace.service";
 import { lookupRecipes } from "./recipe-lookup.service";
 import { writeAudit } from "./audit-log.service";
+import { draftQueueUrl } from "../lib/key-remediation";
 
 export type VerifyDraftResult =
   | { status: "verified"; recipeId: string; draftState: "verified"; evidenceAdded: number; verifiedByDepositingKey: boolean }
@@ -45,6 +50,7 @@ export type VerifyDraftResult =
   | { status: "ambiguous_prefix"; recipeId: string; candidates: string[] }
   | { status: "not_a_draft"; recipeId: string }
   | { status: "already_resolved"; recipeId: string; draftState: string }
+  | { status: "needs_write_access"; recipeId: string; recipeBook: { slug: string; name: string } }
   | { status: "refused"; recipeId: string; error: string };
 
 /** Human-readable text for a result — the MCP tool's reply and the REST error. */
@@ -60,6 +66,8 @@ export function describeVerifyResult(r: VerifyDraftResult): string {
       return `${r.recipeId} is not a draft, so there is nothing to verify; nothing was stored.`;
     case "already_resolved":
       return `${r.recipeId} was already resolved (${r.draftState}); resolution is one-way and nothing was stored.`;
+    case "needs_write_access":
+      return `${r.recipeId} is a draft in the recipe book "${r.recipeBook.name}" (${r.recipeBook.slug}), and verifying it needs write access to this recipe book, which this API key does not have; nothing was stored. Verify it with a key that can write ${r.recipeBook.slug}, or ask the person to confirm it in their review queue: ${draftQueueUrl([r.recipeId])}`;
     case "refused":
       return r.error;
   }
@@ -86,20 +94,24 @@ export async function verifyDraft(
     return { status: "ambiguous_prefix", recipeId, candidates: entry.candidates };
   }
 
-  // Write authority on the recipe's book ([F78]): publishing into a book is a
-  // write, so a key that can read the book but not write it gets the same
-  // answer as an id that does not exist. The resolving statement checks it
-  // again against the book the row is in at that moment.
-  const authority = { kind: "key" as const, writeGroupIds: principal.writeGroupIds };
-  const bookId = entry.recipeBook?.recipeBookId;
-  if (!bookId || !hasWriteAuthority(authority, bookId)) {
-    return { status: "not_found_or_unreadable", recipeId };
-  }
-
   // A published recipe (never a draft, or already verified) carries no state.
+  // The key can read it, so saying so leaks nothing (S3-F1).
   if (entry.draftState === undefined) return { status: "not_a_draft", recipeId: entry.recipeId };
   if (entry.draftState !== "unverified") {
     return { status: "already_resolved", recipeId: entry.recipeId, draftState: entry.draftState };
+  }
+
+  // Write authority on the recipe's book ([F78]): publishing into a book is a
+  // write. The key can read this draft (it is the key's own person's), so the
+  // refusal names the book and the way forward instead of pretending the id
+  // does not exist (S3-F1). The resolving statement checks the authority
+  // again against the book the row is in at that moment.
+  const authority = { kind: "key" as const, writeGroupIds: principal.writeGroupIds };
+  const book = entry.recipeBook;
+  if (!book) return { status: "not_found_or_unreadable", recipeId };
+  const bookId = book.recipeBookId;
+  if (!hasWriteAuthority(authority, bookId)) {
+    return { status: "needs_write_access", recipeId: entry.recipeId, recipeBook: { slug: book.slug, name: book.name } };
   }
 
   const entries = parseEvidenceMarkdown(params.evidence ?? "");

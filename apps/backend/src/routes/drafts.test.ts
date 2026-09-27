@@ -672,25 +672,28 @@ describe.skipIf(!BASE || !canConnect())("drafts for the key's own user (drafts-a
 
   const verifyEvidence = (tag: string) => `The person confirmed it.\n> "confirmed ${tag} ${run}"\n-- conversation, ${run}`;
 
-  it("[F78] a key that can read the book but not write it gets the missing-id answer from verify_draft and REST, and nothing is stored", async () => {
+  it("[F78] + S3-F1 (a): a key that can read the book but not write it gets the honest write-access refusal on its own person's draft, on MCP and REST, and nothing is stored", async () => {
     const readOnlyKey = await mintKey(pat, [shared.id, pat.personalBookId], [pat.personalBookId], pat.personalBookId);
     const d = checkedId(await deposit(patKey, recipe("f78 read only", ` ${MARKER}`), "f78 draft", { draft: true }));
     const evBefore = await sql`SELECT count(*)::int AS n FROM claimnet.trace_evidence WHERE trace_id = ${d}::uuid`;
 
-    const real = await mcp(readOnlyKey, "verify_draft", { recipe_id: d, supporting_evidence: verifyEvidence("f78 mcp") });
-    const random = await mcp(readOnlyKey, "verify_draft", { recipe_id: RANDOM_UUID, supporting_evidence: verifyEvidence("f78 mcp") });
-    expect(norm(real.text, d)).toBe(norm(random.text, RANDOM_UUID));
+    const viaMcp = await mcp(readOnlyKey, "verify_draft", { recipe_id: d, supporting_evidence: verifyEvidence("f78 mcp") });
+    expect(viaMcp.text).toContain("needs write access to this recipe book");
+    expect(viaMcp.text).toContain(shared.slug);
+    expect(viaMcp.text).toContain(`/app/drafts?ids=${d}`);
+    expect(viaMcp.text).not.toContain("not_found_or_unreadable");
 
     const post = (id: string) => fetch(`${BASE}/recipes/${id}/verify`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${readOnlyKey}` },
       body: JSON.stringify({ supporting_evidence: verifyEvidence("f78 rest") }),
     });
-    const restReal = await post(d);
-    const restRandom = await post(RANDOM_UUID);
-    expect(restReal.status).toBe(404);
-    expect(restRandom.status).toBe(404);
-    expect(norm(await restReal.text(), d)).toBe(norm(await restRandom.text(), RANDOM_UUID));
+    const rest = await post(d);
+    expect(rest.status).toBe(403);
+    const restBody = (await rest.json()) as { status: string; error: string; recipeBook: { slug: string } };
+    expect(restBody.status).toBe("needs_write_access");
+    expect(restBody.recipeBook.slug).toBe(shared.slug);
+    expect(restBody.error).toContain("needs write access to this recipe book");
 
     expect((await traceRow(d))?.["draft_state"]).toBe("unverified");
     const evAfter = await sql`SELECT count(*)::int AS n FROM claimnet.trace_evidence WHERE trace_id = ${d}::uuid`;
@@ -704,11 +707,53 @@ describe.skipIf(!BASE || !canConnect())("drafts for the key's own user (drafts-a
     expect((await traceRow(own))?.["draft_state"]).toBe("verified");
   });
 
-  it("[F78] a key whose write scope lacks the book cannot verify, even if a different book of its owner is writable", async () => {
+  it("S3-F1 (b): a published recipe the key can read but not write is \"not a draft\" (409), not the missing-id answer", async () => {
+    const readOnlyKey = await mintKey(pat, [shared.id, pat.personalBookId], [pat.personalBookId], pat.personalBookId);
+    const pub = checkedId(await deposit(samKey, recipe("s3f1 sam published"), "s3f1 published", { recipe_book: shared.slug }));
+    const viaMcp = await mcp(readOnlyKey, "verify_draft", { recipe_id: pub, supporting_evidence: verifyEvidence("s3f1 b mcp") });
+    expect(viaMcp.text).toContain("is not a draft");
+    const rest = await fetch(`${BASE}/recipes/${pub}/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${readOnlyKey}` },
+      body: JSON.stringify({ supporting_evidence: verifyEvidence("s3f1 b rest") }),
+    });
+    expect(rest.status).toBe(409);
+    expect(((await rest.json()) as { status: string }).status).toBe("not_a_draft");
+    const evidenceRows = await sql`SELECT count(*)::int AS n FROM claimnet.trace_evidence te JOIN claimnet.evidence e ON e.id = te.evidence_id WHERE te.trace_id = ${pub}::uuid AND e.content ILIKE ${"%s3f1 b%"}`;
+    expect(Number(evidenceRows[0]?.["n"])).toBe(0);
+  });
+
+  it("S3-F1 (c): everything the key cannot read keeps the uniform answer: Sam's draft, a random UUID, and an 8-character prefix of a hidden draft", async () => {
+    const samDraft = checkedId(await deposit(samKey, recipe("s3f1 sam draft", ` ${MARKER}`), "s3f1 sam draft", { draft: true, recipe_book: shared.slug }));
+    const readOnlyKey = await mintKey(pat, [shared.id, pat.personalBookId], [pat.personalBookId], pat.personalBookId);
+    for (const key of [patKey, readOnlyKey]) {
+      const real = await mcp(key, "verify_draft", { recipe_id: samDraft, supporting_evidence: verifyEvidence("s3f1 c") });
+      const random = await mcp(key, "verify_draft", { recipe_id: RANDOM_UUID, supporting_evidence: verifyEvidence("s3f1 c") });
+      expect(norm(real.text, samDraft)).toBe(norm(random.text, RANDOM_UUID));
+      const prefix = await mcp(key, "verify_draft", { recipe_id: samDraft.slice(0, 8), supporting_evidence: verifyEvidence("s3f1 c") });
+      const randomPrefix = await mcp(key, "verify_draft", { recipe_id: RANDOM_UUID.slice(0, 8), supporting_evidence: verifyEvidence("s3f1 c") });
+      expect(norm(prefix.text, samDraft)).toBe(norm(randomPrefix.text, RANDOM_UUID));
+      const post = (id: string) => fetch(`${BASE}/recipes/${id}/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+        body: JSON.stringify({ supporting_evidence: verifyEvidence("s3f1 c rest") }),
+      });
+      const restReal = await post(samDraft);
+      const restRandom = await post(RANDOM_UUID);
+      expect(restReal.status).toBe(404);
+      expect(restRandom.status).toBe(404);
+      expect(norm(await restReal.text(), samDraft)).toBe(norm(await restRandom.text(), RANDOM_UUID));
+    }
+    expect((await traceRow(samDraft))?.["draft_state"]).toBe("unverified");
+  });
+
+  it("[F78] + S3-F1: a key that cannot read the draft's book at all still gets the uniform answer", async () => {
     // patNoSharedKey reads and writes only Pat's personal book.
     const d = checkedId(await deposit(patKey, recipe("f78 no scope", ` ${MARKER}`), "f78 no scope", { draft: true }));
     const r = await mcp(patNoSharedKey, "verify_draft", { recipe_id: d, supporting_evidence: verifyEvidence("f78 no scope") });
+    const random = await mcp(patNoSharedKey, "verify_draft", { recipe_id: RANDOM_UUID, supporting_evidence: verifyEvidence("f78 no scope") });
     expect(r.text).toContain("not_found_or_unreadable");
+    expect(norm(r.text, d)).toBe(norm(random.text, RANDOM_UUID));
     expect((await traceRow(d))?.["draft_state"]).toBe("unverified");
   });
 

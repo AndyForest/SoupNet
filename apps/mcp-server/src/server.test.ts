@@ -241,4 +241,11 @@ describe("stdio drafts (slice 2)", () => {
     const result = await callTool("verify_draft", { recipe_id: "x", supporting_evidence: evidence });
     expect((result.content as Array<{ text: string }>)[0]!.text).toBe("x: not_found_or_unreadable — nope");
   });
+
+  it("S3-F1: verify_draft relays the honest write-access refusal (403) verbatim, so the agent learns the way forward", async () => {
+    const refusal = "abc is a draft in the recipe book \"Shared\" (shared), and verifying it needs write access to this recipe book, which this API key does not have; nothing was stored.";
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ok: false, error: refusal, status: "needs_write_access" }), { status: 403 })));
+    const result = await callTool("verify_draft", { recipe_id: "abc", supporting_evidence: evidence });
+    expect((result.content as Array<{ text: string }>)[0]!.text).toBe(refusal);
+  });
 });
