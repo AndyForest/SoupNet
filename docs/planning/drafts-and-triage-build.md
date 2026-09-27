@@ -208,7 +208,7 @@ The operator's standing instruction is to take the obvious, standard answer and 
 
 - **Accepted as recommended:** 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 17, 18, 19. For 1, the design doc's "removed from the tool schemas" line is corrected in the same commit. For 3, the check-level ratings keep the operator's words (`impact`, `uncertainty`); the descriptions say plainly that a feedback row's `impact` is a different field, and S1-B6 tests that they never cross.
 - **15:** amend design-thinking §8 in slice 2, citing the operator's 2026-09-19 correction that agents may update some surfaces and are encouraged to keep book descriptions current (recipe `94e0e682`).
-- **16:** decided at the start of slice 4, not now; nothing before it depends on the answer.
+- **16: decided by the operator (2026-09-27, recipe `9e663b62`).** Every recipe's author is always the person who made the API key the agent used: "Accountability by design." `traces.user_id` stays the depositing key's owner, and "on behalf of" is a separate subject field naming the person the draft is about. Author-based rules (read access for the author, deletion by the author) keep their current meaning; draft visibility rules key off the subject as well.
 - **20:** C01-R15 corrected in the same commit to include the depositor.
 
 No question is escalated to the operator at this point. Anything that turns out to need him during a slice is raised then, with the evidence.
