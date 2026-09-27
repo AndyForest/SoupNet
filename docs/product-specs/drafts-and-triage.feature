@@ -171,8 +171,7 @@ Feature: Drafts, triage ratings, and deciding by building both
     @DT-VIS-02 @slice-2
     Scenario: A draft never appears in a collaborator's check or search results
       Given Pat's agent deposited a draft in the book
-      When Sam's agent checks a recipe with the draft's exact text
-      Or Sam's agent searches with the draft's exact text, a quoted phrase from its evidence, or author:<Pat's email>
+      When Sam's agent checks a recipe with the draft's exact text, or searches with that text, a quoted phrase from its evidence, or author:<Pat's email>
       Then the draft's id appears nowhere in the response: not in results, exemplars, cluster member lists, related evidence, or id stubs
       And every count in the response (total results, cluster sizes, "represents N similar") is the count the corpus would give without the draft
 
@@ -209,7 +208,7 @@ Feature: Drafts, triage ratings, and deciding by building both
     @DT-VIS-06 @slice-2
     Scenario: The person's own agents see their drafts, labelled
       Given Pat's agent deposited a draft
-      When any of Pat's keys with read scope on the book checks or searches near the draft
+      When any of Pat's keys with read scope on the book checks near the draft, or searches near it with author:me or author:anyone (search excludes the caller's own recipes by default)
       Then the draft can appear in results, ranked exactly as it would be if it were not a draft
       And each appearance is labelled as a draft in both the markdown and structured formats
 
@@ -235,7 +234,7 @@ Feature: Drafts, triage ratings, and deciding by building both
 
     @DT-VIS-09 @slice-2
     Scenario: The person's own briefing counts drafts separately
-      # Pending decision: see build log §Open design questions, "Counts".
+      # Pending decision: see build log §Open design questions, "Counts, dates, and exemplars".
       Given Pat's agent deposited two drafts in the book
       When Pat's agent calls get_briefing
       Then the book's Index count equals the count of non-draft recipes
@@ -254,10 +253,11 @@ Feature: Drafts, triage ratings, and deciding by building both
       Given Pat's agent deposited a draft
       Then the draft's trace and evidence embeddings are created as for any recipe, so verification needs no re-embedding
       And every statement that reads embeddings for results, clusters, related evidence, or the map applies the draft visibility condition from the authz module
+      And the count, the approximate-nearest-neighbour query, and the exhaustive fallback in semantic search apply the same condition, so a collaborator's totalResults never counts the draft
 
     @DT-VIS-12 @slice-2
     Scenario: Re-checking a draft's text as a non-draft from the same key does not publish it
-      # Pending decision: see build log §Open design questions, "Idempotency".
+      # Pending decision: see build log §Open design questions, "Idempotency and drafts".
       Given Pat's agent deposited a draft
       When the same key checks the identical text in the same book without the draft flag
       Then the response returns the existing recipe's id, reports it as existing and still a draft
@@ -269,6 +269,33 @@ Feature: Drafts, triage ratings, and deciding by building both
       Given Pat's agent deposited a draft in the book
       When Pat moves it to another book Pat can write to
       Then it is still a draft, and Sam cannot see it in either book
+
+    @DT-VIS-15 @slice-2
+    Scenario: Move and delete reveal nothing about a draft to anyone else
+      # Guards: read-path inventory RP-23 (today: 403 for "exists, not yours",
+      # and a book owner or admin passes the delete gate for others' recipes).
+      Given Pat's agent deposited a draft in the book, and Sam is the book's owner
+      When Sam, or any non-member holding the id, tries to move or delete the draft
+      Then the response is the 404 returned for an id that never existed
+      And the draft is unchanged
+
+    @DT-VIS-16 @slice-2
+    Scenario: Export and import keep a draft a draft
+      Given Pat exported data containing a draft
+      When Pat imports that export
+      Then the imported recipe is still a draft, with its ratings
+
+    @DT-VIS-17 @slice-2
+    Scenario: A person's own drafts are not briefing exemplars
+      Given Pat's agent deposited a draft
+      When Pat's agent calls get_briefing with exemplars opted in
+      Then the draft is not an exemplar and not counted in any exemplar's cluster size
+
+    @DT-VIS-18 @slice-2
+    Scenario: Book index dates don't move for a collaborator's draft
+      Given the book's Index line for Sam's agent shows a newest-judgment date and a last-logged date
+      When Pat's agent deposits a draft in the book
+      Then the Index line Sam's agent receives is unchanged, dates included
 
     @DT-VIS-14 @slice-2
     Scenario: The visibility rule lives in one place and is statically guarded
