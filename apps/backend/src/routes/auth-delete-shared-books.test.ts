@@ -961,3 +961,110 @@ describe.skipIf(!BASE)("DELETE /auth/me — former members' recipes [F73]", () =
     }
   });
 });
+
+/**
+ * Invitations follow the inviter's membership [F90]. Removing a member expires
+ * the pending invitations they sent to that book, in the same transaction as
+ * the removal, so a removed member cannot let themselves (or anyone) back in
+ * through an invitation sent before the removal. Invitations from a deleted
+ * account already go with it (F18: inviter_id cascades).
+ */
+describe.skipIf(!BASE)("removing a member revokes the invitations they sent [F90]", () => {
+  async function invite(inviter: TestUser, bookId: string, email: string): Promise<string> {
+    const res = await fetch(`${BASE}/recipe-books/${bookId}/invite`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${inviter.token}` },
+      body: JSON.stringify({ email }),
+    });
+    expect(res.status).toBe(201);
+    const id = ((await res.json()) as { data?: { id?: string } }).data?.id;
+    if (!id) throw new Error("Setup: invitation id missing");
+    return id;
+  }
+
+  async function accept(invitee: TestUser, inviteId: string): Promise<Response> {
+    return fetch(`${BASE}/invitations/${inviteId}/accept`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${invitee.token}` },
+    });
+  }
+
+  async function pendingIds(invitee: TestUser): Promise<string[]> {
+    const res = await fetch(`${BASE}/invitations/pending`, { headers: { Authorization: `Bearer ${invitee.token}` } });
+    return ((await res.json()) as { data?: Array<{ id: string }> }).data?.map((i) => i.id) ?? [];
+  }
+
+  async function removeFromBook(owner: TestUser, bookId: string, member: TestUser): Promise<void> {
+    const res = await fetch(`${BASE}/recipe-books/${bookId}/members/${member.userId}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${owner.token}` },
+    });
+    expect(res.status).toBe(200);
+  }
+
+  it("an invitation sent by a member who is then removed can no longer be accepted", { timeout: 60_000 }, async () => {
+    const sql = makeSql();
+    try {
+      const owner = await provisionUser(sql, "inv-owner");
+      const admin = await provisionUser(sql, "inv-admin");
+      const alt = await provisionUser(sql, "inv-alt");
+      const other = await provisionUser(sql, "inv-other");
+      const bookId = await createBook(owner, `inv-${Date.now().toString(36)}`);
+      await addMember(sql, bookId, admin, "admin", "2026-01-01T00:00:00Z");
+
+      const fromAdmin = await invite(admin, bookId, alt.email);
+      const fromOwner = await invite(owner, bookId, other.email);
+      expect(await pendingIds(alt)).toContain(fromAdmin);
+
+      await removeFromBook(owner, bookId, admin);
+
+      expect(await pendingIds(alt)).not.toContain(fromAdmin);
+      const refused = await accept(alt, fromAdmin);
+      expect(refused.status).toBe(404);
+      expect(((await refused.json()) as { error?: string }).error).toBe("Invitation not found, expired, or not for this account");
+      expect(await roleOf(sql, bookId, alt.userId)).toBeUndefined();
+
+      // Invitations sent by members who stay are untouched.
+      expect((await accept(other, fromOwner)).status).toBe(200);
+      expect(await roleOf(sql, bookId, other.userId)).toBe("member");
+    } finally {
+      await sql.end();
+    }
+  });
+
+  it("the F90 sequence: a removed admin's invitation does not admit anyone to a book later left without members", { timeout: 90_000 }, async () => {
+    const sql = makeSql();
+    try {
+      const owner = await provisionUser(sql, "f90-owner");
+      const admin = await provisionUser(sql, "f90-admin");
+      const writer = await provisionUser(sql, "f90-writer");
+      const alt = await provisionUser(sql, "f90-alt");
+      const slug = `f90-${Date.now().toString(36)}`;
+      const bookId = await createBook(owner, slug);
+      await addMember(sql, bookId, admin, "admin", "2026-01-01T00:00:00Z");
+
+      const altInvite = await invite(admin, bookId, alt.email);
+      await removeFromBook(owner, bookId, admin);
+
+      // Someone writes after the admin's removal, then leaves too.
+      await addMember(sql, bookId, writer, "member", "2026-02-01T00:00:00Z");
+      const writerTrace = await checkRecipe(
+        await mintDailyKey(writer.token), slug,
+        `As a contributor working on a shared notebook, I prefer my notes to stay mine after I leave so that my work stays private. (${Date.now()})`,
+        `F90 fixture.\n> "written after the admin left"\n-- invitation test fixture (f90)`,
+      );
+      await removeFromBook(owner, bookId, writer);
+
+      expect((await deleteAccount(owner)).status).toBe(200);
+      expect(await count(sql`SELECT COUNT(*)::int AS n FROM claimnet.group_members WHERE group_id = ${bookId}::uuid`)).toBe(0);
+
+      expect(await pendingIds(alt)).not.toContain(altInvite);
+      expect((await accept(alt, altInvite)).status).toBe(404);
+      expect(await roleOf(sql, bookId, alt.userId)).toBeUndefined();
+      const read = await fetch(`${BASE}/traces/${writerTrace}`, { headers: { Authorization: `Bearer ${alt.token}` } });
+      expect(read.status).toBe(404);
+    } finally {
+      await sql.end();
+    }
+  });
+});
