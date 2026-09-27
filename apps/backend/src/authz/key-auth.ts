@@ -34,6 +34,7 @@ import crypto from "node:crypto";
 import { sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
+import { membershipOf } from "./membership-sql";
 
 /** Runs on the root connection or inside a transaction. */
 type SqlExecutor = Pick<PostgresJsDatabase, "execute">;
@@ -110,6 +111,10 @@ export function activeUserPredicate(): SQL {
  * The subset of a granted book-id array that is in effect: the owner is a
  * member of the book now, and the book is not a disposed workspace. Order is
  * preserved. Written against an `api_keys` row aliased `k`.
+ *
+ * "Is a member" is the module's one membership condition (membership-sql.ts),
+ * so a condition later added to membership narrows every key's effective
+ * scope on its next request with no change here.
  */
 function effectiveBooks(grantedColumn: SQL): SQL {
   return sql`(
@@ -117,7 +122,7 @@ function effectiveBooks(grantedColumn: SQL): SQL {
     FROM unnest(${grantedColumn}) WITH ORDINALITY AS granted(book_id, ord)
     WHERE EXISTS (
         SELECT 1 FROM claimnet.group_members gm
-        WHERE gm.group_id = granted.book_id AND gm.user_id = k.user_id
+        WHERE gm.group_id = granted.book_id AND ${membershipOf("gm", sql`k.user_id`)}
       )
       AND NOT EXISTS (
         SELECT 1 FROM claimnet.ephemeral_books eb
@@ -134,7 +139,7 @@ function expiredBooks(grantedColumn: SQL): SQL {
     FROM unnest(${grantedColumn}) WITH ORDINALITY AS granted(book_id, ord)
     WHERE EXISTS (
         SELECT 1 FROM claimnet.group_members gm
-        WHERE gm.group_id = granted.book_id AND gm.user_id = k.user_id
+        WHERE gm.group_id = granted.book_id AND ${membershipOf("gm", sql`k.user_id`)}
       )
       AND EXISTS (
         SELECT 1 FROM claimnet.ephemeral_books eb
