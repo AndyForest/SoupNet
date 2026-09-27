@@ -136,7 +136,7 @@ Three thin skills in the house style of `.claude/skills/` (frontmatter `name` an
 | Read one recipe's evidence and feedback | `get_recipes` | Trace detail page |
 | Make a headless key for a sweep | Derived-key minting (planned) | Key form (slice 5 adds the setting) |
 
-Web gaps worth closing later: a "sent" view of the drafts I deposited that are still open, and a bulk "reject all from this depositor" action (already noted at slice 4, question 37).
+Web gap worth closing later, once cross-person drafts are in use: a "sent" view of the drafts I deposited that are still open.
 
 ## 6. What Soup.net needs
 
@@ -195,7 +195,7 @@ Each gap is listed with its smallest addition, and the existing thing that does 
 
 ## 9. Open questions
 
-1. **Question budget per person.** No study gives a number (report 03). **Recommendation:** a config value per person, starting small, ordered by impact × uncertainty (recipe `6fa4a9c9`). The overflow waits in the web queue. Tune it from the confirm and reject rates, which the queue already records. Not escalated.
+1. **Question budget per person.** No study gives a number (report 03). **Recommendation:** the skill drafts only a few calls per PR, highest impact × uncertainty first (recipe `6fa4a9c9`), and the person tells their agent if that's too many or too few. The overflow waits in the web queue. No tuning machinery until real use shows the need. Not escalated.
 2. **Polling or events.** The operator leans event-driven for always-on agents (recipe `3c8600ac`), but the pending review needs the person's own login, and a laptop has no webhook endpoint. **Recommendation:** poll by default. Use Claude Code routines with GitHub triggers where they can act as the person; whether a routine can call the review API is unverified (report 05). Not escalated.
 3. **The PR gets new commits after the draft review is written.** **Recommendation:** leave the pending review alone and add a thread noting the new head SHA. Never delete the person's draft. Not escalated.
 4. **Should Soup.net write verified decisions back into repo files** so bots that can't call MCP inherit them? This trades provenance for reach, and a decision copied into two places has diverged before (recipe `0ba77782`). **Recommendation:** later, as an opt-in generated section behind a staleness gate, the way this repo generates its data-model doc. This is a direction choice, but low-stakes to defer. **It is the one question for the operator**, and only when phase 7 comes up.
