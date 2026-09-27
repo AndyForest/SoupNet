@@ -976,3 +976,14 @@ After the functional verification (above), the browser run, and the read-only se
 - **Reason label** (`8c3ed74`): "Why your agent drafted it:" only on drafts; a published recipe's first interpretation is labelled "Evidence:".
 - **`?next=`** (`8c3ed74`): percent-encoded separators and dots in the path are refused.
 - **F86** is filed in the backlog.
+
+### Slice 3 accepted (2026-09-27)
+
+The functional verification, the browser run, and the read-only security audit all recommended accepting after fixes. The fix pass (`2feb9b7`, `8c3ed74`, `0949691`) passed the full gate on its first run. The audit's live fix-verification at `0949691` then recommends merging. It reproduced the original F85 attack against the fix and found no difference in response bytes, status, or timing. When the old resolver was restored, the branch's F85 test failed. The page clamp, the not-shown count, the verified label, and the `?next=` check each held under break attempts. The one new finding, F89 (P3, guard hardening, not exploitable today), joins the F86 backlog item. **Slice 3 is accepted.**
+
+Carried forward:
+
+- **F86 and F89** in one guard-hardening pass (backlog).
+- **Slice 4's parity tests** must set the subject and the depositor separately. In slice 3 they come from one variable, so the tests can't tell them apart yet.
+- **`traceReadableByPerson` is a signed-in person's full scope.** It belongs on JWT paths only; an API-key path composes the key's narrower scope instead. The guard can't tell the two apart, so this is a review point until F89's fix names it.
+- **Embedding-worker churn under a large import** (seen by the auditor, not caused by the slice): backlog.

@@ -122,7 +122,11 @@ Found 2026-09-27 on `feat/drafts-and-triage` slice 3, gate run 1 (run 2 green on
 
 ### `[IMPL]` Recipe-read guard register: harden against the F86 residual forms
 
-The drafts slice 3 audit (private, F86) found nine source forms that read the recipe tables without the `TRACE_READS` register in `scripts/check-authz-seam.mjs` seeing them. No live exposure: the behaviour suites catch deletions of the real draft predicates, and the forms are unusual in this codebase. Widen the guard's matching to cover them, add one `seam-guard.test.ts` plant per form, and name in the script's header what stays out of its reach. Detail is in the private audit, not here.
+The drafts slice 3 audit (private, F86) found nine source forms that read the recipe tables without the `TRACE_READS` register in `scripts/check-authz-seam.mjs` seeing them. No live exposure: the behaviour suites catch deletions of the real draft predicates, and the forms are unusual in this codebase. Widen the guard's matching to cover them, add one `seam-guard.test.ts` plant per form, and name in the script's header what stays out of its reach. Detail is in the private audit, not here. The slice 3 fix verification (private, F89) adds one more: the guard's list of draft fragments doesn't include `traceReadableByPerson`, so a call to it outside the module isn't seen. Add it, or derive the list from the module's exports, with a plant in the same test file.
+
+### `[IMPL]` Embedding worker churns after a large import
+
+Seen 2026-09-27 by the slice 3 fix verification, on an isolated stack after importing about 10,000 rows: the worker kept resetting stuck vectors to pending, and the job backlog grew from 55 to 325 with no new input. A drafts test (S2-B2) then timed out waiting for embeddings on that stack; it passed on a clean one. Not caused by the drafts work. Next step: reproduce with a large import on a throwaway stack, then see whether the stuck-vector reset re-queues work that is still in flight.
 
 ### `[IMPL]` User-delete cascade (cheap teardown for import-based testing)
 
