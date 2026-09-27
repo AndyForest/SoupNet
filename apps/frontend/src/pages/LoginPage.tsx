@@ -3,7 +3,7 @@ import { useNavigate, useLocation, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { setToken, setEmailVerified } from "../auth.js";
 import soupnetLogo from "../assets/soupnet-logo.png";
-import { loginNoticeFromSearch } from "../lib/login-notice.js";
+import { loginNoticeFromSearch, searchWithoutLoginNotice } from "../lib/login-notice.js";
 
 interface AuthResponse {
   ok: boolean;
@@ -75,8 +75,9 @@ export function LoginPage() {
   // Check for invite token in URL
   const params = new URLSearchParams(window.location.search);
   const inviteToken = params.get("invite");
-  // e.g. "Your account has been deleted." after account deletion.
-  const arrivalNotice = loginNoticeFromSearch(window.location.search);
+  // e.g. "Your account has been deleted." after account deletion. Cleared on
+  // submit (see handleSubmit), so it never sits beside a sign-in error.
+  const [arrivalNotice, setArrivalNotice] = useState(() => loginNoticeFromSearch(window.location.search));
   if (inviteToken && !isRegister) {
     // Auto-switch to register mode if we have an invite token
     setIsRegister(true);
@@ -187,6 +188,11 @@ export function LoginPage() {
     e.preventDefault();
     setError(null);
     setNotice(null);
+    if (arrivalNotice) {
+      setArrivalNotice(null);
+      // Drop the flag from the URL too, so a refresh doesn't bring it back.
+      void navigate({ href: `${location.pathname}${searchWithoutLoginNotice(window.location.search)}`, replace: true });
+    }
     if (isRegister && !tosAccepted) {
       setError("You must accept the Terms of Service and Privacy Policy.");
       return;
