@@ -13,6 +13,7 @@
  * Measured (docs/planning/drafts-and-triage-build.md §Slice 1 baseline):
  *   before slice 1 (2026-09-27): 18,090 bytes
  *   after slice 1 (2026-09-27):  15,864 bytes, with impact and uncertainty added
+ *   after slice 2 (2026-09-27):  16,854 bytes, with draft and verify_draft added
  * The stdio twin lives in apps/mcp-server/src/server.test.ts.
  */
 import { describe, it, expect } from "vitest";
@@ -22,8 +23,12 @@ import { createMcpServer } from "./mcp";
 import type { Principal } from "../authz";
 
 /** S1-Z1: the remote roster's served ceiling. Lower it when the roster
- *  shrinks; raise it only deliberately, with a dated reason (recipe 8dd573b4). */
-const REMOTE_TOOLS_LIST_MAX_BYTES = 16_000;
+ *  shrinks; raise it only deliberately, with a dated reason (recipe 8dd573b4).
+ *  16,000 → 17,000 (2026-09-27, drafts-and-triage slice 2): the `draft` param
+ *  and the verify_draft tool, the one new agent operation the design names
+ *  (recipe 6ae9a299). Measured 15,864 → 16,854; still 1,236 bytes under the
+ *  pre-slice-1 roster (18,090). */
+const REMOTE_TOOLS_LIST_MAX_BYTES = 17_000;
 
 const stubPrincipal: Principal = {
   keyId: "00000000-0000-0000-0000-000000000001",
@@ -94,6 +99,18 @@ describe("remote MCP tools/list as served (drafts-and-triage slice 1)", () => {
     }
     // S1-B6: the check-level impact says it is not a feedback row's impact.
     expect(String(props["impact"]?.["description"])).toContain("feedback row");
+  });
+
+  it("S2-B1: check_recipe serves draft as an optional boolean", async () => {
+    const t = tool((await servedToolsList()).tools, "check_recipe");
+    expect(t.inputSchema.properties?.["draft"]?.["type"]).toBe("boolean");
+    expect((t.inputSchema as { required?: string[] }).required ?? []).not.toContain("draft");
+  });
+
+  it("S2-B10: verify_draft is served with a required recipe_id and supporting_evidence", async () => {
+    const t = tool((await servedToolsList()).tools, "verify_draft");
+    expect(Object.keys(t.inputSchema.properties ?? {}).sort()).toEqual(["recipe_id", "supporting_evidence"]);
+    expect(((t.inputSchema as { required?: string[] }).required ?? []).sort()).toEqual(["recipe_id", "supporting_evidence"]);
   });
 
   it("S1-Z6 / DT-TOOL-02: clusters and max_chars stay declared with a one-line pointer to verbosity", async () => {

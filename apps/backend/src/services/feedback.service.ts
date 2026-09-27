@@ -55,7 +55,7 @@
 import crypto from "node:crypto";
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { inBooks } from "../authz";
+import { inBooks, traceReadableById } from "../authz";
 import {
   FEEDBACK_KINDS,
   FEEDBACK_IMPACTS,
@@ -513,10 +513,14 @@ export async function ingestFeedback(
   if (readGroupIds.length > 0) {
     for (const prefix of prefixesToResolve) {
       const { lo, hi } = uuidPrefixRange(prefix);
+      // Same draft condition as the readable-set select below, so a prefix
+      // shared with someone else's hidden draft resolves as if it did not
+      // exist (DT-VIS-05).
       const matchRows = await db.execute(sql`
-        SELECT id FROM claimnet.traces
-        WHERE id >= ${lo}::uuid AND id <= ${hi}::uuid
-          AND ${inBooks(sql`group_id`, readGroupIds)}
+        SELECT t.id FROM claimnet.traces t
+        WHERE t.id >= ${lo}::uuid AND t.id <= ${hi}::uuid
+          AND ${inBooks(sql`t.group_id`, readGroupIds)}
+          AND ${traceReadableById("t", userId)}
         LIMIT 2
       `);
       const matches = (matchRows as unknown as Array<{ id: string }>).map((r) => r.id);
@@ -551,10 +555,14 @@ export async function ingestFeedback(
   // marker (no existence oracle).
   const readable = new Set<string>();
   if (idsToCheck.size > 0 && readGroupIds.length > 0) {
+    // "Readable" includes the draft rule: feedback about someone else's
+    // hidden draft gets the same marker as a random id (RP-11), while the
+    // person's own agents may annotate their drafts.
     const traceRows = await db.execute(sql`
-      SELECT id FROM claimnet.traces
-      WHERE id IN (${sql.join([...idsToCheck].map((id) => sql`${id}::uuid`), sql`, `)})
-        AND ${inBooks(sql`group_id`, readGroupIds)}
+      SELECT t.id FROM claimnet.traces t
+      WHERE t.id IN (${sql.join([...idsToCheck].map((id) => sql`${id}::uuid`), sql`, `)})
+        AND ${inBooks(sql`t.group_id`, readGroupIds)}
+        AND ${traceReadableById("t", userId)}
     `);
     for (const r of traceRows as unknown as Array<{ id: string }>) {
       readable.add(r.id);

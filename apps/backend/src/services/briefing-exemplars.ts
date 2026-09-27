@@ -18,6 +18,7 @@ import { mmrClusters } from "./clustering.service";
 import { embedQuery } from "../lib/embeddings/provider";
 import { DEFAULT_RANKING } from "@soupnet/domain";
 import type { BriefingExemplar } from "@soupnet/domain";
+import { SHARED_AUDIENCE } from "../authz";
 
 export interface ExemplarFetchOptions {
   k: number;
@@ -87,6 +88,7 @@ export async function fetchBriefingExemplars(
   // clustering; this just keeps them on the result).
   const result = await runSearchPipeline({
     db,
+    audience: SHARED_AUDIENCE,
     groupIds,
     query: options.filter,
     k: options.k,

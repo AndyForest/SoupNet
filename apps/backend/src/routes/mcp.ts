@@ -29,6 +29,7 @@ import {
   VERBOSITY_EXEMPLAR_K,
   buildCheckRecipeToolDescription,
   renderCheckResponseMarkdown,
+  isShownDraftState,
 } from "@soupnet/domain";
 import type { CheckResponseJson } from "@soupnet/domain";
 import type { Recipe } from "@soupnet/contracts";
@@ -63,6 +64,7 @@ import { writeAudit } from "../services/audit-log.service";
 import { ClientSafeError, publicErrorMessage } from "../lib/client-safe-error";
 import { invalidKeyMessage } from "../lib/key-remediation";
 import type { RawFeedbackRow } from "../services/feedback.service";
+import { verifyDraft, describeVerifyResult } from "../services/draft-verify.service";
 import { ingestFeedback, isFeedbackRowObject, summarizeFeedbackResults, withCheckDefaults } from "../services/feedback.service";
 
 // F47 (security-audit-2026-06-11): tool catch-alls surface only deliberate
@@ -357,6 +359,10 @@ const feedbackRowSchema = z.record(z.unknown()).catch((ctx) => ctx.input as Reco
 // make it an SDK validation error that fails the whole check. The preprocess
 // hands non-strings to the service as their JSON text; the served schema
 // still says "string".
+function draftParam() {
+  return z.boolean().optional().catch((ctx) => ctx.input as boolean | undefined).describe(MCP_PARAM_DESCRIPTIONS.draft);
+}
+
 function ratingParam(description: string) {
   return z
     .preprocess((v) => (v === undefined || v === null ? undefined : typeof v === "string" ? v : JSON.stringify(v)), z.string().optional())
@@ -427,6 +433,11 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
       // an SDK validation error that costs the check (recipe 4cfd166e).
       impact: ratingParam(MCP_PARAM_DESCRIPTIONS.impact),
       uncertainty: ratingParam(MCP_PARAM_DESCRIPTIONS.uncertainty),
+      // Draft (slice 2). Served as a boolean; `.catch` hands a value of the
+      // wrong type (the string "true", say) to the service's lenient parser
+      // instead of failing the check, which takes an unrecognized value as a
+      // draft, the private side.
+      draft: draftParam(),
       feedback: z.array(feedbackRowSchema).optional().describe(MCP_PARAM_DESCRIPTIONS.feedbackParam),
       axes: z.string().optional().describe(
         "Two comma-separated concept terms; each result gets x/y similarity positions (0-1) against them (semantic projection)."
@@ -489,7 +500,7 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
       idempotentHint: true,
       openWorldHint: true,
     },
-    async ({ recipe, supporting_evidence, verbosity, clusters, max_chars, decided_at, axes, recipe_book, read_recipe_books, file_url, file_base64, file_name, file_mime_type, region, response_format, known_recipes, session_id, intent, agent_id, synthesize, impact, uncertainty, feedback }) => {
+    async ({ recipe, supporting_evidence, verbosity, clusters, max_chars, decided_at, axes, recipe_book, read_recipe_books, file_url, file_base64, file_name, file_mime_type, region, response_format, known_recipes, session_id, intent, agent_id, synthesize, impact, uncertainty, draft, feedback }) => {
       // Size steer: explicit verbosity wins; with NO steer at all, the
       // internal "auto" sentinel takes the automatic path (ranking-config
       // autoK — ships as the fixed 3-exemplar default). Legacy clusters /
@@ -592,6 +603,7 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
           knownRecipeIds: knownRecipeIds.size > 0 ? [...knownRecipeIds] : undefined,
           impact,
           uncertainty,
+          draft,
         });
 
         if (result.error) {
@@ -897,12 +909,50 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
           return { content: [{ type: "text" as const, text: `Error: too many ids (${ids.length}; max ${RECIPE_LOOKUP_MAX_IDS} per call). Split into multiple calls.` }] };
         }
 
-        const entries = await lookupRecipes(db, ids, principal.readGroupIds);
+        const entries = await lookupRecipes(db, ids, { readGroupIds: principal.readGroupIds, userId: principal.userId });
         const found = entries.filter((e) => e.status === "ok").length;
         const text = `Requested recipes — ${found} of ${entries.length} resolved. Entries marked not_found_or_unreadable either don't exist or aren't readable by this API key (deliberately indistinguishable).\n\n${renderRecipeEntries(entries)}`;
         return { content: [{ type: "text" as const, text }] };
       } catch (err) {
         return { content: [{ type: "text" as const, text: toolErrorText(err, "get_recipes") }] };
+      }
+    },
+  );
+
+  // ── verify_draft tool ──────────────────────────────────────────────────────
+  //
+  // Drafts-and-triage slice 2: the one agent operation that changes a draft's
+  // state (a separate tool rather than a mode of check_recipe or a kind of
+  // feedback row, so each tool keeps one contract — recipe 6201b444; the
+  // design names exactly one new agent operation). REST twin:
+  // POST /recipes/:id/verify. The service holds every rule
+  // (services/draft-verify.service.ts): readable by id through this key or
+  // the uniform marker; only the person the draft is about; new quoted and
+  // cited evidence; one-way.
+
+  if (!lean)
+  server.tool(
+    "verify_draft",
+    MCP_TOOL_DESCRIPTIONS.verifyDraft,
+    {
+      recipe_id: z.string().describe(MCP_PARAM_DESCRIPTIONS.draftRecipeId),
+      supporting_evidence: z.string().describe(MCP_PARAM_DESCRIPTIONS.verificationEvidence),
+    },
+    {
+      title: "Verify a draft",
+      // A one-way state change plus appended evidence: not read-only, not
+      // destructive, and a repeat is refused rather than repeated.
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+    async ({ recipe_id, supporting_evidence }) => {
+      try {
+        const result = await verifyDraft(getDb(), { principal, recipeId: recipe_id, evidence: supporting_evidence });
+        return { content: [{ type: "text" as const, text: describeVerifyResult(result) }] };
+      } catch (err) {
+        return { content: [{ type: "text" as const, text: toolErrorText(err, "verify_draft") }] };
       }
     },
   );
@@ -1192,11 +1242,14 @@ export function buildMcpJsonResponse(
           recipe: result.traceText,
           impact: result.ratings?.impact ?? null,
           uncertainty: result.ratings?.uncertainty ?? null,
+          // Present only when the deposit is an unpublished draft (slice 2).
+          ...(isShownDraftState(result.draftState) ? { draftState: result.draftState } : {}),
         } satisfies Recipe,
       }
       : {}),
     ...(result.existingRecipe ? { existingRecipe: true } : {}),
     ...(result.ratingsNotice ? { ratingsNotice: result.ratingsNotice } : {}),
+    ...(result.draftNotice ? { draftNotice: result.draftNotice } : {}),
     searchMode: result.searchMode ?? "lexical",
     clustered: result.clustered ?? false,
     results: enriched.map((r) => {
@@ -1212,6 +1265,8 @@ export function buildMcpJsonResponse(
         const stub: Recipe = {
           recipeId: r.id,
           known: true,
+          // Labelled in every appearance, stubs included (DT-VIS-06).
+          ...(isShownDraftState(r.draftState) ? { draftState: r.draftState } : {}),
           similarity: r.semanticScore ?? undefined,
           ...(r.clusterSize ? { clusterSize: r.clusterSize } : {}),
         };
@@ -1220,6 +1275,9 @@ export function buildMcpJsonResponse(
       const fill: Recipe = {
         recipeId: r.id,
         recipe: r.claimText,
+        // The viewer's own unpublished draft, labelled (DT-VIS-06); no one
+        // else's reaches a result set.
+        ...(isShownDraftState(r.draftState) ? { draftState: r.draftState } : {}),
         createdAt: r.createdAt,
         // Recipe-book id + name only — the description lives in the briefing
         // (operator ruling 2026-07-18).

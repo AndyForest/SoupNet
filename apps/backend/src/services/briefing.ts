@@ -175,7 +175,7 @@ export async function composeBriefing(input: BriefingComposeInput): Promise<Brie
   let requestedRecipesSection: string | undefined;
   const recipeIds = scope.options.recipeIds ?? [];
   if (recipeIds.length > 0) {
-    const entries = await lookupRecipes(input.db, recipeIds, scope.readGroupIds);
+    const entries = await lookupRecipes(input.db, recipeIds, { readGroupIds: scope.readGroupIds, userId: scope.userId });
     const truncated = recipeIds.length > RECIPE_LOOKUP_MAX_IDS
       ? `\n\n(${recipeIds.length - RECIPE_LOOKUP_MAX_IDS} id(s) beyond the ${RECIPE_LOOKUP_MAX_IDS}-id cap were ignored — fetch them with the get_recipes tool or GET /recipes.)`
       : "";
@@ -304,7 +304,7 @@ async function resolveScope(input: BriefingComposeInput): Promise<ResolvedScope>
   // Per-book index stats — MCP surfaces only, so the web copy-briefing path
   // pays nothing and its output stays byte-identical.
   const statsByGroup: Map<string, BriefingBookStats> = mcpSurface
-    ? await fetchBookStats(db, allIds)
+    ? await fetchBookStats(db, allIds, keyRow.user_id)
     : new Map();
 
   const groups: BriefingGroup[] = groupRowList.map((g) => {

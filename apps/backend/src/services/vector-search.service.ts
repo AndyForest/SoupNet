@@ -23,7 +23,8 @@ import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { PRODUCTION_SEARCH_STRATEGY_IDS, poolBoundary } from "@soupnet/domain";
 import type { ClusterPoolConfig, CandidateSignals } from "@soupnet/domain";
 import { embedQuery, getEmbeddingModelId } from "../lib/embeddings/provider";
-import { inBooks } from "../authz";
+import { inBooks, publishedTrace, traceIdVisibleTo, SHARED_AUDIENCE } from "../authz";
+import type { DraftAudience } from "../authz";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -31,6 +32,11 @@ export interface HybridSearchParams {
   /** Recipe text — embedded and used for vector cosine similarity search */
   recipeText: string;
   groupIds: string[];
+  /** Draft visibility (authz/draft-sql.ts): applied inside the shared
+   *  predicates, so the count, the ANN query, and the exhaustive fallback
+   *  agree on it (S2-M4, DT-VIS-11). Omitted means SHARED_AUDIENCE, the
+   *  strictest view. */
+  audience?: DraftAudience | undefined;
   limit: number;
   offset: number;
   excludeTraceId?: string | undefined;
@@ -299,6 +305,7 @@ export async function hybridSearch(
         AND ecs.strategy_id IN (${strategyIdsSql})
         AND es.source_type = 'trace'
         AND ${inScope}
+        AND ${traceIdVisibleTo(sql`es.source_id`, params.audience ?? SHARED_AUDIENCE)}
         ${excludeTraceId ? sql`AND es.source_id != ${excludeTraceId}::uuid` : sql``}
         ${keywordPredicate}
         ${structuredPredicate}`;
@@ -565,6 +572,11 @@ export async function evidenceSearch(
       AND ev.model_id = ${getEmbeddingModelId()}
       AND es.source_type = 'evidence'
       AND ${inScope}
+      -- Related evidence never comes from an unpublished draft, for any
+      -- viewer (DT-VIS-03): it is quoted without a label, so a person's own
+      -- draft would read as confirmed. Their drafts reach them as labelled
+      -- results instead (RP-40).
+      AND ${publishedTrace("t")}
       ${params.excludeTraceId ? sql`AND te.trace_id != ${params.excludeTraceId}::uuid` : sql``}
     ORDER BY ev.vector <=> ${vectorStr}::halfvec(3072)
     LIMIT ${limit}

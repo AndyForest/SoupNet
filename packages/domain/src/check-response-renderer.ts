@@ -29,6 +29,7 @@
 
 import type { TriageRating } from "@soupnet/contracts";
 import { renderRatingsMarkdown } from "./triage-ratings";
+import { draftLabel } from "./drafts";
 
 // ── Response shape (tolerant — both builders' outputs satisfy it) ───────────
 
@@ -70,6 +71,9 @@ export interface CheckResultItem {
    *  ({recipeId, similarity}) rendered as one compact line beside the full
    *  item ("stub, stub, full recipe"). */
   knownMembers?: Array<{ recipeId?: string; similarity?: number }>;
+  /** Present only on the viewer's own unpublished draft (slice 2) — the
+   *  line is labelled so the agent weighs it as a hypothesis. */
+  draftState?: string;
 }
 
 /** A related-evidence entry IS a Recipe fill (canonical schema): the parent
@@ -93,7 +97,12 @@ export interface CheckResponseData {
     /** Triage ratings on the deposit (slice 1); null = not rated. */
     impact?: TriageRating | null;
     uncertainty?: TriageRating | null;
+    /** Present when the deposit is an unpublished draft (slice 2). */
+    draftState?: string;
   };
+  /** Who can see a draft just deposited and how it gets verified, or the
+   *  state an identical repeat found (slice 2). */
+  draftNotice?: string;
   /** True when the check repeated an identical earlier one (same key, book,
    *  text): `checked` is that earlier recipe; nothing new was stored. */
   existingRecipe?: boolean;
@@ -222,16 +231,20 @@ function renderResultItem(r: CheckResultItem, index: number, known: boolean): st
   // 2026-08-19 comprehensibility pass, one unified search).
   const score = similarityLabel(r.similarity);
   const head = `#${index + 1}${score ? ` (${score})` : ""} ${r.recipeId ?? "?"}`;
+  // Drafts (slice 2): the viewer's own unpublished draft, labelled in every
+  // appearance; the label is a fact about the recipe, not a judgment.
+  const label = draftLabel(r.draftState);
+  const draftTag = label ? ` ${label}` : "";
 
   if (known) {
     // One-line id-only stub: the caller already holds this recipe, so the
     // line keeps the cluster slot visible without re-sending any body text
     // (fetch the full recipe via get_recipes if needed).
     const cluster = r.clusterSize ? ` (represents ${r.clusterSize} similar recipes)` : "";
-    return `${head} [known to you]${cluster}\n`;
+    return `${head} [known to you]${draftTag}${cluster}\n`;
   }
 
-  let text = head;
+  let text = head + draftTag;
   const date = dateLabel(r.createdAt);
   if (date) text += ` -- ${date}`;
   if (r.clusterSize) text += ` (represents ${r.clusterSize} similar recipes)`;
@@ -288,6 +301,8 @@ export function renderCheckResponseMarkdown(
       { impact: data.checked.impact ?? null, uncertainty: data.checked.uncertainty ?? null },
       data.ratingsNotice,
     );
+    // Draft notice (slice 2): who can see the deposit and how it is verified.
+    if (data.draftNotice) text += `${data.draftNotice}\n`;
   }
   if (data.searchOnly && data.searchId) {
     text += `Search id: ${data.searchId} — log_feedback accepts it as search_id.\n`;

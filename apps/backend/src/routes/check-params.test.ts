@@ -7,7 +7,7 @@ const empty: PageParams = {
   verbosity: undefined, clusters: undefined, maxChars: undefined, expand: undefined, compact: undefined,
   axes: undefined, group: undefined, readGroups: undefined, decidedAt: undefined,
   agentId: undefined, knownRecipes: undefined, sessionId: undefined, intent: undefined, filter: undefined,
-  synthesize: undefined, impact: undefined, uncertainty: undefined,
+  synthesize: undefined, impact: undefined, uncertainty: undefined, draft: undefined,
   feedbackTraceId: undefined, feedbackSearchId: undefined, feedbackKind: undefined, feedbackImpact: undefined,
   feedbackDisposition: undefined, feedbackStoryFulfilled: undefined,
   feedbackStory: undefined, feedbackNote: undefined, feedbackIntentId: undefined,
@@ -249,5 +249,17 @@ describe("triage rating params", () => {
     expect(qs).toContain("impact=low");
     expect(qs).toContain("uncertainty=high");
     expect(qs).not.toContain("feedback_impact");
+  });
+});
+
+// drafts-and-triage slice 2 — the draft flag on the /check wire.
+describe("draft param", () => {
+  it("S2-B1 / DT-VIS-01: reads draft by its wire name", () => {
+    expect(readParams(makeGet({ draft: "true" })).draft).toBe("true");
+    expect(readParams(makeGet({})).draft).toBeUndefined();
+  });
+
+  it("carries on round-trips, so re-checking from the page never quietly publishes a draft", () => {
+    expect(buildQs({ ...empty, key: "k", draft: "true" })).toContain("draft=true");
   });
 });

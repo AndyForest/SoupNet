@@ -78,6 +78,7 @@ import {
   mean,
 } from "./metrics";
 import type { SerendipityItem } from "./metrics";
+import { SHARED_AUDIENCE } from "../authz";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "../../../..");
@@ -263,6 +264,7 @@ async function measureQuestion(
   // (a) Expanded flat call: the whole-list ranking surface.
   const flatRes = await runSearchPipeline({
     db: arm.db,
+    audience: SHARED_AUDIENCE,
     groupIds: [arm.groupId],
     query: q.query,
     queryVectorStr,
@@ -280,6 +282,7 @@ async function measureQuestion(
   // (pool-truncated, same space for every variant — the pool vectorDims match).
   const displayRes = await runSearchPipeline({
     db: arm.db,
+    audience: SHARED_AUDIENCE,
     groupIds: [arm.groupId],
     query: q.query,
     queryVectorStr,
@@ -355,6 +358,7 @@ async function measureQuestion(
   if (knownIds.size > 0) {
     const overlayRes = await runSearchPipeline({
       db: arm.db,
+      audience: SHARED_AUDIENCE,
       groupIds: [arm.groupId],
       query: q.query,
       queryVectorStr,

@@ -122,6 +122,19 @@ export const UNCERTAINTY_DEFINITION =
   + "not the person's; it sorts review only and never influences ranking. Independent of impact: "
   + "a fairly certain call can still carry high impact.";
 
+/** A draft's state (drafts-and-triage slice 2). A recipe that was never a
+ *  draft has none. `unverified` is the only state a draft is deposited in;
+ *  it moves one way to a resolution. */
+export const DRAFT_STATE_VALUES = ["unverified", "verified", "rejected", "not_chosen"] as const;
+export type DraftState = (typeof DRAFT_STATE_VALUES)[number];
+
+export const DRAFT_STATE_DEFINITION =
+  "Present only on a draft you are allowed to see: your own. \"unverified\" means the person it is "
+  + "about has not confirmed it, so weigh it as a hypothesis, not their position; until verified, only "
+  + "that person, their agents, and its depositor can see it. \"rejected\" and \"not_chosen\" are "
+  + "resolved drafts that stay private. A verified draft is an ordinary recipe and carries no draftState "
+  + "on shared surfaces. Ranked exactly as if it were not a draft.";
+
 // ── Recipe book ──────────────────────────────────────────────────────────────
 
 export const RecipeBookSchema = z
@@ -246,6 +259,7 @@ const recipeFields = {
   uncertainty: z.enum(TRIAGE_RATING_VALUES).nullable().optional().describe(
     UNCERTAINTY_DEFINITION + " Present on your own deposit (`checked`).",
   ),
+  draftState: z.enum(DRAFT_STATE_VALUES).optional().describe(DRAFT_STATE_DEFINITION),
 };
 
 export interface Recipe {
@@ -261,6 +275,7 @@ export interface Recipe {
   evidence?: EvidenceEntry[] | undefined;
   impact?: TriageRating | null | undefined;
   uncertainty?: TriageRating | null | undefined;
+  draftState?: DraftState | undefined;
   knownMembers?: Recipe[] | undefined;
 }
 
@@ -281,7 +296,7 @@ export const RecipeSchema: z.ZodType<Recipe> = z
     + "{recipeId, known, similarity}; a known cluster-mate is "
     + "{recipeId, similarity}; a full exemplar adds recipe text, evidence, "
     + "and its book; your own deposit is {recipeId, recipe, impact, "
-    + "uncertainty}. Only recipeId is mandatory.",
+    + "uncertainty, draftState}. Only recipeId is mandatory.",
   );
 
 // ── Check response envelope ─────────────────────────────────────────────────
@@ -289,7 +304,7 @@ export const RecipeSchema: z.ZodType<Recipe> = z
 export const CheckResponseDataSchema = z
   .object({
     checked: RecipeSchema.optional().describe(
-      "Your own deposit — {recipeId, recipe, impact, uncertainty}; a null rating means not rated. Absent on the read-only filter path (nothing was logged).",
+      "Your own deposit — {recipeId, recipe, impact, uncertainty, draftState}; a null rating means not rated, and draftState is present only when the deposit is a draft. Absent on the read-only filter path (nothing was logged).",
     ),
     existingRecipe: z
       .boolean()
@@ -297,6 +312,13 @@ export const CheckResponseDataSchema = z
       .describe(
         "True when this check repeated an identical earlier one (same key, recipe book, and text): "
         + "`checked` is the recipe that earlier check logged, and nothing new was stored.",
+      ),
+    draftNotice: z
+      .string()
+      .optional()
+      .describe(
+        "About your deposit's draft state: who can see a draft you just deposited and how it gets "
+        + "verified, or, on an identical repeat, the state the earlier recipe is still in.",
       ),
     ratingsNotice: z
       .string()

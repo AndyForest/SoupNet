@@ -30,6 +30,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
+import { SHARED_AUDIENCE } from "../authz";
 
 interface CorpusFile {
   schemaVersion: number;
@@ -192,6 +193,7 @@ async function dump(db: PostgresJsDatabase, datasetDir: string, queriesFile: str
     if (!vec) throw new Error(`Embedding provider returned null for query ${q.id}`);
     const res = await runSearchPipeline({
       db,
+      audience: SHARED_AUDIENCE,
       groupIds: [state.groupId],
       query: q.query,
       queryVectorStr: `[${vec.join(",")}]`,

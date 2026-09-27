@@ -422,3 +422,30 @@ describe("renderCheckResponseMarkdown — triage ratings", () => {
     expect(text).not.toContain("Your ratings");
   });
 });
+
+describe("renderCheckResponseMarkdown — drafts (slice 2)", () => {
+  it("DT-VIS-01: a draft deposit says so under the checked line", () => {
+    const r = baseResponse();
+    r.data!.checked = { recipeId: CHECK_ID, draftState: "unverified" };
+    r.data!.draftNotice = "Deposited as a draft: until it is verified, only you and your own agents can see it.";
+    const md = renderCheckResponseMarkdown(r);
+    const [first, second] = md.split("\n");
+    expect(first).toBe(`Recipe checked as #${CHECK_ID}`);
+    expect(second).toContain("Deposited as a draft");
+  });
+
+  it("DT-VIS-06: an own draft in results is labelled on its line, full and stub alike", () => {
+    const r = baseResponse();
+    r.data!.results![0]!.draftState = "unverified";
+    r.data!.results!.push({ recipeId: UUID_B, known: true, similarity: 0.5, draftState: "unverified" });
+    const md = renderCheckResponseMarkdown(r);
+    const lines = md.split("\n");
+    expect(lines.find((l) => l.includes(UUID_A))).toContain("[unverified draft");
+    expect(lines.find((l) => l.includes(UUID_B) && l.includes("[known to you]"))).toContain("[unverified draft");
+  });
+
+  it("a published recipe carries no draft label", () => {
+    const md = renderCheckResponseMarkdown(baseResponse());
+    expect(md).not.toContain("draft");
+  });
+});

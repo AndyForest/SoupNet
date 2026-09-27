@@ -192,8 +192,14 @@ describe("MCP tool description budget", () => {
     // briefing's "How to check" paragraph), the feedback param to a pointer
     // at log_feedback, and clusters/max_chars to a pointer at verbosity.
     // Prior total 5,884, new total 5,510.
+    // 5,550 → 6,000 (2026-09-27), UP: drafts-and-triage slice 2 adds the
+    // `draft` param on check_recipe and the one new agent operation the
+    // design names, verify_draft (tool description plus its two params) —
+    // a genuinely new affordance, the session_id / search_recipes class of
+    // raise (recipes 8dd573b4, 6ae9a299). The when-to-draft depth stays out
+    // of schema (briefing body, slice 7). Prior total 5,510, new total 5,965.
     const total = Object.values(all).reduce((n, s) => n + s.length, 0);
-    expect(total).toBeLessThanOrEqual(5550);
+    expect(total).toBeLessThanOrEqual(6000);
   });
 
   it("keeps the shared params that repeat across tools to one line (≤ 120 chars) — S1-Z5", () => {

@@ -154,6 +154,9 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
       // too becomes a notice rather than an SDK error.
       impact: ratingParam(MCP_PARAM_DESCRIPTIONS.impact),
       uncertainty: ratingParam(MCP_PARAM_DESCRIPTIONS.uncertainty),
+      // Draft (slice 2): served as a boolean; a wrong-type value is forwarded
+      // for the backend's lenient parser rather than failing the check.
+      draft: z.boolean().optional().catch((ctx) => ctx.input as boolean | undefined).describe(MCP_PARAM_DESCRIPTIONS.draft),
       // Rows take log_feedback's fields; the description points there instead
       // of repeating the per-field schema (slice 1, S1-Z4). A record, not a
       // bare object, so the SDK keeps every field for the /feedback forward.
@@ -174,7 +177,7 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
       idempotentHint: false,
       openWorldHint: true,
     },
-    async ({ recipe, supporting_evidence, verbosity, clusters, max_chars, decided_at, response_format, known_recipes, session_id, intent, agent_id, synthesize, impact, uncertainty, feedback, file }) => {
+    async ({ recipe, supporting_evidence, verbosity, clusters, max_chars, decided_at, response_format, known_recipes, session_id, intent, agent_id, synthesize, impact, uncertainty, draft, feedback, file }) => {
       if (!apiKey) {
         return {
           content: [{ type: "text" as const, text: "Error: SOUPNET_API_KEY not configured. Get a key from your Soup.net dashboard." }],
@@ -225,6 +228,7 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
           if (synthesize) formData.set("synthesize", "true");
           if (impact !== undefined) formData.set("impact", impact);
           if (uncertainty !== undefined) formData.set("uncertainty", uncertainty);
+          if (draft !== undefined) formData.set("draft", String(draft));
           formData.set("format", "json");
           // Wrap in a fresh Uint8Array so the BlobPart type is Uint8Array<ArrayBuffer>
           // rather than Node's Buffer<ArrayBufferLike> (which TS rejects as a
@@ -253,6 +257,7 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
           if (synthesize) params.set("synthesize", "true");
           if (impact !== undefined) params.set("impact", impact);
           if (uncertainty !== undefined) params.set("uncertainty", uncertainty);
+          if (draft !== undefined) params.set("draft", String(draft));
           params.set("format", "json");
 
           response = await fetch(`${backendUrl}/check?${params.toString()}`, {
@@ -540,6 +545,53 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
   // Recipe lookup by id (WT-3). Thin proxy to GET /recipes?ids=... — the
   // backend enforces the key's read scope and returns a uniform
   // not_found_or_unreadable marker for ids that don't resolve.
+
+  // ── verify_draft tool (drafts-and-triage slice 2) ────────────────────────
+  // Proxies to POST /recipes/:id/verify — same service, same rules, same
+  // uniform not-found answer as the remote tool.
+  server.tool(
+    "verify_draft",
+    MCP_TOOL_DESCRIPTIONS.verifyDraft,
+    {
+      recipe_id: z.string().describe(MCP_PARAM_DESCRIPTIONS.draftRecipeId),
+      supporting_evidence: z.string().describe(MCP_PARAM_DESCRIPTIONS.verificationEvidence),
+    },
+    {
+      title: "Verify a draft",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+    async ({ recipe_id, supporting_evidence }) => {
+      if (!apiKey) {
+        return {
+          content: [{ type: "text" as const, text: "Error: SOUPNET_API_KEY not configured. Get a key from your Soup.net dashboard." }],
+        };
+      }
+      try {
+        const res = await fetch(`${backendUrl}/recipes/${encodeURIComponent(recipe_id)}/verify`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({ supporting_evidence }),
+        });
+        const json = (await res.json()) as { ok: boolean; error?: string; data?: { recipeId: string; evidenceAdded: number } };
+        if (!json.ok || !json.data) {
+          return { content: [{ type: "text" as const, text: json.error ?? "Error: verification failed" }] };
+        }
+        const n = json.data.evidenceAdded;
+        return {
+          content: [{
+            type: "text" as const,
+            text: `Draft ${json.data.recipeId} is verified: it is now an ordinary recipe that collaborators can find, with your new evidence attached (${n} entr${n === 1 ? "y" : "ies"}).`,
+          }],
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: "text" as const, text: `Error verifying draft: ${message}` }] };
+      }
+    },
+  );
 
   server.tool(
     "get_recipes",

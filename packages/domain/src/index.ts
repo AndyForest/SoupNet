@@ -13,4 +13,5 @@ export * from "./feedback";
 export * from "./trace-move";
 export * from "./verbosity";
 export * from "./triage-ratings";
+export * from "./drafts";
 export * from "./search-query";

@@ -10,6 +10,7 @@
  * Measured served tools/list (build log §Slice 1 baseline):
  *   before slice 1 (2026-09-27): 13,670 bytes
  *   after slice 1 (2026-09-27):  12,074 bytes, with impact and uncertainty added
+ *   after slice 2 (2026-09-27):  13,064 bytes, with draft and verify_draft added (still under the cap)
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -199,5 +200,45 @@ describe("stdio check_recipe proxy forwarding", () => {
     const fb = calls.find((c) => c.url === `${BACKEND}/feedback`);
     const sent = JSON.parse(String(fb?.init?.body)) as { feedback: Array<Record<string, unknown>> };
     expect(sent.feedback[0]).toEqual(row);
+  });
+});
+
+describe("stdio drafts (slice 2)", () => {
+  const recipe = "As a backend maintainer working on drafts, I prefer drafts forwarded so that the proxy stays thin.";
+  const evidence = "The test says so.\n> \"forward it\"\n-- server.test.ts";
+
+  it("S2-B1 / DT-VIS-01: forwards draft to /check", async () => {
+    const calls = stubBackend();
+    await callTool("check_recipe", { recipe, supporting_evidence: evidence, draft: true });
+    expect(new URL(calls[0]!.url).searchParams.get("draft")).toBe("true");
+  });
+
+  it("sends no draft param when none was given, and forwards a wrong-type value for the backend to judge", async () => {
+    const calls = stubBackend();
+    await callTool("check_recipe", { recipe, supporting_evidence: evidence });
+    expect(new URL(calls[0]!.url).searchParams.has("draft")).toBe(false);
+    const result = await callTool("check_recipe", { recipe, supporting_evidence: evidence, draft: "yes" });
+    expect(result.isError).not.toBe(true);
+    expect(new URL(calls[1]!.url).searchParams.get("draft")).toBe("yes");
+  });
+
+  it("S2-B10: verify_draft proxies to POST /recipes/:id/verify with the evidence", async () => {
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(input), init });
+      return new Response(JSON.stringify({ ok: true, data: { recipeId: "11111111-1111-4111-8111-111111111111", draftState: "verified", evidenceAdded: 1 } }));
+    }));
+    const result = await callTool("verify_draft", { recipe_id: "11111111", supporting_evidence: evidence });
+    expect(calls[0]!.url).toBe(`${BACKEND}/recipes/11111111/verify`);
+    expect(calls[0]!.init?.method).toBe("POST");
+    expect(JSON.parse(String(calls[0]!.init?.body))).toEqual({ supporting_evidence: evidence });
+    const text = (result.content as Array<{ text: string }>)[0]!.text;
+    expect(text).toContain("is verified");
+  });
+
+  it("verify_draft relays the backend's refusal verbatim", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ok: false, error: "x: not_found_or_unreadable — nope" }), { status: 404 })));
+    const result = await callTool("verify_draft", { recipe_id: "x", supporting_evidence: evidence });
+    expect((result.content as Array<{ text: string }>)[0]!.text).toBe("x: not_found_or_unreadable — nope");
   });
 });

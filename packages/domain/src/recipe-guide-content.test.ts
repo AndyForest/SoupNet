@@ -289,6 +289,27 @@ describe("BRIEFING.build — surface profiles (cold-start v2 Phase B)", () => {
     const indexLine = text.split("\n").find((l) => l.startsWith("    Index: "));
     expect(indexLine).toBe("    Index: 1 recipe · newest judgment 2026-08-23");
   });
+
+  it("DT-VIS-09: the person's own drafts are a separate line, never part of the Index count", () => {
+    const statGroups: BriefingGroup[] = [
+      { ...groups[0]!, stats: { recipeCount: 3, authorCount: 1, ownDraftsAwaitingReview: 2 } },
+    ];
+    const text = BRIEFING.build(thinInput({ groups: statGroups }));
+    const lines = text.split("\n");
+    expect(lines.find((l) => l.startsWith("    Index: "))).toBe("    Index: 3 recipes");
+    expect(lines.find((l) => l.startsWith("    Drafts: "))).toBe(
+      "    Drafts: 2 unverified drafts about your user await their review (only they and their agents see them)",
+    );
+  });
+
+  it("a book holding only the person's drafts gets the Drafts line and no Index line", () => {
+    const statGroups: BriefingGroup[] = [
+      { ...groups[0]!, stats: { recipeCount: 0, authorCount: 0, ownDraftsAwaitingReview: 1 } },
+    ];
+    const text = BRIEFING.build(thinInput({ groups: statGroups }));
+    expect(text).not.toContain("    Index: ");
+    expect(text).toContain("    Drafts: 1 unverified draft about your user awaits their review");
+  });
 });
 
 describe("buildCorpusContextSection", () => {

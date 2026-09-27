@@ -14,7 +14,7 @@ import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { authenticateKey } from "../authz";
 import type { Principal } from "../authz";
-import { HTML_ACCEPT_TYPES, renderCheckResponseMarkdown, fenceCheckResponseMarkdown, parseVerbosity, renderRatingsMarkdown } from "@soupnet/domain";
+import { HTML_ACCEPT_TYPES, renderCheckResponseMarkdown, fenceCheckResponseMarkdown, parseVerbosity, renderRatingsMarkdown, isShownDraftState, parseDraftFlag } from "@soupnet/domain";
 import type { CheckResponseJson } from "@soupnet/domain";
 import type { Recipe } from "@soupnet/contracts";
 import { TRIAGE_RATING_VALUES } from "@soupnet/contracts";
@@ -146,6 +146,10 @@ export const CHECK_PARAMS = [
   // impact, which travels as feedback_impact (DT-RAT-10).
   { field: "impact",      wire: "impact",            aliases: [],              roundTrip: "carry" },
   { field: "uncertainty", wire: "uncertainty",       aliases: [],              roundTrip: "carry" },
+  // Draft (drafts-and-triage slice 2): true | false, default false. A property
+  // of the recipe being checked, so it carries like the ratings: re-checking
+  // from the page must not quietly publish what was deposited as a draft.
+  { field: "draft",       wire: "draft",             aliases: [],              roundTrip: "carry" },
   // Premium opt-in behavior flag — carries like the other intent-preserving
   // params (agent_id, decided_at) so an opted-in caller keeps synthesis on
   // across the page's re-check form and Copy-URL round-trips, rather than
@@ -263,11 +267,14 @@ function buildJsonResponse(
             recipe: result.traceText,
             impact: result.ratings?.impact ?? null,
             uncertainty: result.ratings?.uncertainty ?? null,
+            // Present only when the deposit is an unpublished draft (slice 2).
+            ...(isShownDraftState(result.draftState) ? { draftState: result.draftState } : {}),
           } satisfies Recipe,
         }
         : {}),
       ...(result.existingRecipe ? { existingRecipe: true } : {}),
       ...(result.ratingsNotice ? { ratingsNotice: result.ratingsNotice } : {}),
+      ...(result.draftNotice ? { draftNotice: result.draftNotice } : {}),
       searchMode: result.searchMode ?? "semantic",
       clustered: result.clustered ?? false,
       results: enriched.map((r): Recipe => {
@@ -282,6 +289,8 @@ function buildJsonResponse(
           return {
             recipeId: r.id,
             known: true,
+            // Labelled in every appearance, stubs included (DT-VIS-06).
+            ...(isShownDraftState(r.draftState) ? { draftState: r.draftState } : {}),
             // ONE similarity vocabulary (operator ruling 2026-07-18, recipe
             // ef245b63): the raw cosine, nothing else.
             similarity: r.semanticScore ?? undefined,
@@ -291,6 +300,9 @@ function buildJsonResponse(
         return {
           recipeId: r.id,
           recipe: r.claimText,
+          // The viewer's own unpublished draft, labelled (DT-VIS-06); no one
+          // else's reaches a result set.
+          ...(isShownDraftState(r.draftState) ? { draftState: r.draftState } : {}),
           createdAt: r.createdAt,
           // Recipe-book id + name only — the description lives in the
           // briefing (operator ruling 2026-07-18: "It's in the briefing").
@@ -734,12 +746,16 @@ function renderPage(
     const ratingsHtml = ratingsText
       ? `\n    <p id="check-ratings" style="margin:0.25rem 0;font-size:0.9em">${esc(ratingsText).replace(/\n/g, "<br>")}</p>`
       : "";
+    // Draft notice (slice 2): who can see a draft and how it gets verified.
+    const draftHtml = result.draftNotice
+      ? `\n    <p id="check-draft" style="margin:0.25rem 0;font-size:0.9em">${esc(result.draftNotice)}</p>`
+      : "";
 
     nextStepsHtml = `
   <section id="next-steps" style="background:#f0efe3;padding:0.75rem 1rem;border-radius:4px;margin:0.5rem 0">
     <p style="margin:0.25rem 0"><strong>Your recipe was checked as #${esc(result.traceId)}</strong>
     <button id="copy-md-btn" style="font-size:0.85em;padding:3px 10px;margin-left:1em;cursor:pointer">Copy results for AI agent</button>
-    <button id="copy-json-btn" style="font-size:0.85em;padding:3px 10px;margin-left:0.5em;cursor:pointer">Copy as JSON</button></p>${ratingsHtml}
+    <button id="copy-json-btn" style="font-size:0.85em;padding:3px 10px;margin-left:0.5em;cursor:pointer">Copy as JSON</button></p>${ratingsHtml}${draftHtml}
     <script nonce="${nonce ?? ""}">
     document.getElementById('copy-md-btn').addEventListener('click',function(){var btn=this;var txt=document.getElementById('md-result').textContent;function ok(){btn.textContent='Copied!';setTimeout(function(){btn.textContent='Copy results for AI agent'},2000)}try{navigator.clipboard.writeText(txt).then(ok).catch(function(){var ta=document.createElement('textarea');ta.value=txt;ta.style.position='fixed';ta.style.left='-9999px';document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);ok()})}catch(e){console.error(e);btn.textContent='Copy failed: '+e.message}});
     document.getElementById('copy-json-btn').addEventListener('click',function(){var btn=this;btn.textContent='Fetching...';var url='/check${jsonQs.replace(/'/g, "\\'")}';try{var blob=fetch(url).then(function(r){return r.text()}).then(function(t){return new Blob([t],{type:'text/plain'})});navigator.clipboard.write([new ClipboardItem({'text/plain':blob})]).then(function(){btn.textContent='Copied!';setTimeout(function(){btn.textContent='Copy as JSON'},2000)}).catch(function(e){fetch(url).then(function(r){return r.text()}).then(function(j){var ta=document.createElement('textarea');ta.value=j;ta.style.position='fixed';ta.style.left='-9999px';document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);btn.textContent='Copied!';setTimeout(function(){btn.textContent='Copy as JSON'},2000)}).catch(function(e2){console.error(e2);btn.textContent='Copy failed: '+e2.message})})}catch(e){console.error(e);btn.textContent='Copy failed: '+e.message}});
@@ -1117,6 +1133,8 @@ function renderPage(
         ${renderRatingOptions(params.uncertainty)}
       </select>
 
+      <label for="draft"><input type="checkbox" id="draft" name="draft" value="true"${parseDraftFlag(params.draft).draft ? " checked" : ""}> Deposit as a draft &mdash; the person could not be asked; only they and their agents see it until they verify it</label>
+
       <label for="mix">Mix traces (trace_id:weight, comma-separated)</label>
       <input type="text" id="mix" name="mix" placeholder="4821:1.0, 3102:0.5, 3450:-0.3">
     </details>
@@ -1281,6 +1299,7 @@ async function handleCheck(
       knownRecipeIds: knownRecipeIds.size > 0 ? [...knownRecipeIds] : undefined,
       impact: params.impact,
       uncertainty: params.uncertainty,
+      draft: params.draft,
     });
   } else if (principal && params.filter && !params.trace) {
     // The sanctioned no-logging path: filter (alias f) with no recipe runs a

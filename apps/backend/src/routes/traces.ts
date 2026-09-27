@@ -28,6 +28,13 @@ import {
   readableTraceFor,
   roleInBookOfTrace,
   isOwnerOrAdmin,
+  isPublishedDraftState,
+  mayResolveDraft,
+  publishedTrace,
+  traceReadableById,
+  resolveDraft,
+  resolutionForReaction,
+  SHARED_AUDIENCE,
   inBooks,
 } from "../authz";
 
@@ -124,8 +131,9 @@ traces.get("/map", async (c) => {
         count(*)::int AS n,
         COALESCE(max(created_at)::text, '') AS newest,
         COALESCE(max(updated_at)::text, '') AS touched
-      FROM claimnet.traces
-      WHERE ${inBooks(sql`group_id`, groupIds)}
+      FROM claimnet.traces t
+      WHERE ${inBooks(sql`t.group_id`, groupIds)}
+        AND ${publishedTrace("t")}
       GROUP BY group_id
     `);
     const perBook = new Map(
@@ -160,6 +168,11 @@ traces.get("/map", async (c) => {
   const result = await runSearchPipeline({
     db,
     groupIds,
+    // The map is a shared surface: drafts are out of the pool for every
+    // viewer, the person included (build log open question 10, DT-VIS-08),
+    // BEFORE clustering — so centroids, exemplars, positions, and the
+    // viewer-independent layout cache never see one (RP-24, RP-44).
+    audience: SHARED_AUDIENCE,
     query,
     k: expand ? undefined : k,
     maxChars,
@@ -328,7 +341,8 @@ traces.get("/", async (c) => {
         COALESCE(rc.ref_count, 0)::int AS "referenceCount",
         g.name AS "groupName",
         ak.label AS "apiKeyLabel",
-        u.email AS "userEmail"
+        u.email AS "userEmail",
+        t.draft_state AS "draftState"
       FROM claimnet.traces t
       LEFT JOIN claimnet.groups g ON g.id = t.group_id
       LEFT JOIN claimnet.api_keys ak ON ak.id = t.api_key_id
@@ -344,6 +358,9 @@ traces.get("/", async (c) => {
         WHERE tr.trace_id = t.id
       ) rc ON true
       WHERE t.group_id = ${groupId}::uuid
+        -- Others' unpublished drafts are absent; the viewer's own are listed
+        -- with their draftState (RP-25).
+        AND ${traceReadableById("t", user.id)}
       ORDER BY t.created_at DESC
       LIMIT ${limit}
       OFFSET ${offset}
@@ -369,7 +386,8 @@ traces.get("/", async (c) => {
       COALESCE(ec.evidence_count, 0)::int AS "evidenceCount",
       COALESCE(rc.ref_count, 0)::int AS "referenceCount",
       g.name AS "groupName",
-      ak.label AS "apiKeyLabel"
+      ak.label AS "apiKeyLabel",
+      t.draft_state AS "draftState"
     FROM claimnet.traces t
     LEFT JOIN claimnet.groups g ON g.id = t.group_id
     LEFT JOIN claimnet.api_keys ak ON ak.id = t.api_key_id
@@ -504,14 +522,33 @@ traces.put("/:id/reaction", async (c) => {
     );
   }
 
-  await db.execute(sql`
-    INSERT INTO claimnet.trace_reactions (trace_id, user_id, reaction)
-    VALUES (${traceId}::uuid, ${user.id}::uuid, ${reaction})
-    ON CONFLICT (trace_id, user_id)
-    DO UPDATE SET reaction = ${reaction}, updated_at = NOW()
-  `);
+  // The reaction row and, when the reactor is the person a draft is about,
+  // the draft's one-way resolution land together (DT-VER-01, DT-VER-02). For
+  // anyone else, or a recipe that is not an unverified draft, resolveDraft
+  // changes nothing and the reaction is recorded like any other.
+  const resolution = resolutionForReaction(reaction);
+  const resolved = await db.transaction(async (tx) => {
+    await tx.execute(sql`
+      INSERT INTO claimnet.trace_reactions (trace_id, user_id, reaction)
+      VALUES (${traceId}::uuid, ${user.id}::uuid, ${reaction})
+      ON CONFLICT (trace_id, user_id)
+      DO UPDATE SET reaction = ${reaction}, updated_at = NOW()
+    `);
+    if (!resolution) return false;
+    return (await resolveDraft(tx, { traceId, actorUserId: user.id, resolution, byKeyId: null })) !== null;
+  });
 
-  return c.json({ ok: true, data: { reaction } });
+  if (resolved && resolution) {
+    await writeAudit(db, {
+      actorUserId: user.id,
+      action: resolution === "verified" ? "recipe.draft_verified" : "recipe.draft_rejected",
+      targetType: "trace",
+      targetId: traceId,
+      metadata: { via: "reaction", reaction },
+    });
+  }
+
+  return c.json({ ok: true, data: { reaction, ...(resolved && resolution ? { draftState: resolution } : {}) } });
 });
 
 traces.delete("/:id/reaction", async (c) => {
@@ -587,21 +624,17 @@ traces.get("/:id", async (c) => {
 
   const isGroupAdmin = isOwnerOrAdmin(access.role);
   const isSystem = user.role === "system";
-  const canDelete = isTraceOwner || isGroupAdmin || isSystem;
+  // An unpublished draft is managed by the person it is about alone
+  // (DT-VIS-15); roleInBookOfTrace answers "not found" to anyone else.
+  const canDelete = isPublishedDraftState(access.draftState)
+    ? isTraceOwner || isGroupAdmin || isSystem
+    : access.isDraftSubject;
   // Source gate only. Whether a given DESTINATION book will accept the recipe
   // is decided at move time against that book's membership — the UI can't know
   // it here, and asking would leak which books the trace could be moved into.
   const canMove = canDelete;
-
-  // Triage ratings (drafts-and-triage slice 1): the depositing agent's own
-  // impact and uncertainty, null = not rated. Read only after the gate above
-  // passed, so they are visible exactly where the recipe already is. The
-  // detail row itself comes from the authz module, which slice 1 leaves
-  // untouched, hence the separate read.
-  const ratingRows = await db.execute(sql`
-    SELECT impact, uncertainty FROM claimnet.traces WHERE id = ${traceId}::uuid
-  `);
-  const ratings = (ratingRows as unknown as Array<{ impact: string | null; uncertainty: string | null }>)[0];
+  // The person the draft is about may verify or reject it with a reaction.
+  const canResolveDraft = mayResolveDraft(access);
 
   // Get evidence. The trace_evidence.stance column is preserved for legacy
   // rows but no longer surfaced — the LLM author's stance assertion at write
@@ -656,10 +689,9 @@ traces.get("/:id", async (c) => {
     ok: true,
     data: {
       ...trace,
-      impact: ratings?.impact ?? null,
-      uncertainty: ratings?.uncertainty ?? null,
       canDelete,
       canMove,
+      canResolveDraft,
       evidence: evidenceRows,
       references: referenceRows,
       evidenceReferences: evidenceRefRows,

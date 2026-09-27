@@ -28,13 +28,22 @@ import { clusterResults, mmrClusters } from "./clustering.service";
 import type { ClusterResult } from "./clustering.service";
 import { embedQuery, getEmbeddingModelId } from "../lib/embeddings/provider";
 import { StageTimer } from "../lib/stage-timer";
-import { inBooks } from "../authz";
+import { inBooks, traceVisibleTo, SHARED_AUDIENCE } from "../authz";
+import type { DraftAudience } from "../authz";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export interface SearchPipelineParams {
   db: PostgresJsDatabase;
   groupIds: string[];
+  /** Who the result set is for (slice 2 of the drafts work): a viewer, whose
+   *  own unverified drafts join their results labelled, or SHARED_AUDIENCE
+   *  for shared surfaces (the map, briefing exemplars), where no draft ever
+   *  appears. Omitted means SHARED_AUDIENCE: a caller that forgets gets the
+   *  strictest view, never someone's draft. The condition itself comes from
+   *  the authz module (draft-sql.ts) and is applied in SQL before counting
+   *  and clustering. */
+  audience?: DraftAudience | undefined;
   /** Recipe text query — when provided, runs semantic vector search. When absent, operates on full corpus. */
   query?: string | undefined;
   /** Number of clusters (explicit k). */
@@ -279,6 +288,8 @@ async function fetchCorpusTraces(
   db: PostgresJsDatabase,
   params: {
     groupIds: string[];
+    /** Draft visibility for this result set (authz/draft-sql.ts). */
+    audience: DraftAudience;
     traceIds?: string[] | undefined;
     /** Structured recipe-search filters (qualifier-only queries land here —
      *  no semantic text means corpus mode, ordered by judgment date). */
@@ -289,6 +300,9 @@ async function fetchCorpusTraces(
 ): Promise<{ traces: CorpusTrace[]; total: number }> {
   const conditions = [
     inBooks(sql`t.group_id`, params.groupIds),
+    // Rows and the honest total share this list, so a hidden draft is in
+    // neither (RP-41).
+    traceVisibleTo("t", params.audience),
   ];
 
   if (hasStructuredFilters(params.structured)) {
@@ -371,6 +385,7 @@ export async function runSearchPipeline(
     const searchResponse = await timer.time("search", () => hybridSearch(db, {
       recipeText: params.query!,
       groupIds,
+      audience: params.audience ?? SHARED_AUDIENCE,
       limit: perPage,
       offset,
       excludeTraceId: params.excludeTraceId,
@@ -406,6 +421,7 @@ export async function runSearchPipeline(
     // design-thinking.md §"Understanding group dynamics".
     const corpus = await fetchCorpusTraces(db, {
       groupIds,
+      audience: params.audience ?? SHARED_AUDIENCE,
       traceIds: params.traceIds,
       structured: params.structured,
       limit: params.corpusLimit,

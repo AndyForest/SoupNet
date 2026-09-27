@@ -2,6 +2,7 @@
  * /recipes — recipe lookup by id (API-key Bearer auth).
  *
  * GET /recipes?ids=<uuid>[,<uuid>...]   (comma- or whitespace-separated, max 20)
+ * POST /recipes/:id/verify               (verify a draft; the verify_draft twin)
  *
  * The REST twin of the MCP get_recipes tool — same service, same ACL, same
  * marker semantics (services/recipe-lookup.service.ts). Deliberately shaped so
@@ -28,6 +29,7 @@ import {
   parseRecipeIds,
 } from "../services/recipe-lookup.service";
 import { rateLimit, extractMcpBearerKey, getClientIp, hashApiKey } from "../middleware/rate-limit";
+import { verifyDraft, describeVerifyResult } from "../services/draft-verify.service";
 
 // Per-IP: 1000/hour (defense in depth, same shape as /mcp's per-IP limiter).
 const recipesIpRateLimit = rateLimit({ max: 1000, windowMs: 60 * 60 * 1000 });
@@ -80,8 +82,59 @@ recipes.get("/", recipesIpRateLimit, recipesPerKeyRateLimit, async (c) => {
     );
   }
 
-  const entries = await lookupRecipes(db, ids, validated.readGroupIds);
+  const entries = await lookupRecipes(db, ids, { readGroupIds: validated.readGroupIds, userId: validated.userId });
   return c.json({ ok: true, data: { recipes: entries } });
+});
+
+// POST /recipes/:id/verify — verify a draft with the person's answer
+// (drafts-and-triage slice 2). The REST twin of the MCP verify_draft tool;
+// every rule lives in services/draft-verify.service.ts. Body (JSON):
+// { "supporting_evidence": "<interpretation>, then > the person's answer quoted, then -- where they said it" }
+// (`evidence` is accepted as an alias). A draft this key cannot read by id is
+// the same 404 as a random id, body included apart from the echoed id.
+recipes.post("/:id/verify", recipesIpRateLimit, recipesPerKeyRateLimit, async (c) => {
+  const auth = c.req.header("Authorization") ?? "";
+  const match = /^Bearer\s+(.+)$/i.exec(auth);
+  if (!match) {
+    return c.json({ ok: false, error: "Authorization: Bearer <api-key> required" }, 401);
+  }
+  const db = getDb();
+  const principal = await authenticateKey(db, match[1]!.trim());
+  if (!principal) {
+    return c.json({ ok: false, error: "Invalid or expired API key" }, 401);
+  }
+
+  let body: Record<string, unknown>;
+  try {
+    body = (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return c.json({ ok: false, error: "Body must be JSON: { \"supporting_evidence\": \"...\" }" }, 400);
+  }
+  const raw = body["supporting_evidence"] ?? body["evidence"];
+  const evidence = typeof raw === "string" ? raw : "";
+
+  const result = await verifyDraft(db, { principal, recipeId: c.req.param("id") ?? "", evidence });
+  switch (result.status) {
+    case "verified":
+      return c.json({
+        ok: true,
+        data: {
+          recipeId: result.recipeId,
+          draftState: result.draftState,
+          evidenceAdded: result.evidenceAdded,
+          verifiedByDepositingKey: result.verifiedByDepositingKey,
+        },
+      });
+    case "not_found_or_unreadable":
+      return c.json({ ok: false, error: describeVerifyResult(result), recipeId: result.recipeId, status: result.status }, 404);
+    case "ambiguous_prefix":
+      return c.json({ ok: false, error: describeVerifyResult(result), recipeId: result.recipeId, status: result.status, candidates: result.candidates }, 400);
+    case "not_a_draft":
+    case "already_resolved":
+      return c.json({ ok: false, error: describeVerifyResult(result), recipeId: result.recipeId, status: result.status }, 409);
+    case "refused":
+      return c.json({ ok: false, error: result.error, recipeId: result.recipeId, status: result.status }, 400);
+  }
 });
 
 export { recipes as recipeRoutes };

@@ -26,7 +26,7 @@ import {
 } from "@soupnet/db";
 import { getDb } from "../db";
 import { parseEvidenceMarkdown } from "./evidence-parser";
-import { inBooks } from "../authz";
+import { inBooks, traceVisibleTo } from "../authz";
 import type { Principal } from "../authz";
 import {
   enqueueEmbedding,
@@ -39,8 +39,9 @@ import type { EvidenceSearchResult } from "./vector-search.service";
 import { scoreFormatAdherence } from "./format-adherence";
 import { runSearchPipeline } from "./search-pipeline";
 import { StageTimer } from "../lib/stage-timer";
-import { DEFAULT_RANKING, RANKING_ALGORITHM_VERSION, parseSearchQuery, AUTHOR_ME, buildOwnExcludedNote, parseTriageRating, parseTriageRatings, repeatRatingsNotice } from "@soupnet/domain";
+import { DEFAULT_RANKING, RANKING_ALGORITHM_VERSION, parseSearchQuery, AUTHOR_ME, buildOwnExcludedNote, parseTriageRating, parseTriageRatings, repeatRatingsNotice, parseDraftFlag, draftDepositNotice, isShownDraftState } from "@soupnet/domain";
 import type { CandidateSignals, VerbositySteer, ParsedSearchQuery, TriageRatings } from "@soupnet/domain";
+import type { DraftState } from "@soupnet/contracts";
 import type { StructuredTraceFilters } from "./vector-search.service";
 import { resolveIntent, fetchIntentShownIds, recordIntentShown } from "./intent.service";
 import type { IntentResolution } from "./intent.service";
@@ -152,6 +153,12 @@ export interface SubmitAndSearchParams {
    *  recipe for display and triage; never passed to the search pipeline. */
   impact?: unknown;
   uncertainty?: unknown;
+  /** Deposit as a draft (drafts-and-triage slice 2): true stores the recipe
+   *  `unverified`, visible only to the key's user and their agents until
+   *  verified. A draft deposited now is always about the key's own user
+   *  (on-behalf-of is slice 4). Raw value: parsed leniently, an unrecognized
+   *  value taken as draft with a notice (parseDraftFlag). */
+  draft?: unknown;
 }
 
 export interface SearchResultItem {
@@ -223,6 +230,13 @@ export interface SubmitAndSearchResult {
   existingRecipe?: boolean | undefined;
   /** Why a rating sent on this check was not applied. */
   ratingsNotice?: string | undefined;
+  /** The deposit's draft state as stored (slice 2): on an identical repeat,
+   *  the earlier recipe's. Absent for a recipe that is not an unpublished
+   *  draft (never a draft, or verified). */
+  draftState?: DraftState | undefined;
+  /** Who can see a new draft and how it gets verified, or the state an
+   *  identical repeat found (draftDepositNotice). */
+  draftNotice?: string | undefined;
   formatWarning?: string | undefined;
   results: SearchResultItem[];
   /** Evidence from other recipes that's topically related to the checked recipe */
@@ -319,7 +333,7 @@ interface InsertEvidenceOptions {
   } | undefined;
 }
 
-async function insertEvidenceEntries(opts: InsertEvidenceOptions): Promise<void> {
+export async function insertEvidenceEntries(opts: InsertEvidenceOptions): Promise<void> {
   const { db, traceId, traceText, apiKeyId, groupId, entries, stance, file } = opts;
 
   for (let i = 0; i < entries.length; i++) {
@@ -554,6 +568,11 @@ export async function submitAndSearch(
   const requestedRatings = parseTriageRatings({ impact: params.impact, uncertainty: params.uncertainty });
   let storedRatings: TriageRatings = requestedRatings.ratings;
 
+  // 1g. Draft flag (slice 2): capture-only like the ratings. An
+  // unrecognized value is taken as a draft (the private side) with a notice.
+  const requestedDraft = parseDraftFlag(params.draft);
+  let storedDraftState: string | null = requestedDraft.draft ? "unverified" : null;
+
   // 2. Parse evidence
   const forEntries = parseEvidenceMarkdown(params.evidenceFor);
   // evidence_against removed from ingest — see docs/architecture/embedding-test-results.md
@@ -591,8 +610,8 @@ export async function submitAndSearch(
     // Try to insert — unique constraint on (api_key_id, group_id, claim_text_hash)
     // prevents duplicates from the same agent + group
     const traceRows = await tx.execute(sql`
-      INSERT INTO claimnet.traces (user_id, group_id, api_key_id, claim_text, claim_text_hash, format_adherence_score, decided_at, session_id, impact, uncertainty)
-      VALUES (${userId}::uuid, ${groupId}::uuid, ${keyId}::uuid, ${params.traceText}, ${claimTextHash}, ${adherence.score}, ${decidedAt ? decidedAt.toISOString() : null}::timestamptz, ${session.sessionId}, ${requestedRatings.ratings.impact}, ${requestedRatings.ratings.uncertainty})
+      INSERT INTO claimnet.traces (user_id, group_id, api_key_id, claim_text, claim_text_hash, format_adherence_score, decided_at, session_id, impact, uncertainty, draft_state)
+      VALUES (${userId}::uuid, ${groupId}::uuid, ${keyId}::uuid, ${params.traceText}, ${claimTextHash}, ${adherence.score}, ${decidedAt ? decidedAt.toISOString() : null}::timestamptz, ${session.sessionId}, ${requestedRatings.ratings.impact}, ${requestedRatings.ratings.uncertainty}, ${storedDraftState})
       ON CONFLICT (api_key_id, group_id, claim_text_hash) DO NOTHING
       RETURNING id
     `);
@@ -669,16 +688,22 @@ export async function submitAndSearch(
       // Its ratings come back too: first write wins, so the repeat's
       // ratings are reported as not applied rather than written over the
       // stored ones (build log open question 4; DT-RAT-08).
+      // Its draft state comes back as well (build log open question 5): only
+      // this key can reach this row (the key is part of the unique index), so
+      // it is not an existence oracle for anyone else; the depositor learns
+      // the state its own earlier check left. A draft stays a draft here:
+      // re-checking is not verification (DT-VIS-12).
       const existingRows = await tx.execute(sql`
-        SELECT id, impact, uncertainty FROM claimnet.traces
+        SELECT id, impact, uncertainty, draft_state AS "draftState" FROM claimnet.traces
         WHERE api_key_id = ${keyId}::uuid
           AND group_id = ${groupId}::uuid
           AND claim_text_hash = ${claimTextHash}
         LIMIT 1
       `);
-      const existing = (existingRows as unknown as Array<{ id: string; impact: string | null; uncertainty: string | null }>)[0];
+      const existing = (existingRows as unknown as Array<{ id: string; impact: string | null; uncertainty: string | null; draftState: string | null }>)[0];
       traceId = existing?.id;
       if (existing) {
+        storedDraftState = existing.draftState;
         // Stored values went through the same parser on the way in; parsing
         // again keeps the type honest without trusting the column blindly.
         storedRatings = {
@@ -738,6 +763,9 @@ export async function submitAndSearch(
   const pipelineResult = await runSearchPipeline({
     db,
     groupIds: effectiveReadGroupIds,
+    // The caller's own unverified drafts join their results, labelled and
+    // ranked as if they were not drafts; nobody else's do (DT-VIS-02, -06).
+    audience: { viewerUserId: userId },
     query: params.traceText,
     k: params.clusters,
     maxChars: params.maxChars,
@@ -793,6 +821,9 @@ export async function submitAndSearch(
       ...(requestedRatings.ratings.impact !== null || requestedRatings.ratings.uncertainty !== null
         ? { impact: requestedRatings.ratings.impact, uncertainty: requestedRatings.ratings.uncertainty }
         : {}),
+      // Whether THIS call asked for a draft (slice 2); the recipe's state is
+      // on the row. Absent for an ordinary check.
+      ...(requestedDraft.draft ? { draft: true } : {}),
       // OAuth client identity — segmentable cross-vendor column the day a
       // connector check arrives. Null for daily/scoped keys.
       ...(keyType === "oauth" && oauthClientId ? { oauthClientId } : {}),
@@ -875,6 +906,13 @@ export async function submitAndSearch(
     requestedRatings.notice,
     isExisting ? repeatRatingsNotice(requestedRatings.ratings, storedRatings) : undefined,
   ].filter(Boolean).join(" ") || undefined;
+  // A verified draft is an ordinary recipe on the wire; an unrecognized
+  // stored value never reaches it (it reads as unpublished everywhere).
+  const draftState = isShownDraftState(storedDraftState) ? storedDraftState : undefined;
+  const draftNotice = [
+    requestedDraft.notice,
+    draftDepositNotice({ storedState: storedDraftState, requestedDraft: requestedDraft.draft, existing: isExisting }),
+  ].filter(Boolean).join(" ") || undefined;
 
   return {
     traceId,
@@ -882,6 +920,8 @@ export async function submitAndSearch(
     ratings: storedRatings,
     existingRecipe: isExisting || undefined,
     ratingsNotice,
+    draftState,
+    draftNotice,
     formatWarning,
     results: pipelineResult.results,
     relatedEvidence: pipelineResult.relatedEvidence,
@@ -1108,6 +1148,9 @@ export async function searchWithoutLogging(
   const pipelineResult = await runSearchPipeline({
     db,
     groupIds: effectiveReadGroupIds,
+    // Own unverified drafts reach the caller's search only when an author
+    // qualifier admits their own recipes (MCP search excludes them by default).
+    audience: { viewerUserId: keyResult.userId },
     // Qualifier-only queries have no semantic text: corpus mode, judgment-date
     // ordering, structured predicates applied in fetchCorpusTraces.
     query: parsed.query.semanticText.length > 0 ? parsed.query.semanticText : undefined,
@@ -1131,9 +1174,12 @@ export async function searchWithoutLogging(
   let searchedOwnExcluded: number | undefined;
   if (pipelineResult.totalResults === 0 && effectiveReadGroupIds.length > 0) {
     try {
+      // Counted with the same draft condition as the results, so a
+      // collaborator's draft never moves N (RP-03).
       const scopeRows = await db.execute(sql`
-        SELECT count(*)::int AS n FROM claimnet.traces
-        WHERE ${inBooks(sql`group_id`, effectiveReadGroupIds)}
+        SELECT count(*)::int AS n FROM claimnet.traces t
+        WHERE ${inBooks(sql`t.group_id`, effectiveReadGroupIds)}
+          AND ${traceVisibleTo("t", { viewerUserId: keyResult.userId })}
       `);
       searchedCorpusSize = Number((scopeRows as unknown as Array<{ n: number }>)[0]?.n ?? 0);
       // Own-author honesty (cold-start v2 Phase A): the scope count includes
@@ -1143,9 +1189,10 @@ export async function searchWithoutLogging(
       // it bites instead of only in static tool copy.
       if (ownExcludedByDefault && searchedCorpusSize > 0) {
         const ownRows = await db.execute(sql`
-          SELECT count(*)::int AS n FROM claimnet.traces
-          WHERE ${inBooks(sql`group_id`, effectiveReadGroupIds)}
-            AND user_id = ${keyResult.userId}::uuid
+          SELECT count(*)::int AS n FROM claimnet.traces t
+          WHERE ${inBooks(sql`t.group_id`, effectiveReadGroupIds)}
+            AND t.user_id = ${keyResult.userId}::uuid
+            AND ${traceVisibleTo("t", { viewerUserId: keyResult.userId })}
         `);
         searchedOwnExcluded = Number((ownRows as unknown as Array<{ n: number }>)[0]?.n ?? 0);
       }

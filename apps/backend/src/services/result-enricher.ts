@@ -16,6 +16,7 @@
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import type { SearchResultItem } from "./trace.service";
+import { isPublishedDraftState } from "../authz";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -78,6 +79,11 @@ export interface EnrichedResult {
    *  render them as an id+percentage list beside the item ("stub, stub,
    *  full recipe": known cluster-mates stay visible). */
   knownClusterMembers?: Array<{ id: string; similarity: number }> | undefined;
+  /** The recipe's draft state when it is an unpublished draft (slice 2):
+   *  only ever the viewer's own, since callers pass ids from result sets the
+   *  draft condition already filtered. Absent on published recipes. Response
+   *  builders label it in both formats (DT-VIS-06). */
+  draftState?: string | undefined;
 }
 
 // ── Main function ────────────────────────────────────────────────────────────
@@ -96,14 +102,18 @@ export async function enrichResults(
 
   // 0. Load group info for all trace IDs
   const groupRows = await db.execute(sql`
-    SELECT t.id AS trace_id, g.id AS group_id, g.name AS group_name, g.description AS group_description
+    SELECT t.id AS trace_id, g.id AS group_id, g.name AS group_name, g.description AS group_description,
+           t.draft_state AS draft_state
     FROM claimnet.traces t
     JOIN claimnet.groups g ON g.id = t.group_id
     WHERE t.id IN (${traceIdsSql})
   `);
 
   const traceGroupMap = new Map<string, EnrichedRecipeBook>();
+  const draftStateMap = new Map<string, string>();
   for (const row of groupRows as unknown as Record<string, unknown>[]) {
+    const state = row["draft_state"] as string | null;
+    if (!isPublishedDraftState(state) && state) draftStateMap.set(row["trace_id"] as string, state);
     traceGroupMap.set(row["trace_id"] as string, {
       recipeBookId: row["group_id"] as string,
       name: row["group_name"] as string,
@@ -195,6 +205,7 @@ export async function enrichResults(
     evidence: traceEvidenceMap.get(r.id) ?? [],
     known: r.known,
     knownClusterMembers: r.knownClusterMembers,
+    draftState: draftStateMap.get(r.id),
   }));
 }
 
