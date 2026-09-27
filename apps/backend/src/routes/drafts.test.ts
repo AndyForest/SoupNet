@@ -757,7 +757,7 @@ describe.skipIf(!BASE || !canConnect())("drafts for the key's own user (drafts-a
     expect((await traceRow(d))?.["draft_state"]).toBe("unverified");
   });
 
-  it("[F79] after Pat is removed from a book, his reaction cannot publish his draft there: the missing-id 404, still a draft", async () => {
+  it("[F79] + ruling 25: after Pat is removed from a book, his reaction cannot publish his draft there; he, who can still read it, is told why; still a draft", async () => {
     const slug2 = `drafts-f79-${run}`;
     const created = await call(sam, "POST", "/recipe-books", { name: `Drafts F79 ${run}`, slug: slug2, organizationId: sam.orgId });
     const book2 = ((await created.json()) as { data?: { id: string } }).data?.id ?? "";
@@ -767,16 +767,23 @@ describe.skipIf(!BASE || !canConnect())("drafts for the key's own user (drafts-a
     expect((await call(sam, "DELETE", `/recipe-books/${book2}/members/${pat.userId}`)).status).toBe(200);
 
     for (const reaction of ["still_true", "wrong"]) {
+      // The draft's own person can read it (slice 3, build log ruling 25):
+      // an honest refusal naming the book, not the missing-id answer.
       const real = await call(pat, "PUT", `/traces/${d}/reaction`, { reaction });
-      const random = await call(pat, "PUT", `/traces/${RANDOM_UUID}/reaction`, { reaction });
-      expect(real.status, reaction).toBe(404);
-      expect(await real.text()).toBe(await random.text());
+      expect(real.status, reaction).toBe(403);
+      const body = (await real.json()) as { status: string; error: string };
+      expect(body.status).toBe("needs_write_access");
+      expect(body.error).toContain(`Drafts F79 ${run}`);
     }
     expect((await traceRow(d))?.["draft_state"]).toBe("unverified");
     const reactions = await sql`SELECT count(*)::int AS n FROM claimnet.trace_reactions WHERE trace_id = ${d}::uuid`;
     expect(Number(reactions[0]?.["n"])).toBe(0);
-    // Sam, the book's owner, still cannot see it.
+    // Sam, the book's owner, still cannot see it, and still gets the uniform 404 for the reaction.
     expect((await call(sam, "GET", `/traces/${d}`)).status).toBe(404);
+    const samReal = await call(sam, "PUT", `/traces/${d}/reaction`, { reaction: "still_true" });
+    const samRandom = await call(sam, "PUT", `/traces/${RANDOM_UUID}/reaction`, { reaction: "still_true" });
+    expect(samReal.status).toBe(404);
+    expect(await samReal.text()).toBe(await samRandom.text());
     // The detail page no longer offers Pat the resolve controls.
     const detail = (await jsonOf(await call(pat, "GET", `/traces/${d}`)))["data"] as { canResolveDraft?: boolean };
     expect(detail.canResolveDraft).toBe(false);

@@ -84,6 +84,12 @@ export interface EnrichedResult {
    *  draft condition already filtered. Absent on published recipes. Response
    *  builders label it in both formats (DT-VIS-06). */
   draftState?: string | undefined;
+  /** The agent's triage ratings, present only beside a `draftState` (slice
+   *  3, S3-AG2): the viewer's own draft, so its person's agents see what the
+   *  review queue sorts by. Null = not rated. Published rows never carry
+   *  them. Display only, never ranking. */
+  impact?: string | null | undefined;
+  uncertainty?: string | null | undefined;
 }
 
 // ── Main function ────────────────────────────────────────────────────────────
@@ -103,17 +109,23 @@ export async function enrichResults(
   // 0. Load group info for all trace IDs
   const groupRows = await db.execute(sql`
     SELECT t.id AS trace_id, g.id AS group_id, g.name AS group_name, g.description AS group_description,
-           t.draft_state AS draft_state
+           t.draft_state AS draft_state, t.impact AS impact, t.uncertainty AS uncertainty
     FROM claimnet.traces t
     JOIN claimnet.groups g ON g.id = t.group_id
     WHERE t.id IN (${traceIdsSql})
   `);
 
   const traceGroupMap = new Map<string, EnrichedRecipeBook>();
-  const draftStateMap = new Map<string, string>();
+  const draftStateMap = new Map<string, { state: string; impact: string | null; uncertainty: string | null }>();
   for (const row of groupRows as unknown as Record<string, unknown>[]) {
     const state = row["draft_state"] as string | null;
-    if (!isPublishedDraftState(state) && state) draftStateMap.set(row["trace_id"] as string, state);
+    if (!isPublishedDraftState(state) && state) {
+      draftStateMap.set(row["trace_id"] as string, {
+        state,
+        impact: (row["impact"] as string | null) ?? null,
+        uncertainty: (row["uncertainty"] as string | null) ?? null,
+      });
+    }
     traceGroupMap.set(row["trace_id"] as string, {
       recipeBookId: row["group_id"] as string,
       name: row["group_name"] as string,
@@ -205,7 +217,13 @@ export async function enrichResults(
     evidence: traceEvidenceMap.get(r.id) ?? [],
     known: r.known,
     knownClusterMembers: r.knownClusterMembers,
-    draftState: draftStateMap.get(r.id),
+    ...(draftStateMap.has(r.id)
+      ? {
+        draftState: draftStateMap.get(r.id)!.state,
+        impact: draftStateMap.get(r.id)!.impact,
+        uncertainty: draftStateMap.get(r.id)!.uncertainty,
+      }
+      : {}),
   }));
 }
 

@@ -39,6 +39,8 @@ import type { EvidenceSearchResult } from "./vector-search.service";
 import { scoreFormatAdherence } from "./format-adherence";
 import { runSearchPipeline } from "./search-pipeline";
 import { StageTimer } from "../lib/stage-timer";
+import { searchSelections } from "./search-selection";
+import { draftQueueUrl } from "../lib/key-remediation";
 import { DEFAULT_RANKING, RANKING_ALGORITHM_VERSION, parseSearchQuery, AUTHOR_ME, buildOwnExcludedNote, parseTriageRating, parseTriageRatings, repeatRatingsNotice, parseDraftFlag, draftDepositNotice, isShownDraftState } from "@soupnet/domain";
 import type { CandidateSignals, VerbositySteer, ParsedSearchQuery, TriageRatings } from "@soupnet/domain";
 import type { DraftState } from "@soupnet/contracts";
@@ -911,7 +913,9 @@ export async function submitAndSearch(
   const draftState = isShownDraftState(storedDraftState) ? storedDraftState : undefined;
   const draftNotice = [
     requestedDraft.notice,
-    draftDepositNotice({ storedState: storedDraftState, requestedDraft: requestedDraft.draft, existing: isExisting }),
+    // The queue link for this recipe (slice 3, S3-L6): the one URL the agent
+    // hands its person for review.
+    draftDepositNotice({ storedState: storedDraftState, requestedDraft: requestedDraft.draft, existing: isExisting, queueUrl: draftQueueUrl([traceId]) }),
   ].filter(Boolean).join(" ") || undefined;
 
   return {
@@ -964,7 +968,7 @@ const SEARCH_CORPUS_LIMIT = 200;
  * (an all-unresolved positive filter matches nothing: honest zero results,
  * no user-existence oracle beyond what shared-book membership already shows).
  */
-async function resolveStructuredFilters(
+export async function resolveStructuredFilters(
   db: PostgresJsDatabase,
   parsed: ParsedSearchQuery,
   ctx: { callerUserId: string; excludeOwnDefault: boolean },
@@ -992,11 +996,16 @@ async function resolveStructuredFilters(
   let includeUserIds: string[] | undefined;
   if (parsed.authors.kind === "listed") {
     includeUserIds = resolve(parsed.authors.values);
-  } else if (parsed.authors.kind === "surface-default" && ctx.excludeOwnDefault) {
+  } else if (excludesOwnByDefault(parsed, ctx.excludeOwnDefault)) {
     excludeUserIds.push(ctx.callerUserId);
   }
   // authors.kind === "anyone": no author filter, and the surface default is
-  // explicitly overridden.
+  // explicitly overridden. is:draft overrides it too (below).
+
+  // is:draft, -is:draft, impact:, uncertainty: (drafts-and-triage slice 3):
+  // selections built outside the ranking files and ANDed in as opaque
+  // predicates, so they only ever remove rows (services/search-selection.ts).
+  const selections = searchSelections(parsed, ctx.callerUserId);
 
   return {
     lexicalGroups: parsed.lexicalGroups.length > 0 ? parsed.lexicalGroups : undefined,
@@ -1005,7 +1014,19 @@ async function resolveStructuredFilters(
     excludeUserIds: excludeUserIds.length > 0 ? excludeUserIds : undefined,
     decidedAfter: parsed.after,
     decidedBefore: parsed.before,
+    selections: selections.length > 0 ? selections : undefined,
   };
+}
+
+/**
+ * Whether the surface's exclude-own default applies to this query: only
+ * when the surface has one (MCP search), no positive author: qualifier was
+ * written, and the query is not is:draft. Every draft a viewer can list is
+ * their own (slice 3), so is:draft lifts the default the way author: does,
+ * or it would always return nothing (build log ruling 24, recipe 303e17cf).
+ */
+function excludesOwnByDefault(parsed: ParsedSearchQuery, surfaceExcludesOwn: boolean): boolean {
+  return surfaceExcludesOwn && parsed.authors.kind === "surface-default" && parsed.isDraft !== true;
 }
 
 export interface SearchOnlyParams {
@@ -1102,8 +1123,7 @@ export async function searchWithoutLogging(
   });
   // Whether the surface default (not an explicit author: qualifier) excluded
   // the caller's own recipes — drives the zero-result honesty disclosure.
-  const ownExcludedByDefault =
-    parsed.query.authors.kind === "surface-default" && (params.excludeOwnDefault ?? false);
+  const ownExcludedByDefault = excludesOwnByDefault(parsed.query, params.excludeOwnDefault ?? false);
 
   // Session + known-set: identical rendering-only semantics to the check
   // path's 5b — client-declared ids ∪ the session's deposits ∪ what the

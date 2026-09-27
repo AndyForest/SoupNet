@@ -13,6 +13,7 @@
  * resulting Principal and never the token. See authz/key-auth.ts.
  */
 
+import { ownDraftFields } from "../lib/own-draft-fields";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
@@ -1266,7 +1267,7 @@ export function buildMcpJsonResponse(
           recipeId: r.id,
           known: true,
           // Labelled in every appearance, stubs included (DT-VIS-06).
-          ...(isShownDraftState(r.draftState) ? { draftState: r.draftState } : {}),
+          ...ownDraftFields(r),
           similarity: r.semanticScore ?? undefined,
           ...(r.clusterSize ? { clusterSize: r.clusterSize } : {}),
         };
@@ -1277,7 +1278,7 @@ export function buildMcpJsonResponse(
         recipe: r.claimText,
         // The viewer's own unpublished draft, labelled (DT-VIS-06); no one
         // else's reaches a result set.
-        ...(isShownDraftState(r.draftState) ? { draftState: r.draftState } : {}),
+        ...ownDraftFields(r),
         createdAt: r.createdAt,
         // Recipe-book id + name only — the description lives in the briefing
         // (operator ruling 2026-07-18).

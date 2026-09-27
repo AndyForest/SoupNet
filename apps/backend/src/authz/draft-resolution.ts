@@ -35,7 +35,13 @@ import type { ResolveAuthority } from "./roles";
 /** Anything that can run a statement: the pool or a transaction. */
 type Executor = Pick<PostgresJsDatabase, "execute">;
 
-export type DraftResolution = "verified" | "rejected";
+/**
+ * Where a resolution leaves a draft. `not_chosen` (slice 3) is the review
+ * queue's third action: the option was viable and lost, which is not the
+ * same as `wrong`. It has no reaction; the reaction vocabulary is unchanged
+ * (build log open question 6).
+ */
+export type DraftResolution = "verified" | "rejected" | "not_chosen";
 
 /**
  * Which resolution a human reaction writes, if any: `still_true` verifies,

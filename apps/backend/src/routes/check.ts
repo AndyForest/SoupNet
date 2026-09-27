@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { ownDraftFields } from "../lib/own-draft-fields";
 import type { Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { Next } from "hono";
@@ -290,7 +291,7 @@ function buildJsonResponse(
             recipeId: r.id,
             known: true,
             // Labelled in every appearance, stubs included (DT-VIS-06).
-            ...(isShownDraftState(r.draftState) ? { draftState: r.draftState } : {}),
+            ...ownDraftFields(r),
             // ONE similarity vocabulary (operator ruling 2026-07-18, recipe
             // ef245b63): the raw cosine, nothing else.
             similarity: r.semanticScore ?? undefined,
@@ -302,7 +303,7 @@ function buildJsonResponse(
           recipe: r.claimText,
           // The viewer's own unpublished draft, labelled (DT-VIS-06); no one
           // else's reaches a result set.
-          ...(isShownDraftState(r.draftState) ? { draftState: r.draftState } : {}),
+          ...ownDraftFields(r),
           createdAt: r.createdAt,
           // Recipe-book id + name only — the description lives in the
           // briefing (operator ruling 2026-07-18: "It's in the briefing").
@@ -799,7 +800,7 @@ function renderPage(
         if (knownIdsForHtml.has(r.id) || r.known) {
           return `
     <article class="result">
-      <p><small><code>${esc(r.id)}</code> [known to you]${draftLabel(r.draftState) ? ` ${esc(draftLabel(r.draftState))}` : ""}${scoreDetail ? ` ${esc(scoreDetail)}` : ""}${r.clusterSize ? ` &mdash; represents ${r.clusterSize} similar recipes` : ""}</small></p>
+      <p><small><code>${esc(r.id)}</code> [known to you]${draftLabel(r.draftState, r) ? ` ${esc(draftLabel(r.draftState, r))}` : ""}${scoreDetail ? ` ${esc(scoreDetail)}` : ""}${r.clusterSize ? ` &mdash; represents ${r.clusterSize} similar recipes` : ""}</small></p>
     </article>`;
         }
 
@@ -841,7 +842,7 @@ function renderPage(
         const groupHtml = r.recipeBook ? `<span class="group">[${esc(r.recipeBook.name)}]</span> ` : "";
         // The viewer's own unpublished draft, labelled on the page too
         // (slice 2; nobody else's reaches a result set).
-        const draftHtml = draftLabel(r.draftState) ? `<span class="draft">${esc(draftLabel(r.draftState))}</span> ` : "";
+        const draftHtml = draftLabel(r.draftState, r) ? `<span class="draft">${esc(draftLabel(r.draftState, r))}</span> ` : "";
 
         // Known cluster-mates (seam 2, "stub, stub, full recipe"): members of
         // this cluster the caller already holds, listed as id-stubs beside
@@ -1041,6 +1042,7 @@ function renderPage(
     <ul>
       <li>Bare words search by meaning. <code>"quoted terms"</code> match exactly (filenames, identifiers) &mdash; including inside evidence and its citations. Group with <code>("a" OR "b")</code>; exclude with <code>-"term"</code>.</li>
       <li><code>author:jane@example.com</code>, <code>author:me</code> &mdash; filter by who made the call. <code>after:2026-06-01</code> / <code>before:2026-06-14</code> bound the judgment date.</li>
+      <li><code>is:draft</code> lists your own drafts awaiting review; <code>impact:high</code> / <code>uncertainty:low</code> (low, medium, or high) filter by the depositing agent's ratings.</li>
       <li>Clustered results show one exemplar per group of similar recipes &mdash; &ldquo;Show all&rdquo; flattens them.</li>
       <li>Searching is read-only; checking a recipe (below) is what adds to the corpus. <code>?format=json</code> returns structured data.</li>
     </ul>

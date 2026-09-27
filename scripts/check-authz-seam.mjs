@@ -170,6 +170,10 @@ const NON_AUTHORIZING_KEY_SQL = {
     n: 5, fp: "da71e276cd8d",
     why: "minting, listing, and revoking a user's own keys, behind JWT auth",
   },
+  "apps/backend/src/services/draft-queue.service.ts": {
+    n: 1, fp: "96bbb1f5b943",
+    why: "display join: the depositing key's label on the signed-in person's review-queue items",
+  },
   "apps/backend/src/services/ephemeral-workspace.service.ts": {
     n: 1, fp: "de2edf423d7d",
     why: "the reaper: removes a deleted book's id from every key's grants",
@@ -251,6 +255,10 @@ const TRACE_READS = {
     n: 4, fp: "8b803d685141", composes: false,
     why: "loads author, evidence, and references by id for exemplars the pipeline chose under SHARED_AUDIENCE (RP-10, RP-42)",
   },
+  "apps/backend/src/services/draft-queue.service.ts": {
+    n: 5, fp: "93c0496c2c29", composes: true,
+    why: "the review queue (slice 3): listing and count compose draftAwaitingReviewBy and traceVisibleTo over the person's live books; item details use traceReadableById for ids already resolved through the module",
+  },
   "apps/backend/src/services/ephemeral-workspace.service.ts": {
     n: 5, fp: "c8d8ebe28b99", composes: false,
     why: "the reaper: deletes an expired workspace's recipes (RP-38)",
@@ -280,7 +288,7 @@ const TRACE_READS = {
     why: "corpus mode rows and honest total use traceVisibleTo (RP-41); vector loads are by id for filtered results (RP-42)",
   },
   "apps/backend/src/services/trace.service.ts": {
-    n: 10, fp: "ec75e45c358d", composes: true,
+    n: 10, fp: "379ca3033782", composes: true,
     why: "deposit INSERT, the depositing key's own idempotency row (RP-04), session ledger ids (RP-05), and zero-result scope counts that use traceVisibleTo (RP-03)",
   },
   "apps/backend/src/services/trace-delete.service.ts": {

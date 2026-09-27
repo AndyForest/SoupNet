@@ -19,6 +19,7 @@
  */
 
 import { sql } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { PRODUCTION_SEARCH_STRATEGY_IDS, poolBoundary } from "@soupnet/domain";
 import type { ClusterPoolConfig, CandidateSignals } from "@soupnet/domain";
@@ -124,7 +125,17 @@ export interface StructuredTraceFilters {
    *  lower, exclusive upper (parser-validated ISO strings). */
   decidedAfter?: string | undefined;
   decidedBefore?: string | undefined;
+  /** Opaque selections the caller composed elsewhere (the drafts work,
+   *  slice 3: the draft qualifier from the authz module's fragments, and the
+   *  rating qualifiers from services/search-selection.ts). Each is ANDed in
+   *  as given, the way traceIdVisibleTo reaches the predicates below, so
+   *  this file never names the columns they read: a selection only removes
+   *  rows and never scores or orders them (ranking-isolation.test.ts). */
+  selections?: TraceSelection[] | undefined;
 }
+
+/** A predicate over the traces alias the calling statement uses. */
+export type TraceSelection = (alias: "t" | "tr") => SQL;
 
 /** True when any structured filter is present (drives the traces join). */
 export function hasStructuredFilters(f: StructuredTraceFilters | undefined): boolean {
@@ -134,7 +145,8 @@ export function hasStructuredFilters(f: StructuredTraceFilters | undefined): boo
     f.includeUserIds !== undefined ||
     (f.excludeUserIds?.length ?? 0) > 0 ||
     f.decidedAfter !== undefined ||
-    f.decidedBefore !== undefined
+    f.decidedBefore !== undefined ||
+    (f.selections?.length ?? 0) > 0
   );
 }
 
@@ -205,6 +217,9 @@ export function buildStructuredTracePredicates(
   }
   if (filters.decidedBefore !== undefined) {
     parts.push(sql`AND COALESCE(${a}.decided_at, ${a}.created_at) < ${filters.decidedBefore}::timestamptz`);
+  }
+  for (const selection of filters.selections ?? []) {
+    parts.push(sql`AND (${selection(alias)})`);
   }
 
   return parts.length > 0 ? sql.join(parts, sql` `) : sql``;

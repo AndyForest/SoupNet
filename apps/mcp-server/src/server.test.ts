@@ -242,6 +242,16 @@ describe("stdio drafts (slice 2)", () => {
     expect((result.content as Array<{ text: string }>)[0]!.text).toBe("x: not_found_or_unreadable — nope");
   });
 
+  it("S3-AG1: search_recipes forwards the slice 3 qualifiers unchanged to the backend's filter path", async () => {
+    const calls = stubBackend();
+    const query = 'is:draft impact:high -uncertainty:low "cache"';
+    const result = await callTool("search_recipes", { query });
+    expect(result.isError).not.toBe(true);
+    const url = new URL(calls[0]!.url);
+    expect(url.pathname).toBe("/check");
+    expect(url.searchParams.get("filter")).toBe(query);
+  });
+
   it("S3-F1: verify_draft relays the honest write-access refusal (403) verbatim, so the agent learns the way forward", async () => {
     const refusal = "abc is a draft in the recipe book \"Shared\" (shared), and verifying it needs write access to this recipe book, which this API key does not have; nothing was stored.";
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ok: false, error: refusal, status: "needs_write_access" }), { status: 403 })));

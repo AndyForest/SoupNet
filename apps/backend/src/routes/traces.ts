@@ -19,6 +19,12 @@ import {
   TraceMoveEvidenceNotFoundError,
 } from "../services/trace-move.service";
 import { writeAudit } from "../services/audit-log.service";
+import {
+  listDraftQueue,
+  listLinkedRecipes,
+  countDraftsAwaitingReview,
+  needsWriteAccessReason,
+} from "../services/draft-queue.service";
 import type { SharedAudience } from "../authz";
 import { TRACE_REACTIONS, vocab, authorizeTraceMove } from "@soupnet/domain";
 import {
@@ -301,6 +307,42 @@ traces.get("/checks", async (c) => {
 });
 
 // GET /traces/count — total trace count for the user
+// ── The review queue (drafts-and-triage slice 3) ────────────────────────────
+//
+// GET /traces/drafts — the signed-in person's unresolved drafts, in every
+// book they belong to now (whatever their daily-read settings and whichever
+// of their keys deposited them), ordered for triage. `q` takes the agents'
+// search grammar with is:draft always applied (S3-Q6); a grammar error is a
+// 400 with the parser's message. `ids=a,b,…` instead lists exactly the named
+// recipes the person may read, in order, at most 20, with one reason-free
+// count of ids not shown (S3-L1 to S3-L4). services/draft-queue.service.ts
+// holds the rules.
+traces.get("/drafts", async (c) => {
+  const user = c.get("user");
+  const db = getDb();
+  const ids = c.req.query("ids");
+  if (ids !== undefined) {
+    const linked = await listLinkedRecipes(db, user.id, ids);
+    return c.json({ ok: true, data: { mode: "ids", ...linked } });
+  }
+  const pageRaw = Number(c.req.query("page") ?? "1");
+  const result = await listDraftQueue(db, user.id, {
+    q: c.req.query("q"),
+    page: Number.isFinite(pageRaw) && pageRaw >= 1 ? pageRaw : 1,
+  });
+  if (!result.ok) return c.json({ ok: false, error: `Search query error: ${result.error}` }, 400);
+  const { ok: _ok, ...data } = result;
+  return c.json({ ok: true, data: { mode: "queue", ...data } });
+});
+
+// GET /traces/drafts/count — the dashboard's "N drafts await your review",
+// the same figure as the queue's total (S3-Q3, S3-Q8).
+traces.get("/drafts/count", async (c) => {
+  const user = c.get("user");
+  const count = await countDraftsAwaitingReview(getDb(), user.id);
+  return c.json({ ok: true, data: { count } });
+});
+
 traces.get("/count", async (c) => {
   const user = c.get("user");
   const db = getDb();
@@ -554,18 +596,22 @@ traces.put("/:id/reaction", async (c) => {
   const resolution = resolutionForReaction(reaction);
   // A reaction that would resolve the viewer's own draft needs write
   // authority on its book at this moment ([F79]): a person removed from the
-  // book (or holding no write-capable role) must not publish into it. Such a
-  // request gets the missing-id 404 and records nothing, like a draft they
-  // cannot act on. The resolving statement checks the same thing again.
+  // book (or holding no write-capable role) must not publish into it. The
+  // draft's own person can read it, so the refusal is honest and names the
+  // book (build log ruling 25, rubric S3-A4); nothing is recorded. Everyone
+  // else never reaches this line: canReadTrace above answered their uniform
+  // 404. The resolving statement checks the authority again.
+  let ownDraft = false;
   if (resolution) {
     const facts = await roleInBookOfTrace(db, user.id, traceId);
+    ownDraft = !!facts?.isDraftSubject && facts.draftState !== null;
     if (
       facts
       && facts.draftState === "unverified"
       && facts.isDraftSubject
       && !hasWriteAuthority({ kind: "member", role: facts.role }, facts.bookId)
     ) {
-      return c.json({ ok: false, error: "Trace not found" }, 404);
+      return c.json(await needsWriteAccessBody(db, user.id, traceId), 403);
     }
   }
   const resolved = await db.transaction(async (tx) => {
@@ -589,8 +635,31 @@ traces.put("/:id/reaction", async (c) => {
     });
   }
 
+  // A repeat (or a race lost to another resolution) on the viewer's own
+  // draft is reported as already resolved, with where it stands (S3-A2); the
+  // reaction itself is recorded like any other (DT-VER-03).
+  if (!resolved && resolution && ownDraft) {
+    const now = await roleInBookOfTrace(db, user.id, traceId);
+    return c.json({ ok: true, data: { reaction, alreadyResolved: true, draftState: now?.draftState ?? null } });
+  }
   return c.json({ ok: true, data: { reaction, ...(resolved && resolution ? { draftState: resolution } : {}) } });
 });
+
+/**
+ * The honest refusal for a draft's own person who lacks write authority on
+ * its book (build log ruling 25): they can read the draft, so naming the book
+ * leaks nothing. Only ever built for the draft's subject.
+ */
+async function needsWriteAccessBody(db: ReturnType<typeof getDb>, userId: string, traceId: string) {
+  const readable = await readableTraceFor(db, userId, traceId);
+  const bookName = readable?.trace.groupName ?? "this recipe book";
+  return {
+    ok: false as const,
+    status: "needs_write_access" as const,
+    error: needsWriteAccessReason(bookName),
+    recipeBook: readable ? { id: readable.trace.groupId, name: bookName } : undefined,
+  };
+}
 
 traces.delete("/:id/reaction", async (c) => {
   const user = c.get("user");
@@ -607,6 +676,67 @@ traces.delete("/:id/reaction", async (c) => {
   `);
 
   return c.json({ ok: true, data: { reaction: null } });
+});
+
+// POST /traces/:id/not-chosen — the review queue's third action
+// (drafts-and-triage slice 3, S3-A1): the draft was a viable option that
+// lost, which is not the same as wrong. It writes `not_chosen` through the
+// one resolving statement and records no reaction (the reaction vocabulary
+// is unchanged, build log open question 6). Same authority as confirm and
+// reject: the draft's own person, with write authority on its book now,
+// one-way. Anyone else, and a missing id, get the same 404 (S3-A3); the
+// draft's own person without write authority gets the honest refusal
+// (S3-A4); a published recipe the viewer can read is "not a draft".
+traces.post("/:id/not-chosen", async (c) => {
+  const user = c.get("user");
+  const traceId = c.req.param("id");
+  const db = getDb();
+  const notFound = () => c.json({ ok: false, error: "Trace not found" }, 404);
+
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(traceId)) return notFound();
+  if (!(await canReadTrace(db, traceId, user.id))) return notFound();
+  const facts = await roleInBookOfTrace(db, user.id, traceId);
+  if (!facts) return notFound();
+  if (isPublishedDraftState(facts.draftState)) {
+    return c.json({ ok: false, status: "not_a_draft", error: "This recipe is not a draft, so there is nothing to mark not chosen." }, 409);
+  }
+  // Unpublished and readable means it is the viewer's own draft: only its
+  // subject or depositor may read it, and in this slice they are one person.
+  if (!facts.isDraftSubject) return notFound();
+  if (facts.draftState !== "unverified") {
+    return c.json({ ok: false, status: "already_resolved", draftState: facts.draftState, error: `This draft was already resolved (${facts.draftState}); resolution is one-way.` }, 409);
+  }
+  if (!hasWriteAuthority({ kind: "member", role: facts.role }, facts.bookId)) {
+    return c.json(await needsWriteAccessBody(db, user.id, traceId), 403);
+  }
+
+  const resolved = await resolveDraft(db, {
+    traceId,
+    actorUserId: user.id,
+    resolution: "not_chosen",
+    byKeyId: null,
+    authority: { kind: "member" },
+  });
+  if (!resolved) {
+    // Lost a race to another resolution, or to a membership change.
+    const now = await roleInBookOfTrace(db, user.id, traceId);
+    if (now?.isDraftSubject && now.draftState !== "unverified" && now.draftState !== null) {
+      return c.json({ ok: false, status: "already_resolved", draftState: now.draftState, error: `This draft was already resolved (${now.draftState}); resolution is one-way.` }, 409);
+    }
+    if (now?.isDraftSubject && now.draftState === "unverified") {
+      return c.json(await needsWriteAccessBody(db, user.id, traceId), 403);
+    }
+    return notFound();
+  }
+
+  await writeAudit(db, {
+    actorUserId: user.id,
+    action: "recipe.draft_not_chosen",
+    targetType: "trace",
+    targetId: traceId,
+    metadata: { via: "queue" },
+  });
+  return c.json({ ok: true, data: { draftState: "not_chosen" } });
 });
 
 // PUT /traces/feedback/:feedbackId/star — star a feedback row ("mattered").
