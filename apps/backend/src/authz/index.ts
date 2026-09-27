@@ -11,3 +11,4 @@
 export * from "./roles";
 export * from "./book-access";
 export * from "./memberships";
+export * from "./book-succession";

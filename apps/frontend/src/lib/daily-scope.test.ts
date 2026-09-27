@@ -2,8 +2,9 @@ import { describe, it, expect } from "vitest";
 import { resolveDailyReadBooks, formatBookList, describeDailyReadScope } from "./daily-scope";
 
 // Mirrors apps/backend/src/routes/keys.ts POST /keys/daily read-scope rule:
-// configured daily_read set, or fall back to all memberships when zero are
-// configured. The dashboard label must render this truthfully — the old
+// exactly the configured daily_read set. When zero books are included the
+// backend refuses to mint (no_read_recipe_books_configured) rather than
+// reading every membership [F71], and the label has to say so — the old
 // static "reads all recipe books" claim was the verified WT-2 scope bug.
 
 function book(id: string, name: string, dailyRead: boolean) {
@@ -15,27 +16,27 @@ describe("resolveDailyReadBooks", () => {
     const books = [book("1", "A", true), book("2", "B", false), book("3", "C", true)];
     const result = resolveDailyReadBooks(books);
     expect(result.books.map((b) => b.name)).toEqual(["A", "C"]);
-    expect(result.usedFallback).toBe(false);
+    expect(result.noneConfigured).toBe(false);
   });
 
-  it("falls back to all books when zero are configured", () => {
+  it("reads nothing — never every book — when zero are configured", () => {
     const books = [book("1", "A", false), book("2", "B", false)];
     const result = resolveDailyReadBooks(books);
-    expect(result.books.map((b) => b.name)).toEqual(["A", "B"]);
-    expect(result.usedFallback).toBe(true);
+    expect(result.books).toEqual([]);
+    expect(result.noneConfigured).toBe(true);
   });
 
-  it("handles the all-flagged case without fallback", () => {
+  it("handles the all-flagged case", () => {
     const books = [book("1", "A", true), book("2", "B", true)];
     const result = resolveDailyReadBooks(books);
     expect(result.books).toHaveLength(2);
-    expect(result.usedFallback).toBe(false);
+    expect(result.noneConfigured).toBe(false);
   });
 
-  it("returns empty with fallback for an empty membership list", () => {
+  it("returns empty for an empty membership list", () => {
     const result = resolveDailyReadBooks([]);
     expect(result.books).toEqual([]);
-    expect(result.usedFallback).toBe(true);
+    expect(result.noneConfigured).toBe(true);
   });
 });
 
@@ -76,9 +77,9 @@ describe("describeDailyReadScope", () => {
     );
   });
 
-  it("names the single book when the user has exactly one (fallback)", () => {
+  it("does not claim the single book is read when it is excluded from daily reads", () => {
     expect(describeDailyReadScope([book("1", "Personal", false)])).toBe(
-      "your recipe book Personal",
+      "no recipe books yet (include at least one in daily reads before generating a key)",
     );
   });
 
@@ -88,9 +89,9 @@ describe("describeDailyReadScope", () => {
     );
   });
 
-  it("is honest about the fallback case — all included because none are marked", () => {
+  it("is honest when none are marked — nothing is read, and a key needs at least one", () => {
     expect(describeDailyReadScope([book("1", "A", false), book("2", "B", false)])).toBe(
-      "all 2 of your recipe books (none are marked for daily reads yet, so all are included)",
+      "no recipe books yet (include at least one in daily reads before generating a key)",
     );
   });
 

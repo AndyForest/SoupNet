@@ -4,6 +4,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTraceMap } from "../hooks/useTraceMap.js";
 import type { PositionedCluster, PositionedTrace } from "../hooks/useTraceMap.js";
 import { Link } from "@tanstack/react-router";
+import { dailyKeyErrorCode } from "../lib/daily-key-error.js";
+import { DailyKeyError } from "../components/DailyKeyError.js";
 import { Icon } from "../components/Icon.js";
 import { authFetch } from "../auth.js";
 import { useClipboard } from "../hooks/useClipboard.js";
@@ -150,6 +152,7 @@ export function RecipeMapPage() {
   const queryClient = useQueryClient();
   const { copyAsync, copied } = useClipboard(2500);
   const [briefingPending, setBriefingPending] = useState<boolean>(false);
+  const [briefingError, setBriefingError] = useState<string | null>(null);
 
   // Mint or reuse a key, then fetch the unified briefing with the map's
   // current refinement params (axes, k, filter, strategy) passed through.
@@ -171,8 +174,8 @@ export function RecipeMapPage() {
         method: "POST",
         ...(body ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}),
       });
-      const keyJson = (await keyRes.json()) as { ok: boolean; data?: { key: string; searchUrl: string } };
-      if (!keyJson.ok || !keyJson.data) throw new Error("Failed to generate key");
+      const keyJson = (await keyRes.json()) as { ok: boolean; error?: string; data?: { key: string; searchUrl: string } };
+      if (!keyJson.ok || !keyJson.data) throw new Error(dailyKeyErrorCode(keyJson));
       briefingKey = keyJson.data.key;
     }
 
@@ -204,8 +207,11 @@ export function RecipeMapPage() {
 
   async function handleCopyBriefing() {
     setBriefingPending(true);
+    setBriefingError(null);
     try {
       await copyAsync(() => fetchBriefingText(), "briefing");
+    } catch (e) {
+      setBriefingError(e instanceof Error ? e.message : "Copy failed");
     } finally {
       setBriefingPending(false);
     }
@@ -500,6 +506,7 @@ export function RecipeMapPage() {
           )}
         </div>
       </div>
+      <DailyKeyError error={briefingError} style={{ marginTop: 0, marginBottom: "var(--space-sm)" }} />
 
       {urlQuery && (
         <p className="text-sm" style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-sm)", fontStyle: "italic" }}>

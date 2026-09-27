@@ -4,6 +4,9 @@ import { Link, useSearch } from "@tanstack/react-router";
 import { authFetch } from "../auth.js";
 import { copyToClipboard, useClipboard } from "../hooks/useClipboard.js";
 import { substituteBriefingKey } from "../lib/briefing-key.js";
+import { describeDailyReadScope } from "../lib/daily-scope.js";
+import { dailyKeyErrorCode } from "../lib/daily-key-error.js";
+import { DailyKeyError } from "../components/DailyKeyError.js";
 import { Icon } from "../components/Icon.js";
 
 // Internal type — represents a recipe book row from the backend. Named "Group"
@@ -299,6 +302,7 @@ export function GroupsPage() {
           <GroupCard
             key={group.id}
             group={group}
+            allGroups={groupsQuery.data ?? []}
             expanded={expandedGroup === group.id}
             justJoined={search.justJoined === group.slug}
             onToggle={() => setExpandedGroup(expandedGroup === group.id ? null : group.id)}
@@ -311,11 +315,14 @@ export function GroupsPage() {
 
 function GroupCard({
   group,
+  allGroups,
   expanded,
   justJoined,
   onToggle,
 }: {
   group: Group;
+  /** Every book the user belongs to — the daily key's read scope spans them, not just this card's book. */
+  allGroups: Group[];
   expanded: boolean;
   justJoined: boolean;
   onToggle: () => void;
@@ -509,7 +516,7 @@ function GroupCard({
         )
       )}
 
-      {expanded && <AgentConnectBox group={group} justJoined={justJoined} />}
+      {expanded && <AgentConnectBox group={group} allGroups={allGroups} justJoined={justJoined} />}
 
       {expanded && <DailyPrefsToggles group={group} />}
 
@@ -783,10 +790,11 @@ function PendingInviteRow({
  * a primary-accent border and a welcoming heading. Wording kept in sync
  * with DashboardPage's "For Your Agents" section.
  */
-function AgentConnectBox({ group, justJoined }: { group: Group; justJoined: boolean }) {
+function AgentConnectBox({ group, allGroups, justJoined }: { group: Group; allGroups: Group[]; justJoined: boolean }) {
   const [dailyOpened, setDailyOpened] = useState(false);
   const { copyAsync, copied } = useClipboard(2500);
   const [briefingPending, setBriefingPending] = useState<boolean>(false);
+  const [briefingError, setBriefingError] = useState<string | null>(null);
 
   // Mint a 24h key scoped to this group, then fetch the unified briefing.
   // Invoked inside copyAsync so the ClipboardItem Promise keeps iOS Safari's
@@ -799,8 +807,8 @@ function AgentConnectBox({ group, justJoined }: { group: Group; justJoined: bool
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ writeRecipeBookId: group.id }),
     });
-    const keyJson = (await keyRes.json()) as { ok: boolean; data?: { key: string } };
-    if (!keyJson.ok || !keyJson.data) throw new Error("Failed to generate key");
+    const keyJson = (await keyRes.json()) as { ok: boolean; error?: string; data?: { key: string } };
+    if (!keyJson.ok || !keyJson.data) throw new Error(dailyKeyErrorCode(keyJson));
     const briefRes = await authFetch("/keys/briefing", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -813,8 +821,11 @@ function AgentConnectBox({ group, justJoined }: { group: Group; justJoined: bool
 
   async function handleCopyBriefing() {
     setBriefingPending(true);
+    setBriefingError(null);
     try {
       await copyAsync(() => fetchBriefingText(), "briefing");
+    } catch (e) {
+      setBriefingError(e instanceof Error ? e.message : "Copy failed");
     } finally {
       setBriefingPending(false);
     }
@@ -827,8 +838,8 @@ function AgentConnectBox({ group, justJoined }: { group: Group; justJoined: bool
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ writeRecipeBookId: group.id }),
       });
-      const json = (await res.json()) as { ok: boolean; data?: { searchUrl: string } };
-      if (!json.ok || !json.data) throw new Error("Failed to generate key");
+      const json = (await res.json()) as { ok: boolean; error?: string; data?: { searchUrl: string } };
+      if (!json.ok || !json.data) throw new Error(dailyKeyErrorCode(json));
       return json.data;
     },
     onSuccess: (data) => {
@@ -858,7 +869,9 @@ function AgentConnectBox({ group, justJoined }: { group: Group; justJoined: bool
         find this recipe book's accumulated taste and judgment on its next session.
       </p>
       <p className="text-xs" style={{ color: "var(--color-on-surface-variant)", marginTop: "var(--space-sm)", marginBottom: "var(--space-sm)" }}>
-        Generates a 24-hour key: reads all recipe books, writes to <strong>{group.name}</strong>.
+        {/* Read scope mirrors POST /keys/daily: exactly the books included in
+            daily reads across ALL of the user's books — see lib/daily-scope.ts. */}
+        Generates a 24-hour key: reads {describeDailyReadScope(allGroups)}, writes to <strong>{group.name}</strong>.
       </p>
       <div style={{ display: "flex", gap: "var(--space-sm)", flexWrap: "wrap" }}>
         <button
@@ -890,6 +903,7 @@ function AgentConnectBox({ group, justJoined }: { group: Group; justJoined: bool
           </button>
         </Link>
       </div>
+      <DailyKeyError error={briefingError ?? dailyGoMutation.error?.message} />
       <p className="text-xs" style={{ color: "var(--color-on-surface-variant)", marginTop: "var(--space-sm)", marginBottom: 0 }}>
         For custom expiry, multiple write recipe books, or per-agent labels —{" "}
         <Link to="/app/keys" style={{ color: "var(--color-primary)" }}>manage API keys</Link>.
