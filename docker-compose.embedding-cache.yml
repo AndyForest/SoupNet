@@ -1,0 +1,31 @@
+# Long-lived local embedding cache — see docs/workflows/embedding-cache.md.
+#
+# A separate compose project with its own named volume, so tearing down the
+# dev stack (`docker compose down -v`) never touches it. It holds one table,
+# a copy of claimnet.vector_cache harvested from the databases you run.
+#
+#   docker compose -f docker-compose.embedding-cache.yml up -d
+#   npx tsx scripts/embedding-cache.mts setup
+name: soupnet-embedding-cache
+
+services:
+  embedding-cache:
+    image: pgvector/pgvector:pg17
+    container_name: soupnet-embedding-cache
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cache_admin
+      POSTGRES_PASSWORD: ${EMBEDDING_CACHE_ADMIN_PASSWORD:-cache_admin}
+      POSTGRES_DB: embedding_cache
+    ports:
+      - "127.0.0.1:5733:5432"
+    volumes:
+      - embedding-cache-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cache_admin -d embedding_cache"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  embedding-cache-data:
