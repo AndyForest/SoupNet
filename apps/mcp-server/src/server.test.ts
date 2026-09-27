@@ -139,6 +139,24 @@ describe("stdio check_recipe proxy forwarding", () => {
     expect(new URL(calls[0]!.url).searchParams.get("impact")).toBe("urgent");
   });
 
+  it("S1-B3 follow-up: a wrong-type rating is forwarded as its JSON text, never an SDK error", async () => {
+    const calls = stubBackend();
+    const result = await callTool("check_recipe", { recipe, supporting_evidence: evidence, impact: 3, uncertainty: ["high"] });
+    expect(result.isError).not.toBe(true);
+    const params = new URL(calls[0]!.url).searchParams;
+    expect(params.get("impact")).toBe("3");
+    expect(params.get("uncertainty")).toBe('["high"]');
+  });
+
+  it("S1-B3 follow-up: a non-object feedback row is forwarded as-is for a per-row marker, and the check still runs", async () => {
+    const calls = stubBackend();
+    const result = await callTool("check_recipe", { recipe, supporting_evidence: evidence, feedback: [5, null] });
+    expect(result.isError).not.toBe(true);
+    const fb = calls.find((c) => c.url === `${BACKEND}/feedback`);
+    const sent = JSON.parse(String(fb?.init?.body)) as { feedback: unknown[] };
+    expect(sent.feedback).toEqual([5, null]);
+  });
+
   it("S1-B2: sends no rating params when none were given", async () => {
     const calls = stubBackend();
     await callTool("check_recipe", { recipe, supporting_evidence: evidence });

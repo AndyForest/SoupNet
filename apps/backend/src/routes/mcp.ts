@@ -63,7 +63,7 @@ import { writeAudit } from "../services/audit-log.service";
 import { ClientSafeError, publicErrorMessage } from "../lib/client-safe-error";
 import { invalidKeyMessage } from "../lib/key-remediation";
 import type { RawFeedbackRow } from "../services/feedback.service";
-import { ingestFeedback, summarizeFeedbackResults, withCheckDefaults } from "../services/feedback.service";
+import { ingestFeedback, isFeedbackRowObject, summarizeFeedbackResults, withCheckDefaults } from "../services/feedback.service";
 
 // F47 (security-audit-2026-06-11): tool catch-alls surface only deliberate
 // ClientSafeError messages (validation, size caps, MIME — written for the
@@ -343,7 +343,25 @@ function imageFromBase64(base64: string, filename: string, mimeTypeHint?: string
 // already per-row in the feedback service (strict enums, uuids, types), so
 // one bad row gets a marker instead of a zod error killing the whole call
 // (the ride-along surface must never take down the check it rides on).
-const feedbackRowSchema = z.record(z.unknown());
+//
+// A row that isn't an object at all (a number, a string, null) must not fail
+// the call either: `.catch` hands the raw value through, and the service turns
+// it into a per-row marker. `.catch` leaves the served JSON Schema unchanged
+// (zod-to-json-schema renders the inner record), so agents still read
+// "object" for the item type.
+const feedbackRowSchema = z.record(z.unknown()).catch((ctx) => ctx.input as Record<string, unknown>);
+
+// Triage ratings (slice 1). A value of the wrong JSON type (impact: 3) is an
+// unrecognized rating like any other: stored as not rated, with the notice,
+// and the check deposits (S1-B3; recipe 4cfd166e). z.string() alone would
+// make it an SDK validation error that fails the whole check. The preprocess
+// hands non-strings to the service as their JSON text; the served schema
+// still says "string".
+function ratingParam(description: string) {
+  return z
+    .preprocess((v) => (v === undefined || v === null ? undefined : typeof v === "string" ? v : JSON.stringify(v)), z.string().optional())
+    .describe(description);
+}
 
 /**
  * Build the per-request MCP server for an ALREADY AUTHENTICATED caller.
@@ -407,8 +425,8 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
       // Triage ratings (slice 1). Plain strings, not enums: an unrecognized
       // value must reach the service and become a not-rated notice instead of
       // an SDK validation error that costs the check (recipe 4cfd166e).
-      impact: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.impact),
-      uncertainty: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.uncertainty),
+      impact: ratingParam(MCP_PARAM_DESCRIPTIONS.impact),
+      uncertainty: ratingParam(MCP_PARAM_DESCRIPTIONS.uncertainty),
       feedback: z.array(feedbackRowSchema).optional().describe(MCP_PARAM_DESCRIPTIONS.feedbackParam),
       axes: z.string().optional().describe(
         "Two comma-separated concept terms; each result gets x/y similarity positions (0-1) against them (semantic projection)."
@@ -613,7 +631,7 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
         let feedbackSummary = "";
         let feedbackResults: unknown;
         if (feedback && feedback.length > 0) {
-          const rows: RawFeedbackRow[] = feedback.map((row) =>
+          const rows: unknown[] = feedback.map((row) => !isFeedbackRowObject(row) ? row :
             // Rows inherit the RESOLVED intent id (text sent on this check
             // was registered by the service, so the rows join the intent
             // the check just minted) — join-only, like session inheritance.
@@ -750,7 +768,7 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
         let feedbackSummary = "";
         let feedbackResults: unknown;
         if (feedback && feedback.length > 0) {
-          const rows: RawFeedbackRow[] = feedback.map((row) =>
+          const rows: unknown[] = feedback.map((row) => !isFeedbackRowObject(row) ? row :
             withCheckDefaults(row, {
               agentId: agent_id,
               sessionId: session_id,

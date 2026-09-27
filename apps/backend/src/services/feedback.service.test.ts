@@ -27,6 +27,14 @@ function validRow(overrides: Partial<RawFeedbackRow> = {}): RawFeedbackRow {
 }
 
 describe("validateFeedbackRow", () => {
+  it("a non-object row is a per-row error naming the shape, never a throw", () => {
+    for (const bad of [5, "row", null, undefined, ["x"], true]) {
+      const v = validateFeedbackRow(bad);
+      expect(v.ok).toBe(false);
+      if (!v.ok) expect(v.error).toContain("must be an object");
+    }
+  });
+
   it("accepts a minimal valid row", () => {
     const v = validateFeedbackRow(validRow());
     expect(v.ok).toBe(true);
@@ -239,6 +247,19 @@ describe("ingestFeedback short-id prefix resolution (stubbed db)", () => {
       }),
     } as unknown as PostgresJsDatabase;
   }
+
+  it("non-object rows get markers beside a valid row, and nothing throws", async () => {
+    const results = await ingestFeedback({
+      db: stubDb([[{ id: T1 }]]),
+      apiKeyId: "22222222-2222-2222-2222-222222222222",
+      userId: "99999999-9999-9999-9999-999999999999",
+      readGroupIds: [GROUP],
+      rows: [null, 5, validRow({ trace_id: T1 })],
+    });
+    expect(results.map((r) => r.ok)).toEqual([false, false, true]);
+    expect(results[0]?.error).toContain("must be an object");
+    expect(results[0]?.traceId).toBe("");
+  });
 
   it("resolves an unambiguous prefix and echoes the full UUID on success", async () => {
     const results = await ingestFeedback({

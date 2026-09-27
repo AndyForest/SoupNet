@@ -91,6 +91,16 @@ function formatLookupEntries(entries: LookupEntry[]): string {
   }).join("\n\n");
 }
 
+/** A triage-rating param (slice 1) that never fails the check on a wrong
+ *  JSON type: non-strings are forwarded as their JSON text, so the backend
+ *  stores them as not rated with its notice. Mirrors routes/mcp.ts; the
+ *  served schema still says "string". */
+function ratingParam(description: string) {
+  return z
+    .preprocess((v) => (v === undefined || v === null ? undefined : typeof v === "string" ? v : JSON.stringify(v)), z.string().optional())
+    .describe(description);
+}
+
 /**
  * Build the stdio server with every tool registered, without connecting a
  * transport. index.ts connects it to stdio; tests connect it to an in-memory
@@ -140,12 +150,16 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
       // Triage ratings (slice 1) — plain strings so an unrecognized value
       // reaches the backend and becomes a notice, never an SDK error that
       // costs the check (mirrors routes/mcp.ts).
-      impact: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.impact),
-      uncertainty: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.uncertainty),
+      // A wrong JSON type (impact: 3) is forwarded as its JSON text, so it
+      // too becomes a notice rather than an SDK error.
+      impact: ratingParam(MCP_PARAM_DESCRIPTIONS.impact),
+      uncertainty: ratingParam(MCP_PARAM_DESCRIPTIONS.uncertainty),
       // Rows take log_feedback's fields; the description points there instead
       // of repeating the per-field schema (slice 1, S1-Z4). A record, not a
       // bare object, so the SDK keeps every field for the /feedback forward.
-      feedback: z.array(z.record(z.unknown())).optional().describe(MCP_PARAM_DESCRIPTIONS.feedbackParam),
+      // A non-object row passes through (`.catch`) so /feedback gives it a
+      // per-row marker instead of the SDK failing the whole check.
+      feedback: z.array(z.record(z.unknown()).catch((ctx) => ctx.input as Record<string, unknown>)).optional().describe(MCP_PARAM_DESCRIPTIONS.feedbackParam),
       file: z.string().optional().describe(
         "Optional file to attach as reference evidence (multimodal embedding). " +
         "Local file path (e.g., 'docs/screenshot.png') or URL. " +
@@ -255,7 +269,7 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
         let feedbackSummary = "";
         if (feedback && feedback.length > 0) {
           try {
-            const rows = feedback.map((row) => ({
+            const rows = feedback.map((row) => (row === null || typeof row !== "object" || Array.isArray(row)) ? row : ({
               ...(agent_id ? { agent_id } : {}),
               ...(session_id ? { session_id } : {}),
               // The check response's resolved intent id (text sent on this

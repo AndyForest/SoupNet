@@ -33,11 +33,20 @@ const VOCABULARY = TRIAGE_RATING_VALUES.join(" | ");
  *  unrecognized value (null, with what was sent). */
 export function parseTriageRating(raw: unknown): { value: TriageRating | null; unrecognized?: string } {
   if (raw === undefined || raw === null) return { value: null };
-  const text = String(raw).trim();
+  // Only a string can name a rating. Any other JSON type (a number, a
+  // boolean, an array, an object) is unrecognized and echoed as JSON, so
+  // ["high"] never passes as "high" through String() coercion.
+  const text = typeof raw === "string" ? raw.trim() : JSON.stringify(raw);
   if (text === "") return { value: null };
   const lowered = text.toLowerCase();
-  const match = TRIAGE_RATING_VALUES.find((v) => v === lowered);
-  return match ? { value: match } : { value: null, unrecognized: text };
+  const match = typeof raw === "string" ? TRIAGE_RATING_VALUES.find((v) => v === lowered) : undefined;
+  return match ? { value: match } : { value: null, unrecognized: echo(text) };
+}
+
+const ECHO_MAX = 60;
+/** The unrecognized value as the notice quotes it, bounded in length. */
+function echo(text: string): string {
+  return text.length > ECHO_MAX ? `${text.slice(0, ECHO_MAX)}…` : text;
 }
 
 /** Both ratings from a check's raw params, plus a notice naming any
@@ -57,7 +66,7 @@ export function parseTriageRatings(raw: { impact?: unknown; uncertainty?: unknow
   return {
     ratings,
     notice:
-      `${rejected.join(" and ")} is not a rating value, so it is stored as not rated. `
+      `${rejected.join(" and ")} ${rejected.length > 1 ? "are not rating values, so they are" : "is not a rating value, so it is"} stored as not rated. `
       + `Ratings take ${VOCABULARY}; omit one you have no view on.`,
   };
 }

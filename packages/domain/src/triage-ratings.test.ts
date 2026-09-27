@@ -59,6 +59,25 @@ describe("parseTriageRatings", () => {
     expect(notice).toContain('impact "urgent"');
     expect(notice).toContain('uncertainty "maybe"');
   });
+
+  it("S1-B3 follow-up: two unrecognized values take a plural verb, one takes a singular", () => {
+    const both = parseTriageRatings({ impact: "urgent", uncertainty: "7" }).notice;
+    expect(both).toContain('impact "urgent" and uncertainty "7" are not rating values');
+    const one = parseTriageRatings({ impact: "urgent" }).notice;
+    expect(one).toContain('impact "urgent" is not a rating value');
+  });
+
+  it("S1-B3 follow-up: a non-string value (wrong JSON type) is unrecognized, never thrown", () => {
+    expect(parseTriageRating(3)).toEqual({ value: null, unrecognized: "3" });
+    expect(parseTriageRating(true)).toEqual({ value: null, unrecognized: "true" });
+    expect(parseTriageRating({ level: "high" })).toEqual({ value: null, unrecognized: '{"level":"high"}' });
+    expect(parseTriageRating(["high"])).toEqual({ value: null, unrecognized: '["high"]' });
+  });
+
+  it("S1-B3 follow-up: a long unrecognized value is echoed bounded", () => {
+    const { unrecognized } = parseTriageRating("x".repeat(500));
+    expect(unrecognized!.length).toBeLessThanOrEqual(61);
+  });
 });
 
 describe("repeatRatingsNotice", () => {

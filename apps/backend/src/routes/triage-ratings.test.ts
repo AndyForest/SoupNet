@@ -179,6 +179,13 @@ describe.skipIf(!BASE)("triage ratings (drafts-and-triage slice 1)", () => {
     expect(await storedRatings(pat.jwt, data.checked!.recipeId)).toEqual({ impact: null, uncertainty: null });
   });
 
+  it("S1-B2 / DT-RAT-02 (remote MCP, markdown): an unrated check's report says nothing about ratings", async () => {
+    const { text } = await mcpCall(pat.apiKey, "check_recipe", { recipe: recipeText("omitted-md"), supporting_evidence: EVIDENCE });
+    expect(text).toContain("Recipe checked as #");
+    expect(text).not.toContain("Your ratings");
+    expect(text).not.toContain("not rated");
+  });
+
   // ── S1-B3 / DT-RAT-04: an unrecognized value never costs the check ─────────
 
   it("S1-B3 / DT-RAT-04 (GET /check): impact=urgent deposits, stores not rated, and names the vocabulary", async () => {
@@ -202,6 +209,50 @@ describe.skipIf(!BASE)("triage ratings (drafts-and-triage slice 1)", () => {
     expect(structured?.checked?.recipeId).toBeTruthy();
     expect(structured?.checked?.impact).toBeNull();
     expect(structured?.ratingsNotice).toContain("low | medium | high");
+  });
+
+  it("S1-B3 follow-up (remote MCP): a wrong-type rating is stored as not rated with the notice, and the check deposits", async () => {
+    const { structured } = await mcpCall(pat.apiKey, "check_recipe", {
+      recipe: recipeText("mcp-wrong-type"),
+      supporting_evidence: EVIDENCE,
+      impact: 3,
+      uncertainty: ["high"],
+      response_format: "structured",
+    });
+    expect(structured?.checked?.recipeId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(structured?.checked?.impact).toBeNull();
+    expect(structured?.checked?.uncertainty).toBeNull();
+    expect(structured?.ratingsNotice).toContain('impact "3" and uncertainty "["high"]" are not rating values');
+    expect(await storedRatings(pat.jwt, structured!.checked!.recipeId)).toEqual({ impact: null, uncertainty: null });
+  });
+
+  it("S1-B3 follow-up (remote MCP): a non-object feedback row gets a per-row marker and never blocks the check", async () => {
+    const { structured } = await mcpCall(pat.apiKey, "check_recipe", {
+      recipe: recipeText("mcp-nonobject-row"),
+      supporting_evidence: EVIDENCE,
+      response_format: "structured",
+      feedback: [5, "not a row", null],
+    });
+    expect(structured?.checked?.recipeId).toMatch(/^[0-9a-f-]{36}$/);
+    const rows = structured?.feedbackResults ?? [];
+    expect(rows).toHaveLength(3);
+    for (const r of rows) {
+      expect(r.ok).toBe(false);
+      expect(r.error).toContain("must be an object");
+    }
+  });
+
+  it("S1-B3 follow-up (remote MCP): a non-object feedback row on search_recipes is a marker, not a failed call", async () => {
+    const res = await fetch(`${BASE}/mcp`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: ACCEPT_BOTH, Authorization: `Bearer ${pat.apiKey}` },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "search_recipes", arguments: { query: "triage ratings", feedback: [7] } } }),
+    });
+    const raw = await res.text();
+    const line = raw.split(/\r?\n/).find((l) => l.startsWith("data: "));
+    const msg = JSON.parse(line ? line.slice(6) : raw) as { result?: { isError?: boolean; content?: Array<{ text?: string }> } };
+    expect(msg.result?.isError).not.toBe(true);
+    expect(msg.result?.content?.map((c) => c.text ?? "").join(" ")).toContain("must be an object");
   });
 
   // ── S1-B4 / DT-RAT-03: independent ratings ─────────────────────────────────
