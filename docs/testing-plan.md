@@ -184,15 +184,11 @@ These are tests — they belong in this plan — but they differ from layers 1�
 - **The runner is an AI coding agent following a runbook** — orchestrating fresh sub-agent contexts as test personas and separate sub-agents as judges. This layer adds no LLM API calls to this codebase. (The codebase itself now carries one server-side LLM call — the premium synthesis path — but it is stubbed in CI via `SYNTHESIS_PROVIDER=stub`, same pattern as embeddings; `test:ci` stays deterministic.)
 - **Execution artifacts and outcome data live in a separate eval repo** (committed baseline matrices as JSON/markdown — not gitignored, not the product DB). The specs themselves (`.feature` files, the scenario corpus) stay in this repo, next to the briefing copy they pin, so a briefing PR updates its declared scenarios in the same diff.
 
-### Future: Claude Agentic Browser Testing
+### Layer 3b: Agent-Run Browser Verification
 
-**Status:** TODO — sits between Layer 3 (route tests) and Layer 4 (manual verification).
+**Status:** in use since 2026-09-27. It sits between Layer 3 (route tests) and Layer 4 (manual verification).
 
-**Goal:** Automate Layer 4 using Claude's computer-use or browser-tool capabilities. Verifies visual rendering, link navigation, and form behavior that HTTP-level tests cannot.
-
-**When to implement:** When Claude Code gains stable browser/screenshot tool access and the manual checklist has stabilized.
-
-**What it would cover:** Screenshot each URL, verify no error states, click navigation links, submit forms, verify CSS loads, check responsive layout.
+Playwright Test in `tests/e2e/` against the running dev stack. An agent that did not build the change checks each PR's stated claims in a real browser, from an expectations file written before the run, and reports each one as met, not met, unverified or open. The HTML report carries a screenshot, video and trace per step. Process: [docs/workflows/browser-verification.md](workflows/browser-verification.md). Orchestration: the `browser-verify` skill. Not in `test:ci`: it needs the dev stack and a browser. Layer 4 stays the person's own look. This layer gives them the evidence and the steps to repeat.
 
 ## Coverage Expectations
 - Pure functions: 100% branch coverage
@@ -203,11 +199,14 @@ These are tests — they belong in this plan — but they differ from layers 1�
 
 ## Test Data Isolation
 
-**Automated tests:** Create throwaway users with `@test.local` emails (e.g., `test-check-{timestamp}@test.local`). These are isolated by convention — the cleanup script removes them:
+**Automated tests:** Create throwaway users with `@test.local` emails that carry a run timestamp (e.g., `test-check-{Date.now()}@test.local`). The cleanup script removes those through the account-deletion path (`deleteUserCascade`):
 ```bash
-npx tsx scripts/cleanup-test-data.ts           # clean up @test.local users + all associated data
-npx tsx scripts/cleanup-test-data.ts --status  # just show counts
+npx tsx scripts/cleanup-test-data.mts --dry-run  # what would be deleted, and what is kept and why
+npx tsx scripts/cleanup-test-data.mts            # delete throwaway test accounts + all associated data
+npx tsx scripts/cleanup-test-data.mts --status   # just show counts
 ```
+
+**Long-lived eval accounts** (`perma-eval@test.local`, `swelancer-eval@test.local`, …) share the `@test.local` domain but have no timestamp in their name, and they hold imported corpora. A sweep keeps them, and it also keeps any account with more than 1,000 recipes; `--dry-run` lists what it kept. Name a new long-lived account without a 10-digit run of numbers. Deleting one takes an explicit `--only '<its email>'`. (Pinned in `apps/backend/src/services/test-data-cleanup.test.ts`; a blanket sweep before that rule deleted part of an eval corpus.)
 
 **E2E testing with real data:** AI agents can use the dev credentials from `.env` (`DEV_USERNAME` / `DEV_PASSWORD`) to log in, create a dedicated test recipe book (e.g., "e2e-test-{timestamp}"), and run recipe checks against the actual system with real API keys scoped to that recipe book. This tests the full stack including Soupnet integration without polluting personal recipes. The test recipe book and its data can be cleaned up after the run.
 
