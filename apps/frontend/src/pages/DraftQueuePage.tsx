@@ -15,6 +15,7 @@ import {
   queueRatingsText,
   queueTotalText,
   stateLabel,
+  whyLabel,
 } from "../lib/draft-queue.js";
 import type { QueueAction, QueueItem } from "../lib/draft-queue.js";
 import styles from "./DraftQueuePage.module.css";
@@ -236,7 +237,7 @@ export function DraftQueuePage() {
                     </p>
                     {item.firstInterpretation && (
                       <p className={styles["why"]}>
-                        <span className={styles["whyLabel"]}>Why your agent drafted it: </span>
+                        <span className={styles["whyLabel"]}>{whyLabel(item.state)} </span>
                         {item.firstInterpretation}
                       </p>
                     )}

@@ -35,6 +35,20 @@ describe("safeReturnTarget (S3-L5: no open redirect)", () => {
     }
   });
 
+  it("ignores percent-encoded separators and dots in the path, either case (fix pass)", () => {
+    for (const bad of [
+      "/app/..%2Fadmin", "/app/..%2fadmin", "/app/%2F%2Fevil.com", "/app/%5C%5Cevil.com", "/app/%5cevil",
+      "/app/.%2e/admin", "/app/%2E%2E/admin", "/app/%252F..%252Fadmin",
+    ]) {
+      expect(safeReturnTarget(bad), bad).toBeNull();
+    }
+  });
+
+  it("still accepts encoded characters in the query (an ids list with an encoded comma)", () => {
+    expect(safeReturnTarget("/app/drafts?ids=a%2Cb")).toBe("/app/drafts?ids=a%2Cb");
+    expect(safeReturnTarget("/app/drafts?q=%22cache%22")).toBe("/app/drafts?q=%22cache%22");
+  });
+
   it("ignores empty, missing, and oversized values", () => {
     expect(safeReturnTarget(null)).toBeNull();
     expect(safeReturnTarget(undefined)).toBeNull();

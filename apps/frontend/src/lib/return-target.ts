@@ -20,6 +20,12 @@ export function safeReturnTarget(raw: string | null | undefined): string | null 
   if (!raw.startsWith("/") || raw.startsWith("//") || raw.includes("\\")) return null;
   // No control characters or whitespace.
   if (/[\u0000-\u001f\u007f\s]/.test(raw)) return null;
+  // Percent-encoded separators and dots in the path ("%2F", "%5C", "%2E",
+  // either case, or double-encoded as "%25…") are refused outright: a router
+  // that decodes them before matching could otherwise land on a path other
+  // than the one this check approved (fix pass after the slice 3 audit).
+  const pathPart = raw.split(/[?#]/, 1)[0] ?? "";
+  if (/%(2f|5c|2e|25)/i.test(pathPart)) return null;
   let url: URL;
   try {
     url = new URL(raw, BASE);

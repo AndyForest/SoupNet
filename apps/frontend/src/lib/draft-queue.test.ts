@@ -11,6 +11,7 @@ import {
   linkNotShownText,
   nextFocusId,
   excerpt,
+  whyLabel,
   QUEUE_ACTIONS,
 } from "./draft-queue.js";
 import type { QueueItem } from "./draft-queue.js";
@@ -46,6 +47,14 @@ describe("queue item wording (S3-Q4, S3-UI3)", () => {
     expect(stateLabel("published")).toMatch(/Published/);
     expect(stateLabel("rejected")).toBe("Rejected draft");
     expect(stateLabel("not_chosen")).toBe("Draft not chosen");
+    // Fix pass (E10): a verified draft says so to its person.
+    expect(stateLabel("verified")).toMatch(/^Verified draft/);
+    expect(stateLabel("verified")).not.toMatch(/not a draft/);
+  });
+
+  it("the interpretation is labelled as the agent's reason only on drafts (fix pass)", () => {
+    for (const s of ["unverified", "rejected", "not_chosen", "verified"] as const) expect(whyLabel(s)).toBe("Why your agent drafted it:");
+    expect(whyLabel("published")).toBe("Evidence:");
   });
 });
 
@@ -61,8 +70,18 @@ describe("action labels (ruling 27, S3-UI2)", () => {
     for (const action of QUEUE_ACTIONS) {
       const name = actionAccessibleName(action, item);
       expect(name.startsWith(actionLabel(action, item))).toBe(true);
-      expect(name).toContain("Draft: As a backend maintainer");
+      expect(name).toContain("Draft 11111111: As a backend maintainer");
       expect(name).not.toBe(actionAccessibleName(action, other));
+    }
+  });
+
+  it("names stay unique when two drafts share their first 80 characters (fix pass)", () => {
+    const opening = "As a backend maintainer working on paging, I prefer page one of the same thought so that folding hides it ";
+    const a = { ...item, id: "aaaaaaaa-1111-4111-8111-111111111111", recipe: `${opening}— alpha` };
+    const b = { ...item, id: "bbbbbbbb-1111-4111-8111-111111111111", recipe: `${opening}— beta` };
+    expect(excerpt(a.recipe)).toBe(excerpt(b.recipe));
+    for (const action of QUEUE_ACTIONS) {
+      expect(actionAccessibleName(action, a)).not.toBe(actionAccessibleName(action, b));
     }
   });
 

@@ -12,7 +12,8 @@
  * agent's, as on the detail page (S3-Q4).
  */
 
-export type QueueItemState = "unverified" | "rejected" | "not_chosen" | "published";
+/** `verified` reaches only the draft's own person; anyone else sees `published` ([F83]). */
+export type QueueItemState = "unverified" | "verified" | "rejected" | "not_chosen" | "published";
 
 export interface QueueItem {
   id: string;
@@ -59,9 +60,13 @@ export function actionLabel(action: QueueAction, item: Pick<QueueItem, "recipeBo
   }
 }
 
-/** The button's accessible name: the visible label first (WCAG 2.5.3), then the draft. */
-export function actionAccessibleName(action: QueueAction, item: Pick<QueueItem, "recipeBook" | "recipe">): string {
-  return `${actionLabel(action, item)}. Draft: ${excerpt(item.recipe)}`;
+/**
+ * The button's accessible name: the visible label first (WCAG 2.5.3), then
+ * the draft, with its short id so two drafts that open with the same 80
+ * characters still get different names (fix pass after the browser run).
+ */
+export function actionAccessibleName(action: QueueAction, item: Pick<QueueItem, "recipeBook" | "recipe" | "id">): string {
+  return `${actionLabel(action, item)}. Draft ${item.id.slice(0, 8)}: ${excerpt(item.recipe)}`;
 }
 
 /** What the live region announces after an action succeeds. */
@@ -82,6 +87,8 @@ export function stateLabel(state: QueueItemState): string | null {
   switch (state) {
     case "unverified":
       return null;
+    case "verified":
+      return "Verified draft: you confirmed it, and it is published to its recipe book";
     case "published":
       return "Published: not a draft awaiting review";
     case "rejected":
@@ -89,6 +96,12 @@ export function stateLabel(state: QueueItemState): string | null {
     case "not_chosen":
       return "Draft not chosen";
   }
+}
+
+/** The label for the first evidence interpretation: the agent's reason on a
+ *  draft, plain evidence on a recipe that was never one. */
+export function whyLabel(state: QueueItemState): string {
+  return state === "published" ? "Evidence:" : "Why your agent drafted it:";
 }
 
 /** "Deposited 27 Sep 2026 by Claude Code key" (key label when known). */
