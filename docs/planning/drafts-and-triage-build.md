@@ -232,7 +232,7 @@ The checklist is [drafts-and-triage-read-paths.md](drafts-and-triage-read-paths.
 
 **Surfaces that must change:** the `traces` schema (draft state and verification columns per open question 6) and migration; the authz module and the seam guard; `trace.service.ts` deposit and search paths; `search-pipeline.ts`, `vector-search.service.ts`, `recipe-lookup.service.ts`, `feedback.service.ts`, `book-stats.service.ts`, `briefing-exemplars.ts`; `routes/traces.ts` (reaction write, move, delete, list, map); `routes/auth.ts` export and `import.service.ts`; `routes/mcp.ts`, `routes/check.ts`, the stdio proxy, `packages/contracts` for the `draft` parameter, the draft label in responses, and the verify operation; the trace detail page.
 
-**Surfaces that must NOT change:** ranking math (`mmr.ts`, `ranking-config.ts`, the scoring in `hybridSearch`), with `ranking-regression.test.ts` passing unchanged; the idempotency key; `session_shown` and `intent_shown` semantics (rendering only); reaction vocabulary and `fetchBookStats` reaction counts; `api_keys` schema (headless is slice 5).
+**Surfaces that must NOT change:** ranking math (`mmr.ts`, `ranking-config.ts`, the scoring in `hybridSearch`), with `ranking-regression.test.ts` passing unchanged; the idempotency key; `session_shown` and `intent_shown` semantics (rendering only); reaction vocabulary, and the meaning of `fetchBookStats` reaction counts (they count published recipes only, so a hidden draft never moves a shared figure; clarified 2026-09-27); `api_keys` schema (headless is slice 5).
 
 **Security properties the verifier must see proven**
 
@@ -340,3 +340,12 @@ Neither variant costs the nearest-neighbour query anything; both roughly double 
 7. An unrecognized `draft` value on a check is taken as a draft, with a notice.
 
 **Test-first.** The authz Layer 1 tests (`draft-sql.test.ts`, the draft cases in `trace-access.test.ts`), the domain tests (`drafts.test.ts`, the renderer and briefing cases), and the frontend label test were written before their implementations and failed first. The Layer 3 suite (`routes/drafts.test.ts`, 35 tests) was written after the service code and run against it; its teeth were shown by a mutation run with `publishedTrace` and `traceReadableById` forced to `TRUE`, which failed 16 of its tests.
+
+### Slice 2: orchestrator rulings after implementation (2026-09-27)
+
+- **Index figures count published recipes only**, reactions and feedback included. That is the rubric's intent (a hidden draft must not move anything a collaborator can see); the must-not-change wording was ambiguous and is clarified above.
+- **S2-M4 measured on a throwaway stack** instead of the ranking-eval stack, which belongs to another session: accepted.
+- **Move and delete of a draft return the missing-id 404 to everyone but its subject, system users included:** accepted. Drafts are the person's until verified; operators have other means for incident work.
+- **`verify_draft` as its own tool** (recipe `6ae9a299`) rather than a mode of `check_recipe` or a feedback kind: accepted. It spends 990 of the 2,226 bytes slice 1 saved (remote `tools/list` 16,854, cap moved to 17,000), still 1,236 bytes under the pre-slice-1 roster.
+- **Build-both was used for the first time** (EXISTS versus join for the draft condition in search), with both options recipe-checked, measured, and the final choice checked. One lesson for the pattern: both option recipes landed in the production corpus as ordinary recipes, because the production server doesn't have the `draft` parameter yet. That is what the operator proposed for this trial ("recipe check both, and leave feedback on them later and then recipe check the final decision"); the feedback rows mark which option lost. Once drafts ship, the options can be drafts instead, which keeps the losing option out of everyone's results.
+- **Import reveals whether a recipe id exists** (pre-existing, found during this slice): filed privately for the audit.
