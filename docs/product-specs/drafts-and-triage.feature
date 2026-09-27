@@ -436,8 +436,10 @@ Feature: Drafts, triage ratings, and deciding by building both
   @unreleased
   Rule: A draft may be deposited on behalf of another person, and is always a draft
     # Guards: drafts-and-triage.md §The model (table); recipes 94e0e682 and
-    # 9e663b62 (the author is always the depositing key's owner; the subject
-    # is a separate field); design-thinking.md §6 The Organization Member
+    # 9e663b62 (the author is the depositing key's owner; the subject is a
+    # separate field), b89db1f0 (verification makes the subject the author;
+    # the depositor stays in the audit trail), and 23657e4e (account deletion
+    # never adds anyone to a book); design-thinking.md §6 The Organization Member
     # ("Drafts written about me"), §Decision Archaeology. Rubric and open
     # questions 28 to 39: build log §Slice 4 rubric.
     # Requirement: C01-R15
@@ -512,6 +514,8 @@ Feature: Drafts, triage ratings, and deciding by building both
       Then the response is the 404 returned for an id that never existed, and nothing changes
       When Sam, a non-member, or the system user tries to move or delete such a draft
       Then the response is the 404 returned for an id that never existed, and nothing changes
+      When Pat confirms a third such draft
+      Then it is Pat's recipe: Pat may delete or move it, and Dana has only what any member has
 
     @DT-OBO-09 @slice-4
     Scenario Outline: on_behalf_of is accepted on every check surface
@@ -526,11 +530,12 @@ Feature: Drafts, triage ratings, and deciding by building both
         | the stdio MCP server's check_recipe proxy |
 
     @DT-OBO-10 @slice-4
-    Scenario: The same text about two people is two claims
-      # Decided: build log open question 29 (the subject joins the idempotency key).
+    Scenario: An identical repeat about someone else is reported, not stored
+      # Decided: build log open question 29, amended by recipe b89db1f0 (the
+      # idempotency key is unchanged).
       When Dana's key checks the identical text in the same book on Pat's behalf, then on Sam's behalf
-      Then two drafts are stored, one about each
-      And repeating either check returns that draft and reports it as existing
+      Then one draft is stored, about Pat
+      And the second response returns that draft as an existing recipe, with a notice saying whom it is about and that nothing new was stored
 
     @DT-OBO-11 @slice-4
     Scenario: The depositor's link is the subject's review link
@@ -550,34 +555,56 @@ Feature: Drafts, triage ratings, and deciding by building both
       Then his queue no longer lists it, and through its link he sees it with the actions unavailable and the reason naming the book
 
     @DT-OBO-13 @slice-4
-    Scenario: Account deletion follows authorship
-      # Decided: build log open question 35; recipes 52bbbdc8 and f46cfc50.
-      Given Dana's agent deposited drafts on Pat's behalf
+    Scenario: Account deletion follows the author, who changes at verification
+      # Decided: build log open question 35, amended by recipes b89db1f0 and 23657e4e.
+      Given Dana's agent deposited four drafts on Pat's behalf, and Pat confirmed one, rejected one, and left two unresolved
       When Dana deletes her account
-      Then every recipe her keys wrote is gone, and Pat's queue no longer lists them
+      Then the rejected and the unresolved drafts are gone, and Pat's queue no longer lists them
+      And the confirmed one is still Pat's recipe
+      And the audit trail still records that Dana's key deposited it
       When instead Pat deletes his account
-      Then nothing Dana wrote is deleted, and the unresolved drafts about Pat are visible to Dana alone
+      Then the confirmed one and the two unresolved drafts about Pat are gone
+      And the rejected one is still Dana's, visible to her alone
       And a new account later registered with Pat's email sees none of them
 
     @DT-OBO-14 @slice-4
-    Scenario: Export and import keep an on-behalf draft a draft about its subject
-      # Decided: build log open question 36.
-      Given Dana's agent deposited a draft on Pat's behalf, and Pat verified it
+    Scenario: Export and import follow the author and keep an on-behalf draft a draft
+      # Decided: build log open question 36, amended by recipe b89db1f0.
+      Given Dana's agent deposited two drafts on Pat's behalf, and Pat confirmed one of them
       When Dana exports her data
-      Then the export carries the recipe with Pat as its subject
-      And Pat's export does not carry it, since Dana wrote it
-      When Dana imports that export into a book where Pat can write
+      Then the export carries the unresolved draft with Pat as its subject, and not the confirmed one
+      When Pat exports his data
+      Then the export carries the confirmed one as his own recipe, and not the unresolved draft
+      When Dana imports her export into a book where Pat can write
       Then the imported recipe is an unverified draft about Pat, whatever state the file carried
       When the target book has no writer with Pat's email
       Then that row is refused with the same answer an unknown email gets
 
     @DT-OBO-15 @slice-4
-    Scenario: A published on-behalf recipe names both people
-      # Decided: build log open question 33.
+    Scenario: A confirmed on-behalf recipe is simply the subject's recipe
+      # Decided: build log open questions 33 and 40, amended by recipe b89db1f0.
       Given Dana's agent deposited a draft on Pat's behalf, and Pat confirmed it
       When Sam's agent finds it, or Sam opens its detail page
-      Then it shows Dana as author and Pat as the person it is on behalf of
-      And it shows no draft state, verifier, or verification date
+      Then it shows Pat as its author, with no on-behalf label
+      And it shows no draft state, verifier, verification date, or the label of Dana's key
+
+    @DT-OBO-16 @slice-4
+    Scenario: Confirming moves ownership to the subject, and only confirming does
+      # Decided: recipe b89db1f0; build log S4-M4, S4-S4.
+      Given Dana's agent deposited three drafts on Pat's behalf
+      When Pat confirms the first, rejects the second, and marks the third not chosen
+      Then the first is authored by Pat, and author:<Pat's email> finds it
+      And the second and third are still authored by Dana
+      And the audit trail names Dana as the depositor of the first, written with the change itself
+
+    @DT-OBO-17 @slice-4
+    Scenario: A book left with only someone else's drafts stays, with nobody added
+      # Decided: recipe 23657e4e (account deletion never adds anyone to a book).
+      Given Sam owns the book in his own organization, Dana's agent deposited a draft there on Pat's behalf, and then Dana and Pat left the book
+      When Sam deletes his account
+      Then the book still exists with no members, in Dana's personal organization
+      And nobody was added to it, and an audit row records that it was left without members
+      And Dana can still open and delete her draft, and Pat can open it but not confirm it
 
   # ─────────────────────────────────────────────────────────────────────────
   @unreleased

@@ -126,26 +126,26 @@ Frontend mapping: `DraftQueuePage` (`/app/drafts`) uses RP-47 and RP-48 and acts
 
 ### Touched by slice 4 (drafts on behalf of another person)
 
-Rubric: build log §Slice 4 rubric (ids `S4-*`). From slice 4 a draft's subject (who it is about, a new column) and its depositor (its author, `user_id`) can differ, so every row that says "the viewer's own" now means "the viewer is the subject or the depositor", and every row that counts "drafts about the viewer" reads the subject. For drafts about oneself nothing changes. Rows not listed keep their slice 2 and 3 disposition unchanged. "Pat" is the subject and "Dana" the depositor, as in the rubric.
+Rubric: build log §Slice 4 rubric (ids `S4-*`). From slice 4 a draft's subject (who it is about, a new nullable column, NULL when the recipe is about its author) and its depositor (its author, `user_id`, until the subject verifies it) can differ. Verification makes the subject the author and clears the column, so a verified on-behalf recipe is an ordinary recipe of the subject's on every row below (amended, recipe `b89db1f0`); account deletion follows `23657e4e` (nobody is added to a book). While a draft is unresolved, every row that says "the viewer's own" means "the viewer is the subject or the depositor", and every row that counts "drafts about the viewer" reads the subject (`COALESCE(subject, user_id)`). For drafts about oneself nothing changes. Rows not listed keep their slice 2 and 3 disposition unchanged. "Pat" is the subject and "Dana" the depositor, as in the rubric.
 
 | # | What slice 4 changes | Subject (Pat) | Depositor (Dana) | Everyone else | Rubric |
 |---|---|---|---|---|---|
 | RP-01, RP-13 | Deposit takes `on_behalf_of`; forced draft; the notice; labels name the other party | results: labelled "deposited by Dana" | results: labelled "about Pat" | unchanged (absent) | S4-W1 to W5, S4-L1, S4-L3 |
 | RP-02, RP-14 | Labels; `is:draft` reads the subject; `author:` still the depositor | `is:draft` lists it | `author:me` lists it, `is:draft` does not | unchanged | S4-Q3, S4-Q4 |
 | RP-03 | Scope counts include the viewer's own unresolved drafts as subject or depositor | counted | counted under `author:me` | unchanged | S4-V1 |
-| RP-04 | Idempotency key gains the subject | | same text about two people is two recipes | n/a | S4-S2, S4-L4 |
-| RP-06, RP-08, RP-16 | By-id reads admit subject and depositor; labels; published rows name the subject | labelled | labelled | uniform; published rows show "on behalf of" | S4-L1, S4-L2, S4-U2 |
+| RP-04 | Idempotency key unchanged (amended, `b89db1f0`); a repeat about someone else returns the existing recipe with a notice naming whom it is about | | one recipe; the notice | n/a | S4-S2, S4-L4 |
+| RP-06, RP-08, RP-16 | By-id reads admit subject and depositor while unpublished; labels; after verification an ordinary recipe of the subject's, no label (amended, `b89db1f0`) | labelled | labelled | uniform; after verification, Pat's ordinary recipe | S4-L1, S4-L2, S4-U2 |
 | RP-09, RP-15, RP-17 | The Drafts line counts drafts about the viewer from any depositor | counts it | does not count it | unchanged | S4-Q1, S4-Z5 |
 | RP-11, RP-18 | Feedback targets follow the by-id rule | may attach | may attach | uniform | S4-U2 |
-| RP-19, RP-20 | Detail page: depositor sees unpublished states; both see the other party; published rows name the subject | full, with actions | state, no actions, with delete | 404; after verification, author and subject shown | S4-M3, S4-L2, S4-Q5 |
-| RP-21, RP-50 | Depositor's reaction and not-chosen get an honest refusal, no row | resolves | 403, nothing written | uniform 404 | S4-R2, S4-U3 |
-| RP-23, RP-36 | Move and delete decided in the module on subject and depositor, not `isAuthor` | move and delete | delete only | uniform 404 | S4-M5, S4-D1 to D4 |
-| RP-25 | Book list: depositor sees her deposits labelled; published ones name the subject | own drafts labelled | her deposits labelled | unchanged; published name the subject | S4-M3, S4-L2 |
-| RP-27, RP-28, RP-29 | Own list, count, and check log are by author, so they hold Dana's deposits, labelled "about Pat" | not listed (not his authored) | listed, labelled | n/a | S4-M3 |
-| RP-30 | Export by author, carrying the subject's email | does not carry Dana's recipe | carries it | n/a | S4-E1 |
-| RP-31 to RP-33 | Admin counts by author | | counts for Dana | n/a | S4-C1 |
+| RP-19, RP-20 | Detail page: depositor sees unpublished states; both see the other party; after verification Pat is the author, and a key label shows only when the key is the author's (amended, `b89db1f0`) | full, with actions | state, no actions, delete while unverified | 404; after verification, Pat's recipe with no Dana key label | S4-M3, S4-L2, S4-Q5 |
+| RP-21, RP-50 | Depositor's reaction and not-chosen get an honest refusal, no row; the subject's confirm moves the author to him in the resolving statement (amended, `b89db1f0`) | resolves; confirm makes him author | 403, nothing written | uniform 404 | S4-M4, S4-R2, S4-R3, S4-U3 |
+| RP-23, RP-36 | Move and delete of an unpublished draft decided in the module on subject and depositor, not `isAuthor`; after verification the normal author rules, with Pat as author (amended, `b89db1f0`) | move and delete | delete only, while unverified | uniform 404 | S4-M5, S4-D1 to D4 |
+| RP-25 | Book list: depositor sees her unpublished deposits labelled; verified ones are Pat's ordinary recipes (amended, `b89db1f0`) | own drafts labelled | her unpublished deposits labelled | unchanged | S4-M3, S4-L2 |
+| RP-27, RP-28, RP-29 | Own list and count are by author, so they follow the flip; the check log is by audit actor, so Dana's log keeps her deposit (amended, `b89db1f0`) | listed once he verifies it | listed, labelled, until verified | n/a | S4-M3, S4-V2 |
+| RP-30 | Export by author, so it follows the flip; unresolved rows carry the subject's email (amended, `b89db1f0`) | carries it once verified | carries it until verified | n/a | S4-E1 |
+| RP-31 to RP-33 | Admin counts by author, following the flip (amended, `b89db1f0`) | counts once verified | counts until verified | n/a | S4-C1 |
 | RP-35 | Import applies the naming rule; on-behalf rows restore as unverified | | row restored or uniformly refused | n/a | S4-E2, S4-E3 |
-| RP-37 | Account deletion collects by author; F73 counts drafts as another author's recipes | his deletion removes nothing of Dana's | her deletion takes her deposits | n/a | S4-A3 to A5 |
+| RP-37 | Account deletion collects by author, plus unverified drafts about the departing person; books follow `23657e4e` (nobody added, memberless books stay) (amended, `b89db1f0`, `23657e4e`) | his deletion takes what he verified and unverified drafts about him | her deletion takes her unverified, rejected, and not-chosen deposits | n/a | S4-A3 to A5 |
 | RP-39 to RP-41 | Fragments read the subject column (`subjectOf`) | own drafts in results | deposits in results | unchanged | S4-M2 |
 | RP-46 | Depositor's `verify_draft` gets an honest refusal naming who can verify | verifies | refused, nothing stored | uniform | S4-R2 |
 | RP-47 to RP-49 | Queue and count by subject; item shows the depositor's email | listed | not in her queue; id-list view without actions | unchanged | S4-Q1 to Q5 |
