@@ -12,6 +12,9 @@ export interface Trace {
   apiKeyLabel?: string | null;
   evidenceCount?: number;
   referenceCount?: number;
+  /** Draft state (slice 2): list rows carry it only for the viewer's own
+   *  drafts; others' unpublished drafts are never listed. */
+  draftState?: string | null;
 }
 
 interface RawEvidence {
@@ -85,6 +88,13 @@ export interface TraceDetail extends Trace {
   /** The depositing agent's triage ratings (low | medium | high); null = not rated. */
   impact?: string | null;
   uncertainty?: string | null;
+  /** Draft state (slice 2): null when the recipe was never a draft. */
+  draftState?: string | null;
+  draftResolvedAt?: string | null;
+  draftResolvedByKeyId?: string | null;
+  draftResolvedByEmail?: string | null;
+  /** The person this draft is about may verify or reject it with a reaction. */
+  canResolveDraft?: boolean;
   userId: string;
   userEmail: string | null;
   groupName?: string | null;
@@ -250,6 +260,8 @@ export function useSetTraceReaction(traceId: string) {
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["trace-feedback", traceId] });
+      // A reaction by the person a draft is about can verify or reject it.
+      void queryClient.invalidateQueries({ queryKey: ["trace", traceId] });
     },
   });
 }

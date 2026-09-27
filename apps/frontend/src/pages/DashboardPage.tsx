@@ -9,6 +9,7 @@ import { CopyBriefingButton } from "../components/CopyBriefingButton.js";
 import { describeDailyReadScope } from "../lib/daily-scope.js";
 import { dailyKeyErrorCode } from "../lib/daily-key-error.js";
 import { DailyKeyError } from "../components/DailyKeyError.js";
+import { draftStatusLabel } from "../lib/draft-status-label.js";
 
 // Note: the email-verification banner that used to live here has been
 // replaced by the /verify-pending route, which is the only authed route an
@@ -308,6 +309,11 @@ export function DashboardPage() {
                   style={{ textDecoration: "none", color: "inherit" }}
                 >
                   <p style={{ marginBottom: "var(--space-xs)", lineHeight: 1.5 }}>
+                    {draftStatusLabel(trace) && (
+                      <span className="text-xs" data-testid="draft-status" style={{ color: "var(--color-primary)", marginRight: "var(--space-xs)" }}>
+                        [{draftStatusLabel(trace)!.text}]
+                      </span>
+                    )}
                     {trace.claimText.length > 140 ? trace.claimText.slice(0, 140) + "..." : trace.claimText}
                   </p>
                 </Link>
