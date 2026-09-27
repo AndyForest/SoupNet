@@ -122,9 +122,11 @@ function DeleteAccountSection({ onDeleted }: { onDeleted: () => void }) {
         method: "DELETE",
         body: JSON.stringify({ password }),
       });
-      const body = (await res.json()) as { ok: boolean; error?: string };
+      const body = (await res.json()) as { ok: boolean; error?: string; message?: string };
       if (!res.ok || !body.ok) {
-        throw new Error(body.error ?? "Deletion failed");
+        // Coded errors (e.g. owned_shared_orgs_exist) carry a human sentence
+        // in `message`; plain ones carry it in `error`.
+        throw new Error(body.message ?? body.error ?? "Deletion failed");
       }
     },
     onSuccess: onDeleted,
@@ -138,6 +140,11 @@ function DeleteAccountSection({ onDeleted }: { onDeleted: () => void }) {
         Permanently deletes your account and the content you authored: recipes, evidence
         links, API keys, OAuth authorizations, recipe-book memberships, and uploads. This is irreversible. Export
         your data first if you want a copy.
+      </p>
+      <p style={{ color: "var(--color-on-surface-variant)", fontSize: "0.9rem", marginBottom: "var(--space-md)" }}>
+        Recipe books you own that nobody else belongs to are deleted with your account. Recipe books you
+        share stay: other people's recipes are kept, and ownership passes to another owner, or else to the
+        longest-standing admin or member.
       </p>
       {!confirming ? (
         <button

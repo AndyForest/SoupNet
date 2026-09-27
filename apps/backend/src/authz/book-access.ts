@@ -1,6 +1,6 @@
 /**
- * Recipe-book access for HUMAN (JWT-path) callers: which books a user can see,
- * what role they hold in one, and whether they can read a given recipe.
+ * Recipe-book access for HUMAN (JWT-path) callers: which books a user can see
+ * and what role they hold in one. (Access to a single recipe: trace-access.ts.)
  *
  * This is the read half of the authorization seam (docs/engineering-principles.md
  * §7). Route handlers ask these functions; they do not join
@@ -16,11 +16,14 @@
  *   - No caching. Every call reads the table, so removing a member takes
  *     effect on their next request.
  *   - Every value is a bound parameter.
+ *   - The membership condition comes from membership-sql.ts, never written
+ *     out here.
  */
 
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import type { BookRole } from "./roles";
+import { membershipOf } from "./membership-sql";
 
 /** A recipe book as its member sees it: book columns plus their own membership row. */
 export interface BookForUser {
@@ -45,8 +48,8 @@ export async function roleIn(
   bookId: string,
 ): Promise<BookRole> {
   const rows = await db.execute(sql`
-    SELECT role FROM claimnet.group_members
-    WHERE group_id = ${bookId}::uuid AND user_id = ${userId}::uuid
+    SELECT gm.role FROM claimnet.group_members gm
+    WHERE gm.group_id = ${bookId}::uuid AND ${membershipOf("gm", userId)}
   `);
   return (rows as unknown as Array<{ role: string }>)[0]?.role ?? null;
 }
@@ -65,9 +68,9 @@ export async function isMember(
 /** Ids of every recipe book the user is a member of. */
 export async function bookIdsFor(db: PostgresJsDatabase, userId: string): Promise<string[]> {
   const rows = await db.execute(sql`
-    SELECT group_id AS "groupId"
-    FROM claimnet.group_members
-    WHERE user_id = ${userId}::uuid
+    SELECT gm.group_id AS "groupId"
+    FROM claimnet.group_members gm
+    WHERE ${membershipOf("gm", userId)}
   `);
   return (rows as unknown as Array<{ groupId: string }>).map((r) => r.groupId);
 }
@@ -84,32 +87,8 @@ export async function booksFor(db: PostgresJsDatabase, userId: string): Promise<
            gm.daily_write as daily_write
     FROM claimnet.groups g
     JOIN claimnet.group_members gm ON gm.group_id = g.id
-    WHERE gm.user_id = ${userId}::uuid
+    WHERE ${membershipOf("gm", userId)}
     ORDER BY g.created_at DESC
   `);
   return rows as unknown as BookForUser[];
-}
-
-/**
- * May this user read this recipe? True when they wrote it or are a member of
- * the book it lives in. A missing trace is `false`, the same answer as an
- * unreadable one, so callers can return one uniform 404.
- *
- * `mayReadTrace` (roles.ts) is the same rule for callers that already hold the
- * trace row; the module tests hold the two to each other.
- */
-export async function canReadTrace(
-  db: PostgresJsDatabase,
-  traceId: string,
-  userId: string,
-): Promise<boolean> {
-  const rows = await db.execute(sql`
-    SELECT t.id
-    FROM claimnet.traces t
-    LEFT JOIN claimnet.group_members gm
-      ON gm.group_id = t.group_id AND gm.user_id = ${userId}::uuid
-    WHERE t.id = ${traceId}::uuid
-      AND (t.user_id = ${userId}::uuid OR gm.user_id IS NOT NULL)
-  `);
-  return (rows as unknown as Array<{ id: string }>).length > 0;
 }

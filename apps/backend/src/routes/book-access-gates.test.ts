@@ -207,10 +207,12 @@ describe.skipIf(!canConnect() || !BASE)("recipe-book access gates (characterizat
     expect(
       (await call(outsider, "POST", `/recipe-books/${bookId}/members`, { email: outsider.email })).status,
     ).toBe(403);
-    // Re-adding an existing member is a no-op insert that still answers 201.
+    // An admin passes the gate. The member already exists, so nothing is
+    // written and the answer is 409 (was a misleading 201 until the endpoint
+    // was made to report the stored row — recipe-book-member-add.test.ts).
     expect(
       (await call(admin, "POST", `/recipe-books/${bookId}/members`, { email: member.email })).status,
-    ).toBe(201);
+    ).toBe(409);
     const roles = (await (await call(owner, "GET", `/recipe-books/${bookId}/members`)).json()) as {
       data: Array<{ email: string; role: string }>;
     };

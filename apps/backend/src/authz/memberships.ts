@@ -12,6 +12,7 @@
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { groupMembers } from "@soupnet/db";
+import { countsAsMembership, membershipOf } from "./membership-sql";
 
 export interface BookMember {
   user_id: string;
@@ -31,7 +32,7 @@ export async function listMembers(db: PostgresJsDatabase, bookId: string): Promi
     SELECT gm.user_id, u.email, gm.role, gm.joined_at
     FROM claimnet.group_members gm
     JOIN claimnet.users u ON u.id = gm.user_id
-    WHERE gm.group_id = ${bookId}::uuid
+    WHERE gm.group_id = ${bookId}::uuid AND ${countsAsMembership("gm")}
     ORDER BY gm.joined_at ASC
   `);
   return rows as unknown as BookMember[];
@@ -56,43 +57,111 @@ export async function addCreatorAsOwner(
   });
 }
 
+/** What `addMember` found or made: the stored role, and whether this call created the row. */
+export interface AddMemberResult {
+  created: boolean;
+  /** The role the row actually holds — NOT necessarily the role that was asked for. */
+  role: string;
+}
+
 /**
- * Add a user to a book. Already a member → no-op; their existing role is
- * kept. Daily-link read/write take the column defaults (excluded) — the same
- * anti-spam posture as accepting an invitation; the new member opts in.
+ * Add a user to a book. Already a member → nothing is written and their
+ * existing role is kept; this function adds, it never changes a role. Either
+ * way it returns the row as stored, so a caller reports what is true rather
+ * than what it asked for. Daily-link read/write take the column defaults
+ * (excluded) — the same anti-spam posture as accepting an invitation; the new
+ * member opts in.
+ *
+ * Both statements address the stored row by its key (see membership-sql.ts on
+ * rows versus "is a member").
  */
 export async function addMember(
   db: PostgresJsDatabase,
   bookId: string,
   userId: string,
   role: "member" | "admin",
-): Promise<void> {
-  await db.execute(sql`
-    INSERT INTO claimnet.group_members (group_id, user_id, role)
-    VALUES (${bookId}::uuid, ${userId}::uuid, ${role})
-    ON CONFLICT (group_id, user_id) DO NOTHING
-  `);
+): Promise<AddMemberResult> {
+  // Two passes at most: the second only runs if the row that blocked the
+  // insert was removed before we could read it.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const inserted = await db.execute(sql`
+      INSERT INTO claimnet.group_members (group_id, user_id, role)
+      VALUES (${bookId}::uuid, ${userId}::uuid, ${role})
+      ON CONFLICT (group_id, user_id) DO NOTHING
+      RETURNING role
+    `);
+    const made = (inserted as unknown as Array<{ role: string }>)[0];
+    if (made) return { created: true, role: made.role };
+
+    const existing = await db.execute(sql`
+      SELECT role FROM claimnet.group_members
+      WHERE group_id = ${bookId}::uuid AND user_id = ${userId}::uuid
+    `);
+    const found = (existing as unknown as Array<{ role: string }>)[0];
+    if (found) return { created: false, role: found.role };
+  }
+  throw new Error("addMember: membership row changed repeatedly while adding");
 }
 
-/** How many owners a book has. The last-owner rule reads this. */
+/** How many owners a book has. (The last-owner rule itself lives in `removeMember`.) */
 export async function countOwners(db: PostgresJsDatabase, bookId: string): Promise<number> {
   const rows = await db.execute(sql`
-    SELECT count(*)::int AS total FROM claimnet.group_members
-    WHERE group_id = ${bookId}::uuid AND role = 'owner'
+    SELECT count(*)::int AS total FROM claimnet.group_members gm
+    WHERE gm.group_id = ${bookId}::uuid AND gm.role = 'owner' AND ${countsAsMembership("gm")}
   `);
   return (rows as unknown as Array<{ total: number }>)[0]?.total ?? 0;
 }
 
-/** Remove a user's membership row. Not a member → no-op. */
+/**
+ * What `removeMember` did:
+ *   - `removed`      — the row is gone
+ *   - `not_a_member` — there was no row; nothing changed
+ *   - `last_owner`   — refused: the user is the book's only owner; nothing changed
+ */
+export type RemoveMemberResult = "removed" | "not_a_member" | "last_owner";
+
+/**
+ * Remove a user's membership row — unless that would leave the book with no
+ * owner. The rule is part of the removal itself, so no caller can forget it
+ * or get it subtly wrong:
+ *
+ *   - Ids are compared by the database as uuids, never as strings, so however
+ *     the caller's copy of an id is written it names the same member.
+ *   - The book's owner rows are locked (in a fixed order) before the decision.
+ *     Two owners leaving at the same moment are serialized: the second waits,
+ *     then decides on what the first left behind, and is refused.
+ *
+ * Pass a transaction handle as `db` to make the removal part of a larger unit;
+ * the locks are then held until that transaction ends.
+ *
+ * The DELETE addresses the stored row by its key rather than through the
+ * membership condition: a row that no longer counts as a membership must still
+ * be removable.
+ */
 export async function removeMember(
   db: PostgresJsDatabase,
   bookId: string,
   userId: string,
-): Promise<void> {
-  await db.execute(sql`
-    DELETE FROM claimnet.group_members
-    WHERE group_id = ${bookId}::uuid AND user_id = ${userId}::uuid
-  `);
+): Promise<RemoveMemberResult> {
+  return db.transaction(async (tx) => {
+    const ownerRows = await tx.execute(sql`
+      SELECT ${membershipOf("gm", userId)} AS "isTarget"
+      FROM claimnet.group_members gm
+      WHERE gm.group_id = ${bookId}::uuid AND gm.role = 'owner' AND ${countsAsMembership("gm")}
+      ORDER BY gm.id
+      FOR UPDATE OF gm
+    `);
+    const owners = ownerRows as unknown as Array<{ isTarget: boolean }>;
+    const targetIsOwner = owners.some((o) => o.isTarget === true);
+    if (targetIsOwner && owners.length <= 1) return "last_owner";
+
+    const deleted = await tx.execute(sql`
+      DELETE FROM claimnet.group_members
+      WHERE group_id = ${bookId}::uuid AND user_id = ${userId}::uuid
+      RETURNING id
+    `);
+    return (deleted as unknown as unknown[]).length > 0 ? "removed" : "not_a_member";
+  });
 }
 
 /**
@@ -108,12 +177,12 @@ export async function updateDailyPrefs(
   prefs: { dailyRead?: boolean | undefined; dailyWrite?: boolean | undefined },
 ): Promise<DailyPrefs | null> {
   const rows = await db.execute(sql`
-    UPDATE claimnet.group_members
+    UPDATE claimnet.group_members gm
     SET
-      daily_read = COALESCE(${prefs.dailyRead ?? null}::boolean, daily_read),
-      daily_write = COALESCE(${prefs.dailyWrite ?? null}::boolean, daily_write)
-    WHERE group_id = ${bookId}::uuid AND user_id = ${userId}::uuid
-    RETURNING daily_read AS "dailyRead", daily_write AS "dailyWrite"
+      daily_read = COALESCE(${prefs.dailyRead ?? null}::boolean, gm.daily_read),
+      daily_write = COALESCE(${prefs.dailyWrite ?? null}::boolean, gm.daily_write)
+    WHERE gm.group_id = ${bookId}::uuid AND ${membershipOf("gm", userId)}
+    RETURNING gm.daily_read AS "dailyRead", gm.daily_write AS "dailyWrite"
   `);
   return (rows as unknown as DailyPrefs[])[0] ?? null;
 }

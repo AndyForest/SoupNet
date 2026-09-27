@@ -783,6 +783,61 @@ describe.skipIf(!BASE)("daily-link group preferences", () => {
     const body = (await res.json()) as { error?: string };
     expect(body.error).toBe("no_write_recipe_books_configured");
   });
+
+  // [F71] An empty daily_read set means "read nothing", never "read
+  // everything I belong to". With no book chosen the mint is refused with a
+  // coded error that tells the user where to choose — for the explicit
+  // write override and for the configured-write path alike.
+  it("POST /keys/daily returns 400 no_read_recipe_books_configured when every book is excluded from daily reads (explicit write override)", async () => {
+    await setAllPrefs(false, false);
+
+    const res = await fetch(`${BASE}/keys/daily`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${prefsOwnerToken}` },
+      body: JSON.stringify({ writeRecipeBookId: groupAId }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { ok: boolean; error?: string; message?: string; data?: unknown };
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe("no_read_recipe_books_configured");
+    expect(body.message).toMatch(/Recipe Books page/);
+    expect(body.data).toBeUndefined();
+  });
+
+  it("POST /keys/daily returns 400 no_read_recipe_books_configured when writes are configured but no reads are", async () => {
+    await setAllPrefs(false, false);
+    await fetch(`${BASE}/recipe-books/${groupAId}/daily-prefs`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${prefsOwnerToken}` },
+      body: JSON.stringify({ dailyWrite: true }),
+    });
+
+    const res = await fetch(`${BASE}/keys/daily`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${prefsOwnerToken}` },
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error?: string };
+    expect(body.error).toBe("no_read_recipe_books_configured");
+  });
+
+  it("POST /keys/daily reads exactly the one book that is included, never the rest of the memberships", async () => {
+    await setAllPrefs(false, false);
+    await fetch(`${BASE}/recipe-books/${groupBId}/daily-prefs`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${prefsOwnerToken}` },
+      body: JSON.stringify({ dailyRead: true }),
+    });
+
+    const res = await fetch(`${BASE}/keys/daily`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${prefsOwnerToken}` },
+      body: JSON.stringify({ writeRecipeBookId: groupAId }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data?: { readRecipeBookIds: string[] } };
+    expect(body.data?.readRecipeBookIds).toEqual([groupBId]);
+  });
 });
 
 // ── Email case-insensitivity (invite visibility bug, 2026-07-02) ──────────

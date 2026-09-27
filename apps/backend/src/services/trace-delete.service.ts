@@ -9,6 +9,24 @@ export interface TraceDeleteOptions {
    *  cascades with no human actor, e.g. the ephemeral-workspace reaper. */
   actorUserId: string | null;
   reason?: string | undefined;
+  /**
+   * The book the caller checked the actor's authority against. When given, the
+   * delete only proceeds if the locked trace row is still in this book, so the
+   * authorization and the action are about the same book. Omitted by system
+   * cascades (account deletion, workspace reaping) that authorize no book.
+   */
+  authorizedGroupId?: string | undefined;
+}
+
+/**
+ * The trace is no longer in the book the caller was authorized to delete it
+ * from. Nothing was deleted; the caller should look again and decide afresh.
+ */
+export class TraceDeleteSourceChangedError extends Error {
+  constructor() {
+    super("Trace is no longer in the recipe book this delete was authorized for");
+    this.name = "TraceDeleteSourceChangedError";
+  }
 }
 
 export interface TraceDeleteResult {
@@ -45,9 +63,18 @@ export async function deleteTraceCascade(
     // UPDATE (strategy-check.ts), so it either completes before we take this
     // lock (its rows are then swept by our chain-delete below) or blocks
     // until we commit and sees the trace gone.
-    await tx.execute(sql`
-      SELECT id FROM claimnet.traces WHERE id = ${traceId}::uuid FOR UPDATE
+    const lockedRows = await tx.execute(sql`
+      SELECT group_id AS "groupId" FROM claimnet.traces WHERE id = ${traceId}::uuid FOR UPDATE
     `);
+
+    // Under the row lock the book cannot change again before we commit, so
+    // this is the moment to confirm it is the book the caller authorized
+    // against. (A trace that is already gone falls through: the cascade below
+    // is then a no-op, as it always was.)
+    const locked = (lockedRows as unknown as Array<{ groupId: string }>)[0];
+    if (locked && opts.authorizedGroupId !== undefined && locked.groupId !== opts.authorizedGroupId) {
+      throw new TraceDeleteSourceChangedError();
+    }
 
     const evidenceIdRows = await tx.execute(sql`
       SELECT evidence_id AS "id" FROM claimnet.trace_evidence
