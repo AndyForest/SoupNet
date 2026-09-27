@@ -382,24 +382,28 @@ Feature: Drafts, triage ratings, and deciding by building both
       And the recipe's text, embeddings, and judgment date are unchanged
 
   # ─────────────────────────────────────────────────────────────────────────
-  @unreleased
   Rule: The review queue is the human search page, sorted for triage
     # Guards: drafts-and-triage.md §Build notes; design-thinking.md §Reviewing
-    # drafts, §Dashboard as a Feed.
+    # drafts, §Dashboard as a Feed. Build log rulings 21 to 27: the queue is
+    # the SPA page /app/drafts, listed by a signed-in (JWT) route that parses
+    # the search grammar over the person's live memberships; is:draft means
+    # "unresolved drafts about me" and lifts search's exclude-own default.
     # Requirement: C01-R15 ("The review experience should share the human search page")
 
     @DT-QUE-01 @slice-3
     Scenario: The drafts filter shows only drafts the viewer may see
-      Given drafts about Pat, drafts Dana deposited about Pat, and drafts about Sam exist in the book
-      When Pat opens the search page with the drafts filter
-      Then Pat sees the drafts about Pat and none about Sam
+      Given Pat's agents deposited drafts about Pat with two different keys, into the shared book, a book Pat does not include in daily reads, and his personal book
+      And Sam's agent deposited drafts about Sam in the book, and Pat has published recipes there
+      When Pat opens the review queue
+      Then Pat sees every draft about Pat, from both keys and all three books
+      And none about Sam, and none of his published recipes
 
     @DT-QUE-02 @slice-3
-    Scenario: The queue sorts by impact, then uncertainty, unrated as medium
+    Scenario: The queue sorts by impact times uncertainty, unrated as medium
       Given Pat has drafts rated (high, high), (high, low), (low, high), and one not rated
       When Pat opens the drafts filter without another sort
-      Then the order is (high, high), (high, low), the not-rated draft, (low, high)
-      And ties are broken newest first
+      Then the order is (high, high), the not-rated draft, (high, low), (low, high)
+      And equal products go to the higher impact, then to the most recently deposited
 
     @DT-QUE-03 @slice-3
     Scenario: impact: and uncertainty: narrow the queue
@@ -458,6 +462,13 @@ Feature: Drafts, triage ratings, and deciding by building both
       Given Dana's agent deposited a draft on Pat's behalf
       When Dana reacts still_true, or Dana's agent calls the verify operation with evidence
       Then the recipe is still a draft
+
+    @DT-OBO-06 @slice-4
+    Scenario: The person's review queue lists drafts deposited about them by someone else
+      Given Dana's agent deposited a draft on Pat's behalf
+      When Pat opens the review queue
+      Then Pat sees the draft about Pat that Dana's agent deposited
+      And Dana's own queue does not list it, since it is not about Dana
 
     @DT-OBO-05 @slice-4
     Scenario: On behalf of yourself is an ordinary check
