@@ -139,7 +139,6 @@ const NOT_YET_MIGRATED = {
 const MEMBERSHIP_MENTIONS = {
   "packages/contracts/src/groups.ts": { n: 1, fp: "455fd5eff999", why: "a doc comment on the legacy contract" },
   "packages/domain/src/trace-move.ts": { n: 3, fp: "a479b69c8a35", why: "doc comments on the pure role allowlist; no I/O in this package" },
-  "scripts/cleanup-test-data.ts": { n: 2, fp: "7e194ff79f22", why: "dev-only cleanup of test users: deletes their membership rows" },
 };
 
 /**
@@ -185,10 +184,6 @@ const NON_AUTHORIZING_KEY_SQL = {
   "apps/backend/src/services/user-delete.service.ts": {
     n: 4, fp: "b66060457b2d",
     why: "account-deletion cascade: deletes the user's own keys and what hangs off them, and removes the deleted books' ids from other users' key grants",
-  },
-  "scripts/cleanup-test-data.ts": {
-    n: 1, fp: "88cb4780f315",
-    why: "dev-only cleanup of test users: deletes their keys",
   },
 };
 

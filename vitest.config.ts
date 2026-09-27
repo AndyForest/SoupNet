@@ -38,6 +38,7 @@ export default defineConfig({
     include: [
       "apps/*/src/**/*.test.ts",
       "packages/*/src/**/*.test.ts",
+      "scripts/**/*.test.mts",
     ],
     env: loadDotEnv(),
     // Integration beforeAll hooks chain register → verify → login, and each

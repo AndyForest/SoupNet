@@ -31,6 +31,16 @@ Status (2026-07-08): ~~ADR written — [`docs/adr/0023-local-embedding-providers
 
 ## Data portability
 
+### `[DESIGN]` Point a dev backend's cache queries at the local embedding cache archive
+
+The archive (`docs/workflows/embedding-cache.md`, 2026-09-27) collects vectors from dev and test databases by harvest, but a backend still reads only its own database's `vector_cache`. So a fresh database starts cold and re-embeds text the archive already holds.
+
+Proposed: an optional `VECTOR_CACHE_DATABASE_URL` that sends the cache's four queries (lookup and insert in `lib/embeddings/enqueue.ts`, `embedding-worker/jobs/vector-check.ts` and `vector-api-call.ts`) to a second connection, using the archive's insert-only writer role. Unset, nothing changes.
+
+- Postgres foreign tables are not a shortcut: `postgres_fdw` rejects `ON CONFLICT` with named conflict columns, which both inserts use.
+- Every cache query is an exact-key lookup with no joins, so a second connection is enough.
+- Decide first whether an eval or ranking run should read through, since a run expecting a cold cache would then be warm.
+
 ### `[IMPL]` Export omits `references.original_filename` and `region_meta`
 
 Found 2026-07-12 while implementing import: the columns were added to `references` after `/auth/me/export` was written, so exports silently drop them and a round-trip loses file-attachment metadata (the audit trail viewers use to verify a recipe against their source copy). Add both to the export (additive — `schemaVersion` stays 1); import already passes unknown keys through its additive-tolerance gate.
@@ -233,6 +243,14 @@ From the org-accounts code map (2026-09-19; recipe `8486b345`, operator lean): b
 ### `[DESIGN]` Test-coverage recipe books — judging coverage gaps and overlaps by intent (idea stage, not for the first org release)
 
 Operator idea, 2026-09-19 (recipe `0760205a`). A different kind of recipe book: an agent role-plays an end user in the design-thinking style, starting from a declared intent ("as a site admin, I want to add a new user"), walks the site with browser automation while capturing screenshots and video, and deposits how it went. Clustering over those walkthrough recipes shows whether an intent is already covered, so a team can decide where new walkthroughs and new automated tests are needed, aimed at the proliferation of test cases with no way to judge gaps or overlaps. Builds on things that exist: intents, multimodal evidence (uploads), the recipe map's clustering, and the agent-run persona pattern from the briefing regression harness (`89e712e5`). Open: what the recipe's claim is for a walkthrough (the user's expectation of the flow?), whether screenshots and video fit the evidence model as-is, and how a coverage view differs from the existing map.
+
+### `[IMPL]` Ask for the daily-link choice right after accepting an invitation
+
+Found by the 2026-09-27 browser verification of #96/#97 (`docs/workflows/browser-verification.md`; spec `tests/e2e/pr-96-97.spec.ts`). Design decided by the operator the same day (Soup.net recipe `cb73c253`). Needs a test that fails before the change, plus a browser check with the e2e harness.
+
+Invited members start excluded from daily reads and writes on purpose (design-thinking.md, daily-agent-link user story). But the post-accept "just joined" box on Recipe Books (`AgentConnectBox` with `justJoined`, `GroupsPage.tsx`) says the agent "can share this book's taste", while the key it mints reads only the member's *other* daily books (screenshot E6-04: "reads Personal, writes to E6 shared book"). Decision: the box leads with "Include it in your daily agent link?" and three buttons: include in reads and writes, reads only, not now. Accepting stays one click and the book stays excluded until one of the include buttons is pressed. The buttons use the existing daily-prefs write in `authz/memberships.ts`, and the briefing button below reflects the choice at once. Both accept points (Dashboard's invitation card and the Recipe Books invitation list) should land the person on this box.
+
+The same run's other findings are tracked elsewhere: the notice for an inherited book under "Ownership transfer for shared organizations", and the sole owner who can't leave under "A sole owner can't leave or hand over a recipe book from the page". The removal confirmation, the error-link styling and the parking-list leftovers were fixed in #99.
 
 ### `[IMPL]` Minor web UI improvements (parking list)
 
