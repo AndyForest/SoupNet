@@ -253,6 +253,10 @@ Organized by capability, not by product. Specific AI products are listed as exam
 - *"My user's preference is ambiguous from context alone. I form 3 divergent hypotheses and use MCP elicitation to present them as choices. The user picks one, I check that recipe, and the result gives me both the logged preference and related context from the corpus."* (See [Divergent Recipe Checks](#divergent-recipe-checks-discovering-taste-through-hypothesis-branching))
 - *"I found the commit where the team made a core architecture decision two years ago. I check the reconstructed recipe with `decided_at` set to the commit timestamp, so the judgment carries its original date."* (See [Decision Archaeology](#decision-archaeology-backfilling-judgment-from-existing-artifacts))
 - *"I'm orchestrating sub-agents for a parallel discovery sweep. Each sub-agent's briefing includes recipe-check instructions; their checks land in the user's check log as they work, and their reports tell me which judgment calls they proceeded on versus escalated to me."* (See [Agent Fleets](#agent-fleets-orchestration-observability-and-alignment))
+- *"My user is away until Monday and I hit a call that matters and that I can't settle from context. I check it as a draft with `impact: high` and `uncertainty: high`, and my first evidence line says why I couldn't ask and which question would settle it. I proceed on it. Nobody else sees the draft; my user's other agents see it labelled as a draft, so they weigh it as unconfirmed."* (Aspirational. Design: [planning/drafts-and-triage.md](planning/drafts-and-triage.md))
+- *"Back in conversation, I see three open drafts I might be able to answer. I ask my user the one question each draft names, quote their answer, and verify the draft citing it. The two they confirmed become ordinary recipes; the one they corrected I leave for them to reject, and I check their corrected position as a new recipe."* (Aspirational)
+- *"I want my user to review five drafts from this session. I hand them one link, `/app/drafts?ids=…`, and they confirm or reject each in one click."* (Aspirational)
+- *"Neither my user nor I can tell which of two caching strategies will hold up. We agree the rubric first: lower p95 latency at equal cost. I deposit both options as drafts under one declared intent that states the rubric, build both, measure, verify the winner citing the numbers, and mark the other not chosen, so the next agent facing the same choice finds the measured loser as well as the winner."* (Aspirational)
 
 ### Agent Type B: Web-Browsing
 **"I can visit URLs and fill forms, but I don't have structured tool access."**
@@ -316,6 +320,12 @@ Organized by capability, not by product. Specific AI products are listed as exam
 - *"Our automated reviewer opens a pull request, declares what it's reviewing with the PR attached as a reference, and searches for the judgment calls the author and their colleagues logged around that work. Its review cites them. It deposits nothing."*
 - *"The reviewer logs feedback on which recipes informed its review, so the people who wrote them can see their judgment earning its keep."*
 - *"An org admin creates the reviewer's credential, chooses which org-wide books it can read, and can switch it off like any member. It doesn't use up a person's seat."*
+
+**Between deposit-nothing and deposit-freely: headless keys.** (Aspirational. Design: [planning/drafts-and-triage.md](planning/drafts-and-triage.md) §Headless keys.) A person who expects one of their own agents to run unsupervised marks its key headless when making it. Everything the agent deposits becomes a draft, enforced by the server, and any key it derives for sub-agents is headless too. That gives a key one of three write levels: full, drafts only, nothing.
+
+- *"I set my overnight documentation agent's key to headless. In the morning my review queue holds the eleven calls it made, sorted by how much rides on each and how unsure it was. Nothing it decided reached my collaborators' results overnight."*
+- *"I'm running headless. My briefing tells me how to draft well: say what would settle each call, rate impact and uncertainty honestly, and build both options when the rubric is already agreed. When I finish, I log one outcome row listing the drafts I left open."*
+- *"I tried to make a derived key for a sub-agent that could deposit normally. The key it got back is headless like mine; a derived key only ever narrows."*
 
 ### Orchestrators and the agents they run
 
@@ -386,6 +396,15 @@ Two things make a move different from a shelf-swap. First, the move records itse
 
 Moving is not available to agents, per §8. An agent that could re-file its own recipe after the fact would file it carelessly in the first place.
 
+### Reviewing drafts
+
+(Aspirational. Design: [planning/drafts-and-triage.md](planning/drafts-and-triage.md).) A draft is a recipe an agent recorded without being able to confirm it with the person it's about. Until that person or their agent verifies it, only they, their agents, and whoever's agent deposited it can see it. The review queue is the human search page filtered to drafts and sorted for triage.
+
+- **Working the queue.** *"I open my drafts. The ones rated high impact and high uncertainty are at the top; unrated ones sit in the middle. Each shows why the agent couldn't ask me and the question that would settle it. I click still true on four, wrong on one, and the rest can wait. The four now show up in searches like any recipe I'd confirmed in conversation."*
+- **Narrowing the queue.** *"I only have ten minutes, so I search my drafts with `impact:high`. Six to decide, not forty."*
+- **Resolving a build-both.** *"Two drafts sit side by side under one intent, each with the rubric my agent and I agreed and the measurements it took. The rubric was my agent's, not mine, so it waits for me. I verify the winner and mark the other not chosen. The loser stays on record as a viable option that lost, not as a wrong one."*
+- **What ratings don't do.** *"An agent rated one of its drafts high impact. That moved it up my queue. It didn't make it rank higher for anyone searching once I'd confirmed it."*
+
 ### Understanding recipe-book dynamics
 **User story:** *"I scope the Recipe Map to my project recipe book and see 30 recipes from three different collaborators. I switch to concept axes with 'logistics' and 'design' — the map shows that most recipes are about logistics (event planning, volunteer coordination) and there's a gap in design decisions. I mention this in our next meeting and we spend time discussing the design direction, which our agents then log."*
 
@@ -430,6 +449,10 @@ The agent should show the full recipe text alongside each link, not just a label
 - The full recipe text (the hypothesis)
 - A brief note on what choosing this option clarifies ("This frames the brand as family wisdom rather than enterprise software")
 - The clickable link (for read-only agents) or a button to confirm (for MCP agents)
+
+### When the person can't be asked: drafts
+
+(Aspirational. Design: [planning/drafts-and-triage.md](planning/drafts-and-triage.md).) Divergent checks need the person present to choose. A draft is the asynchronous form of the same move: when the person can't be reached and the call is high enough in impact and uncertainty that an unconfirmed record would mislead, the agent checks its best hypothesis as a draft, says why it couldn't ask and what would settle it, and proceeds. The person's later confirmation is the selection signal, arriving late. An agent that can ask still asks.
 
 ### Result identification in copy-paste workflows
 
@@ -487,6 +510,8 @@ The driving need (2026-06-10): a single-sprint work trial on an unfamiliar produ
 3. **Check with provenance.** Recipe-check the confirmed decision with evidence quoting the artifact verbatim (commit message, ADR text) and a citation carrying the commit hash and date — and set `decided_at` to the artifact's timestamp.
 
 Unconfirmed hypotheses are not checked — the same rule as divergent checks: only genuine, evidenced judgments enter the corpus. A hypothesis the agent couldn't trace to a real artifact is a question, not a recipe.
+
+(Aspirational.) Drafts give a traced-but-unconfirmed decision somewhere to wait. When the artifact is real but the person who made the call isn't the operator, the agent deposits the reconstructed recipe as a draft on that person's behalf. It stays visible only to that person, their agents, and the operator who ran the sweep, until that person's side verifies it. See [planning/drafts-and-triage.md](planning/drafts-and-triage.md). An untraced hypothesis is still a question, not a draft.
 
 ### Temporal honesty: `decided_at` vs `created_at`
 
@@ -610,7 +635,7 @@ This shape mirrors how humans actually relate to shared systems: we don't open a
 
 Items fall roughly into tiers:
 
-1. **Action required** — pending recipe-book invitations, email re-verification, expired keys that should be rotated
+1. **Action required** — pending recipe-book invitations, email re-verification, expired keys that should be rotated, drafts waiting for my review (aspirational; see [Reviewing drafts](#reviewing-drafts))
 2. **Recent activity by me or my agents** — recipes checked today, recipe books I've joined, keys I've created
 3. **Recent activity in my recipe books** — recipes others checked in shared books (social proof)
 4. **Ambient stats** — recipe count trend, cluster count, map updates
