@@ -306,9 +306,9 @@ const TRACE_READS = {
     n: 2, fp: "e3d3e8af7029", composes: false,
     why: "a documented SQL text for one recipe's evidence by id, run only after the caller has the recipe (by-id helper, RP-42)",
   },
-  "scripts/cleanup-test-data.ts": {
-    n: 11, fp: "adaf62c92d90", composes: false,
-    why: "dev-only cleanup of test users: deletes their recipes",
+  "apps/backend/src/services/test-data-cleanup.service.ts": {
+    n: 2, fp: "3581836380cd", composes: false,
+    why: "dev-only cleanup of seeded test users: counts their own recipes by user id before deleting the accounts",
   },
   "scripts/repair-orphaned-user-data.mjs": {
     n: 11, fp: "75064665cb1e", composes: false,
