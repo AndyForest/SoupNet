@@ -63,7 +63,7 @@ export function CookieNotice() {
       <span style={{ flex: "1 1 auto", minWidth: 220, lineHeight: 1.4 }}>
         Soup.net stores a sign-in token in your browser&apos;s localStorage.
         No tracking cookies, no third-party analytics.{" "}
-        <Link to="/info/privacy" style={{ color: "var(--color-primary)" }}>
+        <Link to="/info/privacy" style={{ color: "var(--color-primary)", textDecoration: "underline" }}>
           Privacy Policy
         </Link>
         .

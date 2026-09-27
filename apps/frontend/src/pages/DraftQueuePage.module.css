@@ -1,0 +1,137 @@
+/* The review queue (drafts-and-triage slice 3). One column of draft cards;
+   at the app shell's mobile breakpoint (768px, AppShell.module.css) the
+   search row and the action row stack so nothing scrolls sideways at 412px
+   (S3-UI4). Long recipe text, URLs, and citations wrap anywhere. */
+
+.intro {
+  color: var(--color-on-surface-variant);
+  line-height: 1.55;
+  max-width: 70ch;
+  margin-bottom: var(--space-lg);
+}
+
+.search {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: flex-end;
+  margin-bottom: var(--space-sm);
+}
+.searchField { flex: 1; min-width: 0; }
+.searchField label {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: var(--space-xs);
+}
+.hint {
+  font-size: 0.75rem;
+  color: var(--color-on-surface-variant);
+  margin-bottom: var(--space-md);
+}
+.error {
+  color: var(--color-error);
+  font-size: 0.85rem;
+  margin-bottom: var(--space-md);
+  overflow-wrap: anywhere;
+}
+.status {
+  font-size: 0.85rem;
+  color: var(--color-on-surface-variant);
+  margin-bottom: var(--space-md);
+  min-height: 1.2em;
+}
+
+.list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.item {
+  background: var(--color-surface-container-lowest);
+  border-radius: var(--radius-md);
+  padding: var(--space-md) var(--space-lg);
+  border-left: 4px solid var(--color-primary);
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.item:focus-visible,
+.item a:focus-visible,
+.item button:focus-visible,
+.search button:focus-visible,
+.heading:focus-visible {
+  outline: 3px solid var(--color-secondary);
+  outline-offset: 2px;
+}
+
+.recipe {
+  margin: 0 0 var(--space-sm) 0;
+  line-height: 1.5;
+}
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs) var(--space-md);
+  font-size: 0.8rem;
+  color: var(--color-on-surface-variant);
+  margin-bottom: var(--space-sm);
+}
+.why {
+  font-size: 0.85rem;
+  line-height: 1.5;
+  background: var(--color-surface-container-low);
+  border-radius: var(--radius-sm);
+  padding: var(--space-sm) var(--space-md);
+  margin-bottom: var(--space-sm);
+}
+.whyLabel { font-weight: 600; }
+.state {
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin-bottom: var(--space-sm);
+}
+.blocked {
+  font-size: 0.85rem;
+  color: var(--color-on-surface);
+  background: var(--color-surface-container-high);
+  border-radius: var(--radius-sm);
+  padding: var(--space-sm) var(--space-md);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  align-items: center;
+}
+.actions button {
+  min-height: 32px;
+  font-size: 0.8rem;
+}
+.detailLink {
+  font-size: 0.8rem;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 var(--space-xs);
+  text-decoration: underline;
+}
+
+.empty {
+  padding: var(--space-lg);
+  background: var(--color-surface-container-low);
+  border-radius: var(--radius-md);
+}
+
+@media (max-width: 768px) {
+  .search { flex-direction: column; align-items: stretch; }
+  .item { padding: var(--space-md); }
+  .actions { flex-direction: column; align-items: stretch; }
+  .actions button { justify-content: center; }
+  .detailLink { margin-left: 0; }
+}
