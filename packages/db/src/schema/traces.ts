@@ -53,6 +53,21 @@ export const traces = claimnetSchema.table(
     // docs/planning/session-novelty-and-pool-diversity.md.
     sessionId: text("session_id"),
 
+    // Triage ratings (drafts-and-triage slice 1): the depositing agent's own
+    // view of how much rides on this call (impact) and how unsure it is of
+    // the person's position (uncertainty), each low | medium | high. NULL =
+    // not rated — never a stored default (the review queue treats an unrated
+    // recipe as medium when it sorts, at read time). Text + service-level
+    // validation, the codebase pattern for closed vocabularies
+    // (check_feedback, api_keys.key_type); an unrecognized value is stored
+    // as NULL with a response notice, never a rejected check (recipe
+    // 4cfd166e). Set once at deposit: an idempotent repeat keeps the first
+    // ratings. Display and triage only — NEVER read by ranking, clustering,
+    // or MMR (self-ratings are unsafe as a relevance signal, recipe
+    // ff54eafd); a static test pins that.
+    impact: text("impact"),
+    uncertainty: text("uncertainty"),
+
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },

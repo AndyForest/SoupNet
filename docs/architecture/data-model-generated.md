@@ -1,9 +1,9 @@
 # ClaimNet Data Model — Generated Reference
 
-> **Auto-generated** from Drizzle migration snapshot `0036_snapshot.json`.
+> **Auto-generated** from Drizzle migration snapshot `0037_snapshot.json`.
 > Do not edit by hand. Regenerate with: `npx tsx scripts/generate-data-model-docs.ts`
 >
-> Schema as of migration `0036_intents_and_feedback_intent_id` (2026-08-24).
+> Schema as of migration `0037_traces_triage_ratings` (2026-09-27).
 > Tables: 31 | Schema: `claimnet`
 
 For design rationale, conventions, and context, see [data-model.md](data-model.md).
@@ -326,6 +326,8 @@ erDiagram
         real format_adherence_score
         timestamptz decided_at
         text session_id
+        text impact
+        text uncertainty
         timestamptz created_at
         timestamptz updated_at
     }
@@ -566,6 +568,8 @@ These are created by raw SQL in migration files and are not captured in the snap
 | `format_adherence_score` | `real` | YES |  |  |
 | `decided_at` | `timestamptz` | YES |  |  |
 | `session_id` | `text` | YES |  |  |
+| `impact` | `text` | YES |  |  |
+| `uncertainty` | `text` | YES |  |  |
 | `created_at` | `timestamptz` | NO | `now()` |  |
 | `updated_at` | `timestamptz` | NO | `now()` |  |
 
