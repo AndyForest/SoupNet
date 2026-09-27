@@ -53,9 +53,17 @@ export function countsAsMembership(alias: MembershipAlias): SQL {
   return sql`TRUE`;
 }
 
-/** The row is a membership held by `userId`. */
-export function membershipOf(alias: MembershipAlias, userId: string): SQL {
-  return sql`(${aliasSql(alias)}.user_id = ${userId}::uuid AND ${countsAsMembership(alias)})`;
+/**
+ * The row is a membership held by `holder`: a user id, bound as a parameter,
+ * or a column of the enclosing statement that holds one — key authentication
+ * asks whether the owner of the key row being judged (`k.user_id`) is a
+ * member, for every book its grant names, inside the one statement that
+ * resolves the key. A column reference is SQL the module writes itself,
+ * never caller input.
+ */
+export function membershipOf(alias: MembershipAlias, holder: string | SQL): SQL {
+  const who = typeof holder === "string" ? sql`${holder}::uuid` : holder;
+  return sql`(${aliasSql(alias)}.user_id = ${who} AND ${countsAsMembership(alias)})`;
 }
 
 /** The row is a membership held by anyone other than `userId`. */

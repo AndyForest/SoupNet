@@ -28,6 +28,7 @@ import {
   readableTraceFor,
   roleInBookOfTrace,
   isOwnerOrAdmin,
+  inBooks,
 } from "../authz";
 
 const traces = new Hono<AppEnv>();
@@ -124,7 +125,7 @@ traces.get("/map", async (c) => {
         COALESCE(max(created_at)::text, '') AS newest,
         COALESCE(max(updated_at)::text, '') AS touched
       FROM claimnet.traces
-      WHERE group_id IN (${sql.join(groupIds.map((g) => sql`${g}::uuid`), sql`, `)})
+      WHERE ${inBooks(sql`group_id`, groupIds)}
       GROUP BY group_id
     `);
     const perBook = new Map(

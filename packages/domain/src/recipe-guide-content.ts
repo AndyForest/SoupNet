@@ -356,7 +356,11 @@ function renderBookStatsLine(s: BriefingBookStats): string {
 }
 
 export function renderRecipeBooks(groups: BriefingGroup[]): string {
-  const defaultGroup = groups.filter(g => g.canWrite).find(g => g.isDefault) ?? groups.filter(g => g.canWrite)[0];
+  // No fallback to "the first writable book": a key can be without a usable
+  // default (its owner left that book), and a deposit that names no book is
+  // then refused — so the briefing says so instead of advertising a default
+  // the check path would not honor.
+  const defaultGroup = groups.find(g => g.canWrite && g.isDefault);
   const groupLines = groups.map(g => {
     const access = g.canWrite ? "read/write" : "read";
     const flag = g.isDefault ? ", default" : "";
@@ -378,7 +382,7 @@ export function renderRecipeBooks(groups: BriefingGroup[]): string {
 
   return `${groupLines}
 
-Default write recipe book: ${defaultGroup ? `${defaultGroup.slug} (${defaultGroup.name})` : "personal"}.
+Default write recipe book: ${defaultGroup ? `${defaultGroup.slug} (${defaultGroup.name})` : "none right now — name one with recipe_book on each check"}.
 A useful question before each check: "Who benefits from knowing this?" Personal taste → personal recipe book. Project decisions → the project's shared book. Defaulting everything to personal undermines collaboration.`;
 }
 

@@ -25,6 +25,7 @@
 import crypto from "node:crypto";
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
+import { bindBookToKey } from "../authz";
 import { deleteTraceCascade } from "./trace-delete.service";
 
 // ── Tunables ─────────────────────────────────────────────────────────────────
@@ -157,19 +158,11 @@ export async function createEphemeralWorkspace(
 
     // Capability self-binding (audit F60): append EXACTLY this book id to the
     // presenting key's own read+write arrays, in one atomic statement guarded
-    // on the key still being live. Zero rows updated ⇒ the key expired/consumed
-    // mid-create ⇒ roll back so no orphan book is bound to a dead key.
-    const bindRows = await tx.execute(sql`
-      UPDATE claimnet.api_keys
-      SET read_group_ids = array_append(read_group_ids, ${groupId}::uuid),
-          write_group_ids = array_append(write_group_ids, ${groupId}::uuid)
-      WHERE id = ${keyId}::uuid
-        AND expires_at > NOW()
-        AND consumed_at IS NULL
-        AND NOT (${groupId}::uuid = ANY(read_group_ids))
-      RETURNING id
-    `);
-    if ((bindRows as unknown as Array<{ id: string }>).length === 0) {
+    // on the key still being live and its owner still passing the user-state
+    // predicate (the statement lives in the authz module with the other
+    // key-authorizing SQL). Not bound ⇒ the key died mid-create ⇒ roll back so
+    // no orphan book is bound to a dead key.
+    if (!(await bindBookToKey(tx, keyId, groupId))) {
       throw new EphemeralWorkspaceError(409, "Key is no longer valid — workspace not created.");
     }
 
@@ -234,38 +227,15 @@ export async function setEphemeralExpiry(
   };
 }
 
-// ── Tombstone: the single scope-resolution seam (audit F57) ──────────────────
-
-/**
- * Of the given book ids, return the set that are TOMBSTONED — a born-ephemeral
- * book whose expiry has passed. Consumers subtract this from read scope and
- * reject writes whose target is in it, so a book leaves search/briefings/counts
- * (and refuses deposits) the instant its expiry passes, before the reaper runs.
- * Durable books never appear here (no ephemeral_books row).
- */
-export async function listTombstonedGroupIds(
-  db: PostgresJsDatabase,
-  groupIds: string[],
-): Promise<Set<string>> {
-  if (groupIds.length === 0) return new Set();
-  const rows = await db.execute(sql`
-    SELECT group_id
-    FROM claimnet.ephemeral_books
-    WHERE expires_at <= NOW()
-      AND group_id = ANY(ARRAY[${sql.join(groupIds.map((g) => sql`${g}::uuid`), sql`,`)}]::uuid[])
-  `);
-  return new Set((rows as unknown as Array<{ group_id: string }>).map((r) => r.group_id));
-}
-
-/** Convenience: the live (non-tombstoned) subset of the given ids, order
- *  preserved. Used at read-scope resolution. */
-export async function excludeTombstoned(
-  db: PostgresJsDatabase,
-  groupIds: string[],
-): Promise<string[]> {
-  const dead = await listTombstonedGroupIds(db, groupIds);
-  return dead.size === 0 ? groupIds : groupIds.filter((g) => !dead.has(g));
-}
+// ── Tombstone (audit F57 / F68) ──────────────────────────────────────────────
+//
+// A born-ephemeral book whose expiry has passed is TOMBSTONED: it leaves
+// search, briefings, and by-id reads, and refuses deposits, the instant its
+// expiry passes — before the reaper below physically deletes it. That rule is
+// enforced where a key's scope is resolved, in authz/key-auth.ts: a tombstoned
+// book is in neither of a Principal's scope arrays, so no consumer can receive
+// one and there is no helper here for a consumer to forget to call. Durable
+// books are never tombstoned (no ephemeral_books row).
 
 // ── Reaper ───────────────────────────────────────────────────────────────────
 

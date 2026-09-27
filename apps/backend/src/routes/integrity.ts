@@ -59,7 +59,7 @@ import type { Context } from "hono";
 import { sql } from "drizzle-orm";
 import { getDb } from "../db";
 import type { AppEnv } from "../types";
-import { validateKey } from "../services/api-key.service";
+import { authenticateKey } from "../authz";
 import { rateLimit, getClientIp, hashApiKey } from "../middleware/rate-limit";
 
 /** Pull the raw api key from a Bearer header or the `?key=` query param —
@@ -247,14 +247,18 @@ integrity.get("/", integrityIpRateLimit, integrityPerKeyRateLimit, async (c) => 
   }
 
   const db = getDb();
-  const validated = await validateKey(db, rawKey);
+  const validated = await authenticateKey(db, rawKey);
   if (!validated) {
     // Uniform 401 — a missing, invalid, and expired key are indistinguishable.
     return c.json({ ok: false, error: "Invalid or expired API key" }, 401);
   }
 
   const books = await readIntegrity(db, validated.readGroupIds);
-  const expiredNotYetReaped = await readExpiredNotYetReaped(db, validated.readGroupIds);
+  // `readGroupIds` is effective scope, so disposed workspaces are not in it.
+  // This report is the one consumer that needs them, and asks for them by
+  // name: the Principal lists granted books the owner still belongs to whose
+  // ephemeral expiry has passed (authz/key-auth.ts).
+  const expiredNotYetReaped = await readExpiredNotYetReaped(db, validated.expiredReadGroupIds);
 
   const totalSources = books.reduce((n, b) => n + b.orphanedSources, 0);
   const totalChunks = books.reduce((n, b) => n + b.orphanedChunks, 0);

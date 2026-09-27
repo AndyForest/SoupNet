@@ -245,7 +245,12 @@ describe("key-death UX (invalid/expired key states)", () => {
         id: 1,
       }),
     });
-    expect(res.status).toBe(200);
+    // The key is authenticated in the /mcp route handler before any tool
+    // exists, so a dead key is an HTTP 401 (the status the MCP authorization
+    // spec requires, and the one that tells an OAuth client to refresh) rather
+    // than a 200 tool result. The remediation copy rides in the error body.
+    expect(res.status).toBe(401);
+    expect(res.headers.get("www-authenticate") ?? "").toContain("/.well-known/oauth-protected-resource");
     const text = await res.text();
     expect(text).toContain("Invalid or expired API key");
     expect(text).toContain("/app/keys");

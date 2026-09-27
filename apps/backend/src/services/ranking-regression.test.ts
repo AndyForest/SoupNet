@@ -49,7 +49,7 @@ import type { RankingConfig } from "@soupnet/domain";
  * Requires a running backend + postgres (skipped otherwise). Process
  * discipline (2026-07-17 gate fix): anything that DEPOSITS (a real check)
  * goes over HTTP against BACKEND_URL, so the check's side effects — including
- * validateKey's fire-and-forget last_used_at UPDATE — run in the backend
+ * authenticateKey's fire-and-forget last_used_at UPDATE — run in the backend
  * process, not this vitest worker. In-process calls are reserved for the
  * READ-ONLY pipeline path (runSearchPipeline with a supplied queryVectorStr
  * performs only SELECTs) plus awaited seeding/cleanup SQL; running
@@ -67,7 +67,7 @@ let sql: typeof import("drizzle-orm").sql;
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 let runSearchPipeline: typeof import("./search-pipeline").runSearchPipeline;
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
-let validateKey: typeof import("./api-key.service").validateKey;
+let authenticateKey: typeof import("../authz").authenticateKey;
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 let getEmbeddingModelId: typeof import("../lib/embeddings/provider").getEmbeddingModelId;
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
@@ -132,8 +132,8 @@ async function registerAgent(tag: string): Promise<Agent> {
   });
   const apiKey = ((await keyRes.json()) as { data?: { key?: string } }).data?.key ?? "";
   if (!apiKey) throw new Error("Failed to mint API key for ranking-regression test");
-  const kr = await validateKey(getDb(), apiKey);
-  if (!kr) throw new Error("validateKey failed for ranking-regression test key");
+  const kr = await authenticateKey(getDb(), apiKey);
+  if (!kr || !kr.defaultWriteGroupId) throw new Error("authenticateKey failed for ranking-regression test key");
   return { userId: kr.userId, groupId: kr.defaultWriteGroupId, keyId: kr.keyId, apiKey, jwt };
 }
 
@@ -335,7 +335,7 @@ beforeAll(async () => {
   getDb = (await import("../db")).getDb;
   sql = (await import("drizzle-orm")).sql;
   runSearchPipeline = (await import("./search-pipeline")).runSearchPipeline;
-  validateKey = (await import("./api-key.service")).validateKey;
+  authenticateKey = (await import("../authz")).authenticateKey;
   getEmbeddingModelId = (await import("../lib/embeddings/provider")).getEmbeddingModelId;
   deleteTraceCascade = (await import("./trace-delete.service")).deleteTraceCascade;
 });

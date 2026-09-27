@@ -13,6 +13,7 @@ import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { groupMembers } from "@soupnet/db";
 import { countsAsMembership, membershipOf } from "./membership-sql";
+import { inBooks } from "./scope-sql";
 
 export interface BookMember {
   user_id: string;
@@ -36,6 +37,33 @@ export async function listMembers(db: PostgresJsDatabase, bookId: string): Promi
     ORDER BY gm.joined_at ASC
   `);
   return rows as unknown as BookMember[];
+}
+
+export interface BookMemberIdentity {
+  group_id: string;
+  display_name: string | null;
+  email: string;
+}
+
+/**
+ * Members of several books in one query, ordered by book then email — for the
+ * agent briefing, which names collaborators per shared book. The caller passes
+ * books it is already entitled to see (a Principal's effective scope); this
+ * lists rows and decides nothing. No books → no query.
+ */
+export async function listMembersOfBooks(
+  db: PostgresJsDatabase,
+  bookIds: string[],
+): Promise<BookMemberIdentity[]> {
+  if (bookIds.length === 0) return [];
+  const rows = await db.execute(sql`
+    SELECT gm.group_id, u.display_name, u.email
+    FROM claimnet.group_members gm
+    JOIN claimnet.users u ON u.id = gm.user_id
+    WHERE ${inBooks(sql`gm.group_id`, bookIds)}
+    ORDER BY gm.group_id, u.email
+  `);
+  return rows as unknown as BookMemberIdentity[];
 }
 
 /**

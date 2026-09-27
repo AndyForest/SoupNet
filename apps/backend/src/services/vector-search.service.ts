@@ -23,6 +23,7 @@ import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { PRODUCTION_SEARCH_STRATEGY_IDS, poolBoundary } from "@soupnet/domain";
 import type { ClusterPoolConfig, CandidateSignals } from "@soupnet/domain";
 import { embedQuery, getEmbeddingModelId } from "../lib/embeddings/provider";
+import { inBooks } from "../authz";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -244,10 +245,7 @@ export async function hybridSearch(
     return { results: [], totalResults: 0, searchMode: "semantic" };
   }
 
-  const groupIdsSql = sql.join(
-    groupIds.map((g) => sql`${g}::uuid`),
-    sql`, `,
-  );
+  const inScope = inBooks(sql`es.group_id`, groupIds);
 
   // ── Semantic search (pure vector cosine similarity) ─────────────────────
   // Reuse the caller's pre-resolved vector when available; otherwise embed.
@@ -300,7 +298,7 @@ export async function hybridSearch(
         AND ev.model_id = ${getEmbeddingModelId()}
         AND ecs.strategy_id IN (${strategyIdsSql})
         AND es.source_type = 'trace'
-        AND es.group_id IN (${groupIdsSql})
+        AND ${inScope}
         ${excludeTraceId ? sql`AND es.source_id != ${excludeTraceId}::uuid` : sql``}
         ${keywordPredicate}
         ${structuredPredicate}`;
@@ -542,10 +540,7 @@ export async function evidenceSearch(
     vectorStr = `[${queryVector.join(",")}]`;
   }
 
-  const groupIdsSql = sql.join(
-    params.groupIds.map((id) => sql`${id}::uuid`),
-    sql`, `,
-  );
+  const inScope = inBooks(sql`es.group_id`, params.groupIds);
 
   // Search evidence embeddings — joins back to evidence and parent trace.
   // Same ANN posture as hybridSearch: at LIMIT ~100 the planner streams from
@@ -569,7 +564,7 @@ export async function evidenceSearch(
       AND ev.task_type = 'SEMANTIC_SIMILARITY'
       AND ev.model_id = ${getEmbeddingModelId()}
       AND es.source_type = 'evidence'
-      AND es.group_id IN (${groupIdsSql})
+      AND ${inScope}
       ${params.excludeTraceId ? sql`AND te.trace_id != ${params.excludeTraceId}::uuid` : sql``}
     ORDER BY ev.vector <=> ${vectorStr}::halfvec(3072)
     LIMIT ${limit}

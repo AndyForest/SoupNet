@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PgDialect } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { countsAsMembership, membershipOf, membershipOfSomeoneElse } from "./membership-sql";
 
 // Layer 1 — the membership condition, rendered without a database. These pin
@@ -23,6 +24,12 @@ describe("membership SQL fragments", () => {
     const q = dialect.sqlToQuery(membershipOf("gm", USER));
     expect(q.sql).toBe("(gm.user_id = $1::uuid AND TRUE)");
     expect(q.params).toEqual([USER]);
+  });
+
+  it("membershipOf takes a column of the enclosing statement as the holder, with nothing bound", () => {
+    const q = dialect.sqlToQuery(membershipOf("gm", sql`k.user_id`));
+    expect(q.sql).toBe("(gm.user_id = k.user_id AND TRUE)");
+    expect(q.params).toEqual([]);
   });
 
   it("membershipOfSomeoneElse is the same condition for every other user", () => {

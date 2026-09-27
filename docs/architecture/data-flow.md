@@ -19,11 +19,11 @@ flowchart TB
     subgraph "AI Agents"
         subgraph "MCP Agents"
             MC[Claude Code / Desktop] -->|Bearer api-key| MCP["/mcp endpoint"]
-            MCP -->|validateKey| DB
+            MCP -->|authenticateKey| DB
         end
         subgraph "Web Agents"
             WA[ChatGPT / Stitch] -->|?key=api-key in URL| CHECK["/check endpoint"]
-            CHECK -->|validateKey| DB
+            CHECK -->|authenticateKey| DB
         end
         subgraph "API Agents"
             AA[Custom scripts] -->|?key=api-key&format=json| CHECK
@@ -45,7 +45,7 @@ flowchart TB
 - Stored as SHA-256 hash in `claimnet.api_keys` table
 - Raw key returned only once at creation — never stored
 - Each key has: `read_group_ids[]`, `write_group_ids[]`, `default_write_group_id`
-- `validateKey()` hashes the incoming key, queries DB, checks expiry, returns group scoping
+- `authenticateKey()` (`apps/backend/src/authz/key-auth.ts`) hashes the incoming key and, in one statement, checks expiry, consumption, and the owner's account state, and returns a `Principal` whose recipe-book scope is the key's grant intersected with its owner's current memberships
 
 ---
 
@@ -63,7 +63,7 @@ sequenceDiagram
 
     Note over C,S: Every request is independent
     C->>S: POST /mcp (Authorization: Bearer api-key, body: any JSON-RPC method)
-    S->>DB: validateKey(sha256(api-key))
+    S->>DB: authenticateKey(sha256(api-key))
     DB-->>S: {keyId, userId, groups...} or null
     S->>S: new transport + new McpServer (per-request, stateless)
     S->>S: Register tools, dispatch JSON-RPC method
