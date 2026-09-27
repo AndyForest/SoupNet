@@ -67,6 +67,15 @@ export type DraftAudience = { viewerUserId: string } | typeof SHARED_AUDIENCE;
 /** Shared surfaces: published recipes only, for every viewer. */
 export const SHARED_AUDIENCE = Object.freeze({ shared: true as const });
 
+/** The type of the shared audience alone: a viewer audience is not assignable. */
+export type SharedAudience = typeof SHARED_AUDIENCE;
+
+/** Runtime check that an audience is the shared one (for values that crossed an `unknown` or a cast). */
+export function isSharedAudience(audience: unknown): audience is SharedAudience {
+  return typeof audience === "object" && audience !== null && (audience as { shared?: unknown }).shared === true
+    && !("viewerUserId" in audience);
+}
+
 function isShared(audience: DraftAudience): audience is typeof SHARED_AUDIENCE {
   return "shared" in audience;
 }
@@ -110,6 +119,17 @@ export function traceVisibleTo(alias: TraceAlias, audience: DraftAudience): SQL 
 /** The row may be read by id by this viewer (see the header). */
 export function traceReadableById(alias: TraceAlias, viewerUserId: string): SQL {
   return sql`(${publishedTrace(alias)} OR ${ownDraft(alias, viewerUserId)})`;
+}
+
+/**
+ * The row's draft state as this viewer may see it ([F83]): the state for the
+ * person the draft is about, NULL for everyone else, so a verified draft is
+ * an ordinary recipe on shared surfaces and nobody else learns it was one.
+ * (Others never receive an unpublished draft's row at all.)
+ */
+export function draftStateShownTo(alias: TraceAlias, viewerUserId: string): SQL {
+  const a = aliasSql(alias);
+  return sql`(CASE WHEN ${subjectOf(alias)} = ${viewerUserId}::uuid THEN ${a}.draft_state ELSE NULL END)`;
 }
 
 /**

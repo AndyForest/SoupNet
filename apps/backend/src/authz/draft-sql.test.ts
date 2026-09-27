@@ -11,7 +11,8 @@ import {
   traceReadableById,
   SHARED_AUDIENCE,
 } from "./draft-sql";
-import { mayReadTrace, isPublishedDraftState, mayResolveDraft } from "./roles";
+import { mayReadTrace, isPublishedDraftState, mayResolveDraft, hasWriteAuthority } from "./roles";
+import { writeAuthoritySql } from "./draft-resolution";
 
 // Drafts-and-triage slice 2, S2-M1 / DT-VIS-14: the draft visibility rule is
 // written once in the authz module — one JS rule (`mayReadTrace`, roles.ts)
@@ -91,11 +92,38 @@ describe("the JS read rule (Layer 1)", () => {
   });
 
   it("only the subject may resolve, and only an unverified draft", () => {
-    expect(mayResolveDraft({ draftState: "unverified", isDraftSubject: true })).toBe(true);
-    expect(mayResolveDraft({ draftState: "unverified", isDraftSubject: false })).toBe(false);
+    const write = { canWriteBook: true };
+    expect(mayResolveDraft({ draftState: "unverified", isDraftSubject: true, ...write })).toBe(true);
+    expect(mayResolveDraft({ draftState: "unverified", isDraftSubject: false, ...write })).toBe(false);
     for (const s of [null, "verified", "rejected", "not_chosen"]) {
-      expect(mayResolveDraft({ draftState: s, isDraftSubject: true })).toBe(false);
+      expect(mayResolveDraft({ draftState: s, isDraftSubject: true, ...write })).toBe(false);
     }
+  });
+
+  it("[F78][F79] resolving needs write authority on the draft's book at that moment", () => {
+    expect(mayResolveDraft({ draftState: "unverified", isDraftSubject: true, canWriteBook: false })).toBe(false);
+  });
+
+  it("[F78][F79] write authority: a key's effective write scope, or a live write-capable membership", () => {
+    expect(hasWriteAuthority({ kind: "key", writeGroupIds: ["b1"] }, "b1")).toBe(true);
+    expect(hasWriteAuthority({ kind: "key", writeGroupIds: ["b2"] }, "b1")).toBe(false);
+    expect(hasWriteAuthority({ kind: "key", writeGroupIds: [] }, "b1")).toBe(false);
+    for (const role of ["owner", "admin", "member"]) {
+      expect(hasWriteAuthority({ kind: "member", role }, "b1"), role).toBe(true);
+    }
+    for (const role of [null, undefined, "viewer", ""]) {
+      expect(hasWriteAuthority({ kind: "member", role }, "b1"), String(role)).toBe(false);
+    }
+  });
+
+  it("[F78][F79] resolveDraft renders the write-authority condition inside its UPDATE", () => {
+    const keySql = dialect.sqlToQuery(writeAuthoritySql("t", { kind: "key", writeGroupIds: ["11111111-1111-4111-8111-111111111111"] }, VIEWER));
+    expect(keySql.sql).toContain("t.group_id IN");
+    expect(dialect.sqlToQuery(writeAuthoritySql("t", { kind: "key", writeGroupIds: [] }, VIEWER)).sql).toBe("FALSE");
+    const memberSql = dialect.sqlToQuery(writeAuthoritySql("t", { kind: "member" }, VIEWER));
+    expect(memberSql.sql).toContain("claimnet.group_members me");
+    expect(memberSql.sql).toContain("me.group_id = t.group_id");
+    expect(memberSql.params).toEqual(expect.arrayContaining([VIEWER, "owner", "admin", "member"]));
   });
 });
 

@@ -76,14 +76,46 @@ export function mayReadTrace(viewer: TraceReadFacts): boolean {
   return viewer.isAuthor || (viewer.role !== null && viewer.role !== undefined);
 }
 
+/** Roles whose membership may write into a book (the allowlist posture of
+ *  the predicates above; the same set as `canWriteToBook` in @soupnet/domain). */
+export const WRITE_ROLES: readonly string[] = ["owner", "admin", "member"];
+
+/**
+ * Who is asking to resolve a draft, and with what authority over books:
+ * an API key (its Principal's EFFECTIVE write scope, already the grant
+ * intersected with live membership) or a signed-in person (their live
+ * membership role in the draft's book).
+ */
+export type ResolveAuthority =
+  | { kind: "key"; writeGroupIds: readonly string[] }
+  | { kind: "member"; role?: string | null | undefined };
+
+/**
+ * Write authority on a book at this moment ([F78], [F79]). Publishing a
+ * draft changes what a book's members see, so it is a write: a key needs
+ * the book in its effective write scope, and a person needs a live
+ * membership with a write-capable role. Allowlist: an unknown role is false.
+ */
+export function hasWriteAuthority(authority: ResolveAuthority, bookId: string): boolean {
+  if (authority.kind === "key") return authority.writeGroupIds.includes(bookId);
+  const role = authority.role;
+  return !!role && WRITE_ROLES.includes(role);
+}
+
 /**
  * May this viewer resolve (verify or reject) the draft? Only the person it is
- * about, and only while it is unverified: resolution is one-way (DT-VER-03),
- * and a depositor who is not the subject never verifies someone else's draft
- * (DT-OBO-04, for slice 4).
+ * about, only while it is unverified, and only with write authority on the
+ * draft's book at that moment ([F78], [F79]; `hasWriteAuthority`). Resolution
+ * is one-way (DT-VER-03), and a depositor who is not the subject never
+ * verifies someone else's draft (DT-OBO-04, for slice 4). The resolving
+ * statement (draft-resolution.ts) enforces the same three conditions itself.
  */
-export function mayResolveDraft(facts: { draftState: string | null | undefined; isDraftSubject: boolean }): boolean {
-  return facts.draftState === "unverified" && facts.isDraftSubject;
+export function mayResolveDraft(facts: {
+  draftState: string | null | undefined;
+  isDraftSubject: boolean;
+  canWriteBook: boolean;
+}): boolean {
+  return facts.draftState === "unverified" && facts.isDraftSubject && facts.canWriteBook;
 }
 
 /**

@@ -12,6 +12,8 @@ export interface DraftStatusLike {
   draftState?: string | null;
   draftResolvedAt?: string | null;
   draftResolvedByKeyId?: string | null;
+  /** The viewer resolved it themselves ([F83]: "by you" only then). */
+  draftResolvedByViewer?: boolean;
   apiKeyId?: string | null;
 }
 
@@ -29,7 +31,7 @@ export function draftStatusLabel(t: DraftStatusLike): { text: string; title: str
       };
     case "verified": {
       const by = !t.draftResolvedByKeyId
-        ? "by you"
+        ? (t.draftResolvedByViewer ? "by you" : "by the person it is about")
         : t.draftResolvedByKeyId === t.apiKeyId
           ? "by the agent that deposited it"
           : "by your agent";

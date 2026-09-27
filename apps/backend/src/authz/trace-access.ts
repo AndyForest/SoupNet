@@ -71,6 +71,8 @@ export interface TraceDetail {
   draftResolvedAt: string | null;
   draftResolvedByKeyId: string | null;
   draftResolvedByEmail: string | null;
+  /** The viewer is the one who resolved the draft (the "by you" label). */
+  draftResolvedByViewer: boolean;
 }
 
 export interface ReadableTrace {
@@ -81,7 +83,9 @@ export interface ReadableTrace {
 /** How the statement finds its trace: by the trace's id, or by a feedback row about it. */
 type Locator = { traceId: string } | { feedbackId: string };
 
-type Row = Partial<TraceAccess> & Partial<Omit<TraceDetail, "id" | "claimText" | "userId" | "groupId">>;
+type Row = Partial<TraceAccess> & Partial<Omit<TraceDetail, "id" | "claimText" | "userId" | "groupId">> & {
+  draftResolvedByUserId?: string | null;
+};
 
 const DETAIL_COLUMNS: SQL = sql`,
       t.api_key_id AS "apiKeyId",
@@ -96,7 +100,8 @@ const DETAIL_COLUMNS: SQL = sql`,
       t.uncertainty AS "uncertainty",
       t.draft_resolved_at AS "draftResolvedAt",
       t.draft_resolved_by_key_id AS "draftResolvedByKeyId",
-      ru.email AS "draftResolvedByEmail"`;
+      ru.email AS "draftResolvedByEmail",
+      t.draft_resolved_by_user_id AS "draftResolvedByUserId"`;
 
 const DETAIL_JOINS: SQL = sql`
     LEFT JOIN claimnet.groups g ON g.id = t.group_id
@@ -244,10 +249,59 @@ export async function readableTraceFor(
       userEmail: row.userEmail ?? null,
       impact: row.impact ?? null,
       uncertainty: row.uncertainty ?? null,
-      draftState: access.draftState,
-      draftResolvedAt: row.draftResolvedAt ?? null,
-      draftResolvedByKeyId: row.draftResolvedByKeyId ?? null,
-      draftResolvedByEmail: row.draftResolvedByEmail ?? null,
+      // Draft state and verification details are the draft subject's alone
+      // ([F83]): to anyone else a verified draft is an ordinary recipe, with
+      // no state, verifier, key, or dates.
+      ...(access.isDraftSubject
+        ? {
+          draftState: access.draftState,
+          draftResolvedAt: row.draftResolvedAt ?? null,
+          draftResolvedByKeyId: row.draftResolvedByKeyId ?? null,
+          draftResolvedByEmail: row.draftResolvedByEmail ?? null,
+          draftResolvedByViewer: (row.draftResolvedByUserId ?? null) === userId,
+        }
+        : {
+          draftState: null,
+          draftResolvedAt: null,
+          draftResolvedByKeyId: null,
+          draftResolvedByEmail: null,
+          draftResolvedByViewer: false,
+        }),
     },
   };
+}
+
+/**
+ * Which of these recipe ids may this user read? ([F82]) One statement fetches
+ * the facts for every id, and `mayReadTrace` decides each one in JS, so ids a
+ * viewer may not read (a collaborator's hidden draft, someone else's book, an
+ * id that never existed) drop out, indistinguishably. Returns the readable
+ * ids in input order, without duplicates. Used to render stored id lists that
+ * were captured unchecked, such as feedback lineage (`related_trace_ids`).
+ */
+export async function readableTraceIds(
+  db: PostgresJsDatabase,
+  userId: string,
+  traceIds: readonly string[],
+): Promise<string[]> {
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const ids = [...new Set(traceIds.filter((id) => uuid.test(id)).map((id) => id.toLowerCase()))];
+  if (ids.length === 0) return [];
+  const rows = await db.execute(sql`
+    SELECT
+      t.id AS "traceId",
+      (t.user_id = ${userId}::uuid) AS "isAuthor",
+      gm.role AS "role",
+      t.draft_state AS "draftState",
+      (${subjectOf("t")} = ${userId}::uuid) AS "isDraftSubject",
+      (${depositorOf("t")} = ${userId}::uuid) AS "isDraftDepositor"
+    FROM claimnet.traces t
+    LEFT JOIN claimnet.group_members gm
+      ON gm.group_id = t.group_id AND ${membershipOf("gm", userId)}
+    WHERE t.id IN (${sql.join(ids.map((id) => sql`${id}::uuid`), sql`, `)})
+  `);
+  const readable = new Set(
+    (rows as unknown as Row[]).map(toAccess).filter((a) => mayReadTrace(a)).map((a) => a.traceId.toLowerCase()),
+  );
+  return ids.filter((id) => readable.has(id));
 }

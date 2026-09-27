@@ -18,8 +18,12 @@
  *     rule, via lookupRecipes) — anything else is the uniform
  *     `not_found_or_unreadable`, byte-for-byte what get_recipes answers for a
  *     random id (DT-VER-07);
- *   - only the person the draft is about may resolve it; that check lives in
- *     the resolving UPDATE itself (authz/draft-resolution.ts).
+ *   - the draft's book must be in the key's effective write scope ([F78]):
+ *     publishing is a write. A readable draft in a book the key cannot write
+ *     gets the same uniform marker as a missing id;
+ *   - only the person the draft is about may resolve it; that check, and the
+ *     write-authority check again, live in the resolving UPDATE itself
+ *     (authz/draft-resolution.ts).
  *
  * Nothing is stored unless the draft is verified in the same transaction:
  * the state change runs first and the evidence is attached only if it
@@ -28,7 +32,7 @@
 
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { validateVerificationEvidence } from "@soupnet/domain";
-import { keyMayVerifyDrafts, resolveDraft } from "../authz";
+import { keyMayVerifyDrafts, resolveDraft, hasWriteAuthority } from "../authz";
 import type { Principal } from "../authz";
 import { parseEvidenceMarkdown } from "./evidence-parser";
 import { insertEvidenceEntries } from "./trace.service";
@@ -82,6 +86,16 @@ export async function verifyDraft(
     return { status: "ambiguous_prefix", recipeId, candidates: entry.candidates };
   }
 
+  // Write authority on the recipe's book ([F78]): publishing into a book is a
+  // write, so a key that can read the book but not write it gets the same
+  // answer as an id that does not exist. The resolving statement checks it
+  // again against the book the row is in at that moment.
+  const authority = { kind: "key" as const, writeGroupIds: principal.writeGroupIds };
+  const bookId = entry.recipeBook?.recipeBookId;
+  if (!bookId || !hasWriteAuthority(authority, bookId)) {
+    return { status: "not_found_or_unreadable", recipeId };
+  }
+
   // A published recipe (never a draft, or already verified) carries no state.
   if (entry.draftState === undefined) return { status: "not_a_draft", recipeId: entry.recipeId };
   if (entry.draftState !== "unverified") {
@@ -96,8 +110,6 @@ export async function verifyDraft(
   // Attach everything except entries that repeat a quote the draft carries.
   const known = new Set(existingQuotes.map((q) => q.replace(/\s+/g, " ").trim().toLowerCase()));
   const fresh = entries.filter((e) => !e.quote || !known.has(e.quote.replace(/\s+/g, " ").trim().toLowerCase()));
-  const bookId = entry.recipeBook?.recipeBookId;
-  if (!bookId) return { status: "not_found_or_unreadable", recipeId };
 
   const outcome = await db.transaction(async (tx) => {
     const resolved = await resolveDraft(tx, {
@@ -105,9 +117,11 @@ export async function verifyDraft(
       actorUserId: principal.userId,
       resolution: "verified",
       byKeyId: principal.keyId,
+      authority,
     });
-    // Not the person it is about (possible from slice 4), or resolved by a
-    // concurrent call: nothing is stored.
+    // Resolved by a concurrent call, moved out of the key's write scope
+    // meanwhile, or (from slice 4) not the person it is about: nothing is
+    // stored.
     if (!resolved) return null;
     await insertEvidenceEntries({
       db: tx as unknown as PostgresJsDatabase,
@@ -122,11 +136,15 @@ export async function verifyDraft(
   });
 
   if (!outcome) {
-    return {
-      status: "refused",
-      recipeId: entry.recipeId,
-      error: "Only the person this draft is about can verify it, through their own agents; nothing was stored.",
-    };
+    // A concurrent resolution is reported as such; anything else is the
+    // uniform answer for an id this key cannot act on.
+    const [now] = await lookupRecipes(db, [entry.recipeId], { readGroupIds: principal.readGroupIds, userId: principal.userId });
+    if (now?.status === "ok" && now.draftState !== "unverified") {
+      return now.draftState === undefined
+        ? { status: "not_a_draft", recipeId: entry.recipeId }
+        : { status: "already_resolved", recipeId: entry.recipeId, draftState: now.draftState };
+    }
+    return { status: "not_found_or_unreadable", recipeId };
   }
 
   const verifiedByDepositingKey = outcome.depositingKeyId === principal.keyId;

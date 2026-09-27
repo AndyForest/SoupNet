@@ -19,6 +19,7 @@ import {
   TraceMoveEvidenceNotFoundError,
 } from "../services/trace-move.service";
 import { writeAudit } from "../services/audit-log.service";
+import type { SharedAudience } from "../authz";
 import { TRACE_REACTIONS, vocab, authorizeTraceMove } from "@soupnet/domain";
 import {
   bookIdsFor,
@@ -26,6 +27,7 @@ import {
   canReadTrace,
   canReadTraceOfFeedback,
   readableTraceFor,
+  readableTraceIds,
   roleInBookOfTrace,
   isOwnerOrAdmin,
   isPublishedDraftState,
@@ -34,11 +36,18 @@ import {
   traceReadableById,
   resolveDraft,
   resolutionForReaction,
+  hasWriteAuthority,
+  draftStateShownTo,
   SHARED_AUDIENCE,
   inBooks,
 } from "../authz";
 
 const traces = new Hono<AppEnv>();
+
+/** The map's one audience, for the pipeline and the layout cache key alike
+ *  (RP-24, RP-44). Typed as the shared audience, so changing it to a viewer
+ *  audience fails to compile where the cache key is built. */
+const MAP_AUDIENCE: SharedAudience = SHARED_AUDIENCE;
 
 // Move and delete decide on the book the recipe was in when they looked. If it
 // has left that book by the time the service holds the row lock, nothing is
@@ -149,6 +158,9 @@ traces.get("/map", async (c) => {
       .join("|");
 
     cacheKey = mapLayoutCacheKey({
+      // The same value the pipeline below runs with; typed so only the
+      // shared audience can key the cache (RP-44).
+      audience: MAP_AUDIENCE,
       groupIds,
       k: expand ? undefined : k,
       maxChars,
@@ -172,7 +184,7 @@ traces.get("/map", async (c) => {
     // viewer, the person included (build log open question 10, DT-VIS-08),
     // BEFORE clustering — so centroids, exemplars, positions, and the
     // viewer-independent layout cache never see one (RP-24, RP-44).
-    audience: SHARED_AUDIENCE,
+    audience: MAP_AUDIENCE,
     query,
     k: expand ? undefined : k,
     maxChars,
@@ -342,7 +354,7 @@ traces.get("/", async (c) => {
         g.name AS "groupName",
         ak.label AS "apiKeyLabel",
         u.email AS "userEmail",
-        t.draft_state AS "draftState"
+        ${draftStateShownTo("t", user.id)} AS "draftState"
       FROM claimnet.traces t
       LEFT JOIN claimnet.groups g ON g.id = t.group_id
       LEFT JOIN claimnet.api_keys ak ON ak.id = t.api_key_id
@@ -387,7 +399,7 @@ traces.get("/", async (c) => {
       COALESCE(rc.ref_count, 0)::int AS "referenceCount",
       g.name AS "groupName",
       ak.label AS "apiKeyLabel",
-      t.draft_state AS "draftState"
+      ${draftStateShownTo("t", user.id)} AS "draftState"
     FROM claimnet.traces t
     LEFT JOIN claimnet.groups g ON g.id = t.group_id
     LEFT JOIN claimnet.api_keys ak ON ak.id = t.api_key_id
@@ -486,10 +498,23 @@ traces.get("/:id/feedback", async (c) => {
     counts[r.reaction] = r.n;
   }
 
+  // Lineage ids are captured unchecked (capture-only feedback), so they are
+  // filtered at render: an id this viewer may not read never appears, a
+  // hidden draft's id included ([F82]). Storage is unchanged.
+  const feedbackList = feedbackRows as unknown as Array<Record<string, unknown> & { relatedTraceIds: string[] | null }>;
+  const allRelated = feedbackList.flatMap((f) => f.relatedTraceIds ?? []);
+  const readableRelated = new Set(await readableTraceIds(db, user.id, allRelated));
+  const feedback = feedbackList.map((f) => ({
+    ...f,
+    relatedTraceIds: f.relatedTraceIds
+      ? f.relatedTraceIds.filter((id) => readableRelated.has(id.toLowerCase()))
+      : null,
+  }));
+
   return c.json({
     ok: true,
     data: {
-      feedback: feedbackRows,
+      feedback,
       reactions: {
         mine: (mineRows as unknown as Array<{ reaction: string }>)[0]?.reaction ?? null,
         counts,
@@ -527,6 +552,22 @@ traces.put("/:id/reaction", async (c) => {
   // anyone else, or a recipe that is not an unverified draft, resolveDraft
   // changes nothing and the reaction is recorded like any other.
   const resolution = resolutionForReaction(reaction);
+  // A reaction that would resolve the viewer's own draft needs write
+  // authority on its book at this moment ([F79]): a person removed from the
+  // book (or holding no write-capable role) must not publish into it. Such a
+  // request gets the missing-id 404 and records nothing, like a draft they
+  // cannot act on. The resolving statement checks the same thing again.
+  if (resolution) {
+    const facts = await roleInBookOfTrace(db, user.id, traceId);
+    if (
+      facts
+      && facts.draftState === "unverified"
+      && facts.isDraftSubject
+      && !hasWriteAuthority({ kind: "member", role: facts.role }, facts.bookId)
+    ) {
+      return c.json({ ok: false, error: "Trace not found" }, 404);
+    }
+  }
   const resolved = await db.transaction(async (tx) => {
     await tx.execute(sql`
       INSERT INTO claimnet.trace_reactions (trace_id, user_id, reaction)
@@ -535,7 +576,7 @@ traces.put("/:id/reaction", async (c) => {
       DO UPDATE SET reaction = ${reaction}, updated_at = NOW()
     `);
     if (!resolution) return false;
-    return (await resolveDraft(tx, { traceId, actorUserId: user.id, resolution, byKeyId: null })) !== null;
+    return (await resolveDraft(tx, { traceId, actorUserId: user.id, resolution, byKeyId: null, authority: { kind: "member" } })) !== null;
   });
 
   if (resolved && resolution) {
@@ -633,8 +674,12 @@ traces.get("/:id", async (c) => {
   // is decided at move time against that book's membership — the UI can't know
   // it here, and asking would leak which books the trace could be moved into.
   const canMove = canDelete;
-  // The person the draft is about may verify or reject it with a reaction.
-  const canResolveDraft = mayResolveDraft(access);
+  // The person the draft is about may verify or reject it with a reaction,
+  // while they can write the book it is in ([F79]).
+  const canResolveDraft = mayResolveDraft({
+    ...access,
+    canWriteBook: hasWriteAuthority({ kind: "member", role: access.role }, access.bookId),
+  });
 
   // Get evidence. The trace_evidence.stance column is preserved for legacy
   // rows but no longer surfaced — the LLM author's stance assertion at write

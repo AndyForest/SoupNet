@@ -79,10 +79,11 @@ export const traces = claimnetSchema.table(
     // by hand. A verified draft reads as an ordinary recipe everywhere.
     // NEVER read by ranking, clustering, or MMR (ranking-isolation.test.ts).
     draftState: text("draft_state"),
-    // Who resolved the draft and when (set once, with draft_state leaving
-    // `unverified`; COALESCE-guarded so a repeat is a no-op). The key is
-    // NULL when the person resolved it themselves (a reaction on a human
-    // surface); set when their agent verified it with new evidence.
+    // Who resolved the draft and when, set once as draft_state leaves
+    // `unverified`. The resolving statement matches only an unverified row
+    // (a repeat is a no-op) and writes these itself; an import never
+    // supplies them ([F83]). The key is NULL when a person resolved it (a
+    // reaction, or an import); set when their agent verified it.
     draftResolvedAt: timestamp("draft_resolved_at", { withTimezone: true }),
     draftResolvedByUserId: uuid("draft_resolved_by_user_id"),
     draftResolvedByKeyId: uuid("draft_resolved_by_key_id"),

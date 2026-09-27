@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import crypto from "node:crypto";
 import postgres from "postgres";
 
 /**
@@ -645,5 +646,178 @@ describe.skipIf(!BASE || !canConnect())("drafts for the key's own user (drafts-a
     const body = (await res.json()) as { data: { draftState: string; verifiedByDepositingKey: boolean } };
     expect(body.data.draftState).toBe("verified");
     expect(body.data.verifiedByDepositingKey).toBe(true);
+  });
+
+  // ── Audit follow-ups (F78, F79, F82, F83) ───────────────────────────────
+
+  async function mintKey(actor: Actor, read: string[], write: string[], def: string): Promise<string> {
+    const res = await call(actor, "POST", "/keys/scoped", {
+      readRecipeBookIds: read,
+      writeRecipeBookIds: write,
+      defaultWriteRecipeBookId: def,
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+    });
+    const key = ((await res.json()) as { data?: { key?: string } }).data?.key ?? "";
+    if (!key) throw new Error(`key mint failed: ${res.status}`);
+    return key;
+  }
+
+  const verifyEvidence = (tag: string) => `The person confirmed it.\n> "confirmed ${tag} ${run}"\n-- conversation, ${run}`;
+
+  it("[F78] a key that can read the book but not write it gets the missing-id answer from verify_draft and REST, and nothing is stored", async () => {
+    const readOnlyKey = await mintKey(pat, [shared.id, pat.personalBookId], [pat.personalBookId], pat.personalBookId);
+    const d = checkedId(await deposit(patKey, recipe("f78 read only", ` ${MARKER}`), "f78 draft", { draft: true }));
+    const evBefore = await sql`SELECT count(*)::int AS n FROM claimnet.trace_evidence WHERE trace_id = ${d}::uuid`;
+
+    const real = await mcp(readOnlyKey, "verify_draft", { recipe_id: d, supporting_evidence: verifyEvidence("f78 mcp") });
+    const random = await mcp(readOnlyKey, "verify_draft", { recipe_id: RANDOM_UUID, supporting_evidence: verifyEvidence("f78 mcp") });
+    expect(norm(real.text, d)).toBe(norm(random.text, RANDOM_UUID));
+
+    const post = (id: string) => fetch(`${BASE}/recipes/${id}/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${readOnlyKey}` },
+      body: JSON.stringify({ supporting_evidence: verifyEvidence("f78 rest") }),
+    });
+    const restReal = await post(d);
+    const restRandom = await post(RANDOM_UUID);
+    expect(restReal.status).toBe(404);
+    expect(restRandom.status).toBe(404);
+    expect(norm(await restReal.text(), d)).toBe(norm(await restRandom.text(), RANDOM_UUID));
+
+    expect((await traceRow(d))?.["draft_state"]).toBe("unverified");
+    const evAfter = await sql`SELECT count(*)::int AS n FROM claimnet.trace_evidence WHERE trace_id = ${d}::uuid`;
+    expect(Number(evAfter[0]?.["n"])).toBe(Number(evBefore[0]?.["n"]));
+    expect((await mcp(samKey, "get_recipes", { recipe_ids: d })).text).toContain("not_found_or_unreadable");
+
+    // Positive: the same key verifies a draft in the book it can write.
+    const own = checkedId(await deposit(readOnlyKey, recipe("f78 personal", ` ${MARKER}`), "f78 personal draft", { draft: true }));
+    const ok = await mcp(readOnlyKey, "verify_draft", { recipe_id: own, supporting_evidence: verifyEvidence("f78 personal") });
+    expect(ok.text).toContain("is verified");
+    expect((await traceRow(own))?.["draft_state"]).toBe("verified");
+  });
+
+  it("[F78] a key whose write scope lacks the book cannot verify, even if a different book of its owner is writable", async () => {
+    // patNoSharedKey reads and writes only Pat's personal book.
+    const d = checkedId(await deposit(patKey, recipe("f78 no scope", ` ${MARKER}`), "f78 no scope", { draft: true }));
+    const r = await mcp(patNoSharedKey, "verify_draft", { recipe_id: d, supporting_evidence: verifyEvidence("f78 no scope") });
+    expect(r.text).toContain("not_found_or_unreadable");
+    expect((await traceRow(d))?.["draft_state"]).toBe("unverified");
+  });
+
+  it("[F79] after Pat is removed from a book, his reaction cannot publish his draft there: the missing-id 404, still a draft", async () => {
+    const slug2 = `drafts-f79-${run}`;
+    const created = await call(sam, "POST", "/recipe-books", { name: `Drafts F79 ${run}`, slug: slug2, organizationId: sam.orgId });
+    const book2 = ((await created.json()) as { data?: { id: string } }).data?.id ?? "";
+    expect((await call(sam, "POST", `/recipe-books/${book2}/members`, { email: pat.email, role: "member" })).status).toBe(201);
+    const key2 = await mintKey(pat, [book2], [book2], book2);
+    const d = checkedId(await deposit(key2, recipe("f79 removed", ` ${MARKER}`), "f79 draft", { draft: true }));
+    expect((await call(sam, "DELETE", `/recipe-books/${book2}/members/${pat.userId}`)).status).toBe(200);
+
+    for (const reaction of ["still_true", "wrong"]) {
+      const real = await call(pat, "PUT", `/traces/${d}/reaction`, { reaction });
+      const random = await call(pat, "PUT", `/traces/${RANDOM_UUID}/reaction`, { reaction });
+      expect(real.status, reaction).toBe(404);
+      expect(await real.text()).toBe(await random.text());
+    }
+    expect((await traceRow(d))?.["draft_state"]).toBe("unverified");
+    const reactions = await sql`SELECT count(*)::int AS n FROM claimnet.trace_reactions WHERE trace_id = ${d}::uuid`;
+    expect(Number(reactions[0]?.["n"])).toBe(0);
+    // Sam, the book's owner, still cannot see it.
+    expect((await call(sam, "GET", `/traces/${d}`)).status).toBe(404);
+    // The detail page no longer offers Pat the resolve controls.
+    const detail = (await jsonOf(await call(pat, "GET", `/traces/${d}`)))["data"] as { canResolveDraft?: boolean };
+    expect(detail.canResolveDraft).toBe(false);
+  });
+
+  it("[F82] Sam's view of a published recipe's feedback omits a related id that is Pat's hidden draft, and shows it once verified", async () => {
+    const hidden = checkedId(await deposit(patKey, recipe("f82 hidden", ` ${MARKER}`), "f82 draft", { draft: true }));
+    const pub = checkedId(await deposit(samKey, recipe("f82 sam published"), "f82 published", { recipe_book: shared.slug }));
+    const logged = await mcp(patKey, "log_feedback", {
+      trace_id: pub, kind: "check-feedback", impact: "none", disposition: "proceeded", story_fulfilled: "yes",
+      story: "As a tester, I cited my own draft in lineage.", related_trace_ids: [hidden, RANDOM_UUID],
+    });
+    expect(logged.text).toContain("Feedback recorded");
+    const related = async (actor: Actor): Promise<string[]> => {
+      const body = (await jsonOf(await call(actor, "GET", `/traces/${pub}/feedback`)))["data"] as { feedback: Array<{ relatedTraceIds: string[] | null }> };
+      return body.feedback.flatMap((f) => f.relatedTraceIds ?? []);
+    };
+    const samBefore = await related(sam);
+    expect(samBefore).not.toContain(hidden);
+    expect(samBefore).not.toContain(RANDOM_UUID);
+    expect(await related(pat)).toContain(hidden);
+    await call(pat, "PUT", `/traces/${hidden}/reaction`, { reaction: "still_true" });
+    expect(await related(sam)).toContain(hidden);
+  });
+
+  it("[F83] a collaborator's view of a verified draft is an ordinary recipe: no draft state, verifier, or dates; the subject sees them", async () => {
+    const d = checkedId(await deposit(patKey, recipe("f83 shared view", ` ${MARKER}`), "f83 draft", { draft: true }));
+    await call(pat, "PUT", `/traces/${d}/reaction`, { reaction: "still_true" });
+    const samDetail = (await jsonOf(await call(sam, "GET", `/traces/${d}`)))["data"] as Record<string, unknown>;
+    expect(samDetail["draftState"] ?? null).toBeNull();
+    expect(samDetail["draftResolvedAt"] ?? null).toBeNull();
+    expect(samDetail["draftResolvedByKeyId"] ?? null).toBeNull();
+    expect(samDetail["draftResolvedByEmail"] ?? null).toBeNull();
+    expect(samDetail["draftResolvedByViewer"] ?? false).toBe(false);
+    const samList = (await jsonOf(await call(sam, "GET", `/traces?groupId=${shared.id}&limit=100`)))["data"] as Array<{ id: string; draftState?: string | null }>;
+    expect(samList.find((r) => r.id === d)?.draftState ?? null).toBeNull();
+    const patDetail = (await jsonOf(await call(pat, "GET", `/traces/${d}`)))["data"] as Record<string, unknown>;
+    expect(patDetail["draftState"]).toBe("verified");
+    expect(patDetail["draftResolvedByViewer"]).toBe(true);
+    expect(patDetail["draftResolvedAt"]).not.toBeNull();
+  });
+
+  it("[F83] import never takes resolution attribution or timestamps from the file, and an imported timestamp never blocks a real verification", async () => {
+    const started = new Date(Date.now() - 60_000);
+    const idVerified = crypto.randomUUID();
+    const idUnverified = crypto.randomUUID();
+    const row = (id: string, draftState: string, text: string) => ({
+      id, claimText: recipe(text, ` ${MARKER}`), draftState, draftResolvedAt: "2001-01-01T00:00:00.000Z",
+      createdAt: new Date().toISOString(),
+    });
+    const file = {
+      schemaVersion: 1,
+      traces: [row(idVerified, "verified", "f83 imported verified"), row(idUnverified, "unverified", "f83 imported unverified")],
+      evidence: [], references: [], traceEvidence: [], traceReferences: [], evidenceReferences: [],
+    };
+    const res = await fetch(`${BASE}/import?book=${shared.id}`, {
+      method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${pat.jwt}` }, body: JSON.stringify(file),
+    });
+    expect(res.status).toBe(200);
+    const v = await traceRow(idVerified);
+    expect(v?.["draft_state"]).toBe("verified");
+    expect(new Date(String(v?.["draft_resolved_at"])).getTime()).toBeGreaterThan(started.getTime());
+    expect(v?.["draft_resolved_by_user_id"]).toBe(pat.userId);
+    const u = await traceRow(idUnverified);
+    expect(u?.["draft_state"]).toBe("unverified");
+    expect(u?.["draft_resolved_at"]).toBeNull();
+    await call(pat, "PUT", `/traces/${idUnverified}/reaction`, { reaction: "still_true" });
+    const after = await traceRow(idUnverified);
+    expect(after?.["draft_state"]).toBe("verified");
+    expect(new Date(String(after?.["draft_resolved_at"])).getTime()).toBeGreaterThan(started.getTime());
+  });
+
+  it("RP-24 / RP-44 (cold cache): when the draft's own person loads a book's map first, the cached layout Sam then gets has no draft", async () => {
+    // A fresh book, so the process-wide layout cache has no entry for it: the
+    // first load (Pat's) computes and caches the layout Sam is served.
+    const slug3 = `drafts-map-${run}`;
+    const created = await call(sam, "POST", "/recipe-books", { name: `Drafts map ${run}`, slug: slug3, organizationId: sam.orgId });
+    const book3 = ((await created.json()) as { data?: { id: string } }).data?.id ?? "";
+    expect((await call(sam, "POST", `/recipe-books/${book3}/members`, { email: pat.email, role: "member" })).status).toBe(201);
+    const patKey3 = await mintKey(pat, [book3], [book3], book3);
+    const samKey3 = await mintKey(sam, [book3], [book3], book3);
+    await deposit(samKey3, recipe("map cold sam one"), "map sam one");
+    await deposit(samKey3, recipe("map cold sam two"), "map sam two");
+    await deposit(patKey3, recipe("map cold pat published"), "map pat published");
+    const d = checkedId(await deposit(patKey3, recipe("map cold pat draft", ` ${MARKER}`), "map pat draft", { draft: true }));
+
+    const patMap = (await jsonOf(await call(pat, "GET", `/traces/map?groupId=${book3}`)))["data"] as { meta: { totalTraces: number; cached: boolean } };
+    expect(patMap.meta.cached).toBe(false);
+    expect(JSON.stringify(patMap)).not.toContain(d);
+    expect(patMap.meta.totalTraces).toBe(3);
+
+    const samMap = (await jsonOf(await call(sam, "GET", `/traces/map?groupId=${book3}`)))["data"] as { meta: { totalTraces: number; cached: boolean } };
+    expect(samMap.meta.cached).toBe(true);
+    expect(JSON.stringify(samMap)).not.toContain(d);
+    expect(samMap.meta.totalTraces).toBe(3);
   });
 });

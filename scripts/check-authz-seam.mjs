@@ -19,8 +19,10 @@
  *      lookup, cascade deletion, and the reaper. Each such file is registered
  *      below with the reason it qualifies.
  *
- *   3. RECIPES — `claimnet.traces`, and `claimnet.embedding_sources` (whose
- *      trace rows resolve to recipes) — drafts-and-triage slice 2. The draft
+ *   3. RECIPES — `claimnet.traces`, `claimnet.embedding_sources` (whose
+ *      trace rows resolve to recipes), and the tables that carry a recipe's
+ *      content or annotations by its id (`trace_evidence`, `trace_references`,
+ *      `check_feedback`, `trace_reactions`) — drafts-and-triage slice 2. The draft
  *      visibility condition is written once in the module
  *      (authz/draft-sql.ts). Every file outside it that names either table is
  *      registered in TRACE_READS: either it COMPOSES the module's draft
@@ -34,7 +36,18 @@
  *      silently (the F77 lesson). A statement runs from the mentioning line
  *      to the first following line that starts with a backtick (the end of
  *      the tagged template), at most 40 lines; a mention in a comment line
- *      is fingerprinted alone.
+ *      is fingerprinted alone. Every line that calls a draft fragment is
+ *      fingerprinted too, wherever it sits, so deleting a predicate that was
+ *      composed before its statement (a shared `searchPredicates` or
+ *      `inScope` constant) also changes the entry [F80].
+ *
+ *      What counts as a mention: the table named in SQL, qualified or not
+ *      (`claimnet.traces`, `"claimnet"."traces"`, `FROM traces`); the Drizzle
+ *      table object under whatever name `@soupnet/db` is imported as
+ *      (`traces as T`, `import * as s` then `s.traces`), in any use (`.from(T)`,
+ *      `${T}`, `T.id`); and the relational API (`db.query.traces`). What it
+ *      does not see: SQL built from strings assembled in another file, and
+ *      identifiers computed at runtime.
  *
  * HOW A FILE IS REGISTERED. Each entry records `n`, the number of lines in the
  * file that mention the table, and `fp`, a fingerprint of exactly those lines
@@ -186,7 +199,7 @@ const TRACE_READS = {
     why: "embedding worker: embeds every recipe, drafts included, so verification needs no re-embed (RP-43); returns nothing to a caller",
   },
   "apps/backend/src/embedding-worker/jobs/strategy-check.ts": {
-    n: 4, fp: "6032c6dd86ae", composes: false,
+    n: 6, fp: "dee111dba17b", composes: false,
     why: "embedding worker: strategy coverage bookkeeping (RP-43)",
   },
   "apps/backend/src/embedding-worker/jobs/strategy-sweep.ts": {
@@ -210,7 +223,7 @@ const TRACE_READS = {
     why: "system-role totals and embedding coverage counts for the operator (RP-31 to RP-34)",
   },
   "apps/backend/src/routes/auth.ts": {
-    n: 7, fp: "1b00e328466e", composes: false,
+    n: 13, fp: "0d131b0de6ab", composes: false,
     why: "data export of the signed-in user's own recipes, draft state included (RP-30); account deletion guard",
   },
   "apps/backend/src/routes/integrity.ts": {
@@ -218,15 +231,15 @@ const TRACE_READS = {
     why: "reports embedding sources whose recipe no longer exists; a live draft is never an orphan, and no recipe content or count leaves (RP-12)",
   },
   "apps/backend/src/routes/traces.ts": {
-    n: 5, fp: "436dd87f605e", composes: true,
-    why: "map version counts and the book list compose the fragments (RP-24, RP-25); own list, own count, and own check log are the caller's rows (RP-27 to RP-29)",
+    n: 17, fp: "a8851b1aa871", composes: true,
+    why: "map version counts and the book list compose the fragments (RP-24, RP-25); own list, own count, and own check log are the caller's rows (RP-27 to RP-29); feedback, reaction, and evidence reads for one recipe run after the module's read gate (RP-19 to RP-22), with lineage ids filtered through it",
   },
   "apps/backend/src/services/book-stats.service.ts": {
-    n: 4, fp: "20c7ebafa58a", composes: true,
+    n: 6, fp: "9c1e64a70445", composes: true,
     why: "briefing Index figures: published only, plus the person's own drafts awaiting review (RP-09, RP-17)",
   },
   "apps/backend/src/services/briefing-exemplars.ts": {
-    n: 1, fp: "76e76ae311f3", composes: false,
+    n: 4, fp: "8b803d685141", composes: false,
     why: "loads author, evidence, and references by id for exemplars the pipeline chose under SHARED_AUDIENCE (RP-10, RP-42)",
   },
   "apps/backend/src/services/ephemeral-workspace.service.ts": {
@@ -234,15 +247,15 @@ const TRACE_READS = {
     why: "the reaper: deletes an expired workspace's recipes (RP-38)",
   },
   "apps/backend/src/services/feedback.service.ts": {
-    n: 2, fp: "0ee41eb4a772", composes: true,
-    why: "feedback target ACL: prefix scan and readable set use traceReadableById (RP-11, RP-18)",
+    n: 19, fp: "afbcb00162f0", composes: true,
+    why: "feedback target ACL: prefix scan and readable set use traceReadableById (RP-11, RP-18); check_feedback inserts and the per-key budget count are writes and the caller's own rows",
   },
   "apps/backend/src/services/import.service.ts": {
-    n: 6, fp: "356d3eb72069", composes: false,
+    n: 20, fp: "ddfdd75ccf55", composes: false,
     why: "import writes the importer's own recipes and reads rows by id to classify skip / conflict / remap (RP-35)",
   },
   "apps/backend/src/services/integrity-repair.service.ts": {
-    n: 5, fp: "31e62d75fe05", composes: false,
+    n: 6, fp: "968f1e8abb42", composes: false,
     why: "deletes orphaned embedding rows whose recipe no longer exists; operator-only",
   },
   "apps/backend/src/services/recipe-lookup.service.ts": {
@@ -250,45 +263,93 @@ const TRACE_READS = {
     why: "by-id lookup: prefix scan and main select use traceReadableById (RP-06, RP-08, RP-16)",
   },
   "apps/backend/src/services/result-enricher.ts": {
-    n: 2, fp: "c04c01958fcc", composes: false,
+    n: 3, fp: "cca3461389f6", composes: false,
     why: "loads book, draft label, evidence, and references by id for results a filtered statement already chose (RP-42)",
   },
   "apps/backend/src/services/search-pipeline.ts": {
-    n: 3, fp: "ed5a12ef6b2a", composes: true,
+    n: 4, fp: "27cc9110e6b6", composes: true,
     why: "corpus mode rows and honest total use traceVisibleTo (RP-41); vector loads are by id for filtered results (RP-42)",
   },
   "apps/backend/src/services/trace.service.ts": {
-    n: 6, fp: "bb06ce7f11e3", composes: true,
+    n: 10, fp: "ec75e45c358d", composes: true,
     why: "deposit INSERT, the depositing key's own idempotency row (RP-04), session ledger ids (RP-05), and zero-result scope counts that use traceVisibleTo (RP-03)",
   },
   "apps/backend/src/services/trace-delete.service.ts": {
-    n: 6, fp: "e3fb6a60eda9", composes: false,
+    n: 13, fp: "3fbe25f62b70", composes: false,
     why: "deletes one recipe under lock after the route's access check (RP-36)",
   },
   "apps/backend/src/services/trace-move.service.ts": {
-    n: 4, fp: "f5f97796f636", composes: false,
+    n: 11, fp: "5368ff5140ab", composes: false,
     why: "moves one recipe under lock after the route's access check; draft state rides along unchanged (RP-36)",
   },
   "apps/backend/src/services/user-delete.service.ts": {
-    n: 1, fp: "b65f37f7f3f2", composes: false,
+    n: 2, fp: "030fa45c370f", composes: false,
     why: "account-deletion cascade over the user's own recipes (RP-37)",
   },
   "apps/backend/src/services/vector-search.service.ts": {
-    n: 5, fp: "c4cacae19c30", composes: true,
+    n: 9, fp: "4f3361bb6215", composes: true,
     why: "semantic search predicates use traceIdVisibleTo, related evidence publishedTrace (RP-39, RP-40); the trace load is by id for filtered results",
   },
+  "packages/domain/src/embedding-strategies.ts": {
+    n: 2, fp: "e3d3e8af7029", composes: false,
+    why: "a documented SQL text for one recipe's evidence by id, run only after the caller has the recipe (by-id helper, RP-42)",
+  },
   "scripts/cleanup-test-data.ts": {
-    n: 7, fp: "e2f06ed030cb", composes: false,
+    n: 9, fp: "1d600c0efe4e", composes: false,
     why: "dev-only cleanup of test users: deletes their recipes",
   },
   "scripts/repair-orphaned-user-data.mjs": {
-    n: 5, fp: "26a5ec753e3f", composes: false,
+    n: 7, fp: "da48f81bc495", composes: false,
     why: "operator repair script: deletes recipes whose owner no longer exists",
   },
 };
 
 /** The module's draft fragments; a `composes: true` file must reference one. */
-const DRAFT_FRAGMENT = /\b(publishedTrace|traceVisibleTo|traceIdVisibleTo|traceReadableById|draftAwaitingReviewBy)\(/;
+const DRAFT_FRAGMENT = /\b(publishedTrace|traceVisibleTo|traceIdVisibleTo|traceReadableById|draftAwaitingReviewBy|draftStateShownTo)\(/;
+
+/** SQL table names of the recipe rule, and their Drizzle exports. */
+const TRACE_TABLES = ["traces", "embedding_sources", "trace_evidence", "trace_references", "check_feedback", "trace_reactions"];
+const TRACE_EXPORTS = ["traces", "embeddingSources", "traceEvidence", "traceReferences", "checkFeedback", "traceReactions"];
+const TABLE_ALT = TRACE_TABLES.join("|");
+/** Qualified (`claimnet.traces`, `"claimnet"."traces"`) or unqualified after a
+ *  SQL keyword (`FROM traces`, which resolves through search_path). */
+const TRACE_SQL = new RegExp(
+  `claimnet"?\\s*\\.\\s*"?(${TABLE_ALT})\\b|\\b(FROM|JOIN|UPDATE|INTO)\\s+"?(${TABLE_ALT})"?\\b`,
+  "i",
+);
+const DRIZZLE_QUERY = new RegExp(`\\bquery\\s*\\.\\s*(${TRACE_EXPORTS.join("|")})\\b`);
+
+/**
+ * The names a file gives the recipe tables' Drizzle objects: named imports
+ * from @soupnet/db (aliases included) and namespace imports (`ns.traces`).
+ */
+function drizzleNames(text) {
+  const names = [];
+  for (const m of text.matchAll(/import\s*(type\s+)?\{([^}]*)\}\s*from\s*["']@soupnet\/db["']/g)) {
+    if (m[1]) continue; // type-only imports carry no table object
+    for (const part of m[2].split(",")) {
+      const [orig, alias] = part.trim().replace(/^type\s+/, "").split(/\s+as\s+/);
+      if (orig && TRACE_EXPORTS.includes(orig.trim())) names.push((alias ?? orig).trim());
+    }
+  }
+  for (const m of text.matchAll(/import\s*\*\s*as\s+(\w+)\s*from\s*["']@soupnet\/db["']/g)) {
+    for (const t of TRACE_EXPORTS) names.push(`${m[1]}\\s*\\.\\s*${t}`);
+  }
+  return names;
+}
+
+/** Mention line indexes for the recipe rule in one file. */
+function traceMatcher(lines) {
+  const text = lines.join("\n");
+  const names = drizzleNames(text);
+  const drizzle = names.length > 0 ? new RegExp(`(?<![\\w.])(${names.join("|")})\\b`) : null;
+  const out = [];
+  lines.forEach((line, i) => {
+    if (/^\s*import\b/.test(line) || /^\s*\}?\s*from\s*["']@soupnet\/db["']/.test(line)) return;
+    if (TRACE_SQL.test(line) || DRIZZLE_QUERY.test(line) || (drizzle && drizzle.test(line))) out.push(i);
+  });
+  return out;
+}
 
 const RULES = [
   {
@@ -322,9 +383,11 @@ const RULES = [
     newFileHint: "use the Principal you were given, or move the statement into apps/backend/src/authz/key-auth.ts.",
   },
   {
-    table: "claimnet.traces / claimnet.embedding_sources",
-    pattern: /claimnet"?\s*\.\s*"?(traces|embedding_sources)\b|\.(from|update|insert|delete|innerJoin|leftJoin|rightJoin|fullJoin|join)\(\s*(traces|embeddingSources)\b/i,
+    table: "recipe tables (claimnet.traces, embedding_sources, and the recipe link tables)",
+    pattern: TRACE_SQL,
+    matcher: traceMatcher,
     window: "statement",
+    alsoFingerprint: DRAFT_FRAGMENT,
     lists: { TRACE_READS },
     failure: [
       "a file outside apps/backend/src/authz/ reads recipes (claimnet.traces or embedding_sources) and is not registered.",
@@ -370,11 +433,20 @@ function scanRoots() {
 const isExempt = (file) =>
   TEST_FILE.test(file) || EXEMPT.some(({ prefix }) => (prefix.endsWith("/") ? file.startsWith(prefix) : file === prefix));
 
-const sources = scanRoots()
-  .flatMap(walk)
+/**
+ * AUTHZ_SEAM_OVERRIDES (tests only): a JSON map from repo-relative path to a
+ * file whose content stands in for it, or is added as a new source, so the
+ * guard's tests can plant a bypass without touching the working tree.
+ */
+const OVERRIDES = process.env.AUTHZ_SEAM_OVERRIDES ? JSON.parse(process.env.AUTHZ_SEAM_OVERRIDES) : {};
+
+const sources = [...new Set([...scanRoots().flatMap(walk), ...Object.keys(OVERRIDES)])]
   .sort()
   .filter((file) => SOURCE_FILE.test(file) && !isExempt(file))
-  .map((file) => ({ file, lines: readFileSync(join(projectRoot, file), "utf-8").split(/\r?\n/) }));
+  .map((file) => ({
+    file,
+    lines: readFileSync(OVERRIDES[file] ?? join(projectRoot, file), "utf-8").split(/\r?\n/),
+  }));
 
 const COMMENT_LINE = /^\s*(\*|\/\/|\/\*)/;
 const STATEMENT_MAX_LINES = 40;
@@ -396,13 +468,17 @@ function coveredLineIndexes(lines, index, window) {
 }
 
 /** For each file with at least one matching line: how many, and their fingerprint. */
-function measure(pattern, window = "line") {
+function measure(rule) {
+  const { pattern, matcher, window = "line", alsoFingerprint } = rule;
   const found = new Map();
   for (const { file, lines } of sources) {
     const mentions = [];
-    lines.forEach((line, i) => { if (pattern.test(line)) mentions.push(i); });
+    if (matcher) mentions.push(...matcher(lines));
+    else lines.forEach((line, i) => { if (pattern.test(line)) mentions.push(i); });
     if (mentions.length === 0) continue;
-    const covered = [...new Set(mentions.flatMap((i) => coveredLineIndexes(lines, i, window)))].sort((a, b) => a - b);
+    const extra = [];
+    if (alsoFingerprint) lines.forEach((line, i) => { if (alsoFingerprint.test(line)) extra.push(i); });
+    const covered = [...new Set([...mentions.flatMap((i) => coveredLineIndexes(lines, i, window)), ...extra])].sort((a, b) => a - b);
     const matching = covered.map((i) => lines[i].trim().replace(/\s+/g, " "));
     const fp = createHash("sha256").update(matching.join("\n")).digest("hex").slice(0, 12);
     found.set(file, { n: mentions.length, fp, text: lines.join("\n") });
@@ -412,7 +488,7 @@ function measure(pattern, window = "line") {
 
 if (process.argv.includes("--counts")) {
   for (const rule of RULES) {
-    const found = measure(rule.pattern, rule.window);
+    const found = measure(rule);
     const registered = Object.assign({}, ...Object.values(rule.lists));
     for (const listName of Object.keys(rule.lists)) {
       console.log(`\n${listName}:`);
@@ -437,7 +513,7 @@ const thisScript = relative(projectRoot, fileURLToPath(import.meta.url)).split(s
 let failed = false;
 
 for (const rule of RULES) {
-  const found = measure(rule.pattern, rule.window);
+  const found = measure(rule);
   const newFiles = [];
   const changed = [];
   const stale = [];

@@ -11,8 +11,18 @@
  * middleware/rate-limit.ts for the same assumption), and the cache is a pure
  * latency optimization — a cold container just recomputes.
  *
- * Pure module — no I/O; callers supply the version (one cheap COUNT/MAX query).
+ * No I/O; callers supply the version (one cheap COUNT/MAX query).
+ *
+ * The key names no viewer, so a cached layout is served to everyone with the
+ * same book set. That is safe only because a cached layout is computed for
+ * the shared audience (drafts-and-triage slice 2, RP-44): no draft is in the
+ * pool, for any viewer. The key takes that audience as a typed input and
+ * refuses any other, so a layout computed with one person's drafts can never
+ * be keyed, and so never served to someone else.
  */
+
+import { isSharedAudience } from "../authz";
+import type { SharedAudience } from "../authz";
 
 const MAX_ENTRIES = 16;
 
@@ -26,7 +36,12 @@ export function mapLayoutCacheKey(parts: {
   expand: boolean;
   strategy: string | undefined;
   corpusVersion: string;
+  /** The audience the layout was computed for: only the shared one. */
+  audience: SharedAudience;
 }): string {
+  if (!isSharedAudience(parts.audience)) {
+    throw new Error("map layout cache: a cached layout must be computed for the shared audience");
+  }
   return JSON.stringify({
     g: [...parts.groupIds].sort(),
     k: parts.k ?? null,

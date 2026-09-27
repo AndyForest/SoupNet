@@ -93,6 +93,7 @@ export interface TraceDetail extends Trace {
   draftResolvedAt?: string | null;
   draftResolvedByKeyId?: string | null;
   draftResolvedByEmail?: string | null;
+  draftResolvedByViewer?: boolean;
   /** The person this draft is about may verify or reject it with a reaction. */
   canResolveDraft?: boolean;
   userId: string;

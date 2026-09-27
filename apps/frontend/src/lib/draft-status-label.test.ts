@@ -18,10 +18,17 @@ describe("draftStatusLabel", () => {
     expect(l.title).toContain("Wrong");
   });
 
-  it("DT-VER-01: verified with a reaction", () => {
-    const l = draftStatusLabel({ draftState: "verified", draftResolvedAt: "2026-09-27T10:00:00Z", draftResolvedByKeyId: null })!;
+  it("DT-VER-01: verified with a reaction, by the viewer", () => {
+    const l = draftStatusLabel({ draftState: "verified", draftResolvedAt: "2026-09-27T10:00:00Z", draftResolvedByKeyId: null, draftResolvedByViewer: true })!;
     expect(l.text).toContain("Verified draft");
     expect(l.text).toContain("by you");
+  });
+
+  it("[F83] \"by you\" only when the viewer resolved it", () => {
+    const l = draftStatusLabel({ draftState: "verified", draftResolvedByKeyId: null, draftResolvedByViewer: false })!;
+    expect(l.text).not.toContain("by you");
+    expect(l.text).toContain("by the person it is about");
+    expect(draftStatusLabel({ draftState: "verified", draftResolvedByKeyId: null })!.text).not.toContain("by you");
   });
 
   it("DT-VER-04: verified by an agent, and flagged when it was the agent that deposited it", () => {

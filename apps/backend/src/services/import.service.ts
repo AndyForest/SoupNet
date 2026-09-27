@@ -493,7 +493,13 @@ export async function importCorpus(
             impact: t.impact,
             uncertainty: t.uncertainty,
             draftState: t.draftState,
-            draftResolvedAt: t.draftResolvedAt,
+            // Resolution attribution and time are never taken from the file
+            // ([F83]): an imported resolved draft is resolved by the importer,
+            // now (an import is a human control, so no key); an unverified one
+            // carries none, so a later real verification writes its own.
+            ...(t.draftState !== null && t.draftState !== "unverified"
+              ? { draftResolvedAt: new Date(), draftResolvedByUserId: userId, draftResolvedByKeyId: null }
+              : { draftResolvedAt: null, draftResolvedByUserId: null, draftResolvedByKeyId: null }),
             createdAt: t.createdAt,
             updatedAt: t.updatedAt ?? t.createdAt,
           })))

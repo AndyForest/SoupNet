@@ -44,8 +44,8 @@ export interface ImportTraceRow {
    *  schemaVersion 1; absent in older exports, which import as null. */
   impact: string | null;
   uncertainty: string | null;
+  /** Taken from the file; who resolved a draft and when never is ([F83]). */
   draftState: string | null;
-  draftResolvedAt: Date | null;
   createdAt: Date;
   updatedAt: Date | null;
 }
@@ -286,7 +286,6 @@ export function parseExportPayload(json: unknown): ParseExportResult {
     impact: optEnum(row, "impact", TRIAGE_RATING_VALUES),
     uncertainty: optEnum(row, "uncertainty", TRIAGE_RATING_VALUES),
     draftState: optEnum(row, "draftState", DRAFT_STATE_VALUES),
-    draftResolvedAt: optDate(row, "draftResolvedAt"),
     createdAt: reqDate(row, "createdAt"),
     updatedAt: optDate(row, "updatedAt"),
   }));

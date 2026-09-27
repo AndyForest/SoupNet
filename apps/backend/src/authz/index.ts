@@ -37,7 +37,9 @@ export {
   traceIdVisibleTo,
   traceReadableById,
   draftAwaitingReviewBy,
+  draftStateShownTo,
   SHARED_AUDIENCE,
+  isSharedAudience,
 } from "./draft-sql";
-export type { DraftAudience, TraceAlias } from "./draft-sql";
+export type { DraftAudience, SharedAudience, TraceAlias } from "./draft-sql";
 export * from "./draft-resolution";

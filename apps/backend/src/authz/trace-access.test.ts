@@ -105,6 +105,24 @@ describe("roleInBookOfTrace", () => {
   });
 });
 
+describe("[F83] verification details are the draft subject's alone", () => {
+  const resolved = {
+    draftState: "verified",
+    draftResolvedAt: "2026-09-27T10:00:00Z",
+    draftResolvedByKeyId: "k1",
+    draftResolvedByEmail: "author@test.local",
+    draftResolvedByUserId: VIEWER,
+  };
+  it("a collaborator reading a verified draft gets an ordinary recipe", async () => {
+    const found = await readableTraceFor(fakeDb([{ ...row({ isAuthor: false, role: "member", draftState: "verified" }), ...resolved }]).db, VIEWER, TRACE);
+    expect(found?.trace).toMatchObject({ draftState: null, draftResolvedAt: null, draftResolvedByKeyId: null, draftResolvedByEmail: null, draftResolvedByViewer: false });
+  });
+  it("the subject sees them, and whether they resolved it", async () => {
+    const found = await readableTraceFor(fakeDb([{ ...row({ isAuthor: true, role: "member", draftState: "verified" }), ...resolved }]).db, VIEWER, TRACE);
+    expect(found?.trace).toMatchObject({ draftState: "verified", draftResolvedByKeyId: "k1", draftResolvedByViewer: true });
+  });
+});
+
 describe("the read rule is applied in one place", () => {
   const cases: Array<{ name: string; facts: { isAuthor: boolean; role: string | null; draftState?: string }; readable: boolean }> = [
     { name: "author, no membership", facts: { isAuthor: true, role: null }, readable: true },
@@ -167,6 +185,7 @@ describe("the read rule is applied in one place", () => {
       draftResolvedAt: null,
       draftResolvedByKeyId: null,
       draftResolvedByEmail: null,
+      draftResolvedByViewer: false,
     });
     // The viewer's role drives the route's flags; it is not part of the payload.
     expect("role" in (found?.trace ?? {})).toBe(false);
