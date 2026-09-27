@@ -6,8 +6,11 @@ import {
   pickSuccessor,
   promoteToOwner,
   traceIdsInSoleMemberBooksOwnedBy,
-  removeMembershipsInOrgsOwnedBy,
+  lockBooksForDeparture,
+  booksDeletedWith,
+  removeMembershipsIn,
   removeAllMembershipsOf,
+  inBooks,
 } from "../authz";
 
 export interface UserDeleteResult {
@@ -62,9 +65,11 @@ export interface BookHandover {
  *     and the rows become undeletable orphans
  *   - uploads owned by the user's api keys, then api_keys
  *   - oauth_authorization_codes
- *   - owned books that have no other members (their memberships, the book
- *     ids purged from any remaining key's scope arrays, the groups rows),
- *     the user's organizations, remaining memberships, then the users row
+ *   - owned books that have no other members, and books elsewhere in which
+ *     the user is the only member and nobody else wrote a recipe [F74]
+ *     (their memberships, the book ids purged from any remaining key's scope
+ *     arrays, the groups rows), the user's organizations, remaining
+ *     memberships, then the users row
  *     (FK cascades: invitations.inviter_id, trace_reactions.user_id,
  *     check_feedback_stars.user_id)
  *
@@ -157,19 +162,16 @@ export async function deleteUserCascade(
       DELETE FROM claimnet.oauth_authorization_codes WHERE user_id = ${userId}::uuid
     `);
 
-    // Lock the books that are about to be deleted. A concurrent membership
-    // insert takes a key-share lock on its groups row, so it now waits for
-    // this transaction — nobody can join a book between the hand-over
-    // re-check below and the delete. Then hand on any book that gained a
-    // member since phase 0.
-    await tx.execute(sql`
-      SELECT g.id FROM claimnet.groups g
-      WHERE g.organization_id IN (
-        SELECT id FROM claimnet.organizations WHERE owner_id = ${userId}::uuid
-      )
-      ORDER BY g.id
-      FOR UPDATE OF g
-    `);
+    // Lock every book this transaction may change or delete — books in the
+    // user's organizations and books they belong to — in one statement, in
+    // id order, before touching any membership row [F74]. A concurrent
+    // membership insert takes a key-share lock on its groups row and
+    // removeMember locks the groups row first, so both now wait for this
+    // transaction: nobody can join, leave, or be removed between the
+    // hand-over re-check below and the delete, and a removal racing the
+    // teardown queues instead of deadlocking. Then hand on any book that
+    // gained a member since phase 0.
+    await lockBooksForDeparture(txDb, userId);
     booksHandedOver.push(...(await handOverSharedBooks(txDb, userId)));
 
     // Stragglers: traces created between phase 1 and this transaction
@@ -183,23 +185,23 @@ export async function deleteUserCascade(
       referencesDeleted += result.referencesDeleted;
     }
 
-    // Owned organizations bottom-up. Every book still here has no member
-    // other than the user (shared ones were handed on above): memberships in
-    // those books, the book ids purged from any remaining key's scope, the
-    // books, the orgs. Their traces are already gone via the cascade above.
+    // Books deleted with the account, bottom-up: every book still in the
+    // user's organizations (shared ones were handed on above), plus any book
+    // elsewhere where the user is the only member and nobody else wrote a
+    // recipe [F74] — e.g. a book the user handed on in phase 0 and then, still
+    // a co-owner in between, removed the new owner from. Without this it
+    // would outlive the account with no member at all. The book ids are
+    // purged from any remaining key's scope, then memberships, books, and
+    // the user's organizations go. Their traces are already gone via the
+    // cascade above.
     //
     // Scope purge: a FORMER member's still-live key can carry a deleted
     // book's id. Same repair the ephemeral-book reaper applies (recipe
     // 11d5490e): drop the id from both arrays and point a dangling
     // default_write_group_id at the first remaining write id; if none
     // remains, COALESCE keeps the old value rather than inventing a target.
-    const doomedRows = await tx.execute(sql`
-      SELECT g.id FROM claimnet.groups g
-      WHERE g.organization_id IN (
-        SELECT id FROM claimnet.organizations WHERE owner_id = ${userId}::uuid
-      )
-    `);
-    for (const { id: groupId } of doomedRows as unknown as Array<{ id: string }>) {
+    const doomed = await booksDeletedWith(txDb, userId);
+    for (const groupId of doomed) {
       await tx.execute(sql`
         UPDATE claimnet.api_keys
         SET read_group_ids = array_remove(read_group_ids, ${groupId}::uuid),
@@ -214,13 +216,8 @@ export async function deleteUserCascade(
            OR default_write_group_id = ${groupId}::uuid
       `);
     }
-    await removeMembershipsInOrgsOwnedBy(tx, userId);
-    await tx.execute(sql`
-      DELETE FROM claimnet.groups
-      WHERE organization_id IN (
-        SELECT id FROM claimnet.organizations WHERE owner_id = ${userId}::uuid
-      )
-    `);
+    await removeMembershipsIn(txDb, doomed);
+    await tx.execute(sql`DELETE FROM claimnet.groups WHERE ${inBooks(sql`id`, doomed)}`);
     await tx.execute(sql`
       DELETE FROM claimnet.organizations WHERE owner_id = ${userId}::uuid
     `);

@@ -155,9 +155,12 @@ export type RemoveMemberResult = "removed" | "not_a_member" | "last_owner";
  *
  *   - Ids are compared by the database as uuids, never as strings, so however
  *     the caller's copy of an id is written it names the same member.
- *   - The book's owner rows are locked (in a fixed order) before the decision.
- *     Two owners leaving at the same moment are serialized: the second waits,
- *     then decides on what the first left behind, and is refused.
+ *   - The book's row is locked first, then its owner rows (in a fixed order),
+ *     before the decision. Two owners leaving at the same moment are
+ *     serialized: the second waits, then decides on what the first left
+ *     behind, and is refused. Book row before membership rows is the lock
+ *     order account deletion uses too (book-succession.ts), so a removal and
+ *     a deletion on the same book queue instead of deadlocking [F74].
  *
  * Pass a transaction handle as `db` to make the removal part of a larger unit;
  * the locks are then held until that transaction ends.
@@ -172,6 +175,9 @@ export async function removeMember(
   userId: string,
 ): Promise<RemoveMemberResult> {
   return db.transaction(async (tx) => {
+    await tx.execute(sql`
+      SELECT id FROM claimnet.groups WHERE id = ${bookId}::uuid FOR UPDATE
+    `);
     const ownerRows = await tx.execute(sql`
       SELECT ${membershipOf("gm", userId)} AS "isTarget"
       FROM claimnet.group_members gm

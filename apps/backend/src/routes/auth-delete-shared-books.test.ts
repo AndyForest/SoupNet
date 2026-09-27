@@ -636,3 +636,195 @@ describe.skipIf(!BASE)("DELETE /auth/me — shared recipe books are handed on, n
     }
   });
 });
+
+/**
+ * Account deletion racing member removal [F74].
+ *
+ * Both paths take the book's row lock before any membership row: removeMember
+ * locks the book first, and the deletion cascade locks every book it will
+ * touch, in id order, before reading or changing members. So a removal and a
+ * deletion on the same book serialize instead of deadlocking.
+ *
+ * And the gap between the hand-over (phase 0) and the teardown (phase 2): the
+ * departing owner is still a co-owner in between and can remove the member who
+ * just inherited. The teardown then finds a book where the departing user is
+ * the only member; it must not leave that book with no members at all.
+ */
+describe.skipIf(!BASE)("DELETE /auth/me racing member removal [F74]", () => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  let authz: typeof import("../authz");
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  let getDb: typeof import("../db").getDb;
+
+  async function load(): Promise<void> {
+    authz ??= await import("../authz");
+    getDb ??= (await import("../db")).getDb;
+  }
+
+  async function membersOf(sql: Sql, groupId: string): Promise<number> {
+    return count(sql`SELECT COUNT(*)::int AS n FROM claimnet.group_members WHERE group_id = ${groupId}::uuid`);
+  }
+
+  async function bookExists(sql: Sql, groupId: string): Promise<boolean> {
+    return (await count(sql`SELECT COUNT(*)::int AS n FROM claimnet.groups WHERE id = ${groupId}::uuid`)) === 1;
+  }
+
+  it("removeMember holds the book row lock while it decides, the same first lock the deletion cascade takes", { timeout: 60_000 }, async () => {
+    await load();
+    const sql = makeSql();
+    try {
+      const owner = await provisionUser(sql, "lock-owner");
+      const member = await provisionUser(sql, "lock-member");
+      const bookId = await createBook(owner, `lock-${Date.now().toString(36)}`);
+      await addMember(sql, bookId, member, "member", "2026-01-01T00:00:00Z");
+
+      let release: () => void = () => {};
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      let decided: () => void = () => {};
+      const hasDecided = new Promise<void>((resolve) => { decided = resolve; });
+      let outcome = "";
+      const removal = getDb().transaction(async (tx) => {
+        outcome = await authz.removeMember(tx, bookId, member.userId);
+        decided();
+        await held;
+      });
+      await hasDecided;
+      expect(outcome).toBe("removed");
+
+      let lockError: { code?: string } | undefined;
+      try {
+        await sql`SELECT id FROM claimnet.groups WHERE id = ${bookId}::uuid FOR UPDATE NOWAIT`;
+      } catch (err) {
+        lockError = err as { code?: string };
+      }
+      release();
+      await removal;
+      expect(lockError?.code).toBe("55P03"); // lock_not_available
+    } finally {
+      await sql.end();
+    }
+  });
+
+  it("a member removal in flight when the owner deletes their account: the deletion waits for it, then both complete", { timeout: 90_000 }, async () => {
+    await load();
+    const sql = makeSql();
+    try {
+      const owner = await provisionUser(sql, "inflight-owner");
+      const heir = await provisionUser(sql, "inflight-heir");
+      const leaving = await provisionUser(sql, "inflight-leaving");
+      const bookId = await createBook(owner, `inflight-${Date.now().toString(36)}`);
+      await addMember(sql, bookId, heir, "member", "2026-01-01T00:00:00Z");
+      await addMember(sql, bookId, leaving, "member", "2026-02-01T00:00:00Z");
+
+      let release: () => void = () => {};
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      let decided: () => void = () => {};
+      const hasDecided = new Promise<void>((resolve) => { decided = resolve; });
+      const removal = getDb().transaction(async (tx) => {
+        await authz.removeMember(tx, bookId, leaving.userId);
+        decided();
+        await held;
+      });
+      await hasDecided;
+
+      let deleteStatus = 0;
+      const deletion = deleteAccount(owner).then((r) => { deleteStatus = r.status; });
+      await new Promise((r) => setTimeout(r, 750));
+      expect(deleteStatus).toBe(0); // waiting on the book the removal holds
+
+      release();
+      await removal;
+      await deletion;
+      expect(deleteStatus).toBe(200);
+      expect(await roleOf(sql, bookId, heir.userId)).toBe("owner");
+      expect(await roleOf(sql, bookId, leaving.userId)).toBeUndefined();
+      expect(await membersOf(sql, bookId)).toBe(1);
+    } finally {
+      await sql.end();
+    }
+  });
+
+  it("two co-owners deleting their accounts at the same moment both complete, and each book passes to the remaining member", { timeout: 90_000 }, async () => {
+    const sql = makeSql();
+    try {
+      const first = await provisionUser(sql, "pair-first");
+      const second = await provisionUser(sql, "pair-second");
+      const heir = await provisionUser(sql, "pair-heir");
+      const stamp = Date.now().toString(36);
+      const bookA = await createBook(first, `pair-a-${stamp}`);
+      const bookB = await createBook(second, `pair-b-${stamp}`);
+      await addMember(sql, bookA, second, "owner", "2026-01-01T00:00:00Z");
+      await addMember(sql, bookB, first, "owner", "2026-01-01T00:00:00Z");
+      for (const id of [bookA, bookB]) await addMember(sql, id, heir, "member", "2026-02-01T00:00:00Z");
+
+      const [a, b] = await Promise.all([deleteAccount(first), deleteAccount(second)]);
+      expect([a.status, b.status]).toEqual([200, 200]);
+      for (const id of [bookA, bookB]) {
+        expect(await roleOf(sql, id, heir.userId)).toBe("owner");
+        expect(await membersOf(sql, id)).toBe(1);
+      }
+    } finally {
+      await sql.end();
+    }
+  });
+
+  it("the departing owner removes the member who just inherited: a book holding only the owner's recipes is deleted, never left without members", { timeout: 90_000 }, async () => {
+    const sql = makeSql();
+    try {
+      const owner = await provisionUser(sql, "gap-owner");
+      const heir = await provisionUser(sql, "gap-heir");
+      const slug = `gap-${Date.now().toString(36)}`;
+      const bookId = await createBook(owner, slug);
+      const ownerKey = await mintDailyKey(owner.token);
+      const ownerTrace = await checkRecipe(
+        ownerKey, slug,
+        `As a book owner working on a notebook, I prefer my notes to leave with me so that deletion means deletion. (${Date.now()})`,
+        `Gap fixture.\n> "owner only"\n-- handover test fixture (gap)`,
+      );
+
+      // The state phase 0 leaves: the book handed to the heir and re-homed
+      // into the heir's organization, the departing owner still a co-owner.
+      await addMember(sql, bookId, heir, "owner", "2026-01-01T00:00:00Z");
+      await sql`UPDATE claimnet.groups SET organization_id = ${heir.personalOrgId}::uuid WHERE id = ${bookId}::uuid`;
+
+      // In the gap, the departing owner removes the heir (two owners: allowed).
+      const removed = await fetch(`${BASE}/recipe-books/${bookId}/members/${heir.userId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${owner.token}` },
+      });
+      expect(removed.status).toBe(200);
+
+      expect((await deleteAccount(owner)).status).toBe(200);
+
+      expect(await count(sql`SELECT COUNT(*)::int AS n FROM claimnet.traces WHERE id = ${ownerTrace}::uuid`)).toBe(0);
+      expect(await bookExists(sql, bookId)).toBe(false);
+      expect(await membersOf(sql, bookId)).toBe(0);
+    } finally {
+      await sql.end();
+    }
+  });
+
+  it("a book in someone else's organization whose only member is the departing user is deleted, not left memberless", { timeout: 60_000 }, async () => {
+    const sql = makeSql();
+    try {
+      const leaver = await provisionUser(sql, "sole-leaver");
+      const orgOwner = await provisionUser(sql, "sole-org-owner");
+      // Fixture: reachable today through the race above, and without any race
+      // once organizations have members who do not belong to every book.
+      const groupRows: Array<{ id: string }> = await sql`
+        INSERT INTO claimnet.groups (name, slug, organization_id)
+        VALUES ('Sole', ${`sole-${Date.now().toString(36)}`}, ${orgOwner.personalOrgId}::uuid) RETURNING id
+      `;
+      const bookId = groupRows[0]!.id;
+      await addMember(sql, bookId, leaver, "owner", "2026-01-01T00:00:00Z");
+
+      expect((await deleteAccount(leaver)).status).toBe(200);
+
+      expect(await bookExists(sql, bookId)).toBe(false);
+      // The organization it lived in is not the leaver's and stays.
+      expect(await count(sql`SELECT COUNT(*)::int AS n FROM claimnet.organizations WHERE id = ${orgOwner.personalOrgId}::uuid`)).toBe(1);
+    } finally {
+      await sql.end();
+    }
+  });
+});

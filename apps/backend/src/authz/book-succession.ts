@@ -12,8 +12,8 @@
  * Posture matches book-access.ts: fail closed, bound parameters only, no
  * caching. "Is a member" comes from membership-sql.ts throughout, so the books
  * handed on (`sharedBooksOwnedBy`) and the books deleted with the account
- * (`traceIdsInSoleMemberBooksOwnedBy`) can never disagree about who counts as
- * another member. The two DELETEs at the bottom act on stored rows, not on
+ * (`booksDeletedWith`, `traceIdsInSoleMemberBooksOwnedBy`) can never disagree
+ * about who counts as another member. The two DELETEs at the bottom act on stored rows, not on
  * "is a member": every row goes, whatever it counts as.
  */
 
@@ -21,6 +21,7 @@ import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { membershipOf, membershipOfSomeoneElse } from "./membership-sql";
 import { activeUserPredicate } from "./key-auth";
+import { inBooks } from "./scope-sql";
 
 /** A shared book the departing user is responsible for. */
 export interface BookToHandOver {
@@ -62,10 +63,75 @@ export async function sharedBooksOwnedBy(
         SELECT 1 FROM claimnet.group_members other
         WHERE other.group_id = g.id AND ${membershipOfSomeoneElse("other", userId)}
       )
-    ORDER BY g.created_at ASC, g.id ASC
+    ORDER BY g.id
     FOR UPDATE OF g
   `);
   return rows as unknown as BookToHandOver[];
+}
+
+/**
+ * Lock every book account deletion may change or delete for the user: books in
+ * organizations they own, and books they belong to. One statement, in id
+ * order — the same order `sharedBooksOwnedBy` locks in — so two deletions
+ * locking overlapping sets queue rather than deadlock [F74].
+ *
+ * The lock order across the module is: book row first, then membership rows.
+ * `removeMember` locks its book before its owner rows, and a membership insert
+ * takes a key-share lock on its book, so while these locks are held nobody
+ * joins, leaves, or is removed from these books.
+ */
+export async function lockBooksForDeparture(
+  db: PostgresJsDatabase,
+  userId: string,
+): Promise<void> {
+  await db.execute(sql`
+    SELECT g.id FROM claimnet.groups g
+    WHERE g.organization_id IN (
+        SELECT id FROM claimnet.organizations WHERE owner_id = ${userId}::uuid
+      )
+      OR EXISTS (
+        SELECT 1 FROM claimnet.group_members me
+        WHERE me.group_id = g.id AND ${membershipOf("me", userId)}
+      )
+    ORDER BY g.id
+    FOR UPDATE OF g
+  `);
+}
+
+/**
+ * Books deleted with the account, asked after shared books have been handed
+ * on: every book still in an organization the user owns, plus any book
+ * elsewhere in which the user is the only member and nobody else wrote a
+ * recipe [F74]. The second kind would otherwise outlive the account with no
+ * member at all: unreachable, unmanageable, and holding a slug. Nothing in it
+ * belongs to anyone else, so it goes.
+ */
+export async function booksDeletedWith(
+  db: PostgresJsDatabase,
+  userId: string,
+): Promise<string[]> {
+  const rows = await db.execute(sql`
+    SELECT g.id FROM claimnet.groups g
+    WHERE g.organization_id IN (
+        SELECT id FROM claimnet.organizations WHERE owner_id = ${userId}::uuid
+      )
+      OR (
+        EXISTS (
+          SELECT 1 FROM claimnet.group_members me
+          WHERE me.group_id = g.id AND ${membershipOf("me", userId)}
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM claimnet.group_members other
+          WHERE other.group_id = g.id AND ${membershipOfSomeoneElse("other", userId)}
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM claimnet.traces t
+          WHERE t.group_id = g.id AND t.user_id <> ${userId}::uuid
+        )
+      )
+    ORDER BY g.id
+  `);
+  return (rows as unknown as Array<{ id: string }>).map((r) => r.id);
 }
 
 /**
@@ -138,22 +204,15 @@ export async function traceIdsInSoleMemberBooksOwnedBy(
 }
 
 /**
- * Remove every membership row in books of organizations the user owns. Runs
- * after shared books have been handed on and re-homed, so what is left in
- * those organizations is only what is being deleted with the account.
+ * Remove every membership row in the given books — the books being deleted
+ * with an account (`booksDeletedWith`), so nothing in them outlives it.
  */
-export async function removeMembershipsInOrgsOwnedBy(
+export async function removeMembershipsIn(
   db: PostgresJsDatabase,
-  userId: string,
+  bookIds: readonly string[],
 ): Promise<void> {
   await db.execute(sql`
-    DELETE FROM claimnet.group_members
-    WHERE group_id IN (
-      SELECT g.id FROM claimnet.groups g
-      WHERE g.organization_id IN (
-        SELECT id FROM claimnet.organizations WHERE owner_id = ${userId}::uuid
-      )
-    )
+    DELETE FROM claimnet.group_members WHERE ${inBooks(sql`group_id`, bookIds)}
   `);
 }
 
