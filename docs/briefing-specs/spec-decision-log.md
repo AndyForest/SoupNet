@@ -4,6 +4,41 @@ Every PR that touches briefing copy (`packages/domain/src/recipe-guide-content.t
 
 (Renamed from declared-intent-log.md on 2026-08-23: "intent" now names the runtime intent-registration mechanism — cold-start v2 Phase C — so the discipline's log takes an unambiguous name. The discipline itself is unchanged.)
 
+## 2026-09-27 — Drafts-and-triage slice 1: triage ratings on check_recipe, paid for by a tool-roster trim
+
+Design: [../planning/drafts-and-triage.md](../planning/drafts-and-triage.md) §Triage ratings and §Parameters and tool-description size. Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 1 rubric (this entry is its briefing-copy declaration). Rulings: open questions 1 to 4 accepted as recommended (recipes `cee8fb2d`, `4cfd166e`).
+
+### Edits
+
+1. **Two new `check_recipe` params, both MCP servers:** `impact` ("Your triage rating of how much rides on this call: low | medium | high. Omit it if you have no view. Not a feedback row's impact.") and `uncertainty` ("Your triage rating of how unsure you are of the person's position: low | medium | high. Omit it if you have no view."). Plain strings, not enums, so an unrecognized value reaches the server and becomes a notice instead of an SDK validation error (recipe `4cfd166e`, check `10e3d7e1`).
+2. **`intent`, `agent_id`, `known_recipes` cut to one line each** (all tools that carry them). What moved and where:
+   - `intent`: always-new registration, lost-id recovery after compaction, and "rendering only, never ranking" moved to a new `intent` paragraph in the briefing's "How to check" section. "Sub-agents with their own goals send their own text" and the carry-the-id protocol stay where every agent already sees them: the intent echo line on every response that resolves an intent.
+   - `known_recipes`: kept "stub", "rendering", "ranking" (the drift guard's load-bearing concepts). Dropped "Client-declared sibling of session_id" (the briefing's "How to check" line already says "client-declared ids you still hold — same id-stub rendering") and "logging and clustering are unchanged"; the briefing line gains "never ranking".
+   - `agent_id`: dropped "stamped on audit records" and "Capture only"; kept the example and the joinable-lineage purpose, which the briefing line also states.
+3. **`feedback` on `check_recipe` and `search_recipes` is a pointer**, no longer an inline copy of the row schema: "Feedback rows about PRIOR checks or searches, riding along with this call; each row takes log_feedback's fields. A rejected row never blocks this call." The item schema is an open record, so every row field still reaches the handler (a bare object would let the SDK strip them). Dropped from this description: the "trace_id … full UUID or 8+ char short id" detail, which lives in `log_feedback`'s own `trace_id` description. The briefing's "How to check" line now says each row takes the same fields as `log_feedback`.
+4. **`clusters` and `max_chars`** stay declared and honored; each description is now "Deprecated: use verbosity (still honored)." Dropped: "Exact exemplar count (harness/sweep use)" and "Approximate size target in characters".
+5. **Check report (not briefing copy, listed for completeness):** when an agent rates, or a rating needs explaining, the markdown report gains one line under "Recipe checked as #…": "Your ratings: impact high, uncertainty not rated (triage only, never ranking)." plus any notice. Agents that never rate see no change.
+6. **Budgets:** the shared-description cap moves down 5,950 → 5,550 (total 5,884 → 5,510), and `intent`, `agent_id`, `known_recipes` get a 120-character per-param cap. The thin briefing's size ceiling rises 18,000 → 18,200 chars (fixture ~17,685 → 18,111) for the `intent` paragraph: text loaded once per session instead of three times in every turn's tool list.
+
+### Served `tools/list` bytes (minified UTF-8 `result`, in-memory transport; pinned by `mcp-tools-list-size.test.ts` and `apps/mcp-server/src/server.test.ts`)
+
+| Server | Before | After | Cap |
+|---|---|---|---|
+| Remote (`POST /mcp`) | 18,090 | 15,864 | 16,000 |
+| Stdio (`apps/mcp-server`) | 13,670 | 12,074 | 13,670 |
+
+### Scenarios intended to move
+
+- **`checking-behavior.feature`** — new `@unreleased` scenario "A rated check uses the rating vocabulary and leaves out a rating it has no view on" (added in this PR): a briefed agent that rates uses `low | medium | high` and omits a rating it has no view on rather than defaulting to medium. It stays `@unreleased` until slice 7 teaches rating in the briefing body.
+
+### Scenarios watched, with rationale for holding
+
+- **`feedback-loop.feature` "Mid-flow feedback rides on the next check_recipe call"** — the row fields are now learned from `log_feedback`'s schema rather than an inline copy. Holds because `log_feedback` is in the same tool list the agent already reads, the pointer names it, the briefing's "Closing the loop" section still lists the row vocabulary verbatim, and every field is still accepted and stored (DT-TOOL-03, `triage-ratings.test.ts`). Risk to watch: an agent that never opens `log_feedback`'s schema sends rows without `kind`/`disposition`; those rows get per-row markers, and the check itself is unaffected.
+- **`intent-registration.feature` (all scenarios)** — the `intent` description is one line. Holds because each scenario's trigger is carried elsewhere: declaring at briefing time and carrying the id (the echo line on every response, unchanged), compaction recovery and always-new registration (the new briefing paragraph), sub-agent isolation (the echo line), feedback join (`intent_id` on `log_feedback`, unchanged), and the unknown-id notice (unchanged).
+- **`known-recipes-dedup.feature` "Known ids render as compact stubs instead of full bodies"** — the `known_recipes` description still says ids you hold render as id stubs, rendering only; the stub rendering itself is unchanged.
+- **All others** — principles, voice, format, routing, divergence, and setup copy untouched; `session_id` copy untouched (open question 2).
+- Suite re-run: the agent-run harness is not yet wired; per README the .feature files remain the manual checklist.
+
 ## 2026-08-23 — Cold-start v2 Phase C: declared intents (param + echo line + tool descriptions)
 
 Operator-approved plan (always-new registration ruling, recipe `363e3e0c`; session-supersession direction, `5c55327d`; rendering-only ledger per `9067ca1b`/`4d25aec9`).

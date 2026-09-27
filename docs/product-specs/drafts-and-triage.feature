@@ -1,4 +1,3 @@
-@unreleased
 Feature: Drafts, triage ratings, and deciding by building both
   # Design: docs/planning/drafts-and-triage.md. Build log, slice plan, and
   # rubrics: docs/planning/drafts-and-triage-build.md. Read-path checklist:
@@ -82,7 +81,7 @@ Feature: Drafts, triage ratings, and deciding by building both
 
     @DT-RAT-08 @slice-1
     Scenario: A repeat of an identical check keeps the first ratings
-      # Pending decision: see build log §Open design questions, "Ratings on a repeat check".
+      # Decided: build log §Orchestrator rulings, open question 4 (first write wins; the repeat gets a notice).
       Given Pat's agent checked a recipe with impact "low"
       When the same key checks the identical recipe text in the same book with impact "high"
       Then the response returns the existing recipe id and reports it as an existing recipe
@@ -122,8 +121,8 @@ Feature: Drafts, triage ratings, and deciding by building both
 
     @DT-TOOL-02 @slice-1
     Scenario Outline: A deprecated parameter shrinks to a pointer and is still honored
-      # Pending decision: see build log §Open design questions, "Removing a
-      # parameter from the schema drops it". The MCP SDK strips keys a tool's
+      # Decided: build log §Orchestrator rulings, open question 1 (keep the
+      # parameter declared; recipe cee8fb2d). The MCP SDK strips keys a tool's
       # schema doesn't declare, so a parameter absent from the schema is
       # silently ignored, not honored (mcp.ts comment on clusters/max_chars;
       # mcp-tool-descriptions.test.ts asserts both stay declared). The
@@ -156,6 +155,7 @@ Feature: Drafts, triage ratings, and deciding by building both
       And the stdio MCP server's tool descriptions come from the same shared constants as the remote server's
 
   # ─────────────────────────────────────────────────────────────────────────
+  @unreleased
   Rule: A draft is visible only to the person it is about, their agents, and its depositor
     # Guards: drafts-and-triage.md §The model ("One visibility rule covers
     # every draft"); recipes 94e0e682 and 84e6bc9f; engineering-principles.md
@@ -303,6 +303,7 @@ Feature: Drafts, triage ratings, and deciding by building both
       And the authz seam guard fails when a source file outside the module reads the traces table in a statement that neither uses the module's condition nor is registered with a reason
 
   # ─────────────────────────────────────────────────────────────────────────
+  @unreleased
   Rule: A draft is verified by its person, or by their agent with the person's own words
     # Guards: drafts-and-triage.md §Verifying a draft; recipe 94e0e682 (agents
     # may update some surfaces; verification by the person or an agent under
@@ -374,6 +375,7 @@ Feature: Drafts, triage ratings, and deciding by building both
       And the recipe's text, embeddings, and judgment date are unchanged
 
   # ─────────────────────────────────────────────────────────────────────────
+  @unreleased
   Rule: The review queue is the human search page, sorted for triage
     # Guards: drafts-and-triage.md §Build notes; design-thinking.md §Reviewing
     # drafts, §Dashboard as a Feed.
@@ -420,6 +422,7 @@ Feature: Drafts, triage ratings, and deciding by building both
         | not chosen  | not chosen  |
 
   # ─────────────────────────────────────────────────────────────────────────
+  @unreleased
   Rule: A draft may be deposited on behalf of another person, and is always a draft
     # Guards: drafts-and-triage.md §The model (table); recipe 94e0e682;
     # design-thinking.md §6 The Organization Member ("Drafts written about me"),
@@ -455,6 +458,7 @@ Feature: Drafts, triage ratings, and deciding by building both
       Then the recipe is stored exactly as a check without on_behalf_of
 
   # ─────────────────────────────────────────────────────────────────────────
+  @unreleased
   Rule: A headless key deposits only drafts, and its derived keys inherit that
     # Guards: drafts-and-triage.md §Headless keys; recipe e263dc40;
     # design-thinking.md §Agent Type D (headless keys), §Orchestrators;
@@ -500,6 +504,7 @@ Feature: Drafts, triage ratings, and deciding by building both
       Then that key can declare intents, search, fetch recipes by id, and log feedback exactly as an ordinary key
 
   # ─────────────────────────────────────────────────────────────────────────
+  @unreleased
   Rule: Option sets decide by building both against a rubric set in advance
     # Guards: drafts-and-triage.md §Deciding by building both; recipe ea930c3d;
     # docs/architecture/agent-context-seams.md gap 2 (recipe-to-intent link).

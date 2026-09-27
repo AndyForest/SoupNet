@@ -52,3 +52,10 @@ Feature: Checking behavior — genuine hypotheses, autonomous timing
     When the agent checks the pattern as a recipe
     Then the evidence interpretation attributes the hypothesis to observed artifacts ("suggesting a preference"), not to a user statement
     And the quoted reference is from the artifact, not an invented user quote
+
+  @unreleased
+  Scenario: A rated check uses the rating vocabulary and leaves out a rating it has no view on
+    # Guards: MCP_PARAM_DESCRIPTIONS.impact and .uncertainty (recipe-guide-content.ts); docs/planning/drafts-and-triage.md §Triage ratings; spec-decision-log.md 2026-09-27 (drafts-and-triage slice 1). The parameters ship in slice 1; the scenario stays @unreleased until the briefing body teaches rating (slice 7) and the harness can run it.
+    When the agent makes a check where it has a view on how much rides on the call but none on how sure it is of the person's position
+    Then any rating it sends on check_recipe is one of "low", "medium", or "high"
+    And it sends impact and leaves uncertainty out, rather than sending uncertainty "medium" as a default

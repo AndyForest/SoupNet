@@ -234,6 +234,12 @@ Small items the operator parks as they come up. Add to this list rather than cre
 
 Design: [planning/drafts-and-triage.md](planning/drafts-and-triage.md) (recipes `0e3cb40e`, `ea930c3d`, `e263dc40`, `84e6bc9f`). "Draft" and "on behalf of" become independent properties of a check; `impact` and `uncertainty` ratings on every check for triage (never ranking); drafts hidden from everyone but the person, their agents, and the depositor until verified; a review queue on the human search page; linked option drafts under one intent with a rubric set in advance, resolved by measurement into verified and not-chosen; a headless key setting that forces drafts. Depends on the authz seam, the recipe-to-intent link, and capability flags on keys. Lands with a tool-description trim so the new parameters are net-negative in context size. Supersedes the single "draft on behalf of" parameter in the org program §4.4.
 
+Build: [planning/drafts-and-triage-build.md](planning/drafts-and-triage-build.md), seven slices on `feat/drafts-and-triage`. ~~Slice 1: triage ratings on every check surface and the tool-roster trim~~ built 2026-09-27 (served remote `tools/list` 18,090 → 15,864 bytes), awaiting verification. Slices 2 to 7 remain.
+
+### `[DECISION NEEDED]` Should `POST /check` accept a JSON body?
+
+Found 2026-09-27 building drafts-and-triage slice 1. Scenario DT-RAT-05 lists "POST /check with a JSON body" as a check surface, but `POST /check` parses only urlencoded and multipart bodies (`routes/check.ts`), so a JSON body arrives with no parameters. Accepting JSON would be a new input format on the primary agent surface, and the per-key rate-limit key extractor (`extractCheckRequestKey`) would have to learn it too, or JSON posts would skip the per-key budget. Slice 1 covered `POST /check` with urlencoded and multipart bodies (JSON and HTML responses) and did not add JSON bodies. Decide whether JSON bodies are wanted; if not, reword DT-RAT-05's row.
+
 ### `[IMPL]` ChatGPT compatibility for the remote MCP endpoint
 
 Operator note 2026-09-19: ChatGPT plugins are MCP-based now (since July, per operator — verify against OpenAI's current docs). Check that `POST /mcp` + the OAuth 2.1 connector flow work as a ChatGPT connector/app, note any gaps (tool-shape requirements, auth quirks, directory listing), and add ChatGPT to the public connect page's client list if it works.
