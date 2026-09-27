@@ -616,3 +616,12 @@ Carried into the next slice as follow-ups:
 - **F84 (P3, guard hardening):** match statements as a whole rather than line by line, and add the remaining forms and `embedding_chunks` (private detail).
 - **Suspected flaky test:** `oauth-flow.test.ts` "legacy epoch-stamped consumed rows" sometimes reads back nothing, possibly because the OAuth service's purge of long-dead rows runs in between. Unconfirmed; backlog item.
 
+### Slice 3: orchestrator rulings on open questions 21 to 27 (2026-09-27)
+
+All seven accepted as recommended. Reasons where the call was not mechanical:
+
+- **21, a JWT listing route that reuses the search grammar, reopening ruling 19.** The daily key can only read books ticked for daily reads, so a queue built on it would silently miss drafts, and every queue load would spend the person's search budget and write search audit rows. The operator's words were "keep it DRY with the search engine", which is about reusing the engine, not about which credential the page uses, and he has separately asked for a rich human search page with qualifiers in the one search field (org program §4.4). The `/app/drafts` route is the first piece of that page: same grammar, same authz fragments, the person's live memberships, JWT auth. Ruling 19 is superseded.
+- **22, queue order is impact × uncertainty,** the design's own phrase from the operator's "uncertainty × impact" framing, with unrated counted as medium; ties by higher impact, then most recently deposited, then id. DT-QUE-02 is edited to match in the slice's first commit.
+- **24, `is:draft` lifts search's exclude-own default** the way `author:` does and means "unresolved drafts about me"; the on-behalf-of case in DT-QUE-01 moves to slice 4.
+- **23, 25, 26, 27** as recommended (rating filter as a fragment outside the ranking-guarded files; honest refusal for the draft's own subject, uniform 404 for everyone else; the deposit notice carries the queue link and sign-in returns only to same-origin `/app/` paths; one click, with labels and accessible names that say exactly what each action does).
+
