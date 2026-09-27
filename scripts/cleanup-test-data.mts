@@ -17,7 +17,8 @@
  *   npx tsx scripts/cleanup-test-data.mts --only 'perma-eval@test.local'
  *       # an explicitly named pattern: everything it matches goes, eval corpora included
  *
- * Needs DATABASE_URL (from .env, or set in the environment).
+ * Needs DATABASE_URL, or the PG* variables (PGHOST, PGPORT, PGUSER, PGPASSWORD,
+ * PGDATABASE) the backend also accepts.
  */
 
 import postgres from "postgres";
@@ -31,9 +32,23 @@ import {
   type KeptTestUser,
 } from "../apps/backend/src/services/test-data-cleanup.service";
 
-const databaseUrl = process.env["DATABASE_URL"];
+// DATABASE_URL, or the PG* set, as apps/backend/src/db.ts accepts.
+function connectionUrl(): string | undefined {
+  if (process.env["DATABASE_URL"]) return process.env["DATABASE_URL"];
+  const host = process.env["PGHOST"];
+  if (!host) return undefined;
+  const u = new URL("postgresql://localhost");
+  u.hostname = host;
+  u.port = process.env["PGPORT"] ?? "5432";
+  u.username = encodeURIComponent(process.env["PGUSER"] ?? "");
+  u.password = encodeURIComponent(process.env["PGPASSWORD"] ?? "");
+  u.pathname = `/${process.env["PGDATABASE"] ?? ""}`;
+  return u.toString();
+}
+
+const databaseUrl = connectionUrl();
 if (!databaseUrl) {
-  console.error("DATABASE_URL is required (set it, or run with `node --env-file=.env` / `source .env` first).");
+  console.error("Set DATABASE_URL, or PGHOST + PGPORT + PGUSER + PGPASSWORD + PGDATABASE (e.g. `node --env-file=.env`).");
   process.exit(1);
 }
 

@@ -61,5 +61,5 @@ A spec that passes on the merged change is a candidate regression test. The PR's
 ## Where the files live
 
 - The spec and harness: this repo, `tests/e2e/`.
-- Expectations and results: beside whoever runs the verification, not in this repo. Results for a security fix follow the security workflow's rule: findings stay out of this public repo. The operator keeps them in the private companion repo.
+- Expectations and results: beside whoever runs the verification, not in this repo. One folder per run holds `expectations.md`, `results.md` and, when the run finds something about the harness itself (a helper, the config, an older spec the change broke), `handback.md`. Whoever next works on the harness handles each open `handback.md` and adds a line at its end saying what was done, so harness findings stay with the run that found them and don't depend on any one session. Results for a security fix follow the security workflow's rule: findings stay out of this public repo. The operator keeps them in the private companion repo.
 - The report, screenshots, videos and traces: `playwright-report/` and `test-results/`, both gitignored. They can show local dev data.

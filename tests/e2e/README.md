@@ -12,7 +12,11 @@ npm run test:e2e                  # all specs; or: npx playwright test pr-96-97
 npm run test:e2e:report           # open the HTML report (screenshots, video, trace)
 ```
 
-Watch a run: `E2E_SLOWMO=500 npx playwright test smoke --headed --project=desktop`. Other hosts: `E2E_FRONTEND_URL`, `E2E_BACKEND_URL`.
+Watch a run: `E2E_SLOWMO=500 npx playwright test smoke --headed --project=desktop`.
+
+Other hosts: `E2E_FRONTEND_URL` and `E2E_BACKEND_URL`. For example, `E2E_FRONTEND_URL=http://localhost:5274` verifies a frontend served from another worktree.
+
+Passing `--reporter=list` (or any `--reporter`) replaces the configured reporters, so no HTML report is written. To keep it, use `--reporter=list,html`.
 
 If a run fails oddly, run `npx playwright test smoke` first. It proves a seeded account can reach the dashboard.
 

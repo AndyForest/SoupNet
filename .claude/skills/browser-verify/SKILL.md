@@ -12,6 +12,7 @@ You are the orchestrator. You write the expectations and relay the results. You 
 - **Where expectations and results go.** Ask the person if it isn't stated. The default is a working directory outside this repo. For a security fix, results never go in this repo.
 - **The stack.** Backend: `docker compose up --build -d` from the checkout whose code is under test, then check `curl -s -o /dev/null -w "%{http_code}" http://localhost:3101/health/ready` returns 200. Frontend: `npm run dev:frontend` in the background, from a worktree at the head under test.
 - **The harness.** If `@playwright/test` is missing from the worktree, run `npm install`. Then `npx playwright install chromium`, then `npx playwright test smoke`. Don't go on until smoke passes.
+- **Open handbacks.** Look for `handback.md` files in earlier run folders that have no closing line, and handle them first: they are harness problems an earlier run found.
 - **One dev server serves one head.** PRs in a stack are verified one after another. If other sessions use the stack, tell them before you move the frontend.
 
 ## 1. Expectations, before any browser opens
@@ -52,7 +53,8 @@ Use the Agent tool with `subagent_type: general-purpose`, in the background. Nev
 >    - per expectation: ID, status, one factual sentence, then indented the screenshot names and test title; for anything not met, what the page showed against what was expected, and the code you believe responsible, marked as your reading;
 >    - "Found, not listed";
 >    - the seeded accounts.
-> 6. Do not commit or push.
+> 6. Anything you find about the harness itself (a helper, the config, an older spec this change broke) goes in `handback.md` beside the results, not in the results.
+> 7. Do not commit or push.
 >
 > **Report back:** the results file's top section and the per-expectation lines, and anything that blocked you.
 

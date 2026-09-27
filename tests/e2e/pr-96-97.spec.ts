@@ -513,6 +513,11 @@ test("E4 removing a member and adding one back still work", async ({ page, reque
   await test.step("owner removes the member, then reloads", async () => {
     const card = bookCard(page, bookName);
     await card.locator("li").filter({ hasText: member.email }).getByRole("button", { name: "Remove" }).click();
+    // #99 adds a confirmation step ("Yes, remove {email}"). Confirm it when it
+    // appears, so E4 runs before and after that lands; ui-followups.spec.ts
+    // pins the confirmation itself.
+    const confirm = page.getByRole("button", { name: `Yes, remove ${member.email}` });
+    if (await confirm.waitFor({ timeout: 2_000 }).then(() => true, () => false)) await confirm.click();
     await expect(card.locator("li").filter({ hasText: member.email }), "the removed member should leave the list").toHaveCount(0);
     await page.reload();
     const card2 = await expandBook(page, bookName);
