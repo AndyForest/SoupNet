@@ -11,7 +11,12 @@ import {
   repeatRatingsNotice,
   describeRatings,
   renderRatingsMarkdown,
+  triageWeight,
+  triageScore,
+  compareForTriage,
+  UNRATED_TRIAGE_WEIGHT,
 } from "./triage-ratings";
+import type { TriageOrderable } from "./triage-ratings";
 
 describe("parseTriageRating", () => {
   it("S1-B1 / DT-RAT-01: accepts each vocabulary value", () => {
@@ -121,5 +126,87 @@ describe("describeRatings / renderRatingsMarkdown", () => {
   it("S1-B3: a notice renders even when both ratings ended up not rated", () => {
     const md = renderRatingsMarkdown({ impact: null, uncertainty: null }, "Some notice.");
     expect(md).toBe("Your ratings: impact not rated, uncertainty not rated (triage only, never ranking).\nSome notice.\n");
+  });
+});
+
+// ── Slice 3: the review queue's order (S3-O1, DT-QUE-02) ────────────────────
+
+describe("triage order (S3-O1)", () => {
+  const values = [null, "low", "medium", "high"] as const;
+  const weight = (v: (typeof values)[number]) => (v === null ? 2 : { low: 1, medium: 2, high: 3 }[v]);
+
+  it("weights low 1, medium 2, high 3, and unrated (or an unknown value) as medium", () => {
+    expect(triageWeight("low")).toBe(1);
+    expect(triageWeight("medium")).toBe(2);
+    expect(triageWeight("high")).toBe(3);
+    expect(triageWeight(null)).toBe(UNRATED_TRIAGE_WEIGHT);
+    expect(triageWeight(undefined)).toBe(2);
+    expect(triageWeight("urgent")).toBe(2);
+    expect(triageWeight("toString")).toBe(2);
+  });
+
+  it("scores impact × uncertainty for all 16 combinations; an unrated draft scores 4", () => {
+    for (const impact of values) {
+      for (const uncertainty of values) {
+        expect(triageScore({ impact, uncertainty }), `${impact}/${uncertainty}`).toBe(weight(impact) * weight(uncertainty));
+      }
+    }
+    expect(triageScore({ impact: null, uncertainty: null })).toBe(4);
+  });
+
+  it("orders all 16 combinations by score, then impact, and every pair consistently", () => {
+    const t0 = Date.parse("2026-09-27T10:00:00Z");
+    const items: TriageOrderable[] = [];
+    let i = 0;
+    for (const impact of values) {
+      for (const uncertainty of values) {
+        items.push({ id: `id-${String(i).padStart(2, "0")}`, impact, uncertainty, createdAt: new Date(t0 + i * 1000) });
+        i += 1;
+      }
+    }
+    const sorted = [...items].sort(compareForTriage);
+    for (let k = 1; k < sorted.length; k++) {
+      const a = sorted[k - 1]!;
+      const b = sorted[k]!;
+      const sa = triageScore(a);
+      const sb = triageScore(b);
+      expect(sa, `${JSON.stringify(a)} before ${JSON.stringify(b)}`).toBeGreaterThanOrEqual(sb);
+      if (sa === sb) {
+        expect(triageWeight(a.impact)).toBeGreaterThanOrEqual(triageWeight(b.impact));
+        if (triageWeight(a.impact) === triageWeight(b.impact)) {
+          expect(new Date(a.createdAt).getTime()).toBeGreaterThan(new Date(b.createdAt).getTime());
+        }
+      }
+    }
+    // Antisymmetric and total: no two distinct items compare equal.
+    for (const a of items) {
+      for (const b of items) {
+        const ab = Math.sign(compareForTriage(a, b));
+        const ba = Math.sign(compareForTriage(b, a));
+        expect(ab + ba).toBe(0);
+        if (a !== b) expect(ab).not.toBe(0);
+      }
+    }
+  });
+
+  it("DT-QUE-02: (high, high), not rated, (high, low), (low, high), whatever the deposit order", () => {
+    const t = (m: number) => new Date(Date.UTC(2026, 8, 27, 10, m));
+    // Deposited in the browser run's order: (low, high), (high, low), not rated, (high, high).
+    const lowHigh = { id: "a", impact: "low", uncertainty: "high", createdAt: t(1) };
+    const highLow = { id: "b", impact: "high", uncertainty: "low", createdAt: t(2) };
+    const unrated = { id: "c", impact: null, uncertainty: null, createdAt: t(3) };
+    const highHigh = { id: "d", impact: "high", uncertainty: "high", createdAt: t(4) };
+    const order = [lowHigh, highLow, unrated, highHigh].sort(compareForTriage).map((d) => d.id);
+    expect(order).toEqual(["d", "c", "b", "a"]);
+  });
+
+  it("equal score and impact: the most recently deposited first, then the smaller id", () => {
+    const older = { id: "z", impact: "high", uncertainty: "low", createdAt: "2026-09-01T00:00:00Z" };
+    const newer = { id: "y", impact: "high", uncertainty: "low", createdAt: "2026-09-02T00:00:00Z" };
+    expect([older, newer].sort(compareForTriage).map((d) => d.id)).toEqual(["y", "z"]);
+    const sameA = { id: "a", impact: null, uncertainty: null, createdAt: "2026-09-01T00:00:00Z" };
+    const sameB = { id: "b", impact: null, uncertainty: null, createdAt: "2026-09-01T00:00:00Z" };
+    expect([sameB, sameA].sort(compareForTriage).map((d) => d.id)).toEqual(["a", "b"]);
+    expect(compareForTriage(sameA, { ...sameA })).toBe(0);
   });
 });

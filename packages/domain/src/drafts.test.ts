@@ -113,3 +113,67 @@ describe("validateVerificationEvidence (DT-VER-05, DT-VER-06)", () => {
     expect(r.ok).toBe(true);
   });
 });
+
+// ── Slice 3 ──────────────────────────────────────────────────────────────────
+
+describe("draftDepositNotice with the queue link (S3-L6, S3-Z3)", () => {
+  const url = "https://soup.net/app/drafts?ids=11111111-1111-4111-8111-111111111111";
+
+  it("a new draft's notice hands the agent the queue link in place of the recipe page", () => {
+    const n = draftDepositNotice({ storedState: "unverified", requestedDraft: true, existing: false, queueUrl: url })!;
+    expect(n).toContain(`review queue: ${url}`);
+    expect(n).not.toContain("recipe's page");
+  });
+
+  it("so does an identical repeat of an unresolved draft", () => {
+    const n = draftDepositNotice({ storedState: "unverified", requestedDraft: false, existing: true, queueUrl: url })!;
+    expect(n).toContain(url);
+    expect(n).toContain("still a draft");
+  });
+
+  it("a resolved repeat and a published repeat carry no link (nothing to review)", () => {
+    expect(draftDepositNotice({ storedState: "rejected", requestedDraft: false, existing: true, queueUrl: url })).not.toContain(url);
+    expect(draftDepositNotice({ storedState: null, requestedDraft: true, existing: true, queueUrl: url })).not.toContain(url);
+  });
+
+  it("grows by at most the queue URL plus 20 characters", () => {
+    for (const existing of [false, true]) {
+      const before = draftDepositNotice({ storedState: "unverified", requestedDraft: !existing, existing })!;
+      const after = draftDepositNotice({ storedState: "unverified", requestedDraft: !existing, existing, queueUrl: url })!;
+      expect(after.length - before.length).toBeLessThanOrEqual(url.length + 20);
+    }
+  });
+});
+
+describe("draftLabel with the agent's ratings (S3-AG2, S3-Z4)", () => {
+  const values = [null, "low", "medium", "high"] as const;
+
+  it("an unrated draft's label is unchanged, and a published row has no label at all", () => {
+    for (const state of ["unverified", "rejected", "not_chosen"] as const) {
+      expect(draftLabel(state, { impact: null, uncertainty: null })).toBe(draftLabel(state));
+      expect(draftLabel(state, {})).toBe(draftLabel(state));
+    }
+    for (const state of [null, undefined, "verified"]) {
+      expect(draftLabel(state, { impact: "high", uncertainty: "high" })).toBe("");
+    }
+  });
+
+  it("adds at most 40 bytes for every rated combination", () => {
+    for (const state of ["unverified", "rejected", "not_chosen"] as const) {
+      const base = Buffer.byteLength(draftLabel(state), "utf8");
+      for (const impact of values) {
+        for (const uncertainty of values) {
+          const label = draftLabel(state, { impact, uncertainty });
+          const added = Buffer.byteLength(label, "utf8") - base;
+          if (impact === null && uncertainty === null) expect(added).toBe(0);
+          else expect(added, `${state} ${impact}/${uncertainty}: ${label}`).toBeLessThanOrEqual(40);
+        }
+      }
+    }
+  });
+
+  it("names both ratings, 'not rated' for a missing one, inside the label", () => {
+    expect(draftLabel("unverified", { impact: "high", uncertainty: null })).toMatch(/; impact high, uncertainty not rated\]$/);
+    expect(draftLabel("unverified", { impact: "low", uncertainty: "medium" })).toMatch(/; impact low, uncertainty medium\]$/);
+  });
+});

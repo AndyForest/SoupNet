@@ -971,13 +971,16 @@ export const MCP_PARAM_DESCRIPTIONS = {
     "the server adapts to your results. A steer, not a hard cap.",
 
   /** search_recipes query — the grammar mini-spec (full spec + precedent:
-   *  docs/planning/recipe-search-design.md; parser: search-query.ts). */
+   *  docs/planning/recipe-search-design.md; parser: search-query.ts). Slice 3
+   *  of the drafts work (2026-09-27) named is:draft, impact:, and
+   *  uncertainty: inside the unchanged budget; the unknown-qualifier error
+   *  lists every qualifier and value, so this stays terse. */
   searchQuery:
-    "Bare text searches semantically as one phrase (no boolean operators). \"Quoted terms\" match " +
-    "exact substrings across recipe, evidence, and reference citations — quote filenames for PR " +
-    "review; group with (\"a.ts\" OR \"b.ts\"); -\"term\" excludes. Qualifiers: author: (email, me, " +
-    "anyone — any author: replaces the exclude-own default), after:/before: (ISO date, judgment " +
-    "date). Qualifier-only queries return newest first.",
+    "Bare text is one semantic phrase. \"Quoted terms\" match exact substrings of recipe, evidence, " +
+    "and citations (quote filenames for PR review); group with (\"a\" OR \"b\"); -\"term\" excludes. " +
+    "Qualifiers: author: (email, me, anyone), after:/before: (ISO judgment date), is:draft (your " +
+    "unresolved drafts), impact:/uncertainty: (low|medium|high). author: or is:draft lifts the " +
+    "exclude-own default. Qualifier-only: newest first.",
 
   /** Deprecated legacy levers — kept in schema so existing callers stay
    *  honored (the SDK strips unknown keys silently, which would recreate the

@@ -107,3 +107,61 @@ export function renderRatingsMarkdown(ratings: TriageRatings | undefined, notice
   if (notice) text += `${notice}\n`;
   return text;
 }
+
+// ── The review queue's order (drafts-and-triage slice 3) ─────────────────────
+//
+// The operator's own triage phrase is a product, "uncertainty × impact"
+// (recipe 0e3cb40e), so a draft's triage score is impact × uncertainty with
+// low 1, medium 2, high 3, and a missing rating counted as medium: an
+// unrated draft scores 4 and sits between a high-impact certain call (3) and
+// a high-stakes open question (9), where design-thinking §Reviewing drafts
+// puts it ("in the middle"). Ties go to the higher impact, then to the most
+// recently deposited (created_at, not the judgment date: a backfilled draft
+// can carry a years-old decided_at while it has waited minutes), then to the
+// id, so the order is total (build log ruling 22, rubric S3-O1).
+//
+// Display only. The queue applies this order to its qualifier-only listing;
+// search results keep the pipeline's order, and ranking never reads a rating
+// (ranking-isolation.test.ts).
+
+/** Weight of a rating in the triage score. */
+export const TRIAGE_WEIGHTS: Readonly<Record<TriageRating, number>> = Object.freeze({ low: 1, medium: 2, high: 3 });
+
+/** An unrated rating counts as medium in the triage score. */
+export const UNRATED_TRIAGE_WEIGHT = 2;
+
+/** One rating's weight; null (not rated) or an unknown value counts as medium. */
+export function triageWeight(rating: string | null | undefined): number {
+  return rating && Object.prototype.hasOwnProperty.call(TRIAGE_WEIGHTS, rating)
+    ? TRIAGE_WEIGHTS[rating as TriageRating]
+    : UNRATED_TRIAGE_WEIGHT;
+}
+
+/** impact × uncertainty, 1 to 9; an unrated draft scores 4. */
+export function triageScore(r: { impact: string | null | undefined; uncertainty: string | null | undefined }): number {
+  return triageWeight(r.impact) * triageWeight(r.uncertainty);
+}
+
+export interface TriageOrderable {
+  id: string;
+  impact: string | null | undefined;
+  uncertainty: string | null | undefined;
+  /** When the draft was deposited (not its judgment date). */
+  createdAt: Date | string;
+}
+
+/**
+ * The queue's comparator: negative when `a` is listed before `b`. Higher
+ * score first, then higher impact, then newer deposit, then the smaller id.
+ * The backend's SQL ORDER BY for the listing mirrors this function, and a
+ * Layer 3 test checks the two agree.
+ */
+export function compareForTriage(a: TriageOrderable, b: TriageOrderable): number {
+  const byScore = triageScore(b) - triageScore(a);
+  if (byScore !== 0) return byScore;
+  const byImpact = triageWeight(b.impact) - triageWeight(a.impact);
+  if (byImpact !== 0) return byImpact;
+  const byAge = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+  if (byAge !== 0) return byAge;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}

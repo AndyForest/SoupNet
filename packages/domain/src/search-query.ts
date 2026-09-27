@@ -4,7 +4,8 @@
  * A restricted Gmail-shaped grammar over one query string: bare text is a
  * single semantic query (embedded whole — no boolean operators over a vector),
  * double-quoted terms are lexical substring matches, and a small allowlisted
- * qualifier vocabulary (`author:`, `after:`, `before:`) carries the structured
+ * qualifier vocabulary (`author:`, `after:`, `before:`, and from the drafts
+ * review queue `is:draft`, `impact:`, `uncertainty:`) carries the structured
  * filters. Design + syntax precedent citations:
  * docs/planning/recipe-search-design.md.
  *
@@ -24,12 +25,29 @@ export const SEARCH_QUERY_MAX_LENGTH = 2000;
 export const SEARCH_QUERY_MAX_LEXICAL_TERMS = 8;
 export const SEARCH_QUERY_MAX_AUTHOR_VALUES = 8;
 
-export const SEARCH_QUALIFIERS = ["author", "after", "before"] as const;
+export const SEARCH_QUALIFIERS = ["author", "after", "before", "is", "impact", "uncertainty"] as const;
 export type SearchQualifier = (typeof SEARCH_QUALIFIERS)[number];
 
 /** Reserved author values (case-insensitive on the wire, canonical lowercase here). */
 export const AUTHOR_ME = "me";
 export const AUTHOR_ANYONE = "anyone";
+
+/** The one `is:` value (drafts-and-triage slice 3): the viewer's own
+ *  unresolved drafts. GitHub's and Gmail's form for a state filter. */
+export const IS_DRAFT = "draft";
+
+/** The rating vocabulary `impact:` and `uncertainty:` take (the check's
+ *  triage ratings, slice 1). Matched case-insensitively. */
+export const SEARCH_RATING_VALUES = ["low", "medium", "high"] as const;
+export type SearchRatingValue = (typeof SEARCH_RATING_VALUES)[number];
+
+/** One rating qualifier's selection: `impact:high` sets `equals` (at most
+ *  once); each `-impact:low` adds to `excluded`, which keeps unrated rows.
+ *  Unrated recipes never match `equals` (DT-QUE-03). */
+export interface RatingSelector {
+  equals?: SearchRatingValue | undefined;
+  excluded: SearchRatingValue[];
+}
 
 /**
  * Who the search should return recipes by. `surface-default` means no
@@ -59,13 +77,23 @@ export interface ParsedSearchQuery {
   after?: string | undefined;
   /** Judgment-date upper bound, exclusive (`before:D` ⇒ date < D). ISO string as written. */
   before?: string | undefined;
+  /** `is:draft` ⇒ true: only the viewer's own unresolved drafts, and the
+   *  surface's exclude-own default is lifted (as any author: does).
+   *  `-is:draft` ⇒ false: the viewer's unresolved drafts are left out.
+   *  Undefined: no draft qualifier. */
+  isDraft?: boolean | undefined;
+  /** `impact:` / `uncertainty:` selections over the stored triage ratings.
+   *  A filter the viewer asked for, never a ranking input. */
+  impact?: RatingSelector | undefined;
+  uncertainty?: RatingSelector | undefined;
 }
 
 export type ParseSearchQueryResult =
   | { ok: true; query: ParsedSearchQuery }
   | { ok: false; error: string };
 
-const QUALIFIER_HELP = "valid qualifiers are author:, after:, before:";
+const QUALIFIER_HELP =
+  "valid qualifiers are author:, after:, before:, is:draft, impact: and uncertainty: (low, medium, or high)";
 
 /** `YYYY-MM-DD` or a full ISO datetime; Date.parse re-checks real dates. */
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/;
@@ -197,6 +225,8 @@ export function parseSearchQuery(input: string): ParseSearchQueryResult {
   let sawAuthorQualifier = false;
   let after: string | undefined;
   let before: string | undefined;
+  let isDraft: boolean | undefined;
+  const ratings: { impact?: RatingSelector; uncertainty?: RatingSelector } = {};
 
   const addLexicalGroup = (terms: string[]): string | null => {
     const count = lexicalGroups.flat().length + lexicalNegated.length + terms.length;
@@ -302,6 +332,32 @@ export function parseSearchQuery(input: string): ParseSearchQueryResult {
           if (totalAuthors > SEARCH_QUERY_MAX_AUTHOR_VALUES) {
             return { ok: false, error: `too many author values — the limit is ${SEARCH_QUERY_MAX_AUTHOR_VALUES}` };
           }
+        } else if (name === "is") {
+          if (values.length !== 1) return { ok: false, error: "is: takes one value: is:draft" };
+          const v = values[0]!.trim().toLowerCase();
+          if (v !== IS_DRAFT) {
+            return { ok: false, error: `is: takes draft (is:draft lists your unresolved drafts) — got "${values[0]}"` };
+          }
+          if (isDraft !== undefined && isDraft !== !negated) {
+            return { ok: false, error: "is:draft and -is:draft contradict each other — keep one" };
+          }
+          isDraft = !negated;
+        } else if (name === "impact" || name === "uncertainty") {
+          if (values.length !== 1) return { ok: false, error: `${name}: takes one value: low, medium, or high` };
+          const v = values[0]!.trim().toLowerCase();
+          const rating = SEARCH_RATING_VALUES.find((r) => r === v);
+          if (!rating) {
+            return { ok: false, error: `${name}: takes low, medium, or high — got "${values[0]}"` };
+          }
+          const sel = (ratings[name] ??= { excluded: [] });
+          if (negated) {
+            if (!sel.excluded.includes(rating)) sel.excluded.push(rating);
+          } else {
+            if (sel.equals !== undefined) {
+              return { ok: false, error: `duplicate ${name}: — give one value (low, medium, or high), or exclude others with -${name}:` };
+            }
+            sel.equals = rating;
+          }
         } else {
           if (negated) return { ok: false, error: `-${name}: is not supported — use the opposite bound instead` };
           if (values.length !== 1) return { ok: false, error: `${name}: takes a single date` };
@@ -351,6 +407,9 @@ export function parseSearchQuery(input: string): ParseSearchQueryResult {
       authorsNegated,
       after,
       before,
+      ...(isDraft !== undefined ? { isDraft } : {}),
+      ...(ratings.impact ? { impact: ratings.impact } : {}),
+      ...(ratings.uncertainty ? { uncertainty: ratings.uncertainty } : {}),
     },
   };
 }

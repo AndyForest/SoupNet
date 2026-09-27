@@ -74,6 +74,10 @@ export interface CheckResultItem {
   /** Present only on the viewer's own unpublished draft (slice 2) — the
    *  line is labelled so the agent weighs it as a hypothesis. */
   draftState?: string;
+  /** The agent's triage ratings, carried only beside a `draftState` (slice
+   *  3, S3-AG2); null = not rated. The label names them when one is set. */
+  impact?: TriageRating | null;
+  uncertainty?: TriageRating | null;
 }
 
 /** A related-evidence entry IS a Recipe fill (canonical schema): the parent
@@ -233,7 +237,7 @@ function renderResultItem(r: CheckResultItem, index: number, known: boolean): st
   const head = `#${index + 1}${score ? ` (${score})` : ""} ${r.recipeId ?? "?"}`;
   // Drafts (slice 2): the viewer's own unpublished draft, labelled in every
   // appearance; the label is a fact about the recipe, not a judgment.
-  const label = draftLabel(r.draftState);
+  const label = draftLabel(r.draftState, r);
   const draftTag = label ? ` ${label}` : "";
 
   if (known) {

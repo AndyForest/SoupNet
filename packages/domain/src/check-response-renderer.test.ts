@@ -449,3 +449,29 @@ describe("renderCheckResponseMarkdown — drafts (slice 2)", () => {
     expect(md).not.toContain("draft");
   });
 });
+
+describe("renderCheckResponseMarkdown — ratings on own drafts (slice 3, S3-AG2, S3-Z4)", () => {
+  it("a rated own draft's label names the ratings, adding at most 40 bytes", () => {
+    const unrated = baseResponse();
+    unrated.data!.results![0]!.draftState = "unverified";
+    const rated = baseResponse();
+    rated.data!.results![0] = { ...rated.data!.results![0]!, draftState: "unverified", impact: "medium", uncertainty: null };
+    const a = renderCheckResponseMarkdown(unrated);
+    const b = renderCheckResponseMarkdown(rated);
+    expect(b).toContain("; impact medium, uncertainty not rated]");
+    const grew = Buffer.byteLength(b, "utf8") - Buffer.byteLength(a, "utf8");
+    expect(grew).toBeGreaterThan(0);
+    expect(grew).toBeLessThanOrEqual(40);
+  });
+
+  it("an unrated own draft renders exactly as before, and ratings on a non-draft row are never printed", () => {
+    const before = baseResponse();
+    before.data!.results![0]!.draftState = "unverified";
+    const withNulls = baseResponse();
+    withNulls.data!.results![0] = { ...withNulls.data!.results![0]!, draftState: "unverified", impact: null, uncertainty: null };
+    expect(renderCheckResponseMarkdown(withNulls)).toBe(renderCheckResponseMarkdown(before));
+    const published = baseResponse();
+    published.data!.results![0] = { ...published.data!.results![0]!, impact: "high", uncertainty: "high" };
+    expect(renderCheckResponseMarkdown(published)).toBe(renderCheckResponseMarkdown(baseResponse()));
+  });
+});

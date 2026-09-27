@@ -254,10 +254,10 @@ const recipeFields = {
     .optional()
     .describe("Evidence entries supporting the claim."),
   impact: z.enum(TRIAGE_RATING_VALUES).nullable().optional().describe(
-    IMPACT_DEFINITION + " Present on your own deposit (`checked`).",
+    IMPACT_DEFINITION + " Present on your own deposit (`checked`), and beside `draftState` on a result that is your own draft.",
   ),
   uncertainty: z.enum(TRIAGE_RATING_VALUES).nullable().optional().describe(
-    UNCERTAINTY_DEFINITION + " Present on your own deposit (`checked`).",
+    UNCERTAINTY_DEFINITION + " Present on your own deposit (`checked`), and beside `draftState` on a result that is your own draft.",
   ),
   draftState: z.enum(DRAFT_STATE_VALUES).optional().describe(DRAFT_STATE_DEFINITION),
 };
@@ -331,7 +331,7 @@ export const CheckResponseDataSchema = z
       .boolean()
       .optional()
       .describe("True for the read-only `filter` search path — no recipe was logged."),
-    filter: z.string().optional().describe("The structured query of a search-only response (bare text semantic, \"quoted\" lexical, author:/after:/before: qualifiers)."),
+    filter: z.string().optional().describe("The structured query of a search-only response (bare text semantic, \"quoted\" lexical, author:/after:/before:/is:draft/impact:/uncertainty: qualifiers)."),
     searchId: z
       .string()
       .optional()

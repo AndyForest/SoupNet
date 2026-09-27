@@ -34,9 +34,20 @@ export function parseDraftFlag(raw: unknown): { draft: boolean; notice?: string 
   };
 }
 
-const VERIFY_HOW =
-  "To publish it, ask the person and call verify_draft with their answer quoted and cited "
-  + "(or they confirm it with still true on the recipe's page).";
+/**
+ * How a draft gets published. With the queue link (slice 3, rubric S3-L6),
+ * the agent learns the one URL it can hand its person, in place of "on the
+ * recipe's page"; without one (a caller that has no frontend URL), the old
+ * wording stands.
+ */
+function verifyHow(queueUrl: string | undefined): string {
+  return (
+    "To publish it, ask the person and call verify_draft with their answer quoted and cited "
+    + (queueUrl
+      ? `(or they confirm it in their review queue: ${queueUrl}).`
+      : "(or they confirm it with still true on the recipe's page).")
+  );
+}
 
 /**
  * The deposit's draft notice: who can see a new draft and how it gets
@@ -47,13 +58,15 @@ export function draftDepositNotice(p: {
   storedState: DraftState | string | null | undefined;
   requestedDraft: boolean;
   existing: boolean;
+  /** The person's review queue narrowed to this recipe (`/app/drafts?ids=<id>`). */
+  queueUrl?: string | undefined;
 }): string | undefined {
   const state = p.storedState ?? null;
   if (!p.existing) {
     if (state !== "unverified") return undefined;
     return (
       "Deposited as a draft: until it is verified, only you and your own agents can see it, "
-      + "labelled as a draft; it appears on no shared surface. " + VERIFY_HOW
+      + "labelled as a draft; it appears on no shared surface. " + verifyHow(p.queueUrl)
     );
   }
   // An identical earlier check from this key already holds this text
@@ -61,7 +74,7 @@ export function draftDepositNotice(p: {
   if (state === "unverified") {
     return (
       "An identical earlier check from this key logged this recipe as a draft, and it is still a draft: "
-      + "checking it again does not verify it. " + VERIFY_HOW
+      + "checking it again does not verify it. " + verifyHow(p.queueUrl)
     );
   }
   if (state === "rejected" || state === "not_chosen") {
@@ -82,18 +95,34 @@ export function draftDepositNotice(p: {
 /**
  * The one-line markdown label for a recipe in a draft state the viewer may
  * see. Empty for a published recipe (no state, or verified).
+ *
+ * Slice 3 (rubric S3-AG2, S3-Z4): the agent's triage ratings join the label
+ * when at least one is set, so the person's own agents see what the queue
+ * sorts by; an unrated draft's label is unchanged (silence when unrated, the
+ * DT-RAT-02 ruling), and a published row never carries ratings.
  */
-export function draftLabel(state: DraftState | string | null | undefined): string {
+export function draftLabel(
+  state: DraftState | string | null | undefined,
+  ratings?: { impact?: string | null | undefined; uncertainty?: string | null | undefined },
+): string {
+  let base: string;
   switch (state) {
     case "unverified":
-      return "[unverified draft: a hypothesis the person has not confirmed; visible only to them and their agents]";
+      base = "[unverified draft: a hypothesis the person has not confirmed; visible only to them and their agents]";
+      break;
     case "rejected":
-      return "[rejected draft: the person said this is wrong]";
+      base = "[rejected draft: the person said this is wrong]";
+      break;
     case "not_chosen":
-      return "[draft not chosen]";
+      base = "[draft not chosen]";
+      break;
     default:
       return "";
   }
+  const impact = ratings?.impact ?? null;
+  const uncertainty = ratings?.uncertainty ?? null;
+  if (impact === null && uncertainty === null) return base;
+  return `${base.slice(0, -1)}; impact ${impact ?? "not rated"}, uncertainty ${uncertainty ?? "not rated"}]`;
 }
 
 // ── Agent verification ───────────────────────────────────────────────────────
