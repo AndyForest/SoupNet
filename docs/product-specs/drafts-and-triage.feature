@@ -162,7 +162,6 @@ Feature: Drafts, triage ratings, and deciding by building both
       And the stdio MCP server's tool descriptions come from the same shared constants as the remote server's
 
   # ─────────────────────────────────────────────────────────────────────────
-  @unreleased
   Rule: A draft is visible only to the person it is about, their agents, and its depositor
     # Guards: drafts-and-triage.md §The model ("One visibility rule covers
     # every draft"); recipes 94e0e682 and 84e6bc9f; engineering-principles.md
@@ -241,7 +240,7 @@ Feature: Drafts, triage ratings, and deciding by building both
 
     @DT-VIS-09 @slice-2
     Scenario: The person's own briefing counts drafts separately
-      # Pending decision: see build log §Open design questions, "Counts, dates, and exemplars".
+      # Decided: build log §Orchestrator rulings, open question 9.
       Given Pat's agent deposited two drafts in the book
       When Pat's agent calls get_briefing
       Then the book's Index count equals the count of non-draft recipes
@@ -264,7 +263,7 @@ Feature: Drafts, triage ratings, and deciding by building both
 
     @DT-VIS-12 @slice-2
     Scenario: Re-checking a draft's text as a non-draft from the same key does not publish it
-      # Pending decision: see build log §Open design questions, "Idempotency and drafts".
+      # Decided: build log §Orchestrator rulings, open question 5.
       Given Pat's agent deposited a draft
       When the same key checks the identical text in the same book without the draft flag
       Then the response returns the existing recipe's id, reports it as existing and still a draft
@@ -310,8 +309,9 @@ Feature: Drafts, triage ratings, and deciding by building both
       And the authz seam guard fails when a source file outside the module reads the traces table in a statement that neither uses the module's condition nor is registered with a reason
 
   # ─────────────────────────────────────────────────────────────────────────
-  @unreleased
   Rule: A draft is verified by its person, or by their agent with the person's own words
+    # The agent operation is the verify_draft MCP tool and its REST twin,
+    # POST /recipes/:id/verify (slice 2).
     # Guards: drafts-and-triage.md §Verifying a draft; recipe 94e0e682 (agents
     # may update some surfaces; verification by the person or an agent under
     # their control).

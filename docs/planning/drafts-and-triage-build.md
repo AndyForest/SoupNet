@@ -303,3 +303,40 @@ Slice 1 is **accepted**. Follow-ups, handled at the start of slice 2 as their ow
 - **Export doesn't carry the ratings:** folds into slice 2's export work (open question 12).
 - **Layer 4 detail-page check:** on the operator's handoff list.
 
+
+### Slice 2 build notes (implementing agent, 2026-09-27)
+
+Written by the builder (agent `a-drafts-slice2-2026-09-27`) for the verifier; the verification record below it is the verifier's to write. Soup.net intent `int_gk6hwTWT7E0CYKGGtYjm7hAP`.
+
+**Shape.**
+
+- **Storage:** one text column `traces.draft_state` (`unverified | verified | rejected | not_chosen`; NULL for a recipe that was never a draft), plus `draft_resolved_at`, `draft_resolved_by_user_id`, and `draft_resolved_by_key_id` (NULL when the person resolved it with a reaction). Migration `0038_traces_draft_state`, with a partial index on `user_id` over unpublished drafts for the "awaiting review" count. One state column rather than a flag plus a resolution, so "a draft that is not a draft" can't be stored.
+- **The rule, once:** `authz/roles.ts` (`mayReadTrace` with draft facts, `isPublishedDraftState`, `mayResolveDraft`, `keyMayVerifyDrafts`) and `authz/draft-sql.ts` (`publishedTrace`, `traceVisibleTo` with a viewer or `SHARED_AUDIENCE`, `traceIdVisibleTo`, `traceReadableById`, `draftAwaitingReviewBy`). The subject and depositor columns are both `user_id` today (ruling 16); slice 4 changes `subjectOf` in `draft-sql.ts` and nothing else. `draft-sql.test.ts` proves the SQL and JS forms agree on every combination of facts against a real database and fails when any backend file outside the module compares `draft_state` by hand.
+- **Resolution:** `authz/draft-resolution.ts` (`resolveDraft`) is the one statement that moves a draft out of `unverified`: one-way, COALESCE-guarded, subject check inside the UPDATE. The reaction route writes it in the reaction's transaction; the agent operation writes it before attaching evidence, in one transaction.
+- **The agent operation:** a separate `verify_draft` MCP tool (remote and stdio) with a REST twin, `POST /recipes/:id/verify`, rather than a mode of `check_recipe` or a kind of feedback row (recipe `6ae9a299`, following `6201b444` and `c6cff3ad`). The served remote `tools/list` went 15,864 → 16,854 bytes, so its cap moved 16,000 → 17,000 with a dated comment; stdio went 12,074 → 13,064, inside its unchanged cap.
+- **Seam guard:** `scripts/check-authz-seam.mjs` gains `TRACE_READS`, 26 files, 7 of them composing the fragments. Unlike the two older registers it fingerprints the whole statement around each mention (the mentioning line to the end of its tagged template), because the draft condition sits on the line after `FROM claimnet.traces`; deleting that line in `recipe-lookup.service.ts` was shown to fail the check. A planted unregistered read in a new file fails it too.
+
+**Build-both (first trial).** S2-M4 left "join or `EXISTS`" open, and both options were cheap, so both were built and measured: A, a positive `EXISTS` probe on `traces` by primary key; B, a `NOT EXISTS` probe against a partial index of unpublished drafts. Recipes: option A `6fa1772e`, option B `540e1069`, final choice `2625feed`; feedback rows `3482de0a` (A) and `3b140524` (B) carry the measurements. Synthetic corpus of stub 3,072-dimension vectors with 4% drafts, `hybridSearch`'s exact predicates, 25 timed runs after 3 warm-ups, on the throwaway 5574 stack:
+
+| Corpus | Variant | Count p50 | ANN top-60 p50 | HNSW used |
+|---|---|---|---|---|
+| 5,000 | none (pre-slice) | 3.8 ms | 70.4 ms | no |
+| 5,000 | A | 5.8 ms | 48.4 ms | yes |
+| 5,000 | B | 4.0 ms | 69.2 ms | no |
+| 20,000 | none (pre-slice) | 16.6 ms | 51.8 ms | yes |
+| 20,000 | A | 32.0 ms | 51.6 ms | yes |
+| 20,000 | B | 29.9 ms | 51.7 ms | yes |
+
+Neither variant costs the nearest-neighbour query anything; both roughly double the exact count at 20,000 recipes (+15 ms). B saves about 2 ms on the count and needs a second partial index. A was chosen. A copy of the draft state on `embedding_sources` was not considered further, since the cost it would save is small. The timings include the round trip; `EXPLAIN ANALYZE` put the ANN execution at about 10 ms for all three at 20,000. The rubric asks for the numbers "on the ranking eval stack"; that stack belongs to another session, so the measurement ran on this build's own stack instead (the verifier can re-run `bench-draft-condition.mjs`, which the builder can hand over).
+
+**Interpretations the verifier should check.**
+
+1. Related evidence (RP-40) comes only from published recipes for every viewer, the person included: it is quoted without a label, so an own draft there would read as confirmed. Own drafts reach their person as labelled results instead.
+2. Every figure on the briefing Index line now counts published recipes only, including feedback and reaction counts, so a collaborator's line never moves when a draft is annotated. The rubric lists "`fetchBookStats` reaction counts" under must-not-change; the reaction vocabulary and meaning are unchanged, but reactions on unpublished drafts no longer count toward a book's shared figure. Flagged in case the intent was stricter.
+3. A viewer's result sets include their own `unverified` drafts only; `rejected` and `not_chosen` leave their results (DT-VER-02) but stay readable by id, labelled.
+4. Move and delete of an unpublished draft are for its subject alone: a book owner, a book admin, and a system user all get the missing-id 404 (open question 11 said "everyone else").
+5. `SearchPipelineParams.audience` and `HybridSearchParams.audience` are optional and default to `SHARED_AUDIENCE`, the strictest view, so `ranking-regression.test.ts` passes unchanged and a caller that forgets the parameter hides every draft rather than showing one.
+6. Import validates `draftState`, `impact`, and `uncertainty` strictly (an unknown value is a row error), unlike the check path's lenient parsing: an import file is not an agent guessing. It restores state on insert only; an overwrite of an existing recipe keeps its current draft state.
+7. An unrecognized `draft` value on a check is taken as a draft, with a notice.
+
+**Test-first.** The authz Layer 1 tests (`draft-sql.test.ts`, the draft cases in `trace-access.test.ts`), the domain tests (`drafts.test.ts`, the renderer and briefing cases), and the frontend label test were written before their implementations and failed first. The Layer 3 suite (`routes/drafts.test.ts`, 35 tests) was written after the service code and run against it; its teeth were shown by a mutation run with `publishedTrace` and `traceReadableById` forced to `TRUE`, which failed 16 of its tests.

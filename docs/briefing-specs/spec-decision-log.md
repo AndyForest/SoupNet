@@ -4,6 +4,37 @@ Every PR that touches briefing copy (`packages/domain/src/recipe-guide-content.t
 
 (Renamed from declared-intent-log.md on 2026-08-23: "intent" now names the runtime intent-registration mechanism — cold-start v2 Phase C — so the discipline's log takes an unambiguous name. The discipline itself is unchanged.)
 
+## 2026-09-27 — Drafts-and-triage slice 2: the draft parameter, verify_draft, and the briefing's Drafts line
+
+Design: [../planning/drafts-and-triage.md](../planning/drafts-and-triage.md) §The model and §Verifying a draft. Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 2 rubric (this entry is its briefing-copy declaration). Rulings: open questions 5 to 15 as accepted; the separate tool is recipe `6ae9a299`.
+
+### Edits
+
+1. **New `check_recipe` param, both MCP servers:** `draft` ("True: a draft, for a high-impact, uncertain call the person can't be asked about now; say why in the first evidence entry. Private to them and their agents until verified."). Served as a boolean; a value of the wrong type reaches the server's lenient parser, which takes anything unrecognized as a draft (the private side) with a notice, instead of the SDK failing the check.
+2. **New tool `verify_draft`, both MCP servers** (REST twin `POST /recipes/:id/verify`): description "Publish your user's draft recipe once they confirm it, with new evidence quoting their answer and a citation. Evidence that adds nothing new is refused." Params `recipe_id` ("The draft's id (full UUID or 8+ char short id).") and `supporting_evidence` ("Your interpretation, then > the person's answer verbatim, then -- where they said it.").
+3. **Check responses:** a draft deposit gets a `draftNotice` line under "Recipe checked as #…" saying only the person and their agents can see it and how it is verified; a person's own drafts in results carry an `[unverified draft: …]` label (also `[rejected draft …]`, `[draft not chosen]` by id). Not briefing copy, listed for completeness.
+4. **Briefing corpus section:** under a book's Index line, the person's own agents get `Drafts: N unverified drafts about your user await their review (only they and their agents see them)` when there are any. Every Index figure now counts published recipes only, so a collaborator's line never moves when a draft lands. Absent when there are no drafts, so every existing briefing is byte-identical.
+5. **Budgets:** shared-description cap 5,550 → 6,000 (total 5,510 → 5,965), a dated raise for a genuinely new affordance (recipe `8dd573b4`).
+
+### Served `tools/list` bytes
+
+| Server | Before (slice 1) | After (slice 2) | Cap |
+|---|---|---|---|
+| Remote (`POST /mcp`) | 15,864 | 16,854 | 16,000 → 17,000 (dated raise in `mcp-tools-list-size.test.ts`) |
+| Stdio (`apps/mcp-server`) | 12,074 | 13,064 | 13,670 (unchanged) |
+
+### Scenarios intended to move
+
+- **`checking-behavior.feature`** — new `@unreleased` scenario "An agent drafts only when it cannot ask, and says why in the first evidence entry" (added in this PR). It stays `@unreleased` until slice 7 teaches when to draft in the briefing body.
+
+### Scenarios watched, with rationale for holding
+
+- **`checking-behavior.feature` "A rated check uses the rating vocabulary…"** — the ratings descriptions are unchanged; `draft` is a separate parameter and its description names the same impact-and-uncertainty bar in the ratings' own words.
+- **`divergent-checks.feature` (all; the "present options and wait" pattern)** — the `draft` description sends an agent that can ask to ask first ("the person can't be asked about now"), so presenting options stays the answer when the person is reachable.
+- **`feedback-loop.feature`** — `verify_draft` is not a feedback surface; `log_feedback` and the ride-along `feedback` param are unchanged.
+- **`briefing-surfaces.feature`** — the Drafts line renders only for a person with drafts, on the MCP profile where Index lines render; the thin/full section structure is unchanged.
+- **All others** — principles, voice, format, routing, and setup copy untouched.
+
 ## 2026-09-27 — Drafts-and-triage slice 1: triage ratings on check_recipe, paid for by a tool-roster trim
 
 Design: [../planning/drafts-and-triage.md](../planning/drafts-and-triage.md) §Triage ratings and §Parameters and tool-description size. Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 1 rubric (this entry is its briefing-copy declaration). Rulings: open questions 1 to 4 accepted as recommended (recipes `cee8fb2d`, `4cfd166e`).

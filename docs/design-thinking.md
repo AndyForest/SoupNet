@@ -67,6 +67,8 @@ Recipe checks are read-only searches with an append-only side effect. Agents get
 
 Corrections are therefore human-only: deleting a malformed recipe, and re-filing a misfiled one. Both live on the SPA, behind JWT and verified email.
 
+"No update affordance" was never absolute. The operator has ruled that agents may update some surfaces, and are encouraged to keep recipe-book descriptions current (recipe `94e0e682`, 2026-09-19: "Agents can absolutely update some surfaces"). Verifying a draft is the other agent state change, and it keeps this section's reasoning because it is forward-only and backed by appended evidence: an agent verifies its person's draft by adding a new evidence entry that quotes the person's answer and cites where they gave it, and the draft moves one way, from unverified to verified. Nothing is overwritten, nothing can be undone by the agent, and a verification with nothing new to cite is refused, so the move still pushes an uncertain agent to ask its human first rather than to proceed and correct later. Rejecting a draft stays with the person.
+
 ---
 
 ## User Archetypes

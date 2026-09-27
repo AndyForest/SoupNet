@@ -59,3 +59,13 @@ Feature: Checking behavior — genuine hypotheses, autonomous timing
     When the agent makes a check where it has a view on how much rides on the call but none on how sure it is of the person's position
     Then any rating it sends on check_recipe is one of "low", "medium", or "high"
     And it sends impact and leaves uncertainty out, rather than sending uncertainty "medium" as a default
+
+  @unreleased
+  Scenario: An agent drafts only when it cannot ask, and says why in the first evidence entry
+    # Guards: MCP_PARAM_DESCRIPTIONS.draft (recipe-guide-content.ts); docs/planning/drafts-and-triage.md §When to draft, and when to ask instead; spec-decision-log.md 2026-09-27 (drafts-and-triage slice 2). The parameter ships in slice 2; the scenario stays @unreleased until the briefing body teaches when to draft (slice 7) and the harness can run it.
+    Given the person is reachable in the conversation
+    When the agent faces a high-impact, uncertain call about the person's taste and judgment
+    Then it asks the person, or presents divergent options, rather than depositing a draft
+    When the person cannot be asked now and the agent has to proceed
+    Then it checks the recipe with draft set to true
+    And the first evidence entry's interpretation says why the person could not be asked and what would settle it

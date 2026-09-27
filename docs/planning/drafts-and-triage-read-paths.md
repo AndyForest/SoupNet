@@ -84,6 +84,12 @@ Most agent reads funnel through a small number of functions. Putting the draft c
 
 `update_recipe_book_description` (`routes/mcp.ts:960`) reads no traces.
 
+Added by slice 2:
+
+| # | Tool / path | file (function) | Returns / counts | Who can call | Trace filtering | Draft disposition |
+|---|---|---|---|---|---|---|
+| RP-46 | `verify_draft` (MCP, remote and stdio) and `POST /recipes/:id/verify` | `services/draft-verify.service.ts` (`verifyDraft`) via `lookupRecipes`, then `authz/draft-resolution.ts` (`resolveDraft`) | on success the recipe id, `draftState: verified`, evidence count; otherwise the uniform `not_found_or_unreadable` (404 on REST), `ambiguous_prefix`, "not a draft", "already resolved", or an evidence refusal | API key; the key must be allowed to verify (`keyMayVerifyDrafts`, every key today, not headless keys from slice 5) | module: readable by id through `traceReadableById`, and the resolving UPDATE requires the key's user to be the draft's subject | `exclude` for everyone else (uniform absence, DT-VER-07); a one-way write for the person's own agents |
+
 **Stdio server** (`apps/mcp-server/src/index.ts`): a thin proxy with no database access. `check_recipe` → `POST /check` (or `GET /check?...&format=json`), `search_recipes` → `GET /check?filter=`, `get_briefing` → `GET /briefing`, `get_recipes` → `GET /recipes?ids=`, `log_feedback` → `POST /feedback`. It inherits RP-01, RP-02, RP-07, RP-06, and RP-11 exactly; no separate row.
 
 ## JWT human surfaces (`routes/traces.ts` unless noted)
