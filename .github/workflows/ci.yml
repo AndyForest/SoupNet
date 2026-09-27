@@ -102,8 +102,10 @@ jobs:
         run: npm run check:data-model
 
       # Fails if a source file outside apps/backend/src/authz/ starts reading
-      # or writing recipe-book memberships (group_members) — book-access and
-      # role checks go through the authz module (engineering-principles.md §7).
+      # or writing recipe-book memberships (group_members), or running SQL against
+      # claimnet.api_keys beyond the registered non-authorizing uses — book-access,
+      # role checks, and API-key authentication go through the authz module
+      # (engineering-principles.md §7).
       # Static (no DB needed). Mirrored in scripts/test-ci-local.mjs.
       - name: Check authz seam
         run: npm run check:authz-seam

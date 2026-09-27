@@ -10,7 +10,7 @@
  * path inline.
  *
  * Anti-enumeration invariant: invalid and expired keys render identically
- * on every surface (same message, same status). validateKey() already
+ * on every surface (same message, same status). authenticateKey() already
  * collapses the two cases; nothing downstream may distinguish them.
  */
 

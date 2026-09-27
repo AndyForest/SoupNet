@@ -69,25 +69,6 @@ interface GenerateKeyResult {
   defaultWriteGroupId: string;
 }
 
-interface ValidateKeyResult {
-  keyId: string;
-  userId: string;
-  readGroupIds: string[];
-  writeGroupIds: string[];
-  defaultWriteGroupId: string;
-  /** 'daily' | 'scoped' | 'oauth' — lets callers stamp the connection
-   *  surface (UVP Layer 1: OAuth client identity is server-known). */
-  keyType: string;
-  /** oauth_clients.client_id for key_type='oauth'; null otherwise. */
-  oauthClientId: string | null;
-  /** When this key expires. The validation query already SELECTs expires_at
-   *  (the `expires_at > NOW()` guard), so surfacing it here is purely additive
-   *  — no extra query, no second lookup. Lets the presenting key see its own
-   *  runway (GET /health/version, eval-reset contract item (f)) without a new
-   *  DB round-trip. Never exposes another key's expiry — only the caller's. */
-  expiresAt: Date;
-}
-
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function generateRawKey(prefix: string): string {
@@ -205,66 +186,9 @@ export async function generateScopedKey(
   };
 }
 
-/**
- * Validate an API key. Returns user/group info if valid, null if expired or not found.
- * Updates lastUsedAt on successful validation.
- */
-export async function validateKey(
-  db: PostgresJsDatabase,
-  key: string,
-): Promise<ValidateKeyResult | null> {
-  const hashedKey = hashKey(key);
-
-  // F15: defensively reject keys whose owner has not verified their email.
-  // Key creation is gated by requireVerifiedEmail middleware, so this branch
-  // should not normally fire — but we enforce it here too in case a user is
-  // unverified after the fact (e.g. invitation flow, F31).
-  //
-  // consumed_at IS NULL: the OAuth refresh-rotation consumption marker
-  // (migration 0028; F38 follow-up). Rotation also truncates the consumed
-  // row's expires_at to the epoch sentinel, so this guard is redundant today —
-  // it enforces "consumed ⇒ invalid" independently of that stamp, keeping the
-  // old access token dead even if the expires_at truncation is ever refactored
-  // away. Always NULL for 'daily'/'scoped' keys (no behavior change for them).
-  const rows = await db.execute(sql`
-    SELECT k.id, k.user_id, k.read_group_ids, k.write_group_ids, k.default_write_group_id, k.expires_at, k.key_type, k.oauth_client_id
-    FROM claimnet.api_keys k
-    JOIN claimnet.users u ON u.id = k.user_id
-    WHERE k.key = ${hashedKey}
-      AND k.expires_at > NOW()
-      AND k.consumed_at IS NULL
-      AND u.email_verified_at IS NOT NULL
-    LIMIT 1
-  `);
-
-  if (!rows || rows.length === 0) return null;
-
-  const row = rows[0] as Record<string, unknown>;
-
-  // Update lastUsedAt asynchronously (fire and forget). The catch is
-  // load-bearing: an untracked rejection (e.g. the pool closing under an
-  // in-process caller at test/worker teardown) is otherwise unhandleable and
-  // kills the whole process via Node's default unhandled-rejection behavior
-  // — diagnosed 2026-07-17 as a vitest "Worker exited unexpectedly" that
-  // only reproduced at full-suite scale. Telemetry write: losing one
-  // last_used_at tick is acceptable; killing the caller is not.
-  void db.execute(sql`
-    UPDATE claimnet.api_keys SET last_used_at = NOW() WHERE key = ${hashedKey}
-  `).catch((err) => {
-    console.error("[api-key.service] last_used_at update failed (non-fatal):", err);
-  });
-
-  return {
-    keyId: row["id"] as string,
-    userId: row["user_id"] as string,
-    readGroupIds: row["read_group_ids"] as string[],
-    writeGroupIds: row["write_group_ids"] as string[],
-    defaultWriteGroupId: row["default_write_group_id"] as string,
-    keyType: row["key_type"] as string,
-    oauthClientId: (row["oauth_client_id"] as string | null) ?? null,
-    expiresAt: new Date(row["expires_at"] as string),
-  };
-}
+// Authenticating a presented key is NOT here. It lives in the authorization
+// seam — `authenticateKey` in ../authz/key-auth.ts — together with every other
+// statement that authorizes on a key. This file mints, lists, and revokes.
 
 /**
  * List all non-expired keys for a user.

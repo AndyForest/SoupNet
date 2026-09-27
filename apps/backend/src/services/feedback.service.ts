@@ -55,6 +55,7 @@
 import crypto from "node:crypto";
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
+import { inBooks } from "../authz";
 import {
   FEEDBACK_KINDS,
   FEEDBACK_IMPACTS,
@@ -414,7 +415,10 @@ export function computeFeedbackContentHash(
 
 export interface IngestFeedbackParams {
   db: PostgresJsDatabase;
-  /** Validated key context (from validateKey). */
+  /** The authenticated caller (from authz `authenticateKey`). `readGroupIds`
+   *  is the Principal's effective read scope, so a recipe in a book the key's
+   *  owner has left, or in a disposed workspace, gets the uniform
+   *  not-readable marker like any other out-of-scope id (F68). */
   apiKeyId: string;
   /** The key's user — the ACL scope for search_id targets (feedback attaches
    *  only to searches made under the same user; a shared fleet key = one
@@ -495,7 +499,7 @@ export async function ingestFeedback(
       const matchRows = await db.execute(sql`
         SELECT id FROM claimnet.traces
         WHERE id >= ${lo}::uuid AND id <= ${hi}::uuid
-          AND group_id IN (${sql.join(readGroupIds.map((id) => sql`${id}::uuid`), sql`, `)})
+          AND ${inBooks(sql`group_id`, readGroupIds)}
         LIMIT 2
       `);
       const matches = (matchRows as unknown as Array<{ id: string }>).map((r) => r.id);
@@ -533,7 +537,7 @@ export async function ingestFeedback(
     const traceRows = await db.execute(sql`
       SELECT id FROM claimnet.traces
       WHERE id IN (${sql.join([...idsToCheck].map((id) => sql`${id}::uuid`), sql`, `)})
-        AND group_id IN (${sql.join(readGroupIds.map((id) => sql`${id}::uuid`), sql`, `)})
+        AND ${inBooks(sql`group_id`, readGroupIds)}
     `);
     for (const r of traceRows as unknown as Array<{ id: string }>) {
       readable.add(r.id);

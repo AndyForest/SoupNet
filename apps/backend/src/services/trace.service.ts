@@ -26,8 +26,8 @@ import {
 } from "@soupnet/db";
 import { getDb } from "../db";
 import { parseEvidenceMarkdown } from "./evidence-parser";
-import { validateKey } from "./api-key.service";
-import { listTombstonedGroupIds } from "./ephemeral-workspace.service";
+import { inBooks } from "../authz";
+import type { Principal } from "../authz";
 import {
   enqueueEmbedding,
   getOrCreateCachedVector,
@@ -39,7 +39,6 @@ import type { EvidenceSearchResult } from "./vector-search.service";
 import { scoreFormatAdherence } from "./format-adherence";
 import { runSearchPipeline } from "./search-pipeline";
 import { StageTimer } from "../lib/stage-timer";
-import { invalidKeyMessage } from "../lib/key-remediation";
 import { DEFAULT_RANKING, RANKING_ALGORITHM_VERSION, parseSearchQuery, AUTHOR_ME, buildOwnExcludedNote } from "@soupnet/domain";
 import type { CandidateSignals, VerbositySteer, ParsedSearchQuery } from "@soupnet/domain";
 import type { StructuredTraceFilters } from "./vector-search.service";
@@ -66,8 +65,21 @@ export interface ImageAttachment {
   filename: string;
 }
 
+/**
+ * The refusal for a deposit that names no recipe book when the key has no
+ * usable default. The first sentence is the long-standing wording; the rest is
+ * the recovery path (errors on agent surfaces carry their remediation inline).
+ */
+export const NO_DEFAULT_WRITE_BOOK_MESSAGE =
+  "API key has no write access to its default group. " +
+  "Pass recipe_book with one of this key's writable recipe books (the briefing and list_my_recipe_books show them), " +
+  "or ask your human to mint a new key.";
+
 export interface SubmitAndSearchParams {
-  key: string;
+  /** The authenticated caller (authz `authenticateKey`). The service never
+   *  sees a raw key: whoever calls it has already authenticated one, and the
+   *  Principal's arrays are effective scope — see authz/key-auth.ts. */
+  principal: Principal;
   traceText: string;
   evidenceFor: string;
   sort?: string | undefined;
@@ -422,40 +434,18 @@ export async function submitAndSearch(
   const page = params.page ?? 1;
   const perPage = params.perPage ?? 20;
 
-  // 1. Validate API key
-  const keyResult = await validateKey(db, params.key);
-  if (!keyResult) {
-    return {
-      error: invalidKeyMessage(),
-      results: [],
-      totalResults: 0,
-      currentPage: page,
-      totalPages: 0,
-    };
-  }
+  // 1. The caller is already authenticated. The Principal's arrays are
+  // EFFECTIVE scope (authz/key-auth.ts): a book the key's owner has left, or a
+  // born-ephemeral book past its TTL (F57), is in neither array — so a deposit
+  // racing a workspace's expiry loses, and a deposit into such a book fails
+  // with the EXISTING "not writable" shape. No new error class, no oracle.
+  // Everything below only ever narrows.
+  const { keyId, userId, readGroupIds, writeGroupIds, defaultWriteGroupId, keyType, oauthClientId } = params.principal;
 
-  const { keyId, userId, readGroupIds, writeGroupIds, defaultWriteGroupId, keyType, oauthClientId } = keyResult;
-
-  // Tombstone seam (eval-reset destructive tier, audit F57): a born-ephemeral
-  // book past its TTL leaves read scope AND refuses deposits, enforced HERE
-  // where scope resolves from the key — so a deposit racing expiry loses, and
-  // the book is invisible to search the instant expiry passes (before the
-  // reaper physically deletes it). Durable books are never tombstoned (no
-  // ephemeral_books row). Excluding tombstoned ids from writeGroupIds makes a
-  // deposit into an expired book fail with the EXISTING "not writable" shape —
-  // no new error class, no oracle.
-  const tombstoned = await listTombstonedGroupIds(
-    db,
-    [...new Set([...readGroupIds, ...writeGroupIds])],
-  );
-  const liveWriteGroupIds = tombstoned.size > 0
-    ? writeGroupIds.filter((g) => !tombstoned.has(g))
-    : writeGroupIds;
-
-  // Resolve write target group (slug or ID, within key's LIVE write groups)
+  // Resolve write target group (slug or ID, within the key's write groups)
   let groupId: string;
   if (params.targetGroup) {
-    const resolved = await resolveGroupSlug(db, params.targetGroup, liveWriteGroupIds);
+    const resolved = await resolveGroupSlug(db, params.targetGroup, writeGroupIds);
     if (!resolved) {
       return {
         error: `Group "${params.targetGroup}" not found or not writable with this key.`,
@@ -463,27 +453,27 @@ export async function submitAndSearch(
       };
     }
     groupId = resolved;
-  } else {
+  } else if (defaultWriteGroupId) {
     groupId = defaultWriteGroupId;
-  }
-
-  if (!groupId || !liveWriteGroupIds.includes(groupId)) {
+  } else {
+    // The key has no default write book right now: the Principal reports null
+    // when the stored default is outside the effective write set (its owner
+    // left that book, or it is a disposed workspace). Refused, never
+    // redirected — a recipe must not land in a book its author did not choose
+    // — and the copy carries the way forward.
     return {
-      error: "API key has no write access to its default group.",
+      error: NO_DEFAULT_WRITE_BOOK_MESSAGE,
       results: [], totalResults: 0, currentPage: page, totalPages: 0,
     };
   }
 
-  // Resolve read scope (optional per-call narrowing of readable groups),
-  // starting from the LIVE (non-tombstoned) read set.
-  let effectiveReadGroupIds = tombstoned.size > 0
-    ? readGroupIds.filter((g) => !tombstoned.has(g))
-    : readGroupIds;
+  // Resolve read scope (optional per-call narrowing of readable groups).
+  let effectiveReadGroupIds = readGroupIds;
   if (params.readGroups) {
     const slugs = params.readGroups.split(",").map((s) => s.trim()).filter(Boolean);
     const resolved: string[] = [];
-    // Resolve narrowing slugs against the LIVE read set so a caller cannot
-    // re-admit a tombstoned book via read_recipe_books.
+    // Narrowing slugs resolve within the effective read set, so a caller
+    // cannot re-admit a book the Principal does not hold.
     for (const slug of slugs) {
       const id = await resolveGroupSlug(db, slug, effectiveReadGroupIds);
       if (id) resolved.push(id);
@@ -933,7 +923,8 @@ async function resolveStructuredFilters(
 }
 
 export interface SearchOnlyParams {
-  key: string;
+  /** The authenticated caller — see SubmitAndSearchParams.principal. */
+  principal: Principal;
   /** The structured search query (2026-08-19, docs/planning/recipe-search-design.md):
    *  bare text is the semantic query (the same runSearchPipeline query slot
    *  the briefing's filter/purpose params use — a plain-text filter behaves
@@ -991,18 +982,10 @@ export async function searchWithoutLogging(
   const page = params.page ?? 1;
   const perPage = params.perPage ?? 20;
 
-  const keyResult = await validateKey(db, params.key);
-  if (!keyResult) {
-    return {
-      error: invalidKeyMessage(),
-      results: [],
-      totalResults: 0,
-      currentPage: page,
-      totalPages: 0,
-    };
-  }
+  const keyResult = params.principal;
 
-  // Resolve read scope exactly as submitAndSearch does.
+  // Read scope starts from the Principal's effective read set — the same
+  // starting point submitAndSearch uses — and only narrows.
   let effectiveReadGroupIds = keyResult.readGroupIds;
   if (params.readGroups) {
     const slugs = params.readGroups.split(",").map((s) => s.trim()).filter(Boolean);
@@ -1104,7 +1087,7 @@ export async function searchWithoutLogging(
     try {
       const scopeRows = await db.execute(sql`
         SELECT count(*)::int AS n FROM claimnet.traces
-        WHERE group_id IN (${sql.join(effectiveReadGroupIds.map((g) => sql`${g}::uuid`), sql`, `)})
+        WHERE ${inBooks(sql`group_id`, effectiveReadGroupIds)}
       `);
       searchedCorpusSize = Number((scopeRows as unknown as Array<{ n: number }>)[0]?.n ?? 0);
       // Own-author honesty (cold-start v2 Phase A): the scope count includes
@@ -1115,7 +1098,7 @@ export async function searchWithoutLogging(
       if (ownExcludedByDefault && searchedCorpusSize > 0) {
         const ownRows = await db.execute(sql`
           SELECT count(*)::int AS n FROM claimnet.traces
-          WHERE group_id IN (${sql.join(effectiveReadGroupIds.map((g) => sql`${g}::uuid`), sql`, `)})
+          WHERE ${inBooks(sql`group_id`, effectiveReadGroupIds)}
             AND user_id = ${keyResult.userId}::uuid
         `);
         searchedOwnExcluded = Number((ownRows as unknown as Array<{ n: number }>)[0]?.n ?? 0);
@@ -1256,7 +1239,7 @@ async function resolveGroupSlug(
   const rows = await db.execute(sql`
     SELECT id FROM claimnet.groups
     WHERE slug = ${groupRef}
-      AND id IN (${sql.join(allowedGroupIds.map((id) => sql`${id}::uuid`), sql`, `)})
+      AND ${inBooks(sql`id`, allowedGroupIds)}
     LIMIT 1
   `);
 

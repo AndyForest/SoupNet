@@ -200,10 +200,10 @@ Filter behavior is **unified across all endpoints** (2026-04-05, simplified 2026
 
 | Endpoint | Auth | Token location | Validated by |
 |---|---|---|---|
-| `GET/POST /check` | API key | `key` query/form param | `validateKey()` |
+| `GET/POST /check` | API key | `key` query/form param | `authenticateKey()` |
 | `POST /mcp` (check_recipe) | API key | `Authorization: Bearer <key>` | MCP auth middleware |
 | `GET /traces/map` | JWT | `Authorization: Bearer <jwt>` | `requireAuth()` middleware |
-| `GET/POST /search` | API key | `key` query/form param | `validateKey()` |
+| `GET/POST /search` | API key | `key` query/form param | `authenticateKey()` |
 
 ### Inconsistencies and Open Questions
 
