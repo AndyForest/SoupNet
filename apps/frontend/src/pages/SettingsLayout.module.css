@@ -1,0 +1,61 @@
+/* Settings: section nav in a left column beside the content on wide
+   screens. At the app shell's mobile breakpoint (768px, AppShell.module.css)
+   the nav stacks above the content as a row of links, so the cards get the
+   full width instead of what is left beside a 180px column. */
+.layout {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: var(--space-xl);
+  align-items: start;
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  position: sticky;
+  top: var(--space-md);
+}
+
+.heading {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-on-surface-variant);
+  margin-bottom: var(--space-xs);
+}
+
+.navLink {
+  display: block;
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+  color: var(--color-on-surface);
+  font-size: 0.9rem;
+  text-decoration: none;
+}
+.navLink:hover { text-decoration: none; background: var(--color-surface-container-low); }
+
+.navLinkActive,
+.navLinkActive:hover {
+  background: var(--color-surface-container);
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.content { min-width: 0; }
+
+@media (max-width: 768px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-lg);
+  }
+  .nav {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .heading {
+    flex-basis: 100%;
+  }
+}

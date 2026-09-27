@@ -28,6 +28,7 @@ import { clusterResults, mmrClusters } from "./clustering.service";
 import type { ClusterResult } from "./clustering.service";
 import { embedQuery, getEmbeddingModelId } from "../lib/embeddings/provider";
 import { StageTimer } from "../lib/stage-timer";
+import { inBooks } from "../authz";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -287,7 +288,7 @@ async function fetchCorpusTraces(
   },
 ): Promise<{ traces: CorpusTrace[]; total: number }> {
   const conditions = [
-    sql`t.group_id IN (${sql.join(params.groupIds.map((g) => sql`${g}::uuid`), sql`, `)})`,
+    inBooks(sql`t.group_id`, params.groupIds),
   ];
 
   if (hasStructuredFilters(params.structured)) {

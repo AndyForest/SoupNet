@@ -13,7 +13,7 @@ import { getDb } from "../db";
 import type { AppEnv } from "../types";
 import { composeBriefing } from "../services/briefing";
 import { parseVerbosity, VERBOSITY_EXEMPLAR_K } from "@soupnet/domain";
-import { validateKey } from "../services/api-key.service";
+import { authenticateKey } from "../authz";
 import { parseRecipeIds } from "../services/recipe-lookup.service";
 import { invalidKeyMessage } from "../lib/key-remediation";
 
@@ -30,7 +30,7 @@ briefing.get("/", async (c) => {
   const rawKey = match[1]!.trim();
 
   const db = getDb();
-  const validated = await validateKey(db, rawKey);
+  const validated = await authenticateKey(db, rawKey);
   if (!validated) {
     // Remediation copy rides in the error string so the stdio MCP proxy
     // (which surfaces backend `error` verbatim) inherits it — the bare
@@ -64,7 +64,7 @@ briefing.get("/", async (c) => {
 
   const result = await composeBriefing({
     db,
-    rawKey,
+    principal: validated,
     backendUrl,
     frontendUrl,
     surface,

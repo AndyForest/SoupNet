@@ -180,7 +180,9 @@ async function main() {
 
     // 4c. Authz seam — mirrors the "Check authz seam" step in
     //     .github/workflows/ci.yml. Fails if a file outside
-    //     apps/backend/src/authz/ starts touching group_members. Static (no DB).
+    //     apps/backend/src/authz/ starts touching group_members, or runs SQL
+    //     against claimnet.api_keys beyond the registered non-authorizing uses.
+    //     Static (no DB).
     console.log("\n=== Authz seam check ===");
     run("npm run check:authz-seam");
 

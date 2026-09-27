@@ -11,7 +11,6 @@
  * Both go through the same backing data fetch (key validation, group + member
  * lookup, exemplar clustering, user prefs) — single source of truth.
  */
-import crypto from "node:crypto";
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import {
@@ -29,7 +28,8 @@ import type {
 } from "@soupnet/domain";
 import { fetchBriefingExemplars } from "./briefing-exemplars";
 import { fetchBookStats } from "./book-stats.service";
-import { listTombstonedGroupIds } from "./ephemeral-workspace.service";
+import { listMembersOfBooks } from "../authz";
+import type { Principal } from "../authz";
 import { writeAudit } from "./audit-log.service";
 import {
   RECIPE_LOOKUP_MAX_IDS,
@@ -68,9 +68,12 @@ export interface BriefingOptions {
 
 export interface BriefingComposeInput {
   db: PostgresJsDatabase;
-  rawKey: string;
-  /** Owning user — if omitted, the key's user_id is used (MCP path). */
-  userId?: string;
+  /** The authenticated caller (authz `authenticateKey`). The composer never
+   *  sees a raw key or looks one up (F65): every surface authenticates first
+   *  and hands over the Principal, whose arrays are effective scope. The JWT
+   *  dashboard route authenticates the key in its body with `ownerUserId` so
+   *  a signed-in user can only brief their own keys (F33). */
+  principal: Principal;
   backendUrl: string;
   frontendUrl: string;
   options?: BriefingOptions;
@@ -88,9 +91,7 @@ export interface BriefingComposeSuccess {
   exemplarCount: number;
 }
 
-export type BriefingComposeError =
-  | { ok: false; code: "key_not_found" }
-  | { ok: false; code: "no_groups" };
+export type BriefingComposeError = { ok: false; code: "no_groups" };
 
 export type BriefingComposeResult = BriefingComposeSuccess | BriefingComposeError;
 
@@ -123,7 +124,6 @@ interface ResolvedScope {
 /** Compose the full unified briefing markdown. */
 export async function composeBriefing(input: BriefingComposeInput): Promise<BriefingComposeResult> {
   const scope = await resolveScope(input);
-  if ("error" in scope) return scope.error;
 
   const { exemplarsSection, exemplarCount } = await renderExemplars(input.db, scope);
 
@@ -208,7 +208,6 @@ ${renderRecipeEntries(entries)}${truncated}`;
  *  exemplars), for the MCP list_my_recipe_books tool. */
 export async function composeCorpusContext(input: BriefingComposeInput): Promise<BriefingComposeResult> {
   const scope = await resolveScope(input);
-  if ("error" in scope) return scope.error;
 
   const { exemplarsSection, exemplarCount } = await renderExemplars(input.db, scope);
   const text = buildCorpusContextSection({
@@ -227,7 +226,9 @@ interface KeyRow {
   user_id: string;
   read_group_ids: string[];
   write_group_ids: string[];
-  default_write_group_id: string;
+  /** Null when the key has no usable default right now — no book is flagged
+   *  as the default in the briefing, matching what a deposit would do. */
+  default_write_group_id: string | null;
   key_type: string;
 }
 
@@ -249,41 +250,21 @@ interface MemberRow {
   email: string;
 }
 
-async function resolveScope(
-  input: BriefingComposeInput,
-): Promise<ResolvedScope | { error: BriefingComposeError }> {
-  const { db, rawKey, userId } = input;
+async function resolveScope(input: BriefingComposeInput): Promise<ResolvedScope> {
+  const { db, principal } = input;
 
-  // Hashed-key lookup matches the F33 fix in /keys/briefing — never look up
-  // by 8-char prefix because cn_d_/cn_s_ keys can collide on prefix.
-  const hashedKey = crypto.createHash("sha256").update(rawKey).digest("hex");
-  const userScopeClause = userId ? sql`AND user_id = ${userId}::uuid` : sql``;
-  const keyRows = await db.execute(sql`
-    SELECT id, user_id, read_group_ids, write_group_ids, default_write_group_id, key_type
-    FROM claimnet.api_keys
-    WHERE key = ${hashedKey}
-      AND expires_at > NOW()
-      ${userScopeClause}
-    LIMIT 1
-  `);
-
-  const keyRow = (keyRows as unknown as KeyRow[])[0];
-  if (!keyRow) {
-    return { error: { ok: false, code: "key_not_found" } };
-  }
-
-  // Tombstone seam (audit F57): a born-ephemeral book past its TTL leaves the
-  // briefing's recipe-book list, member counts, and exemplar scope the instant
-  // expiry passes — the same scope-resolution exclusion the check path applies,
-  // so a briefing never surfaces a book a check can no longer read or write.
-  const tomb = await listTombstonedGroupIds(
-    db,
-    [...new Set([...keyRow.read_group_ids, ...keyRow.write_group_ids])],
-  );
-  if (tomb.size > 0) {
-    keyRow.read_group_ids = keyRow.read_group_ids.filter((g) => !tomb.has(g));
-    keyRow.write_group_ids = keyRow.write_group_ids.filter((g) => !tomb.has(g));
-  }
+  // The Principal's arrays are effective scope (authz/key-auth.ts), so the
+  // briefing's recipe-book list, member lists, and exemplar scope are exactly
+  // what a check with the same key can read and write: a book the owner has
+  // left, or a born-ephemeral book past its TTL (F57), is already gone.
+  const keyRow: KeyRow = {
+    id: principal.keyId,
+    user_id: principal.userId,
+    read_group_ids: principal.readGroupIds,
+    write_group_ids: principal.writeGroupIds,
+    default_write_group_id: principal.defaultWriteGroupId,
+    key_type: principal.keyType,
+  };
 
   // User identity (display name + email) for the "## Your user" line.
   const userRows = await db.execute(sql`
@@ -306,15 +287,7 @@ async function resolveScope(
   // Fetch members for all in-scope recipe books in one query; bucket per group.
   // Surface members so the briefing flags collaboration: when a shared book
   // appears, the receiving LLM can name collaborators in synthesis.
-  const memberRowList = allIds.length > 0
-    ? (await db.execute(sql`
-        SELECT gm.group_id, u.display_name, u.email
-        FROM claimnet.group_members gm
-        JOIN claimnet.users u ON u.id = gm.user_id
-        WHERE gm.group_id IN (${sql.join(allIds.map((id) => sql`${id}::uuid`), sql`, `)})
-        ORDER BY gm.group_id, u.email
-      `) as unknown as MemberRow[])
-    : [];
+  const memberRowList: MemberRow[] = await listMembersOfBooks(db, allIds);
 
   const membersByGroup = new Map<string, BriefingMember[]>();
   for (const row of memberRowList) {

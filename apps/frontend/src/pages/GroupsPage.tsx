@@ -6,6 +6,8 @@ import { copyToClipboard, useClipboard } from "../hooks/useClipboard.js";
 import { substituteBriefingKey } from "../lib/briefing-key.js";
 import { describeDailyReadScope } from "../lib/daily-scope.js";
 import { dailyKeyErrorCode } from "../lib/daily-key-error.js";
+import { memberRemovalPrompt } from "../lib/member-removal.js";
+import { applyDailyPrefs, dailyPrefsRollback, type DailyPrefsPatch } from "../lib/daily-prefs-optimistic.js";
 import { DailyKeyError } from "../components/DailyKeyError.js";
 import { Icon } from "../components/Icon.js";
 
@@ -333,6 +335,8 @@ function GroupCard({
   const [editDesc, setEditDesc] = useState(group.description ?? "");
   const [saving, setSaving] = useState(false);
   const [editError, setEditError] = useState("");
+  // The member whose removal is awaiting confirmation (one row at a time).
+  const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
 
   const isOwner = group.member_role === "owner";
   const isOwnerOrAdmin = isOwner || group.member_role === "admin";
@@ -382,6 +386,7 @@ function GroupCard({
       return json;
     },
     onSuccess: () => {
+      setConfirmRemoveId(null);
       void queryClient.invalidateQueries({ queryKey: ["group-members", group.id] });
     },
   });
@@ -533,23 +538,42 @@ function GroupCard({
                   key={member.user_id}
                   style={{
                     display: "flex",
+                    flexWrap: "wrap",
                     justifyContent: "space-between",
                     alignItems: "center",
+                    gap: "var(--space-xs)",
                     padding: "var(--space-xs) 0",
                     fontSize: "0.9rem",
                   }}
                 >
-                  <span>
+                  <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>
                     {member.email} <span className="pill" style={{ marginLeft: "var(--space-xs)" }}>{member.role}</span>
                   </span>
-                  {isOwner && member.role !== "owner" && (
+                  {isOwner && member.role !== "owner" && confirmRemoveId !== member.user_id && (
                     <button
                       className="btn-danger"
                       style={{ fontSize: "0.75rem", padding: "2px 8px" }}
-                      onClick={(e) => { e.stopPropagation(); removeMemberMutation.mutate(member.user_id); }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeMemberMutation.reset();
+                        setConfirmRemoveId(member.user_id);
+                      }}
                     >
                       Remove
                     </button>
+                  )}
+                  {isOwner && confirmRemoveId === member.user_id && (
+                    <MemberRemovalConfirm
+                      email={member.email}
+                      bookName={group.name}
+                      pending={removeMemberMutation.isPending}
+                      error={removeMemberMutation.error?.message ?? null}
+                      onConfirm={() => removeMemberMutation.mutate(member.user_id)}
+                      onCancel={() => {
+                        removeMemberMutation.reset();
+                        setConfirmRemoveId(null);
+                      }}
+                    />
                   )}
                 </li>
               ))}
@@ -923,8 +947,15 @@ function AgentConnectBox({ group, allGroups, justJoined }: { group: Group; allGr
  */
 function DailyPrefsToggles({ group }: { group: Group }) {
   const queryClient = useQueryClient();
+  const [saveError, setSaveError] = useState<string | null>(null);
+  // Optimistic: the checkbox flips on click (the cached ["groups"] list is
+  // patched in onMutate) and flips back with an error if the save fails, so
+  // a slow save never looks like an ignored click. Both checkboxes stay
+  // enabled while a save is in flight; each rollback touches only the field
+  // its own save changed.
   const mutation = useMutation({
-    mutationFn: async (body: { dailyRead?: boolean; dailyWrite?: boolean }) => {
+    mutationKey: ["daily-prefs"],
+    mutationFn: async (body: DailyPrefsPatch) => {
       const res = await authFetch(`/recipe-books/${group.id}/daily-prefs`, {
         method: "PUT",
         body: JSON.stringify(body),
@@ -933,8 +964,25 @@ function DailyPrefsToggles({ group }: { group: Group }) {
       if (!json.ok) throw new Error(json.error ?? "Failed to update");
       return json;
     },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["groups"] });
+    onMutate: async (body) => {
+      setSaveError(null);
+      await queryClient.cancelQueries({ queryKey: ["groups"] });
+      const rollback = dailyPrefsRollback(queryClient.getQueryData<Group[]>(["groups"]), group.id, body);
+      queryClient.setQueryData<Group[]>(["groups"], (books) => applyDailyPrefs(books, group.id, body));
+      return { rollback };
+    },
+    onError: (err, _body, context) => {
+      if (context) {
+        queryClient.setQueryData<Group[]>(["groups"], (books) => applyDailyPrefs(books, group.id, context.rollback));
+      }
+      setSaveError(`Couldn't save that change, so it was undone: ${err.message}`);
+    },
+    onSettled: () => {
+      // Refetch once the last in-flight save settles, so an earlier save's
+      // refetch can't overwrite a later click that is still optimistic.
+      if (queryClient.isMutating({ mutationKey: ["daily-prefs"] }) === 1) {
+        void queryClient.invalidateQueries({ queryKey: ["groups"] });
+      }
     },
   });
 
@@ -947,7 +995,6 @@ function DailyPrefsToggles({ group }: { group: Group }) {
             type="checkbox"
             checked={group.daily_read}
             onChange={(e) => mutation.mutate({ dailyRead: e.target.checked })}
-            disabled={mutation.isPending}
             style={{ width: "auto", marginRight: 0 }}
           />
           Include in reads
@@ -957,16 +1004,82 @@ function DailyPrefsToggles({ group }: { group: Group }) {
             type="checkbox"
             checked={group.daily_write}
             onChange={(e) => mutation.mutate({ dailyWrite: e.target.checked })}
-            disabled={mutation.isPending}
             style={{ width: "auto", marginRight: 0 }}
           />
           Include in writes
         </label>
       </div>
+      {saveError && (
+        <p role="alert" className="text-xs" style={{ color: "var(--color-error)", marginTop: "var(--space-xs)", marginBottom: 0 }}>
+          {saveError}
+        </p>
+      )}
       <p className="text-xs" style={{ color: "var(--color-on-surface-variant)", marginTop: "var(--space-xs)", marginBottom: 0 }}>
         Controls what the Dashboard's Copy-briefing and Open-check-page buttons include by default. For per-key control, use{" "}
         <Link to="/app/keys" style={{ color: "var(--color-primary)" }}>manage API keys</Link>.
       </p>
+    </div>
+  );
+}
+
+/**
+ * Inline confirmation before an owner removes a member, in the same two-step
+ * shape as account deletion on Settings → Account: the Remove button gives
+ * way to a question naming the person and the book, with Remove and Cancel.
+ * Cancel takes focus so a keyboard user who pressed Remove by mistake backs
+ * out with Enter.
+ */
+function MemberRemovalConfirm({
+  email,
+  bookName,
+  pending,
+  error,
+  onConfirm,
+  onCancel,
+}: {
+  email: string;
+  bookName: string;
+  pending: boolean;
+  error: string | null;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const prompt = memberRemovalPrompt(email, bookName);
+  return (
+    <div
+      role="group"
+      aria-label={prompt.question}
+      onClick={(e) => e.stopPropagation()}
+      style={{
+        flexBasis: "100%",
+        padding: "var(--space-sm) var(--space-md)",
+        background: "var(--color-surface-container-low)",
+        borderRadius: "var(--radius-sm)",
+        display: "flex",
+        flexDirection: "column",
+        gap: "var(--space-xs)",
+      }}
+    >
+      <p style={{ fontWeight: 600, margin: 0, overflowWrap: "anywhere" }}>{prompt.question}</p>
+      <p className="text-xs" style={{ color: "var(--color-on-surface-variant)", margin: 0 }}>{prompt.detail}</p>
+      {error && (
+        <p role="alert" className="text-xs" style={{ color: "var(--color-error)", margin: 0 }}>{error}</p>
+      )}
+      <div style={{ display: "flex", gap: "var(--space-sm)", marginTop: "var(--space-xs)" }}>
+        <button
+          type="button"
+          className="btn-danger"
+          onClick={onConfirm}
+          disabled={pending}
+          aria-label={pending ? undefined : prompt.confirmAccessibleName}
+          style={{ fontSize: "0.8rem" }}
+        >
+          {pending ? "Removing…" : prompt.confirmLabel}
+        </button>
+        <button type="button" className="btn-secondary" onClick={onCancel} disabled={pending} autoFocus style={{ fontSize: "0.8rem" }}>
+          Cancel
+        </button>
+      </div>
     </div>
   );
 }

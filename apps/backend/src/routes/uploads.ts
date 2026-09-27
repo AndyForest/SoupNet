@@ -17,7 +17,7 @@ import type { Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 
 import { getDb } from "../db";
-import { validateKey } from "../services/api-key.service";
+import { authenticateKey } from "../authz";
 import { createUpload } from "../services/upload.service";
 import { FileStoreError } from "../lib/file-store";
 import { ALLOWED_MIME_TYPES, EXT_TO_MIME, MAX_UPLOAD_BYTES } from "@soupnet/domain";
@@ -90,7 +90,7 @@ uploadsRouter.post("/", uploadBodyLimit, uploadRateLimit, async (c) => {
   }
 
   const db = getDb();
-  const keyResult = await validateKey(db, apiKey);
+  const keyResult = await authenticateKey(db, apiKey);
   if (!keyResult) {
     return c.json({ ok: false, error: "Invalid or expired API key." }, 401);
   }

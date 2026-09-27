@@ -11,8 +11,9 @@
  *   - Fail closed. "No membership row" is `null` / `false` / an empty list,
  *     never a thrown error a caller might swallow, and never a default role.
  *   - `userId` comes from the verified JWT. Nothing here trusts a
- *     client-supplied user id, and nothing here reads an API key — agent scope
- *     is frozen on the key at mint time and is a separate mechanism.
+ *     client-supplied user id, and nothing here reads an API key — agent
+ *     callers are authenticated and scoped in key-auth.ts, which intersects a
+ *     key's grant with these same membership rows.
  *   - No caching. Every call reads the table, so removing a member takes
  *     effect on their next request.
  *   - Every value is a bound parameter.

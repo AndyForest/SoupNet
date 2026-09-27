@@ -183,6 +183,20 @@ async function deposit(
   return { ok: res.ok && body.ok !== false, recipeId: body.data?.checked?.recipeId, error: body.error };
 }
 
+/** Call a remote MCP tool and return the raw response text. */
+async function mcpTool(key: string, name: string, args: Record<string, unknown>): Promise<string> {
+  const res = await fetch(`${BASE}/mcp`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+      Authorization: `Bearer ${key}`,
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
+  });
+  return res.text();
+}
+
 async function briefingBookSlugs(jwt: string, key: string): Promise<string[]> {
   const res = await fetch(`${BASE}/keys/briefing`, {
     method: "POST",
@@ -317,6 +331,96 @@ describe.skipIf(!BASE)("ephemeral workspaces — eval-reset destructive tier", (
     const integ = await integrity(A.scopedKey);
     expect(integ.expiredNotYetReaped.some((b) => b.recipeBookId === recipeBookId)).toBe(true);
     expect(integ.clean).toBe(false);
+  });
+
+  // ── 3b: the tombstone reaches every scope consumer, not only briefing ────
+  describe("(3b) after expire-now the book is gone from every key-scoped read", () => {
+    const MARKER = `tombmarker${Date.now()}`;
+    let recipeBookId = "";
+    let slug = "";
+    let recipeId = "";
+
+    beforeAll(async () => {
+      const created = await createWorkspace(A.scopedKey, { name: "Tombstone reach" });
+      ({ recipeBookId, slug } = created.body.data!);
+      seededGroupIds.push(recipeBookId);
+      const seeded = await deposit(
+        A.scopedKey,
+        `As a benchmark engineer working on ${MARKER}, I prefer disposed workspaces to vanish from every read so that the next scored run sees no phantom hits.`,
+        slug,
+      );
+      recipeId = seeded.recipeId ?? "";
+      if (!recipeId) throw new Error(`Setup failed: seed deposit (${seeded.error ?? "no id"})`);
+      const expired = await setExpiry(A.scopedKey, recipeBookId, "now");
+      if (!expired.body.data?.tombstoned) throw new Error("Setup failed: expire-now");
+    }, 60_000);
+
+    it("by-id lookup returns the uniform not-found marker", async () => {
+      const res = await fetch(`${BASE}/recipes?ids=${recipeId}`, { headers: { Authorization: `Bearer ${A.scopedKey}` } });
+      const text = await res.text();
+      expect(text).toContain("not_found_or_unreadable");
+    });
+
+    it("a check no longer surfaces its recipes", async () => {
+      const url = `${BASE}/check?key=${encodeURIComponent(A.scopedKey)}&trace=${encodeURIComponent(
+        `As a benchmark engineer working on ${MARKER}, I prefer disposed workspaces to vanish from every read so that a later check sees no phantom hits.`,
+      )}&ef=${encodeURIComponent(`Evidence.\n> "phantom hits"\n-- workspace integration test`)}&format=json`;
+      const text = await (await fetch(url, { headers: { Accept: "application/json" } })).text();
+      expect(text).not.toContain(recipeId);
+    });
+
+    // First written as an expected failure (F68): the read-only search path
+    // resolved read scope without the tombstone. Scope is now resolved in one
+    // place (authz/key-auth.ts), so no consumer can receive a tombstoned book.
+    it("a read-only search no longer surfaces its recipes", async () => {
+      const url = `${BASE}/check?key=${encodeURIComponent(A.scopedKey)}&f=${encodeURIComponent(`"${MARKER}"`)}&format=json`;
+      const text = await (await fetch(url, { headers: { Accept: "application/json" } })).text();
+      expect(text).not.toContain(recipeId);
+    });
+
+    it("the MCP search tool no longer surfaces its recipes", async () => {
+      const res = await mcpTool(A.scopedKey, "search_recipes", { query: `"${MARKER}" author:anyone` });
+      expect(res).not.toContain(recipeId);
+    });
+
+    it("a feedback row about one of its recipes gets the uniform not-readable marker", async () => {
+      const row = {
+        trace_id: recipeId,
+        kind: "check-feedback",
+        impact: "none",
+        disposition: "proceeded",
+        story_fulfilled: "unknown",
+        story: "As a tombstone test, I wanted feedback on a disposed workspace refused so that nothing is deposited there.",
+      };
+      const unknownRow = { ...row, trace_id: "00000000-0000-4000-8000-000000000000" };
+      const post = async (body: unknown) => {
+        const res = await fetch(`${BASE}/feedback`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${A.scopedKey}` },
+          body: JSON.stringify(body),
+        });
+        return JSON.stringify(((await res.json()) as { data?: { results?: Array<{ ok: boolean; error?: string }> } }).data?.results?.map(
+          (r) => ({ ok: r.ok, error: r.error }),
+        ));
+      };
+      const tombstoned = await post(row);
+      expect(tombstoned).toContain('"ok":false');
+      // Indistinguishable from a recipe that does not exist.
+      expect(tombstoned).toBe(await post(unknownRow));
+    });
+
+    it("update_recipe_book_description refuses the disposed book", async () => {
+      const res = await mcpTool(A.scopedKey, "update_recipe_book_description", {
+        recipe_book_id_or_slug: recipeBookId,
+        description: "should not be written",
+      });
+      expect(res).toContain("not found in your key's write recipe books");
+      const { sql } = getSql();
+      const row = (await sql`SELECT description FROM claimnet.groups WHERE id = ${recipeBookId}::uuid`)[0] as
+        | { description: string | null }
+        | undefined;
+      expect(row?.description ?? null).not.toBe("should not be written");
+    });
   });
 
   // ── expire-now is creator-KEY-only ───────────────────────────────────────

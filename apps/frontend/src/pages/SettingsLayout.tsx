@@ -1,7 +1,10 @@
 import { Outlet, Link, useMatchRoute } from "@tanstack/react-router";
+import styles from "./SettingsLayout.module.css";
 
 /**
- * Settings layout — left-nav + outlet for `/app/settings/*`.
+ * Settings layout — left-nav + outlet for `/app/settings/*`. Below the app
+ * shell's 768px mobile breakpoint the nav stacks above the content (see
+ * SettingsLayout.module.css).
  *
  * The nav is a simple persistent vertical list rather than a true accordion;
  * with 2 children it would be over-engineered to collapse. When a third
@@ -18,34 +21,24 @@ export function SettingsLayout() {
   const matchRoute = useMatchRoute();
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: "var(--space-xl)", alignItems: "start" }}>
-      <nav style={{ display: "flex", flexDirection: "column", gap: "var(--space-xs)", position: "sticky", top: "var(--space-md)" }}>
-        <h2 style={{ fontSize: "0.85rem", textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-on-surface-variant)", marginBottom: "var(--space-xs)" }}>
-          Settings
-        </h2>
+    <div className={styles.layout}>
+      <nav className={styles.nav} aria-label="Settings">
+        <h2 className={styles.heading}>Settings</h2>
         {NAV_ITEMS.map((item) => {
           const active = !!matchRoute({ to: item.to, fuzzy: false });
           return (
             <Link
               key={item.to}
               to={item.to}
-              style={{
-                display: "block",
-                padding: "var(--space-xs) var(--space-sm)",
-                borderRadius: "var(--radius-sm)",
-                background: active ? "var(--color-surface-container)" : "transparent",
-                color: active ? "var(--color-primary)" : "var(--color-on-surface)",
-                fontWeight: active ? 600 : 400,
-                fontSize: "0.9rem",
-                textDecoration: "none",
-              }}
+              className={active ? `${styles.navLink} ${styles.navLinkActive}` : styles.navLink}
+              aria-current={active ? "page" : undefined}
             >
               {item.label}
             </Link>
           );
         })}
       </nav>
-      <div style={{ minWidth: 0 }}>
+      <div className={styles.content}>
         <Outlet />
       </div>
     </div>

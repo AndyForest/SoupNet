@@ -108,6 +108,18 @@ a {
 }
 a:hover { text-decoration: underline; }
 
+/* A link inside running text is underlined, so it can be told apart from the
+   sentence by more than colour (WCAG 1.4.1; axe `link-in-text-block`). Links
+   that carry a class (nav items, button-styled links) and links with an
+   inline `text-decoration` keep their own styling; the underline applies only
+   to plain links inside prose containers. `[class="active"]` covers a plain
+   router Link pointing at the current page: TanStack Router adds that class
+   on its own, and the link is still a link. */
+:where(p, li, dd, td, th, label, figcaption, blockquote) a:is(:not([class]), [class="active"]) {
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
 /* ── Buttons ────────────────────────────────────────────────────── */
 button, .btn {
   font-family: var(--font-headline);

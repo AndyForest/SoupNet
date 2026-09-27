@@ -21,6 +21,7 @@
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import type { BriefingBookStats } from "@soupnet/domain";
+import { inBooks } from "../authz";
 
 interface TraceAggRow {
   groupId: string;
@@ -60,7 +61,7 @@ export async function fetchBookStats(
 ): Promise<Map<string, BriefingBookStats>> {
   const out = new Map<string, BriefingBookStats>();
   if (groupIds.length === 0) return out;
-  const idList = sql.join(groupIds.map((id) => sql`${id}::uuid`), sql`, `);
+  const inScope = inBooks(sql`t.group_id`, groupIds);
 
   const traceRows = await db.execute(sql`
     SELECT
@@ -70,7 +71,7 @@ export async function fetchBookStats(
       max(t.created_at)::text AS "lastLogged",
       count(DISTINCT t.user_id)::int AS "authorCount"
     FROM claimnet.traces t
-    WHERE t.group_id IN (${idList})
+    WHERE ${inScope}
     GROUP BY t.group_id
   `);
   for (const row of traceRows as unknown as TraceAggRow[]) {
@@ -93,7 +94,7 @@ export async function fetchBookStats(
       count(*) FILTER (WHERE cf.story_fulfilled = 'yes')::int AS "feedbackFulfilled"
     FROM claimnet.check_feedback cf
     JOIN claimnet.traces t ON t.id = cf.trace_id
-    WHERE t.group_id IN (${idList})
+    WHERE ${inScope}
     GROUP BY t.group_id
   `);
   for (const row of feedbackRows as unknown as FeedbackAggRow[]) {
@@ -110,7 +111,7 @@ export async function fetchBookStats(
       count(*)::int AS n
     FROM claimnet.trace_reactions tr
     JOIN claimnet.traces t ON t.id = tr.trace_id
-    WHERE t.group_id IN (${idList})
+    WHERE ${inScope}
     GROUP BY t.group_id, tr.reaction
   `);
   for (const row of reactionRows as unknown as ReactionAggRow[]) {

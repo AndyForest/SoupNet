@@ -3,7 +3,7 @@
  *
  * Tokens issued by this service are Soup.net API keys (cn_s_... prefix) stored
  * in claimnet.api_keys with key_type='oauth'. Bearer-token validation goes
- * through the same validateKey() path as scoped keys — see api-key.service.ts.
+ * through the same authenticateKey() path as scoped keys — see authz/key-auth.ts.
  *
  * Format conventions:
  *   client_id      — `oauth_<base62>` (24 bytes random → 24 chars)
@@ -14,6 +14,7 @@
 import crypto from "node:crypto";
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
+import { activeUserPredicate, consumeRefreshToken } from "../authz";
 
 // ── Base62 encoding ──────────────────────────────────────────────────────────
 
@@ -183,8 +184,8 @@ export async function verifyClientCredentials(
     Buffer.from(row.client_secret_hash, "hex"),
   );
   if (valid) {
-    // Fire-and-forget last_used_at stamp (mirrors validateKey's pattern in
-    // api-key.service.ts). The F39 sweep uses this to tell DCR spam (never
+    // Fire-and-forget last_used_at stamp (mirrors authenticateKey's pattern in
+    // authz/key-auth.ts). The F39 sweep uses this to tell DCR spam (never
     // authenticated) from dormant-but-real clients, which are kept.
     void db
       .execute(sql`
@@ -351,15 +352,24 @@ export async function redeemAuthCode(
   // Single UPDATE...RETURNING that atomically marks the code consumed if and
   // only if it's still valid and unconsumed. Avoids the TOCTOU race a separate
   // SELECT + UPDATE would have.
+  //
+  // The user who granted the code must still pass the shared user-state
+  // predicate (F66) — the same SQL fragment key authentication and refresh
+  // rotation embed, so the three cannot drift. A code whose user fails it
+  // matches no row: it is refused with the uniform invalid_grant and is NOT
+  // consumed (it simply lapses with its five-minute expiry).
   const rows = await db.execute(sql`
-    UPDATE claimnet.oauth_authorization_codes
+    UPDATE claimnet.oauth_authorization_codes AS ac
     SET consumed_at = NOW()
-    WHERE code_hash = ${codeHash}
-      AND consumed_at IS NULL
-      AND expires_at > NOW()
-    RETURNING client_id, user_id, redirect_uri, code_challenge, code_challenge_method,
-              scope_read_group_ids, scope_write_group_ids, scope_default_write_group_id,
-              consumed_at, expires_at
+    FROM claimnet.users u
+    WHERE ac.code_hash = ${codeHash}
+      AND ac.consumed_at IS NULL
+      AND ac.expires_at > NOW()
+      AND u.id = ac.user_id
+      AND ${activeUserPredicate()}
+    RETURNING ac.client_id, ac.user_id, ac.redirect_uri, ac.code_challenge, ac.code_challenge_method,
+              ac.scope_read_group_ids, ac.scope_write_group_ids, ac.scope_default_write_group_id,
+              ac.consumed_at, ac.expires_at
   `);
   const row = (rows as unknown as AuthCodeRow[])[0];
   if (!row) throw new RedeemCodeError("invalid_grant", "authorization code is invalid, expired, or already used");
@@ -439,6 +449,8 @@ export async function mintOAuthTokenBundle(
   const accessExpiresAt = new Date(Date.now() + ACCESS_TOKEN_TTL_SECONDS * 1000);
   const refreshExpiresAt = new Date(Date.now() + REFRESH_TOKEN_TTL_SECONDS * 1000);
 
+  // The scope arrays carry explicit ::uuid[] casts: a grant can be read-only,
+  // so the write array can legitimately be empty, and a bare ARRAY[] has no type.
   await db.execute(sql`
     INSERT INTO claimnet.api_keys (
       id, key, key_prefix, user_id, read_group_ids, write_group_ids,
@@ -449,8 +461,8 @@ export async function mintOAuthTokenBundle(
       ${accessTokenHash},
       ${keyPrefix},
       ${input.userId}::uuid,
-      ${sql`ARRAY[${sql.join(input.scopeReadGroupIds.map((g) => sql`${g}::uuid`), sql`,`)}]`},
-      ${sql`ARRAY[${sql.join(input.scopeWriteGroupIds.map((g) => sql`${g}::uuid`), sql`,`)}]`},
+      ${sql`ARRAY[${sql.join(input.scopeReadGroupIds.map((g) => sql`${g}::uuid`), sql`,`)}]::uuid[]`},
+      ${sql`ARRAY[${sql.join(input.scopeWriteGroupIds.map((g) => sql`${g}::uuid`), sql`,`)}]::uuid[]`},
       ${input.scopeDefaultWriteGroupId}::uuid,
       ${`oauth: ${input.clientId}`},
       'oauth',
@@ -468,14 +480,6 @@ export async function mintOAuthTokenBundle(
     expiresInSeconds: ACCESS_TOKEN_TTL_SECONDS,
     scope: scopeString(input.scopeWriteGroupIds, input.scopeReadGroupIds),
   };
-}
-
-interface RefreshableKeyRow {
-  user_id: string;
-  oauth_client_id: string;
-  read_group_ids: string[];
-  write_group_ids: string[];
-  default_write_group_id: string;
 }
 
 export class RefreshTokenError extends Error {
@@ -520,50 +524,37 @@ export async function refreshOAuthTokenBundle(
   const refreshTokenHash = hashOpaque(params.refreshToken);
 
   return db.transaction(async (tx) => {
-    // SET stamps two columns in one atomic consumption:
-    //   consumed_at = NOW()      — the CAS marker (and a useful audit time;
-    //                              safe here because nothing compares it).
-    //   expires_at = epoch       — deliberate policy + compatibility:
-    //     policy: the old ACCESS token dies the moment its bundle is rotated
-    //       (OAuth 2.1 leaves this open; revoking limits a stolen access
-    //       token's life to the rotation cadence). Every liveness reader —
-    //       validateKey, briefing scope resolution, the per-key rate limiter,
-    //       key lists, admin stats — checks expires_at > NOW(), so all of
-    //       them inherit the revocation without needing a consumed_at guard.
-    //     compatibility: pre-0028 code marked consumption by writing exactly
-    //       this sentinel and re-checking expires_at > NOW(). Writing it here,
-    //       and excluding epoch-stamped rows via `expires_at > to_timestamp(0)`
-    //       below, keeps a mixed-version window (rolling ECS task replacement,
-    //       or any row an old task consumes after the 0028 backfill ran)
-    //       race-free in both directions: rows consumed by either version are
-    //       dead for both versions.
-    const rows = await tx.execute(sql`
-      UPDATE claimnet.api_keys
-      SET consumed_at = NOW(), expires_at = to_timestamp(0)
-      WHERE refresh_token_hash = ${refreshTokenHash}
-        AND key_type = 'oauth'
-        AND consumed_at IS NULL
-        AND expires_at > to_timestamp(0)
-        AND refresh_token_expires_at > NOW()
-      RETURNING id, user_id, oauth_client_id, read_group_ids, write_group_ids,
-                default_write_group_id
-    `);
-    const row = (rows as unknown as Array<RefreshableKeyRow & { id: string }>)[0];
-    if (!row) throw new RefreshTokenError("invalid_grant", "refresh token is invalid, expired, or revoked");
+    // The consumption statement — the compare-and-swap on consumed_at, the
+    // epoch stamp on expires_at that kills the old access token for every
+    // liveness reader, and the shared user-state predicate (F66) — lives in
+    // the authz module with the other statements that authorize on a key. Its
+    // doc comment carries the full F38 reasoning.
+    const consumed = await consumeRefreshToken(tx, refreshTokenHash);
+    if (!consumed) throw new RefreshTokenError("invalid_grant", "refresh token is invalid, expired, or revoked");
 
     // Throwing past this point rolls the consumption back — a mismatched
     // client_id must not burn the legitimate client's token (same observable
     // behavior as before F38).
-    if (row.oauth_client_id !== params.clientId) {
+    if (consumed.oauthClientId !== params.clientId) {
       throw new RefreshTokenError("invalid_grant", "client_id does not match the refresh token");
     }
 
+    // The grant is carried forward unchanged. Rotation is not where reach is
+    // decided (F50): every presented key, this connection's next access token
+    // included, is authenticated against the owner's memberships at that
+    // moment, so a book they have left is already unreachable and a book they
+    // rejoin comes back, the same reversible rule scoped and daily keys get.
+    // Narrowing the stored grant here would make OAuth the one credential
+    // that loses a book permanently.
     return mintOAuthTokenBundle(tx, {
-      userId: row.user_id,
-      clientId: row.oauth_client_id,
-      scopeReadGroupIds: row.read_group_ids,
-      scopeWriteGroupIds: row.write_group_ids,
-      scopeDefaultWriteGroupId: row.default_write_group_id,
+      userId: consumed.userId,
+      clientId: consumed.oauthClientId,
+      scopeReadGroupIds: consumed.readGroupIds,
+      scopeWriteGroupIds: consumed.writeGroupIds,
+      // The stored pointer is carried forward as-is (the column is NOT NULL).
+      // Whether it is usable is decided at authentication, every time: outside
+      // the effective write set it reads as "no default", never a redirect.
+      scopeDefaultWriteGroupId: consumed.storedDefaultWriteGroupId,
     });
   });
 }

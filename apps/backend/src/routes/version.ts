@@ -36,7 +36,7 @@ import { sql } from "drizzle-orm";
 import { RANKING_ALGORITHM_VERSION } from "@soupnet/domain";
 import { getDb } from "../db";
 import type { AppEnv } from "../types";
-import { validateKey } from "../services/api-key.service";
+import { authenticateKey } from "../authz";
 import {
   getEmbeddingProviderId,
   getEmbeddingModelId,
@@ -115,7 +115,7 @@ version.get("/", versionIpRateLimit, versionPerKeyRateLimit, async (c) => {
   }
 
   const db = getDb();
-  const validated = await validateKey(db, rawKey);
+  const validated = await authenticateKey(db, rawKey);
   if (!validated) {
     // Uniform 401 — a missing, invalid, and expired key are indistinguishable.
     return c.json({ ok: false, error: "Invalid or expired API key" }, 401);

@@ -93,7 +93,7 @@ apps/backend/src/routes/keys.ts
 ├── POST /keys/scoped rejects past expiresAt → 400
 ├── POST /keys/scoped rejects expiresAt > 1 year → 400
 ├── DELETE /keys/:id rejects other user's key → 403
-└── Expired keys are rejected by validateKey
+└── Expired keys are rejected by authenticateKey (authz module)
 
 apps/backend/src/routes/groups.ts
 ├── POST /groups rejects non-owned organizationId → 403

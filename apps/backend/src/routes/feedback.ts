@@ -37,7 +37,7 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { getDb } from "../db";
-import { validateKey } from "../services/api-key.service";
+import { authenticateKey } from "../authz";
 import { rateLimit } from "../middleware/rate-limit";
 import type { RawFeedbackRow, FeedbackRowResult } from "../services/feedback.service";
 import { ingestFeedback } from "../services/feedback.service";
@@ -159,7 +159,7 @@ feedback.post("/", feedbackBodyLimit, feedbackRateLimit, async (c) => {
   const rawKey = authHeader.slice(7);
 
   const db = getDb();
-  const keyResult = await validateKey(db, rawKey);
+  const keyResult = await authenticateKey(db, rawKey);
   if (!keyResult) {
     return c.json({ ok: false, error: "Invalid or expired API key." }, 401);
   }
@@ -230,7 +230,7 @@ feedback.get("/", feedbackRateLimit, async (c) => {
   }
 
   const db = getDb();
-  const keyResult = await validateKey(db, rawKey);
+  const keyResult = await authenticateKey(db, rawKey);
   if (!keyResult) {
     const message = `Invalid or expired API key. ${keyParamMessage}`;
     return jsonMode

@@ -168,6 +168,12 @@ interface PerKeyDeps {
 /** Default deps query the live DB. Tests inject stubs. */
 export function defaultPerKeyDeps(): PerKeyDeps {
   return {
+    // COUNTING ONLY — this is not authentication. It maps a presented
+    // credential to the id its usage is counted under, and checks nothing but
+    // expiry. Whether the key is VALID (consumption, the owner's state, and
+    // what it may touch) is decided in one place, authz `authenticateKey`,
+    // which every handler behind this limiter calls for itself. Do not return
+    // more columns from here, and do not let the result reach a handler.
     resolveApiKeyId: async (rawKey: string) => {
       const hashed = hashApiKey(rawKey);
       const rows = await getDb().execute(sql`
@@ -296,8 +302,10 @@ export function perKeyRateLimit(opts: PerKeyRateLimitOptions) {
       return next();
     }
 
-    // Stash for downstream handlers that want to skip re-resolving.
-    c.set("apiKeyId" as never, apiKeyId as never);
+    // The resolved id is used for COUNTING below and goes no further. It is
+    // deliberately not placed on the request context: this lookup checks
+    // expiry only — none of the predicates that make a key valid — so a
+    // handler must never be able to pick it up in place of a Principal.
 
     const hourly = await deps.countRecipeChecksSince(apiKeyId, "1 hour");
     if (hourly >= hourlyMax) {

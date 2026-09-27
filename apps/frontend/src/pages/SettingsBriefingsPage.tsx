@@ -114,7 +114,7 @@ export function SettingsBriefingsPage() {
 
         {prefsQuery.isLoading && <p style={{ color: "var(--color-on-surface-variant)" }}>Loading...</p>}
         {prefsQuery.data && (
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-lg)" }}>
+          <div className="grid-2-cards">
             <div>
               <label htmlFor="clusterCount" style={{ fontSize: "0.9rem", fontWeight: 600 }}>
                 Number of clusters

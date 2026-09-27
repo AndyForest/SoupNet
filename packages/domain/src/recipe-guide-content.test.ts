@@ -287,4 +287,25 @@ describe("buildCorpusContextSection", () => {
     expect(text).not.toContain("?key=");
     expect(text).toContain("## Your recipe books");
   });
+
+  it("names the flagged default write book", () => {
+    const text = buildCorpusContextSection({
+      user: { displayName: "Test User", email: "user@example.test" },
+      groups,
+    });
+    expect(text).toContain("Default write recipe book: personal (Personal).");
+  });
+
+  it("says there is no default, rather than naming another book, when none is flagged", () => {
+    // A key can be without a usable default (its owner left that book). A
+    // deposit that names no book is then refused, so the briefing must not
+    // advertise some other writable book as the default.
+    const text = buildCorpusContextSection({
+      user: { displayName: "Test User", email: "user@example.test" },
+      groups: groups.map((g) => ({ ...g, isDefault: false })),
+    });
+    expect(text).toContain("Default write recipe book: none right now");
+    expect(text).toContain("recipe_book");
+    expect(text).not.toContain("Default write recipe book: personal");
+  });
 });
