@@ -390,6 +390,12 @@ describe.skipIf(!BASE || !canConnect())("drafts for the key's own user (drafts-a
     expect(byId.text).toContain("Draft: [unverified draft");
   });
 
+  it("S2-B4 / DT-VIS-06 (the /check HTML page): Pat's own draft is labelled there too", async () => {
+    const qs = new URLSearchParams({ key: patKey, filter: `author:me "${MARKER}"` });
+    const page = await (await fetch(`${BASE}/check?${qs.toString()}`)).text();
+    expect(page).toContain("[unverified draft");
+  });
+
   it("S2-B4 / DT-VIS-06: search excludes Pat's own drafts by default, like his other recipes", async () => {
     const r = await mcp(patKey, "search_recipes", { query: `"${MARKER}"` });
     expect(r.text).not.toContain(draftId);

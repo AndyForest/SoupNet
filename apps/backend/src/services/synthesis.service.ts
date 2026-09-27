@@ -62,6 +62,9 @@ export function toSynthesisInput(
       recipe: r.claimText,
       judgmentDate: r.createdAt,
       evidence: r.evidence.map((e) => e.content),
+      // Only the caller's own drafts reach a result set; they stay labelled
+      // in the synthesis input (RP-13).
+      ...(r.draftState === "unverified" ? { draft: true } : {}),
     })),
     relatedEvidence: (relatedEvidence ?? []).map((e) => ({
       recipeId: e.parentTraceId,

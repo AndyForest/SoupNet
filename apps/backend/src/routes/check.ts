@@ -14,7 +14,7 @@ import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { authenticateKey } from "../authz";
 import type { Principal } from "../authz";
-import { HTML_ACCEPT_TYPES, renderCheckResponseMarkdown, fenceCheckResponseMarkdown, parseVerbosity, renderRatingsMarkdown, isShownDraftState, parseDraftFlag } from "@soupnet/domain";
+import { HTML_ACCEPT_TYPES, renderCheckResponseMarkdown, fenceCheckResponseMarkdown, parseVerbosity, renderRatingsMarkdown, isShownDraftState, parseDraftFlag, draftLabel } from "@soupnet/domain";
 import type { CheckResponseJson } from "@soupnet/domain";
 import type { Recipe } from "@soupnet/contracts";
 import { TRIAGE_RATING_VALUES } from "@soupnet/contracts";
@@ -799,7 +799,7 @@ function renderPage(
         if (knownIdsForHtml.has(r.id) || r.known) {
           return `
     <article class="result">
-      <p><small><code>${esc(r.id)}</code> [known to you]${scoreDetail ? ` ${esc(scoreDetail)}` : ""}${r.clusterSize ? ` &mdash; represents ${r.clusterSize} similar recipes` : ""}</small></p>
+      <p><small><code>${esc(r.id)}</code> [known to you]${draftLabel(r.draftState) ? ` ${esc(draftLabel(r.draftState))}` : ""}${scoreDetail ? ` ${esc(scoreDetail)}` : ""}${r.clusterSize ? ` &mdash; represents ${r.clusterSize} similar recipes` : ""}</small></p>
     </article>`;
         }
 
@@ -839,6 +839,9 @@ function renderPage(
           : renderEvidenceHtml("Evidence", r.evidence);
 
         const groupHtml = r.recipeBook ? `<span class="group">[${esc(r.recipeBook.name)}]</span> ` : "";
+        // The viewer's own unpublished draft, labelled on the page too
+        // (slice 2; nobody else's reaches a result set).
+        const draftHtml = draftLabel(r.draftState) ? `<span class="draft">${esc(draftLabel(r.draftState))}</span> ` : "";
 
         // Known cluster-mates (seam 2, "stub, stub, full recipe"): members of
         // this cluster the caller already holds, listed as id-stubs beside
@@ -849,7 +852,7 @@ function renderPage(
 
         return `
     <article class="result">
-      <p>${groupHtml}${esc(r.claimText)}</p>
+      <p>${groupHtml}${draftHtml}${esc(r.claimText)}</p>
       ${scoreDetail ? `<span class="rank">${esc(scoreDetail)}</span>` : ""}${clusterHtml}${knownMembersHtml}
       ${evidenceHtml}
     </article>`;
