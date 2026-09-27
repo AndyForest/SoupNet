@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { authFetch, clearToken } from "../auth.js";
 import { useNavigate } from "@tanstack/react-router";
+import { ACCOUNT_DELETED_SEARCH } from "../lib/login-notice.js";
 
 /**
  * /app/settings/account — identity, sign-out, data export.
@@ -103,7 +104,8 @@ export function SettingsAccountPage() {
       <DeleteAccountSection
         onDeleted={() => {
           clearToken();
-          void navigate({ to: "/auth/login" });
+          // The sign-in page confirms the deletion (lib/login-notice.ts).
+          void navigate({ href: `/auth/login?${ACCOUNT_DELETED_SEARCH}` });
         }}
       />
     </div>

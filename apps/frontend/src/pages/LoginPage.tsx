@@ -3,6 +3,7 @@ import { useNavigate, useLocation, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { setToken, setEmailVerified } from "../auth.js";
 import soupnetLogo from "../assets/soupnet-logo.png";
+import { loginNoticeFromSearch } from "../lib/login-notice.js";
 
 interface AuthResponse {
   ok: boolean;
@@ -74,6 +75,8 @@ export function LoginPage() {
   // Check for invite token in URL
   const params = new URLSearchParams(window.location.search);
   const inviteToken = params.get("invite");
+  // e.g. "Your account has been deleted." after account deletion.
+  const arrivalNotice = loginNoticeFromSearch(window.location.search);
   if (inviteToken && !isRegister) {
     // Auto-switch to register mode if we have an invite token
     setIsRegister(true);
@@ -294,6 +297,20 @@ export function LoginPage() {
             </p>
           )}
         </div>
+
+        {arrivalNotice && !isRegister && (
+          <p role="status" style={{
+            color: "var(--color-on-surface)",
+            fontSize: "0.875rem",
+            lineHeight: 1.5,
+            marginBottom: "var(--space-lg)",
+            padding: "var(--space-md)",
+            background: "var(--color-surface-container-low)",
+            borderRadius: "var(--radius-sm)",
+          }}>
+            {arrivalNotice}
+          </p>
+        )}
 
         {/* Open-signups reassurance — only when the status endpoint has
             confirmed signups are open. Skipped in the invite flow, where
