@@ -431,37 +431,11 @@ describe.skipIf(!BASE)("DELETE /auth/me — shared recipe books are handed on, n
       expect((await bookRow(sql, teamBook))?.organization_id).toBe(orgId);
       expect(await roleOf(sql, teamBook, colleague.userId)).toBe("member");
 
-      // A second book in the organization held a recipe by a former member.
-      // Removing its members does not make the organization unshared: the
-      // guard still counts the recipes other people wrote there [F73].
-      const authoredRows: Array<{ id: string }> = await sql`
-        INSERT INTO claimnet.groups (name, slug, organization_id)
-        VALUES ('Team Archive', ${`team-archive-${stamp}`}, ${orgId}::uuid) RETURNING id
-      `;
-      const archiveBook = authoredRows[0]!.id;
-      await addMember(sql, archiveBook, owner, "owner", "2026-01-01T00:00:00Z");
-      await addMember(sql, archiveBook, colleague, "member", "2026-02-01T00:00:00Z");
-      const colleagueTrace = await checkRecipe(
-        await mintDailyKey(colleague.token), `team-archive-${stamp}`,
-        `As a colleague working on a team notebook, I prefer my notes to stay with the team so that my work outlives my membership. (${Date.now()})`,
-        `Guard fixture.\n> "colleague wrote this"\n-- handover test fixture (org guard)`,
-      );
+      // Once the organization is no longer shared, deletion proceeds.
       await sql`
         DELETE FROM claimnet.group_members
-        WHERE group_id IN (${teamBook}::uuid, ${archiveBook}::uuid) AND user_id = ${colleague.userId}::uuid
+        WHERE group_id = ${teamBook}::uuid AND user_id = ${colleague.userId}::uuid
       `;
-      const stillBlocked = await deleteAccount(owner);
-      expect(stillBlocked.status).toBe(409);
-      const stillBlockedBody = (await stillBlocked.json()) as { message?: string };
-      expect(stillBlockedBody.message).not.toMatch(/remove the other members/i);
-      expect(await count(sql`SELECT COUNT(*)::int AS n FROM claimnet.traces WHERE id = ${colleagueTrace}::uuid`)).toBe(1);
-
-      // Once nothing in the organization belongs to anyone else, deletion proceeds.
-      const hardDelete = await fetch(`${BASE}/traces/${colleagueTrace}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${owner.token}` },
-      });
-      expect(hardDelete.status).toBe(200);
       expect((await deleteAccount(owner)).status).toBe(200);
       expect(await count(sql`SELECT COUNT(*)::int AS n FROM claimnet.organizations WHERE id = ${orgId}::uuid`)).toBe(0);
     } finally {
@@ -530,104 +504,6 @@ describe.skipIf(!BASE)("DELETE /auth/me — shared recipe books are handed on, n
           SELECT COUNT(*)::int AS n FROM claimnet.group_members WHERE group_id = ${id}::uuid AND role = 'owner'
         `)).toBeGreaterThan(0);
       }
-    } finally {
-      await sql.end();
-    }
-  });
-
-  it("keeps a former member's recipes: a book holding other authors' recipes passes to its longest-standing author who can act, re-added as owner [F73]", { timeout: 120_000 }, async () => {
-    const sql = makeSql();
-    try {
-      const owner = await provisionUser(sql, "fa-owner");
-      const dormant = await provisionUser(sql, "fa-dormant");
-      const early = await provisionUser(sql, "fa-early");
-      const late = await provisionUser(sql, "fa-late");
-      const slug = `former-${Date.now().toString(36)}`;
-      const bookId = await createBook(owner, slug);
-      for (const m of [dormant, early, late]) await addMember(sql, bookId, m, "member", "2026-01-01T00:00:00Z");
-
-      const now = Date.now();
-      const write = async (u: TestUser, label: string) => checkRecipe(
-        await mintDailyKey(u.token), slug,
-        `As a contributor working on a shared notebook, I prefer my ${label} notes to outlive my membership so that my work stays mine. (${now})`,
-        `Former-author fixture.\n> "${label}"\n-- handover test fixture (${label}) ${now}`,
-      );
-      const ownerTrace = await write(owner, "owner");
-      const dormantTrace = await write(dormant, "dormant");
-      const earlyTrace = await write(early, "early");
-      const lateTrace = await write(late, "late");
-      // Deterministic authorship order: dormant first, then early, then late.
-      await sql`UPDATE claimnet.traces SET created_at = '2026-01-10T00:00:00Z' WHERE id = ${dormantTrace}::uuid`;
-      await sql`UPDATE claimnet.traces SET created_at = '2026-01-20T00:00:00Z' WHERE id = ${earlyTrace}::uuid`;
-      await sql`UPDATE claimnet.traces SET created_at = '2026-01-30T00:00:00Z' WHERE id = ${lateTrace}::uuid`;
-
-      // The owner removes every contributor, leaving themselves the only member.
-      for (const m of [dormant, early, late]) {
-        const res = await fetch(`${BASE}/recipe-books/${bookId}/members/${m.userId}`, {
-          method: "DELETE",
-          headers: { Authorization: `Bearer ${owner.token}` },
-        });
-        expect(res.status).toBe(200);
-      }
-      // The earliest author can no longer act (email unverified since).
-      await sql`UPDATE claimnet.users SET email_verified_at = NULL WHERE id = ${dormant.userId}::uuid`;
-
-      expect((await deleteAccount(owner)).status).toBe(200);
-
-      // Every other author's recipe survives; the owner's own goes.
-      for (const t of [dormantTrace, earlyTrace, lateTrace]) {
-        expect(await count(sql`SELECT COUNT(*)::int AS n FROM claimnet.traces WHERE id = ${t}::uuid`)).toBe(1);
-      }
-      expect(await count(sql`SELECT COUNT(*)::int AS n FROM claimnet.traces WHERE id = ${ownerTrace}::uuid`)).toBe(0);
-
-      // The book passes to the longest-standing author who can act, re-added
-      // as owner with daily-link reads and writes off (they opt in), and is
-      // re-homed into their personal organization.
-      const book = await bookRow(sql, bookId);
-      expect(book?.organization_id).toBe(early.personalOrgId);
-      expect(book?.slug).toBe(slug);
-      const rows: Array<{ role: string; daily_read: boolean; daily_write: boolean }> = await sql`
-        SELECT role, daily_read, daily_write FROM claimnet.group_members
-        WHERE group_id = ${bookId}::uuid AND user_id = ${early.userId}::uuid
-      `;
-      expect(rows[0]).toEqual({ role: "owner", daily_read: false, daily_write: false });
-      expect(await roleOf(sql, bookId, dormant.userId)).toBeUndefined();
-      expect(await roleOf(sql, bookId, late.userId)).toBeUndefined();
-
-      const auditRows: Array<{ metadata: Record<string, unknown> }> = await sql`
-        SELECT metadata FROM claimnet.audit_log
-        WHERE action = 'recipe_book.ownership_transferred' AND target_id = ${bookId}::uuid
-      `;
-      expect(auditRows.length).toBe(1);
-      expect(auditRows[0]!.metadata["newOwnerUserId"]).toBe(early.userId);
-      expect(auditRows[0]!.metadata["successionRule"]).toBe("longest_standing_author");
-    } finally {
-      await sql.end();
-    }
-  });
-
-  it("a current member inherits ahead of a former author [F73]", { timeout: 90_000 }, async () => {
-    const sql = makeSql();
-    try {
-      const owner = await provisionUser(sql, "fm-owner");
-      const former = await provisionUser(sql, "fm-former");
-      const member = await provisionUser(sql, "fm-member");
-      const slug = `former-member-${Date.now().toString(36)}`;
-      const bookId = await createBook(owner, slug);
-      await addMember(sql, bookId, former, "member", "2026-01-01T00:00:00Z");
-      const formerTrace = await checkRecipe(
-        await mintDailyKey(former.token), slug,
-        `As a contributor working on a shared notebook, I prefer my notes to stay after I leave so that my work stays mine. (${Date.now()})`,
-        `Former fixture.\n> "former"\n-- handover test fixture (former-member)`,
-      );
-      await sql`DELETE FROM claimnet.group_members WHERE group_id = ${bookId}::uuid AND user_id = ${former.userId}::uuid`;
-      await addMember(sql, bookId, member, "member", "2026-02-01T00:00:00Z");
-
-      expect((await deleteAccount(owner)).status).toBe(200);
-
-      expect(await roleOf(sql, bookId, member.userId)).toBe("owner");
-      expect(await roleOf(sql, bookId, former.userId)).toBeUndefined();
-      expect(await count(sql`SELECT COUNT(*)::int AS n FROM claimnet.traces WHERE id = ${formerTrace}::uuid`)).toBe(1);
     } finally {
       await sql.end();
     }
@@ -771,8 +647,10 @@ describe.skipIf(!BASE)("DELETE /auth/me — shared recipe books are handed on, n
  *
  * And the gap between the hand-over (phase 0) and the teardown (phase 2): the
  * departing owner is still a co-owner in between and can remove the member who
- * just inherited. The teardown then finds a book where the departing user is
- * the only member; it must not leave that book with no members at all.
+ * just inherited. The teardown then finds a book, in someone else's
+ * organization, where the departing user is the only member. It removes the
+ * user's membership and recipes and nothing else: other people's recipes
+ * survive, and the book is left where it is, even with no members [F73].
  */
 describe.skipIf(!BASE)("DELETE /auth/me racing member removal [F74]", () => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
@@ -892,23 +770,28 @@ describe.skipIf(!BASE)("DELETE /auth/me racing member removal [F74]", () => {
     }
   });
 
-  it("the departing owner removes the member who just inherited: a book holding only the owner's recipes is deleted, never left without members", { timeout: 90_000 }, async () => {
+  it("the departing owner removes the member who just inherited: their recipes survive, the book stays where it is with no members, and nobody is re-added", { timeout: 90_000 }, async () => {
     const sql = makeSql();
     try {
       const owner = await provisionUser(sql, "gap-owner");
       const heir = await provisionUser(sql, "gap-heir");
       const slug = `gap-${Date.now().toString(36)}`;
       const bookId = await createBook(owner, slug);
-      const ownerKey = await mintDailyKey(owner.token);
+      await addMember(sql, bookId, heir, "member", "2026-01-01T00:00:00Z");
       const ownerTrace = await checkRecipe(
-        ownerKey, slug,
+        await mintDailyKey(owner.token), slug,
         `As a book owner working on a notebook, I prefer my notes to leave with me so that deletion means deletion. (${Date.now()})`,
-        `Gap fixture.\n> "owner only"\n-- handover test fixture (gap)`,
+        `Gap fixture.\n> "owner wrote this"\n-- handover test fixture (gap owner)`,
+      );
+      const heirTrace = await checkRecipe(
+        await mintDailyKey(heir.token), slug,
+        `As a contributor working on a shared notebook, I prefer my notes to survive a colleague's exit so that my work stays mine. (${Date.now()})`,
+        `Gap fixture.\n> "heir wrote this"\n-- handover test fixture (gap heir)`,
       );
 
       // The state phase 0 leaves: the book handed to the heir and re-homed
       // into the heir's organization, the departing owner still a co-owner.
-      await addMember(sql, bookId, heir, "owner", "2026-01-01T00:00:00Z");
+      await sql`UPDATE claimnet.group_members SET role = 'owner' WHERE group_id = ${bookId}::uuid AND user_id = ${heir.userId}::uuid`;
       await sql`UPDATE claimnet.groups SET organization_id = ${heir.personalOrgId}::uuid WHERE id = ${bookId}::uuid`;
 
       // In the gap, the departing owner removes the heir (two owners: allowed).
@@ -921,55 +804,20 @@ describe.skipIf(!BASE)("DELETE /auth/me racing member removal [F74]", () => {
       expect((await deleteAccount(owner)).status).toBe(200);
 
       expect(await count(sql`SELECT COUNT(*)::int AS n FROM claimnet.traces WHERE id = ${ownerTrace}::uuid`)).toBe(0);
-      expect(await bookExists(sql, bookId)).toBe(false);
+      expect(await count(sql`SELECT COUNT(*)::int AS n FROM claimnet.traces WHERE id = ${heirTrace}::uuid`)).toBe(1);
+      expect(await bookExists(sql, bookId)).toBe(true);
+      expect((await bookRow(sql, bookId))?.organization_id).toBe(heir.personalOrgId);
       expect(await membersOf(sql, bookId)).toBe(0);
     } finally {
       await sql.end();
     }
   });
 
-  it("the departing owner removes the member who just inherited, and that member wrote recipes there: the book is handed back to them [F73]", { timeout: 90_000 }, async () => {
-    const sql = makeSql();
-    try {
-      const owner = await provisionUser(sql, "gap2-owner");
-      const heir = await provisionUser(sql, "gap2-heir");
-      const slug = `gap2-${Date.now().toString(36)}`;
-      const bookId = await createBook(owner, slug);
-      await addMember(sql, bookId, heir, "member", "2026-01-01T00:00:00Z");
-      const heirTrace = await checkRecipe(
-        await mintDailyKey(heir.token), slug,
-        `As a contributor working on a shared notebook, I prefer my notes to survive a colleague's exit so that my work stays mine. (${Date.now()})`,
-        `Gap fixture.\n> "heir wrote this"\n-- handover test fixture (gap2)`,
-      );
-
-      // The state phase 0 leaves, then the removal in the gap.
-      await sql`UPDATE claimnet.group_members SET role = 'owner' WHERE group_id = ${bookId}::uuid AND user_id = ${heir.userId}::uuid`;
-      await sql`UPDATE claimnet.groups SET organization_id = ${heir.personalOrgId}::uuid WHERE id = ${bookId}::uuid`;
-      const removed = await fetch(`${BASE}/recipe-books/${bookId}/members/${heir.userId}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${owner.token}` },
-      });
-      expect(removed.status).toBe(200);
-
-      expect((await deleteAccount(owner)).status).toBe(200);
-
-      expect(await count(sql`SELECT COUNT(*)::int AS n FROM claimnet.traces WHERE id = ${heirTrace}::uuid`)).toBe(1);
-      expect(await bookExists(sql, bookId)).toBe(true);
-      expect(await roleOf(sql, bookId, heir.userId)).toBe("owner");
-      expect(await membersOf(sql, bookId)).toBe(1);
-      expect((await bookRow(sql, bookId))?.organization_id).toBe(heir.personalOrgId);
-    } finally {
-      await sql.end();
-    }
-  });
-
-  it("a book in someone else's organization whose only member is the departing user is deleted, not left memberless", { timeout: 60_000 }, async () => {
+  it("a book in someone else's organization whose only member is the departing user is left where it is", { timeout: 60_000 }, async () => {
     const sql = makeSql();
     try {
       const leaver = await provisionUser(sql, "sole-leaver");
       const orgOwner = await provisionUser(sql, "sole-org-owner");
-      // Fixture: reachable today through the race above, and without any race
-      // once organizations have members who do not belong to every book.
       const groupRows: Array<{ id: string }> = await sql`
         INSERT INTO claimnet.groups (name, slug, organization_id)
         VALUES ('Sole', ${`sole-${Date.now().toString(36)}`}, ${orgOwner.personalOrgId}::uuid) RETURNING id
@@ -979,9 +827,135 @@ describe.skipIf(!BASE)("DELETE /auth/me racing member removal [F74]", () => {
 
       expect((await deleteAccount(leaver)).status).toBe(200);
 
-      expect(await bookExists(sql, bookId)).toBe(false);
-      // The organization it lived in is not the leaver's and stays.
-      expect(await count(sql`SELECT COUNT(*)::int AS n FROM claimnet.organizations WHERE id = ${orgOwner.personalOrgId}::uuid`)).toBe(1);
+      // Not the leaver's to delete: only their membership goes.
+      expect(await bookExists(sql, bookId)).toBe(true);
+      expect((await bookRow(sql, bookId))?.organization_id).toBe(orgOwner.personalOrgId);
+      expect(await membersOf(sql, bookId)).toBe(0);
+    } finally {
+      await sql.end();
+    }
+  });
+});
+
+/**
+ * Former members' recipes [F73, F87]. Account deletion deletes what is the
+ * departing person's and never adds anyone to a book. A book they own with no
+ * members left but other people's recipes in it stays, with no members; it
+ * moves into an author's personal organization only because the departing
+ * person's organizations are deleted.
+ */
+describe.skipIf(!BASE)("DELETE /auth/me — former members' recipes [F73]", () => {
+  async function membersOf(sql: Sql, groupId: string): Promise<number> {
+    return count(sql`SELECT COUNT(*)::int AS n FROM claimnet.group_members WHERE group_id = ${groupId}::uuid`);
+  }
+
+  async function traceExists(sql: Sql, traceId: string): Promise<boolean> {
+    return (await count(sql`SELECT COUNT(*)::int AS n FROM claimnet.traces WHERE id = ${traceId}::uuid`)) === 1;
+  }
+
+  async function removeFromBook(owner: TestUser, bookId: string, member: TestUser): Promise<void> {
+    const res = await fetch(`${BASE}/recipe-books/${bookId}/members/${member.userId}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${owner.token}` },
+    });
+    expect(res.status).toBe(200);
+  }
+
+  it("a removed co-author's recipes survive the owner's deletion; the book has no members, nobody is added, and each author still reads their own recipe", { timeout: 120_000 }, async () => {
+    const sql = makeSql();
+    try {
+      const owner = await provisionUser(sql, "fa-owner");
+      const early = await provisionUser(sql, "fa-early");
+      const late = await provisionUser(sql, "fa-late");
+      const slug = `former-${Date.now().toString(36)}`;
+      const bookId = await createBook(owner, slug);
+      for (const m of [early, late]) await addMember(sql, bookId, m, "member", "2026-01-01T00:00:00Z");
+
+      const now = Date.now();
+      const write = async (u: TestUser, label: string) => checkRecipe(
+        await mintDailyKey(u.token), slug,
+        `As a contributor working on a shared notebook, I prefer my ${label} notes to outlive my membership so that my work stays mine. (${now})`,
+        `Former-author fixture.\n> "${label}"\n-- handover test fixture (${label}) ${now}`,
+      );
+      const ownerTrace = await write(owner, "owner");
+      const earlyTrace = await write(early, "early");
+      const lateTrace = await write(late, "late");
+      await sql`UPDATE claimnet.traces SET created_at = '2026-01-10T00:00:00Z' WHERE id = ${earlyTrace}::uuid`;
+      await sql`UPDATE claimnet.traces SET created_at = '2026-01-20T00:00:00Z' WHERE id = ${lateTrace}::uuid`;
+
+      for (const m of [early, late]) await removeFromBook(owner, bookId, m);
+
+      expect((await deleteAccount(owner)).status).toBe(200);
+
+      expect(await traceExists(sql, earlyTrace)).toBe(true);
+      expect(await traceExists(sql, lateTrace)).toBe(true);
+      expect(await traceExists(sql, ownerTrace)).toBe(false);
+
+      // No members, nobody re-added; the book left the deleted organization for
+      // the personal organization of the author of its earliest recipe.
+      expect(await membersOf(sql, bookId)).toBe(0);
+      const book = await bookRow(sql, bookId);
+      expect(book?.organization_id).toBe(early.personalOrgId);
+      expect(book?.slug).toBe(slug);
+      expect(await count(sql`
+        SELECT COUNT(*)::int AS n FROM claimnet.audit_log
+        WHERE action = 'recipe_book.ownership_transferred' AND target_id = ${bookId}::uuid
+      `)).toBe(0);
+      expect(await count(sql`
+        SELECT COUNT(*)::int AS n FROM claimnet.audit_log
+        WHERE action = 'recipe_book.left_without_members' AND target_id = ${bookId}::uuid
+      `)).toBe(1);
+
+      // Each author reads their own recipe by id, as before; neither reads the other's.
+      const read = (u: TestUser, id: string) => fetch(`${BASE}/traces/${id}`, { headers: { Authorization: `Bearer ${u.token}` } });
+      expect((await read(early, earlyTrace)).status).toBe(200);
+      expect((await read(late, lateTrace)).status).toBe(200);
+      expect((await read(early, lateTrace)).status).toBe(404);
+      expect((await read(late, earlyTrace)).status).toBe(404);
+      const books = await fetch(`${BASE}/recipe-books`, { headers: { Authorization: `Bearer ${early.token}` } });
+      const bookIds = ((await books.json()) as { data?: Array<{ id: string }> }).data?.map((g) => g.id) ?? [];
+      expect(bookIds).not.toContain(bookId);
+
+      // When the author whose organization the book now sits in deletes their
+      // account, their recipe goes; the book stays while another person's
+      // recipe is in it, now in that person's organization.
+      expect((await deleteAccount(early)).status).toBe(200);
+      expect(await traceExists(sql, earlyTrace)).toBe(false);
+      expect(await traceExists(sql, lateTrace)).toBe(true);
+      expect((await bookRow(sql, bookId))?.organization_id).toBe(late.personalOrgId);
+
+      // The last author leaves: their recipe goes, and the book, now empty and
+      // in their organization, goes with it.
+      expect((await deleteAccount(late)).status).toBe(200);
+      expect(await traceExists(sql, lateTrace)).toBe(false);
+      expect(await count(sql`SELECT COUNT(*)::int AS n FROM claimnet.groups WHERE id = ${bookId}::uuid`)).toBe(0);
+    } finally {
+      await sql.end();
+    }
+  });
+
+  it("a current member still inherits, and a former author is not added [F73, F87]", { timeout: 90_000 }, async () => {
+    const sql = makeSql();
+    try {
+      const owner = await provisionUser(sql, "fm-owner");
+      const former = await provisionUser(sql, "fm-former");
+      const member = await provisionUser(sql, "fm-member");
+      const slug = `former-member-${Date.now().toString(36)}`;
+      const bookId = await createBook(owner, slug);
+      await addMember(sql, bookId, former, "member", "2026-01-01T00:00:00Z");
+      const formerTrace = await checkRecipe(
+        await mintDailyKey(former.token), slug,
+        `As a contributor working on a shared notebook, I prefer my notes to stay after I leave so that my work stays mine. (${Date.now()})`,
+        `Former fixture.\n> "former"\n-- handover test fixture (former-member)`,
+      );
+      await removeFromBook(owner, bookId, former);
+      await addMember(sql, bookId, member, "member", "2026-02-01T00:00:00Z");
+
+      expect((await deleteAccount(owner)).status).toBe(200);
+
+      expect(await roleOf(sql, bookId, member.userId)).toBe("owner");
+      expect(await roleOf(sql, bookId, former.userId)).toBeUndefined();
+      expect(await traceExists(sql, formerTrace)).toBe(true);
     } finally {
       await sql.end();
     }

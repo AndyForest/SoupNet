@@ -11,31 +11,18 @@
  *
  * Posture matches book-access.ts: fail closed, bound parameters only, no
  * caching. "Is a member" comes from membership-sql.ts throughout, so the books
- * handed on (`sharedBooksOwnedBy`) and the books deleted with the account
- * (`booksDeletedWith`) can never disagree about who counts as another member.
- * Both also count recipes written by anyone else as a reason a book is not
- * the departing user's alone [F73]. The two DELETEs at the bottom act on stored rows, not on
- * "is a member": every row goes, whatever it counts as.
+ * handed on (`sharedBooksOwnedBy`), the books left without members
+ * (`memberlessBooksWithOthersRecipes`) and the recipes deleted with the
+ * account (`traceIdsInSoleMemberBooksOwnedBy`) can never disagree about who
+ * counts as another member. Account deletion never adds anyone to a book
+ * [F73, F87]. The two DELETEs at the bottom act on stored rows, not on "is a
+ * member": every row goes, whatever it counts as.
  */
 
 import { sql } from "drizzle-orm";
-import type { SQL } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { membershipOf, membershipOfSomeoneElse } from "./membership-sql";
 import { activeUserPredicate } from "./key-auth";
-import { inBooks } from "./scope-sql";
-
-/**
- * A `claimnet.traces` row aliased `t` is a recipe by another author: someone
- * other than `userId` whose account still exists [F73]. (traces.user_id has
- * no foreign key; a recipe whose author has no account left has nobody to be
- * handed to and goes with the book it is in, as before.)
- */
-function byAnotherAuthor(userId: string): SQL {
-  return sql`(t.user_id <> ${userId}::uuid AND EXISTS (
-    SELECT 1 FROM claimnet.users author WHERE author.id = t.user_id
-  ))`;
-}
 
 /** A shared book the departing user is responsible for. */
 export interface BookToHandOver {
@@ -46,28 +33,17 @@ export interface BookToHandOver {
   inOwnedOrg: boolean;
 }
 
-/**
- * Who takes a book over. `role` is the role they held beforehand, or null for
- * a former author: someone who wrote a recipe in the book but is no longer a
- * member, and is re-added as its owner [F73].
- */
+/** The member who takes a book over, with the role they held beforehand. */
 export interface Successor {
   userId: string;
-  role: string | null;
+  role: string;
 }
 
 /**
- * Shared books the user is responsible for. "Shared" means the book holds
- * someone else: another member, or a recipe written by someone else, whether
- * or not that author is still a member [F73] (operator ruling 2026-09-27,
- * Soup.net recipe f46cfc50: "never destroy co-authors' recipes" covers anyone
- * who ever wrote a recipe in the book). "Responsible" means the book lives in
- * an organization the user owns, or the user is one of its owners, or the
- * user is its only member — a book that would otherwise be left with nobody
- * to look after what others wrote in it [F74].
- *
- * In id order, locking each book row (the module's lock order: book rows, in
- * id order, before membership rows; see `lockBooksForDeparture`).
+ * Shared books the user is responsible for: books with at least one OTHER
+ * member that either live in an organization the user owns, or have the user
+ * as a role-'owner' member. Id order (the module's lock order, see
+ * `lockBooksForDeparture`); locks each book row.
  */
 export async function sharedBooksOwnedBy(
   db: PostgresJsDatabase,
@@ -84,26 +60,10 @@ export async function sharedBooksOwnedBy(
           SELECT 1 FROM claimnet.group_members me
           WHERE me.group_id = g.id AND ${membershipOf("me", userId)} AND me.role = 'owner'
         )
-        OR (
-          EXISTS (
-            SELECT 1 FROM claimnet.group_members me
-            WHERE me.group_id = g.id AND ${membershipOf("me", userId)}
-          )
-          AND NOT EXISTS (
-            SELECT 1 FROM claimnet.group_members other
-            WHERE other.group_id = g.id AND ${membershipOfSomeoneElse("other", userId)}
-          )
-        )
       )
-      AND (
-        EXISTS (
-          SELECT 1 FROM claimnet.group_members other
-          WHERE other.group_id = g.id AND ${membershipOfSomeoneElse("other", userId)}
-        )
-        OR EXISTS (
-          SELECT 1 FROM claimnet.traces t
-          WHERE t.group_id = g.id AND ${byAnotherAuthor(userId)}
-        )
+      AND EXISTS (
+        SELECT 1 FROM claimnet.group_members other
+        WHERE other.group_id = g.id AND ${membershipOfSomeoneElse("other", userId)}
       )
     ORDER BY g.id
     FOR UPDATE OF g
@@ -141,60 +101,17 @@ export async function lockBooksForDeparture(
 }
 
 /**
- * Books deleted with the account, asked after shared books have been handed
- * on: every book still in an organization the user owns, plus any book
- * elsewhere in which the user is the only member and nobody else wrote a
- * recipe [F74]. The second kind would otherwise outlive the account with no
- * member at all: unreachable, unmanageable, and holding a slug. Nothing in it
- * belongs to anyone else, so it goes.
- */
-export async function booksDeletedWith(
-  db: PostgresJsDatabase,
-  userId: string,
-): Promise<string[]> {
-  const rows = await db.execute(sql`
-    SELECT g.id FROM claimnet.groups g
-    WHERE g.organization_id IN (
-        SELECT id FROM claimnet.organizations WHERE owner_id = ${userId}::uuid
-      )
-      OR (
-        EXISTS (
-          SELECT 1 FROM claimnet.group_members me
-          WHERE me.group_id = g.id AND ${membershipOf("me", userId)}
-        )
-        AND NOT EXISTS (
-          SELECT 1 FROM claimnet.group_members other
-          WHERE other.group_id = g.id AND ${membershipOfSomeoneElse("other", userId)}
-        )
-        AND NOT EXISTS (
-          SELECT 1 FROM claimnet.traces t
-          WHERE t.group_id = g.id AND ${byAnotherAuthor(userId)}
-        )
-      )
-    ORDER BY g.id
-  `);
-  return (rows as unknown as Array<{ id: string }>).map((r) => r.id);
-}
-
-/**
  * Who takes the book over when `departingUserId` leaves: another existing
  * owner if there is one; else the longest-standing admin; else the
- * longest-standing member (joined_at, then id, as the tie-break); else, when
- * no other member remains, the longest-standing former author — the author
- * of the book's earliest recipe among people who are no longer members, who
- * is re-added as owner (`readmitAsOwner`) [F73]. Null when the book holds
- * nobody else at all.
+ * longest-standing member (joined_at, then id, as the tie-break). Null when no
+ * other member remains. Locks the chosen membership row.
  *
  * Accounts that can act come first [F75]: the order above is applied to
- * candidates whose account passes the same user-state predicate key
+ * members whose account passes the same user-state predicate key
  * authentication uses (`activeUserPredicate`: verified, not waitlisted, and
  * whatever account-disable condition later lands there), and falls back to
- * the others only when none does, so a book is never lost for want of an
- * active heir.
- *
- * Takes no row locks of its own: the caller holds the book's row lock, and
- * every membership change takes that lock first (see
- * `lockBooksForDeparture`), so the candidates cannot change underneath it.
+ * the other members only when none does, so a book is never lost for want of
+ * an active heir.
  */
 export async function pickSuccessor(
   db: PostgresJsDatabase,
@@ -202,47 +119,17 @@ export async function pickSuccessor(
   departingUserId: string,
 ): Promise<Successor | null> {
   const rows = await db.execute(sql`
-    WITH candidates AS (
-      SELECT gm.user_id, gm.role, gm.joined_at AS since, gm.id::text AS tiebreak
-      FROM claimnet.group_members gm
-      WHERE gm.group_id = ${bookId}::uuid AND ${membershipOfSomeoneElse("gm", departingUserId)}
-      UNION ALL
-      SELECT t.user_id, NULL, MIN(t.created_at), t.user_id::text
-      FROM claimnet.traces t
-      WHERE t.group_id = ${bookId}::uuid AND t.user_id <> ${departingUserId}::uuid
-        AND NOT EXISTS (
-          SELECT 1 FROM claimnet.group_members gm
-          WHERE gm.group_id = t.group_id AND ${membershipOf("gm", sql`t.user_id`)}
-        )
-      GROUP BY t.user_id
-    )
-    SELECT c.user_id AS "userId", c.role
-    FROM candidates c
-    JOIN claimnet.users u ON u.id = c.user_id
+    SELECT gm.user_id AS "userId", gm.role
+    FROM claimnet.group_members gm
+    JOIN claimnet.users u ON u.id = gm.user_id
+    WHERE gm.group_id = ${bookId}::uuid AND ${membershipOfSomeoneElse("gm", departingUserId)}
     ORDER BY ${activeUserPredicate()} DESC,
-             CASE c.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 WHEN 'member' THEN 2 ELSE 3 END,
-             c.since ASC, c.tiebreak ASC
+             CASE gm.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END,
+             gm.joined_at ASC, gm.id ASC
     LIMIT 1
+    FOR UPDATE OF gm
   `);
   return (rows as unknown as Successor[])[0] ?? null;
-}
-
-/**
- * Re-add a former author as the book's owner [F73]. Daily-link reads and
- * writes take the column defaults (excluded), as for any membership the user
- * did not create themselves; they opt in. If a row already exists (it does
- * not count as a membership, or appeared since), it is made the owner row.
- */
-export async function readmitAsOwner(
-  db: PostgresJsDatabase,
-  bookId: string,
-  userId: string,
-): Promise<void> {
-  await db.execute(sql`
-    INSERT INTO claimnet.group_members (group_id, user_id, role)
-    VALUES (${bookId}::uuid, ${userId}::uuid, 'owner')
-    ON CONFLICT (group_id, user_id) DO UPDATE SET role = 'owner'
-  `);
 }
 
 /** Make an existing member the book's owner. */
@@ -258,53 +145,99 @@ export async function promoteToOwner(
 }
 
 /**
- * Whether any of the given books holds a recipe written by someone other than
- * the user. The teardown asks this of the books it is about to delete and
- * refuses to go on if the answer is yes [F73]: a book holding another
- * author's recipe is handed on, never deleted, and this holds even if a
- * hand-over was somehow missed (or a recipe landed after it). Nothing is
- * deleted in that case; a retry hands the book on.
+ * Ids of recipes in books of organizations the user owns that have NO member
+ * other than the user, and that are not another person's: the user's own, and
+ * any whose author has no account left. A book with another member never
+ * contributes here, and neither does a recipe by another author who still has
+ * an account, member or not [F73]: the conditions are the cascade's own
+ * guarantee that another person's recipe is never collected.
  */
-export async function booksHoldOthersRecipes(
+export async function traceIdsInSoleMemberBooksOwnedBy(
   db: PostgresJsDatabase,
-  bookIds: readonly string[],
   userId: string,
-): Promise<boolean> {
-  const rows = await db.execute(sql`
-    SELECT EXISTS (
-      SELECT 1 FROM claimnet.traces t
-      WHERE ${inBooks(sql`t.group_id`, bookIds)} AND ${byAnotherAuthor(userId)}
-    ) AS "found"
-  `);
-  return (rows as unknown as Array<{ found: boolean }>)[0]?.found === true;
-}
-
-/**
- * Ids of recipes in the given books whose author has no account left. They
- * have nobody to be handed to, so they go with the book they are in.
- */
-export async function authorlessTraceIdsIn(
-  db: PostgresJsDatabase,
-  bookIds: readonly string[],
 ): Promise<string[]> {
   const rows = await db.execute(sql`
     SELECT t.id FROM claimnet.traces t
-    WHERE ${inBooks(sql`t.group_id`, bookIds)}
-      AND NOT EXISTS (SELECT 1 FROM claimnet.users author WHERE author.id = t.user_id)
+    JOIN claimnet.groups g ON g.id = t.group_id
+    WHERE g.organization_id IN (
+      SELECT id FROM claimnet.organizations WHERE owner_id = ${userId}::uuid
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM claimnet.group_members gm
+      WHERE gm.group_id = g.id AND ${membershipOfSomeoneElse("gm", userId)}
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM claimnet.users author
+      WHERE author.id = t.user_id AND author.id <> ${userId}::uuid
+    )
   `);
   return (rows as unknown as Array<{ id: string }>).map((r) => r.id);
 }
 
+/** A book left without members that still holds another person's recipes. */
+export interface MemberlessBook {
+  id: string;
+  slug: string;
+  organizationId: string;
+  /** The author of the book's earliest recipe among people other than the departing user. */
+  authorUserId: string;
+}
+
 /**
- * Remove every membership row in the given books — the books being deleted
- * with an account (`booksDeletedWith`), so nothing in them outlives it.
+ * Books in organizations the user owns that have no member other than the
+ * user but still hold recipes by other people (former members who still have
+ * an account) [F73]. They are not the user's to delete, and nobody is added
+ * to them: the cascade moves each into the personal organization of the
+ * author of its earliest remaining recipe (organization_id is NOT NULL, and
+ * the user's organizations are going) and leaves it with no members. Id
+ * order; locks each book row.
  */
-export async function removeMembershipsIn(
+export async function memberlessBooksWithOthersRecipes(
   db: PostgresJsDatabase,
-  bookIds: readonly string[],
+  userId: string,
+): Promise<MemberlessBook[]> {
+  const rows = await db.execute(sql`
+    SELECT g.id, g.slug, g.organization_id AS "organizationId",
+      (SELECT t.user_id FROM claimnet.traces t
+       JOIN claimnet.users author ON author.id = t.user_id
+       WHERE t.group_id = g.id AND t.user_id <> ${userId}::uuid
+       ORDER BY t.created_at ASC, t.id ASC LIMIT 1) AS "authorUserId"
+    FROM claimnet.groups g
+    WHERE g.organization_id IN (
+        SELECT id FROM claimnet.organizations WHERE owner_id = ${userId}::uuid
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM claimnet.group_members other
+        WHERE other.group_id = g.id AND ${membershipOfSomeoneElse("other", userId)}
+      )
+      AND EXISTS (
+        SELECT 1 FROM claimnet.traces t
+        JOIN claimnet.users author ON author.id = t.user_id
+        WHERE t.group_id = g.id AND t.user_id <> ${userId}::uuid
+      )
+    ORDER BY g.id
+    FOR UPDATE OF g
+  `);
+  return rows as unknown as MemberlessBook[];
+}
+
+/**
+ * Remove every membership row in books of organizations the user owns. Runs
+ * after shared books have been handed on and re-homed, so what is left in
+ * those organizations is only what is being deleted with the account.
+ */
+export async function removeMembershipsInOrgsOwnedBy(
+  db: PostgresJsDatabase,
+  userId: string,
 ): Promise<void> {
   await db.execute(sql`
-    DELETE FROM claimnet.group_members WHERE ${inBooks(sql`group_id`, bookIds)}
+    DELETE FROM claimnet.group_members
+    WHERE group_id IN (
+      SELECT g.id FROM claimnet.groups g
+      WHERE g.organization_id IN (
+        SELECT id FROM claimnet.organizations WHERE owner_id = ${userId}::uuid
+      )
+    )
   `);
 }
 

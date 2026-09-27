@@ -144,10 +144,10 @@ function DeleteAccountSection({ onDeleted }: { onDeleted: () => void }) {
         your data first if you want a copy.
       </p>
       <p style={{ color: "var(--color-on-surface-variant)", fontSize: "0.9rem", marginBottom: "var(--space-md)" }}>
-        Recipe books you own that hold only your own work are deleted with your account. A book that
-        anyone else belongs to or has written recipes in, even someone who has since left it, stays:
-        their recipes are kept, and ownership passes to another owner, else the longest-standing admin
-        or member, else the earliest of its other authors.
+        Recipe books you own that hold only your own work are deleted with your account. Other people's
+        recipes are never deleted. A book you share passes to another owner, or else to the
+        longest-standing admin or member. A book where only people who have since left wrote recipes
+        stays, and nobody is given access to it.
       </p>
       {!confirming ? (
         <button

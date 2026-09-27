@@ -539,10 +539,9 @@ auth.get("/me/export", requireAuth, requireVerifiedEmail, async (c) => {
 // evidence/references and the embedding_sources/chunks/vectors that hold
 // recipe + evidence text in cleartext, check_feedback authored by the
 // user's keys, uploads, api_keys, oauth codes, memberships, their
-// organizations and the books in them that hold nobody else, then the users
-// row. A book they own that other people belong to, or that holds recipes
-// other people wrote (members or not), is handed on with everyone else's
-// recipes intact [F70, F73].
+// organizations and the books in them that nobody else belongs to, then the
+// users row. A book they own that other people still belong to is handed on
+// to a remaining member with everyone else's recipes intact [F70].
 //
 // Deliberately retained (documented):
 //   - audit_log entries with actor_user_id=this user are left in place so the
@@ -586,8 +585,7 @@ auth.delete("/me", authRateLimit, requireAuth, async (c) => {
   }
 
   // Guard: a shared (non-personal) organization the user owns that still has
-  // other members, or recipes by other people, is not dissolved by self-serve
-  // deletion. This guard
+  // other members is not dissolved by self-serve deletion. This guard
   // protects the ORGANIZATION, not recipes — deleteUserCascade on its own
   // never removes another author's recipe and hands shared books on to a
   // remaining member [F70]. But handing a shared organization's books into
@@ -601,20 +599,10 @@ auth.delete("/me", authRateLimit, requireAuth, async (c) => {
     SELECT o.id, o.name FROM claimnet.organizations o
     WHERE o.owner_id = ${user.id}::uuid
       AND o.is_personal = false
-      AND (EXISTS (
+      AND EXISTS (
         SELECT 1 FROM claimnet.group_members gm
         JOIN claimnet.groups g ON g.id = gm.group_id
         WHERE g.organization_id = o.id AND gm.user_id <> ${user.id}::uuid
-      )
-        -- Recipes other people wrote there count too, members or not [F73]:
-        -- removing the members would otherwise clear the guard and let the
-        -- cascade hand the organization's books to a former author.
-        OR EXISTS (
-          SELECT 1 FROM claimnet.traces t
-          JOIN claimnet.groups tg ON tg.id = t.group_id
-          JOIN claimnet.users author ON author.id = t.user_id
-          WHERE tg.organization_id = o.id AND t.user_id <> ${user.id}::uuid
-        )
       )
   `);
   const blockingOrgList = blockingOrgs as unknown as Array<{ id: string; name: string }>;
@@ -623,7 +611,7 @@ auth.delete("/me", authRateLimit, requireAuth, async (c) => {
       ok: false,
       error: "owned_shared_orgs_exist",
       message:
-        "You own a shared organization whose recipe books other people belong to or have written in. Transfer its ownership before deleting your account.",
+        "You own a shared organization that other people still belong to. Transfer its ownership or remove the other members before deleting your account.",
       organizations: blockingOrgList,
     }, 409);
   }
