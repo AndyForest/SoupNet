@@ -163,35 +163,57 @@ describe.skipIf(!canConnect() || !BASE)("key scope follows live membership and a
   }
 
   /**
+   * Whether a surface's response is an ordinary answer rather than an error.
+   * A probe that only looks for a string is satisfied by an error body too, so
+   * "not visible" must also mean "answered normally": an HTTP 200 that is not
+   * a failure envelope (REST `ok: false`) or a failed tool call (MCP
+   * `isError`, a JSON-RPC `error`, or a tool catch-all's "Error: …" text,
+   * which routes/mcp.ts toolErrorText returns without an isError flag).
+   */
+  function answeredNormally(status: number, text: string): boolean {
+    if (status !== 200) return false;
+    if (/"isError"\s*:\s*true/.test(text)) return false;
+    if (/"text"\s*:\s*"Error: /.test(text)) return false;
+    if (/"jsonrpc"\s*:\s*"2\.0"[\s\S]*"error"\s*:\s*\{/.test(text)) return false;
+    if (/^\s*\{\s*"ok"\s*:\s*false/.test(text)) return false;
+    return true;
+  }
+
+  /**
    * Whether the owner's recipe (or, for the book list, the shared book) shows
    * up on each read surface, REST and MCP. Each surface is probed for a string
    * it does NOT echo back from the request: searches echo their query, so they
    * are probed for the recipe id; by-id lookups echo the id, so they are
-   * probed for a word that appears only in the recipe's text.
+   * probed for a word that appears only in the recipe's text. Every probe must
+   * also be answered normally, so an error body never passes for "not visible".
    */
   async function visibleOn(key: string): Promise<Record<string, boolean>> {
     const bearer = { Authorization: `Bearer ${key}` };
     const query = `"${OWNER_WORD}" author:anyone`;
-    const has = (text: string, needle: string) => text.includes(needle);
-    return {
-      "read-only search": has(
-        await (await fetch(`${BASE}/check?key=${encodeURIComponent(key)}&f=${encodeURIComponent(query)}&format=json`)).text(),
-        ownerRecipeId,
-      ),
-      "GET /recipes": has(await (await fetch(`${BASE}/recipes?ids=${ownerRecipeId}`, { headers: bearer })).text(), OWNER_WORD),
-      "GET /briefing (requested recipe)": has(
-        await (await fetch(`${BASE}/briefing?recipe_ids=${ownerRecipeId}`, { headers: bearer })).text(),
-        OWNER_WORD,
-      ),
-      "GET /briefing (book list)": has(await (await fetch(`${BASE}/briefing`, { headers: bearer })).text(), shared.slug),
-      "MCP search_recipes": has((await mcpTool(key, "search_recipes", { query })).text, ownerRecipeId),
-      "MCP get_recipes": has((await mcpTool(key, "get_recipes", { recipe_ids: ownerRecipeId })).text, OWNER_WORD),
-      "MCP get_briefing (requested recipe)": has(
-        (await mcpTool(key, "get_briefing", { recipe_ids: ownerRecipeId })).text,
-        OWNER_WORD,
-      ),
-      "MCP list_my_recipe_books": has((await mcpTool(key, "list_my_recipe_books", {})).text, shared.slug),
+    const get = async (path: string, headers: Record<string, string> = bearer) => {
+      const res = await fetch(`${BASE}${path}`, { headers });
+      return { status: res.status, text: await res.text() };
     };
+    const probes: Record<string, [{ status: number; text: string }, string]> = {
+      "read-only search": [
+        await get(`/check?key=${encodeURIComponent(key)}&f=${encodeURIComponent(query)}&format=json`, {}),
+        ownerRecipeId,
+      ],
+      "GET /recipes": [await get(`/recipes?ids=${ownerRecipeId}`), OWNER_WORD],
+      "GET /briefing (requested recipe)": [await get(`/briefing?recipe_ids=${ownerRecipeId}`), OWNER_WORD],
+      "GET /briefing (book list)": [await get(`/briefing`), shared.slug],
+      "MCP search_recipes": [await mcpTool(key, "search_recipes", { query }), ownerRecipeId],
+      "MCP get_recipes": [await mcpTool(key, "get_recipes", { recipe_ids: ownerRecipeId }), OWNER_WORD],
+      "MCP get_briefing (requested recipe)": [await mcpTool(key, "get_briefing", { recipe_ids: ownerRecipeId }), OWNER_WORD],
+      "MCP list_my_recipe_books": [await mcpTool(key, "list_my_recipe_books", {}), shared.slug],
+    };
+    const failed = Object.entries(probes)
+      .filter(([, [res]]) => !answeredNormally(res.status, res.text))
+      .map(([surface, [res]]) => `${surface}: ${res.status} ${res.text.slice(0, 200)}`);
+    expect(failed, "every surface answers normally").toEqual([]);
+    return Object.fromEntries(
+      Object.entries(probes).map(([surface, [res, needle]]) => [surface, res.text.includes(needle)]),
+    );
   }
 
   function allSurfaces(value: boolean, seen: Record<string, boolean>): Record<string, boolean> {
@@ -363,6 +385,78 @@ describe.skipIf(!canConnect() || !BASE)("key scope follows live membership and a
       expect(seen).toEqual(allSurfaces(true, seen));
       const deposit = await check(memberKey, recipe("after-rejoin"));
       expect(deposit.status).toBe(200);
+    });
+  });
+
+  describe("a key whose only book was removed reads nothing, without an error", () => {
+    // A removed member's key whose grant named only the shared book has an
+    // EMPTY effective scope. That is an ordinary state, not a broken key: every
+    // read answers normally with nothing in it, and a deposit that names no
+    // book keeps its existing clear refusal.
+    let onlyShared = "";
+    const bearer = () => ({ Authorization: `Bearer ${onlyShared}` });
+
+    beforeAll(async () => {
+      onlyShared = await mintScopedKey(member, [shared.id], shared.id);
+      await removeMember();
+    }, 60_000);
+
+    afterAll(async () => {
+      await addMember();
+    });
+
+    async function mcpNormal(name: string, args: Record<string, unknown>): Promise<string> {
+      const res = await mcpTool(onlyShared, name, args);
+      expect(answeredNormally(res.status, res.text), `${name}: ${res.status} ${res.text.slice(0, 300)}`).toBe(true);
+      return res.text;
+    }
+
+    it("MCP search_recipes with a qualifier-only query", async () => {
+      const text = await mcpNormal("search_recipes", { query: "author:anyone" });
+      expect(text).not.toContain(ownerRecipeId);
+    });
+
+    it("MCP search_recipes with a quoted-terms query", async () => {
+      const text = await mcpNormal("search_recipes", { query: `"${OWNER_WORD}"` });
+      expect(text).not.toContain(ownerRecipeId);
+    });
+
+    it("MCP search_recipes with a bare-text (semantic) query", async () => {
+      const text = await mcpNormal("search_recipes", { query: `membership test ${MARKER}` });
+      expect(text).not.toContain(ownerRecipeId);
+    });
+
+    it("the web read-only search, /check?format=json&f=", async () => {
+      for (const f of ["author:anyone", `"${OWNER_WORD}" author:anyone`, `membership test ${MARKER}`]) {
+        const res = await fetch(`${BASE}/check?key=${encodeURIComponent(onlyShared)}&f=${encodeURIComponent(f)}&format=json`);
+        const text = await res.text();
+        expect(answeredNormally(res.status, text), `f=${f}: ${res.status} ${text.slice(0, 300)}`).toBe(true);
+        expect(text).not.toContain(ownerRecipeId);
+      }
+    });
+
+    it("get_recipes answers with the uniform unreadable marker", async () => {
+      const text = await mcpNormal("get_recipes", { recipe_ids: ownerRecipeId });
+      expect(text).not.toContain(OWNER_WORD);
+      const res = await fetch(`${BASE}/recipes?ids=${ownerRecipeId}`, { headers: bearer() });
+      const body = await res.text();
+      expect(answeredNormally(res.status, body), body.slice(0, 300)).toBe(true);
+      expect(body).toContain("not_found_or_unreadable");
+    });
+
+    it("get_briefing answers, listing no book", async () => {
+      const text = await mcpNormal("get_briefing", {});
+      expect(text).not.toContain(shared.slug);
+      const res = await fetch(`${BASE}/briefing`, { headers: bearer() });
+      expect(res.status).toBe(200);
+      expect(await res.text()).not.toContain(shared.slug);
+    });
+
+    it("a deposit that names no book keeps its clear refusal", async () => {
+      const res = await check(onlyShared, recipe("empty-scope-default"));
+      expect(res.status).toBe(400);
+      expect(res.error).toContain("API key has no write access to its default group.");
+      expect(res.error).toContain("recipe_book");
     });
   });
 

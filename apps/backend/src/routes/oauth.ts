@@ -29,6 +29,7 @@ import {
 } from "../services/oauth.service";
 import { rateLimit } from "../middleware/rate-limit";
 import type { AppEnv } from "../types";
+import { inBooks } from "../authz";
 
 function getBackendUrl(): string {
   return process.env["BACKEND_URL"] ?? "http://localhost:3101";
@@ -212,7 +213,7 @@ oauthRoutes.post(
     const memberRows = await getDb().execute(sql`
       SELECT group_id FROM claimnet.group_members
       WHERE user_id = ${user.id}::uuid
-        AND group_id IN (${sql.join(allGroupIds.map((g) => sql`${g}::uuid`), sql`, `)})
+        AND ${inBooks(sql`group_id`, allGroupIds)}
     `);
     const memberSet = new Set((memberRows as unknown as Array<{ group_id: string }>).map((r) => r.group_id));
     if (allGroupIds.some((g) => !memberSet.has(g))) {

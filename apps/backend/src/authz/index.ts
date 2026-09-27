@@ -13,6 +13,8 @@
  *   roles.ts           — pure role predicates, and the trace read rule
  *   membership-sql.ts  — the membership condition, written once (internal:
  *                        deliberately not re-exported)
+ *   scope-sql.ts       — a caller's book scope as a SQL condition; an empty
+ *                        scope reads nothing
  *
  * Import from here. See docs/engineering-principles.md §7.
  */
@@ -23,3 +25,4 @@ export * from "./trace-access";
 export * from "./memberships";
 export * from "./book-succession";
 export * from "./key-auth";
+export * from "./scope-sql";

@@ -33,6 +33,7 @@ import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { enrichResults } from "./result-enricher";
 import { isTraceIdPrefix, uuidPrefixRange } from "./feedback.service";
 import type { SearchResultItem } from "./trace.service";
+import { inBooks } from "../authz";
 
 /** Hard cap on ids per lookup call. Routes reject above this; the briefing
  *  surface silently truncates and says so in the rendered section. */
@@ -152,7 +153,7 @@ export async function lookupRecipes(
       const matchRows = await db.execute(sql`
         SELECT id FROM claimnet.traces
         WHERE id >= ${lo}::uuid AND id <= ${hi}::uuid
-          AND group_id IN (${sql.join(liveReadGroupIds.map((id) => sql`${id}::uuid`), sql`, `)})
+          AND ${inBooks(sql`group_id`, liveReadGroupIds)}
         LIMIT 2
       `);
       const matches = (matchRows as unknown as Array<{ id: string }>).map((r) => r.id);
@@ -191,7 +192,7 @@ export async function lookupRecipes(
       LEFT JOIN claimnet.groups g ON g.id = t.group_id
       LEFT JOIN claimnet.users u ON u.id = t.user_id
       WHERE t.id IN (${sql.join(validIds.map((id) => sql`${id}::uuid`), sql`, `)})
-        AND t.group_id IN (${sql.join(liveReadGroupIds.map((id) => sql`${id}::uuid`), sql`, `)})
+        AND ${inBooks(sql`t.group_id`, liveReadGroupIds)}
     `);
 
     const traceRows = rows as unknown as TraceRow[];

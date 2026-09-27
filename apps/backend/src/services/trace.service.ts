@@ -26,6 +26,7 @@ import {
 } from "@soupnet/db";
 import { getDb } from "../db";
 import { parseEvidenceMarkdown } from "./evidence-parser";
+import { inBooks } from "../authz";
 import type { Principal } from "../authz";
 import {
   enqueueEmbedding,
@@ -1086,7 +1087,7 @@ export async function searchWithoutLogging(
     try {
       const scopeRows = await db.execute(sql`
         SELECT count(*)::int AS n FROM claimnet.traces
-        WHERE group_id IN (${sql.join(effectiveReadGroupIds.map((g) => sql`${g}::uuid`), sql`, `)})
+        WHERE ${inBooks(sql`group_id`, effectiveReadGroupIds)}
       `);
       searchedCorpusSize = Number((scopeRows as unknown as Array<{ n: number }>)[0]?.n ?? 0);
       // Own-author honesty (cold-start v2 Phase A): the scope count includes
@@ -1097,7 +1098,7 @@ export async function searchWithoutLogging(
       if (ownExcludedByDefault && searchedCorpusSize > 0) {
         const ownRows = await db.execute(sql`
           SELECT count(*)::int AS n FROM claimnet.traces
-          WHERE group_id IN (${sql.join(effectiveReadGroupIds.map((g) => sql`${g}::uuid`), sql`, `)})
+          WHERE ${inBooks(sql`group_id`, effectiveReadGroupIds)}
             AND user_id = ${keyResult.userId}::uuid
         `);
         searchedOwnExcluded = Number((ownRows as unknown as Array<{ n: number }>)[0]?.n ?? 0);
@@ -1238,7 +1239,7 @@ async function resolveGroupSlug(
   const rows = await db.execute(sql`
     SELECT id FROM claimnet.groups
     WHERE slug = ${groupRef}
-      AND id IN (${sql.join(allowedGroupIds.map((id) => sql`${id}::uuid`), sql`, `)})
+      AND ${inBooks(sql`id`, allowedGroupIds)}
     LIMIT 1
   `);
 

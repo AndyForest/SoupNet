@@ -13,6 +13,7 @@ import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { groupMembers } from "@soupnet/db";
 import { countsAsMembership, membershipOf } from "./membership-sql";
+import { inBooks } from "./scope-sql";
 
 export interface BookMember {
   user_id: string;
@@ -59,7 +60,7 @@ export async function listMembersOfBooks(
     SELECT gm.group_id, u.display_name, u.email
     FROM claimnet.group_members gm
     JOIN claimnet.users u ON u.id = gm.user_id
-    WHERE gm.group_id IN (${sql.join(bookIds.map((id) => sql`${id}::uuid`), sql`, `)})
+    WHERE ${inBooks(sql`gm.group_id`, bookIds)}
     ORDER BY gm.group_id, u.email
   `);
   return rows as unknown as BookMemberIdentity[];

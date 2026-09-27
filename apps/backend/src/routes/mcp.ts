@@ -41,7 +41,7 @@ import type { RegionMeta } from "../lib/image-roi";
 import type { EnrichedResult } from "../services/result-enricher";
 import { enrichResults, clusterEvidenceInResults } from "../services/result-enricher";
 import { getDb } from "../db";
-import { authenticateKey, isOwnerOrAdmin, roleIn } from "../authz";
+import { authenticateKey, inBooks, isOwnerOrAdmin, roleIn } from "../authz";
 import type { Principal } from "../authz";
 import { maybeSynthesize } from "../services/synthesis.service";
 import type { SynthesisResult } from "../services/synthesis.service";
@@ -997,7 +997,7 @@ function createMcpServer(backendUrl: string, principal: Principal): McpServer {
           const slugRows = await db.execute(sql`
             SELECT id FROM claimnet.groups
             WHERE slug = ${recipe_book_id_or_slug}
-              AND id IN (${sql.join(writeGroupIds.map((id) => sql`${id}::uuid`), sql`, `)})
+              AND ${inBooks(sql`id`, writeGroupIds)}
             LIMIT 1
           `);
           groupId = (slugRows as unknown as Array<{ id: string }>)[0]?.id ?? null;

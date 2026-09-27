@@ -7,7 +7,7 @@ import { generateDailyKey, generateScopedKey, listKeys, revokeKey } from "../ser
 import { rateLimit } from "../middleware/rate-limit";
 import { sql } from "drizzle-orm";
 import { composeBriefing } from "../services/briefing";
-import { authenticateKey } from "../authz";
+import { authenticateKey, inBooks } from "../authz";
 import { parseRecipeIds } from "../services/recipe-lookup.service";
 
 // C1 — recipe-book rename. Wire-format field names use the new "recipe book"
@@ -168,7 +168,7 @@ keys.post("/scoped", keyGenRateLimit, async (c) => {
   const memberGroups = await db.execute(sql`
     SELECT group_id FROM claimnet.group_members
     WHERE user_id = ${user.id}::uuid
-      AND group_id IN (${sql.join(allGroupIds.map(g => sql`${g}::uuid`), sql`, `)})
+      AND ${inBooks(sql`group_id`, allGroupIds)}
   `);
   const memberGroupIds = new Set((memberGroups as unknown as Array<{ group_id: string }>).map(r => r.group_id));
   const unauthorized = allGroupIds.filter(g => !memberGroupIds.has(g));
