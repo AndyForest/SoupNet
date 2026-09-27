@@ -149,8 +149,9 @@ function DeleteAccountSection({ onDeleted }: { onDeleted: () => void }) {
       {!confirming ? (
         <button
           type="button"
+          className="btn-danger"
           onClick={() => setConfirming(true)}
-          style={{ fontSize: "0.85rem", color: "var(--color-error, #c0392b)" }}
+          style={{ fontSize: "0.85rem" }}
         >
           Delete my account…
         </button>
@@ -173,22 +174,16 @@ function DeleteAccountSection({ onDeleted }: { onDeleted: () => void }) {
           <div style={{ display: "flex", gap: "var(--space-sm)" }}>
             <button
               type="button"
+              className="btn-danger"
               onClick={() => deleteMutation.mutate()}
               disabled={!password || deleteMutation.isPending}
-              style={{
-                background: "var(--color-error, #c0392b)",
-                color: "white",
-                border: "none",
-                padding: "var(--space-sm) var(--space-md)",
-                borderRadius: "var(--radius-sm)",
-                cursor: "pointer",
-                fontSize: "0.85rem",
-              }}
+              style={{ fontSize: "0.85rem" }}
             >
               {deleteMutation.isPending ? "Deleting…" : "Permanently delete"}
             </button>
             <button
               type="button"
+              className="btn-secondary"
               onClick={() => {
                 setConfirming(false);
                 setPassword("");
