@@ -231,6 +231,8 @@ npx tsx scripts/cleanup-test-data.ts --status  # just show counts
 
 See [`docs/testing-plan.md`](docs/testing-plan.md) for coverage expectations and test categories.
 
+**Keeping embeddings across databases.** Dropping a dev database drops the vectors you paid to embed. [`docs/workflows/embedding-cache.md`](docs/workflows/embedding-cache.md) sets up a long-lived local copy of the embedding cache, with harvest, verified backups and a restore test.
+
 ---
 
 ## Public vs hosted

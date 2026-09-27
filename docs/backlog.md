@@ -31,6 +31,16 @@ Status (2026-07-08): ~~ADR written — [`docs/adr/0023-local-embedding-providers
 
 ## Data portability
 
+### `[DESIGN]` Point a dev backend's cache queries at the local embedding cache archive
+
+The archive (`docs/workflows/embedding-cache.md`, 2026-09-27) collects vectors from dev and test databases by harvest, but a backend still reads only its own database's `vector_cache`. So a fresh database starts cold and re-embeds text the archive already holds.
+
+Proposed: an optional `VECTOR_CACHE_DATABASE_URL` that sends the cache's four queries (lookup and insert in `lib/embeddings/enqueue.ts`, `embedding-worker/jobs/vector-check.ts` and `vector-api-call.ts`) to a second connection, using the archive's insert-only writer role. Unset, nothing changes.
+
+- Postgres foreign tables are not a shortcut: `postgres_fdw` rejects `ON CONFLICT` with named conflict columns, which both inserts use.
+- Every cache query is an exact-key lookup with no joins, so a second connection is enough.
+- Decide first whether an eval or ranking run should read through, since a run expecting a cold cache would then be warm.
+
 ### `[IMPL]` Export omits `references.original_filename` and `region_meta`
 
 Found 2026-07-12 while implementing import: the columns were added to `references` after `/auth/me/export` was written, so exports silently drop them and a round-trip loses file-attachment metadata (the audit trail viewers use to verify a recipe against their source copy). Add both to the export (additive — `schemaVersion` stays 1); import already passes unknown keys through its additive-tolerance gate.
