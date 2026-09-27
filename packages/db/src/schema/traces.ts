@@ -68,6 +68,25 @@ export const traces = claimnetSchema.table(
     impact: text("impact"),
     uncertainty: text("uncertainty"),
 
+    // Draft state (drafts-and-triage slice 2). NULL = an ordinary recipe,
+    // never a draft. Otherwise one of unverified | verified | rejected |
+    // not_chosen: a draft is deposited `unverified`, and moves one way to a
+    // resolution. Text + service-level validation, the codebase pattern for
+    // closed vocabularies. Until verified, a draft is visible only to the
+    // person it is about and their agents, and to the depositor; that rule
+    // lives once in apps/backend/src/authz/draft-sql.ts (SQL) and roles.ts
+    // (`mayReadTrace`), and nothing outside the module writes the condition
+    // by hand. A verified draft reads as an ordinary recipe everywhere.
+    // NEVER read by ranking, clustering, or MMR (ranking-isolation.test.ts).
+    draftState: text("draft_state"),
+    // Who resolved the draft and when (set once, with draft_state leaving
+    // `unverified`; COALESCE-guarded so a repeat is a no-op). The key is
+    // NULL when the person resolved it themselves (a reaction on a human
+    // surface); set when their agent verified it with new evidence.
+    draftResolvedAt: timestamp("draft_resolved_at", { withTimezone: true }),
+    draftResolvedByUserId: uuid("draft_resolved_by_user_id"),
+    draftResolvedByKeyId: uuid("draft_resolved_by_key_id"),
+
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -84,6 +103,14 @@ export const traces = claimnetSchema.table(
     // and any future recency decay — the display-date convention everywhere
     // is COALESCE(decided_at, created_at), so the index matches it.
     index("traces_judgment_date_idx").using("btree", sql`(COALESCE(${t.decidedAt}, ${t.createdAt}))`),
+    // Drafts not yet published (unverified, rejected, not chosen), by the
+    // person they are about: small by design. Serves the briefing's
+    // "drafts awaiting your review" count and the future review queue.
+    // (Vector search probes draft state through the primary key instead;
+    // measured in the slice-2 build log.)
+    index("traces_unpublished_draft_idx")
+      .on(t.userId)
+      .where(sql`${t.draftState} IS NOT NULL AND ${t.draftState} <> 'verified'`),
     // tsvector GIN index defined in migration SQL
   ]
 );
