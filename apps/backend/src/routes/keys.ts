@@ -23,7 +23,7 @@ const scopedKeySchema = z.object({
   // headless key; "none" is reserved and refused like any other value.
   depositLevel: z.enum(["full", "drafts"]).optional(),
   // Unknown fields are refused, not ignored (slice 5 fix pass, from the
-  // audit's ergonomics note): a misspelled `deposit_level` or a `headless: true` would
+  // audit's ergonomics note): a snake-case or misspelled level field, or `headless: true`, would
   // otherwise mint an ordinary key while the caller believes it is headless.
 }).strict();
 
