@@ -1,6 +1,9 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { useState } from "react";
 import { authFetch, clearToken, setEmailVerified } from "../auth.js";
+import { TurnstileWidget } from "../components/TurnstileWidget";
+import { TURNSTILE_SITE_KEY } from "../lib/turnstile";
 
 /**
  * The only page an unverified-but-logged-in user can reach.
@@ -17,6 +20,9 @@ import { authFetch, clearToken, setEmailVerified } from "../auth.js";
  */
 export function VerifyPendingPage() {
   const navigate = useNavigate();
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const [turnstileReset, setTurnstileReset] = useState(0);
+  const [resendNotice, setResendNotice] = useState<string | null>(null);
 
   const meQuery = useQuery({
     queryKey: ["me"],
@@ -39,9 +45,17 @@ export function VerifyPendingPage() {
 
   const resendMutation = useMutation({
     mutationFn: async () => {
-      const res = await authFetch("/auth/resend-verification", { method: "POST" });
+      const res = await authFetch("/auth/resend-verification", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ turnstileToken: turnstileToken ?? undefined }),
+      });
       const json = (await res.json()) as { ok: boolean; error?: string };
       if (!json.ok) throw new Error(json.error ?? "Failed to send verification email");
+    },
+    // A Turnstile token is single-use: get a fresh one after every request.
+    onSettled: () => {
+      if (TURNSTILE_SITE_KEY) setTurnstileReset((n) => n + 1);
     },
   });
 
@@ -95,9 +109,26 @@ export function VerifyPendingPage() {
             {meQuery.isFetching ? "Checking..." : "I've verified my email"}
           </button>
 
+          {TURNSTILE_SITE_KEY && !resendMutation.isSuccess && (
+            <TurnstileWidget siteKey={TURNSTILE_SITE_KEY} onToken={setTurnstileToken} resetKey={turnstileReset} />
+          )}
+          {(resendNotice ?? (resendMutation.isError ? resendMutation.error.message : null)) && (
+            <p style={{ color: "var(--color-error)", fontSize: "0.875rem", margin: 0 }}>
+              {resendNotice ?? resendMutation.error?.message}
+            </p>
+          )}
+
           <button
             className="btn-secondary"
-            onClick={() => resendMutation.mutate()}
+            onClick={() => {
+              // Hold the request until the check has issued its token.
+              if (TURNSTILE_SITE_KEY && !turnstileToken) {
+                setResendNotice("Please complete the check above the button first.");
+                return;
+              }
+              setResendNotice(null);
+              resendMutation.mutate();
+            }}
             disabled={resendMutation.isPending}
             style={{ width: "100%", justifyContent: "center" }}
           >

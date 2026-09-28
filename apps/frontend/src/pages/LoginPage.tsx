@@ -1,4 +1,5 @@
 import { TurnstileWidget } from "../components/TurnstileWidget";
+import { TURNSTILE_SITE_KEY } from "../lib/turnstile";
 import { useState } from "react";
 import { safeReturnTarget } from "../lib/return-target.js";
 import { useNavigate, useLocation, Link } from "@tanstack/react-router";
@@ -22,11 +23,13 @@ interface AuthResponse {
   };
   error?: string;
   message?: string;
+  /** A waitlisted, unverified sign-in: the re-send needs a Turnstile check. */
+  turnstileRequired?: boolean;
 }
 
 import { API_BASE } from "../auth.js";
 
-async function loginRequest(body: { email: string; password: string }): Promise<AuthResponse> {
+async function loginRequest(body: { email: string; password: string; turnstileToken?: string | undefined }): Promise<AuthResponse> {
   const res = await fetch(`${API_BASE}/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -51,14 +54,14 @@ async function registerRequest(body: {
   return res.json() as Promise<AuthResponse>;
 }
 
-// Cloudflare Turnstile on the signup form, only when the build sets a site
-// key (the backend checks the token only when it has the secret).
-const TURNSTILE_SITE_KEY = (import.meta.env["VITE_TURNSTILE_SITE_KEY"] as string | undefined) || undefined;
 
 export function LoginPage() {
   const navigate = useNavigate();
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const [turnstileReset, setTurnstileReset] = useState(0);
+  // Sign-in shows the widget only after the backend asks for it (a
+  // waitlisted, unverified account whose re-send needs the check).
+  const [loginNeedsTurnstile, setLoginNeedsTurnstile] = useState(false);
   const location = useLocation();
   const queryClient = useQueryClient();
   const [email, setEmail] = useState("");
@@ -146,7 +149,7 @@ export function LoginPage() {
             tosAccepted: true,
             turnstileToken: turnstileToken ?? undefined,
           })
-        : loginRequest(body),
+        : loginRequest({ ...body, turnstileToken: loginNeedsTurnstile ? (turnstileToken ?? undefined) : undefined }),
     onSuccess: (data) => {
       if (data.ok && data.data) {
         if (isRegister) {
@@ -188,7 +191,14 @@ export function LoginPage() {
         // Correct password, account still on the waitlist — informational,
         // not a failure. The backend message branches on verification and
         // auto-resends a stale verification link, so it's the whole story.
-        setNotice(data.message ?? "You're on the waitlist — we'll email you when a spot opens.");
+        if (data.turnstileRequired && TURNSTILE_SITE_KEY) {
+          setLoginNeedsTurnstile(true);
+          setTurnstileReset((n) => n + 1);
+          setNotice("You're on the waitlist, but your email isn't verified yet. To get a fresh verification link, complete the check above and sign in again.");
+        } else {
+          setLoginNeedsTurnstile(false);
+          setNotice(data.message ?? "You're on the waitlist — we'll email you when a spot opens.");
+        }
       } else {
         setError(data.error ?? "Authentication failed");
         // A Turnstile token is single-use: get a fresh one for the retry.
@@ -213,7 +223,7 @@ export function LoginPage() {
       setError("You must accept the Terms of Service and Privacy Policy.");
       return;
     }
-    if (isRegister && TURNSTILE_SITE_KEY && !turnstileToken) {
+    if ((isRegister || loginNeedsTurnstile) && TURNSTILE_SITE_KEY && !turnstileToken) {
       setError("Please complete the check above the button first.");
       return;
     }
@@ -472,7 +482,7 @@ export function LoginPage() {
             </div>
           )}
 
-          {isRegister && TURNSTILE_SITE_KEY && (
+          {(isRegister || loginNeedsTurnstile) && TURNSTILE_SITE_KEY && (
             <TurnstileWidget siteKey={TURNSTILE_SITE_KEY} onToken={setTurnstileToken} resetKey={turnstileReset} />
           )}
 

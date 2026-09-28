@@ -2,21 +2,35 @@ import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { useMutation } from "@tanstack/react-query";
 import { API_BASE } from "../auth.js";
+import { TurnstileWidget } from "../components/TurnstileWidget";
+import { TURNSTILE_SITE_KEY } from "../lib/turnstile";
 
 export function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const [turnstileReset, setTurnstileReset] = useState(0);
 
   const mutation = useMutation({
     mutationFn: async (addr: string) => {
       const res = await fetch(`${API_BASE}/auth/forgot-password`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: addr }),
+        body: JSON.stringify({ email: addr, turnstileToken: turnstileToken ?? undefined }),
       });
-      return (await res.json()) as { ok: boolean; data?: { message?: string } };
+      return (await res.json()) as { ok: boolean; error?: string; data?: { message?: string } };
     },
-    onSuccess: () => setSubmitted(true),
+    onSuccess: (data) => {
+      if (data.ok) {
+        setSubmitted(true);
+        return;
+      }
+      setError(data.error ?? "Something went wrong. Please try again.");
+      // A Turnstile token is single-use: get a fresh one for the retry.
+      if (TURNSTILE_SITE_KEY) setTurnstileReset((n) => n + 1);
+    },
+    onError: () => setError("Network error. Please try again."),
   });
 
   return (
@@ -72,6 +86,11 @@ export function ForgotPasswordPage() {
         ) : (
           <form onSubmit={(e) => {
             e.preventDefault();
+            setError(null);
+            if (TURNSTILE_SITE_KEY && !turnstileToken) {
+              setError("Please complete the check above the button first.");
+              return;
+            }
             mutation.mutate(email);
           }}>
             <div style={{ marginBottom: "var(--space-md)" }}>
@@ -86,6 +105,14 @@ export function ForgotPasswordPage() {
                 placeholder="you@example.com"
               />
             </div>
+
+            {TURNSTILE_SITE_KEY && (
+              <TurnstileWidget siteKey={TURNSTILE_SITE_KEY} onToken={setTurnstileToken} resetKey={turnstileReset} />
+            )}
+
+            {error && (
+              <p style={{ color: "var(--color-error)", fontSize: "0.875rem", marginBottom: "var(--space-md)" }}>{error}</p>
+            )}
 
             <button
               type="submit"

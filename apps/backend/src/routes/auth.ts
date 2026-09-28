@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { z } from "zod";
 import crypto from "crypto";
 import { sql } from "drizzle-orm";
@@ -17,6 +17,9 @@ import type { AppEnv } from "../types";
 const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1),
+  // Only used when this sign-in would re-send a verification email (a
+  // waitlisted, unverified account); a normal sign-in never needs it.
+  turnstileToken: z.string().max(4096).optional(),
 });
 
 const registerSchema = z.object({
@@ -48,6 +51,11 @@ const resetPasswordRateLimit = rateLimit({ max: 10, windowMs: 15 * 60 * 1000 });
 
 const forgotPasswordSchema = z.object({
   email: z.string().email(),
+  turnstileToken: z.string().max(4096).optional(),
+});
+
+const resendVerificationSchema = z.object({
+  turnstileToken: z.string().max(4096).optional(),
 });
 
 const resetPasswordSchema = z.object({
@@ -61,6 +69,20 @@ function hashResetToken(token: string): string {
 }
 
 const auth = new Hono<AppEnv>();
+
+/**
+ * Cloudflare Turnstile on every path that sends an email to an address the
+ * caller may not own: registration, verification resend, password reset,
+ * and sign-in's re-send for waitlisted accounts (lib/turnstile.ts; off
+ * unless TURNSTILE_SECRET_KEY is set). Returns the refusal to send, or null
+ * to proceed. The refusal never depends on the email, so it leaks nothing.
+ */
+async function turnstileRefusal(c: Context<AppEnv>, token: string | undefined, route: string): Promise<Response | null> {
+  const result = await verifyTurnstile({ secret: process.env["TURNSTILE_SECRET_KEY"], token });
+  if (result.ok) return null;
+  if (result.reason === "unreachable") console.error(`[${route}] Turnstile verification unreachable`);
+  return c.json({ ok: false, code: "turnstile_failed", error: "We couldn't confirm you're not a bot. Please try again." }, 400);
+}
 
 // POST /auth/register
 //
@@ -94,17 +116,8 @@ auth.post("/register", authRateLimit, async (c) => {
   // Bot check before any database work (lib/turnstile.ts; off unless
   // TURNSTILE_SECRET_KEY is set). The refusal says nothing about the email,
   // so it leaks nothing.
-  const turnstile = await verifyTurnstile({
-    secret: process.env["TURNSTILE_SECRET_KEY"],
-    token: parsed.data.turnstileToken,
-  });
-  if (!turnstile.ok) {
-    if (turnstile.reason === "unreachable") console.error("[auth/register] Turnstile verification unreachable");
-    return c.json(
-      { ok: false, code: "turnstile_failed", error: "We couldn't confirm you're not a bot. Please try again." },
-      400,
-    );
-  }
+  const refusal = await turnstileRefusal(c, parsed.data.turnstileToken, "auth/register");
+  if (refusal) return refusal;
 
   // Canonical lowercase form everywhere: the invite lookup below, the user
   // row registerUser inserts, and the verification email must all agree.
@@ -333,7 +346,15 @@ auth.post("/login", authRateLimit, async (c) => {
       ? Date.now() - new Date(row.tokenCreatedAt).getTime()
       : Infinity;
     let resent = false;
-    if (tokenAgeMs > 60 * 60 * 1000) {
+    // The re-send mails the account's address, which a bot may have
+    // registered with a stranger's: it needs a Turnstile token when that
+    // check is on. Without one, answer as before and ask the page for one.
+    const turnstileNeeded = Boolean(process.env["TURNSTILE_SECRET_KEY"]);
+    const turnstilePassed = turnstileNeeded
+      ? (await verifyTurnstile({ secret: process.env["TURNSTILE_SECRET_KEY"], token: parsed.data.turnstileToken })).ok
+      : true;
+    const resendDue = tokenAgeMs > 60 * 60 * 1000;
+    if (resendDue && turnstilePassed) {
       const freshToken = crypto.randomBytes(32).toString("hex");
       await db.execute(sql`
         UPDATE claimnet.users
@@ -351,6 +372,8 @@ auth.post("/login", authRateLimit, async (c) => {
       ok: false,
       error: "waitlisted",
       verified: false,
+      // The page shows the Turnstile widget and asks for a second sign-in.
+      ...(resendDue && !turnstilePassed ? { turnstileRequired: true } : {}),
       message: resent
         ? "You're on the waitlist, but your email isn't verified yet — we just sent you a fresh verification link. Confirm it to hold your place."
         : "You're on the waitlist, but your email isn't verified yet. Check your inbox (and spam) for the verification link we sent — confirming it holds your place.",
@@ -735,6 +758,10 @@ auth.post("/verify", verifyRateLimit, async (c) => {
 // This is one of only two opt-outs (the other is /auth/me).
 auth.post("/resend-verification", resendRateLimit, requireAuth, async (c) => {
   const user = c.get("user");
+  const body: unknown = await c.req.json().catch(() => ({}));
+  const parsedBody = resendVerificationSchema.safeParse(body ?? {});
+  const refusal = await turnstileRefusal(c, parsedBody.success ? parsedBody.data.turnstileToken : undefined, "auth/resend-verification");
+  if (refusal) return refusal;
   const db = getDb();
 
   // Check if already verified
@@ -784,6 +811,11 @@ auth.post("/forgot-password", forgotPasswordRateLimit, async (c) => {
   }
   // Same normalization as register/login — the not-exists branch does the
   // identical work, so this adds no enumeration signal (F45).
+  // Bot check before the lookup, so it costs the same whether or not the
+  // account exists (F45 timing equality is untouched).
+  const refusal = await turnstileRefusal(c, parsed.data.turnstileToken, "auth/forgot-password");
+  if (refusal) return refusal;
+
   const email = normalizeEmail(parsed.data.email);
   const db = getDb();
 
