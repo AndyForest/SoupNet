@@ -692,6 +692,29 @@ describe.skipIf(!BASE || !canConnect())("drafts on behalf of another person (dra
     expect(answers[0]).toBe(answers[1]);
   });
 
+  it("[F92] import overwrite never changes a draft the importer deposited about someone else; the subject confirms the text he reviewed", async () => {
+    const id = await onBehalf("bait");
+    const original = String((await sql`SELECT claim_text FROM claimnet.traces WHERE id = ${id}::uuid`)[0]?.["claim_text"]);
+    const swapped = recipe("switched text the subject never saw");
+    const res = await fetch(`${BASE}/import?book=${shared.slug}&overwrite=true`, {
+      method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${dana.jwt}` },
+      body: JSON.stringify({
+        schemaVersion: 1,
+        traces: [{ id, claimText: swapped, createdAt: new Date().toISOString(), decidedAt: "2020-01-01" }],
+        evidence: [], references: [], traceEvidence: [], traceReferences: [], evidenceReferences: [],
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { counts: { traces: Record<string, number> }; conflicts: Array<{ id: string; kept: string }> } };
+    expect(body.data.counts.traces).toMatchObject({ overwritten: 0, conflicted: 1 });
+    expect(body.data.conflicts.find((c) => c.id === id)?.kept).toBe("existing");
+    const after = await sql`SELECT claim_text, decided_at FROM claimnet.traces WHERE id = ${id}::uuid`;
+    expect(after[0]?.["claim_text"]).toBe(original);
+    expect(after[0]?.["decided_at"]).toBeNull();
+    expect((await call(pat, "PUT", `/traces/${id}/reaction`, { reaction: "still_true" })).status).toBe(200);
+    expect(String((await sql`SELECT claim_text FROM claimnet.traces WHERE id = ${id}::uuid`)[0]?.["claim_text"])).toBe(original);
+  });
+
   // ── Leaving the book (S4-A1, S4-A2) ──────────────────────────────────────
 
   it("S4-A1 / DT-OBO-12: Pat removed from the book: the draft stays; his queue drops it; his link shows it with the book as the reason; rejoining restores it", async () => {

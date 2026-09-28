@@ -73,7 +73,7 @@ import {
 } from "@soupnet/db";
 import { getEmbeddingModelId } from "../lib/embeddings/provider";
 import { deleteEmbeddingChainForSource } from "./trace-delete.service";
-import { normalizeOnBehalfOf, resolveNameableSubject } from "../authz";
+import { normalizeOnBehalfOf, resolveNameableSubject, onBehalfSubjectOf } from "../authz";
 import { onBehalfRefusal } from "@soupnet/domain";
 import type { ParsedExport, ImportTraceRow } from "./import-validate";
 
@@ -185,6 +185,8 @@ interface ExistingTrace {
   groupId: string;
   claimText: string;
   decidedAt: Date | null;
+  /** Set on a draft someone deposited about another person (slice 4). */
+  subjectUserId?: string | null;
 }
 
 /** The exact evidence-embedding text the check path produces
@@ -234,10 +236,11 @@ export async function importCorpus(
     const existingTraces = new Map<string, ExistingTrace>();
     for (const chunk of chunks(parsed.traces)) {
       const rows = await tx.execute(sql`
-        SELECT id, user_id AS "userId", group_id AS "groupId",
-               claim_text AS "claimText", decided_at AS "decidedAt"
-        FROM claimnet.traces
-        WHERE id IN (${sql.join(chunk.map((t) => sql`${t.id}::uuid`), sql`, `)})
+        SELECT t.id, t.user_id AS "userId", t.group_id AS "groupId",
+               t.claim_text AS "claimText", t.decided_at AS "decidedAt",
+               ${onBehalfSubjectOf("t")} AS "subjectUserId"
+        FROM claimnet.traces t
+        WHERE t.id IN (${sql.join(chunk.map((t) => sql`${t.id}::uuid`), sql`, `)})
       `);
       for (const r of rows as unknown as Array<ExistingTrace & { decidedAt: string | Date | null }>) {
         existingTraces.set(r.id, {
@@ -268,10 +271,11 @@ export async function importCorpus(
     // instead of colliding on insert.
     for (const chunk of chunks([...traceIdRemap.values()])) {
       const rows = await tx.execute(sql`
-        SELECT id, user_id AS "userId", group_id AS "groupId",
-               claim_text AS "claimText", decided_at AS "decidedAt"
-        FROM claimnet.traces
-        WHERE id IN (${sql.join(chunk.map((id) => sql`${id}::uuid`), sql`, `)})
+        SELECT t.id, t.user_id AS "userId", t.group_id AS "groupId",
+               t.claim_text AS "claimText", t.decided_at AS "decidedAt",
+               ${onBehalfSubjectOf("t")} AS "subjectUserId"
+        FROM claimnet.traces t
+        WHERE t.id IN (${sql.join(chunk.map((id) => sql`${id}::uuid`), sql`, `)})
       `);
       for (const r of rows as unknown as Array<ExistingTrace & { decidedAt: string | Date | null }>) {
         existingTraces.set(r.id, {
@@ -305,10 +309,14 @@ export async function importCorpus(
       if (!sameInstant(existing.decidedAt, t.decidedAt)) fields.push("decidedAt");
       if (fields.length === 0) {
         skippedIdentical++;
-      } else if (overwrite) {
+      } else if (overwrite && !existing.subjectUserId) {
         toOverwrite.push(t);
         addConflict({ entity: "trace", id: t.id, fields, kept: "incoming" });
       } else {
+        // Kept as it is: overwrite=false, or a draft this importer deposited
+        // about someone else ([F92]). Its text is what its subject reviews,
+        // and their confirm publishes it as their own recipe, so the file's
+        // version is reported as a conflict like any row import keeps.
         conflicted++;
         addConflict({ entity: "trace", id: t.id, fields, kept: "existing" });
       }
@@ -541,13 +549,14 @@ export async function importCorpus(
     // embeddings for the old text are removed so the worker sweep re-embeds.
     for (const t of toOverwrite) {
       await tx.execute(sql`
-        UPDATE claimnet.traces
+        UPDATE claimnet.traces t
         SET claim_text = ${t.claimText},
             claim_text_hash = ${t.claimTextHash ?? sha256(t.claimText)},
             format_adherence_score = ${t.formatAdherenceScore},
             decided_at = ${t.decidedAt ? t.decidedAt.toISOString() : null}::timestamptz,
             updated_at = now()
-        WHERE id = ${t.id}::uuid AND user_id = ${userId}::uuid
+        WHERE t.id = ${t.id}::uuid AND t.user_id = ${userId}::uuid
+          AND ${onBehalfSubjectOf("t")} IS NULL
       `);
       await deleteEmbeddingChainForSource(tx, "trace", t.id);
     }
