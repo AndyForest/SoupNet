@@ -606,7 +606,7 @@ describe.skipIf(!BASE || !canConnect())("drafts for the key's own user (drafts-a
   it("S2-B10 / S2-B11 / DT-VER-04, DT-VER-09: Pat's agent verifies with a new quote: verified by that key, evidence attached, Sam finds it, ranking inputs untouched", async () => {
     const before = await traceRow(draftId);
     const embBefore = await sql`
-      SELECT es.id::text AS id FROM claimnet.embedding_sources es
+      SELECT es.id::text AS id, es.source_text AS text FROM claimnet.embedding_sources es
       WHERE es.source_type = 'trace' AND es.source_id = ${draftId}::uuid ORDER BY es.id`;
     const query = `author:me draft visibility ${MARKER}`;
     const patSearchBefore = await mcp(patKey, "search_recipes", { query, verbosity: "high", response_format: "structured" });
@@ -624,11 +624,16 @@ describe.skipIf(!BASE || !canConnect())("drafts for the key's own user (drafts-a
     expect(after?.["claim_text"]).toBe(before?.["claim_text"]);
     expect(String(after?.["decided_at"])).toBe(String(before?.["decided_at"]));
     expect(after?.["impact"]).toBe("high");
-    // …and so are the recipe's own embeddings.
+    // …and so are the recipe's own embeddings: every source that existed
+    // before verification is still there with the same text. The worker's
+    // strategy sweep may add a source for a new strategy mid-test, so
+    // extra rows are not a verification effect.
     const embAfter = await sql`
-      SELECT es.id::text AS id FROM claimnet.embedding_sources es
+      SELECT es.id::text AS id, es.source_text AS text FROM claimnet.embedding_sources es
       WHERE es.source_type = 'trace' AND es.source_id = ${draftId}::uuid ORDER BY es.id`;
-    expect(embAfter.map((e) => e["id"])).toEqual(embBefore.map((e) => e["id"]));
+    const afterById = new Map(embAfter.map((e) => [e["id"], e["text"]]));
+    expect(embBefore.length).toBeGreaterThan(0);
+    for (const e of embBefore) expect(afterById.get(e["id"])).toBe(e["text"]);
     // The new evidence is attached, by the verifying key.
     const quotes = await sql`
       SELECT r.quote FROM claimnet.trace_references tr JOIN claimnet.references r ON r.id = tr.reference_id
