@@ -295,8 +295,8 @@ const TRACE_READS = {
     why: "moves one recipe under lock after the route's access check; draft state rides along unchanged (RP-36)",
   },
   "apps/backend/src/services/user-delete.service.ts": {
-    n: 2, fp: "030fa45c370f", composes: false,
-    why: "account-deletion cascade over the user's own recipes (RP-37)",
+    n: 3, fp: "b5f74ff7f35a", composes: false,
+    why: "account-deletion cascade over the user's own recipes (RP-37), and the book delete's any-recipe-left guard, which must count drafts too",
   },
   "apps/backend/src/services/vector-search.service.ts": {
     n: 11, fp: "7beb48e89474", composes: true,
