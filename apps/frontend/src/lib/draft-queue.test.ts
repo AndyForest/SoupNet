@@ -12,6 +12,7 @@ import {
   nextFocusId,
   excerpt,
   whyLabel,
+  partyText,
   QUEUE_ACTIONS,
 } from "./draft-queue.js";
 import type { QueueItem } from "./draft-queue.js";
@@ -130,5 +131,28 @@ describe("focus after an action (S3-A5)", () => {
     expect(nextFocusId(["a"], "a")).toBeNull();
     expect(nextFocusId(["a", "b"], "z")).toBe("a");
     expect(nextFocusId([], "z")).toBeNull();
+  });
+});
+
+describe("slice 4: drafts deposited on someone else's behalf (S4-Q2, S4-Q5, S4-UI2)", () => {
+  const base = { depositedAt: "2026-09-27T10:00:00Z", keyLabel: "Dana laptop", impact: "high", uncertainty: null };
+
+  it("names the depositor beside the key label, and says the ratings are the depositing agent's", () => {
+    const item = { ...base, depositedBy: "dana@test.local" };
+    expect(depositedText(item, "en-GB")).toContain("by dana@test.local (Dana laptop)");
+    expect(queueRatingsText(item)).toBe("Depositing agent's ratings: impact high · uncertainty not rated");
+    expect(whyLabel("unverified", item)).toBe("Why their agent drafted it:");
+    expect(partyText(item)).toBe("Deposited on your behalf by dana@test.local");
+  });
+
+  it("names the subject to the depositor", () => {
+    expect(partyText({ about: "pat@test.local" })).toBe("About pat@test.local");
+  });
+
+  it("a draft the person's own agent deposited reads as before", () => {
+    expect(depositedText(base, "en-GB")).toContain("by Dana laptop");
+    expect(queueRatingsText(base)).toBe("Agent's ratings: impact high · uncertainty not rated");
+    expect(whyLabel("unverified")).toBe("Why your agent drafted it:");
+    expect(partyText({})).toBeNull();
   });
 });

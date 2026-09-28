@@ -15,6 +15,34 @@ export interface DraftStatusLike {
   /** The viewer resolved it themselves ([F83]: "by you" only then). */
   draftResolvedByViewer?: boolean;
   apiKeyId?: string | null;
+  /** Slice 4: on a draft about the viewer that someone else's agent
+   *  deposited, that person's email. */
+  draftDepositedBy?: string | null;
+  /** Slice 4: on a draft the viewer's agent deposited about someone else,
+   *  that person's email. */
+  draftAbout?: string | null;
+}
+
+/**
+ * The line naming the other party of an unpublished on-behalf draft (slice
+ * 4, S4-L1, S4-UI2): text, never colour or an icon alone. Null otherwise.
+ */
+export function draftPartyLine(t: Pick<DraftStatusLike, "draftDepositedBy" | "draftAbout">): string | null {
+  if (t.draftDepositedBy) return `Deposited by ${t.draftDepositedBy}'s agent, on your behalf`;
+  if (t.draftAbout) return `About ${t.draftAbout}: only they can confirm or reject it`;
+  return null;
+}
+
+/**
+ * The delete control's accessible name on a draft the viewer deposited about
+ * someone else (S4-UI2): it says what it removes. Undefined otherwise, so
+ * the visible label stands.
+ */
+export function deleteDraftAccessibleName(t: Pick<DraftStatusLike, "draftAbout"> & { claimText: string }): string | undefined {
+  if (!t.draftAbout) return undefined;
+  const flat = t.claimText.replace(/\s+/g, " ").trim();
+  const text = flat.length > 80 ? `${flat.slice(0, 79).trimEnd()}…` : flat;
+  return `Delete draft about ${t.draftAbout}: ${text}`;
 }
 
 export function draftStatusLabel(t: DraftStatusLike): { text: string; title: string } | null {
@@ -23,10 +51,18 @@ export function draftStatusLabel(t: DraftStatusLike): { text: string; title: str
     case null:
       return null;
     case "unverified":
+      if (t.draftAbout) {
+        return {
+          text: "Unverified draft",
+          title: `Your agent deposited this about ${t.draftAbout}. Until they verify it, only they and you, with your agents, can see it.`,
+        };
+      }
       return {
         text: "Unverified draft",
         title:
-          "An agent parked this as a hypothesis about your taste and judgment. Only you and your agents can see it. " +
+          (t.draftDepositedBy
+            ? `${t.draftDepositedBy}'s agent parked this as a hypothesis about your taste and judgment. Only you, they, and your agents can see it. `
+            : "An agent parked this as a hypothesis about your taste and judgment. Only you and your agents can see it. ") +
           "Still true verifies it and makes it an ordinary recipe; Wrong rejects it and keeps it private.",
       };
     case "verified": {

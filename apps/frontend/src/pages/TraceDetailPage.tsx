@@ -15,7 +15,7 @@ import { ApiKeyBadge } from "../components/ApiKeyBadge.js";
 import { DeleteTraceConfirmModal } from "../components/DeleteTraceConfirmModal.js";
 import { MoveTraceModal } from "../components/MoveTraceModal.js";
 import { triageRatingsLabel, TRIAGE_RATINGS_TITLE } from "../lib/triage-ratings-label.js";
-import { draftStatusLabel } from "../lib/draft-status-label.js";
+import { draftStatusLabel, draftPartyLine, deleteDraftAccessibleName } from "../lib/draft-status-label.js";
 
 export function TraceDetailPage() {
   const { traceId } = useParams({ strict: false }) as { traceId: string };
@@ -39,6 +39,7 @@ export function TraceDetailPage() {
   const createdAt = new Date(trace.createdAt);
   const ratingsLabel = triageRatingsLabel(trace);
   const draftStatus = draftStatusLabel(trace);
+  const draftParty = draftPartyLine(trace);
 
   return (
     <div>
@@ -94,6 +95,13 @@ export function TraceDetailPage() {
               {draftStatus.text}
             </span>
           )}
+          {/* Slice 4: who else a draft deposited on someone's behalf involves,
+              as text (S4-UI2). Only its two people ever see an unpublished one. */}
+          {draftParty && (
+            <span className="text-xs" data-testid="draft-party" style={{ color: "var(--color-on-surface-variant)", overflowWrap: "anywhere" }}>
+              {draftParty}
+            </span>
+          )}
           {/* The depositing agent's triage ratings (drafts-and-triage slice 1),
               labelled as the agent's so they never read as the person's own
               assessment. Absent when the agent rated neither. */}
@@ -143,9 +151,13 @@ export function TraceDetailPage() {
           <span className="text-xs" style={{ color: "var(--color-on-surface-variant)" }}>
             {trace.canResolveDraft
               ? "Is this draft right? Still true verifies it; Wrong rejects it."
-              : "Is this recipe still right?"}
+              : trace.draftAbout
+                ? `Only ${trace.draftAbout} can review this draft; send them the review link from your agent.`
+                : "Is this recipe still right?"}
           </span>
-          {(["still_true", "stale", "wrong"] as TraceReaction[]).map((r) => {
+          {/* The depositor of a draft about someone else cannot verify or
+              reject it (S4-R2), so the reactions are not offered. */}
+          {!trace.draftAbout && (["still_true", "stale", "wrong"] as TraceReaction[]).map((r) => {
             const active = feedbackData?.reactions.mine === r;
             const count = feedbackData?.reactions.counts[r] ?? 0;
             const label = r === "still_true" ? "Still true" : r === "stale" ? "Stale" : "Wrong";
@@ -220,9 +232,10 @@ export function TraceDetailPage() {
           <button
             className="btn-ghost"
             onClick={() => setConfirmOpen(true)}
+            aria-label={deleteDraftAccessibleName(trace)}
             style={{ color: "var(--color-error)", borderColor: "var(--color-error)" }}
           >
-            Delete this trace
+            {trace.draftAbout ? "Delete this draft" : "Delete this trace"}
           </button>
         </section>
       )}

@@ -12,6 +12,7 @@ import {
   excerpt,
   linkNotShownText,
   nextFocusId,
+  partyText,
   queueRatingsText,
   queueTotalText,
   stateLabel,
@@ -230,6 +231,7 @@ export function DraftQueuePage() {
                   >
                     <p id={`draft-${item.id}`} className={styles["recipe"]}>{item.recipe}</p>
                     {stateLabel(item.state) && <p className={styles["state"]}>{stateLabel(item.state)}</p>}
+                    {partyText(item) && <p className={styles["state"]} data-testid="queue-party">{partyText(item)}</p>}
                     <p className={styles["meta"]}>
                       <span>Recipe book: {item.recipeBook.name}</span>
                       <span>{queueRatingsText(item)}</span>
@@ -237,14 +239,19 @@ export function DraftQueuePage() {
                     </p>
                     {item.firstInterpretation && (
                       <p className={styles["why"]}>
-                        <span className={styles["whyLabel"]}>{whyLabel(item.state)} </span>
+                        <span className={styles["whyLabel"]}>{whyLabel(item.state, item)} </span>
                         {item.firstInterpretation}
                       </p>
                     )}
                     {item.state === "unverified" && !item.canResolve && item.blockedReason && (
-                      <p className={styles["blocked"]}>{item.blockedReason}</p>
+                      <p id={`blocked-${item.id}`} className={styles["blocked"]}>{item.blockedReason}</p>
                     )}
-                    <div className={styles["actions"]}>
+                    <div
+                      className={styles["actions"]}
+                      role="group"
+                      aria-label={`Actions for draft ${item.id.slice(0, 8)}`}
+                      {...(item.state === "unverified" && !item.canResolve && item.blockedReason ? { "aria-describedby": `blocked-${item.id}` } : {})}
+                    >
                       {item.canResolve && QUEUE_ACTIONS.map((action) => (
                         <button
                           key={action}

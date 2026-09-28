@@ -96,6 +96,10 @@ export interface TraceDetail extends Trace {
   draftResolvedByViewer?: boolean;
   /** The person this draft is about may verify or reject it with a reaction. */
   canResolveDraft?: boolean;
+  /** Slice 4: the other party of an unpublished on-behalf draft, from the
+   *  viewer's side (the depositor to its subject, the subject to its depositor). */
+  draftDepositedBy?: string | null;
+  draftAbout?: string | null;
   userId: string;
   userEmail: string | null;
   groupName?: string | null;
