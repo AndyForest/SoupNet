@@ -8,6 +8,7 @@ import { Icon } from "../components/Icon.js";
 import { RecipeBookScopePicker } from "../components/RecipeBookScopePicker.js";
 import { useClipboard } from "../hooks/useClipboard.js";
 import { substituteBriefingKey } from "../lib/briefing-key.js";
+import { scopedKeyPayload, headlessKeyLabel, HEADLESS_KEY_DESCRIPTION, HEADLESS_KEY_FIXED_NOTE } from "../lib/headless-key.js";
 
 // sessionStorage key for the ephemeral custom-briefing handoff. The raw API
 // key never goes into the URL — RecipeMapPage reads this once on mount, then
@@ -25,6 +26,8 @@ interface ApiKey {
   id: string;
   keyPrefix: string;
   keyType: string;
+  /** "full" | "drafts" (headless), slice 5. */
+  depositLevel?: string;
   readRecipeBookIds: string[];
   writeRecipeBookIds: string[];
   defaultWriteRecipeBookId: string;
@@ -57,6 +60,7 @@ export function ApiKeysPage() {
   const [readGroupIds, setReadGroupIds] = useState<string[]>([]);
   const [writeGroupIds, setWriteGroupIds] = useState<string[]>([]);
   const [defaultWriteGroupId, setDefaultWriteGroupId] = useState<string>("");
+  const [scopedHeadless, setScopedHeadless] = useState(false);
 
   // Track just-created key — shows inline in the active keys list
   const [justCreatedKey, setJustCreatedKey] = useState<{ raw: string; id: string } | null>(null);
@@ -106,13 +110,14 @@ export function ApiKeysPage() {
       const dwId = defaultWriteGroupId || wIds[0] || "";
       const res = await authFetch("/keys/scoped", {
         method: "POST",
-        body: JSON.stringify({
+        body: JSON.stringify(scopedKeyPayload({
           readRecipeBookIds: rIds,
           writeRecipeBookIds: wIds,
           defaultWriteRecipeBookId: dwId,
           expiresAt,
-          label: scopedLabel || undefined,
-        }),
+          label: scopedLabel,
+          headless: scopedHeadless,
+        })),
       });
       const json = (await res.json()) as KeyResponse;
       if (!json.ok) throw new Error(json.error ?? "Failed to generate key");
@@ -123,6 +128,7 @@ export function ApiKeysPage() {
       setShowForm(false);
       setScopedLabel("");
       setScopedDays("30");
+      setScopedHeadless(false);
       void queryClient.invalidateQueries({ queryKey: ["keys"] });
 
       // Find the new key in the refreshed list by matching the prefix
@@ -270,6 +276,23 @@ export function ApiKeysPage() {
                 />
               </div>
 
+              <div>
+                <label htmlFor="scopedHeadless" style={{ display: "flex", alignItems: "center", gap: "var(--space-sm)", cursor: "pointer", marginBottom: "var(--space-xs)" }}>
+                  <input
+                    id="scopedHeadless"
+                    type="checkbox"
+                    checked={scopedHeadless}
+                    onChange={(e) => setScopedHeadless(e.target.checked)}
+                    aria-describedby="scopedHeadlessDescription"
+                    style={{ width: "auto", margin: 0 }}
+                  />
+                  Headless
+                </label>
+                <p id="scopedHeadlessDescription" className="text-xs" style={{ color: "var(--color-on-surface-variant)", margin: 0 }}>
+                  {HEADLESS_KEY_DESCRIPTION}
+                </p>
+              </div>
+
               {groups.length > 1 && (
                 <RecipeBookScopePicker
                   books={groups}
@@ -309,6 +332,7 @@ export function ApiKeysPage() {
             const isExpanded = expandedKeyId === key.id || (justCreatedKey?.id === key.keyPrefix);
             const isJustCreated = justCreatedKey?.id === key.keyPrefix;
             const rawKey = isJustCreated ? justCreatedRawKey : null;
+            const headlessLabel = headlessKeyLabel(key.depositLevel);
 
             return (
               <div
@@ -340,6 +364,11 @@ export function ApiKeysPage() {
                     <span className="text-xs" style={{ color: "var(--color-outline-variant)" }}>
                       expires {new Date(key.expiresAt).toLocaleDateString()}
                     </span>
+                    {headlessLabel && (
+                      <span className="text-xs" style={{ color: "var(--color-on-surface)", fontWeight: 600 }}>
+                        {headlessLabel}
+                      </span>
+                    )}
                     {isJustCreated && (
                       <span className="pill" style={{ fontSize: "0.6rem", background: "var(--color-primary)", color: "var(--color-on-primary)" }}>
                         NEW
@@ -371,6 +400,9 @@ export function ApiKeysPage() {
                         <p style={{ fontWeight: 600, fontSize: "0.85rem", marginBottom: "var(--space-sm)", color: "var(--color-secondary)" }}>
                           Key shown once only — copy it now
                         </p>
+                        {headlessLabel && (
+                          <p className="text-xs" style={{ marginBottom: "var(--space-sm)" }}>{headlessLabel}</p>
+                        )}
                         <div style={{ display: "flex", gap: "var(--space-sm)", alignItems: "center" }}>
                           <input readOnly value={rawKey} className="text-mono" style={{ fontSize: "0.78rem" }} />
                           <button className="btn-secondary" onClick={() => void copyText(rawKey, `key-${key.id}`)} style={{ flexShrink: 0, fontSize: "0.8rem" }}>
@@ -455,6 +487,11 @@ export function ApiKeysPage() {
                         Created {new Date(key.createdAt).toLocaleDateString()}
                       </span>
                     </div>
+                    {headlessLabel && (
+                      <p className="text-xs" style={{ color: "var(--color-on-surface-variant)", marginTop: "var(--space-sm)", marginBottom: 0 }}>
+                        {HEADLESS_KEY_FIXED_NOTE}
+                      </p>
+                    )}
                   </div>
                 )}
               </div>
