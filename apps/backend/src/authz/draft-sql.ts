@@ -48,13 +48,12 @@ import { inBooks } from "./scope-sql";
 /**
  * The aliases the fragments may be applied to: `t` and `tr` for statements
  * that read `claimnet.traces`, `dv`, the alias the id-keyed form gives
- * its own lookup, and `ot`, content-ownership.ts's owning recipes. A closed set, so only these constants reach `sql.raw`.
+ * its own lookup. A closed set, so only these constants reach `sql.raw`.
  */
 const ALIASES = {
   t: sql.raw("t"),
   tr: sql.raw("tr"),
   dv: sql.raw("dv"),
-  ot: sql.raw("ot"),
 } as const;
 
 export type TraceAlias = keyof typeof ALIASES;

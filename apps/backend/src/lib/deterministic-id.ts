@@ -10,7 +10,7 @@ import crypto from "node:crypto";
  *
  * - Same importer + same original id → the SAME minted id, every run, on any
  *   instance. Re-importing a file is idempotent because the minted id
- *   collides with itself and flows down the same-owner upsert path.
+ *   collides with itself and the importer's existing row is kept.
  * - Different importers → different minted ids, so parallel imports of one
  *   source corpus (the fresh-user-per-benchmark-run pattern) produce fully
  *   disjoint subgraphs that cannot cross-contaminate.

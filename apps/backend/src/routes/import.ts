@@ -15,8 +15,10 @@
  *                      (default: create a new book, lazily — only if the
  *                      import inserts anything)
  *   book_name=<text>   name for the created book (default "Imported <date>")
- *   overwrite=true     replace owned traces whose content differs
- *                      (default: existing rows win; conflicts are reported)
+ *
+ * Import only creates rows: an existing row is never changed (a trace of
+ * yours whose content differs is kept and reported as a conflict), and links
+ * are written only between rows the import created. See import.service.ts.
  *
  * Auth surface (design point 8): signed-in human — JWT + verified email,
  * same posture as recipe re-filing and deletion. API keys are rejected with
@@ -28,7 +30,7 @@
  * can't oversize the buffer), then parsed in one JSON.parse — measured at
  * well under a second at the 20 MB scale, and bounded by the byte cap.
  * Failed imports roll back completely (single transaction); re-uploading the
- * same file is the resume path (idempotent upsert-on-id).
+ * same file is the resume path (idempotent: existing ids are skipped).
  */
 
 import { Hono } from "hono";
@@ -120,7 +122,6 @@ importRoutes.post("/", async (c) => {
       userId: user.id,
       targetBook: c.req.query("book") || undefined,
       newBookName: c.req.query("book_name") || undefined,
-      overwrite: c.req.query("overwrite") === "true",
     });
 
     // Audit trail: one row per import with the summary + book mapping, so the
@@ -139,7 +140,6 @@ importRoutes.post("/", async (c) => {
           // Old→new remaps (v1.1 mint-on-conflict) so the mapping is
           // reconstructable from the trail even if the response is lost.
           idMap: result.idMap,
-          overwrite: c.req.query("overwrite") === "true",
           originalBooks: result.originalBooks,
           embeddings: {
             evidenceQueued: result.embeddings.evidenceQueued,

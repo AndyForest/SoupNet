@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import crypto from "node:crypto";
+import { mintImportId } from "../lib/deterministic-id";
 
 /**
  * Layer 3 integration tests for POST /import — requires a running backend
@@ -120,9 +121,9 @@ interface ImportResponse {
   data?: {
     book: { id: string; name: string; slug: string; created: boolean } | null;
     counts: {
-      traces: { inserted: number; skippedIdentical: number; conflicted: number; overwritten: number; remapped: number };
-      evidence: { inserted: number; skippedExisting: number; conflicted: number; remapped: number };
-      references: { inserted: number; skippedExisting: number; conflicted: number; remapped: number };
+      traces: { inserted: number; skippedIdentical: number; conflicted: number; remapped: number };
+      evidence: { inserted: number; skippedExisting: number; remapped: number };
+      references: { inserted: number; skippedExisting: number; remapped: number };
       links: { inserted: number; skippedExisting: number; orphaned: number };
     };
     conflicts: Array<{ entity: string; id: string; fields: string[]; kept: string }>;
@@ -226,7 +227,7 @@ describe.skipIf(!BASE)("POST /import", () => {
     expect(data.book!.created).toBe(true);
     rtBookId = data.book!.id;
     expect(data.counts.traces).toEqual({
-      inserted: 2, skippedIdentical: 0, conflicted: 0, overwritten: 0, remapped: 0,
+      inserted: 2, skippedIdentical: 0, conflicted: 0, remapped: 0,
     });
     expect(data.idMap).toEqual([]);
     expect(data.counts.evidence.inserted).toBe(1);
@@ -266,10 +267,10 @@ describe.skipIf(!BASE)("POST /import", () => {
     expect(status).toBe(200);
     const data = body.data!;
     expect(data.counts.traces).toEqual({
-      inserted: 0, skippedIdentical: 2, conflicted: 0, overwritten: 0, remapped: 0,
+      inserted: 0, skippedIdentical: 2, conflicted: 0, remapped: 0,
     });
-    expect(data.counts.evidence).toEqual({ inserted: 0, skippedExisting: 1, conflicted: 0, remapped: 0 });
-    expect(data.counts.references).toEqual({ inserted: 0, skippedExisting: 1, conflicted: 0, remapped: 0 });
+    expect(data.counts.evidence).toEqual({ inserted: 0, skippedExisting: 1, remapped: 0 });
+    expect(data.counts.references).toEqual({ inserted: 0, skippedExisting: 1, remapped: 0 });
     expect(data.counts.links.inserted).toBe(0);
     expect(data.counts.links.skippedExisting).toBe(3);
     // Fully-skipped import must not litter an empty book.
@@ -302,25 +303,19 @@ describe.skipIf(!BASE)("POST /import", () => {
     expect(t1!.claimText).toContain("preserve my original decision dates");
   });
 
-  it("overwrite=true replaces owned trace content and reports kept=incoming", async () => {
+  it("never changes an existing recipe: the retired overwrite option is ignored", async () => {
+    // Import only creates rows (recipe 5d541d2c). overwrite=true was removed;
+    // a changed row of the importer's own is kept and reported as a conflict.
     const doctored = structuredClone(rt.file);
-    const newText = "As a data owner re-importing corrected history, I chose overwrite so that the incoming file wins.";
-    doctored.traces[0]!["claimText"] = newText;
+    doctored.traces[0]!["claimText"] = "As a data owner re-importing corrected history, I chose overwrite so that the incoming file wins.";
     const { status, body } = await postImport(tokenA, JSON.stringify(doctored), "?overwrite=true");
     expect(status).toBe(200);
-    const data = body.data!;
-    expect(data.counts.traces.overwritten).toBe(1);
-    expect(data.conflicts[0]!.kept).toBe("incoming");
-    expect(data.embeddings.tracesPendingBackfill).toBe(1);
+    expect(body.data!.counts.traces).toMatchObject({ inserted: 0, conflicted: 1 });
+    expect(body.data!.conflicts[0]!.kept).toBe("existing");
 
     const exported = await exportAccount(tokenA);
     const t1 = exported.traces.find((t) => t.id === rt.traceIds[0]);
-    expect(t1!.claimText).toBe(newText);
-    // Overwrite is content-only: the row stays in its book.
-    expect(t1!.groupId).toBe(rtBookId);
-
-    // Restore the original content for any later assertions.
-    await postImport(tokenA, JSON.stringify(rt.file), "?overwrite=true");
+    expect(t1!.claimText).toContain("preserve my original decision dates");
   });
 
   it("mints a fully independent subgraph for another user's corpus (v1.1 isolation)", async () => {
@@ -512,11 +507,11 @@ describe.skipIf(!BASE)("POST /import", () => {
     expect(body.data!.counts.links.inserted).toBe(3);
   });
 
-  // ── [F98] Link endpoints absent from the file must be the importer's own ──
-  // Import links or reuses an existing evidence or reference row only when it
-  // hangs off recipes the importer authors. Anyone else's id in a link is
-  // treated as absent (the link is orphaned); anyone else's row listed in the
-  // file is minted the importer's own copy.
+  // ── [F98] Links connect only rows the file creates ──────────────────────
+  // Import writes a link only when both of its rows were created by this
+  // import. An id absent from the file, anyone's, leaves the link orphaned;
+  // an existing row listed in the file that a new recipe links to gets the
+  // importer's own copy.
 
   /** A one-trace carrier file owned by whoever imports it. */
   function carrierFile(tag: string): { file: ExportFile; traceId: string } {
@@ -634,8 +629,9 @@ describe.skipIf(!BASE)("POST /import", () => {
     expect(exportedB.references.some((r) => r.id === owner.referenceId)).toBe(false);
   });
 
-  it("[F98] still links the importer's own existing evidence and references by id", async () => {
-    // Positive control: ownership, not mere absence from the file, is the test.
+  it("[F98] does not link even the importer's own existing evidence and references by id", async () => {
+    // Nothing is looked up to decide a link: an id absent from the file is
+    // orphaned whoever owns it (recipe 5d541d2c).
     const own = await seedOwnerCorpus(tokenA);
     const { file, traceId } = carrierFile("own");
     file.traceEvidence.push({ id: crypto.randomUUID(), traceId, evidenceId: own.evidenceId, stance: "for", apiKeyId: null, createdAt: NOW });
@@ -643,8 +639,8 @@ describe.skipIf(!BASE)("POST /import", () => {
 
     const { status, body } = await postImport(tokenA, JSON.stringify(file));
     expect(status).toBe(200);
-    expect(body.data!.counts.links.orphaned).toBe(0);
-    expect(body.data!.counts.links.inserted).toBe(2);
+    expect(body.data!.counts.links.orphaned).toBe(2);
+    expect(body.data!.counts.links.inserted).toBe(0);
   });
 
   it("[F98] mints a copy of an existing row in the file that hangs off no one's recipe", async () => {
@@ -666,6 +662,45 @@ describe.skipIf(!BASE)("POST /import", () => {
     const exportedC = await exportAccount(tokenC);
     expect(exportedC.evidence.some((e) => e.id === orphanEv)).toBe(false);
     expect(exportedC.evidence.some((e) => e.content === "C's own text under a colliding id")).toBe(true);
+  });
+
+  it("[F100] rows pre-planted under the importer's mint are never taken as the importer's own", async () => {
+    // The mint is public, so C can create rows under B's minted ids before B
+    // imports a file naming A's rows. B's rows must land under fresh ids with
+    // B's content, and nothing C planted may reach B's recipe.
+    const me = await fetch(`${BASE}/auth/me`, { headers: { Authorization: `Bearer ${tokenB}` } });
+    const bId = ((await me.json()) as { data?: { user?: { id: string } } }).data?.user?.id ?? "";
+    expect(bId).not.toBe("");
+    const source = await seedOwnerCorpus(tokenA);
+
+    const plantedTrace = mintImportId(bId, source.traceIds[0]!);
+    const plantedEv = mintImportId(bId, source.evidenceId);
+    const plantRef = crypto.randomUUID();
+    const plant = carrierFile("plant-mint");
+    plant.file.traces[0]!["id"] = plantedTrace;
+    plant.file.evidence.push({ id: plantedEv, content: "C's planted evidence", createdAt: NOW, updatedAt: NOW });
+    plant.file.references.push({ id: plantRef, quote: "PLANTED QUOTE under B's mint", source: "fabricated", fileUrl: null, fileMimeType: null, fileHash: null, createdAt: NOW });
+    plant.file.traceEvidence.push({ id: crypto.randomUUID(), traceId: plantedTrace, evidenceId: plantedEv, stance: "for", apiKeyId: null, createdAt: NOW });
+    plant.file.evidenceReferences.push({ id: crypto.randomUUID(), evidenceId: plantedEv, referenceId: plantRef, createdAt: NOW });
+    expect((await postImport(tokenC, JSON.stringify(plant.file))).body.data!.counts.traces.inserted).toBe(1);
+
+    const { status, body } = await postImport(tokenB, JSON.stringify(source.file));
+    expect(status).toBe(200);
+    const data = body.data!;
+    expect(data.counts.traces).toMatchObject({ inserted: 2, skippedIdentical: 0, conflicted: 0 });
+    expect(data.counts.evidence).toMatchObject({ inserted: 1, skippedExisting: 0 });
+    const to = new Map(data.idMap.map((m) => [m.from, m.to]));
+    expect(to.get(source.traceIds[0]!)).not.toBe(plantedTrace);
+    expect(to.get(source.evidenceId)).not.toBe(plantedEv);
+
+    const exportedB = await exportAccount(tokenB);
+    expect(exportedB.traces.some((t) => t.id === plantedTrace)).toBe(false);
+    expect(exportedB.evidence.some((e) => e.content === "C's planted evidence")).toBe(false);
+    expect(exportedB.references.some((r) => r.quote.includes("PLANTED QUOTE under B's mint"))).toBe(false);
+    const bT1 = to.get(source.traceIds[0]!)!;
+    const bEv = to.get(source.evidenceId)!;
+    expect(exportedB.traceEvidence.some((l) => l.traceId === bT1 && l.evidenceId === bEv)).toBe(true);
+    expect(exportedB.evidence.find((e) => e.id === bEv)?.content).toBe("The user asked for a lossless round trip.");
   });
 });
 

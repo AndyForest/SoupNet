@@ -713,7 +713,7 @@ describe.skipIf(!BASE || !canConnect())("drafts on behalf of another person (dra
     expect(answers[0]).toBe(answers[1]);
   });
 
-  it("[F92] import overwrite never changes a draft the importer deposited about someone else; the subject confirms the text he reviewed", async () => {
+  it("[F92] import never changes a draft the importer deposited about someone else, even with the retired overwrite option; the subject confirms the text he reviewed", async () => {
     const id = await onBehalf("bait");
     const original = String((await sql`SELECT claim_text FROM claimnet.traces WHERE id = ${id}::uuid`)[0]?.["claim_text"]);
     const swapped = recipe("switched text the subject never saw");
@@ -726,9 +726,14 @@ describe.skipIf(!BASE || !canConnect())("drafts on behalf of another person (dra
       }),
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { data: { counts: { traces: Record<string, number> }; conflicts: Array<{ id: string; kept: string }> } };
-    expect(body.data.counts.traces).toMatchObject({ overwritten: 0, conflicted: 1 });
-    expect(body.data.conflicts.find((c) => c.id === id)?.kept).toBe("existing");
+    // Import only creates rows: the draft is not the importer's to keep, so
+    // the file's row lands under a fresh id as her own recipe.
+    const body = (await res.json()) as { data: { counts: { traces: Record<string, number> }; idMap: Array<{ from: string; to: string }> } };
+    expect(body.data.counts.traces).toMatchObject({ inserted: 1, conflicted: 0 });
+    const fresh = body.data.idMap.find((m) => m.from === id)?.to;
+    expect(fresh).toBeDefined();
+    expect(fresh).not.toBe(id);
+    expect(await row(fresh!)).toMatchObject({ user_id: dana.userId, subject_user_id: null });
     const after = await sql`SELECT claim_text, decided_at FROM claimnet.traces WHERE id = ${id}::uuid`;
     expect(after[0]?.["claim_text"]).toBe(original);
     expect(after[0]?.["decided_at"]).toBeNull();
