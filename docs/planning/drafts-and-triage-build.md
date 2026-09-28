@@ -1242,3 +1242,20 @@ After the verification record (`9b30e51`) and the read-only security audit (priv
 - The invitations failure did not repeat in runs 2 and 3.
 - On a fresh stack, `trace-delete.service.test.ts` and `groups.test.ts` pass when run alone: 42 tests in 6.6 s.
 - These are flakes the orchestrator has also seen on merged main. The `trace-delete` hook timeout recurs, so it belongs under the backlog's gate-reliability item. The fix pass adds three tests to the slice 4 suite, which adds a little load.
+
+### Slice 4 second fix pass (implementing agent, 2026-09-27)
+
+After the fix verification (private). It confirmed F93 and F94, and found that F92 was closed only on the overwrite path. The orchestrator's ruling replaces the earlier premise that "once overwrite is closed, a draft's text has no other path to change". There is still no confirm-time hash check. Each fix is its own commit, and its test is the audit's reproduction, which failed before the fix.
+
+- **F96** (`306e929`): an imported row that carries `onBehalfOf` always lands under a fresh random id. It never gets the file's id, and never a deterministic mint, which a delete-then-reimport would reproduce. The new id is reported in `idMap`. A delete-then-reimport of the id the subject is reviewing now creates a new draft: his open link, his confirm, and his agent's `verify_draft` on the old id find nothing.
+  - The row is named by its `onBehalfOf`, before the naming rule resolves whether the email is the importer's own. A hand-made row naming the importer also gets a fresh id; export never writes such a row.
+  - This departs from import's deterministic per-importer mint (recipe `c40fd228`) for these rows only. Re-importing a file with on-behalf rows adds them again rather than skipping them.
+  - S4-E2's test now follows the row through `idMap`.
+- **F97** (`6214014`): the link step's `ownedTraceIds` excludes existing rows with an on-behalf subject, the same condition as the F92 classification. A file can no longer add evidence, references, or quotes to a draft deposited about someone else. New on-behalf rows in a file have fresh ids (F96), so they are new deposits and take their own links.
+- **F98** (import accepting other people's evidence ids) is not fixed here: it is on main already and a separate branch handles it.
+
+**Gate** (`TESTCI_PGPORT=5574 npm run test:ci` at `6214014`, one run): exit 1, 1,783 passed, 2 failed.
+- `workspaces.test.ts` "(3) after expire-now …": the known workspace-expiry flake, the "timestamp-at-now" item in the backlog.
+- `draft-queue.test.ts` S3-Q2: a 15-second test timeout, not an assertion failure, under the load of the full run.
+
+No slice 4 test failed, and `origin/main` had not moved.
