@@ -166,8 +166,8 @@ const NON_AUTHORIZING_KEY_SQL = {
     why: "display joins: a recipe's key label and type for the JWT-authed recipe views",
   },
   "apps/backend/src/services/api-key.service.ts": {
-    n: 5, fp: "da71e276cd8d",
-    why: "minting, listing, and revoking a user's own keys, behind JWT auth",
+    n: 5, fp: "7f64094912af",
+    why: "minting, listing, and revoking a user's own keys, behind JWT auth; the scoped mint is the only statement that writes the deposit level (slice 5, S5-S2), and the list displays it",
   },
   "apps/backend/src/services/draft-queue.service.ts": {
     n: 1, fp: "96bbb1f5b943",
@@ -285,8 +285,8 @@ const TRACE_READS = {
     why: "corpus mode rows and honest total use traceVisibleTo (RP-41); vector loads are by id for filtered results (RP-42)",
   },
   "apps/backend/src/services/trace.service.ts": {
-    n: 10, fp: "d4e19a98ba6d", composes: true,
-    why: "deposit INSERT (the on-behalf subject from the module's naming rule, S4-M1), the depositing key's own idempotency row with its subject through onBehalfSubjectOf (RP-04, S4-L4), session ledger ids (RP-05), and zero-result scope counts that use traceVisibleTo (RP-03)",
+    n: 10, fp: "7c01a110f3cf", composes: true,
+    why: "deposit INSERT (the on-behalf subject from the module's naming rule, S4-M1; the draft state forced for a headless key by keyForcesDrafts, S5-M3), the depositing key's own idempotency row with its subject through onBehalfSubjectOf (RP-04, S4-L4), session ledger ids (RP-05), and zero-result scope counts that use traceVisibleTo (RP-03)",
   },
   "apps/backend/src/services/trace-delete.service.ts": {
     n: 15, fp: "66a8c2514e26", composes: false,

@@ -19,6 +19,9 @@ const scopedKeySchema = z.object({
   defaultWriteRecipeBookId: z.string().uuid(),
   expiresAt: z.string().datetime(),
   label: z.string().max(100).optional(),
+  // Drafts-and-triage slice 5 (S5-K1): the ladder's wire name. "drafts" is a
+  // headless key; "none" is reserved and refused like any other value.
+  depositLevel: z.enum(["full", "drafts"]).optional(),
 });
 
 // Rate limit key generation: 10 per hour per user
@@ -79,6 +82,17 @@ keys.post("/daily", keyGenRateLimit, async (c) => {
   try {
     body = (await c.req.json()) as Record<string, unknown>;
   } catch { /* no body or invalid JSON — use configured defaults */ }
+
+  // Only scoped keys can be headless (slice 5, S5-O1; open question 43). A
+  // daily key asked for any other level is refused loudly rather than
+  // silently minted full.
+  if (body["depositLevel"] !== undefined && body["depositLevel"] !== "full") {
+    return c.json({
+      ok: false,
+      error: "daily_keys_are_full",
+      message: "Daily keys always deposit ordinary recipes. To make a headless key, create a scoped key with depositLevel \"drafts\" on the API keys page.",
+    }, 400);
+  }
 
   if (typeof body["writeRecipeBookId"] === "string") {
     const wgId = body["writeRecipeBookId"];
@@ -144,7 +158,7 @@ keys.post("/scoped", keyGenRateLimit, async (c) => {
   const readGroupIds = parsed.data.readRecipeBookIds;
   const writeGroupIds = parsed.data.writeRecipeBookIds;
   const defaultWriteGroupId = parsed.data.defaultWriteRecipeBookId;
-  const { expiresAt, label } = parsed.data;
+  const { expiresAt, label, depositLevel } = parsed.data;
 
   if (!writeGroupIds.includes(defaultWriteGroupId)) {
     return c.json({ ok: false, error: "defaultWriteRecipeBookId must be in writeRecipeBookIds" }, 400);
@@ -182,6 +196,7 @@ keys.post("/scoped", keyGenRateLimit, async (c) => {
     defaultWriteGroupId,
     expiresAt: expiresDate,
     ...(label ? { label } : {}),
+    ...(depositLevel ? { depositLevel } : {}),
   });
   return c.json({ ok: true, data: toWireKey(result) });
 });
@@ -305,6 +320,7 @@ interface WireKey {
   readRecipeBookIds: string[];
   writeRecipeBookIds: string[];
   defaultWriteRecipeBookId: string;
+  depositLevel: string;
 }
 
 interface ServiceKey {
@@ -314,6 +330,7 @@ interface ServiceKey {
   readGroupIds: string[];
   writeGroupIds: string[];
   defaultWriteGroupId: string;
+  depositLevel: string;
 }
 
 function toWireKey(k: ServiceKey): WireKey {
@@ -324,6 +341,7 @@ function toWireKey(k: ServiceKey): WireKey {
     readRecipeBookIds: k.readGroupIds,
     writeRecipeBookIds: k.writeGroupIds,
     defaultWriteRecipeBookId: k.defaultWriteGroupId,
+    depositLevel: k.depositLevel,
   };
 }
 
@@ -331,6 +349,7 @@ interface ServiceKeyListItem {
   id: string;
   keyPrefix: string;
   keyType: string;
+  depositLevel: string;
   readGroupIds: string[];
   writeGroupIds: string[];
   defaultWriteGroupId: string;
@@ -343,6 +362,7 @@ interface WireKeyListItem {
   id: string;
   keyPrefix: string;
   keyType: string;
+  depositLevel: string;
   readRecipeBookIds: string[];
   writeRecipeBookIds: string[];
   defaultWriteRecipeBookId: string;
@@ -356,6 +376,7 @@ function toWireKeyListItem(k: ServiceKeyListItem): WireKeyListItem {
     id: k.id,
     keyPrefix: k.keyPrefix,
     keyType: k.keyType,
+    depositLevel: k.depositLevel,
     readRecipeBookIds: k.readGroupIds,
     writeRecipeBookIds: k.writeGroupIds,
     defaultWriteRecipeBookId: k.defaultWriteGroupId,

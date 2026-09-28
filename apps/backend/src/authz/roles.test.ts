@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isOwner, isOwnerOrAdmin, mayReadTrace, unpublishedDraftManagement } from "./roles";
+import { isOwner, isOwnerOrAdmin, mayReadTrace, unpublishedDraftManagement, keyForcesDrafts, keyMayVerifyDrafts } from "./roles";
 
 // Layer 1 — the pure half of the authorization seam. Every branch, including
 // the fail-closed ones: no membership, and a role this module has never seen.
@@ -71,4 +71,25 @@ describe("unpublishedDraftManagement (slice 4, S4-M5)", () => {
       expect(f(s, false, false), s).toEqual({ move: false, delete: false });
     }
   });
+});
+
+describe("the key's deposit level (slice 5, S5-M2)", () => {
+  // Fail closed: anything but exactly "full" forces drafts and cannot verify,
+  // so a reserved level ("none") or a value this code has never seen can
+  // never act as a full key.
+  const table: Array<[string, boolean]> = [
+    ["full", false],
+    ["drafts", true],
+    ["none", true],
+    ["", true],
+    ["FULL", true],
+    ["full ", true],
+    ["headless", true],
+  ];
+  for (const [depositLevel, forced] of table) {
+    it(`${JSON.stringify(depositLevel)}: forces drafts ${forced}, may verify ${!forced}`, () => {
+      expect(keyForcesDrafts({ depositLevel })).toBe(forced);
+      expect(keyMayVerifyDrafts({ depositLevel })).toBe(!forced);
+    });
+  }
 });

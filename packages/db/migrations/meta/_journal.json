@@ -281,6 +281,13 @@
       "when": 1790554188174,
       "tag": "0039_traces_draft_subject",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1790572838375,
+      "tag": "0040_api_keys_deposit_level",
+      "breakpoints": true
     }
   ]
 }
