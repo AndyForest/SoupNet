@@ -624,8 +624,8 @@ Feature: Drafts, triage ratings, and deciding by building both
 
     @DT-HDL-02 @derived-keys
     Scenario: A derived key of a headless key cannot deposit a non-draft
-      # Pending decision: see build log §Open design questions, question 44.
-      # Derived keys are not built; this scenario ships with them.
+      # Decided: build log open question 44 (accepted 2026-09-28). Derived keys
+      # are not built; this scenario ships with them.
       Given Pat made a key marked headless
       When that key derives a key for a sub-agent without naming a level
       Then the derived key is headless
@@ -659,16 +659,19 @@ Feature: Drafts, triage ratings, and deciding by building both
       Then that key can declare intents, search, fetch recipes by id, log feedback, upload files, and create an ephemeral workspace exactly as an ordinary key
 
     @DT-HDL-07 @slice-5
-    Scenario: A headless key cannot change a recipe book's description
-      # Pending decision: see build log §Open design questions, question 42.
+    Scenario: A headless key may change a recipe book's description like any key
+      # Decided: build log open question 42, overridden by the orchestrator
+      # (2026-09-28): headless means only that deposits are drafts; a headless
+      # agent is directly supervised (recipe e0d2c1c9), and agents are
+      # encouraged to keep descriptions current (recipe 94e0e682).
       Given Pat made a key marked headless, and owns the book
-      When that key tries to update the book's description
-      Then nothing changes, and the answer says Pat can change it himself or through an ordinary key
-      And the answer is the same for a book the key cannot write and a book that does not exist
+      When that key updates the book's description
+      Then the description changes, exactly as it would through one of Pat's ordinary keys
+      And for a book the key cannot write, or a book that does not exist, the answer is the one an ordinary key gets
 
     @DT-HDL-08 @slice-5
     Scenario: Only keys made on the keys page can be headless
-      # Pending decision: see build log §Open design questions, question 43.
+      # Decided: build log open question 43 (accepted 2026-09-28).
       When Pat asks for a headless daily key
       Then the request is refused and no key is made
       And keys issued to an OAuth-connected client are never headless
