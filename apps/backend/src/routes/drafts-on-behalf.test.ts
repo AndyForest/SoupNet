@@ -785,6 +785,23 @@ describe.skipIf(!BASE || !canConnect())("drafts on behalf of another person (dra
       for (const m of [quinn, dex]) await addMember(owen, own.id, m);
     }, 120_000);
 
+    it("[F94] the subject deletes their account: their own book, holding only drafts about them, is deleted with them, not re-homed", async () => {
+      const [vic, wes] = await Promise.all([register("vic"), register("wes")]);
+      const slug = `vic-${run}`;
+      const created = await call(vic, "POST", "/recipe-books", { name: `Vic private ${run}`, slug, organizationId: vic.orgId });
+      const bookId = ((await created.json()) as { data?: { id: string } }).data?.id ?? "";
+      await addMember(vic, bookId, wes);
+      const W = await mintKey(wes, [bookId], bookId);
+      const draft = idOf(await deposit(W, recipe("about vic"), { on_behalf_of: vic.email }));
+      expect((await call(vic, "DELETE", `/recipe-books/${bookId}/members/${wes.userId}`)).status).toBe(200);
+      await deleteAccount(vic);
+      expect(await row(draft)).toBeUndefined();
+      const book = await sql`SELECT count(*)::int AS n FROM claimnet.groups WHERE id = ${bookId}::uuid`;
+      expect(Number(book[0]?.["n"])).toBe(0);
+      const rehomed = await sql`SELECT count(*)::int AS n FROM claimnet.audit_log WHERE action = 'recipe_book.left_without_members' AND target_id = ${bookId}::uuid`;
+      expect(Number(rehomed[0]?.["n"])).toBe(0);
+    });
+
     it("S4-A5 / DT-OBO-17: the owner deletes their account; a book holding only another person's on-behalf drafts stays, memberless, in the depositor's organization; nobody is added", async () => {
       const XO = await mintKey(dex, [own.id], own.id);
       const d1 = idOf(await deposit(XO, recipe("owen book draft"), { on_behalf_of: quinn.email }));

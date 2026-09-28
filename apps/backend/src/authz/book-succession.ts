@@ -23,6 +23,7 @@ import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { membershipOf, membershipOfSomeoneElse } from "./membership-sql";
 import { activeUserPredicate } from "./key-auth";
+import { draftAwaitingReviewBy } from "./draft-sql";
 
 /** A shared book the departing user is responsible for. */
 export interface BookToHandOver {
@@ -190,7 +191,8 @@ export interface MemberlessBook {
  * to them: the cascade moves each into the personal organization of the
  * author of its earliest remaining recipe (organization_id is NOT NULL, and
  * the user's organizations are going) and leaves it with no members. Id
- * order; locks each book row.
+ * order; locks each book row. Unverified drafts about the user do not count:
+ * the cascade deletes them with the account (drafts slice 4, [F94]).
  */
 export async function memberlessBooksWithOthersRecipes(
   db: PostgresJsDatabase,
@@ -201,6 +203,7 @@ export async function memberlessBooksWithOthersRecipes(
       (SELECT t.user_id FROM claimnet.traces t
        JOIN claimnet.users author ON author.id = t.user_id
        WHERE t.group_id = g.id AND t.user_id <> ${userId}::uuid
+         AND NOT ${draftAwaitingReviewBy("t", userId)}
        ORDER BY t.created_at ASC, t.id ASC LIMIT 1) AS "authorUserId"
     FROM claimnet.groups g
     WHERE g.organization_id IN (
@@ -214,6 +217,10 @@ export async function memberlessBooksWithOthersRecipes(
         SELECT 1 FROM claimnet.traces t
         JOIN claimnet.users author ON author.id = t.user_id
         WHERE t.group_id = g.id AND t.user_id <> ${userId}::uuid
+          -- Unverified drafts about the departing person are deleted with
+          -- them (S4-A3), so they are not another person's recipes to keep
+          -- a book for ([F94]).
+          AND NOT ${draftAwaitingReviewBy("t", userId)}
       )
     ORDER BY g.id
     FOR UPDATE OF g
