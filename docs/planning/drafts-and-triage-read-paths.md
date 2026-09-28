@@ -154,7 +154,7 @@ Added by slice 4:
 
 | # | Path | file (function) | Returns / counts | Who can call | Trace filtering | Draft disposition |
 |---|---|---|---|---|---|---|
-| RP-51 | The naming lookup inside a deposit (and import) | `apps/backend/src/authz/` (the S4-M1 function) | the subject's user id, or nothing | reached only through a check or import by a key or person who can write the target book | module: one statement over `users` by `lower(email)`, `membershipOf`, `WRITE_ROLES`, `activeUserPredicate`; reads no recipe | `irrelevant` for recipes; the answer is uniform for every refused email so it is not an account-existence oracle (S4-U1) |
+| RP-51 | The naming lookup inside a deposit (and import) | `apps/backend/src/authz/naming.ts` (`resolveNameableSubject`) | the subject's user id, or nothing | reached only through a check or import by a key or person who can write the target book | module: one statement over `users` by `lower(email)`, `membershipOf`, `WRITE_ROLES`, `activeUserPredicate`; reads no recipe | `irrelevant` for recipes; the answer is uniform for every refused email so it is not an account-existence oracle (S4-U1) |
 
 ## Admin (system role only, `routes/admin.ts`)
 

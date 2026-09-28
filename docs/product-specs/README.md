@@ -23,4 +23,4 @@ Gherkin-style specs for Soup.net's deterministic product behavior: what the serv
 
 | File | Concern |
 |---|---|
-| [drafts-and-triage.feature](drafts-and-triage.feature) | Triage ratings and the tool-roster trim (slice 1, shipped); `@unreleased` per Rule — draft visibility, verification, review queue, on-behalf-of, headless keys, option sets. Design: [planning/drafts-and-triage.md](../planning/drafts-and-triage.md) |
+| [drafts-and-triage.feature](drafts-and-triage.feature) | Triage ratings and the tool-roster trim (slice 1), draft visibility and verification (slice 2), the review queue (slice 3), and drafts on behalf of another person (slice 4) are built; `@unreleased` per Rule — headless keys, option sets. Design: [planning/drafts-and-triage.md](../planning/drafts-and-triage.md) |
