@@ -1002,6 +1002,14 @@ describe.skipIf(!BASE)("removing a member revokes the invitations they sent [F90
 
       await removeFromBook(owner, bookId, admin);
 
+      // Stamped a minute in the past, not NOW(), so the revocation holds in a
+      // later transaction even if the database clock steps back.
+      const [stamp] = await sql<Array<{ margin_ok: boolean }>>`
+        SELECT expires_at < NOW() - interval '30 seconds' AS margin_ok
+        FROM claimnet.invitations WHERE id = ${fromAdmin}::uuid
+      `;
+      expect(stamp?.margin_ok).toBe(true);
+
       expect(await pendingIds(alt)).not.toContain(fromAdmin);
       const refused = await accept(alt, fromAdmin);
       expect(refused.status).toBe(404);

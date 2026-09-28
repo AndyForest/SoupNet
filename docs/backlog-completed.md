@@ -19,11 +19,23 @@ No timeout was changed, and file parallelism was left uncapped (recipe `a9ccdfb1
 
 **After** (forks pool, the default): summed per-file time fell to 427-436 s. The backend saturated ~15 s per run. Postgres connections peaked at ~75 of 100, up from ~40, because each worker now opens its own pool for setup. Over 9 gate runs, 5 passed, the last a full gate with the ranking eval. The other 4 each lost one or two files to the native worker crash, with no test failures and no timeouts. Over the 21 gate runs after the fix, in both pools, no test assertion failed and no hook timed out. The slowest file is now `drafts.test.ts` at 84-161 s, most of it the S2-B2 wait for the embedding worker; `draft-queue.test.ts` and `auth-delete-shared-books.test.ts` take ~27 s each.
 
-**Clock hypothesis:** confirmed as a mechanism, and it is a product issue, not a test issue. Docker Desktop's VM clock steps back 20-30 ms every 30 s, and an expiry stamped with `NOW()` reads as live after a step. It moved to the `[DECISION NEEDED]` item "An expiry stamped with `NOW()` reads as live after the clock steps back". The tests were not changed.
+**Clock hypothesis:** confirmed as a mechanism, and it was a product issue, not a test issue. Docker Desktop's VM clock steps back 20-30 ms every 30 s, and an expiry stamped with `NOW()` read as live after a step. Fixed the same day by stamping a minute in the past (the item below).
 
-**Still open:** the native worker crash (the vitest worker-exit item has the diagnosis), and the clock item above.
+**Still open:** the native worker crash (the vitest worker-exit item has the diagnosis and the suspects).
 
 ### Moved items (verbatim):
+
+### `[DECISION NEEDED]` ~~ An expiry stamped with `NOW()` reads as live after the clock steps back (F90 property)~~
+
+Diagnosed 2026-09-28 on `chore/gate-reliability`. It replaces two flake items, "test:ci flake: workspace-expiry assertions at 'now'" and "F90 sequence test failed once on merged main" (both moved to `backlog-completed.md`), and it explains `groups.test.ts` "Owner can list + revoke pending invitations" (failed 2026-09-27, a revoked invitation still listed). Security-relevant: follow docs/workflows/security.md, where the audit and the fix are separate roles.
+
+The pattern: one statement closes something by stamping `expires_at = NOW()`. Examples are revoking or re-issuing an invitation (`routes/groups.ts`), the invitations a removed member sent [F90] (`authz/memberships.ts`), and workspace expire-now (`services/ephemeral-workspace.service.ts`). A later transaction then decides liveness with `expires_at > NOW()` (invitation list and accept in `routes/invitations.ts`, `routes/auth.ts`) or `expires_at <= NOW()` (the workspace tombstone in `authz/key-auth.ts`). That holds only while the database's wall clock never goes backwards. `NOW()` is wall-clock time, and Docker Desktop's VM steps its wall clock back 20-30 ms every 30 s on the operator's Windows machine. Measured 2026-09-28: inside a container, `Date.now()` minus the monotonic clock dropped by 20-30 ms at exact 30 s intervals, idle, under the gate, and with the host CPU saturated. The host clock did not step. The failure reproduced against a scratch pg17 container. One connection ran `UPDATE ... SET ts = now()`, then a second ran `SELECT ts <= now()`. Over 95 s and 69,427 iterations, the just-expired row read as live 3 times, each right after a step, with the reader's `NOW()` 19-22 ms before the stamp.
+
+So for up to one step after a revocation, the revoked invitation is listed and passes the accept predicate, and an expired-now workspace stays in scope. In production the window depends on the database host's clock: NTP normally slews rather than steps, but steps happen, for example at boot or after a large offset. The OAuth rotation already avoids this class (F38): consumption is a `consumed_at IS NULL` compare-and-swap, and the old access token is killed with the epoch, not `NOW()`. The same shapes would fix it here: stamp the epoch or a separate closed marker checked with `IS NULL`, or stamp a time safely in the past. The tests were left unchanged, and on Docker Desktop they will keep catching this now and then.
+
+One open question: this mechanism predicts a low local failure rate. A comparison fails only if a step lands between the write and a read taken less than one step (~25 ms) later. The gate logs from 2026-09-19 to 27 show about 7 expiry failures in 33 runs, more than that predicts. Larger steps on some days would explain it (the 2026-08-19 workspaces item recorded 300-600 ms of host/VM skew), or there is a second cause. No expiry failure occurred in any of the 24 gate runs of 2026-09-28.
+
+**Resolution (2026-09-28, decided by the coordinator):** every such stamp now writes `NOW() - interval '1 minute'`, with the same statement shape, no new column, and liveness checks unchanged: invitation re-invite and revoke (`routes/groups.ts`), the F90 revocation of a removed member's invitations (`authz/memberships.ts`), and workspace expire-now (`services/ephemeral-workspace.service.ts`, whose response `expiresAt` now shows that time). No UI shows these rows' expiry: the invitation lists show only live invitations. Production's clock is unlikely to step back, so this is cheap insurance that also removes the local flakes; the F38 marker approach was judged more machinery than needed. Each site has a test that the stamp is more than 30 s in the past right after the revocation (`groups.test.ts`, `auth-delete-shared-books.test.ts`, `workspaces.test.ts`), since a clock step can't be simulated in the gate.
 
 ### `[IMPL]` Gate reliability: most local gate runs now hit at least one flake
 
@@ -35,7 +47,7 @@ Measure before cutting anything: per-file duration, and backend CPU during a run
 - Fix the known races.
 - Only then look for redundant tests.
 
-**Resolution (2026-09-28):** measured and fixed as summarized at the top of this section. Setup signups over HTTP were the saturation; the timestamp comparisons are a product clock issue, now a `[DECISION NEEDED]` item.
+**Resolution (2026-09-28):** measured and fixed as summarized at the top of this section. Setup signups over HTTP were the saturation; the timestamp comparisons were a product clock issue, fixed by the item below.
 
 ### `[IMPL]` Suspected flaky test: `oauth-flow.test.ts` "legacy epoch-stamped consumed rows" sometimes reads back nothing
 
@@ -47,13 +59,13 @@ Seen during the drafts-and-triage slice 2 gates (2026-09-27), unconfirmed. The t
 
 Found 2026-09-27 on `feat/drafts-and-triage` slice 3, gate run 1 (run 2 green on the same tree): `authz/key-auth.test.ts` "drops a disposed workspace…" and `routes/workspaces.test.ts` "(3) after expire-now…" failed together, alongside a vitest worker exit. Both assert on an ephemeral workspace's expiry at the current moment, so a clock or transaction-timestamp boundary is the likely cause (unconfirmed). Neither file was touched by the slice. Next step: rerun both files in a loop to reproduce, then compare the assertion's clock with the database's `NOW()`.
 
-**Superseded (2026-09-28)** by the backlog item "An expiry stamped with `NOW()` reads as live after the clock steps back", which has the diagnosis.
+**Superseded (2026-09-28)** by the item "An expiry stamped with `NOW()` reads as live after the clock steps back" in this section, which has the diagnosis and the fix.
 
 ### `[IMPL]` F90 sequence test failed once on merged main
 
 Seen 2026-09-27 on main at `dfdedaa` (after #100 and #110 merged), in one of two local gate runs: `auth-delete-shared-books.test.ts` "the F90 sequence…" found the removed admin's invitation still in the invitee's pending list after the owner's account deletion (`expected [ Array(1) ] to not include '<id>'`). The same run had two setup hooks time out under load; the second run passed this test, and it passed on #110's own branch. Every invitation check compares `expires_at > NOW()` in the database, and removal sets `expires_at = NOW()` in its own transaction, so no clock skew explains it. Worth one look because it is the F90 property: rerun the file in a loop on a fresh stack, and if it reproduces, log the invitation row's `expires_at` against the removal's timestamp.
 
-**Superseded (2026-09-28)** by the backlog item "An expiry stamped with `NOW()` reads as live after the clock steps back", which has the diagnosis.
+**Superseded (2026-09-28)** by the item "An expiry stamped with `NOW()` reads as live after the clock steps back" in this section, which has the diagnosis and the fix.
 
 ## 2026-09-27 — corpus import only creates rows
 

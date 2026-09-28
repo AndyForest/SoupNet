@@ -301,6 +301,15 @@ describe.skipIf(!BASE)("ephemeral workspaces — eval-reset destructive tier", (
     expect(expired.status).toBe(200);
     expect(expired.body.data?.tombstoned).toBe(true);
 
+    // Expire-now stamps a minute in the past, not NOW(), so the tombstone
+    // holds in a later transaction even if the database clock steps back.
+    const { sql } = getSql();
+    const [stamp] = await sql<Array<{ margin_ok: boolean }>>`
+      SELECT expires_at < NOW() - interval '30 seconds' AS margin_ok
+      FROM claimnet.ephemeral_books WHERE group_id = ${recipeBookId}::uuid
+    `;
+    expect(stamp?.margin_ok).toBe(true);
+
     // Read exclusion: gone from briefing scope the instant expiry passed.
     const after = await briefingBookSlugs(A.jwt, A.scopedKey);
     expect(after).not.toContain(slug);

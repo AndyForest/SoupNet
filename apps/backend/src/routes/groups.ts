@@ -302,10 +302,15 @@ groupsRouter.post("/:id/invite", async (c) => {
   `);
   const inviterEmail = (inviterRow as unknown as Array<{ email: string }>)[0]?.email ?? "";
 
-  // Expire any existing pending invitation for this email+group (idempotent)
+  // Expire any existing pending invitation for this email+group (idempotent).
+  // Stamped a minute in the past, not NOW(): liveness is `expires_at > NOW()`
+  // in a later transaction, and a stamp of exactly NOW() reads as live again
+  // if the database clock steps back (Docker Desktop's VM steps 20-30 ms
+  // every 30 s). Same for revoke below and the F90 revocation in
+  // authz/memberships.ts.
   await db.execute(sql`
     UPDATE claimnet.invitations
-    SET expires_at = NOW()
+    SET expires_at = NOW() - interval '1 minute'
     WHERE email = ${inviteeEmail}
       AND group_id = ${groupId}::uuid
       AND accepted_at IS NULL
@@ -440,10 +445,11 @@ groupsRouter.delete("/:id/invitations/:inviteId", async (c) => {
     return c.json({ ok: false, error: "Only recipe-book owners and admins can revoke invitations" }, 403);
   }
 
-  // Revoke = expire. Preserves the row for audit.
+  // Revoke = expire, a minute in the past (see the re-invite above). Preserves
+  // the row for audit.
   const result = await db.execute(sql`
     UPDATE claimnet.invitations
-    SET expires_at = NOW()
+    SET expires_at = NOW() - interval '1 minute'
     WHERE id = ${inviteId}::uuid
       AND group_id = ${groupId}::uuid
       AND accepted_at IS NULL

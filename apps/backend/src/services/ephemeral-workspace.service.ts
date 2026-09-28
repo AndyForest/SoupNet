@@ -209,9 +209,14 @@ export async function setEphemeralExpiry(
   // and the verdict must come from the DB clock too. Stamping from the app
   // clock made expire-now racy whenever the host and DB clocks disagreed
   // (hundreds of ms of skew observed under Docker Desktop/WSL2).
+  //
+  // Expire-now stamps a minute in the past, not NOW(): the tombstone check is
+  // `expires_at <= NOW()` in later transactions, and a stamp of exactly NOW()
+  // reads as live again if the database clock steps back (Docker Desktop's VM
+  // steps 20-30 ms every 30 s). The returned expiresAt shows that time.
   const rows = await db.execute(sql`
     UPDATE claimnet.ephemeral_books
-    SET expires_at = ${expiresAt === "now" ? sql`NOW()` : sql`${expiresAt.toISOString()}::timestamptz`}
+    SET expires_at = ${expiresAt === "now" ? sql`NOW() - interval '1 minute'` : sql`${expiresAt.toISOString()}::timestamptz`}
     WHERE group_id = ${groupId}::uuid
       AND created_by_key_id = ${keyId}::uuid
     RETURNING expires_at, (expires_at <= NOW()) AS tombstoned
