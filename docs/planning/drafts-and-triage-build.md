@@ -1043,6 +1043,108 @@ A note for whoever makes OAuth keys headless later: rotation mints a new `api_ke
 
 **Briefing-copy declaration.** The headless briefing section, the headless deposit notice, and the verify refusal are agent-facing copy under [../briefing-specs/README.md](../briefing-specs/README.md) §The regression rule. The slice 5 PR appends a `spec-decision-log.md` entry (mirrored in the commit body) that declares a new `@unreleased` scenario in `briefing-surfaces.feature` (a briefed agent on a headless key says in each draft why its person couldn't be asked and what would settle it, rates impact and uncertainty, does not call `verify_draft`, and ends with one `outcome` row listing the open draft ids), names as watched every `briefing-surfaces.feature` scenario (the profile now also depends on the key) with the rationale that ordinary briefings are byte-identical, and records the bytes before and after for `tools/list`, the shared descriptions, both briefing fixtures, and the headless section. The when-to-draft guidance for every key stays in slice 7.
 
+### Slice 5 verification record
+
+Written 2026-09-28 by the functional verifier (agent `a-drafts-verify-s5-2026-09-28`, Soup.net intent `int_68Wpau98A9rS0cF9qePp1WDj`), who did not build the slice and changed no application code. Verified at branch tip `0b044ef` in a throwaway detached worktree after `npm ci` and `npm run build:packages`. Verdicts were formed from the verifier's own probes and code review before the builder's build notes were read; the notes were then checked against that evidence (see "Builder's interpretations" below).
+
+**Verdict: accept with minor follow-ups, once one gate run is green.** Of the 29 rows, 28 pass (three with a note on how they were proven). One is not met as written: S5-UI1, whose serious and critical axe violations all come from elements the slice did not change. No security property failed. The gate was not green in either run, for load timeouts only (below).
+
+**How it was verified.**
+
+- **Gate:** `TESTCI_PGPORT=5834 npm run test:ci`, two runs, both **exit code 1**, with other sessions' gates holding 5814 and 5564. Build, typecheck, lint, the data-model check, and the authz seam check passed in both. Run 1: 1,814 passed, 1 failed, 40 skipped; 3 files failed, all timeouts (`import` and `trace-delete.service` setup hooks at 30 s, `draft-queue` S3-Q2 at 15 s). Run 2: 1,810 passed, 3 failed; the same two hooks, S3-Q2 and `workspaces` (3) at 15 s, and `draft-queue` S3-Q3 counting 4 against 3 because it ran while the timed-out S3-Q2 was still removing a member. No slice 5 test failed and no assertion about slice 5 behaviour failed. The ranking eval did not run, since the tests failed first. The builder's two runs show the same pattern.
+- **Isolated re-run** on the verifier's idle stack: the four files that failed plus `drafts-headless.test.ts`, `deposit-level.test.ts`, `roles.test.ts`, and `seam-guard.test.ts`: 8 files, 138 passed, 1 skipped, exit 0.
+- **Independent probe:** a script of the verifier's own (214 assertions and three follow-up probes) against the built backend on a throwaway stack (compose project `soupnet-ci-5834`, backend on :3491 with the test-ci environment, stub embeddings, `FRONTEND_URL=http://localhost:5873`), torn down afterwards. Cast: Pat (owner of H, K, and a daily key D), Sam (owns the shared book and a book Pat's keys read but do not write), Olive (outsider); keys H (headless scoped), K (ordinary scoped, same books), S (Sam's), O (Olive's). 208 assertions passed; the six that failed were the probe's own comparison mistakes (the markdown response contains the recipe text, which says "headless"; two description updates echo different previous descriptions), and follow-up probes confirmed the behaviour in each.
+- **Tests fail without the slice's rules** (mutations in the throwaway tree, reverted): `keyForcesDrafts` returning false fails 6 of the 20 unit tests in `roles.test.ts` and `deposit-level.test.ts`; `keyMayVerifyDrafts` returning true fails 6; forcing drafts only for the exact value `drafts` (not fail-closed) fails 5; a planted `UPDATE … SET deposit_level` fails the static test and `check:authz-seam` (exit 1); a planted key statement in `routes/keys.ts` fails `check:authz-seam`. Bypassing `keyForcesDrafts` in `trace.service.ts` passes every static check and unit test and is caught only by the live suite: rebuilt and served on a second port, `drafts-headless.test.ts` failed 8 of 18. So the forced deposit is protected by the Layer 3 suite alone, which is what S5-M3 asks for.
+- **Code review** of `7bcedba..0b044ef`.
+
+**Where it lives**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S5-M1 | pass | `authenticateKey`'s one statement selects `k.deposit_level`; `Principal.depositLevel` is set only there (a repo grep finds no other `depositLevel:` assignment outside tests, and the type makes it required, so every principal comes from it). No route or service reads the column; seam guard green. |
+| S5-M2 | pass | The two predicates sit together in `roles.ts`; the doc comment names `verify_draft`, its REST twin, option-set resolution, and agent reject or not-chosen outcomes. Live, keys whose stored level was set by direct SQL on the throwaway database to `none`, `""`, `weird`, `DRAFTS`, and `Full` each deposited an unverified draft with `draft=false`, were refused by `verify_draft`, and got the headless briefing. Mutations above. |
+| S5-M3 | pass (Layer 3 carries it) | The only change on the deposit path is `forcedDraft = !!subject \|\| keyForcesDrafts(principal)` beside the existing on-behalf forcing; `check.ts`, `mcp.ts`, and `apps/mcp-server` are unchanged in the diff. The single `INSERT INTO claimnet.traces` is still the only trace insert (grep). The seam guard does not see a bypass of this line (mutation above); the live suite does. |
+
+**Storage**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S5-S1 | pass (by code review) | `0040_api_keys_deposit_level.sql` is one `ALTER TABLE … ADD COLUMN "deposit_level" text DEFAULT 'full' NOT NULL;` with no `UPDATE`; `check:data-model` passed in both gate runs. Existing rows read `full` by Postgres's column-default semantics; no pre-slice database was migrated (the builder's note says the same). |
+| S5-S2 | pass | Only the scoped `INSERT` in `api-key.service.ts` writes the level; the daily insert and `mintOAuthTokenBundle`'s insert do not name it; `ephemeral-workspace.service.ts`'s `UPDATE claimnet.api_keys` touches scope columns only. `deposit-level.test.ts` pins all of this and fails on a planted `SET deposit_level`. |
+| S5-S3 | pass | Two fingerprints re-registered (`api-key.service.ts`, `trace.service.ts`), each keeping its reason and adding a slice 5 clause. |
+
+**Forcing drafts on every deposit surface**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S5-W1 | pass | The full cross product the builder simplified: seven surfaces (MCP structured, MCP markdown, `GET /check` JSON, `POST /check` urlencoded, multipart, the HTML `GET`, and the HTML form `POST`) × five `draft` values (absent, `false`, `"false"`, `"maybe"`, `true`). All 35 through H stored `unverified`, author Pat, no subject; all 35 through K stored what they store today (null for absent and false, `unverified` for `maybe` and true). Opt-out attempts (`depositLevel=full`, `deposit_level=full`, `headless=false`, `level=full` on each form surface, and the same as MCP arguments) were ignored. H naming Pat himself in `on_behalf_of` (padded, upper case) is still a headless draft. The stdio server, run live over stdin against the backend, stored a headless draft from `draft: false`. |
+| S5-W2 | pass | On all 35 H deposits the notice gives "because this API key is headless, a setting chosen when the key was made", `http://localhost:5873/app/drafts?ids=<full id>`, and no `verify_draft`; "(your draft flag was overridden)" appears for `false` and `"false"` only (absent, `maybe`, and true do not get it). |
+| S5-W3 | pass | One MCP deposit through H with `on_behalf_of` Sam, `decided_at` 2025-03-15, `impact` high, `uncertainty` low, `intent` text, `known_recipes`, a base64 PNG, and a ride-along feedback row: stored as an unverified draft about Sam by Pat with the date and ratings, one `trace_references` row, the audit row carrying `intentId` and the file, the feedback row stored, and the on-behalf notice. H's own `POST /uploads` then `file_url` stored a draft with its reference. A deposit into a workspace H created is a draft in that book. |
+| S5-W4 | pass | Identical repeats through MCP (`draft` absent then false) and `GET /check` return the same id, still `unverified`, one row, notice "…still a draft: checking it again does not verify it, and this headless key cannot" with the link. After Pat's `wrong` reaction the repeat reports the rejected state, no new row. A repeat of a draft Pat had confirmed returns the same (now published) row; H published nothing. |
+| S5-W5 | pass | H and K compared after replacing ids, timestamps, intent ids, and key strings: `search_recipes` (default, `author:me`, `is:draft`, and with intent text), `/check?filter=` (`author:anyone`, `is:draft`, `author:me`, by `recipeId`), `get_recipes`, `GET /recipes`, `list_my_recipe_books`, `get_briefing` (plain and with verbosity, purpose, and recipe ids) and `GET /briefing` minus the section, `log_feedback` (with and without `intent_id`), `POST /feedback` (single and batch), `GET /feedback`, `POST /uploads`, `/health/version` (full body less the key's expiry), `/health/integrity`, and `POST /workspaces`: all equal. |
+| S5-W6 | pass | H updates Pat's personal book's description; the answer has K's shape, and both write `group.description_updated` rows. For the read-only book (by slug and by id), the shared book, and a missing slug, H's and K's answers are byte-identical. |
+
+**Verify and resolve refusals**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S5-R1 | pass | H's `verify_draft` (remote), `POST /recipes/:id/verify` (403, `status: key_cannot_verify`), and the stdio `verify_draft` (run live) each refuse with the headless reason, the queue link with the id as given, and the ordinary-key alternative. State, evidence count, reactions, and `recipe.draft_*` audit rows unchanged. |
+| S5-R2 | pass | K verifies an H draft: published, audit `verifiedByDepositingKey: false`. Pat's queue id-link view lists H's drafts; his `still_true` confirms one and not chosen marks another. |
+
+**Key creation and display**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S5-K1 | pass | `drafts`, `full`, and absent round-trip through the mint response and `GET /keys`. `none`, `true`, `"DRAFTS"`, `1`, `null`, `""`, `" drafts"`, `["drafts"]`, `"headless"`, `false`, and an object are 400 and add no `api_keys` row. |
+| S5-K2 | pass | `PATCH`, `PUT`, and `POST /keys/:id`, `PATCH`/`POST /keys/:id/deposit-level`, `PATCH /keys`, and `PUT /keys/scoped` are 404 or 405, and H's stored level is still `drafts` afterwards; H itself on `POST /keys/scoped` is 401; `POST /keys/briefing` ignores a `depositLevel`. The page offers no toggle (browser E5). |
+| S5-K3 | pass | Browser E1, E3, E6: the checkbox, off by default, with the one-sentence description; "Headless: deposits drafts only" as text in the banner and the row, surviving a reload; Copy agent briefing on the headless key puts the headless section on the clipboard, the ordinary key's has none. |
+| S5-B1 | pass | On remote `get_briefing`, `GET /briefing` (full profile), `GET /briefing` with the stdio surface header, the stdio server itself (run live), and `POST /keys/briefing`, H's text is K's with only the section removed; the section follows "## Your API key". A daily key's briefing has none. |
+| S5-O1 | pass | `POST /keys/daily` with `drafts`, `none`, `null`, `"FULL"`, `true`, and `""` is 400 `daily_keys_are_full` with no new row; `full` and absent mint, stored `full`. OAuth issuance and rotation are unchanged in the diff and pinned by the static test. |
+
+**Uniform responses**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S5-U1 | pass | H's `verify_draft` answer is byte-identical, after replacing the echoed id, for its own draft, K's published recipe, K's draft, Sam's draft, an 8-character prefix, a random UUID, and `not-an-id`; REST likewise (status and body). No side effect on K's or Sam's drafts. |
+| S5-U2 | pass | For Sam's and Olive's keys, `get_recipes` and `GET /recipes` on an H draft equal a random id, and `author:anyone` search does not list it; for Sam and Olive, `GET /traces/:id` equals a random id (status and body). The slice 2 to 4 suites passed in the gate and the isolated re-run. |
+
+**Budgets** (measured by the verifier: served lists live, copy lengths from the domain functions over the rubric's fixtures)
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S5-Z1 | pass | Remote `tools/list` **16,986** bytes for H and for K, byte-identical, `verify_draft` and `update_recipe_book_description` included (cap 17,000); stdio **13,196** for H and K, byte-identical, measured through the running stdio server (cap 13,670). |
+| S5-Z2 | pass | Shared descriptions **6,051** characters; cap 6,080 unchanged. |
+| S5-Z3 | pass | Thin fixture **18,183** characters (18,297 bytes), full **24,119** (24,261 bytes), both unchanged; with the section 18,536 and 24,472; the section is **351** characters (limit 400); ceilings 18,200 and 18,600 held. No live pre-slice `GET /briefing` was captured; byte-identity rests on the domain test (absent or false equals the ordinary text) and the live H-versus-K comparisons. |
+| S5-Z4 | pass | With a 73-character queue URL: headless new-draft notice **338** characters against the self draft's **344**; with the override clause **371** (+27, limit +80). Verify refusal **289** characters plus the link. |
+| S5-Z5 | pass (code review) | `authenticateKey` is still one statement with one more column; the deposit adds a pure predicate call and no statement or round trip. |
+
+**Accessibility and phone width** (browser run: expectations and results in the private companion repo under `docs/working/browser-verification/2026-09-28-drafts-slice5/`; spec `tests/e2e/drafts-slice5.spec.ts`, written and run by this verifier and not committed, with a copy in that folder; desktop 2 tests, mobile 1; 2 passed, 1 failed on the soft axe assertions below. No open `handback.md` was found and none was written.)
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S5-UI1 | not met as written (pre-existing cause) | With the form open: none serious or critical. With the headless banner: a serious `color-contrast` (1.52:1) on the key row's "expires" date (`--color-outline-variant`) and a critical `label` on the banner's read-only raw-key input, both on lines the slice did not change. With a headless key listed, and expanded: the same "expires" contrast. The slice's new elements (checkbox, description, row and banner labels, the fixed-level note) raise none. |
+| S5-UI2 | pass | The checkbox's accessible name is "Headless" and its description comes through `aria-describedby` as visible text; the row label is text in `on-surface` weight 600. Tabbing from the label field, past the days field, reaches it; after the transition its focus style is the design system's 2 px `box-shadow` ring (`outline: none`), visible in the close-up though subtle against the checkbox's own dark border; Space ticks it. |
+| S5-UI3 | pass | Pixel 7 (412 px): content 412 px with the form open and with the headless row expanded, measured against the configured viewport. |
+
+**Security properties.** Every deposit through a headless key was a draft on all seven surfaces and the stdio server, with no parameter that opts out (S5-W1), and nothing it did published: not a repeat, not `verify_draft` on either server, not the REST twin (S5-W4, S5-R1). No route changes a key's level, and no statement assigns it (S5-K2, S5-S2). Stored values other than exactly `full`, reserved or unknown, fail closed live (S5-M2). The refusal is the same bytes for every id and has no side effect, and a headless key's drafts are a random id to Sam and Olive (S5-U1, S5-U2). A headless key changes a description exactly as an ordinary key does (S5-W6). Daily keys cannot be minted headless (S5-O1). The layer that protects the forced deposit is the live Layer 3 suite, not the seam guard (S5-M3). The security audit is a separate role; its findings go to the private repo.
+
+**Builder's interpretations** (build notes, 1 to 4), checked after the verdicts above.
+
+1. An on-behalf deposit through H gets slice 4's notice unchanged, without the headless reason: confirmed (S5-W3) and agreed, since the on-behalf notice names the one person who can review it.
+2. The daily refusal treats `null` as a request for another level: confirmed (400) and agreed; only the string `full` or an absent field mints.
+3. The frontend reads a missing `depositLevel` as ordinary: agreed; this server always sends it, and the server's own reading is the one that fails closed.
+4. The verify refusal echoes the id as given: confirmed for a prefix and garbage; the refusal is still uniform after replacing the echo (S5-U1).
+
+The builder's simplifications (W1 on one value per surface, W3 without attachments, `intent`, or `known_recipes`, W5 without REST feedback or intents, R1 and B1 without a live stdio run) were all run by the verifier and pass.
+
+**Found beyond the rubric** (none blocking).
+
+- **The W5 parity test's `/check?filter=` pair compares nothing.** `drafts-headless.test.ts` maps `results.map((r) => r.id)`, but `/check` JSON results carry `recipeId`, so both sides are lists of `undefined` and only the count is compared. The verifier's comparison by `recipeId` found the lists equal. Follow-up: read `recipeId`.
+- The `/check` HTML form still offers the "Deposit as a draft" checkbox to a headless key, where it has no effect. Copy follow-up at most.
+- Pre-existing on the keys page: a key row expands only on a click of a `div` (not keyboard reachable), the "expires" date's contrast, and the unlabelled raw-key input (S5-UI1).
+
+**Follow-ups** (none blocking): one green gate run before merge (the gate-reliability branch addresses the load timeouts); fix the W5 `/check?filter=` comparison; the pre-existing keys-page contrast, input label, and click-only row header; optionally, hide or reword the HTML form's draft checkbox for a headless key.
+
 ## Open design questions
 
 Found on contact with the code (`feat/authz-seam-keys`, 2026-09-27). Each has a recommendation; the slice that meets it gets a ruling first. Scenarios marked `# Pending decision:` in the feature file, and `decide` rows in the read-path inventory, point here.
