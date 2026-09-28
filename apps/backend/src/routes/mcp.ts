@@ -526,7 +526,7 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
           // Detect own-hostname URLs (POST /uploads pattern) and resolve via
           // the uploads table instead of HTTP-fetching ourselves. This is
           // how agents attach private local files without blowing context
-          // on inline base64. See docs/planning/uploads-endpoint.md.
+          // on inline base64.
           const ownUpload = parseOwnHostnameUpload(file_url, getOwnHostname());
           if (ownUpload) {
             // Uploads resolve only for the key that made them.

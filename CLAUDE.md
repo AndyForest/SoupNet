@@ -98,7 +98,7 @@ npm run test:ci
 
 If it fails, fix before committing. Do not skip. Do not invent per-workspace variants — CI uses the root-level scripts (which pass `--if-present`), so agent-invented commands like `npm run typecheck --workspaces` hit missing-script errors CI doesn't. During tight iteration you can run `npx vitest run path/to.test.ts` against the dev Docker backend for faster feedback, but the gate before commit is always `npm run test:ci`.
 
-After tests pass, check `docs/testing-plan.md` Layer 4 for manual browser verification — tell the human what URLs to check and what to look for. For a change to the SPA, run the `browser-verify` skill first (Layer 3b, `docs/workflows/browser-verification.md`): a separate verifier agent checks the PR's claims with Playwright and hands the human an HTML report to step through. **If backend code changed, run `docker compose up --build -d` before handing off to the human** — `test:ci` uses its own isolated stack (`docker-compose.ci.yml` on port 5534) and does NOT rebuild the dev containers the human tests against. Commit only after gates pass and human confirms.
+After tests pass, check `docs/testing-plan.md` Layer 4 for manual browser verification — tell the human what URLs to check and what to look for. For a change to the SPA, run the `browser-verify` skill first (Layer 3b, `docs/workflows/browser-verification.md`): a separate verifier agent checks the PR's claims with Playwright and hands the human an HTML report to step through. **If backend code changed, run `docker compose up --build -d` before handing off to the human** — `test:ci` uses its own isolated stack (`docker-compose.ci.yml` on port 5534) and does NOT rebuild the dev containers the human tests against. On a branch, commit logical units as gates pass (see the branch flow below); the human's confirmation happens at PR review, before merge.
 
 **Branch + draft-PR flow (standard since 2026-07-06, now that the repo is public):** build features on a branch — worktrees for parallel sessions — and commit logical units as gates pass. The push to the shared remote is the operator's personal checkpoint, even for PR branches: finish by handing back the exact `git push -u origin <branch>` command, and once the operator has pushed, open a draft PR (`gh pr create --draft`) for their review. Main only moves by reviewed merge; agents never merge PRs. (Soup.net recipes `985afff8`, `12d95bfd`.)
 
@@ -130,7 +130,7 @@ Single Postgres database on port **5633** (non-standard, intentional), single `c
 - `evidence`, `references` — Toulmin-structured supporting data
 - `trace_evidence`, `trace_references`, `evidence_references` — N:N linking tables with `api_key_id` for coverage tracking
 - `api_keys` — daily rotating and scoped keys for agent authentication; hashed at rest
-- `uploads` — multimodal evidence files, api-key-scoped capability tokens (ADR-0019)
+- `uploads` — multimodal evidence files, api-key-scoped capability tokens (design in `apps/backend/src/routes/uploads.ts`)
 - `embedding_sources`, `embedding_chunk_strategies`, `embedding_chunks`, `embedding_vectors` — 4-table vector pipeline
 - `vector_cache` — full-precision float32 content-hash-keyed cache (survives HNSW halfvec quantization)
 - `reference_source_cache` — cached fetched content from reference URLs

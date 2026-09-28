@@ -2,8 +2,7 @@
  * Upload service — opaque file references for agent-attached evidence.
  *
  * Backs the POST /uploads endpoint and the own-hostname resolution path
- * inside check_recipe. See docs/planning/uploads-endpoint.md for the
- * full design.
+ * inside check_recipe. The design is described in routes/uploads.ts.
  *
  * Security boundary: every upload is owned by an api_key_id. Resolution
  * verifies the *current* request's api_key_id matches the upload's; mismatch

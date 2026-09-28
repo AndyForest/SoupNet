@@ -12,6 +12,7 @@ import { sendVerificationEmail, sendPasswordResetEmail } from "../services/email
 import { rateLimit } from "../middleware/rate-limit";
 import { normalizeEmail } from "../lib/normalize-email";
 import { onBehalfSubjectOf } from "../authz";
+import { verifyTurnstile } from "../lib/turnstile";
 import type { AppEnv } from "../types";
 
 const loginSchema = z.object({
@@ -31,6 +32,9 @@ const registerSchema = z.object({
   // user row. The legal pages are currently placeholder content (see
   // backlog "Legal and compliance") but the structural decision is in
   // place from day one so we don't have to retrofit it later.
+  // Cloudflare Turnstile token from the signup form. Required only when the
+  // server has TURNSTILE_SECRET_KEY (see lib/turnstile.ts).
+  turnstileToken: z.string().max(4096).optional(),
   tosAccepted: z.literal(true, {
     errorMap: () => ({ message: "You must accept the Terms of Service and Privacy Policy to create an account." }),
   }),
@@ -88,6 +92,21 @@ auth.post("/register", authRateLimit, async (c) => {
     // not data exposure. Zod errors stay specific.
     return c.json({ ok: false, error: "Invalid input", details: parsed.error.issues }, 400);
   }
+  // Bot check before any database work (lib/turnstile.ts; off unless
+  // TURNSTILE_SECRET_KEY is set). The refusal says nothing about the email,
+  // so it leaks nothing.
+  const turnstile = await verifyTurnstile({
+    secret: process.env["TURNSTILE_SECRET_KEY"],
+    token: parsed.data.turnstileToken,
+  });
+  if (!turnstile.ok) {
+    if (turnstile.reason === "unreachable") console.error("[auth/register] Turnstile verification unreachable");
+    return c.json(
+      { ok: false, code: "turnstile_failed", error: "We couldn't confirm you're not a bot. Please try again." },
+      400,
+    );
+  }
+
   // Canonical lowercase form everywhere: the invite lookup below, the user
   // row registerUser inserts, and the verification email must all agree.
   const email = normalizeEmail(parsed.data.email);
