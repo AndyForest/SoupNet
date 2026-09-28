@@ -26,7 +26,7 @@ import {
 } from "@soupnet/db";
 import { getDb } from "../db";
 import { parseEvidenceMarkdown } from "./evidence-parser";
-import { inBooks, traceVisibleTo } from "../authz";
+import { inBooks, traceVisibleTo, normalizeOnBehalfOf, resolveNameableSubject, onBehalfSubjectOf } from "../authz";
 import type { Principal } from "../authz";
 import {
   enqueueEmbedding,
@@ -41,7 +41,7 @@ import { runSearchPipeline } from "./search-pipeline";
 import { StageTimer } from "../lib/stage-timer";
 import { searchSelections } from "./search-selection";
 import { draftQueueUrl } from "../lib/key-remediation";
-import { DEFAULT_RANKING, RANKING_ALGORITHM_VERSION, parseSearchQuery, AUTHOR_ME, buildOwnExcludedNote, parseTriageRating, parseTriageRatings, repeatRatingsNotice, parseDraftFlag, draftDepositNotice, isShownDraftState } from "@soupnet/domain";
+import { DEFAULT_RANKING, RANKING_ALGORITHM_VERSION, parseSearchQuery, AUTHOR_ME, buildOwnExcludedNote, parseTriageRating, parseTriageRatings, repeatRatingsNotice, parseDraftFlag, draftDepositNotice, isShownDraftState, onBehalfRefusal } from "@soupnet/domain";
 import type { CandidateSignals, VerbositySteer, ParsedSearchQuery, TriageRatings } from "@soupnet/domain";
 import type { DraftState } from "@soupnet/contracts";
 import type { StructuredTraceFilters } from "./vector-search.service";
@@ -161,6 +161,13 @@ export interface SubmitAndSearchParams {
    *  (on-behalf-of is slice 4). Raw value: parsed leniently, an unrecognized
    *  value taken as draft with a notice (parseDraftFlag). */
   draft?: unknown;
+  /** On behalf of (drafts-and-triage slice 4): the email of the person the
+   *  recipe is about. Naming anyone but the key's own user stores an
+   *  `unverified` draft about them, whatever `draft` says, and is accepted
+   *  only for a live writer of the target book (authz/naming.ts); anything
+   *  else refuses the check with one uniform answer. Empty = absent; the
+   *  key's own user = an ordinary check. */
+  onBehalfOf?: unknown;
 }
 
 export interface SearchResultItem {
@@ -239,6 +246,9 @@ export interface SubmitAndSearchResult {
   /** Who can see a new draft and how it gets verified, or the state an
    *  identical repeat found (draftDepositNotice). */
   draftNotice?: string | undefined;
+  /** Slice 4: the email of the person the deposit is about, when it is a
+   *  draft deposited on their behalf (the depositor's side of S4-L1). */
+  draftAbout?: string | undefined;
   formatWarning?: string | undefined;
   results: SearchResultItem[];
   /** Evidence from other recipes that's topically related to the checked recipe */
@@ -456,6 +466,74 @@ export async function insertEvidenceEntries(opts: InsertEvidenceOptions): Promis
 // enqueued on the check path.)
 import { buildFullRecipeContext } from "@soupnet/domain";
 
+/**
+ * The deposit-time fields of a check's `recipe.checked` audit row (the
+ * search's own fields are added after it runs). Slice 4: an on-behalf
+ * deposit carries the subject's user id, never the email it was named by
+ * (open question 39), and a refused naming writes no row at all.
+ */
+function depositAuditMetadata(p: {
+  params: SubmitAndSearchParams;
+  keyId: string;
+  keyType: string;
+  oauthClientId: string | null | undefined;
+  sessionId: string;
+  intentId: string | null | undefined;
+  ratings: TriageRatings;
+  draft: boolean;
+  subjectUserId: string | null;
+}): Record<string, unknown> {
+  const { params } = p;
+  const metadata: Record<string, unknown> = {
+    apiKeyId: p.keyId,
+    k: params.clusters ?? null,
+    maxChars: params.maxChars ?? null,
+    verbosity: params.verbosity ?? null,
+    // Connection surface: mcp-http | mcp-stdio | web (server-known).
+    surface: params.surface ?? "web",
+    // Which ranking served the check — joins offline analysis to the
+    // algorithm version (brief §3c) — and which session deposited it.
+    rankingVersion: RANKING_ALGORITHM_VERSION,
+    sessionId: p.sessionId,
+    // Declared intent (Phase C) — joins this check into its intent lineage.
+    ...(p.intentId ? { intentId: p.intentId } : {}),
+    // Triage ratings as sent on THIS call (slice 1). The recipe keeps its
+    // first ratings on an identical repeat, so this row is the per-call
+    // history (build log open question 4). Absent when nothing was rated.
+    ...(p.ratings.impact !== null || p.ratings.uncertainty !== null
+      ? { impact: p.ratings.impact, uncertainty: p.ratings.uncertainty }
+      : {}),
+    // Whether THIS call asked for (or, on behalf of someone else, forced) a
+    // draft (slice 2); the recipe's state is on the row. Absent for an
+    // ordinary check.
+    ...(p.draft ? { draft: true } : {}),
+    // Who the deposit is about, when that is not the depositor (slice 4).
+    ...(p.subjectUserId ? { subjectUserId: p.subjectUserId } : {}),
+    // OAuth client identity — segmentable cross-vendor column the day a
+    // connector check arrives. Null for daily/scoped keys.
+    ...(p.keyType === "oauth" && p.oauthClientId ? { oauthClientId: p.oauthClientId } : {}),
+  };
+  if (params.agentId) {
+    // Self-minted agent identity — capture only (no behavior; see
+    // SubmitAndSearchParams.agentId).
+    metadata["agentId"] = params.agentId;
+  }
+  if (params.image) {
+    const imageHash = crypto.createHash("sha256").update(params.image.buffer).digest("hex");
+    metadata["hasFile"] = true;
+    metadata["fileHash"] = imageHash;
+    metadata["fileMimeType"] = params.image.mimeType;
+    metadata["fileBytes"] = params.image.buffer.length;
+  }
+  return metadata;
+}
+
+/** A book's slug, for copy that names the target book. */
+async function bookSlugOf(db: PostgresJsDatabase, bookId: string): Promise<string> {
+  const rows = await db.execute(sql`SELECT slug FROM claimnet.groups WHERE id = ${bookId}::uuid`);
+  return (rows as unknown as Array<{ slug: string }>)[0]?.slug ?? "the target recipe book";
+}
+
 // ── Main service function ────────────────────────────────────────────────────
 
 export async function submitAndSearch(
@@ -496,6 +574,24 @@ export async function submitAndSearch(
       error: NO_DEFAULT_WRITE_BOOK_MESSAGE,
       results: [], totalResults: 0, currentPage: page, totalPages: 0,
     };
+  }
+
+  // 1a. On behalf of (slice 4, S4-M1, S4-W2 to W4): who the recipe is about.
+  // Decided once, in the authz module, against the target book: the named
+  // person must be able to resolve the draft now. Everything else is one
+  // uniform refusal, before anything is stored or searched (S4-U1). Naming
+  // the key's own user is an ordinary check (S4-W3).
+  const naming = normalizeOnBehalfOf(params.onBehalfOf);
+  let subject: { userId: string; email: string } | null = null;
+  if (naming.present) {
+    const named = await resolveNameableSubject(db, { email: naming.email, bookId: groupId });
+    if (!named) {
+      return {
+        error: onBehalfRefusal(await bookSlugOf(db, groupId)),
+        results: [], totalResults: 0, currentPage: page, totalPages: 0,
+      };
+    }
+    if (named.userId !== userId) subject = named;
   }
 
   // Resolve read scope (optional per-call narrowing of readable groups).
@@ -573,7 +669,11 @@ export async function submitAndSearch(
   // 1g. Draft flag (slice 2): capture-only like the ratings. An
   // unrecognized value is taken as a draft (the private side) with a notice.
   const requestedDraft = parseDraftFlag(params.draft);
-  let storedDraftState: string | null = requestedDraft.draft ? "unverified" : null;
+  // On behalf of someone else always implies draft (S4-W2).
+  let storedDraftState: string | null = requestedDraft.draft || subject ? "unverified" : null;
+  // The subject of the recipe this call returns: the named person for a new
+  // on-behalf draft, the stored one on an identical repeat.
+  let storedSubjectEmail: string | null = subject?.email ?? null;
 
   // 2. Parse evidence
   const forEntries = parseEvidenceMarkdown(params.evidenceFor);
@@ -608,12 +708,22 @@ export async function submitAndSearch(
       ),
     ]));
 
+  // The recipe.checked audit row's deposit-time fields; the search adds its
+  // own below. For an on-behalf deposit this row is written in the deposit's
+  // transaction (S4-S4, recipe c6aa9587): after the subject verifies it, the
+  // audit trail is the only record of who deposited it.
+  const auditMetadata = depositAuditMetadata({
+    params, keyId, keyType, oauthClientId, sessionId: session.sessionId, intentId: intent.intentId,
+    ratings: requestedRatings.ratings, draft: requestedDraft.draft || !!subject, subjectUserId: subject?.userId ?? null,
+  });
+  let depositAuditId: string | null = null;
+
   await timer.time("write", () => db.transaction(async (tx) => {
     // Try to insert — unique constraint on (api_key_id, group_id, claim_text_hash)
     // prevents duplicates from the same agent + group
     const traceRows = await tx.execute(sql`
-      INSERT INTO claimnet.traces (user_id, group_id, api_key_id, claim_text, claim_text_hash, format_adherence_score, decided_at, session_id, impact, uncertainty, draft_state)
-      VALUES (${userId}::uuid, ${groupId}::uuid, ${keyId}::uuid, ${params.traceText}, ${claimTextHash}, ${adherence.score}, ${decidedAt ? decidedAt.toISOString() : null}::timestamptz, ${session.sessionId}, ${requestedRatings.ratings.impact}, ${requestedRatings.ratings.uncertainty}, ${storedDraftState})
+      INSERT INTO claimnet.traces (user_id, group_id, api_key_id, claim_text, claim_text_hash, format_adherence_score, decided_at, session_id, impact, uncertainty, draft_state, subject_user_id)
+      VALUES (${userId}::uuid, ${groupId}::uuid, ${keyId}::uuid, ${params.traceText}, ${claimTextHash}, ${adherence.score}, ${decidedAt ? decidedAt.toISOString() : null}::timestamptz, ${session.sessionId}, ${requestedRatings.ratings.impact}, ${requestedRatings.ratings.uncertainty}, ${storedDraftState}, ${subject?.userId ?? null}::uuid)
       ON CONFLICT (api_key_id, group_id, claim_text_hash) DO NOTHING
       RETURNING id
     `);
@@ -623,6 +733,20 @@ export async function submitAndSearch(
     if (insertedRow) {
       // New trace — insert evidence, references, embeddings
       traceId = insertedRow.id;
+
+      if (subject) {
+        // Not best-effort: if this row cannot be written, the draft is not
+        // stored either (S4-S4).
+        const auditRows = await tx.insert(auditLog).values({
+          actorUserId: userId,
+          apiKeyId: keyId,
+          action: "recipe.checked",
+          targetType: "trace",
+          targetId: traceId,
+          metadata: auditMetadata,
+        }).returning({ id: auditLog.id });
+        depositAuditId = auditRows[0]?.id ?? null;
+      }
 
       // Store file attachment if present (for first evidence_for reference).
       // storeFile stores the ORIGINAL (unmodified) bytes per ADR-0019 —
@@ -695,17 +819,23 @@ export async function submitAndSearch(
       // it is not an existence oracle for anyone else; the depositor learns
       // the state its own earlier check left. A draft stays a draft here:
       // re-checking is not verification (DT-VIS-12).
+      // An on-behalf draft reports whom it is about (S4-L4); the idempotency
+      // key is unchanged, so a repeat naming someone else returns this recipe
+      // as any identical repeat does (S4-S2).
       const existingRows = await tx.execute(sql`
-        SELECT id, impact, uncertainty, draft_state AS "draftState" FROM claimnet.traces
-        WHERE api_key_id = ${keyId}::uuid
-          AND group_id = ${groupId}::uuid
-          AND claim_text_hash = ${claimTextHash}
+        SELECT t.id, t.impact, t.uncertainty, t.draft_state AS "draftState", su.email AS "subjectEmail"
+        FROM claimnet.traces t
+        LEFT JOIN claimnet.users su ON su.id = ${onBehalfSubjectOf("t")}
+        WHERE t.api_key_id = ${keyId}::uuid
+          AND t.group_id = ${groupId}::uuid
+          AND t.claim_text_hash = ${claimTextHash}
         LIMIT 1
       `);
-      const existing = (existingRows as unknown as Array<{ id: string; impact: string | null; uncertainty: string | null; draftState: string | null }>)[0];
+      const existing = (existingRows as unknown as Array<{ id: string; impact: string | null; uncertainty: string | null; draftState: string | null; subjectEmail: string | null }>)[0];
       traceId = existing?.id;
       if (existing) {
         storedDraftState = existing.draftState;
+        storedSubjectEmail = existing.subjectEmail;
         // Stored values went through the same parser on the way in; parsing
         // again keeps the type honest without trusting the column blindly.
         storedRatings = {
@@ -795,63 +925,39 @@ export async function submitAndSearch(
   // included on this same event rather than a separate upload.received event
   // — uploads only co-occur with /check, so a single row keys the forensic
   // trail to (key, trace, file) atomically. See ADR-0019.
+  const searchMetadata: Record<string, unknown> = {
+    searchMode: pipelineResult.searchMode,
+    resultCount: pipelineResult.totalResults,
+    clustered: pipelineResult.clustered,
+    resultTraceIds: pipelineResult.results.map((r) => r.id),
+    // UVP Layer 1 server stamps (2026-07-05): what the agent actually saw.
+    // resultSimilarities is index-parallel to resultTraceIds — together
+    // they erase the retyped-topSimilarity gap in self-reported feedback.
+    resultSimilarities: pipelineResult.results.map((r) => r.semanticScore ?? null),
+  };
   try {
-    const metadata: Record<string, unknown> = {
-      apiKeyId: keyId,
-      k: params.clusters ?? null,
-      maxChars: params.maxChars ?? null,
-      verbosity: params.verbosity ?? null,
-      searchMode: pipelineResult.searchMode,
-      resultCount: pipelineResult.totalResults,
-      clustered: pipelineResult.clustered,
-      resultTraceIds: pipelineResult.results.map((r) => r.id),
-      // UVP Layer 1 server stamps (2026-07-05): what the agent actually saw.
-      // resultSimilarities is index-parallel to resultTraceIds — together
-      // they erase the retyped-topSimilarity gap in self-reported feedback.
-      resultSimilarities: pipelineResult.results.map((r) => r.semanticScore ?? null),
-      // Connection surface: mcp-http | mcp-stdio | web (server-known).
-      surface: params.surface ?? "web",
-      // Which ranking served the check — joins offline analysis to the
-      // algorithm version (brief §3c) — and which session deposited it.
-      rankingVersion: RANKING_ALGORITHM_VERSION,
-      sessionId: session.sessionId,
-      // Declared intent (Phase C) — joins this check into its intent lineage.
-      ...(intent.intentId ? { intentId: intent.intentId } : {}),
-      // Triage ratings as sent on THIS call (slice 1). The recipe keeps its
-      // first ratings on an identical repeat, so this row is the per-call
-      // history (build log open question 4). Absent when nothing was rated.
-      ...(requestedRatings.ratings.impact !== null || requestedRatings.ratings.uncertainty !== null
-        ? { impact: requestedRatings.ratings.impact, uncertainty: requestedRatings.ratings.uncertainty }
-        : {}),
-      // Whether THIS call asked for a draft (slice 2); the recipe's state is
-      // on the row. Absent for an ordinary check.
-      ...(requestedDraft.draft ? { draft: true } : {}),
-      // OAuth client identity — segmentable cross-vendor column the day a
-      // connector check arrives. Null for daily/scoped keys.
-      ...(keyType === "oauth" && oauthClientId ? { oauthClientId } : {}),
-    };
-    if (params.agentId) {
-      // Self-minted agent identity — capture only (no behavior; see
-      // SubmitAndSearchParams.agentId).
-      metadata["agentId"] = params.agentId;
+    if (depositAuditId) {
+      // The on-behalf deposit's row already exists (written with the
+      // deposit); the search's fields complete that same row, so one check
+      // is still one recipe.checked row for the per-key budget.
+      await db.execute(sql`
+        UPDATE claimnet.audit_log
+        SET metadata = metadata || ${JSON.stringify(searchMetadata)}::jsonb
+        WHERE id = ${depositAuditId}::uuid
+      `);
+    } else {
+      await db.insert(auditLog).values({
+        actorUserId: userId,
+        apiKeyId: keyId,
+        action: "recipe.checked",
+        targetType: "trace",
+        targetId: traceId,
+        metadata: { ...auditMetadata, ...searchMetadata },
+      });
     }
-    if (params.image) {
-      const imageHash = crypto.createHash("sha256").update(params.image.buffer).digest("hex");
-      metadata["hasFile"] = true;
-      metadata["fileHash"] = imageHash;
-      metadata["fileMimeType"] = params.image.mimeType;
-      metadata["fileBytes"] = params.image.buffer.length;
-    }
-    await db.insert(auditLog).values({
-      actorUserId: userId,
-      apiKeyId: keyId,
-      action: "recipe.checked",
-      targetType: "trace",
-      targetId: traceId,
-      metadata,
-    });
   } catch (err) {
     // Non-blocking — don't fail the recipe check if audit logging fails
+    // (the on-behalf deposit's own row was written with the deposit).
     console.error("[trace.service] Audit log write failed:", err);
   }
 
@@ -915,7 +1021,14 @@ export async function submitAndSearch(
     requestedDraft.notice,
     // The queue link for this recipe (slice 3, S3-L6): the one URL the agent
     // hands its person for review.
-    draftDepositNotice({ storedState: storedDraftState, requestedDraft: requestedDraft.draft, existing: isExisting, queueUrl: draftQueueUrl([traceId]) }),
+    draftDepositNotice({
+      storedState: storedDraftState,
+      requestedDraft: requestedDraft.draft || !!subject,
+      existing: isExisting,
+      queueUrl: draftQueueUrl([traceId]),
+      onBehalfOf: storedSubjectEmail ?? undefined,
+      draftFlagOverridden: !!subject && !requestedDraft.draft,
+    }),
   ].filter(Boolean).join(" ") || undefined;
 
   return {
@@ -926,6 +1039,8 @@ export async function submitAndSearch(
     ratingsNotice,
     draftState,
     draftNotice,
+    // Only while the stored recipe is an unpublished draft about someone else.
+    draftAbout: draftState && storedSubjectEmail ? storedSubjectEmail : undefined,
     formatWarning,
     results: pipelineResult.results,
     relatedEvidence: pipelineResult.relatedEvidence,

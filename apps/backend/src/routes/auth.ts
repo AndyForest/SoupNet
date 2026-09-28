@@ -11,6 +11,7 @@ import { deleteUserCascade } from "../services/user-delete.service";
 import { sendVerificationEmail, sendPasswordResetEmail } from "../services/email.service";
 import { rateLimit } from "../middleware/rate-limit";
 import { normalizeEmail } from "../lib/normalize-email";
+import { onBehalfSubjectOf } from "../authz";
 import type { AppEnv } from "../types";
 
 const loginSchema = z.object({
@@ -436,7 +437,10 @@ auth.get("/me/export", requireAuth, requireVerifiedEmail, async (c) => {
   // and nullable like decidedAt, so a draft exported and re-imported comes
   // back a draft (DT-VIS-16). The export is the caller's own recipes only
   // (user_id), so a collaborator's export never holds someone else's draft
-  // (DT-VIS-10).
+  // (DT-VIS-10). Export is by author, so it follows the author flip (slice
+  // 4, S4-E1): a draft deposited about someone else is in the depositor's
+  // export with that person's email (`onBehalfOf`) until they verify it, and
+  // from then on in theirs, as their own recipe (the subject is cleared).
   const traces = await db.execute(sql`
     SELECT id, user_id AS "userId", group_id AS "groupId", api_key_id AS "apiKeyId",
            claim_text AS "claimText", claim_text_hash AS "claimTextHash",
@@ -444,8 +448,9 @@ auth.get("/me/export", requireAuth, requireVerifiedEmail, async (c) => {
            decided_at AS "decidedAt",
            impact, uncertainty,
            draft_state AS "draftState", draft_resolved_at AS "draftResolvedAt",
+           (SELECT su.email FROM claimnet.users su WHERE su.id = ${onBehalfSubjectOf("t")}) AS "onBehalfOf",
            created_at AS "createdAt", updated_at AS "updatedAt"
-    FROM claimnet.traces WHERE user_id = ${user.id}::uuid
+    FROM claimnet.traces t WHERE user_id = ${user.id}::uuid
     ORDER BY created_at
   `);
 

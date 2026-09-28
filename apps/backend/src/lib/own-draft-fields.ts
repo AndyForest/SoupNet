@@ -21,7 +21,22 @@ export function ownDraftFields(r: {
   draftState?: string | undefined;
   impact?: string | null | undefined;
   uncertainty?: string | null | undefined;
-}): { draftState?: Exclude<DraftState, "verified">; impact?: TriageRating | null; uncertainty?: TriageRating | null } {
+  draftDepositedBy?: string | undefined;
+  draftAbout?: string | undefined;
+}): {
+  draftState?: Exclude<DraftState, "verified">;
+  impact?: TriageRating | null;
+  uncertainty?: TriageRating | null;
+  draftDepositedBy?: string;
+  draftAbout?: string;
+} {
   if (!isShownDraftState(r.draftState)) return {};
-  return { draftState: r.draftState, impact: asRating(r.impact), uncertainty: asRating(r.uncertainty) };
+  return {
+    draftState: r.draftState,
+    impact: asRating(r.impact),
+    uncertainty: asRating(r.uncertainty),
+    // Slice 4 (S4-L1): only on an on-behalf draft, naming the other party.
+    ...(r.draftDepositedBy ? { draftDepositedBy: r.draftDepositedBy } : {}),
+    ...(r.draftAbout ? { draftAbout: r.draftAbout } : {}),
+  };
 }

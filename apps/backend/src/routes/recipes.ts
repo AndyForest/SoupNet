@@ -136,6 +136,10 @@ recipes.post("/:id/verify", recipesIpRateLimit, recipesPerKeyRateLimit, async (c
       // The key can read this draft (S3-F1), so the refusal is honest: it
       // names the book and the way forward.
       return c.json({ ok: false, error: describeVerifyResult(result), recipeId: result.recipeId, status: result.status, recipeBook: result.recipeBook }, 403);
+    case "only_subject_reviews":
+      // The depositor of a draft about someone else can read it (slice 4,
+      // S4-R2): honest refusal with the link to hand its subject.
+      return c.json({ ok: false, error: describeVerifyResult(result), recipeId: result.recipeId, status: result.status }, 403);
     case "refused":
       return c.json({ ok: false, error: result.error, recipeId: result.recipeId, status: result.status }, 400);
   }

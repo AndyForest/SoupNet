@@ -46,6 +46,9 @@ export interface ImportTraceRow {
   uncertainty: string | null;
   /** Taken from the file; who resolved a draft and when never is ([F83]). */
   draftState: string | null;
+  /** Slice 4: the email of the person an on-behalf draft is about (the
+   *  export's `onBehalfOf`); absent on everything else. */
+  onBehalfOf: string | null;
   createdAt: Date;
   updatedAt: Date | null;
 }
@@ -286,6 +289,7 @@ export function parseExportPayload(json: unknown): ParseExportResult {
     impact: optEnum(row, "impact", TRIAGE_RATING_VALUES),
     uncertainty: optEnum(row, "uncertainty", TRIAGE_RATING_VALUES),
     draftState: optEnum(row, "draftState", DRAFT_STATE_VALUES),
+    onBehalfOf: optString(row, "onBehalfOf"),
     createdAt: reqDate(row, "createdAt"),
     updatedAt: optDate(row, "updatedAt"),
   }));

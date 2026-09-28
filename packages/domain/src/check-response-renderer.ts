@@ -78,6 +78,10 @@ export interface CheckResultItem {
    *  3, S3-AG2); null = not rated. The label names them when one is set. */
   impact?: TriageRating | null;
   uncertainty?: TriageRating | null;
+  /** Slice 4 (S4-L1): the other party of an unpublished on-behalf draft,
+   *  named inside the label. */
+  draftDepositedBy?: string;
+  draftAbout?: string;
 }
 
 /** A related-evidence entry IS a Recipe fill (canonical schema): the parent
@@ -103,6 +107,8 @@ export interface CheckResponseData {
     uncertainty?: TriageRating | null;
     /** Present when the deposit is an unpublished draft (slice 2). */
     draftState?: string;
+    /** Slice 4: the person an on-behalf deposit is about. */
+    draftAbout?: string;
   };
   /** Who can see a draft just deposited and how it gets verified, or the
    *  state an identical repeat found (slice 2). */

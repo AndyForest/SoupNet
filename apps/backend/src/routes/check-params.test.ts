@@ -7,7 +7,7 @@ const empty: PageParams = {
   verbosity: undefined, clusters: undefined, maxChars: undefined, expand: undefined, compact: undefined,
   axes: undefined, group: undefined, readGroups: undefined, decidedAt: undefined,
   agentId: undefined, knownRecipes: undefined, sessionId: undefined, intent: undefined, filter: undefined,
-  synthesize: undefined, impact: undefined, uncertainty: undefined, draft: undefined,
+  synthesize: undefined, impact: undefined, uncertainty: undefined, draft: undefined, onBehalfOf: undefined,
   feedbackTraceId: undefined, feedbackSearchId: undefined, feedbackKind: undefined, feedbackImpact: undefined,
   feedbackDisposition: undefined, feedbackStoryFulfilled: undefined,
   feedbackStory: undefined, feedbackNote: undefined, feedbackIntentId: undefined,

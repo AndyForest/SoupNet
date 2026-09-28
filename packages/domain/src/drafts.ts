@@ -60,8 +60,15 @@ export function draftDepositNotice(p: {
   existing: boolean;
   /** The person's review queue narrowed to this recipe (`/app/drafts?ids=<id>`). */
   queueUrl?: string | undefined;
+  /** Slice 4: the email of the person the stored draft is about, when it is
+   *  a draft deposited on their behalf. */
+  onBehalfOf?: string | undefined;
+  /** Slice 4: this call sent a draft flag that on_behalf_of overrode (a
+   *  false or absent flag; a draft is forced). */
+  draftFlagOverridden?: boolean | undefined;
 }): string | undefined {
   const state = p.storedState ?? null;
+  if (p.onBehalfOf) return onBehalfNotice({ ...p, state, subject: p.onBehalfOf });
   if (!p.existing) {
     if (state !== "unverified") return undefined;
     return (
@@ -93,6 +100,68 @@ export function draftDepositNotice(p: {
 }
 
 /**
+ * The deposit notice for a draft about someone else (slice 4, S4-L3, S4-L4):
+ * why it is a draft, who can see it, who alone can confirm it, and the link
+ * to hand that person. It never tells the depositor to verify it: only the
+ * subject can.
+ */
+function onBehalfNotice(p: {
+  state: string | null;
+  existing: boolean;
+  subject: string;
+  queueUrl?: string | undefined;
+  draftFlagOverridden?: boolean | undefined;
+}): string | undefined {
+  const link = p.queueUrl ? ` Hand them their review link: ${p.queueUrl}` : "";
+  if (!p.existing) {
+    if (p.state !== "unverified") return undefined;
+    return (
+      `Deposited as a draft about ${p.subject}, because it is on their behalf`
+      + `${p.draftFlagOverridden ? " (your draft flag was overridden)" : ""}. `
+      + "Until they verify it, only they and you, with your agents, can see it; only they can confirm or reject it."
+      + link
+    );
+  }
+  if (p.state === "unverified") {
+    return (
+      `An identical earlier check from this key logged this recipe as a draft about ${p.subject}, and it is still a draft: `
+      + "checking it again does not verify it; only they can." + link
+    );
+  }
+  return (
+    `An identical earlier check from this key logged this recipe as a draft about ${p.subject} that has since been `
+    + `${p.state === "rejected" ? "rejected" : "marked not chosen"}; it stays private and nothing new was stored.`
+  );
+}
+
+/**
+ * The refusal when `on_behalf_of` names nobody who may be named (slice 4,
+ * S4-W4, S4-U1): one answer whatever the reason (no account, not a member of
+ * the book, a member who cannot act, a malformed address), so it is never an
+ * account-existence oracle. It names the way forward and echoes nothing.
+ */
+export function onBehalfRefusal(bookLabel: string): string {
+  return (
+    `on_behalf_of must be the email of a person who can write to the recipe book "${bookLabel}"; nothing was stored. `
+    + "Name a member with write access to that book, or check without on_behalf_of to record the recipe as your own."
+  );
+}
+
+/**
+ * The honest refusal for the depositor of a draft about someone else who
+ * tries to verify, react to, or mark it (slice 4, S4-R2, S4-Q5): she can read
+ * it, so saying who reviews it leaks nothing, and the link is the one to
+ * hand them.
+ */
+export function onlySubjectReviewsReason(subjectEmail: string | null, queueUrl?: string | undefined): string {
+  const who = subjectEmail ?? "the person it is about";
+  return (
+    `Only ${who} can review this draft: it is about them. `
+    + (queueUrl ? `Hand them their review link: ${queueUrl}` : "Ask them to confirm or reject it in their review queue.")
+  );
+}
+
+/**
  * The one-line markdown label for a recipe in a draft state the viewer may
  * see. Empty for a published recipe (no state, or verified).
  *
@@ -103,18 +172,32 @@ export function draftDepositNotice(p: {
  */
 export function draftLabel(
   state: DraftState | string | null | undefined,
-  ratings?: { impact?: string | null | undefined; uncertainty?: string | null | undefined },
+  ratings?: {
+    impact?: string | null | undefined;
+    uncertainty?: string | null | undefined;
+    /** Slice 4 (S4-L1): on a draft about the viewer that someone else's
+     *  agent deposited, the depositor's email. */
+    draftDepositedBy?: string | null | undefined;
+    /** Slice 4: on a draft the viewer's agent deposited about someone
+     *  else, that person's email. */
+    draftAbout?: string | null | undefined;
+  },
 ): string {
+  // The other party, when there is one, follows the state's name (at most
+  // the email plus 15 characters, S4-Z3); a self draft's label is unchanged.
+  const party = ratings?.draftDepositedBy
+    ? `, deposited by ${ratings.draftDepositedBy}`
+    : ratings?.draftAbout ? ` about ${ratings.draftAbout}` : "";
   let base: string;
   switch (state) {
     case "unverified":
-      base = "[unverified draft: a hypothesis the person has not confirmed; visible only to them and their agents]";
+      base = `[unverified draft${party}: a hypothesis the person has not confirmed; visible only to them and their agents]`;
       break;
     case "rejected":
-      base = "[rejected draft: the person said this is wrong]";
+      base = `[rejected draft${party}: the person said this is wrong]`;
       break;
     case "not_chosen":
-      base = "[draft not chosen]";
+      base = `[draft not chosen${party}]`;
       break;
     default:
       return "";

@@ -1080,6 +1080,13 @@ export const MCP_PARAM_DESCRIPTIONS = {
     "True: a draft, for a high-impact, uncertain call the person can't be asked about now; say why " +
     "in the first evidence entry. Private to them and their agents until verified.",
 
+  /** on_behalf_of on check_recipe (drafts-and-triage slice 4, S4-Z1: one
+   *  line of at most 90 characters, since the remote tools/list had 147
+   *  bytes of headroom). The forcing rule and who may be named live in the
+   *  deposit notice and the refusal, not here. */
+  onBehalfOf:
+    "Email of the person this recipe is about, if not you: a draft only they can verify.",
+
   /** verify_draft's id param. */
   draftRecipeId: "The draft's id (full UUID or 8+ char short id).",
 

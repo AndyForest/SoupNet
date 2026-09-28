@@ -135,6 +135,16 @@ export const DRAFT_STATE_DEFINITION =
   + "resolved drafts that stay private. A verified draft is an ordinary recipe and carries no draftState "
   + "on shared surfaces. Ranked exactly as if it were not a draft.";
 
+/** Slice 4: the other party of an unpublished draft deposited on someone
+ *  else's behalf, present only on such rows and only for the two people
+ *  involved. */
+export const DRAFT_DEPOSITED_BY_DEFINITION =
+  "On a draft about you that another person's agent deposited (on_behalf_of), that person's email. "
+  + "Absent on everything else.";
+export const DRAFT_ABOUT_DEFINITION =
+  "On a draft your agent deposited on another person's behalf (on_behalf_of), the email of the person "
+  + "it is about, who alone can verify it. Absent on everything else.";
+
 // ── Recipe book ──────────────────────────────────────────────────────────────
 
 export const RecipeBookSchema = z
@@ -260,6 +270,8 @@ const recipeFields = {
     UNCERTAINTY_DEFINITION + " Present on your own deposit (`checked`), and beside `draftState` on a result that is your own draft.",
   ),
   draftState: z.enum(DRAFT_STATE_VALUES).optional().describe(DRAFT_STATE_DEFINITION),
+  draftDepositedBy: z.string().optional().describe(DRAFT_DEPOSITED_BY_DEFINITION),
+  draftAbout: z.string().optional().describe(DRAFT_ABOUT_DEFINITION),
 };
 
 export interface Recipe {
@@ -276,6 +288,8 @@ export interface Recipe {
   impact?: TriageRating | null | undefined;
   uncertainty?: TriageRating | null | undefined;
   draftState?: DraftState | undefined;
+  draftDepositedBy?: string | undefined;
+  draftAbout?: string | undefined;
   knownMembers?: Recipe[] | undefined;
 }
 

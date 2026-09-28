@@ -73,6 +73,8 @@ import {
 } from "@soupnet/db";
 import { getEmbeddingModelId } from "../lib/embeddings/provider";
 import { deleteEmbeddingChainForSource } from "./trace-delete.service";
+import { normalizeOnBehalfOf, resolveNameableSubject } from "../authz";
+import { onBehalfRefusal } from "@soupnet/domain";
 import type { ParsedExport, ImportTraceRow } from "./import-validate";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -470,10 +472,33 @@ export async function importCorpus(
     if (toInsert.length > 0) {
       if (!dest) throw new ImportError(500, "internal: destination book unresolved");
       const destId = dest.id;
+      // On behalf of (slice 4, S4-E2): a row naming someone other than the
+      // importer goes through the deposit's naming rule against the
+      // destination book. Accepted, it is restored as an unverified draft
+      // about that person whatever state the file carries, since only they
+      // resolve it; otherwise the import is refused with the uniform naming
+      // answer and nothing is stored (the transaction rolls back).
+      const subjectOf = new Map<string, string | null>();
+      for (const t of toInsert) {
+        const naming = normalizeOnBehalfOf(t.onBehalfOf);
+        if (!naming.present || subjectOf.has(naming.email)) continue;
+        const named = await resolveNameableSubject(tx, { email: naming.email, bookId: destId });
+        if (!named) throw new ImportError(400, `A recipe in the file: ${onBehalfRefusal(dest.slug)}`);
+        subjectOf.set(naming.email, named.userId === userId ? null : named.userId);
+      }
+      const subjectFor = (t: ImportTraceRow): string | null => {
+        const naming = normalizeOnBehalfOf(t.onBehalfOf);
+        return naming.present ? subjectOf.get(naming.email) ?? null : null;
+      };
       for (const chunk of chunks(toInsert)) {
         const rows = await tx
           .insert(tracesTable)
-          .values(chunk.map((t) => ({
+          .values(chunk.map((t) => {
+            const subjectUserId = subjectFor(t);
+            // An on-behalf row is always an unverified draft (S4-E2), and the
+            // importer is its author and depositor (S4-E3).
+            const draftState = subjectUserId ? "unverified" : t.draftState;
+            return {
             id: t.id,
             userId,
             groupId: destId,
@@ -492,17 +517,19 @@ export async function importCorpus(
             // so nothing here publishes anyone else's draft.
             impact: t.impact,
             uncertainty: t.uncertainty,
-            draftState: t.draftState,
+            draftState,
+            subjectUserId,
             // Resolution attribution and time are never taken from the file
             // ([F83]): an imported resolved draft is resolved by the importer,
             // now (an import is a human control, so no key); an unverified one
             // carries none, so a later real verification writes its own.
-            ...(t.draftState !== null && t.draftState !== "unverified"
+            ...(draftState !== null && draftState !== "unverified"
               ? { draftResolvedAt: new Date(), draftResolvedByUserId: userId, draftResolvedByKeyId: null }
               : { draftResolvedAt: null, draftResolvedByUserId: null, draftResolvedByKeyId: null }),
             createdAt: t.createdAt,
             updatedAt: t.updatedAt ?? t.createdAt,
-          })))
+            };
+          }))
           .onConflictDoNothing()
           .returning({ id: tracesTable.id });
         insertedTraces += rows.length;

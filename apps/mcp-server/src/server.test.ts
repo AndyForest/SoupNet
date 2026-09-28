@@ -260,3 +260,16 @@ describe("stdio drafts (slice 2)", () => {
     expect((result.content as Array<{ text: string }>)[0]!.text).toBe(refusal);
   });
 });
+
+describe("stdio on behalf of (slice 4)", () => {
+  const recipe = "As a backend maintainer working on drafts, I prefer on-behalf drafts forwarded so that the proxy stays thin.";
+  const evidence = "Interpretation.\n> \"quote\"\n-- server.test.ts";
+
+  it("S4-W1: forwards on_behalf_of to /check as given, and sends none when absent", async () => {
+    const calls = stubBackend();
+    await callTool("check_recipe", { recipe, supporting_evidence: evidence, on_behalf_of: " Pat@Example.test " });
+    expect(new URL(calls[0]!.url).searchParams.get("on_behalf_of")).toBe(" Pat@Example.test ");
+    await callTool("check_recipe", { recipe, supporting_evidence: evidence });
+    expect(new URL(calls[1]!.url).searchParams.has("on_behalf_of")).toBe(false);
+  });
+});
