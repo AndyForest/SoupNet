@@ -13,6 +13,7 @@ import {
   excerpt,
   whyLabel,
   partyText,
+  linkHeading,
   QUEUE_ACTIONS,
 } from "./draft-queue.js";
 import type { QueueItem } from "./draft-queue.js";
@@ -154,5 +155,14 @@ describe("slice 4: drafts deposited on someone else's behalf (S4-Q2, S4-Q5, S4-U
     expect(queueRatingsText(base)).toBe("Agent's ratings: impact high · uncertainty not rated");
     expect(whyLabel("unverified")).toBe("Why your agent drafted it:");
     expect(partyText({})).toBeNull();
+  });
+});
+
+describe("the id-list heading is true for whoever opens the link (slice 4 fix pass)", () => {
+  it("says 'your agent' only when every linked draft is the viewer's own agent's", () => {
+    expect(linkHeading([{ depositedBy: null, about: null }])).toBe("Drafts your agent linked");
+    expect(linkHeading([{ depositedBy: null, about: "pat@test.local" }])).toBe("Linked drafts");
+    expect(linkHeading([{ depositedBy: "dana@test.local", about: null }])).toBe("Linked drafts");
+    expect(linkHeading([])).toBe("Drafts your agent linked");
   });
 });

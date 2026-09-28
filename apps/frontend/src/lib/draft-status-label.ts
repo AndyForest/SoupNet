@@ -37,9 +37,10 @@ export function showsKeyBadge(t: { apiKeyId?: string | null; apiKeyIsAuthors?: b
  * The line naming the other party of an unpublished on-behalf draft (slice
  * 4, S4-L1, S4-UI2): text, never colour or an icon alone. Null otherwise.
  */
-export function draftPartyLine(t: Pick<DraftStatusLike, "draftDepositedBy" | "draftAbout">): string | null {
+export function draftPartyLine(t: Pick<DraftStatusLike, "draftDepositedBy" | "draftAbout" | "draftState">): string | null {
   if (t.draftDepositedBy) return `Deposited by ${t.draftDepositedBy}'s agent, on your behalf`;
-  if (t.draftAbout) return `About ${t.draftAbout}: only they can confirm or reject it`;
+  // Once resolved there is nothing left for them to confirm or reject.
+  if (t.draftAbout) return t.draftState === "unverified" ? `About ${t.draftAbout}: only they can confirm or reject it` : `About ${t.draftAbout}`;
   return null;
 }
 
@@ -87,9 +88,14 @@ export function draftStatusLabel(t: DraftStatusLike): { text: string; title: str
       };
     }
     case "rejected":
-      return { text: `Rejected draft${when}`, title: "You marked this draft wrong. It stays private to you and your agents." };
+      // The depositor of a draft about someone else did not resolve it.
+      return t.draftAbout
+        ? { text: `Rejected draft${when}`, title: `${t.draftAbout} marked this draft wrong. It stays private to them and to you.` }
+        : { text: `Rejected draft${when}`, title: "You marked this draft wrong. It stays private to you and your agents." };
     case "not_chosen":
-      return { text: `Draft not chosen${when}`, title: "This option lost to another. It stays private to you and your agents." };
+      return t.draftAbout
+        ? { text: `Draft not chosen${when}`, title: `${t.draftAbout} marked this option not chosen. It stays private to them and to you.` }
+        : { text: `Draft not chosen${when}`, title: "This option lost to another. It stays private to you and your agents." };
     default:
       return { text: "Draft", title: "Only you and your agents can see it." };
   }

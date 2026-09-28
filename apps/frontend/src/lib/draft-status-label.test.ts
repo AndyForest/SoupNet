@@ -47,7 +47,7 @@ describe("draftStatusLabel", () => {
 describe("slice 4: on-behalf drafts on the detail page (S4-L1, S4-UI2)", () => {
   it("names the other party as text, from each side", () => {
     expect(draftPartyLine({ draftDepositedBy: "dana@test.local" })).toBe("Deposited by dana@test.local's agent, on your behalf");
-    expect(draftPartyLine({ draftAbout: "pat@test.local" })).toBe("About pat@test.local: only they can confirm or reject it");
+    expect(draftPartyLine({ draftAbout: "pat@test.local", draftState: "unverified" })).toBe("About pat@test.local: only they can confirm or reject it");
     expect(draftPartyLine({})).toBeNull();
   });
 
@@ -68,5 +68,24 @@ describe("[F93] the key badge shows only under its owner's authorship", () => {
     expect(showsKeyBadge({ apiKeyId: "k1", apiKeyIsAuthors: true })).toBe(true);
     expect(showsKeyBadge({ apiKeyId: "k1", apiKeyIsAuthors: false })).toBe(false);
     expect(showsKeyBadge({ apiKeyId: null, apiKeyIsAuthors: true })).toBe(false);
+  });
+});
+
+describe("depositor-facing copy is true for the depositor (slice 4 fix pass)", () => {
+  it("a resolved draft's party line no longer says only they can confirm it", () => {
+    expect(draftPartyLine({ draftAbout: "pat@test.local", draftState: "unverified" })).toBe("About pat@test.local: only they can confirm or reject it");
+    for (const draftState of ["rejected", "not_chosen"]) {
+      expect(draftPartyLine({ draftAbout: "pat@test.local", draftState })).toBe("About pat@test.local");
+    }
+  });
+
+  it("the depositor's tooltip on a resolved draft names the person who resolved it, not 'you'", () => {
+    const rejected = draftStatusLabel({ draftState: "rejected", draftAbout: "pat@test.local" })!;
+    expect(rejected.title).toContain("pat@test.local marked this draft wrong");
+    expect(rejected.title).not.toContain("You marked");
+    const notChosen = draftStatusLabel({ draftState: "not_chosen", draftAbout: "pat@test.local" })!;
+    expect(notChosen.title).toContain("pat@test.local");
+    // The subject's own view is unchanged.
+    expect(draftStatusLabel({ draftState: "rejected" })!.title).toContain("You marked this draft wrong");
   });
 });

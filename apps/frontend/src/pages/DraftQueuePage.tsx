@@ -13,6 +13,7 @@ import {
   linkNotShownText,
   nextFocusId,
   partyText,
+  linkHeading,
   queueRatingsText,
   queueTotalText,
   stateLabel,
@@ -151,7 +152,7 @@ export function DraftQueuePage() {
     }
   }
 
-  const heading = linkMode ? "Drafts your agent linked" : "Drafts awaiting your review";
+  const heading = linkMode ? linkHeading(linkQuery.data?.items ?? []) : "Drafts awaiting your review";
 
   return (
     <div>

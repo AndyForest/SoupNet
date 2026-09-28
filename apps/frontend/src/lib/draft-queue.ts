@@ -54,6 +54,15 @@ export function queueRatingsText(item: Pick<QueueItem, "impact" | "uncertainty">
   return `${whose}: impact ${item.impact ?? "not rated"} · uncertainty ${item.uncertainty ?? "not rated"}`;
 }
 
+/**
+ * The id-list view's heading: "your agent" only when every linked draft was
+ * deposited by the viewer's own agent (slice 4 fix pass: a link a colleague's
+ * agent made, or one the viewer's agent made about a colleague, says neither).
+ */
+export function linkHeading(items: ReadonlyArray<Pick<Partial<QueueItem>, "depositedBy" | "about">>): string {
+  return items.some((i) => i.depositedBy || i.about) ? "Linked drafts" : "Drafts your agent linked";
+}
+
 /** Slice 4 (S4-Q2, S4-Q5): the line naming the other party of an on-behalf draft, as text. */
 export function partyText(item: Pick<Partial<QueueItem>, "depositedBy" | "about">): string | null {
   if (item.depositedBy) return `Deposited on your behalf by ${item.depositedBy}`;
