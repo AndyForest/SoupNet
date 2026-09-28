@@ -258,11 +258,15 @@ describe.skipIf(!BASE || !canConnect())("drafts for the key's own user (drafts-a
     expect(JSON.stringify(map)).not.toContain(draftId);
   });
 
-  it("S2-B2 / DT-VIS-03: the draft's evidence never surfaces as related evidence for Sam", { timeout: 120_000 }, async () => {
+  it("S2-B2 / DT-VIS-03: the draft's evidence never surfaces as related evidence for Sam", { timeout: 240_000 }, async () => {
+    // Slice 4: the wait was 80 s; under the full gate with the slice 4 suite
+    // depositing alongside, the embedding worker's backlog (experimental
+    // strategy backfills) twice kept this book's evidence pending past it.
+    // The wait is now 200 s; the assertion is unchanged.
     // Wait for the evidence embeddings (the async worker, busy under the full
     // suite): the draft's, so a leak would show, and every other evidence
     // entry in the shared book, so the channel is live for the check below.
-    for (let i = 0; i < 160; i++) {
+    for (let i = 0; i < 400; i++) {
       const rows = await sql`
         SELECT
           count(*) FILTER (WHERE te.trace_id = ${draftId}::uuid AND ev.id IS NOT NULL)::int AS draft_done,
