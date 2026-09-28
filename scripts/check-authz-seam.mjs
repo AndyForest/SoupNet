@@ -299,7 +299,6 @@ const TRACE_READS = {
   "apps/backend/src/services/user-delete.service.ts": {
     n: 3, fp: "fb9e54dc855f", composes: false,
     why: "account-deletion cascade over the user's own recipes (RP-37), plus the unverified drafts about them (draftAwaitingReviewBy, S4-A3), and the book delete's any-recipe-left guard, which must count drafts too",
-
   },
   "apps/backend/src/services/vector-search.service.ts": {
     n: 11, fp: "7beb48e89474", composes: true,
