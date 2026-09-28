@@ -215,6 +215,15 @@ describe.skipIf(!BASE || !canConnect())("headless keys (drafts-and-triage slice 
     expect(await keyRows(pat.userId)).toBe(before);
   });
 
+  it("S5-K1 (fix pass): an unknown field such as deposit_level or headless is refused loudly, not ignored into an ordinary key", async () => {
+    const before = await keyRows(pat.userId);
+    for (const extra of [{ deposit_level: "drafts" }, { headless: true }, { depositlevel: "drafts" }]) {
+      const res = await mintScoped(pat, [pat.personalBookId], [pat.personalBookId], pat.personalBookId, extra);
+      expect(res.status, JSON.stringify(extra)).toBe(400);
+    }
+    expect(await keyRows(pat.userId)).toBe(before);
+  });
+
   it("S5-O1 / DT-HDL-08: a daily key asked for any level but full is refused and mints nothing", async () => {
     const before = await keyRows(pat.userId);
     for (const depositLevel of ["drafts", "none", true, null]) {
@@ -303,6 +312,18 @@ describe.skipIf(!BASE || !canConnect())("headless keys (drafts-and-triage slice 
     const page = await (await fetch(`${BASE}/check?${new URLSearchParams({ key: H, recipe: recipe("html get"), evidence: evidence("html get") }).toString()}`)).text();
     const pid = /Your recipe was checked as #([0-9a-f-]{36})/.exec(page)?.[1];
     expect(await row(pid!)).toMatchObject({ draft_state: "unverified" });
+  });
+
+  it("S5-W2 (fix pass): the /check HTML form shows a headless key's draft state as forced, and K's as a choice", async () => {
+    const draftInput = (html: string): string => /<input type="checkbox" id="draft"[^>]*>/.exec(html)?.[0] ?? "";
+    const h = await (await fetch(`${BASE}/check?${new URLSearchParams({ key: H }).toString()}`)).text();
+    expect(draftInput(h)).toContain("checked");
+    expect(draftInput(h)).toContain("disabled");
+    expect(h).toContain("this API key is headless");
+    const k = await (await fetch(`${BASE}/check?${new URLSearchParams({ key: K }).toString()}`)).text();
+    expect(draftInput(k)).not.toContain("disabled");
+    expect(draftInput(k)).not.toContain("checked");
+    expect(k).not.toContain("this API key is headless");
   });
 
   it("S5-W4 / DT-HDL-01: an identical repeat returns the same draft, still a draft; after Pat rejects it the repeat reports that", async () => {
@@ -417,8 +438,12 @@ describe.skipIf(!BASE || !canConnect())("headless keys (drafts-and-triage slice 
       ["GET /recipes", async (key) => (await (await fetch(`${BASE}/recipes?ids=${hDraft}`, { headers: { Authorization: `Bearer ${key}` } })).text())],
       ["list_my_recipe_books", async (key) => (await mcp(key, "list_my_recipe_books", {})).text],
       ["/check?filter", async (key) => {
-        const b = (await (await fetch(`${BASE}/check?${new URLSearchParams({ key, filter: `is:draft "${MARKER}"`, format: "json" }).toString()}`, { headers: { Accept: "application/json" } })).json()) as { data: { results: Array<{ id: string }> } };
-        return b.data.results.map((r) => r.id).sort().join(",");
+        const b = (await (await fetch(`${BASE}/check?${new URLSearchParams({ key, filter: `is:draft "${MARKER}"`, format: "json" }).toString()}`, { headers: { Accept: "application/json" } })).json()) as { data: { results: Array<{ recipeId: string }> } };
+        const ids = b.data.results.map((r) => r.recipeId);
+        // Never compare two empty or undefined lists (the fix pass's point).
+        expect(ids.length, "is:draft results").toBeGreaterThan(0);
+        expect(ids.every((id) => typeof id === "string" && id.length === 36), ids.join(",")).toBe(true);
+        return ids.sort().join(",");
       }],
       ["log_feedback", async (key) => (await mcp(key, "log_feedback", { trace_id: hDraft, kind: "operational", impact: "none", disposition: "proceeded", story_fulfilled: "unknown", story: "parity" })).text],
       ["/health/integrity", async (key) => (await (await fetch(`${BASE}/health/integrity`, { headers: { Authorization: `Bearer ${key}` } })).text()).replace(/"checkedAt":"[^"]*"/, "")],

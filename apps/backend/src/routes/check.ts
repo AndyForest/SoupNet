@@ -13,7 +13,7 @@ import type { SynthesisResult } from "../services/synthesis.service";
 import { getDb } from "../db";
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { authenticateKey } from "../authz";
+import { authenticateKey, keyForcesDrafts } from "../authz";
 import type { Principal } from "../authz";
 import { HTML_ACCEPT_TYPES, renderCheckResponseMarkdown, fenceCheckResponseMarkdown, parseVerbosity, renderRatingsMarkdown, isShownDraftState, parseDraftFlag, draftLabel } from "@soupnet/domain";
 import type { CheckResponseJson } from "@soupnet/domain";
@@ -708,6 +708,9 @@ function renderPage(
   nonce?: string,
   synthesisResult?: SynthesisResult,
   feedbackResults?: FeedbackRowResult[],
+  /** The presenting key is headless (slice 5): the form shows the draft
+   *  state as forced rather than as a choice. */
+  headless = false,
 ): string {
   const hasSearch = !!(params.trace && params.ef && params.key);
   // A result with no traceId is the read-only `filter` search — nothing was
@@ -1143,7 +1146,9 @@ function renderPage(
         ${renderRatingOptions(params.uncertainty)}
       </select>
 
-      <label for="draft"><input type="checkbox" id="draft" name="draft" value="true"${parseDraftFlag(params.draft).draft ? " checked" : ""}> Deposit as a draft &mdash; the person could not be asked; only they and their agents see it until they verify it</label>
+      ${headless
+        ? `<label for="draft"><input type="checkbox" id="draft" name="draft" value="true" checked disabled> Deposit as a draft &mdash; always on: this API key is headless, so every recipe it checks is stored as a draft until the person confirms it</label>`
+        : `<label for="draft"><input type="checkbox" id="draft" name="draft" value="true"${parseDraftFlag(params.draft).draft ? " checked" : ""}> Deposit as a draft &mdash; the person could not be asked; only they and their agents see it until they verify it</label>`}
 
       <label for="on_behalf_of">On behalf of &mdash; the email of the person this recipe is about, if not you (optional; always a draft only they can verify)</label>
       <input type="email" id="on_behalf_of" name="on_behalf_of" value="${esc(params.onBehalfOf ?? "")}" autocomplete="off">
@@ -1433,7 +1438,7 @@ async function handleCheck(
   }
 
   const nonce = c.get("cspNonce" as never) as string | undefined;
-  const html = renderPage(params, result, enriched, keyGroups, nonce, synthesisResult, feedbackResults);
+  const html = renderPage(params, result, enriched, keyGroups, nonce, synthesisResult, feedbackResults, principal ? keyForcesDrafts(principal) : false);
   return c.html(html, result?.error ? 400 : 200);
 }
 

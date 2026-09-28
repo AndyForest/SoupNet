@@ -22,7 +22,10 @@ const scopedKeySchema = z.object({
   // Drafts-and-triage slice 5 (S5-K1): the ladder's wire name. "drafts" is a
   // headless key; "none" is reserved and refused like any other value.
   depositLevel: z.enum(["full", "drafts"]).optional(),
-});
+  // Unknown fields are refused, not ignored (slice 5 fix pass, from the
+  // audit's ergonomics note): a misspelled `deposit_level` or a `headless: true` would
+  // otherwise mint an ordinary key while the caller believes it is headless.
+}).strict();
 
 // Rate limit key generation: 10 per hour per user
 const keyGenRateLimit = rateLimit({
