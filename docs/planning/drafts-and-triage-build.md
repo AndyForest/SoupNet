@@ -960,6 +960,8 @@ Written by the builder (agent `a-drafts-slice3-2026-09-27`) for the verifier; th
 
 **Budgets:** remote `tools/list` 16,854 → 16,853 bytes (cap 17,000); stdio 13,064 → 13,063 (cap 13,670); shared descriptions 5,965 → 5,968 characters (cap 6,000); `searchQuery` 412 → 415 (cap 420); the deposit notice +60 characters with a 73-character URL; a rated draft label at most +38 bytes.
 
+**Gate** (`TESTCI_PGPORT=5574 npm run test:ci`): run 1 exit 1 (vitest worker exit; 15 s and 30 s timeouts in the new suite and `import.test.ts`; S2-B2); run 2 exit 1 (S2-B2 again, the F90 assertion); after the slice 4 suite's per-test timeout and S2-B2's longer embedding wait, run 3 exit 0 (123 files, 1,768 tests passed, 10 skipped) at `e527e15`, and run 4 exit 0 with the same counts at `abef1a5`, after merging `origin/main` again. The flakes are recorded under the backlog's gate-reliability item.
+
 **Test-first:** not held strictly. The Layer 1 tests were written alongside their functions; the Layer 3 suite (`routes/draft-queue.test.ts`, 31 tests) after the routes. The F1 tests assert statuses the pre-slice code could not produce (409 and 403 where it answered 404).
 
 **Build-both:** not used. The rulings settled every fork this slice met (route shape, order, the exclude-own default, where the rating filter lives, refusal wording), and the remaining choices (page size, whether an acted-on item stays in the link view) were cheap to change later rather than worth building twice.
@@ -1034,7 +1036,7 @@ Written by the builder (agent `a-drafts-build-s4-2026-09-27`) for the verifier; 
 **Found on the way.**
 
 - `ranking-isolation.test.ts`'s draft-column pattern (slice 2) held two literal backspace characters where `\b` was meant, so it never matched anything: the draft half of that guard was toothless. Fixed in `ed89afa`; the five ranking files pass it.
-- `origin/main` as merged fails `check:authz-seam`: #100 and #110 each updated the recipe register against their own copy of `user-delete.service.ts`, and the merged file has three recipe-table mentions where the register says two. This branch's merge refreshes the entry (`93c0857`); main stays red on that check until this lands or it is fixed there.
+- `origin/main` as merged after #100 and #110 failed `check:authz-seam` (the recipe register counted two recipe-table mentions in `user-delete.service.ts`, where the merged file has three). This branch refreshed the entry in `93c0857`; main fixed it in #115, and the second merge of `origin/main` (`c816809`) kept this branch's entry, whose fingerprint also covers the S4-A3 fragment.
 
 **Budgets.**
 
