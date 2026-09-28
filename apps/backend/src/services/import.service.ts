@@ -20,11 +20,13 @@
  *      (recipe 8ba10d32).
  *
  * Where each file row lands:
- *   - Its id is new to the server → inserted under that id.
+ *   - A trace whose id is new to the server → inserted under that id.
  *   - A trace whose id is the importer's own ordinary recipe → kept as it is:
  *     skipped-identical, or a reported conflict when its content differs.
- *   - An evidence or reference row whose id exists, and which nothing this
- *     import creates links to → kept as it is (skipped-existing).
+ *   - An evidence or reference row is written only when a row this import
+ *     creates links to it ([F103]), under its id when that is new. One
+ *     nothing created links to is kept when its id exists (skipped-existing)
+ *     and otherwise not written (orphaned).
  *   - Anything else that exists (someone else's recipe, a draft about someone
  *     else, evidence a created recipe of this file links to) → a fresh id: the
  *     importer's deterministic mint, mintImportId(userId, id), when that is
@@ -119,8 +121,10 @@ export interface ImportResult {
        *  `idMap` carries the old→new detail. */
       remapped: number;
     };
-    evidence: { inserted: number; skippedExisting: number; remapped: number };
-    references: { inserted: number; skippedExisting: number; remapped: number };
+    /** `orphaned`: file rows nothing this import creates links to and whose
+     *  id is new, so they were not written ([F103]). */
+    evidence: { inserted: number; skippedExisting: number; orphaned: number; remapped: number };
+    references: { inserted: number; skippedExisting: number; orphaned: number; remapped: number };
     links: { inserted: number; skippedExisting: number; orphaned: number };
   };
   /** Per-row collision detail for kept traces, capped at MAX_CONFLICT_DETAIL. */
@@ -139,7 +143,7 @@ export interface ImportResult {
 
 export class ImportError extends Error {
   constructor(
-    public readonly status: 400 | 403 | 404 | 500,
+    public readonly status: 400 | 403 | 404 | 409 | 500,
     message: string,
   ) {
     super(message);
@@ -148,6 +152,18 @@ export class ImportError extends Error {
 }
 
 const CHUNK = 500;
+
+/** Rows decided "create" were not all created: a concurrent import (or a row
+ *  planted at the importer's mint while this one ran) claimed some of their
+ *  ids first. The whole import rolls back ([F102]); a retry sees those rows
+ *  and gives the file's rows fresh ids, so re-uploading stays the resume
+ *  path and no run ever gets a 200 with rows silently missing. */
+function claimedConcurrently(): ImportError {
+  return new ImportError(
+    409,
+    "Another import claimed some of this file's ids while it ran, so nothing was imported. Retry with the same file: the retry gives those rows their own ids.",
+  );
+}
 const MAX_CONFLICT_DETAIL = 200;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -182,6 +198,8 @@ interface ExistingTrace {
 interface Landing {
   id: string;
   create: boolean;
+  /** An evidence or reference row that is neither created nor kept ([F103]). */
+  dropped?: true;
 }
 
 /** Existing traces among `ids`, with what classification needs. */
@@ -220,16 +238,18 @@ async function existingIds(
 }
 
 /**
- * Where an evidence or reference row lands. A row that is new to the server
- * is inserted under its id. An existing one is kept when nothing this import
- * creates links to it (at the importer's mint when that exists, so a
- * re-import reports the same idMap), and otherwise gets a fresh row: the
- * mint when it is free, else a random id ([F100]).
+ * Where an evidence or reference row lands. It is created only when a row
+ * this import creates links to it, so every content row import writes is
+ * reachable from a recipe and goes when that recipe goes ([F103]): under its
+ * id when that is new to the server, else the importer's mint when that is
+ * free, else a random id ([F100]). A row nothing created links to is not
+ * written: it is kept when its id exists (skipped-existing), and otherwise
+ * dropped and counted orphaned.
  */
 function landContent(id: string, userId: string, exists: Set<string>, linkedByCreated: boolean): Landing {
+  if (!linkedByCreated) return exists.has(id) ? { id, create: false } : { id, create: false, dropped: true };
   if (!exists.has(id)) return { id, create: true };
   const mint = mintImportId(userId, id);
-  if (!linkedByCreated) return { id: exists.has(mint) ? mint : id, create: false };
   return exists.has(mint) ? { id: crypto.randomUUID(), create: true } : { id: mint, create: true };
 }
 
@@ -368,9 +388,8 @@ export async function importCorpus(
     }
 
     // ── 4. Insert traces (chunked batches; explicit ids + timestamps) ──────
-    // Links below go only onto rows these statements actually returned, so a
-    // row someone else created under the same id in the meantime is never
-    // linked into.
+    // Every insert must return every row it was given; a row claimed by a
+    // concurrent import fails the whole import with a retryable 409 ([F102]).
     const insertedTraceIds = new Set<string>();
     if (tracesToInsert.length > 0) {
       if (!dest) throw new ImportError(500, "internal: destination book unresolved");
@@ -433,6 +452,7 @@ export async function importCorpus(
           }))
           .onConflictDoNothing()
           .returning({ id: tracesTable.id });
+        if (rows.length < chunk.length) throw claimedConcurrently();
         for (const r of rows) insertedTraceIds.add(r.id);
       }
     }
@@ -450,6 +470,7 @@ export async function importCorpus(
         })))
         .onConflictDoNothing()
         .returning({ id: evidenceTable.id });
+      if (rows.length < chunk.length) throw claimedConcurrently();
       for (const r of rows) insertedEvidenceIds.add(r.id);
     }
 
@@ -468,6 +489,7 @@ export async function importCorpus(
         })))
         .onConflictDoNothing()
         .returning({ id: referencesTable.id });
+      if (rows.length < chunk.length) throw claimedConcurrently();
       for (const r of rows) insertedReferenceIds.add(r.id);
     }
 
@@ -485,18 +507,22 @@ export async function importCorpus(
       bInserted: Set<string>,
     ): [string, string] | null => {
       if (a && b && aInserted.has(a.id) && bInserted.has(b.id)) return [a.id, b.id];
-      if (a && b && !a.create && !b.create) linksSkipped++;
+      if (a && b && !a.create && !b.create && !a.dropped && !b.dropped) linksSkipped++;
       else linksOrphaned++;
       return null;
     };
-    const linkId = (fileLinkId: string, ...endpoints: Array<[string, string]>): string =>
-      endpoints.every(([from, to]) => from === to) ? fileLinkId : crypto.randomUUID();
+    // Every written link gets a fresh id ([F101]). A link table's only key
+    // is its id, so keeping the file's id would let a row someone else
+    // created under it silently suppress the link. Idempotency does not need
+    // link ids: on a re-import both endpoints are kept and the link is
+    // counted skipped before any insert.
+    const linkId = (): string => crypto.randomUUID();
 
     const teRows: ImportTraceEvidenceRow[] = [];
     for (const l of parsed.traceEvidence) {
       const ends = classify(traceLanding.get(l.traceId), insertedTraceIds, evidenceLanding.get(l.evidenceId), insertedEvidenceIds);
       if (!ends) continue;
-      teRows.push({ ...l, id: linkId(l.id, [l.traceId, ends[0]], [l.evidenceId, ends[1]]), traceId: ends[0], evidenceId: ends[1] });
+      teRows.push({ ...l, id: linkId(), traceId: ends[0], evidenceId: ends[1] });
     }
     for (const chunk of chunks(teRows)) {
       const rows = await tx
@@ -521,7 +547,7 @@ export async function importCorpus(
     for (const l of parsed.traceReferences) {
       const ends = classify(traceLanding.get(l.traceId), insertedTraceIds, referenceLanding.get(l.referenceId), insertedReferenceIds);
       if (!ends) continue;
-      trRows.push({ ...l, id: linkId(l.id, [l.traceId, ends[0]], [l.referenceId, ends[1]]), traceId: ends[0], referenceId: ends[1] });
+      trRows.push({ ...l, id: linkId(), traceId: ends[0], referenceId: ends[1] });
     }
     for (const chunk of chunks(trRows)) {
       const rows = await tx
@@ -543,7 +569,7 @@ export async function importCorpus(
     for (const l of parsed.evidenceReferences) {
       const ends = classify(evidenceLanding.get(l.evidenceId), insertedEvidenceIds, referenceLanding.get(l.referenceId), insertedReferenceIds);
       if (!ends) continue;
-      erRows.push({ ...l, id: linkId(l.id, [l.evidenceId, ends[0]], [l.referenceId, ends[1]]), evidenceId: ends[0], referenceId: ends[1] });
+      erRows.push({ ...l, id: linkId(), evidenceId: ends[0], referenceId: ends[1] });
     }
     for (const chunk of chunks(erRows)) {
       const rows = await tx
@@ -589,12 +615,14 @@ export async function importCorpus(
       idMap,
       evidenceCounts: {
         inserted: insertedEvidenceIds.size,
-        skippedExisting: parsed.evidence.length - insertedEvidenceIds.size,
+        skippedExisting: [...evidenceLanding.values()].filter((l) => !l.create && !l.dropped).length,
+        orphaned: [...evidenceLanding.values()].filter((l) => l.dropped).length,
         remapped: idMap.filter((m) => m.entity === "evidence").length,
       },
       referenceCounts: {
         inserted: insertedReferenceIds.size,
-        skippedExisting: parsed.references.length - insertedReferenceIds.size,
+        skippedExisting: [...referenceLanding.values()].filter((l) => !l.create && !l.dropped).length,
+        orphaned: [...referenceLanding.values()].filter((l) => l.dropped).length,
         remapped: idMap.filter((m) => m.entity === "reference").length,
       },
       linkCounts: { inserted: linksInserted, skippedExisting: linksSkipped, orphaned: linksOrphaned },
