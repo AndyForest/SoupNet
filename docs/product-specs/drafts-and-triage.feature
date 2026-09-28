@@ -611,21 +611,25 @@ Feature: Drafts, triage ratings, and deciding by building both
     # Guards: drafts-and-triage.md §Headless keys; recipe e263dc40;
     # design-thinking.md §Agent Type D (headless keys), §Orchestrators;
     # docs/planning/derived-agent-keys.md (derived keys only narrow).
+    # Rubric: build log §Slice 5 rubric (ids S5-*); open questions 13 and 41 to 44.
     # Requirement: C01-R13 (drafts-only as one candidate write level for autonomous agents)
 
     @DT-HDL-01 @slice-5
     Scenario: Every deposit through a headless key is a draft
       Given Pat made a key marked headless
-      When that key checks a recipe with draft false
-      Then the recipe is stored as a draft
-      And the response says draft was forced by the key's setting
+      When that key checks a recipe with draft false, on any check surface
+      Then the recipe is stored as a draft about Pat
+      And the response says it was stored as a draft because the key is headless, and gives Pat's review link
+      And checking the same text again through that key returns the same draft, still unpublished
 
-    @DT-HDL-02 @slice-5
+    @DT-HDL-02 @derived-keys
     Scenario: A derived key of a headless key cannot deposit a non-draft
+      # Pending decision: see build log §Open design questions, question 44.
+      # Derived keys are not built; this scenario ships with them.
       Given Pat made a key marked headless
-      When that key derives a key for a sub-agent, asking for it not to be headless
+      When that key derives a key for a sub-agent without naming a level
       Then the derived key is headless
-      And a check through the derived key with draft false is stored as a draft
+      And a request for a derived key that is not headless is refused, and no key is made
 
     @DT-HDL-03 @slice-5
     Scenario: The headless setting is fixed when the key is made
@@ -635,21 +639,46 @@ Feature: Drafts, triage ratings, and deciding by building both
 
     @DT-HDL-04 @slice-5
     Scenario: A headless key cannot verify drafts
-      # Pending decision: see build log §Open design questions, "Headless verification".
+      # Decided: open question 13 (headless keys, and keys derived from them,
+      # cannot verify drafts or resolve option sets).
       Given a draft about Pat
       When Pat's headless key calls the verify operation with evidence
       Then the verification is refused and the recipe is still a draft
+      And the refusal reads the same for any id, and says Pat can confirm it in his review queue
 
     @DT-HDL-05 @slice-5
     Scenario: A headless key gets the headless briefing profile
       When Pat's headless key calls get_briefing
       Then the briefing is the headless profile, which covers drafting well, saying what would settle a draft, the triage ratings, and building both
       # Copy behavior belongs to docs/briefing-specs/ under the regression rule; this scenario pins only that the profile is selected.
+      # Slice 5 selects the profile and adds one short section; slice 7 writes the guidance.
 
     @DT-HDL-06 @slice-5
     Scenario: Headless keeps every other agent surface
       Given Pat made a key marked headless
-      Then that key can declare intents, search, fetch recipes by id, and log feedback exactly as an ordinary key
+      Then that key can declare intents, search, fetch recipes by id, log feedback, upload files, and create an ephemeral workspace exactly as an ordinary key
+
+    @DT-HDL-07 @slice-5
+    Scenario: A headless key cannot change a recipe book's description
+      # Pending decision: see build log §Open design questions, question 42.
+      Given Pat made a key marked headless, and owns the book
+      When that key tries to update the book's description
+      Then nothing changes, and the answer says Pat can change it himself or through an ordinary key
+      And the answer is the same for a book the key cannot write and a book that does not exist
+
+    @DT-HDL-08 @slice-5
+    Scenario: Only keys made on the keys page can be headless
+      # Pending decision: see build log §Open design questions, question 43.
+      When Pat asks for a headless daily key
+      Then the request is refused and no key is made
+      And keys issued to an OAuth-connected client are never headless
+
+    @DT-HDL-09 @slice-5
+    Scenario: Drafts from a headless key are reviewed like any draft
+      Given Pat's headless key deposited a draft
+      Then Pat can confirm, reject, or mark it not chosen in his review queue
+      And an agent on one of Pat's ordinary keys can verify it with Pat's quoted answer
+      And Sam finds it uniformly absent until Pat confirms it
 
   # ─────────────────────────────────────────────────────────────────────────
   @unreleased
