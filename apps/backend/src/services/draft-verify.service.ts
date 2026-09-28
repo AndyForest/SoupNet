@@ -12,8 +12,9 @@
  * when that is what happened, and the person can audit it.
  *
  * Authority:
- *   - the key must be allowed to verify (`keyMayVerifyDrafts`; slice 5's
- *     headless keys will not be — build log open question 13);
+ *   - the key must be allowed to verify (`keyMayVerifyDrafts`): a headless
+ *     key is refused before any lookup (slice 5, S5-R1; build log open
+ *     question 13), so the refusal reads the same for every id (S5-U1);
  *   - the draft must be readable by id through this key (scope ∩ the draft
  *     rule, via lookupRecipes) — anything else is the uniform
  *     `not_found_or_unreadable`, byte-for-byte what get_recipes answers for a
@@ -35,7 +36,7 @@
  */
 
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { validateVerificationEvidence, onlySubjectReviewsReason } from "@soupnet/domain";
+import { validateVerificationEvidence, onlySubjectReviewsReason, headlessVerifyRefusal } from "@soupnet/domain";
 import { keyMayVerifyDrafts, resolveDraft, hasWriteAuthority } from "../authz";
 import type { Principal } from "../authz";
 import { parseEvidenceMarkdown } from "./evidence-parser";
@@ -51,6 +52,7 @@ export type VerifyDraftResult =
   | { status: "already_resolved"; recipeId: string; draftState: string }
   | { status: "needs_write_access"; recipeId: string; recipeBook: { slug: string; name: string } }
   | { status: "only_subject_reviews"; recipeId: string; subjectEmail: string }
+  | { status: "key_cannot_verify"; recipeId: string }
   | { status: "refused"; recipeId: string; error: string };
 
 /** Human-readable text for a result — the MCP tool's reply and the REST error. */
@@ -70,6 +72,8 @@ export function describeVerifyResult(r: VerifyDraftResult): string {
       return `${r.recipeId} is a draft in the recipe book "${r.recipeBook.name}" (${r.recipeBook.slug}), and verifying it needs write access to this recipe book, which this API key does not have; nothing was stored. Verify it with a key that can write ${r.recipeBook.slug}, or ask the person to confirm it in their review queue: ${draftQueueUrl([r.recipeId])}`;
     case "only_subject_reviews":
       return `${onlySubjectReviewsReason(r.subjectEmail, draftQueueUrl([r.recipeId]))} Nothing was stored.`;
+    case "key_cannot_verify":
+      return headlessVerifyRefusal(r.recipeId, draftQueueUrl([r.recipeId]));
     case "refused":
       return r.error;
   }
@@ -82,8 +86,10 @@ export async function verifyDraft(
   const { principal } = params;
   const recipeId = params.recipeId.trim();
 
+  // Decided from the key alone, before anything is looked up, so the answer
+  // is the same for every id apart from its echo (S5-U1).
   if (!keyMayVerifyDrafts(principal)) {
-    return { status: "refused", recipeId, error: "This API key cannot verify drafts." };
+    return { status: "key_cannot_verify", recipeId };
   }
 
   // Readable by id through this key: scope ∩ the draft rule, with the same

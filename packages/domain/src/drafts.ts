@@ -63,12 +63,17 @@ export function draftDepositNotice(p: {
   /** Slice 4: the email of the person the stored draft is about, when it is
    *  a draft deposited on their behalf. */
   onBehalfOf?: string | undefined;
-  /** Slice 4: this call sent a draft flag that on_behalf_of overrode (a
-   *  false or absent flag; a draft is forced). */
+  /** This call sent a draft flag read as false that on_behalf_of (slice 4)
+   *  or a headless key (slice 5) overrode. */
   draftFlagOverridden?: boolean | undefined;
+  /** Slice 5: the depositing key is headless, so the draft was forced and
+   *  the key cannot verify it. The on-behalf reason still wins when both
+   *  apply, since it names who can review the draft. */
+  headless?: boolean | undefined;
 }): string | undefined {
   const state = p.storedState ?? null;
   if (p.onBehalfOf) return onBehalfNotice({ ...p, state, subject: p.onBehalfOf });
+  if (p.headless && state === "unverified") return headlessNotice({ ...p, existing: p.existing });
   if (!p.existing) {
     if (state !== "unverified") return undefined;
     return (
@@ -131,6 +136,52 @@ function onBehalfNotice(p: {
   return (
     `An identical earlier check from this key logged this recipe as a draft about ${p.subject} that has since been `
     + `${p.state === "rejected" ? "rejected" : "marked not chosen"}; it stays private and nothing new was stored.`
+  );
+}
+
+/**
+ * Where a headless key's person confirms a draft: the queue link when the
+ * caller has one, else the recipe's page. Never verify_draft, which the key
+ * cannot call successfully.
+ */
+function personConfirms(queueUrl: string | undefined): string {
+  return queueUrl
+    ? `hand the person their review link: ${queueUrl}`
+    : "the person confirms it with still true on the recipe's page.";
+}
+
+/**
+ * The deposit notice for a headless key's draft about its own person (slice 5,
+ * S5-W2, S5-W4): why it is a draft (the key's setting, chosen at mint), who can
+ * see it, and the link to hand the person. It never suggests verify_draft.
+ */
+function headlessNotice(p: { existing: boolean; queueUrl?: string | undefined; draftFlagOverridden?: boolean | undefined }): string {
+  if (p.existing) {
+    return (
+      "An identical earlier check from this key logged this recipe as a draft, and it is still a draft: "
+      + "checking it again does not verify it, and this headless key cannot; " + personConfirms(p.queueUrl)
+    );
+  }
+  return (
+    "Deposited as a draft because this API key is headless, a setting chosen when the key was made"
+    + `${p.draftFlagOverridden ? " (your draft flag was overridden)" : ""}. `
+    + "Until the person confirms it, only you and your own agents can see it; it appears on no shared surface. "
+    + "This key cannot verify drafts; " + personConfirms(p.queueUrl)
+  );
+}
+
+/**
+ * The refusal when a headless key calls verify_draft or its REST twin (slice
+ * 5, S5-R1). Decided from the key alone, before any lookup, so it reads the
+ * same for every id apart from the echo (S5-U1). It names both ways forward:
+ * the person confirms it in their queue, or an agent on an ordinary key
+ * verifies it with their answer.
+ */
+export function headlessVerifyRefusal(recipeId: string, queueUrl: string): string {
+  return (
+    "This API key is headless, a setting chosen when the key was made, so it cannot verify drafts; nothing was stored. "
+    + `The person can confirm ${recipeId} in their review queue: ${queueUrl} `
+    + "Or an agent on one of their ordinary keys can verify it with their answer quoted and cited."
   );
 }
 
