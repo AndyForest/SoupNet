@@ -14,6 +14,8 @@ import { UserBadge } from "../components/UserBadge.js";
 import { ApiKeyBadge } from "../components/ApiKeyBadge.js";
 import { DeleteTraceConfirmModal } from "../components/DeleteTraceConfirmModal.js";
 import { MoveTraceModal } from "../components/MoveTraceModal.js";
+import { triageRatingsLabel, TRIAGE_RATINGS_TITLE } from "../lib/triage-ratings-label.js";
+import { draftStatusLabel } from "../lib/draft-status-label.js";
 
 export function TraceDetailPage() {
   const { traceId } = useParams({ strict: false }) as { traceId: string };
@@ -35,6 +37,8 @@ export function TraceDetailPage() {
   }
 
   const createdAt = new Date(trace.createdAt);
+  const ratingsLabel = triageRatingsLabel(trace);
+  const draftStatus = draftStatusLabel(trace);
 
   return (
     <div>
@@ -71,6 +75,31 @@ export function TraceDetailPage() {
           {trace.formatAdherenceScore !== null && trace.formatAdherenceScore !== undefined && (
             <span className="text-xs" style={{ color: "var(--color-on-surface-variant)" }}>
               Format score: {Math.round(trace.formatAdherenceScore * 100)}%
+            </span>
+          )}
+          {/* Draft status (drafts-and-triage slice 2): only the person a draft
+              is about and their agents ever see an unpublished one. */}
+          {draftStatus && (
+            <span
+              className="text-xs"
+              title={draftStatus.title}
+              data-testid="draft-status"
+              style={{
+                color: "var(--color-primary)",
+                border: "1px solid var(--color-primary)",
+                borderRadius: "var(--radius-sm)",
+                padding: "1px 6px",
+              }}
+            >
+              {draftStatus.text}
+            </span>
+          )}
+          {/* The depositing agent's triage ratings (drafts-and-triage slice 1),
+              labelled as the agent's so they never read as the person's own
+              assessment. Absent when the agent rated neither. */}
+          {ratingsLabel && (
+            <span className="text-xs" title={TRIAGE_RATINGS_TITLE} style={{ color: "var(--color-on-surface-variant)" }}>
+              {ratingsLabel}
             </span>
           )}
           {trace.groupName && (
@@ -112,7 +141,9 @@ export function TraceDetailPage() {
             agent feedback (UVP Layer 3). */}
         <div style={{ display: "flex", gap: "var(--space-xs)", marginTop: "var(--space-md)", alignItems: "center", flexWrap: "wrap" }}>
           <span className="text-xs" style={{ color: "var(--color-on-surface-variant)" }}>
-            Is this recipe still right?
+            {trace.canResolveDraft
+              ? "Is this draft right? Still true verifies it; Wrong rejects it."
+              : "Is this recipe still right?"}
           </span>
           {(["still_true", "stale", "wrong"] as TraceReaction[]).map((r) => {
             const active = feedbackData?.reactions.mine === r;

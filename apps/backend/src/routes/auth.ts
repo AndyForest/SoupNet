@@ -431,11 +431,19 @@ auth.get("/me/export", requireAuth, requireVerifiedEmail, async (c) => {
   // and import preserve it exactly. A consumer that needs "when was this
   // decided" for filtering/ordering should coalesce: COALESCE(decided_at,
   // created_at); the coalesce belongs in the consumer, not in the stored data.
+  //
+  // Triage ratings (slice 1) and draft state (slice 2) ride along, additive
+  // and nullable like decidedAt, so a draft exported and re-imported comes
+  // back a draft (DT-VIS-16). The export is the caller's own recipes only
+  // (user_id), so a collaborator's export never holds someone else's draft
+  // (DT-VIS-10).
   const traces = await db.execute(sql`
     SELECT id, user_id AS "userId", group_id AS "groupId", api_key_id AS "apiKeyId",
            claim_text AS "claimText", claim_text_hash AS "claimTextHash",
            format_adherence_score AS "formatAdherenceScore",
            decided_at AS "decidedAt",
+           impact, uncertainty,
+           draft_state AS "draftState", draft_resolved_at AS "draftResolvedAt",
            created_at AS "createdAt", updated_at AS "updatedAt"
     FROM claimnet.traces WHERE user_id = ${user.id}::uuid
     ORDER BY created_at

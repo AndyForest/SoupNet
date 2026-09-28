@@ -486,6 +486,20 @@ export async function importCorpus(
             claimTextHash: t.claimTextHash ?? sha256(t.claimText),
             formatAdherenceScore: t.formatAdherenceScore,
             decidedAt: t.decidedAt,
+            // Ratings and draft state are restored (DT-VIS-16): a draft
+            // exported and re-imported is still a draft. The importer is the
+            // person the draft is about (imports write only their own rows),
+            // so nothing here publishes anyone else's draft.
+            impact: t.impact,
+            uncertainty: t.uncertainty,
+            draftState: t.draftState,
+            // Resolution attribution and time are never taken from the file
+            // ([F83]): an imported resolved draft is resolved by the importer,
+            // now (an import is a human control, so no key); an unverified one
+            // carries none, so a later real verification writes its own.
+            ...(t.draftState !== null && t.draftState !== "unverified"
+              ? { draftResolvedAt: new Date(), draftResolvedByUserId: userId, draftResolvedByKeyId: null }
+              : { draftResolvedAt: null, draftResolvedByUserId: null, draftResolvedByKeyId: null }),
             createdAt: t.createdAt,
             updatedAt: t.updatedAt ?? t.createdAt,
           })))

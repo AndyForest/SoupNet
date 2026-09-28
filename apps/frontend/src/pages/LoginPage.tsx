@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { safeReturnTarget } from "../lib/return-target.js";
 import { useNavigate, useLocation, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { setToken, setEmailVerified } from "../auth.js";
@@ -168,7 +169,11 @@ export function LoginPage() {
           // resend-email and sign-out.
           void navigate({ to: "/auth/verify-pending" });
         } else {
-          void navigate({ to: "/app/dashboard" });
+          // Back to the in-app link the person opened signed out, if it is a
+          // safe same-origin /app/ path (S3-L5); otherwise the dashboard.
+          const next = safeReturnTarget(new URLSearchParams(window.location.search).get("next"));
+          if (next) void navigate({ href: next });
+          else void navigate({ to: "/app/dashboard" });
         }
       } else if (data.error === "waitlisted") {
         // Correct password, account still on the waitlist — informational,

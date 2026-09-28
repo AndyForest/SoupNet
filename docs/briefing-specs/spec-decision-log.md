@@ -4,6 +4,114 @@ Every PR that touches briefing copy (`packages/domain/src/recipe-guide-content.t
 
 (Renamed from declared-intent-log.md on 2026-08-23: "intent" now names the runtime intent-registration mechanism — cold-start v2 Phase C — so the discipline's log takes an unambiguous name. The discipline itself is unchanged.)
 
+## 2026-09-27 — Drafts-and-triage slice 3: the review queue's qualifiers, the queue link in the deposit notice, and ratings on own-draft labels
+
+Design: [../planning/drafts-and-triage.md](../planning/drafts-and-triage.md) §Verifying a draft ("Links"). Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 3 rubric, rulings 21 to 27.
+
+### Edits
+
+1. **`search_recipes` `query` description (both MCP servers):** names `is:draft (your unresolved drafts)` and `impact:/uncertainty: (low|medium|high)`, and says "author: or is:draft lifts the exclude-own default". To stay inside the unchanged budgets, "searches semantically as one phrase (no boolean operators)" became "is one semantic phrase", "across recipe, evidence, and reference citations — quote filenames for PR review" became "of recipe, evidence, and citations (quote filenames for PR review)", the example group lost its `.ts` suffixes, "(ISO date, judgment date)" became "(ISO judgment date)", and "Qualifier-only queries return newest first" became "Qualifier-only: newest first". Dropped: "no boolean operators" (the unknown-qualifier and group errors still teach the shape). 412 → 415 characters (cap 420); shared total 5,965 → 5,968 (cap 6,000, not raised).
+2. **Unknown-qualifier error text:** now lists every qualifier and value ("valid qualifiers are author:, after:, before:, is:draft, impact: and uncertainty: (low, medium, or high)"), so the description can stay terse. New errors for `is:` and the rating qualifiers name their vocabulary.
+3. **Draft deposit notice:** "(or they confirm it with still true on the recipe's page)" becomes "(or they confirm it in their review queue: <FRONTEND_URL>/app/drafts?ids=<id>)", on a new draft and on an identical repeat of an unresolved one. 284 → 344 characters for a new draft and 280 → 340 for a repeat, with a 73-character URL (the rubric's cap is the URL plus 20).
+4. **Own-draft result labels (markdown):** when the agent rated a draft, its label gains "; impact X, uncertainty Y" (at most 38 bytes; 0 for an unrated draft and for any published row). JSON and structured rows that carry `draftState` also carry `impact` and `uncertainty` (null when unrated); the published schema says so.
+5. **`/check` HTML search tips:** one new line for `is:draft`, `impact:`, and `uncertainty:`.
+6. **`verify_draft` refusals (not description copy):** "is not a draft" for a published recipe the key can read, and a refusal naming the book and the ways forward ("needs write access to this recipe book … or ask the person to confirm it in their review queue: <link>") for the key's own draft in a book it cannot write. The tool description is unchanged.
+
+`/briefing` output is unchanged (no queue pointer on the Drafts line; rubric S3-Z5).
+
+### Scenarios intended to move
+
+- **New `@unreleased` scenario** in `checking-behavior.feature`: "An agent that deposited drafts hands its person the queue link rather than listing ids" (added in this PR). It stays `@unreleased` until the briefing body teaches drafting (slice 7) and the harness can run it.
+
+### Scenarios watched, with rationale for holding
+
+- **`checking-behavior.feature` "Probing the system does not log junk recipes"** and the search-vs-check scenarios: the search description still carries the grammar's shape (semantic phrase, quoted terms, groups, negation, author/date qualifiers) and the PR-review hint; only "no boolean operators" left, and the grammar's error for a bare OR or a mixed group still says so at the moment it matters.
+- **`checking-behavior.feature` "An agent drafts only when it cannot ask …"** (slice 2): the notice now gives a link instead of "the recipe's page"; the when-to-draft guidance is untouched.
+- **`feedback-loop.feature`, `known-recipes-dedup.feature`, `intent-registration.feature`:** no copy they rely on changed.
+
+### Served `tools/list` bytes
+
+| Server | Before (slice 2) | After (slice 3) | Cap |
+|---|---|---|---|
+| Remote | 16,854 | 16,853 | 17,000 |
+| Stdio | 13,064 | 13,063 | 13,670 |
+
+## 2026-09-27 — Drafts-and-triage slice 2: the draft parameter, verify_draft, and the briefing's Drafts line
+
+Design: [../planning/drafts-and-triage.md](../planning/drafts-and-triage.md) §The model and §Verifying a draft. Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 2 rubric (this entry is its briefing-copy declaration). Rulings: open questions 5 to 15 as accepted; the separate tool is recipe `6ae9a299`.
+
+### Edits
+
+1. **New `check_recipe` param, both MCP servers:** `draft` ("True: a draft, for a high-impact, uncertain call the person can't be asked about now; say why in the first evidence entry. Private to them and their agents until verified."). Served as a boolean; a value of the wrong type reaches the server's lenient parser, which takes anything unrecognized as a draft (the private side) with a notice, instead of the SDK failing the check.
+2. **New tool `verify_draft`, both MCP servers** (REST twin `POST /recipes/:id/verify`): description "Publish your user's draft recipe once they confirm it, with new evidence quoting their answer and a citation. Evidence that adds nothing new is refused." Params `recipe_id` ("The draft's id (full UUID or 8+ char short id).") and `supporting_evidence` ("Your interpretation, then > the person's answer verbatim, then -- where they said it.").
+3. **Check responses:** a draft deposit gets a `draftNotice` line under "Recipe checked as #…" saying only the person and their agents can see it and how it is verified; a person's own drafts in results carry an `[unverified draft: …]` label (also `[rejected draft …]`, `[draft not chosen]` by id). Not briefing copy, listed for completeness.
+4. **Briefing corpus section:** under a book's Index line, the person's own agents get `Drafts: N unverified drafts about your user await their review (only they and their agents see them)` when there are any. Every Index figure now counts published recipes only, so a collaborator's line never moves when a draft lands. Absent when there are no drafts, so every existing briefing is byte-identical.
+5. **Budgets:** shared-description cap 5,550 → 6,000 (total 5,510 → 5,965), a dated raise for a genuinely new affordance (recipe `8dd573b4`).
+
+### Served `tools/list` bytes
+
+| Server | Before (slice 1) | After (slice 2) | Cap |
+|---|---|---|---|
+| Remote (`POST /mcp`) | 15,864 | 16,854 | 16,000 → 17,000 (dated raise in `mcp-tools-list-size.test.ts`) |
+| Stdio (`apps/mcp-server`) | 12,074 | 13,064 | 13,670 (unchanged) |
+
+### Scenarios intended to move
+
+- **`checking-behavior.feature`** — new `@unreleased` scenario "An agent drafts only when it cannot ask, and says why in the first evidence entry" (added in this PR). It stays `@unreleased` until slice 7 teaches when to draft in the briefing body.
+
+### Scenarios watched, with rationale for holding
+
+- **`checking-behavior.feature` "A rated check uses the rating vocabulary…"** — the ratings descriptions are unchanged; `draft` is a separate parameter and its description names the same impact-and-uncertainty bar in the ratings' own words.
+- **`divergent-checks.feature` (all; the "present options and wait" pattern)** — the `draft` description sends an agent that can ask to ask first ("the person can't be asked about now"), so presenting options stays the answer when the person is reachable.
+- **`feedback-loop.feature`** — `verify_draft` is not a feedback surface; `log_feedback` and the ride-along `feedback` param are unchanged.
+- **`briefing-surfaces.feature`** — the Drafts line renders only for a person with drafts, on the MCP profile where Index lines render; the thin/full section structure is unchanged.
+- **All others** — principles, voice, format, routing, and setup copy untouched.
+
+## 2026-09-27 — Drafts-and-triage slice 1: triage ratings on check_recipe, paid for by a tool-roster trim
+
+Design: [../planning/drafts-and-triage.md](../planning/drafts-and-triage.md) §Triage ratings and §Parameters and tool-description size. Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 1 rubric (this entry is its briefing-copy declaration). Rulings: open questions 1 to 4 accepted as recommended (recipes `cee8fb2d`, `4cfd166e`).
+
+### Edits
+
+1. **Two new `check_recipe` params, both MCP servers:** `impact` ("Your triage rating of how much rides on this call: low | medium | high. Omit it if you have no view. Not a feedback row's impact.") and `uncertainty` ("Your triage rating of how unsure you are of the person's position: low | medium | high. Omit it if you have no view."). Plain strings, not enums, so an unrecognized value reaches the server and becomes a notice instead of an SDK validation error (recipe `4cfd166e`, check `10e3d7e1`).
+2. **`intent`, `agent_id`, `known_recipes` cut to one line each** (all tools that carry them). What moved and where:
+   - `intent`: always-new registration, lost-id recovery after compaction, and "rendering only, never ranking" moved to a new `intent` paragraph in the briefing's "How to check" section. "Sub-agents with their own goals send their own text" and the carry-the-id protocol stay where every agent already sees them: the intent echo line on every response that resolves an intent.
+   - `known_recipes`: kept "stub", "rendering", "ranking" (the drift guard's load-bearing concepts). Dropped "Client-declared sibling of session_id" (the briefing's "How to check" line already says "client-declared ids you still hold — same id-stub rendering") and "logging and clustering are unchanged"; the briefing line gains "never ranking".
+   - `agent_id`: dropped "stamped on audit records" and "Capture only"; kept the example and the joinable-lineage purpose, which the briefing line also states.
+3. **`feedback` on `check_recipe` and `search_recipes` is a pointer**, no longer an inline copy of the row schema: "Feedback rows about PRIOR checks or searches, riding along with this call; each row takes log_feedback's fields. A rejected row never blocks this call." The item schema is an open record, so every row field still reaches the handler (a bare object would let the SDK strip them). Dropped from this description: the "trace_id … full UUID or 8+ char short id" detail, which lives in `log_feedback`'s own `trace_id` description. The briefing's "How to check" line now says each row takes the same fields as `log_feedback`.
+4. **`clusters` and `max_chars`** stay declared and honored; each description is now "Deprecated: use verbosity (still honored)." Dropped: "Exact exemplar count (harness/sweep use)" and "Approximate size target in characters".
+5. **Check report (not briefing copy, listed for completeness):** when an agent rates, or a rating needs explaining, the markdown report gains one line under "Recipe checked as #…": "Your ratings: impact high, uncertainty not rated (triage only, never ranking)." plus any notice. Agents that never rate see no change.
+6. **Budgets:** the shared-description cap moves down 5,950 → 5,550 (total 5,884 → 5,510), and `intent`, `agent_id`, `known_recipes` get a 120-character per-param cap. The thin briefing's size ceiling rises 18,000 → 18,200 chars (fixture ~17,685 → 18,111) for the `intent` paragraph: text loaded once per session instead of three times in every turn's tool list.
+
+### Served `tools/list` bytes (minified UTF-8 `result`, in-memory transport; pinned by `mcp-tools-list-size.test.ts` and `apps/mcp-server/src/server.test.ts`)
+
+| Server | Before | After | Cap |
+|---|---|---|---|
+| Remote (`POST /mcp`) | 18,090 | 15,864 | 16,000 |
+| Stdio (`apps/mcp-server`) | 13,670 | 12,074 | 13,670 |
+
+### Scenarios intended to move
+
+- **`checking-behavior.feature`** — new `@unreleased` scenario "A rated check uses the rating vocabulary and leaves out a rating it has no view on" (added in this PR): a briefed agent that rates uses `low | medium | high` and omits a rating it has no view on rather than defaulting to medium. It stays `@unreleased` until slice 7 teaches rating in the briefing body.
+
+### Scenarios watched, with rationale for holding
+
+- **`feedback-loop.feature` "Mid-flow feedback rides on the next check_recipe call"** — the row fields are now learned from `log_feedback`'s schema rather than an inline copy. Holds because `log_feedback` is in the same tool list the agent already reads, the pointer names it, the briefing's "Closing the loop" section still lists the row vocabulary verbatim, and every field is still accepted and stored (DT-TOOL-03, `triage-ratings.test.ts`). Risk to watch: an agent that never opens `log_feedback`'s schema sends rows without `kind`/`disposition`; those rows get per-row markers, and the check itself is unaffected.
+- **`intent-registration.feature` (all scenarios)** — the `intent` description is one line. Holds because each scenario's trigger is carried elsewhere: declaring at briefing time and carrying the id (the echo line on every response, unchanged), compaction recovery and always-new registration (the new briefing paragraph), sub-agent isolation (the echo line), feedback join (`intent_id` on `log_feedback`, unchanged), and the unknown-id notice (unchanged).
+- **`known-recipes-dedup.feature` "Known ids render as compact stubs instead of full bodies"** — the `known_recipes` description still says ids you hold render as id stubs, rendering only; the stub rendering itself is unchanged.
+- **All others** — principles, voice, format, routing, divergence, and setup copy untouched; `session_id` copy untouched (open question 2).
+- Suite re-run: the agent-run harness is not yet wired; per README the .feature files remain the manual checklist.
+
+### Addendum (2026-09-27, after verification): slice 1 follow-ups
+
+Rulings: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 1: rulings on the verification follow-ups.
+
+1. **Briefing "How to check", `intent` paragraph.** Restores the meaning the one-line `intent` description dropped ("stubs reset"): the paragraph now says recipes already delivered to an intent render as id-stubs, and that a re-sent story "starts with no stubs, and recipes render in full again". The awkward "say to context compaction" becomes "for example to context compaction". Thin fixture grows by about 60 characters, inside the 18,200 ceiling; pinned by `recipe-guide-content.test.ts`.
+2. **Not copy, listed for completeness:** a rating of the wrong JSON type (`impact: 3`) and a non-object feedback row no longer fail the whole MCP call on either server; the rating is stored as not rated with the notice, and the row gets a per-row error. The served schemas are byte-identical (remote `tools/list` still 15,864 bytes). The notice takes a plural verb when both ratings are unrecognized.
+3. **DT-RAT-02 edited, not the code:** the markdown report stays silent when the agent sent no rating; JSON and structured responses carry `null`.
+
+Scenarios intended to move: none. Watched: `intent-registration.feature` (all), which the restored sentence strengthens rather than changes; `known-recipes-dedup.feature` "Known ids render as compact stubs" (stub rendering unchanged).
+
 ## 2026-08-23 — Cold-start v2 Phase C: declared intents (param + echo line + tool descriptions)
 
 Operator-approved plan (always-new registration ruling, recipe `363e3e0c`; session-supersession direction, `5c55327d`; rendering-only ledger per `9067ca1b`/`4d25aec9`).

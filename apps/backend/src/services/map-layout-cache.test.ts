@@ -5,6 +5,8 @@ import {
   setCachedMapLayout,
   clearMapLayoutCache,
 } from "./map-layout-cache";
+import { SHARED_AUDIENCE } from "../authz";
+import type { DraftAudience } from "../authz";
 
 // Layer 1 — pure module, no I/O.
 
@@ -18,7 +20,18 @@ describe("map-layout-cache", () => {
     expand: false,
     strategy: undefined,
     corpusVersion: "100:2026-07-02",
+    audience: SHARED_AUDIENCE,
   };
+
+  it("a cached layout is only ever the shared audience's: a viewer audience cannot build a key", () => {
+    // The cache is process-wide and its key names no viewer, so a layout
+    // computed with one person's drafts in it would be served to everyone.
+    // The type admits only SHARED_AUDIENCE; this pins the runtime check too.
+    const viewer = { viewerUserId: "11111111-1111-4111-8111-111111111111" } as unknown as typeof SHARED_AUDIENCE;
+    expect(() => mapLayoutCacheKey({ ...baseParts, audience: viewer })).toThrow(/shared audience/);
+    const widened: DraftAudience = SHARED_AUDIENCE;
+    expect(() => mapLayoutCacheKey({ ...baseParts, audience: widened as typeof SHARED_AUDIENCE })).not.toThrow();
+  });
 
   it("key is order-insensitive for groupIds and version-sensitive", () => {
     const k1 = mapLayoutCacheKey(baseParts);

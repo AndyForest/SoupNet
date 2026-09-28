@@ -21,7 +21,7 @@
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import type { BriefingBookStats } from "@soupnet/domain";
-import { inBooks } from "../authz";
+import { inBooks, publishedTrace, draftAwaitingReviewBy } from "../authz";
 
 interface TraceAggRow {
   groupId: string;
@@ -51,17 +51,25 @@ function shortDate(value: unknown): string | undefined {
 }
 
 /**
- * Fetch index stats for the given books in three batched queries.
+ * Fetch index stats for the given books in batched queries.
  * Books with zero traces get no map entry — callers render no index line
  * for them (an empty book's absence of stats is itself legible).
+ *
+ * Drafts (drafts-and-triage slice 2): every shared figure — recipe and author
+ * counts, both dates, feedback and reaction counts — is of PUBLISHED recipes
+ * only, so a collaborator's Index line never moves when someone's draft
+ * lands or is annotated (DT-VIS-08, DT-VIS-18). `personUserId` (the key's
+ * user) adds one figure only their own agents see: their unverified drafts
+ * awaiting review, rendered on a separate line (DT-VIS-09).
  */
 export async function fetchBookStats(
   db: PostgresJsDatabase,
   groupIds: string[],
+  personUserId: string,
 ): Promise<Map<string, BriefingBookStats>> {
   const out = new Map<string, BriefingBookStats>();
   if (groupIds.length === 0) return out;
-  const inScope = inBooks(sql`t.group_id`, groupIds);
+  const inScope = sql`${inBooks(sql`t.group_id`, groupIds)} AND ${publishedTrace("t")}`;
 
   const traceRows = await db.execute(sql`
     SELECT
@@ -84,6 +92,20 @@ export async function fetchBookStats(
     if (newest) stats.newestJudgment = newest;
     if (logged) stats.lastLogged = logged;
     out.set(row.groupId, stats);
+  }
+
+  // The person's own unverified drafts, per book (their agents only).
+  const draftRows = await db.execute(sql`
+    SELECT t.group_id::text AS "groupId", count(*)::int AS n
+    FROM claimnet.traces t
+    WHERE ${inBooks(sql`t.group_id`, groupIds)}
+      AND ${draftAwaitingReviewBy("t", personUserId)}
+    GROUP BY t.group_id
+  `);
+  for (const row of draftRows as unknown as Array<{ groupId: string; n: number }>) {
+    const existing = out.get(row.groupId);
+    if (existing) existing.ownDraftsAwaitingReview = Number(row.n);
+    else out.set(row.groupId, { recipeCount: 0, authorCount: 0, ownDraftsAwaitingReview: Number(row.n) });
   }
   if (out.size === 0) return out;
 

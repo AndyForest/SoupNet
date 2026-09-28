@@ -55,7 +55,7 @@
 import crypto from "node:crypto";
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { inBooks } from "../authz";
+import { inBooks, traceReadableById } from "../authz";
 import {
   FEEDBACK_KINDS,
   FEEDBACK_IMPACTS,
@@ -227,9 +227,25 @@ function optionalString(value: unknown, field: string, out: { error?: string }):
   return value.trim() || null;
 }
 
+/** A row is an object (not null, not an array). Anything else arriving in a
+ *  feedback batch is a per-row error, never a thrown TypeError or a failed
+ *  call: "a rejected row never blocks this call". */
+export function isFeedbackRowObject(raw: unknown): raw is RawFeedbackRow {
+  return raw !== null && typeof raw === "object" && !Array.isArray(raw);
+}
+
+/** The trace id a row names, for markers; "" for non-object rows. */
+function rowTraceId(raw: unknown): string {
+  return isFeedbackRowObject(raw) && typeof raw.trace_id === "string" ? raw.trace_id : "";
+}
+
 export function validateFeedbackRow(
-  raw: RawFeedbackRow,
+  raw: unknown,
 ): { ok: true; row: ValidatedFeedbackRow } | { ok: false; error: string } {
+  if (!isFeedbackRowObject(raw)) {
+    const got = raw === undefined ? "undefined" : JSON.stringify(raw).slice(0, 60);
+    return { ok: false, error: `each feedback row must be an object with log_feedback's fields (got ${got})` };
+  }
   // Full UUID or an unambiguous short-id prefix (≥ MIN_TRACE_ID_PREFIX hex
   // chars — the form check responses print). Normalized to lowercase so the
   // resolved-set membership checks below compare canonically. `recipe_id` is
@@ -425,7 +441,8 @@ export interface IngestFeedbackParams {
    *  user, so sub-agents can reference each other's searches by design). */
   userId: string;
   readGroupIds: string[];
-  rows: RawFeedbackRow[];
+  /** Untrusted: a non-object entry gets a per-row marker. */
+  rows: readonly unknown[];
 }
 
 export async function ingestFeedback(
@@ -453,7 +470,7 @@ export async function ingestFeedback(
       return rows.map((raw, index) => ({
         index,
         ok: false,
-        traceId: typeof raw.trace_id === "string" ? raw.trace_id : "",
+        traceId: rowTraceId(raw),
         error: "feedback budget exceeded for this API key — retry later",
       }));
     }
@@ -478,7 +495,7 @@ export async function ingestFeedback(
         prefixesToResolve.add(v.row.traceId);
       }
     } else {
-      validated.push({ index, error: v.error, traceId: typeof raw.trace_id === "string" ? raw.trace_id : "" });
+      validated.push({ index, error: v.error, traceId: rowTraceId(raw) });
     }
   });
 
@@ -496,10 +513,14 @@ export async function ingestFeedback(
   if (readGroupIds.length > 0) {
     for (const prefix of prefixesToResolve) {
       const { lo, hi } = uuidPrefixRange(prefix);
+      // Same draft condition as the readable-set select below, so a prefix
+      // shared with someone else's hidden draft resolves as if it did not
+      // exist (DT-VIS-05).
       const matchRows = await db.execute(sql`
-        SELECT id FROM claimnet.traces
-        WHERE id >= ${lo}::uuid AND id <= ${hi}::uuid
-          AND ${inBooks(sql`group_id`, readGroupIds)}
+        SELECT t.id FROM claimnet.traces t
+        WHERE t.id >= ${lo}::uuid AND t.id <= ${hi}::uuid
+          AND ${inBooks(sql`t.group_id`, readGroupIds)}
+          AND ${traceReadableById("t", userId)}
         LIMIT 2
       `);
       const matches = (matchRows as unknown as Array<{ id: string }>).map((r) => r.id);
@@ -534,10 +555,14 @@ export async function ingestFeedback(
   // marker (no existence oracle).
   const readable = new Set<string>();
   if (idsToCheck.size > 0 && readGroupIds.length > 0) {
+    // "Readable" includes the draft rule: feedback about someone else's
+    // hidden draft gets the same marker as a random id (RP-11), while the
+    // person's own agents may annotate their drafts.
     const traceRows = await db.execute(sql`
-      SELECT id FROM claimnet.traces
-      WHERE id IN (${sql.join([...idsToCheck].map((id) => sql`${id}::uuid`), sql`, `)})
-        AND ${inBooks(sql`group_id`, readGroupIds)}
+      SELECT t.id FROM claimnet.traces t
+      WHERE t.id IN (${sql.join([...idsToCheck].map((id) => sql`${id}::uuid`), sql`, `)})
+        AND ${inBooks(sql`t.group_id`, readGroupIds)}
+        AND ${traceReadableById("t", userId)}
     `);
     for (const r of traceRows as unknown as Array<{ id: string }>) {
       readable.add(r.id);

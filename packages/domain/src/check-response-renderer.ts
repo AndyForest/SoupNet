@@ -27,6 +27,10 @@
  *     gist is an ossification risk; fetch bodies via get_recipes).
  */
 
+import type { TriageRating } from "@soupnet/contracts";
+import { renderRatingsMarkdown } from "./triage-ratings";
+import { draftLabel } from "./drafts";
+
 // ── Response shape (tolerant — both builders' outputs satisfy it) ───────────
 
 export interface CheckResultReference {
@@ -67,6 +71,13 @@ export interface CheckResultItem {
    *  ({recipeId, similarity}) rendered as one compact line beside the full
    *  item ("stub, stub, full recipe"). */
   knownMembers?: Array<{ recipeId?: string; similarity?: number }>;
+  /** Present only on the viewer's own unpublished draft (slice 2) — the
+   *  line is labelled so the agent weighs it as a hypothesis. */
+  draftState?: string;
+  /** The agent's triage ratings, carried only beside a `draftState` (slice
+   *  3, S3-AG2); null = not rated. The label names them when one is set. */
+  impact?: TriageRating | null;
+  uncertainty?: TriageRating | null;
 }
 
 /** A related-evidence entry IS a Recipe fill (canonical schema): the parent
@@ -84,7 +95,24 @@ export interface CheckRelatedEvidence {
 export interface CheckResponseData {
   /** The caller's own deposit as a Recipe fill ({recipeId, recipe}). Absent
    *  on the read-only filter path. */
-  checked?: { recipeId?: string; recipe?: string };
+  checked?: {
+    recipeId?: string;
+    recipe?: string;
+    /** Triage ratings on the deposit (slice 1); null = not rated. */
+    impact?: TriageRating | null;
+    uncertainty?: TriageRating | null;
+    /** Present when the deposit is an unpublished draft (slice 2). */
+    draftState?: string;
+  };
+  /** Who can see a draft just deposited and how it gets verified, or the
+   *  state an identical repeat found (slice 2). */
+  draftNotice?: string;
+  /** True when the check repeated an identical earlier one (same key, book,
+   *  text): `checked` is that earlier recipe; nothing new was stored. */
+  existingRecipe?: boolean;
+  /** Why a rating sent on this check was not applied (unrecognized value,
+   *  or an identical repeat keeping the first ratings). */
+  ratingsNotice?: string;
   /** True for the /check `filter` read-only search path — no trace logged. */
   searchOnly?: boolean;
   /** The keyword filter text of a search-only response. */
@@ -207,16 +235,20 @@ function renderResultItem(r: CheckResultItem, index: number, known: boolean): st
   // 2026-08-19 comprehensibility pass, one unified search).
   const score = similarityLabel(r.similarity);
   const head = `#${index + 1}${score ? ` (${score})` : ""} ${r.recipeId ?? "?"}`;
+  // Drafts (slice 2): the viewer's own unpublished draft, labelled in every
+  // appearance; the label is a fact about the recipe, not a judgment.
+  const label = draftLabel(r.draftState, r);
+  const draftTag = label ? ` ${label}` : "";
 
   if (known) {
     // One-line id-only stub: the caller already holds this recipe, so the
     // line keeps the cluster slot visible without re-sending any body text
     // (fetch the full recipe via get_recipes if needed).
     const cluster = r.clusterSize ? ` (represents ${r.clusterSize} similar recipes)` : "";
-    return `${head} [known to you]${cluster}\n`;
+    return `${head} [known to you]${draftTag}${cluster}\n`;
   }
 
-  let text = head;
+  let text = head + draftTag;
   const date = dateLabel(r.createdAt);
   if (date) text += ` -- ${date}`;
   if (r.clusterSize) text += ` (represents ${r.clusterSize} similar recipes)`;
@@ -265,6 +297,17 @@ export function renderCheckResponseMarkdown(
   let text = data.searchOnly
     ? `Read-only search${data.filter ? ` for "${data.filter}"` : ""}.\n`
     : `Recipe checked as #${data.checked?.recipeId ?? "?"}\n`;
+  if (!data.searchOnly && data.checked) {
+    // Triage ratings echo (drafts-and-triage slice 1): a line only when the
+    // agent rated or a rating needs explaining, so agents that never rate
+    // see no change. JSON consumers read checked.impact / checked.uncertainty.
+    text += renderRatingsMarkdown(
+      { impact: data.checked.impact ?? null, uncertainty: data.checked.uncertainty ?? null },
+      data.ratingsNotice,
+    );
+    // Draft notice (slice 2): who can see the deposit and how it is verified.
+    if (data.draftNotice) text += `${data.draftNotice}\n`;
+  }
   if (data.searchOnly && data.searchId) {
     text += `Search id: ${data.searchId} — log_feedback accepts it as search_id.\n`;
   }

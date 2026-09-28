@@ -31,6 +31,10 @@ export interface SynthesisInput {
     /** Coalesced COALESCE(decided_at, created_at) date — the newest-wins key. */
     judgmentDate: string;
     evidence?: string[];
+    /** The caller's own unverified draft (drafts-and-triage slice 2): a
+     *  hypothesis the person has not confirmed. Labelled in the prompt so
+     *  the profile never presents it as their position (read path RP-13). */
+    draft?: boolean;
   }>;
   relatedEvidence?: Array<{ recipeId: string; content: string }>;
 }
@@ -81,8 +85,11 @@ export function buildSynthesisPrompt(input: SynthesisInput): string {
     lines.push("Recorded recipes (newest judgment first): none returned.");
   } else {
     lines.push("Recorded recipes (newest judgment first):");
+    if (ordered.some((r) => r.draft)) {
+      lines.push("(Recipes marked [unverified draft] are hypotheses the user has not confirmed. If you draw on one, say it is unconfirmed; never present it as their position.)");
+    }
     for (const r of ordered) {
-      lines.push(`- [${r.id}] (${r.judgmentDate}) ${r.recipe}`);
+      lines.push(`- [${r.id}] (${r.judgmentDate})${r.draft ? " [unverified draft]" : ""} ${r.recipe}`);
       const evidence = (r.evidence ?? []).filter((e) => e.trim().length > 0);
       if (evidence.length > 0) {
         lines.push(`    evidence: ${evidence.join(" | ")}`);

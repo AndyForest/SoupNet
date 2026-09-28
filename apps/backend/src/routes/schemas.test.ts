@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { RECIPE_TEXT_DEFINITION, SESSION_ID_DEFINITION } from "@soupnet/contracts";
+import { RECIPE_TEXT_DEFINITION, SESSION_ID_DEFINITION, IMPACT_DEFINITION, UNCERTAINTY_DEFINITION } from "@soupnet/contracts";
 
 /**
  * GET /schemas/* — the published wire schemas (canonical Recipe format,
@@ -73,5 +73,32 @@ describe.skipIf(!BASE)("GET /schemas", () => {
     expect(JSON.stringify(doc)).toContain(SESSION_ID_DEFINITION.slice(0, 60));
     // Public, cacheable-for-an-hour surface.
     expect(res.headers.get("cache-control")).toContain("max-age=3600");
+  });
+});
+
+// drafts-and-triage slice 1: the published schemas describe the triage
+// ratings on the caller's own deposit, and the two response fields that
+// explain them.
+describe.skipIf(!BASE)("GET /schemas — triage ratings (slice 1)", () => {
+  it("S1-B1 / S1-B2: recipe.json describes impact and uncertainty as low | medium | high or null (not rated)", async () => {
+    const doc = (await (await fetch(`${BASE}/schemas/recipe.json`)).json()) as {
+      definitions: { Recipe: { properties: Record<string, { enum?: string[]; type?: unknown; anyOf?: unknown; description?: string }> } };
+    };
+    const props = doc.definitions.Recipe.properties;
+    for (const name of ["impact", "uncertainty"]) {
+      const raw = JSON.stringify(props[name]);
+      expect(raw, name).toContain('"low"');
+      expect(raw, name).toContain('"high"');
+      expect(raw, name).toContain("null");
+      expect(props[name]?.description, name).toContain("not rated");
+    }
+    expect(JSON.stringify(doc)).toContain(IMPACT_DEFINITION.slice(0, 60));
+    expect(JSON.stringify(doc)).toContain(UNCERTAINTY_DEFINITION.slice(0, 60));
+  });
+
+  it("S1-B3 / S1-B5: check-response.json describes existingRecipe and ratingsNotice", async () => {
+    const raw = JSON.stringify(await (await fetch(`${BASE}/schemas/check-response.json`)).json());
+    expect(raw).toContain('"existingRecipe"');
+    expect(raw).toContain('"ratingsNotice"');
   });
 });

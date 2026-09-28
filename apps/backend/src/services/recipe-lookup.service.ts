@@ -33,7 +33,8 @@ import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { enrichResults } from "./result-enricher";
 import { isTraceIdPrefix, uuidPrefixRange } from "./feedback.service";
 import type { SearchResultItem } from "./trace.service";
-import { inBooks } from "../authz";
+import { inBooks, traceReadableById } from "../authz";
+import { draftLabel, isShownDraftState } from "@soupnet/domain";
 
 /** Hard cap on ids per lookup call. Routes reject above this; the briefing
  *  surface silently truncates and says so in the rendered section. */
@@ -68,6 +69,8 @@ export interface RecipeLookupFound {
   /** Raw append time; differs from createdAt only for backfilled decisions. */
   loggedAt: string;
   evidence: RecipeLookupEvidence[];
+  /** Present only on the caller's own unpublished draft (slice 2). */
+  draftState?: "unverified" | "rejected" | "not_chosen" | undefined;
 }
 
 export interface RecipeLookupMarker {
@@ -109,18 +112,28 @@ interface TraceRow {
   groupName: string | null;
   authorEmail: string | null;
   authorDisplayName: string | null;
+  draftState: string | null;
+}
+
+/** Who is looking: the key's effective read scope and the key's user. */
+export interface RecipeLookupViewer {
+  readGroupIds: string[];
+  /** The key's user — their own drafts are readable by id; anyone else's
+   *  unpublished draft is the uniform marker (drafts-and-triage slice 2). */
+  userId: string;
 }
 
 /**
- * Resolve up to RECIPE_LOOKUP_MAX_IDS trace ids against the key's read scope.
- * Returns one entry per unique input id, in input order. Ids beyond the cap
- * are ignored (callers surface their own cap message).
+ * Resolve up to RECIPE_LOOKUP_MAX_IDS trace ids against the key's read scope
+ * and the draft rule. Returns one entry per unique input id, in input order.
+ * Ids beyond the cap are ignored (callers surface their own cap message).
  */
 export async function lookupRecipes(
   db: PostgresJsDatabase,
   ids: string[],
-  readGroupIds: string[],
+  viewer: RecipeLookupViewer,
 ): Promise<RecipeLookupEntry[]> {
+  const { readGroupIds } = viewer;
   const capped = [...new Set(ids)].slice(0, RECIPE_LOOKUP_MAX_IDS);
 
   const foundById = new Map<string, RecipeLookupFound>();
@@ -150,10 +163,14 @@ export async function lookupRecipes(
   if (liveReadGroupIds.length > 0) {
     for (const prefix of prefixes) {
       const { lo, hi } = uuidPrefixRange(prefix);
+      // The prefix scan applies the SAME draft condition as the main select
+      // below, so `ambiguous_prefix` never names a hidden draft and a prefix
+      // shared with one resolves as if it did not exist (DT-VIS-05).
       const matchRows = await db.execute(sql`
-        SELECT id FROM claimnet.traces
-        WHERE id >= ${lo}::uuid AND id <= ${hi}::uuid
-          AND ${inBooks(sql`group_id`, liveReadGroupIds)}
+        SELECT t.id FROM claimnet.traces t
+        WHERE t.id >= ${lo}::uuid AND t.id <= ${hi}::uuid
+          AND ${inBooks(sql`t.group_id`, liveReadGroupIds)}
+          AND ${traceReadableById("t", viewer.userId)}
         LIMIT 2
       `);
       const matches = (matchRows as unknown as Array<{ id: string }>).map((r) => r.id);
@@ -187,12 +204,14 @@ export async function lookupRecipes(
         g.slug              AS "groupSlug",
         g.name              AS "groupName",
         u.email             AS "authorEmail",
-        u.display_name      AS "authorDisplayName"
+        u.display_name      AS "authorDisplayName",
+        t.draft_state       AS "draftState"
       FROM claimnet.traces t
       LEFT JOIN claimnet.groups g ON g.id = t.group_id
       LEFT JOIN claimnet.users u ON u.id = t.user_id
       WHERE t.id IN (${sql.join(validIds.map((id) => sql`${id}::uuid`), sql`, `)})
         AND ${inBooks(sql`t.group_id`, liveReadGroupIds)}
+        AND ${traceReadableById("t", viewer.userId)}
     `);
 
     const traceRows = rows as unknown as TraceRow[];
@@ -239,6 +258,7 @@ export async function lookupRecipes(
           createdAt: new Date(row.decidedAt ?? row.createdAt).toISOString(),
           loggedAt: new Date(row.createdAt).toISOString(),
           evidence,
+          ...(isShownDraftState(row.draftState) ? { draftState: row.draftState } : {}),
         });
       }
     }
@@ -294,7 +314,9 @@ export function renderRecipeEntries(entries: RecipeLookupEntry[]): string {
         : []),
     ].join("\n");
 
-    let text = `${metaLines}\n\n${entry.recipe}`;
+    // The caller's own unpublished draft is labelled (DT-VIS-06).
+    const label = draftLabel(entry.draftState);
+    let text = `${metaLines}${label ? `\nDraft: ${label}` : ""}\n\n${entry.recipe}`;
 
     if (entry.evidence.length > 0) {
       const blocks = entry.evidence.map((ev) => {

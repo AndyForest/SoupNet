@@ -33,7 +33,9 @@ import { AdminEmbeddingsPage } from "./pages/AdminEmbeddingsPage.js";
 import { AdminUsersPage } from "./pages/AdminUsersPage.js";
 import { AdminSignupsPage } from "./pages/AdminSignupsPage.js";
 import { AdminEmailsPage } from "./pages/AdminEmailsPage.js";
+import { DraftQueuePage } from "./pages/DraftQueuePage.js";
 import { isLoggedIn, getEmailVerified } from "./auth.js";
+import { safeReturnTarget } from "./lib/return-target.js";
 
 const rootRoute = createRootRoute({
   component: AppShell,
@@ -49,9 +51,13 @@ const rootRoute = createRootRoute({
  * Only `null` (unknown) and `false` (explicitly unverified) trigger
  * the redirect — `true` lets the route load.
  */
-function requireAuth() {
+function requireAuth(ctx?: { location?: { href?: string } }) {
   if (!isLoggedIn()) {
-    throw redirect({ to: "/auth/login" });
+    // Keep where the person was going (an agent's /app/drafts?ids=… link
+    // above all) so sign-in returns there; only same-origin /app/ paths are
+    // carried (drafts-and-triage slice 3, S3-L5).
+    const next = safeReturnTarget(ctx?.location?.href);
+    throw redirect({ to: "/auth/login", ...(next ? { search: { next } as never } : {}) });
   }
   if (getEmailVerified() !== true) {
     throw redirect({ to: "/auth/verify-pending" });
@@ -207,6 +213,14 @@ const dashboardRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "dashboard",
   component: DashboardPage,
+});
+
+// The review queue (drafts-and-triage slice 3): ?ids=a,b lists exactly the
+// named recipes; ?q= narrows with the search grammar; ?page= pages.
+const draftsRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "drafts",
+  component: DraftQueuePage,
 });
 
 const checkRoute = createRoute({
@@ -366,6 +380,7 @@ export const routeTree = rootRoute.addChildren([
   ]),
   appRoute.addChildren([
     dashboardRoute,
+    draftsRoute,
     checkRoute,
     traceDetailRoute,
     keysRoute,

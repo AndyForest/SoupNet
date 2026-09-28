@@ -1,0 +1,637 @@
+/**
+ * Soup.net MCP Server (stdio transport) — tool registrations
+ *
+ * Thin proxy. Forwards tool calls to the Soup.net backend HTTP API using the
+ * user's API key. The backend is the source of truth for tool behavior, so
+ * this file stays a transport-only shell — when the HTTP MCP route adds a
+ * tool, mirror it here with a fetch call.
+ *
+ * Tools:
+ *   - check_recipe   → POST /check (or GET ?key=...&format=json)
+ *   - search_recipes → GET /check?filter=... (read-only structured search)
+ *   - get_briefing   → GET /briefing (optional purpose + recipe_ids params)
+ *   - get_recipes    → GET /recipes?ids=... (recipe lookup by id, WT-3)
+ *
+ * Auth: the caller passes the user's API key (index.ts reads SOUPNET_API_KEY).
+ * The same daily or scoped key shown on the dashboard.
+ */
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
+import {
+  EXT_TO_MIME,
+  MCP_PARAM_DESCRIPTIONS,
+  MCP_TOOL_DESCRIPTIONS,
+  VERBOSITY_LEVELS,
+  buildCheckRecipeToolDescription,
+  renderCheckResponseMarkdown,
+} from "@soupnet/domain";
+import type { CheckResponseJson } from "@soupnet/domain";
+
+export interface StdioServerOptions {
+  /** Backend base URL the proxy forwards to. */
+  backendUrl: string;
+  /** The user's API key (SOUPNET_API_KEY); empty means unconfigured. */
+  apiKey: string;
+}
+
+interface LookupReference {
+  quote: string | null;
+  source: string | null;
+  fileUrl?: string;
+  fileMimeType?: string;
+  originalFilename?: string;
+}
+
+interface LookupEntry {
+  recipeId: string;
+  status: "ok" | "not_found_or_unreadable" | "ambiguous_prefix";
+  /** ambiguous_prefix only: the (readable) candidate ids the prefix matched. */
+  candidates?: string[];
+  recipe?: string;
+  recipeBook?: { recipeBookId: string; slug: string; name: string } | null;
+  author?: { email: string; displayName?: string } | null;
+  /** Judgment date (COALESCE(decided_at, created_at)), per the canonical schema. */
+  createdAt?: string;
+  /** Raw append time; differs from createdAt only for backfilled decisions. */
+  loggedAt?: string;
+  evidence?: Array<{ interpretation: string; references: LookupReference[] }>;
+}
+
+function formatLookupEntries(entries: LookupEntry[]): string {
+  return entries.map((entry) => {
+    if (entry.status === "ambiguous_prefix") {
+      return `### ${entry.recipeId}\nStatus: ambiguous_prefix — this short id matches more than one readable recipe (${(entry.candidates ?? []).join(", ")}). Re-request with a longer prefix or a full id.`;
+    }
+    if (entry.status !== "ok") {
+      return `### ${entry.recipeId}\nStatus: not_found_or_unreadable — this id does not exist or is not readable by this API key (the two cases are deliberately indistinguishable).`;
+    }
+    const meta = [
+      `### ${entry.recipeId}`,
+      ...(entry.recipeBook ? [`Recipe book: ${entry.recipeBook.name} (${entry.recipeBook.slug})`] : []),
+      ...(entry.author ? [`Author: ${entry.author.displayName ? `${entry.author.displayName} <${entry.author.email}>` : entry.author.email}`] : []),
+      ...(entry.loggedAt ? [`Logged: ${entry.loggedAt.slice(0, 10)}`] : []),
+      ...(entry.createdAt && entry.createdAt.slice(0, 10) !== entry.loggedAt?.slice(0, 10)
+        ? [`Decided: ${entry.createdAt.slice(0, 10)}`]
+        : []),
+    ].join("\n");
+    let text = `${meta}\n\n${entry.recipe ?? ""}`;
+    if (entry.evidence && entry.evidence.length > 0) {
+      const blocks = entry.evidence.map((ev) => {
+        const lines = [`- ${ev.interpretation}`];
+        for (const ref of ev.references) {
+          if (ref.quote) lines.push(`  > "${ref.quote}"`);
+          if (ref.source) lines.push(`  -- ${ref.source}`);
+          if (ref.fileUrl) lines.push(`  [file: ${ref.originalFilename ?? ref.fileUrl}${ref.fileMimeType ? ` (${ref.fileMimeType})` : ""}]`);
+        }
+        return lines.join("\n");
+      });
+      text += `\n\nEvidence:\n${blocks.join("\n\n")}`;
+    }
+    return text;
+  }).join("\n\n");
+}
+
+/** A triage-rating param (slice 1) that never fails the check on a wrong
+ *  JSON type: non-strings are forwarded as their JSON text, so the backend
+ *  stores them as not rated with its notice. Mirrors routes/mcp.ts; the
+ *  served schema still says "string". */
+function ratingParam(description: string) {
+  return z
+    .preprocess((v) => (v === undefined || v === null ? undefined : typeof v === "string" ? v : JSON.stringify(v)), z.string().optional())
+    .describe(description);
+}
+
+/**
+ * Build the stdio server with every tool registered, without connecting a
+ * transport. index.ts connects it to stdio; tests connect it to an in-memory
+ * transport to measure the served tools/list and to observe what the proxy
+ * forwards (drafts-and-triage slice 1, S1-Z2 and S1-B1).
+ */
+export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): McpServer {
+  // The local formatting helpers that used to live here (formatResults etc.)
+  // were replaced by @soupnet/domain renderCheckResponseMarkdown — the same
+  // renderer the HTTP MCP route and the web /check copy-back block use, so the
+  // two MCP surfaces can't drift. Pagination text is gone with them: agents
+  // can't page (no page param), so the renderer emits a narrowing hint instead.
+
+  // ── MCP Server ─────────────────────────────────────────────────────────────────
+
+  const server = new McpServer({
+    name: "soupnet",
+    version: "0.4.0",
+    description:
+      "Soup.net: check recipes — taste and judgment traces with evidence. " +
+      "Call get_briefing before your first check to learn the format and get a sample of the user's corpus.",
+  });
+
+  // ── check_recipe tool ──────────────────────────────────────────────────────────
+
+  server.tool(
+    "check_recipe",
+    buildCheckRecipeToolDescription({ includeFileAttachment: false }),
+    {
+      recipe: z.string().describe(MCP_PARAM_DESCRIPTIONS.recipe),
+      supporting_evidence: z.string().describe(MCP_PARAM_DESCRIPTIONS.supportingEvidence),
+      verbosity: z.enum(VERBOSITY_LEVELS).optional().describe(MCP_PARAM_DESCRIPTIONS.verbosity),
+      // Deprecated size levers — kept in schema so existing callers stay
+      // honored (mirrors routes/mcp.ts on the HTTP surface).
+      clusters: z.number().optional().describe(MCP_PARAM_DESCRIPTIONS.clusters),
+      max_chars: z.number().optional().describe(MCP_PARAM_DESCRIPTIONS.maxChars),
+      decided_at: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.decidedAt),
+      // No SDK-level outputSchema — see the HTTP MCP route (routes/mcp.ts):
+      // declaring one would force structuredContent onto every response,
+      // violating the one-format-per-response rule.
+      response_format: z.enum(["markdown", "structured"]).optional().describe(MCP_PARAM_DESCRIPTIONS.responseFormat),
+      known_recipes: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.knownRecipes),
+      session_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.sessionId),
+      intent: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.intent),
+      agent_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.agentId),
+      synthesize: z.boolean().optional().describe(MCP_PARAM_DESCRIPTIONS.synthesize),
+      // Triage ratings (slice 1) — plain strings so an unrecognized value
+      // reaches the backend and becomes a notice, never an SDK error that
+      // costs the check (mirrors routes/mcp.ts).
+      // A wrong JSON type (impact: 3) is forwarded as its JSON text, so it
+      // too becomes a notice rather than an SDK error.
+      impact: ratingParam(MCP_PARAM_DESCRIPTIONS.impact),
+      uncertainty: ratingParam(MCP_PARAM_DESCRIPTIONS.uncertainty),
+      // Draft (slice 2): served as a boolean; a wrong-type value is forwarded
+      // for the backend's lenient parser rather than failing the check.
+      draft: z.boolean().optional().catch((ctx) => ctx.input as boolean | undefined).describe(MCP_PARAM_DESCRIPTIONS.draft),
+      // Rows take log_feedback's fields; the description points there instead
+      // of repeating the per-field schema (slice 1, S1-Z4). A record, not a
+      // bare object, so the SDK keeps every field for the /feedback forward.
+      // A non-object row passes through (`.catch`) so /feedback gives it a
+      // per-row marker instead of the SDK failing the whole check.
+      feedback: z.array(z.record(z.unknown()).catch((ctx) => ctx.input as Record<string, unknown>)).optional().describe(MCP_PARAM_DESCRIPTIONS.feedbackParam),
+      file: z.string().optional().describe(
+        "Optional file to attach as reference evidence (multimodal embedding). " +
+        "Local file path (e.g., 'docs/screenshot.png') or URL. " +
+        "Supports: images (PNG/JPEG/WebP), video (MP4/MOV ≤120s), audio (MP3/WAV/FLAC/OGG), PDF (≤6 pages)."
+      ),
+    },
+    {
+      title: "Recipe check",
+      // Append-only trace as a side effect — not read-only, but not destructive either.
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+    async ({ recipe, supporting_evidence, verbosity, clusters, max_chars, decided_at, response_format, known_recipes, session_id, intent, agent_id, synthesize, impact, uncertainty, draft, feedback, file }) => {
+      if (!apiKey) {
+        return {
+          content: [{ type: "text" as const, text: "Error: SOUPNET_API_KEY not configured. Get a key from your Soup.net dashboard." }],
+        };
+      }
+
+      try {
+        let response: Response;
+
+        if (file) {
+          // File attached — POST as multipart/form-data
+          const { readFile } = await import("node:fs/promises");
+          const { resolve } = await import("node:path");
+          const { basename } = await import("node:path");
+
+          let fileBuffer: Buffer;
+          let fileName: string;
+
+          if (file.startsWith("http://") || file.startsWith("https://")) {
+            // URL — fetch the file
+            const fileRes = await fetch(file);
+            if (!fileRes.ok) throw new Error(`Failed to fetch file: ${fileRes.status}`);
+            fileBuffer = Buffer.from(await fileRes.arrayBuffer());
+            fileName = file.split("/").pop() ?? "attachment";
+          } else {
+            // Local file path — resolve relative to cwd
+            const filePath = resolve(process.cwd(), file);
+            fileBuffer = await readFile(filePath);
+            fileName = basename(filePath);
+          }
+
+          // Detect MIME type from extension (shared definition in @soupnet/domain)
+          const ext = fileName.split(".").pop()?.toLowerCase() ?? "";
+          const mimeType = EXT_TO_MIME[ext] ?? "application/octet-stream";
+
+          const formData = new FormData();
+          formData.set("key", apiKey);
+          formData.set("trace", recipe);
+          formData.set("ef", supporting_evidence);
+          if (verbosity) formData.set("verbosity", verbosity);
+          if (clusters) formData.set("clusters", String(clusters));
+          if (max_chars) formData.set("max_chars", String(max_chars));
+          if (decided_at) formData.set("decided_at", decided_at);
+          if (agent_id) formData.set("agent_id", agent_id);
+          if (known_recipes) formData.set("known_recipes", known_recipes);
+          if (session_id) formData.set("session_id", session_id);
+          if (intent) formData.set("intent", intent);
+          if (synthesize) formData.set("synthesize", "true");
+          if (impact !== undefined) formData.set("impact", impact);
+          if (uncertainty !== undefined) formData.set("uncertainty", uncertainty);
+          if (draft !== undefined) formData.set("draft", String(draft));
+          formData.set("format", "json");
+          // Wrap in a fresh Uint8Array so the BlobPart type is Uint8Array<ArrayBuffer>
+          // rather than Node's Buffer<ArrayBufferLike> (which TS rejects as a
+          // BlobPart under lib.dom's SharedArrayBuffer-excluding signature).
+          formData.set("image", new Blob([new Uint8Array(fileBuffer)], { type: mimeType }), fileName);
+
+          response = await fetch(`${backendUrl}/check`, {
+            method: "POST",
+            headers: { "X-SoupNet-Surface": "mcp-stdio" },
+            body: formData,
+          });
+        } else {
+          // No file — GET with query params (lighter, avoids multipart overhead)
+          const params = new URLSearchParams();
+          params.set("key", apiKey);
+          params.set("trace", recipe);
+          params.set("ef", supporting_evidence);
+          if (verbosity) params.set("verbosity", verbosity);
+          if (clusters) params.set("clusters", String(clusters));
+          if (max_chars) params.set("max_chars", String(max_chars));
+          if (decided_at) params.set("decided_at", decided_at);
+          if (agent_id) params.set("agent_id", agent_id);
+          if (known_recipes) params.set("known_recipes", known_recipes);
+          if (session_id) params.set("session_id", session_id);
+          if (intent) params.set("intent", intent);
+          if (synthesize) params.set("synthesize", "true");
+          if (impact !== undefined) params.set("impact", impact);
+          if (uncertainty !== undefined) params.set("uncertainty", uncertainty);
+          if (draft !== undefined) params.set("draft", String(draft));
+          params.set("format", "json");
+
+          response = await fetch(`${backendUrl}/check?${params.toString()}`, {
+            headers: { "Accept": "application/json", "X-SoupNet-Surface": "mcp-stdio" },
+          });
+        }
+
+        const json = (await response.json()) as CheckResponseJson;
+
+        // Ride-along feedback about PRIOR checks: the web /check endpoint this
+        // proxy talks to doesn't carry feedback, so forward rows to the REST
+        // /feedback surface (same server-side service and validation path).
+        // Failures become marker text — never a request-killing error.
+        let feedbackSummary = "";
+        if (feedback && feedback.length > 0) {
+          try {
+            const rows = feedback.map((row) => (row === null || typeof row !== "object" || Array.isArray(row)) ? row : ({
+              ...(agent_id ? { agent_id } : {}),
+              ...(session_id ? { session_id } : {}),
+              // The check response's resolved intent id (text sent on this
+              // check was registered server-side) — join-only inheritance.
+              ...((json.data as { intentId?: string } | undefined)?.intentId
+                ? { intent_id: (json.data as { intentId?: string }).intentId }
+                : {}),
+              ...row,
+            }));
+            const fbRes = await fetch(`${backendUrl}/feedback`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+              body: JSON.stringify({ feedback: rows }),
+            });
+            const fbJson = (await fbRes.json()) as {
+              ok: boolean;
+              error?: string;
+              data?: { recorded: number; results: Array<{ index: number; ok: boolean; traceId: string; error?: string }> };
+            };
+            if (fbJson.data) {
+              const lines = [`Feedback: ${fbJson.data.recorded}/${feedback.length} row(s) recorded.`];
+              for (const r of fbJson.data.results) {
+                if (!r.ok) lines.push(`  - row ${r.index + 1} (${r.traceId || "no trace_id"}): ${r.error}`);
+              }
+              feedbackSummary = lines.join("\n");
+            } else {
+              feedbackSummary = `Feedback: not recorded — ${fbJson.error ?? "unknown error"}`;
+            }
+          } catch (err) {
+            feedbackSummary = `Feedback: not recorded — ${err instanceof Error ? err.message : String(err)}`;
+          }
+        }
+
+        // One format per response: structured returns the backend's JSON data
+        // as structuredContent with a one-line stub; markdown (default) is the
+        // shared readable report. Never both.
+        if (response_format === "structured" && json.ok && json.data) {
+          const stub = `Recipe checked as #${json.data.checked?.recipeId ?? "?"}. ${json.data.totalResults ?? 0} similar recipe(s) — see structuredContent.${feedbackSummary ? `\n${feedbackSummary}` : ""}`;
+          return {
+            content: [{ type: "text" as const, text: stub }],
+            structuredContent: json.data as unknown as Record<string, unknown>,
+          };
+        }
+
+        let text = renderCheckResponseMarkdown(json, {
+          knownRecipeIds: (known_recipes ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+        });
+        if (feedbackSummary) text += `\n\n${feedbackSummary}`;
+
+        return {
+          content: [{ type: "text" as const, text }],
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: "text" as const, text: `Error checking recipe: ${message}` }],
+        };
+      }
+    },
+  );
+
+  // ── search_recipes tool ────────────────────────────────────────────────────────
+  // Read-only structured search (2026-08-19) — forwards to the backend /check
+  // filter path. The X-SoupNet-Surface header carries the mcp-stdio identity,
+  // which the backend maps to the MCP exclude-own default (recipe 303e17cf).
+
+  server.tool(
+    "search_recipes",
+    MCP_TOOL_DESCRIPTIONS.searchRecipes,
+    {
+      query: z.string().describe(MCP_PARAM_DESCRIPTIONS.searchQuery),
+      verbosity: z.enum(VERBOSITY_LEVELS).optional().describe(MCP_PARAM_DESCRIPTIONS.verbosity),
+      response_format: z.enum(["markdown", "structured"]).optional().describe(MCP_PARAM_DESCRIPTIONS.responseFormat),
+      known_recipes: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.knownRecipes),
+      session_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.sessionId),
+      intent: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.intent),
+      agent_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.agentId),
+      read_recipe_books: z.string().optional().describe(
+        "Comma-separated recipe-book slugs to restrict result scope. Default: all readable books."
+      ),
+    },
+    {
+      title: "Recipe search",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    async ({ query, verbosity, response_format, known_recipes, session_id, intent, agent_id, read_recipe_books }) => {
+      if (!apiKey) {
+        return {
+          content: [{ type: "text" as const, text: "Error: SOUPNET_API_KEY not configured. Get a key from your Soup.net dashboard." }],
+        };
+      }
+      try {
+        const params = new URLSearchParams();
+        params.set("key", apiKey);
+        params.set("filter", query);
+        if (verbosity) params.set("verbosity", verbosity);
+        if (agent_id) params.set("agent_id", agent_id);
+        if (known_recipes) params.set("known_recipes", known_recipes);
+        if (session_id) params.set("session_id", session_id);
+        if (intent) params.set("intent", intent);
+        if (read_recipe_books) params.set("read_recipe_books", read_recipe_books);
+        params.set("format", "json");
+
+        const response = await fetch(`${backendUrl}/check?${params.toString()}`, {
+          headers: { "Accept": "application/json", "X-SoupNet-Surface": "mcp-stdio" },
+        });
+        const json = (await response.json()) as CheckResponseJson;
+
+        if (response_format === "structured" && json.ok && json.data) {
+          const data = json.data as unknown as Record<string, unknown>;
+          const stub = `Read-only search — ${String(json.data.totalResults ?? 0)} result(s)${json.data.searchId ? `, searchId ${json.data.searchId}` : ""}. See structuredContent.`;
+          return {
+            content: [{ type: "text" as const, text: stub }],
+            structuredContent: data,
+          };
+        }
+
+        const text = renderCheckResponseMarkdown(json, {
+          knownRecipeIds: (known_recipes ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+        });
+        return { content: [{ type: "text" as const, text }] };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: "text" as const, text: `Error searching recipes: ${message}` }],
+        };
+      }
+    },
+  );
+
+  // elicit_divergent_check was removed 2026-04-18. The major MCP clients either
+  // don't surface the elicitation form (Antigravity) or render it as an
+  // unusable wall of text (Claude Code). The divergent-check pattern lives on
+  // as natural-language conversation — present 2-4 framings to the user, then
+  // call check_recipe with the chosen one. See briefings.
+
+  // ── log_feedback tool ──────────────────────────────────────────────────────────
+  //
+  // Mirror of the backend HTTP MCP log_feedback tool — proxies to the REST
+  // POST /feedback surface (same server-side service, validation, and ACL
+  // path). Flat single-row params; batching lives on check_recipe's feedback
+  // param.
+
+  server.tool(
+    "log_feedback",
+    MCP_TOOL_DESCRIPTIONS.logFeedback,
+    {
+      trace_id: z.string().describe(
+        "Recipe id of the prior check — the full UUID from the check response, or an unambiguous short-id prefix (8+ chars, e.g. '18912fbd'). Ambiguous prefixes are rejected naming the candidates."
+      ),
+      kind: z.string().describe("check-feedback | operational | outcome"),
+      impact: z.string().describe("none | new | subtle | big | operational"),
+      disposition: z.string().describe("proceeded | corrected | asked-human | charted-new | deferred"),
+      story_fulfilled: z.string().describe("yes | partial | no | unknown"),
+      story: z.string().describe(
+        "The user story behind the check — why it was made (e.g. 'As an AI sub-agent working on X, I wanted Y so that Z')."
+      ),
+      note: z.string().optional().describe("What you did with the result — how it changed (or confirmed) your approach."),
+      agent_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.agentId),
+      top_similarity: z.number().optional().describe("Top similarity the check returned (0-1), as you saw it."),
+      model: z.string().optional().describe("Your model id (e.g. 'claude-fable-5')."),
+      harness: z.string().optional().describe("Your harness (e.g. 'claude-code', 'codex')."),
+      harness_version: z.string().optional().describe("Harness version, if known."),
+      related_trace_ids: z.array(z.string()).optional().describe(
+        "Lineage links — recipe UUIDs in the same arc (e.g. the recipe that changed the action and the trace that logged the new decision). Full UUIDs only — short-id prefixes are not resolved here."
+      ),
+      session_id: z.string().optional().describe(
+        "The session token from your check responses — joins your feedback to that session's check lineage. Capture only."
+      ),
+      intent_id: z.string().optional().describe(
+        "The int_… id from a prior response — joins this row to that declared intent. Join-only: this surface never registers; send intent TEXT on a check/search/briefing instead."
+      ),
+    },
+    {
+      title: "Log feedback",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+    async (args) => {
+      if (!apiKey) {
+        return {
+          content: [{ type: "text" as const, text: "Error: SOUPNET_API_KEY not configured. Get a key from your Soup.net dashboard." }],
+        };
+      }
+      try {
+        const res = await fetch(`${backendUrl}/feedback`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+          body: JSON.stringify(args),
+        });
+        const json = (await res.json()) as {
+          ok: boolean;
+          error?: string;
+          data?: { recorded: number; results: Array<{ ok: boolean; traceId: string; feedbackId?: string; error?: string }> };
+        };
+        const r = json.data?.results?.[0];
+        if (r?.ok) {
+          return { content: [{ type: "text" as const, text: `Feedback recorded for check ${r.traceId} (feedback id ${r.feedbackId}).` }] };
+        }
+        return { content: [{ type: "text" as const, text: `Feedback rejected: ${r?.error ?? json.error ?? "unknown error"}` }] };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: "text" as const, text: `Error logging feedback: ${message}` }] };
+      }
+    },
+  );
+
+  // ── get_briefing tool ──────────────────────────────────────────────────────────
+  //
+  // Fetches the unified briefing from the backend (/briefing endpoint, Bearer-token
+  // auth). The backend composer reads the user's preferences, looks up their
+  // recipe books, and includes a clustered sample of exemplar recipes. Same
+  // artifact as the dashboard's Copy briefing button.
+
+  server.tool(
+    "get_briefing",
+    MCP_TOOL_DESCRIPTIONS.getBriefing,
+    {
+      purpose: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.briefingPurpose),
+      intent: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.intent),
+      recipe_ids: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.briefingRecipeIds),
+      verbosity: z.enum(VERBOSITY_LEVELS).optional().describe(MCP_PARAM_DESCRIPTIONS.briefingVerbosity),
+    },
+    {
+      title: "Get briefing",
+      readOnlyHint: true,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    async ({ purpose, intent, recipe_ids, verbosity }) => {
+      if (!apiKey) {
+        return {
+          content: [{ type: "text" as const, text: "Error: SOUPNET_API_KEY not configured. Get a key from your Soup.net dashboard." }],
+        };
+      }
+
+      try {
+        const params = new URLSearchParams();
+        if (purpose) params.set("purpose", purpose);
+        if (intent) params.set("intent", intent);
+        if (recipe_ids) params.set("recipe_ids", recipe_ids);
+        if (verbosity) params.set("verbosity", verbosity);
+        const qs = params.toString();
+        const res = await fetch(`${backendUrl}/briefing${qs ? `?${qs}` : ""}`, {
+          // X-SoupNet-Surface: same self-identification the proxy sends on
+          // /check — briefing.issued audit rows record surface=mcp-stdio.
+          headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "X-SoupNet-Surface": "mcp-stdio" },
+        });
+        const json = (await res.json()) as { ok: boolean; error?: string; data?: { text: string } };
+        if (!json.ok || !json.data) {
+          return { content: [{ type: "text" as const, text: `Error: ${json.error ?? "briefing fetch failed"}` }] };
+        }
+        return { content: [{ type: "text" as const, text: json.data.text }] };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: "text" as const, text: `Error fetching briefing: ${message}` }] };
+      }
+    },
+  );
+
+  // ── get_recipes tool ───────────────────────────────────────────────────────
+  //
+  // Recipe lookup by id (WT-3). Thin proxy to GET /recipes?ids=... — the
+  // backend enforces the key's read scope and returns a uniform
+  // not_found_or_unreadable marker for ids that don't resolve.
+
+  // ── verify_draft tool (drafts-and-triage slice 2) ────────────────────────
+  // Proxies to POST /recipes/:id/verify — same service, same rules, same
+  // uniform not-found answer as the remote tool.
+  server.tool(
+    "verify_draft",
+    MCP_TOOL_DESCRIPTIONS.verifyDraft,
+    {
+      recipe_id: z.string().describe(MCP_PARAM_DESCRIPTIONS.draftRecipeId),
+      supporting_evidence: z.string().describe(MCP_PARAM_DESCRIPTIONS.verificationEvidence),
+    },
+    {
+      title: "Verify a draft",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+    async ({ recipe_id, supporting_evidence }) => {
+      if (!apiKey) {
+        return {
+          content: [{ type: "text" as const, text: "Error: SOUPNET_API_KEY not configured. Get a key from your Soup.net dashboard." }],
+        };
+      }
+      try {
+        const res = await fetch(`${backendUrl}/recipes/${encodeURIComponent(recipe_id)}/verify`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({ supporting_evidence }),
+        });
+        const json = (await res.json()) as { ok: boolean; error?: string; data?: { recipeId: string; evidenceAdded: number } };
+        if (!json.ok || !json.data) {
+          return { content: [{ type: "text" as const, text: json.error ?? "Error: verification failed" }] };
+        }
+        const n = json.data.evidenceAdded;
+        return {
+          content: [{
+            type: "text" as const,
+            text: `Draft ${json.data.recipeId} is verified: it is now an ordinary recipe that collaborators can find, with your new evidence attached (${n} entr${n === 1 ? "y" : "ies"}).`,
+          }],
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: "text" as const, text: `Error verifying draft: ${message}` }] };
+      }
+    },
+  );
+
+  server.tool(
+    "get_recipes",
+    MCP_TOOL_DESCRIPTIONS.getRecipes,
+    {
+      recipe_ids: z.string().describe(MCP_PARAM_DESCRIPTIONS.recipeIds),
+    },
+    {
+      title: "Get recipes by id",
+      readOnlyHint: true,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    async ({ recipe_ids }) => {
+      if (!apiKey) {
+        return {
+          content: [{ type: "text" as const, text: "Error: SOUPNET_API_KEY not configured. Get a key from your Soup.net dashboard." }],
+        };
+      }
+
+      try {
+        const params = new URLSearchParams();
+        params.set("ids", recipe_ids);
+        const res = await fetch(`${backendUrl}/recipes?${params.toString()}`, {
+          headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+        });
+        const json = (await res.json()) as { ok: boolean; error?: string; data?: { recipes: LookupEntry[] } };
+        if (!json.ok || !json.data) {
+          return { content: [{ type: "text" as const, text: `Error: ${json.error ?? "recipe lookup failed"}` }] };
+        }
+        const entries = json.data.recipes;
+        const found = entries.filter((e) => e.status === "ok").length;
+        const text = `Requested recipes — ${found} of ${entries.length} resolved. Entries marked not_found_or_unreadable either don't exist or aren't readable by this API key (deliberately indistinguishable).\n\n${formatLookupEntries(entries)}`;
+        return { content: [{ type: "text" as const, text }] };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { content: [{ type: "text" as const, text: `Error looking up recipes: ${message}` }] };
+      }
+    },
+  );
+
+  return server;
+}

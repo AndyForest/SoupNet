@@ -106,6 +106,35 @@ export const RECIPE_BOOK_DEFINITION =
   + "(the briefing and list_my_recipe_books) — check results carry {recipeBookId, name} and the "
   + "briefing you already hold is the source for descriptions.";
 
+export const TRIAGE_RATING_VALUES = ["low", "medium", "high"] as const;
+export type TriageRating = (typeof TRIAGE_RATING_VALUES)[number];
+
+export const IMPACT_DEFINITION =
+  "The depositing agent's triage rating of how much rides on getting this call right (low | "
+  + "medium | high), or null when it gave none (not rated). It is the agent's own view at check "
+  + "time, not the person's assessment, and it sorts review only: ratings never influence ranking. "
+  + "Not the same field as a feedback row's impact, which grades what a prior check surfaced "
+  + "(none | new | subtle | big | operational).";
+
+export const UNCERTAINTY_DEFINITION =
+  "The depositing agent's triage rating of how unsure it is of the person's position (low | "
+  + "medium | high), or null when it gave none (not rated). The agent's own view at check time, "
+  + "not the person's; it sorts review only and never influences ranking. Independent of impact: "
+  + "a fairly certain call can still carry high impact.";
+
+/** A draft's state (drafts-and-triage slice 2). A recipe that was never a
+ *  draft has none. `unverified` is the only state a draft is deposited in;
+ *  it moves one way to a resolution. */
+export const DRAFT_STATE_VALUES = ["unverified", "verified", "rejected", "not_chosen"] as const;
+export type DraftState = (typeof DRAFT_STATE_VALUES)[number];
+
+export const DRAFT_STATE_DEFINITION =
+  "Present only on a draft you are allowed to see: your own. \"unverified\" means the person it is "
+  + "about has not confirmed it, so weigh it as a hypothesis, not their position; until verified, only "
+  + "that person, their agents, and its depositor can see it. \"rejected\" and \"not_chosen\" are "
+  + "resolved drafts that stay private. A verified draft is an ordinary recipe and carries no draftState "
+  + "on shared surfaces. Ranked exactly as if it were not a draft.";
+
 // ── Recipe book ──────────────────────────────────────────────────────────────
 
 export const RecipeBookSchema = z
@@ -224,6 +253,13 @@ const recipeFields = {
     .array(EvidenceEntrySchema)
     .optional()
     .describe("Evidence entries supporting the claim."),
+  impact: z.enum(TRIAGE_RATING_VALUES).nullable().optional().describe(
+    IMPACT_DEFINITION + " Present on your own deposit (`checked`), and beside `draftState` on a result that is your own draft.",
+  ),
+  uncertainty: z.enum(TRIAGE_RATING_VALUES).nullable().optional().describe(
+    UNCERTAINTY_DEFINITION + " Present on your own deposit (`checked`), and beside `draftState` on a result that is your own draft.",
+  ),
+  draftState: z.enum(DRAFT_STATE_VALUES).optional().describe(DRAFT_STATE_DEFINITION),
 };
 
 export interface Recipe {
@@ -237,6 +273,9 @@ export interface Recipe {
   clusterSize?: number | undefined;
   recipeBook?: RecipeBook | undefined;
   evidence?: EvidenceEntry[] | undefined;
+  impact?: TriageRating | null | undefined;
+  uncertainty?: TriageRating | null | undefined;
+  draftState?: DraftState | undefined;
   knownMembers?: Recipe[] | undefined;
 }
 
@@ -256,8 +295,8 @@ export const RecipeSchema: z.ZodType<Recipe> = z
     "The one Recipe object, used at every fill level: a stub is "
     + "{recipeId, known, similarity}; a known cluster-mate is "
     + "{recipeId, similarity}; a full exemplar adds recipe text, evidence, "
-    + "and its book; your own deposit is {recipeId, recipe}. Only recipeId "
-    + "is mandatory.",
+    + "and its book; your own deposit is {recipeId, recipe, impact, "
+    + "uncertainty, draftState}. Only recipeId is mandatory.",
   );
 
 // ── Check response envelope ─────────────────────────────────────────────────
@@ -265,13 +304,34 @@ export const RecipeSchema: z.ZodType<Recipe> = z
 export const CheckResponseDataSchema = z
   .object({
     checked: RecipeSchema.optional().describe(
-      "Your own deposit — {recipeId, recipe}. Absent on the read-only filter path (nothing was logged).",
+      "Your own deposit — {recipeId, recipe, impact, uncertainty, draftState}; a null rating means not rated, and draftState is present only when the deposit is a draft. Absent on the read-only filter path (nothing was logged).",
     ),
+    existingRecipe: z
+      .boolean()
+      .optional()
+      .describe(
+        "True when this check repeated an identical earlier one (same key, recipe book, and text): "
+        + "`checked` is the recipe that earlier check logged, and nothing new was stored.",
+      ),
+    draftNotice: z
+      .string()
+      .optional()
+      .describe(
+        "About your deposit's draft state: who can see a draft you just deposited and how it gets "
+        + "verified, or, on an identical repeat, the state the earlier recipe is still in.",
+      ),
+    ratingsNotice: z
+      .string()
+      .optional()
+      .describe(
+        "Why a triage rating you sent was not applied: an unrecognized value (stored as not rated), "
+        + "or a repeat of an identical check, which keeps the first check's ratings.",
+      ),
     searchOnly: z
       .boolean()
       .optional()
       .describe("True for the read-only `filter` search path — no recipe was logged."),
-    filter: z.string().optional().describe("The structured query of a search-only response (bare text semantic, \"quoted\" lexical, author:/after:/before: qualifiers)."),
+    filter: z.string().optional().describe("The structured query of a search-only response (bare text semantic, \"quoted\" lexical, author:/after:/before:/is:draft/impact:/uncertainty: qualifiers)."),
     searchId: z
       .string()
       .optional()

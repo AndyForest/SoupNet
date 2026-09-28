@@ -22,6 +22,7 @@ import path from "node:path";
 
 import { DEFAULT_RANKING } from "@soupnet/domain";
 import type { RankingConfig } from "@soupnet/domain";
+import { SHARED_AUDIENCE } from "../authz";
 
 interface QueryEntry {
   id: string;
@@ -91,6 +92,7 @@ async function main(): Promise<void> {
       : undefined;
     const run = (ranking: RankingConfig) => runSearchPipeline({
       db,
+      audience: SHARED_AUDIENCE,
       groupIds: [state.groupId],
       query: q.query,
       queryVectorStr,

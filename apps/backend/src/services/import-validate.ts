@@ -28,6 +28,7 @@
  */
 
 import crypto from "node:crypto";
+import { TRIAGE_RATING_VALUES, DRAFT_STATE_VALUES } from "@soupnet/contracts";
 
 // ── Output types ─────────────────────────────────────────────────────────────
 
@@ -39,6 +40,12 @@ export interface ImportTraceRow {
   claimTextHash: string | null;
   formatAdherenceScore: number | null;
   decidedAt: Date | null;
+  /** Triage ratings (slice 1) and draft state (slice 2), additive fields of
+   *  schemaVersion 1; absent in older exports, which import as null. */
+  impact: string | null;
+  uncertainty: string | null;
+  /** Taken from the file; who resolved a draft and when never is ([F83]). */
+  draftState: string | null;
   createdAt: Date;
   updatedAt: Date | null;
 }
@@ -170,6 +177,15 @@ function optString(row: Record<string, unknown>, key: string): string | null {
   return v;
 }
 
+/** A closed-vocabulary field: null when absent, the value when it is one of
+ *  `allowed`, a row error otherwise (an import never guesses a state). */
+function optEnum(row: Record<string, unknown>, key: string, allowed: readonly string[]): string | null {
+  const v = optString(row, key);
+  if (v === null) return null;
+  if (!allowed.includes(v)) throw new RowError(`${key} must be one of ${allowed.join(" | ")} or null`);
+  return v;
+}
+
 function optNumber(row: Record<string, unknown>, key: string): number | null {
   const v = row[key];
   if (v === undefined || v === null) return null;
@@ -267,6 +283,9 @@ export function parseExportPayload(json: unknown): ParseExportResult {
     claimTextHash: optString(row, "claimTextHash"),
     formatAdherenceScore: optNumber(row, "formatAdherenceScore"),
     decidedAt: optDate(row, "decidedAt"),
+    impact: optEnum(row, "impact", TRIAGE_RATING_VALUES),
+    uncertainty: optEnum(row, "uncertainty", TRIAGE_RATING_VALUES),
+    draftState: optEnum(row, "draftState", DRAFT_STATE_VALUES),
     createdAt: reqDate(row, "createdAt"),
     updatedAt: optDate(row, "updatedAt"),
   }));

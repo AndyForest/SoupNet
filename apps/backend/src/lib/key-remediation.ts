@@ -25,6 +25,14 @@ export function backendBaseUrl(): string {
   );
 }
 
+/**
+ * The person's draft review queue, narrowed to the named recipes
+ * (drafts-and-triage slice 3): the link an agent hands its human.
+ */
+export function draftQueueUrl(ids: readonly string[]): string {
+  return `${frontendBaseUrl()}/app/drafts?ids=${ids.map(encodeURIComponent).join(",")}`;
+}
+
 /** The keys-management page a signed-in human mints keys from. */
 export function keysPageUrl(): string {
   return `${frontendBaseUrl()}/app/keys`;

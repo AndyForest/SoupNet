@@ -13,6 +13,7 @@
  * resulting Principal and never the token. See authz/key-auth.ts.
  */
 
+import { ownDraftFields } from "../lib/own-draft-fields";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
@@ -29,6 +30,7 @@ import {
   VERBOSITY_EXEMPLAR_K,
   buildCheckRecipeToolDescription,
   renderCheckResponseMarkdown,
+  isShownDraftState,
 } from "@soupnet/domain";
 import type { CheckResponseJson } from "@soupnet/domain";
 import type { Recipe } from "@soupnet/contracts";
@@ -63,7 +65,8 @@ import { writeAudit } from "../services/audit-log.service";
 import { ClientSafeError, publicErrorMessage } from "../lib/client-safe-error";
 import { invalidKeyMessage } from "../lib/key-remediation";
 import type { RawFeedbackRow } from "../services/feedback.service";
-import { ingestFeedback, summarizeFeedbackResults, withCheckDefaults } from "../services/feedback.service";
+import { verifyDraft, describeVerifyResult } from "../services/draft-verify.service";
+import { ingestFeedback, isFeedbackRowObject, summarizeFeedbackResults, withCheckDefaults } from "../services/feedback.service";
 
 // F47 (security-audit-2026-06-11): tool catch-alls surface only deliberate
 // ClientSafeError messages (validation, size caps, MIME — written for the
@@ -334,28 +337,38 @@ function imageFromBase64(base64: string, filename: string, mimeTypeHint?: string
 
 // ── MCP server factory ──────────────────────────────────────────────────────
 
-// Loose zod shape for feedback rows — presence-level only. Strict enum/uuid
-// validation happens per-row in the feedback service so one bad row gets a
-// marker instead of a zod error killing the whole call (the ride-along
-// surface must never take down the check it rides on).
-const feedbackRowSchema = z.object({
-  trace_id: z.string().optional(),
-  search_id: z.string().optional(),
-  kind: z.string().optional(),
-  impact: z.string().optional(),
-  disposition: z.string().optional(),
-  story_fulfilled: z.string().optional(),
-  story: z.string().optional(),
-  note: z.string().optional(),
-  agent_id: z.string().optional(),
-  top_similarity: z.number().optional(),
-  model: z.string().optional(),
-  harness: z.string().optional(),
-  harness_version: z.string().optional(),
-  related_trace_ids: z.array(z.string()).optional(),
-  session_id: z.string().optional(),
-  intent_id: z.string().optional(),
-});
+// Ride-along feedback rows: an open object per row. The row's fields are
+// log_feedback's, and the feedback param's description points there rather
+// than repeating the per-field schema on two tools (drafts-and-triage slice
+// 1, S1-Z4: ~570 bytes of item schema per tool). The item schema must still
+// admit every field — a bare z.object({}) would let the SDK strip them all
+// before the handler — so it is a record of unknown values. Validation was
+// already per-row in the feedback service (strict enums, uuids, types), so
+// one bad row gets a marker instead of a zod error killing the whole call
+// (the ride-along surface must never take down the check it rides on).
+//
+// A row that isn't an object at all (a number, a string, null) must not fail
+// the call either: `.catch` hands the raw value through, and the service turns
+// it into a per-row marker. `.catch` leaves the served JSON Schema unchanged
+// (zod-to-json-schema renders the inner record), so agents still read
+// "object" for the item type.
+const feedbackRowSchema = z.record(z.unknown()).catch((ctx) => ctx.input as Record<string, unknown>);
+
+// Triage ratings (slice 1). A value of the wrong JSON type (impact: 3) is an
+// unrecognized rating like any other: stored as not rated, with the notice,
+// and the check deposits (S1-B3; recipe 4cfd166e). z.string() alone would
+// make it an SDK validation error that fails the whole check. The preprocess
+// hands non-strings to the service as their JSON text; the served schema
+// still says "string".
+function draftParam() {
+  return z.boolean().optional().catch((ctx) => ctx.input as boolean | undefined).describe(MCP_PARAM_DESCRIPTIONS.draft);
+}
+
+function ratingParam(description: string) {
+  return z
+    .preprocess((v) => (v === undefined || v === null ? undefined : typeof v === "string" ? v : JSON.stringify(v)), z.string().optional())
+    .describe(description);
+}
 
 /**
  * Build the per-request MCP server for an ALREADY AUTHENTICATED caller.
@@ -367,7 +380,7 @@ const feedbackRowSchema = z.object({
  * cannot be unauthenticated by omission, and cannot resolve scope some other
  * way (F65). The Principal's arrays are effective scope; tools only narrow it.
  */
-function createMcpServer(backendUrl: string, principal: Principal): McpServer {
+export function createMcpServer(backendUrl: string, principal: Principal): McpServer {
   const server = new McpServer({
     name: "soupnet",
     version: "0.4.0",
@@ -416,6 +429,16 @@ function createMcpServer(backendUrl: string, principal: Principal): McpServer {
       intent: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.intent),
       agent_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.agentId),
       synthesize: z.boolean().optional().describe(MCP_PARAM_DESCRIPTIONS.synthesize),
+      // Triage ratings (slice 1). Plain strings, not enums: an unrecognized
+      // value must reach the service and become a not-rated notice instead of
+      // an SDK validation error that costs the check (recipe 4cfd166e).
+      impact: ratingParam(MCP_PARAM_DESCRIPTIONS.impact),
+      uncertainty: ratingParam(MCP_PARAM_DESCRIPTIONS.uncertainty),
+      // Draft (slice 2). Served as a boolean; `.catch` hands a value of the
+      // wrong type (the string "true", say) to the service's lenient parser
+      // instead of failing the check, which takes an unrecognized value as a
+      // draft, the private side.
+      draft: draftParam(),
       feedback: z.array(feedbackRowSchema).optional().describe(MCP_PARAM_DESCRIPTIONS.feedbackParam),
       axes: z.string().optional().describe(
         "Two comma-separated concept terms; each result gets x/y similarity positions (0-1) against them (semantic projection)."
@@ -478,7 +501,7 @@ function createMcpServer(backendUrl: string, principal: Principal): McpServer {
       idempotentHint: true,
       openWorldHint: true,
     },
-    async ({ recipe, supporting_evidence, verbosity, clusters, max_chars, decided_at, axes, recipe_book, read_recipe_books, file_url, file_base64, file_name, file_mime_type, region, response_format, known_recipes, session_id, intent, agent_id, synthesize, feedback }) => {
+    async ({ recipe, supporting_evidence, verbosity, clusters, max_chars, decided_at, axes, recipe_book, read_recipe_books, file_url, file_base64, file_name, file_mime_type, region, response_format, known_recipes, session_id, intent, agent_id, synthesize, impact, uncertainty, draft, feedback }) => {
       // Size steer: explicit verbosity wins; with NO steer at all, the
       // internal "auto" sentinel takes the automatic path (ranking-config
       // autoK — ships as the fixed 3-exemplar default). Legacy clusters /
@@ -579,6 +602,9 @@ function createMcpServer(backendUrl: string, principal: Principal): McpServer {
           sessionId: session_id ?? undefined,
           intent: intent ?? undefined,
           knownRecipeIds: knownRecipeIds.size > 0 ? [...knownRecipeIds] : undefined,
+          impact,
+          uncertainty,
+          draft,
         });
 
         if (result.error) {
@@ -618,7 +644,7 @@ function createMcpServer(backendUrl: string, principal: Principal): McpServer {
         let feedbackSummary = "";
         let feedbackResults: unknown;
         if (feedback && feedback.length > 0) {
-          const rows: RawFeedbackRow[] = feedback.map((row) =>
+          const rows: unknown[] = feedback.map((row) => !isFeedbackRowObject(row) ? row :
             // Rows inherit the RESOLVED intent id (text sent on this check
             // was registered by the service, so the rows join the intent
             // the check just minted) — join-only, like session inheritance.
@@ -755,7 +781,7 @@ function createMcpServer(backendUrl: string, principal: Principal): McpServer {
         let feedbackSummary = "";
         let feedbackResults: unknown;
         if (feedback && feedback.length > 0) {
-          const rows: RawFeedbackRow[] = feedback.map((row) =>
+          const rows: unknown[] = feedback.map((row) => !isFeedbackRowObject(row) ? row :
             withCheckDefaults(row, {
               agentId: agent_id,
               sessionId: session_id,
@@ -884,12 +910,50 @@ function createMcpServer(backendUrl: string, principal: Principal): McpServer {
           return { content: [{ type: "text" as const, text: `Error: too many ids (${ids.length}; max ${RECIPE_LOOKUP_MAX_IDS} per call). Split into multiple calls.` }] };
         }
 
-        const entries = await lookupRecipes(db, ids, principal.readGroupIds);
+        const entries = await lookupRecipes(db, ids, { readGroupIds: principal.readGroupIds, userId: principal.userId });
         const found = entries.filter((e) => e.status === "ok").length;
         const text = `Requested recipes — ${found} of ${entries.length} resolved. Entries marked not_found_or_unreadable either don't exist or aren't readable by this API key (deliberately indistinguishable).\n\n${renderRecipeEntries(entries)}`;
         return { content: [{ type: "text" as const, text }] };
       } catch (err) {
         return { content: [{ type: "text" as const, text: toolErrorText(err, "get_recipes") }] };
+      }
+    },
+  );
+
+  // ── verify_draft tool ──────────────────────────────────────────────────────
+  //
+  // Drafts-and-triage slice 2: the one agent operation that changes a draft's
+  // state (a separate tool rather than a mode of check_recipe or a kind of
+  // feedback row, so each tool keeps one contract — recipe 6201b444; the
+  // design names exactly one new agent operation). REST twin:
+  // POST /recipes/:id/verify. The service holds every rule
+  // (services/draft-verify.service.ts): readable by id through this key or
+  // the uniform marker; only the person the draft is about; new quoted and
+  // cited evidence; one-way.
+
+  if (!lean)
+  server.tool(
+    "verify_draft",
+    MCP_TOOL_DESCRIPTIONS.verifyDraft,
+    {
+      recipe_id: z.string().describe(MCP_PARAM_DESCRIPTIONS.draftRecipeId),
+      supporting_evidence: z.string().describe(MCP_PARAM_DESCRIPTIONS.verificationEvidence),
+    },
+    {
+      title: "Verify a draft",
+      // A one-way state change plus appended evidence: not read-only, not
+      // destructive, and a repeat is refused rather than repeated.
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+    async ({ recipe_id, supporting_evidence }) => {
+      try {
+        const result = await verifyDraft(getDb(), { principal, recipeId: recipe_id, evidence: supporting_evidence });
+        return { content: [{ type: "text" as const, text: describeVerifyResult(result) }] };
+      } catch (err) {
+        return { content: [{ type: "text" as const, text: toolErrorText(err, "verify_draft") }] };
       }
     },
   );
@@ -1170,10 +1234,23 @@ export function buildMcpJsonResponse(
 ): Record<string, unknown> {
   const data: Record<string, unknown> = {
     // The caller's own deposit as a Recipe fill (canonical schema, recipe
-    // 7945fd8a): {recipeId, recipe}.
+    // 7945fd8a): {recipeId, recipe}, plus its triage ratings (slice 1; null
+    // = not rated).
     ...(result.traceId
-      ? { checked: { recipeId: result.traceId, recipe: result.traceText } satisfies Recipe }
+      ? {
+        checked: {
+          recipeId: result.traceId,
+          recipe: result.traceText,
+          impact: result.ratings?.impact ?? null,
+          uncertainty: result.ratings?.uncertainty ?? null,
+          // Present only when the deposit is an unpublished draft (slice 2).
+          ...(isShownDraftState(result.draftState) ? { draftState: result.draftState } : {}),
+        } satisfies Recipe,
+      }
       : {}),
+    ...(result.existingRecipe ? { existingRecipe: true } : {}),
+    ...(result.ratingsNotice ? { ratingsNotice: result.ratingsNotice } : {}),
+    ...(result.draftNotice ? { draftNotice: result.draftNotice } : {}),
     searchMode: result.searchMode ?? "lexical",
     clustered: result.clustered ?? false,
     results: enriched.map((r) => {
@@ -1189,6 +1266,8 @@ export function buildMcpJsonResponse(
         const stub: Recipe = {
           recipeId: r.id,
           known: true,
+          // Labelled in every appearance, stubs included (DT-VIS-06).
+          ...ownDraftFields(r),
           similarity: r.semanticScore ?? undefined,
           ...(r.clusterSize ? { clusterSize: r.clusterSize } : {}),
         };
@@ -1197,6 +1276,9 @@ export function buildMcpJsonResponse(
       const fill: Recipe = {
         recipeId: r.id,
         recipe: r.claimText,
+        // The viewer's own unpublished draft, labelled (DT-VIS-06); no one
+        // else's reaches a result set.
+        ...ownDraftFields(r),
         createdAt: r.createdAt,
         // Recipe-book id + name only — the description lives in the briefing
         // (operator ruling 2026-07-18).

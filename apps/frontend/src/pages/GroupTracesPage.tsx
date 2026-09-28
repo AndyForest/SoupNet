@@ -4,6 +4,7 @@ import { useDeleteTrace, useGroupTraces } from "../hooks/useTraces.js";
 import type { GroupTrace } from "../hooks/useTraces.js";
 import { Icon } from "../components/Icon.js";
 import { DeleteTraceConfirmModal } from "../components/DeleteTraceConfirmModal.js";
+import { draftStatusLabel } from "../lib/draft-status-label.js";
 
 /**
  * Per-recipe-book moderation list. Any member can view; per-row delete
@@ -141,7 +142,14 @@ function TraceRow({
           params={{ traceId: trace.id }}
           style={{ color: "var(--color-on-surface)", textDecoration: "none" }}
         >
-          <p style={{ marginBottom: "var(--space-xs)" }}>{trace.claimText}</p>
+          <p style={{ marginBottom: "var(--space-xs)" }}>
+            {draftStatusLabel(trace) && (
+              <span className="text-xs" data-testid="draft-status" style={{ color: "var(--color-primary)", marginRight: "var(--space-xs)" }}>
+                [{draftStatusLabel(trace)!.text}]
+              </span>
+            )}
+            {trace.claimText}
+          </p>
         </Link>
         <div
           className="text-xs"

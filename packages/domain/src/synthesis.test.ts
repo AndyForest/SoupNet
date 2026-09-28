@@ -120,3 +120,18 @@ describe("stubSynthesis", () => {
     expect(out).toBe("Current preference profile (stub synthesis): no recorded recipes to synthesize.");
   });
 });
+
+describe("buildSynthesisPrompt — drafts (slice 2, RP-13)", () => {
+  it("labels the caller's own unverified draft and tells the model it is unconfirmed", () => {
+    const input = baseInput();
+    input.results[0] = { ...input.results[0]!, draft: true };
+    const prompt = buildSynthesisPrompt(input);
+    expect(prompt).toContain(`[${input.results[0]!.id}] (${input.results[0]!.judgmentDate}) [unverified draft]`);
+    expect(prompt).toContain("hypotheses the user has not confirmed");
+  });
+
+  it("is unchanged when no result is a draft", () => {
+    const prompt = buildSynthesisPrompt(baseInput());
+    expect(prompt).not.toContain("unverified draft");
+  });
+});

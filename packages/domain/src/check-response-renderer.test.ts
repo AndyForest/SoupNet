@@ -393,3 +393,85 @@ describe("buildOwnExcludedNote (cold-start v2 Phase A)", () => {
     expect(text).toContain("thin-corpus signal");
   });
 });
+
+// drafts-and-triage slice 1: the deposit's triage ratings in the markdown
+// report (MCP default format and the web copy-back).
+describe("renderCheckResponseMarkdown — triage ratings", () => {
+  const base = (checked: Record<string, unknown>, extra: Record<string, unknown> = {}): CheckResponseJson => ({
+    ok: true,
+    data: { checked: { recipeId: "r-1", recipe: "x", ...checked }, results: [], ...extra },
+  });
+
+  it("S1-B1 / DT-RAT-01: echoes the ratings as the agent's own, right under the checked line", () => {
+    const text = renderCheckResponseMarkdown(base({ impact: "high", uncertainty: "medium" }));
+    expect(text.startsWith("Recipe checked as #r-1\nYour ratings: impact high, uncertainty medium (triage only, never ranking).\n")).toBe(true);
+  });
+
+  it("S1-B2: agents that never rate see no ratings line (JSON carries the nulls)", () => {
+    expect(renderCheckResponseMarkdown(base({ impact: null, uncertainty: null }))).not.toContain("Your ratings");
+    expect(renderCheckResponseMarkdown(base({}))).not.toContain("Your ratings");
+  });
+
+  it("S1-B3 / S1-B5: a ratings notice renders with the stored ratings", () => {
+    const text = renderCheckResponseMarkdown(base({ impact: "low", uncertainty: null }, { ratingsNotice: "First ratings stand." }));
+    expect(text).toContain("Your ratings: impact low, uncertainty not rated (triage only, never ranking).\nFirst ratings stand.\n");
+  });
+
+  it("read-only searches carry no ratings line", () => {
+    const text = renderCheckResponseMarkdown({ ok: true, data: { searchOnly: true, checked: { recipeId: "r", impact: "high" }, results: [] } });
+    expect(text).not.toContain("Your ratings");
+  });
+});
+
+describe("renderCheckResponseMarkdown — drafts (slice 2)", () => {
+  it("DT-VIS-01: a draft deposit says so under the checked line", () => {
+    const r = baseResponse();
+    r.data!.checked = { recipeId: CHECK_ID, draftState: "unverified" };
+    r.data!.draftNotice = "Deposited as a draft: until it is verified, only you and your own agents can see it.";
+    const md = renderCheckResponseMarkdown(r);
+    const [first, second] = md.split("\n");
+    expect(first).toBe(`Recipe checked as #${CHECK_ID}`);
+    expect(second).toContain("Deposited as a draft");
+  });
+
+  it("DT-VIS-06: an own draft in results is labelled on its line, full and stub alike", () => {
+    const r = baseResponse();
+    r.data!.results![0]!.draftState = "unverified";
+    r.data!.results!.push({ recipeId: UUID_B, known: true, similarity: 0.5, draftState: "unverified" });
+    const md = renderCheckResponseMarkdown(r);
+    const lines = md.split("\n");
+    expect(lines.find((l) => l.includes(UUID_A))).toContain("[unverified draft");
+    expect(lines.find((l) => l.includes(UUID_B) && l.includes("[known to you]"))).toContain("[unverified draft");
+  });
+
+  it("a published recipe carries no draft label", () => {
+    const md = renderCheckResponseMarkdown(baseResponse());
+    expect(md).not.toContain("draft");
+  });
+});
+
+describe("renderCheckResponseMarkdown — ratings on own drafts (slice 3, S3-AG2, S3-Z4)", () => {
+  it("a rated own draft's label names the ratings, adding at most 40 bytes", () => {
+    const unrated = baseResponse();
+    unrated.data!.results![0]!.draftState = "unverified";
+    const rated = baseResponse();
+    rated.data!.results![0] = { ...rated.data!.results![0]!, draftState: "unverified", impact: "medium", uncertainty: null };
+    const a = renderCheckResponseMarkdown(unrated);
+    const b = renderCheckResponseMarkdown(rated);
+    expect(b).toContain("; impact medium, uncertainty not rated]");
+    const grew = Buffer.byteLength(b, "utf8") - Buffer.byteLength(a, "utf8");
+    expect(grew).toBeGreaterThan(0);
+    expect(grew).toBeLessThanOrEqual(40);
+  });
+
+  it("an unrated own draft renders exactly as before, and ratings on a non-draft row are never printed", () => {
+    const before = baseResponse();
+    before.data!.results![0]!.draftState = "unverified";
+    const withNulls = baseResponse();
+    withNulls.data!.results![0] = { ...withNulls.data!.results![0]!, draftState: "unverified", impact: null, uncertainty: null };
+    expect(renderCheckResponseMarkdown(withNulls)).toBe(renderCheckResponseMarkdown(before));
+    const published = baseResponse();
+    published.data!.results![0] = { ...published.data!.results![0]!, impact: "high", uncertainty: "high" };
+    expect(renderCheckResponseMarkdown(published)).toBe(renderCheckResponseMarkdown(baseResponse()));
+  });
+});

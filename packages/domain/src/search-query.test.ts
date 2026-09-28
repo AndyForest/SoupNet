@@ -252,7 +252,7 @@ describe("parseSearchQuery — unknown qualifiers (loud rejection)", () => {
   it("rejects unknown qualifier-shaped tokens naming the valid set", () => {
     const e = errorOf("athor:jane@x.com");
     expect(e).toMatch(/unknown qualifier "athor:"/);
-    expect(e).toMatch(/author:, after:, before:/);
+    expect(e).toMatch(/author:, after:, before:, is:draft, impact: and uncertainty:/);
   });
 
   it("suggests quoting for colon-bearing text", () => {
@@ -289,5 +289,143 @@ describe("parseSearchQuery — combined and adversarial", () => {
 
   it("trims whitespace inside quoted terms", () => {
     expect(parsed('"  padded.ts  "').lexicalGroups).toEqual([["padded.ts"]]);
+  });
+});
+
+// ── Drafts-and-triage slice 3: is:draft, impact:, uncertainty: ─────────────
+// Rubric S3-G1 to S3-G6 (docs/planning/drafts-and-triage-build.md).
+
+describe("parseSearchQuery — is:draft (S3-G1, S3-G2)", () => {
+  it("is:draft selects the viewer's unresolved drafts, with no semantic text", () => {
+    const q = parsed("is:draft");
+    expect(q.isDraft).toBe(true);
+    expect(q.semanticText).toBe("");
+    expect(q.authors).toEqual({ kind: "surface-default" });
+  });
+
+  it("the qualifier name and value are case-insensitive, like the others", () => {
+    expect(parsed("IS:draft").isDraft).toBe(true);
+    expect(parsed("Is:DRAFT").isDraft).toBe(true);
+    expect(parsed('is:"draft"').isDraft).toBe(true);
+  });
+
+  it("-is:draft leaves the viewer's unresolved drafts out", () => {
+    expect(parsed("-is:draft cache").isDraft).toBe(false);
+    expect(parsed("-is:draft cache").semanticText).toBe("cache");
+  });
+
+  it("a query without the qualifier carries no draft selection", () => {
+    expect(parsed("cache strategy").isDraft).toBeUndefined();
+  });
+
+  it("repeating is:draft is harmless; is:draft with -is:draft is a contradiction", () => {
+    expect(parsed("is:draft is:draft").isDraft).toBe(true);
+    expect(errorOf("is:draft -is:draft")).toMatch(/contradict/);
+  });
+
+  it("any other value, a group, and a bare is: are errors that name the valid value", () => {
+    for (const bad of ["is:drafts", "is:published", "is:open"]) {
+      const e = errorOf(bad);
+      expect(e, bad).toMatch(/is:draft/);
+    }
+    expect(errorOf("is:(draft OR published)")).toMatch(/is:draft/);
+    expect(errorOf("is:")).toMatch(/is:draft/);
+    expect(errorOf("cache is:")).toMatch(/is:draft/);
+  });
+
+  it("words that merely start with is stay semantic text", () => {
+    expect(parsed("issue isolation -isolate").semanticText).toBe("issue isolation -isolate");
+  });
+});
+
+describe("parseSearchQuery — impact: and uncertainty: (S3-G4)", () => {
+  it("each takes low, medium, or high, case-insensitively", () => {
+    expect(parsed("impact:high").impact).toEqual({ equals: "high", excluded: [] });
+    expect(parsed("uncertainty:LOW").uncertainty).toEqual({ equals: "low", excluded: [] });
+    expect(parsed("IMPACT:Medium").impact).toEqual({ equals: "medium", excluded: [] });
+  });
+
+  it("negation excludes a value (unrated rows are kept by the SQL layer); repeats dedupe", () => {
+    expect(parsed("-impact:low -impact:medium -impact:low").impact).toEqual({ excluded: ["low", "medium"] });
+    expect(parsed("impact:high -uncertainty:low")).toMatchObject({
+      impact: { equals: "high", excluded: [] },
+      uncertainty: { excluded: ["low"] },
+    });
+  });
+
+  it("an unknown value is an error naming the vocabulary (a query is not a deposit)", () => {
+    for (const bad of ["impact:urgent", "uncertainty:7", "impact:none", "impact:big"]) {
+      expect(errorOf(bad), bad).toMatch(/low, medium, or high/);
+    }
+  });
+
+  it("a repeated positive rating qualifier is an error naming the vocabulary", () => {
+    expect(errorOf("impact:high impact:low")).toMatch(/duplicate impact:.*low, medium, or high/);
+    expect(errorOf("uncertainty:high uncertainty:high")).toMatch(/duplicate uncertainty:/);
+  });
+
+  it("a group or a bare qualifier is an error", () => {
+    expect(errorOf("impact:(high OR low)")).toMatch(/low, medium, or high/);
+    expect(errorOf("impact:")).toMatch(/impact:/);
+  });
+
+  it("queries without rating qualifiers carry none", () => {
+    const q = parsed("cache");
+    expect(q.impact).toBeUndefined();
+    expect(q.uncertainty).toBeUndefined();
+  });
+});
+
+describe("parseSearchQuery — the new qualifiers compose (S3-G6) and the error lists them (S3-Z2)", () => {
+  it('is:draft impact:high after:2026-09-01 "cache" applies all four', () => {
+    const q = parsed('is:draft impact:high after:2026-09-01 "cache"');
+    expect(q.isDraft).toBe(true);
+    expect(q.impact).toEqual({ equals: "high", excluded: [] });
+    expect(q.after).toBe("2026-09-01");
+    expect(q.lexicalGroups).toEqual([["cache"]]);
+    expect(q.semanticText).toBe("");
+  });
+
+  it("semantic text rides along with the qualifiers", () => {
+    const q = parsed("cache strategy is:draft uncertainty:high author:me");
+    expect(q.semanticText).toBe("cache strategy");
+    expect(q.authors).toEqual({ kind: "listed", values: [AUTHOR_ME] });
+  });
+
+  it("the unknown-qualifier error lists every valid qualifier and value", () => {
+    const e = errorOf("imapct:high");
+    for (const part of ["author:", "after:", "before:", "is:draft", "impact:", "uncertainty:", "low", "medium", "high"]) {
+      expect(e, part).toContain(part);
+    }
+  });
+});
+
+describe("parseSearchQuery — adversarial values for the new qualifiers (S3-G5)", () => {
+  // Qualifier structure selects fixed predicate shapes; the only values that
+  // reach the SQL layer are members of a closed vocabulary. Anything else
+  // fails loudly rather than parsing into a bound string.
+  const hostile = [
+    "is:draft';DROP TABLE claimnet.traces;--",
+    'is:"draft\' OR 1=1 --"',
+    "impact:high'--",
+    "impact:%",
+    "impact:_",
+    'uncertainty:"high OR 1=1"',
+    "uncertainty:(high OR 1=1)",
+    "impact:high%00",
+    "is:draft\\",
+    'is:"',
+  ];
+  for (const input of hostile) {
+    it(`rejects ${JSON.stringify(input)} loudly`, () => {
+      expect(parseSearchQuery(input).ok).toBe(false);
+    });
+  }
+
+  it("the parsed values are only ever vocabulary members", () => {
+    const q = parsed("is:draft impact:HIGH -uncertainty:Low");
+    expect(q.isDraft).toBe(true);
+    expect(q.impact?.equals).toBe("high");
+    expect(q.uncertainty?.excluded).toEqual(["low"]);
   });
 });

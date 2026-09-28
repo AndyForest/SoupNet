@@ -15,6 +15,11 @@
  *                        deliberately not re-exported)
  *   scope-sql.ts       — a caller's book scope as a SQL condition; an empty
  *                        scope reads nothing
+ *   draft-sql.ts       — the draft visibility condition, written once, for
+ *                        every set-returning statement (the JS form is
+ *                        mayReadTrace in roles.ts); its facts helpers stay
+ *                        internal
+ *   draft-resolution.ts — the one statement that verifies or rejects a draft
  *
  * Import from here. See docs/engineering-principles.md §7.
  */
@@ -26,3 +31,16 @@ export * from "./memberships";
 export * from "./book-succession";
 export * from "./key-auth";
 export * from "./scope-sql";
+export {
+  publishedTrace,
+  traceVisibleTo,
+  traceIdVisibleTo,
+  traceReadableById,
+  traceReadableByPerson,
+  draftAwaitingReviewBy,
+  draftStateShownTo,
+  SHARED_AUDIENCE,
+  isSharedAudience,
+} from "./draft-sql";
+export type { DraftAudience, SharedAudience, TraceAlias } from "./draft-sql";
+export * from "./draft-resolution";

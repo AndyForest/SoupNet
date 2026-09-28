@@ -230,12 +230,27 @@ describe("BRIEFING.build — surface profiles (cold-start v2 Phase B)", () => {
     expectNoRawKey(text);
   });
 
+  it("the intent paragraph says a re-sent story starts with no stubs (slice 1 follow-up: 'stubs reset')", () => {
+    // The one-line intent param dropped "stubs reset"; the ruling restores
+    // its meaning here: losing or omitting the intent means recipes render
+    // in full again.
+    expect(mcpText).toContain("the fresh intent starts with no stubs, and recipes render in full again");
+    expect(mcpText).not.toContain("say to context compaction");
+  });
+
   it("holds the thin briefing under its size ceiling (fixed fixture, no exemplars)", () => {
     // The point of the profile: the always-pushed layer stays an index.
     // Fixture floor measured ~16.5KB at introduction; ceiling leaves modest
     // headroom — growth past it should be a deliberate, dated raise, exactly
     // like the tool-description budget.
-    expect(mcpText.length).toBeLessThanOrEqual(18_000);
+    // 18,000 → 18,200 (2026-09-27, drafts-and-triage slice 1): the intent
+    // param's depth (always-new registration, lost-id recovery, rendering-
+    // only stubs) moved out of three tool schemas, which every connected
+    // client loads on every turn, into one "How to check" paragraph here,
+    // which loads once per session; the feedback pointer names log_feedback's
+    // fields. Served tools/list fell 18,090 → 15,864 bytes; this text grew
+    // ~17,685 → 18,111 chars.
+    expect(mcpText.length).toBeLessThanOrEqual(18_200);
     expect(mcpText.length).toBeLessThan(fullText.length);
   });
 
@@ -273,6 +288,27 @@ describe("BRIEFING.build — surface profiles (cold-start v2 Phase B)", () => {
     // nothing — the whole line is exactly the two surviving parts.
     const indexLine = text.split("\n").find((l) => l.startsWith("    Index: "));
     expect(indexLine).toBe("    Index: 1 recipe · newest judgment 2026-08-23");
+  });
+
+  it("DT-VIS-09: the person's own drafts are a separate line, never part of the Index count", () => {
+    const statGroups: BriefingGroup[] = [
+      { ...groups[0]!, stats: { recipeCount: 3, authorCount: 1, ownDraftsAwaitingReview: 2 } },
+    ];
+    const text = BRIEFING.build(thinInput({ groups: statGroups }));
+    const lines = text.split("\n");
+    expect(lines.find((l) => l.startsWith("    Index: "))).toBe("    Index: 3 recipes");
+    expect(lines.find((l) => l.startsWith("    Drafts: "))).toBe(
+      "    Drafts: 2 unverified drafts about your user await their review (only they and their agents see them)",
+    );
+  });
+
+  it("a book holding only the person's drafts gets the Drafts line and no Index line", () => {
+    const statGroups: BriefingGroup[] = [
+      { ...groups[0]!, stats: { recipeCount: 0, authorCount: 0, ownDraftsAwaitingReview: 1 } },
+    ];
+    const text = BRIEFING.build(thinInput({ groups: statGroups }));
+    expect(text).not.toContain("    Index: ");
+    expect(text).toContain("    Drafts: 1 unverified draft about your user awaits their review");
   });
 });
 

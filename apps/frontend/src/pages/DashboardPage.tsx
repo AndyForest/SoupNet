@@ -9,6 +9,8 @@ import { CopyBriefingButton } from "../components/CopyBriefingButton.js";
 import { describeDailyReadScope } from "../lib/daily-scope.js";
 import { dailyKeyErrorCode } from "../lib/daily-key-error.js";
 import { DailyKeyError } from "../components/DailyKeyError.js";
+import { draftStatusLabel } from "../lib/draft-status-label.js";
+import { dashboardDraftsEntry } from "../lib/draft-queue.js";
 
 // Note: the email-verification banner that used to live here has been
 // replaced by the /verify-pending route, which is the only authed route an
@@ -75,6 +77,20 @@ export function DashboardPage() {
       return json.ok ? json.data : [];
     },
   });
+
+  // Drafts awaiting the person's review — tier 1 of the feed (action
+  // required), beside invitations (drafts-and-triage slice 3, S3-Q8; design
+  // thinking §Dashboard as a Feed, "drafts waiting for my review"). The same
+  // figure as the queue's total (S3-Q3).
+  const draftsCountQuery = useQuery({
+    queryKey: ["drafts-count"],
+    queryFn: async () => {
+      const res = await authFetch("/traces/drafts/count");
+      const json = (await res.json()) as { ok: boolean; data?: { count: number } };
+      return json.ok && json.data ? json.data.count : 0;
+    },
+  });
+  const draftsEntry = dashboardDraftsEntry(draftsCountQuery.data);
 
   const acceptInviteMutation = useMutation({
     mutationFn: async (inviteId: string) => {
@@ -223,6 +239,34 @@ export function DashboardPage() {
         </section>
       )}
 
+      {/* Drafts awaiting review — tier 1 (action required). */}
+      {draftsEntry && (
+        <section style={{ marginBottom: "var(--space-2xl)" }} aria-labelledby="drafts-entry-heading" data-testid="drafts-entry">
+          <div
+            className="card"
+            style={{
+              borderLeft: "4px solid var(--color-primary)",
+              padding: "var(--space-md) var(--space-lg)",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: "var(--space-md)",
+              flexWrap: "wrap",
+            }}
+          >
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <h2 id="drafts-entry-heading" style={{ fontSize: "1.05rem", margin: 0 }}>{draftsEntry}</h2>
+              <p className="text-sm" style={{ color: "var(--color-on-surface-variant)", margin: "var(--space-xs) 0 0 0" }}>
+                Hypotheses your agents parked about your taste and judgment because they could not ask you.
+              </p>
+            </div>
+            <Link to="/app/drafts" className="btn" style={{ textDecoration: "none", fontSize: "0.85rem" }}>
+              Review drafts
+            </Link>
+          </div>
+        </section>
+      )}
+
       {/* Stats row */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "var(--space-md)", marginBottom: "var(--space-2xl)" }}>
         <div className="card" style={{ textAlign: "center", padding: "var(--space-lg)" }}>
@@ -308,6 +352,11 @@ export function DashboardPage() {
                   style={{ textDecoration: "none", color: "inherit" }}
                 >
                   <p style={{ marginBottom: "var(--space-xs)", lineHeight: 1.5 }}>
+                    {draftStatusLabel(trace) && (
+                      <span className="text-xs" data-testid="draft-status" style={{ color: "var(--color-primary)", marginRight: "var(--space-xs)" }}>
+                        [{draftStatusLabel(trace)!.text}]
+                      </span>
+                    )}
                     {trace.claimText.length > 140 ? trace.claimText.slice(0, 140) + "..." : trace.claimText}
                   </p>
                 </Link>
