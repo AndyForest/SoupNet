@@ -8,8 +8,6 @@
  *
  * GET /uploads/:filename — always 404. The URL is a reference token, not
  *   a file. Matches Gemini File API semantics.
- *
- * See docs/planning/uploads-endpoint.md for the full design.
  */
 
 import { Hono } from "hono";
