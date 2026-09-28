@@ -1211,3 +1211,34 @@ Written by the builder (agent `a-drafts-build-s4-2026-09-27`) for the verifier; 
 **Test-first:** not held strictly. The domain, module, and frontend tests were written alongside their code; the Layer 3 suite (`routes/drafts-on-behalf.test.ts`, 35 tests) after it. Its teeth: with `subjectOf` forced back to `user_id`, 22 of the 35 fail.
 
 **Build-both:** not used. The rulings and the amended rubric settled every fork this slice met (the column, the idempotency key, who may be named, where the audit row is written, what the depositor may do); the remaining choices (the label wording, the whole-file import refusal) were cheap to change later rather than worth building twice.
+
+### Slice 4 fix pass (implementing agent, 2026-09-27)
+
+After the verification record (`9b30e51`) and the read-only security audit (private, F92 to F95), following the orchestrator's rulings. `origin/main` was merged first (`92227a3`: Turnstile signup and the docs PRs; one import-line conflict in `routes/auth.ts`). Each fix is its own commit, with a test that fails without it.
+
+- **F92 [P2]** (`d7961fe`): import's `overwrite=true` no longer changes a draft the importer deposited about someone else. The row is kept and reported as a conflict (`kept: "existing"`), the way import reports any row it keeps, and the overwrite `UPDATE` itself requires no on-behalf subject (`onBehalfSubjectOf("t") IS NULL`). "Unresolved" is read as "has an on-behalf subject": verification clears the column, so this covers every unverified, rejected, or not-chosen draft about someone else, and a verified one is the subject's own recipe, which the depositor could never overwrite anyway. No confirm-time text hash, as ruled. Recipe `44c5e754`. Test: `drafts-on-behalf.test.ts` "[F92] …" (it counted `overwritten: 1` before the fix).
+- **F93 and S4-L2** (`ca45c9b`): both `GET /traces` lists return no key label when the depositing key is not the recipe author's, which covers the book page's "via …" and the dashboard. The detail row gains `apiKeyIsAuthors`, and the detail page shows no agent badge at all when it is false: no "No label set" and no key-id prefix. Raw `apiKeyId` fields and pre-publication feedback rows are unchanged, as ruled. Tests: `drafts-on-behalf.test.ts` "[F93] / S4-L2 …" (Sam's book list carried Dana's label before the fix) and `showsKeyBadge` in `draft-status-label.test.ts`.
+- **F94** (`50e91d0`): `memberlessBooksWithOthersRecipes` no longer counts unverified drafts about the departing person (`draftAwaitingReviewBy`), since the S4-A3 cascade deletes them. A book left holding only those is deleted with the person. Test: `drafts-on-behalf.test.ts` "[F94] …" (the book survived before the fix).
+- **S4-L3** (`bcb3a3e`): "(your draft flag was overridden)" appears only when a `draft` value was sent and read as false. S4-W2's assertions were tightened first and failed.
+- **Depositor-facing copy** (`c40624d`): on a resolved draft she deposited, Dana's party line reads "About <Pat>" without "only they can confirm or reject it", and the tooltip names who resolved it ("<Pat> marked this draft wrong…", "…marked this option not chosen…") instead of "You". The id-list heading says "Drafts your agent linked" only when every linked draft was deposited by the viewer's own agent, and "Linked drafts" otherwise. No new states. Tests in `draft-status-label.test.ts` and `draft-queue.test.ts` failed first.
+- **S2-B2** (`20067fc`): after the embedding poll the test asserts that the draft's evidence, and the book's other evidence, embedded, so the absence check can no longer pass vacuously. With the poll cut to zero iterations the new assertion fails, where the old test would have passed.
+- **Backlog** (`fa72cc9`): F95 is folded into the F86 guard-hardening item, by F-number only. A new `[IMPL]` item covers the detail page's pre-existing badge and evidence-source contrast and its recipe heading's missing `overflow-wrap`.
+
+**Ruled, not fixed:**
+- A depositor's `stale` reaction on an unverified draft about someone else stays allowed.
+- A rejected or not-chosen on-behalf draft re-imports as a fresh unverified draft. That is a new deposit, which the subject can reject again.
+- The landing page after a delete is unchanged.
+- The pre-existing contrast and heading-overflow issues are in the backlog, as above.
+- F95 is in the guard-hardening backlog item.
+
+**Gate** (`TESTCI_PGPORT=5574 npm run test:ci`, at `fa72cc9`). It is not green. Three runs all exited 1, and no slice 4 test failed in any of them.
+
+| Run | Exit | Tests | Failures |
+|---|---|---|---|
+| 1 | 1 | 1,771 passed, 1 failed | `groups.test.ts` "Owner can list + revoke pending invitations": the revoked invitation was still listed. The vitest "Worker exited unexpectedly" error also appeared. |
+| 2 | 1 | 1,733 passed | `trace-delete.service.test.ts`: its `beforeAll` timed out at 30 s. The worker exit appeared again. |
+| 3 | 1 | 1,778 passed | The `trace-delete.service.test.ts` `beforeAll` timeout again. |
+
+- The invitations failure did not repeat in runs 2 and 3.
+- On a fresh stack, `trace-delete.service.test.ts` and `groups.test.ts` pass when run alone: 42 tests in 6.6 s.
+- These are flakes the orchestrator has also seen on merged main. The `trace-delete` hook timeout recurs, so it belongs under the backlog's gate-reliability item. The fix pass adds three tests to the slice 4 suite, which adds a little load.
