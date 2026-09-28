@@ -146,7 +146,7 @@ Seen 2026-09-27 on main at `dfdedaa` (after #100 and #110 merged), in one of two
 
 ### `[IMPL]` Recipe-read guard register: harden against the F86 residual forms
 
-The drafts slice 3 audit (private, F86) found nine source forms that read the recipe tables without the `TRACE_READS` register in `scripts/check-authz-seam.mjs` seeing them. No live exposure: the behaviour suites catch deletions of the real draft predicates, and the forms are unusual in this codebase. Widen the guard's matching to cover them, add one `seam-guard.test.ts` plant per form, and name in the script's header what stays out of its reach. Detail is in the private audit, not here. ~~The slice 3 fix verification (private, F89) adds one more: the guard's list of draft fragments doesn't include `traceReadableByPerson`, so a call to it outside the module isn't seen. Add it, or derive the list from the module's exports, with a plant in the same test file.~~ Done 2026-09-27 at the start of drafts slice 4 (the fragment list names it; `seam-guard.test.ts` plants a call). The nine F86 forms stay open: their detail is in the private audit, which the slice 4 builder did not have, so slice 4's verifier plants each new slice 4 statement's draft fragment deletion by hand (rubric S4-F1, S4-M6). The drafts slice 4 audit (private, F95) adds guard gaps for the subject column; fold them into the same pass. Detail is in the private audit.
+The drafts slice 3 audit (private, F86) found nine source forms that read the recipe tables without the `TRACE_READS` register in `scripts/check-authz-seam.mjs` seeing them. No live exposure: the behaviour suites catch deletions of the real draft predicates, and the forms are unusual in this codebase. Widen the guard's matching to cover them, add one `seam-guard.test.ts` plant per form, and name in the script's header what stays out of its reach. Detail is in the private audit, not here. ~~The slice 3 fix verification (private, F89) adds one more: the guard's list of draft fragments doesn't include `traceReadableByPerson`, so a call to it outside the module isn't seen. Add it, or derive the list from the module's exports, with a plant in the same test file.~~ Done 2026-09-27 at the start of drafts slice 4 (the fragment list names it; `seam-guard.test.ts` plants a call). The nine F86 forms stay open: their detail is in the private audit, which the slice 4 builder did not have, so slice 4's verifier plants each new slice 4 statement's draft fragment deletion by hand (rubric S4-F1, S4-M6). The drafts slice 4 audit (private, F95) adds guard gaps for the subject column; fold them into the same pass. The drafts slice 5 audit (private, F104) adds the same class for the key's deposit level. Detail is in the private audit.
 
 ### `[IMPL]` User-delete cascade (cheap teardown for import-based testing)
 
@@ -501,13 +501,14 @@ Recorded so it isn't re-proposed. The `trace.moved` audit row already reconstruc
 
 ## Unsorted
 
-### `[IMPL]` Trace detail page: badge-caption contrast and the recipe heading's overflow
+### `[IMPL]` Trace detail page and keys page: pre-existing contrast and accessibility issues
 
-Found 2026-09-27 by the drafts slice 4 browser run (axe on the detail page). These predate the slice.
+Found 2026-09-27 by the drafts slice 4 browser run (axe on the detail page), and 2026-09-28 by the slice 5 browser run (the keys page). These predate the slices.
 - The detail page's badge captions ("Human user", "Agent (API key)"), the key-id prefix (1.52:1), and the evidence source line (1.76:1) fail colour contrast (serious). They use `--color-outline-variant`, in `UserBadge.tsx`, `ApiKeyBadge.tsx`, and the evidence card.
 - The recipe heading has no `overflow-wrap`, so a long unbroken token (a URL, a long email) pushes the page wider than a 412 px viewport (1,232 px with a 90-character token).
+- Keys page (`ApiKeysPage.tsx`): a key row's "expires" date fails colour contrast at 1.52:1 (the same `--color-outline-variant`); the just-created raw-key input has no label; and key rows expand only on a mouse click (the header is a `div` with an `onClick`, not a button, so it is not reachable or operable by keyboard).
 
-Fix both in the shared styles rather than per page, and re-run axe on the detail page.
+Fix the contrast in the shared styles rather than per page, give the raw-key input an accessible name, make the row header a button, and re-run axe on the detail page and the keys page.
 
 ### `[IMPL]` workspaces.test.ts races: "(3) after expire-now …" has two intermittent asserts
 
