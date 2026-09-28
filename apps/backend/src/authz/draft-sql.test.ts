@@ -165,6 +165,17 @@ describe("the draft condition is written once", () => {
     }
   });
 
+  it("[S4-M4] only the resolving statement changes an existing recipe's author or subject", () => {
+    // An UPDATE of claimnet.traces whose SET names user_id or subject_user_id,
+    // or a Drizzle .update(...).set({ userId | subjectUserId }).
+    const sqlUpdate = /UPDATE\s+claimnet\.traces\b[^`]*?\bSET\b(?:(?!\bWHERE\b)[^`])*?\b(user_id|subject_user_id)\s*=/i;
+    const drizzleUpdate = /\.update\([^)]*\)\s*\.set\(\s*\{[^}]*\b(userId|subjectUserId)\s*:/;
+    const writers = sources
+      .filter(({ text }) => sqlUpdate.test(text) || drizzleUpdate.test(text))
+      .map(({ file }) => file);
+    expect(writers).toEqual(["authz/draft-resolution.ts"]);
+  });
+
   it("the JS rule lives in roles.ts and is the only place draft states are judged in JS", () => {
     const roles = sources.find((s) => s.file === "authz/roles.ts")?.text ?? "";
     expect(roles).toContain("export function mayReadTrace(");
