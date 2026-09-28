@@ -59,7 +59,7 @@ Since 2026-09-19 a key's scope follows live membership: when its owner leaves a 
 
 ### `[IMPL]` F98 follow-ups: import's minted ids, and rows linked before the fix
 
-The F98 fix (2026-09-27) makes import link or reuse only the importer's own evidence and references (`authz/content-ownership.ts`). Two related pieces are still open. First, apply the same ownership test when a deterministically minted id already exists. Second, check the link rows that imports created before the fix, on each deployment. Detail is in the private security notes, not here.
+The F98 fix (2026-09-27) makes import link or reuse only the importer's own evidence and references (`authz/content-ownership.ts`). Two related pieces are still open. First, apply the same ownership test when a deterministically minted id already exists (F100). Second, check the link rows that imports created before the fix, on each deployment. Detail is in the private security notes, not here.
 
 ---
 

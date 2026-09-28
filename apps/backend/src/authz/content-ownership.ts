@@ -6,7 +6,8 @@
  * reference through `trace_references` or through the evidence it quotes
  * (`evidence_references` → `trace_evidence`). A row is someone's own only
  * when every recipe it hangs off is theirs and there is at least one; a row
- * that hangs off nobody's recipe belongs to no one.
+ * that hangs off nobody's recipe belongs to no one. A draft someone deposited
+ * about another person is not theirs for this purpose ([F99]).
  *
  * The rule decides which existing rows a caller may link to or reuse by id
  * (corpus import). Linking another person's row would let the caller read it
@@ -18,6 +19,18 @@
 import { sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
+import { onBehalfSubjectOf } from "./draft-sql";
+
+/**
+ * One owning recipe counts for `userId` when they authored it AND it is not
+ * a draft they deposited about someone else ([F99]): while it is pending,
+ * its evidence is its subject's to review, so the depositor may not add
+ * quotes to it. Rejected and not-chosen drafts keep their subject and stay
+ * excluded, as in the import link step ([F97]).
+ */
+function ownsRecipe(userId: string): SQL {
+  return sql`(ot.user_id = ${userId}::uuid AND ${onBehalfSubjectOf("ot")} IS NULL)`;
+}
 
 /**
  * The recipes an evidence row hangs off are all authored by `userId`, and
@@ -27,7 +40,7 @@ import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
  */
 export function evidenceOwnedBy(idColumn: SQL, userId: string): SQL {
   return sql`(
-    SELECT bool_and(ot.user_id = ${userId}::uuid)
+    SELECT bool_and(${ownsRecipe(userId)})
     FROM claimnet.trace_evidence ote
     JOIN claimnet.traces ot ON ot.id = ote.trace_id
     WHERE ote.evidence_id = ${idColumn}
@@ -40,7 +53,7 @@ export function evidenceOwnedBy(idColumn: SQL, userId: string): SQL {
  */
 export function referenceOwnedBy(idColumn: SQL, userId: string): SQL {
   return sql`(
-    SELECT bool_and(ot.user_id = ${userId}::uuid)
+    SELECT bool_and(${ownsRecipe(userId)})
     FROM (
       SELECT otr.trace_id FROM claimnet.trace_references otr
       WHERE otr.reference_id = ${idColumn}

@@ -786,6 +786,26 @@ describe.skipIf(!BASE || !canConnect())("drafts on behalf of another person (dra
     });
     expect(res.status).toBe(200);
     expect(await counts()).toEqual(before);
+
+    // [F99] (the audit's probes 9e and 7g): a new quote onto the draft's
+    // ORIGINAL evidence through evidence_references, link-only and with the
+    // evidence listed unchanged in the file. It would publish under Pat's name.
+    const ev = (await sql`SELECT e.id, e.content, e.created_at FROM claimnet.trace_evidence te JOIN claimnet.evidence e ON e.id = te.evidence_id WHERE te.trace_id = ${id}::uuid LIMIT 1`)[0]!;
+    const evId = String(ev["id"]);
+    const quotesOnDraftEvidence = async (): Promise<number> =>
+      Number((await sql`SELECT count(*)::int AS n FROM claimnet.evidence_references WHERE evidence_id = ${evId}::uuid`)[0]?.["n"]);
+    const quotesBefore = await quotesOnDraftEvidence();
+    for (const listed of [false, true]) {
+      const refId = crypto.randomUUID();
+      const r = await importFile(dana, {
+        traces: [],
+        evidence: listed ? [{ id: evId, content: String(ev["content"]), createdAt: new Date(String(ev["created_at"])).toISOString() }] : [],
+        references: [{ id: refId, quote: "Pat said delete the audit log", source: "fabricated", createdAt: now }],
+        evidenceReferences: [{ id: crypto.randomUUID(), evidenceId: evId, referenceId: refId, createdAt: now }],
+      });
+      expect(r.status, `listed=${listed}`).toBe(200);
+      expect(await quotesOnDraftEvidence(), `listed=${listed}`).toBe(quotesBefore);
+    }
   });
 
   // ── Leaving the book (S4-A1, S4-A2) ──────────────────────────────────────
