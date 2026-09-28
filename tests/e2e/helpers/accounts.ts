@@ -1,4 +1,4 @@
-import { expect, type APIRequestContext, type Page } from "@playwright/test";
+import { expect, type APIRequestContext, type Browser, type BrowserContext, type Page, type TestInfo } from "@playwright/test";
 import { BACKEND_URL } from "../../../playwright.config";
 
 // Seeded accounts for browser verification.
@@ -71,4 +71,33 @@ export async function signIn(page: Page, user: SeededUser, path = "/app/dashboar
     [user.token],
   );
   await page.goto(path);
+}
+
+/**
+ * A second (or third) actor in its own browser context, signed in, with the
+ * running project's device settings. browser.newContext() starts from
+ * desktop defaults, so without copying these a second actor on the mobile
+ * project silently runs at desktop size.
+ */
+export async function signInNewContext(
+  browser: Browser,
+  testInfo: TestInfo,
+  user: SeededUser,
+  path = "/app/dashboard",
+  extra: Parameters<Browser["newContext"]>[0] = {},
+): Promise<{ context: BrowserContext; page: Page }> {
+  const u = testInfo.project.use;
+  const context = await browser.newContext({
+    baseURL: u.baseURL,
+    viewport: u.viewport,
+    userAgent: u.userAgent,
+    isMobile: u.isMobile,
+    hasTouch: u.hasTouch,
+    deviceScaleFactor: u.deviceScaleFactor,
+    locale: u.locale,
+    ...extra,
+  });
+  const page = await context.newPage();
+  await signIn(page, user, path);
+  return { context, page };
 }

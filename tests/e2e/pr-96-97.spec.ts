@@ -163,12 +163,13 @@ test("E1 Settings → Account explains what deletion keeps @mobile", async ({ pa
     await section.scrollIntoViewIfNeeded();
     await shot(page, testInfo, testInfo.project.name === "mobile" ? "E1-02-settings-account-deletion-copy-mobile" : "E1-01-settings-account-deletion-copy");
 
-    await expect(section, "the copy should say recipe books shared with other people are not deleted").toContainText(/Recipe books you share stay/);
-    await expect(section, "the copy should say ownership of a shared book passes to another member").toContainText(
-      /ownership passes to another owner, or else to the longest-standing admin or member/,
+    // Pins the claims, not the exact sentences: the copy was reworded when
+    // later fixes (F73, F87) changed what happens to books whose authors left.
+    await expect(section, "the copy should say a shared book passes to another member").toContainText(
+      /book you share passes to another owner, or else to the longest-standing admin or member/i,
     );
     await expect(section, "the copy should say only the user's own content (recipes) is removed").toContainText(/the content you authored: recipes/);
-    await expect(section, "the copy should say other people's recipes are kept").toContainText(/other people's recipes are kept/);
+    await expect(section, "the copy should say other people's recipes are kept").toContainText(/other people's recipes are never deleted/i);
     await expect(page.getByRole("button", { name: "Delete my account…" }), "the delete button should be offered but not pressed").toBeVisible();
   });
 
