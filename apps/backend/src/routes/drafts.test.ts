@@ -266,6 +266,7 @@ describe.skipIf(!BASE || !canConnect())("drafts for the key's own user (drafts-a
     // Wait for the evidence embeddings (the async worker, busy under the full
     // suite): the draft's, so a leak would show, and every other evidence
     // entry in the shared book, so the channel is live for the check below.
+    let w: { draft_done: number; others_pending: number; others_done: number } | undefined;
     for (let i = 0; i < 400; i++) {
       const rows = await sql`
         SELECT
@@ -279,10 +280,15 @@ describe.skipIf(!BASE || !canConnect())("drafts for the key's own user (drafts-a
         JOIN claimnet.embedding_chunks ec ON ec.chunk_strategy_id = ecs.id
         LEFT JOIN claimnet.embedding_vectors ev ON ev.embedding_chunk_id = ec.id AND ev.status = 'complete'
         WHERE es.source_type = 'evidence'`;
-      const w = rows[0] as { draft_done: number; others_pending: number; others_done: number } | undefined;
+      w = rows[0] as { draft_done: number; others_pending: number; others_done: number } | undefined;
       if (w && w.draft_done > 0 && w.others_pending === 0 && w.others_done > 0) break;
       await new Promise((r) => setTimeout(r, 500));
     }
+    // The poll must have seen the draft's own evidence embedded: otherwise
+    // "never surfaces" below would pass without the draft ever being a
+    // candidate (slice 4 verification follow-up).
+    expect(w?.draft_done ?? 0, "the draft's evidence never embedded within the wait").toBeGreaterThan(0);
+    expect(w?.others_done ?? 0, "no other evidence in the book embedded within the wait").toBeGreaterThan(0);
     const r = await mcp(samKey, "check_recipe", {
       recipe: recipe("related evidence probe"), supporting_evidence: evidence(draftQuote), clusters: 100, response_format: "structured",
     });
