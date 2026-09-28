@@ -104,6 +104,41 @@ export async function getPendingInvitationCount(
   return ((rows[0] as Record<string, unknown>)?.["total"] as number) ?? 0;
 }
 
+export interface SignupCapUsage {
+  /** Verified users plus pending non-bypass invitations: what the cap counts. */
+  used: number;
+  cap: number;
+}
+
+export async function getSignupCapUsage(db: PostgresJsDatabase): Promise<SignupCapUsage> {
+  const cap = await getSetting(db, "signupCap");
+  const used = (await getVerifiedUserCount(db)) + (await getPendingInvitationCount(db));
+  return { used, cap };
+}
+
+/**
+ * The log line an operator's alerting can key on, or null when there's
+ * nothing to say: "[signup-cap] reached ..." when a registration lands on
+ * the waitlist, "[signup-cap] near ..." when the cap is 90% or more used.
+ * The prefixes are a contract with log-based alerts (see the test).
+ */
+export function signupCapLogLine(usage: SignupCapUsage, { waitlisted }: { waitlisted: boolean }): string | null {
+  const counts = `used=${usage.used} cap=${usage.cap}`;
+  if (waitlisted) return `[signup-cap] reached ${counts}`;
+  if (usage.cap > 0 && usage.used >= Math.ceil(usage.cap * 0.9)) return `[signup-cap] near ${counts}`;
+  return null;
+}
+
+/** Log the cap state after a registration or verification. Never throws. */
+export async function logSignupCapState(db: PostgresJsDatabase, opts: { waitlisted: boolean }): Promise<void> {
+  try {
+    const line = signupCapLogLine(await getSignupCapUsage(db), opts);
+    if (line) console.warn(line);
+  } catch (err) {
+    console.error("[signup-cap] usage check failed:", err);
+  }
+}
+
 /**
  * Check if a new signup would exceed the cap.
  * Counts verified users + pending non-bypass invitations against the cap.
