@@ -695,7 +695,11 @@ describe.skipIf(!BASE || !canConnect())("drafts on behalf of another person (dra
     const okId = crypto.randomUUID();
     const ok = await importAs(dana, file(okId, recipe("imported"), pat.email, "verified"));
     expect(ok.status, await ok.clone().text()).toBe(200);
-    expect(await row(okId)).toMatchObject({ user_id: dana.userId, subject_user_id: pat.userId, draft_state: "unverified", resolved_by: null, key_owner: null });
+    // [F96] an on-behalf row lands under a fresh id, reported in idMap.
+    const okMap = ((await ok.json()) as { data: { idMap: Array<{ entity: string; from: string; to: string }> } }).data.idMap;
+    const newId = okMap.find((m) => m.entity === "trace" && m.from === okId)?.to ?? "";
+    expect(await row(okId)).toBeUndefined();
+    expect(await row(newId)).toMatchObject({ user_id: dana.userId, subject_user_id: pat.userId, draft_state: "unverified", resolved_by: null, key_owner: null });
 
     const answers: string[] = [];
     for (const who of [`nobody-${run}@test.local`, olive.email]) {
@@ -730,6 +734,34 @@ describe.skipIf(!BASE || !canConnect())("drafts on behalf of another person (dra
     expect(after[0]?.["decided_at"]).toBeNull();
     expect((await call(pat, "PUT", `/traces/${id}/reaction`, { reaction: "still_true" })).status).toBe(200);
     expect(String((await sql`SELECT claim_text FROM claimnet.traces WHERE id = ${id}::uuid`)[0]?.["claim_text"])).toBe(original);
+  });
+
+  async function importFile(a: Actor, body: Json, query = ""): Promise<{ status: number; body: Json }> {
+    const res = await fetch(`${BASE}/import?book=${shared.slug}${query}`, {
+      method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${a.jwt}` },
+      body: JSON.stringify({ schemaVersion: 1, evidence: [], references: [], traceEvidence: [], traceReferences: [], evidenceReferences: [], ...body }),
+    });
+    return { status: res.status, body: (await res.json()) as Json };
+  }
+
+  it("[F96] delete and re-import under the reviewed id: the on-behalf row gets a fresh id, so the subject's open review finds nothing to confirm", async () => {
+    const id = await onBehalf("reviewed original");
+    expect((await link(pat, id)).data.items[0]?.id).toBe(id);
+    expect((await call(dana, "DELETE", `/traces/${id}`)).status).toBe(200);
+    const swapped = recipe("swapped behind the reviewed id");
+    const res = await importFile(dana, { traces: [{ id, claimText: swapped, createdAt: new Date().toISOString(), onBehalfOf: pat.email }] });
+    expect(res.status).toBe(200);
+    // Nothing lives under the id Pat reviewed; his confirm and his agent's verify find nothing.
+    expect(await row(id)).toBeUndefined();
+    expect((await call(pat, "PUT", `/traces/${id}/reaction`, { reaction: "still_true" })).status).toBe(404);
+    const verify = await mcp(P, "verify_draft", { recipe_id: id, supporting_evidence: evidence(`pat confirms ${id}`) });
+    expect(verify.text).toContain("not_found_or_unreadable");
+    // The imported row is a new draft about Pat under a new id, reported in idMap.
+    const idMap = (dataOf(res.body)["idMap"] as Array<{ entity: string; from: string; to: string }>) ?? [];
+    const moved = idMap.find((m) => m.entity === "trace" && m.from === id);
+    expect(moved?.to).toBeDefined();
+    expect(moved?.to).not.toBe(id);
+    expect(await row(moved!.to)).toMatchObject({ user_id: dana.userId, subject_user_id: pat.userId, draft_state: "unverified" });
   });
 
   // ── Leaving the book (S4-A1, S4-A2) ──────────────────────────────────────

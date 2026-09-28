@@ -261,7 +261,15 @@ export async function importCorpus(
     const traceIdRemap = new Map<string, string>();
     for (const t of parsed.traces) {
       const existing = existingTraces.get(t.id);
-      if (existing && existing.userId !== userId) {
+      if (normalizeOnBehalfOf(t.onBehalfOf).present) {
+        // A row about someone else never lands under a client-chosen id
+        // ([F96]): delete-then-reimport of the same id would put new text
+        // behind the id its subject is reviewing. A fresh random id (not a
+        // deterministic mint, which a re-import would reproduce) makes it a
+        // new deposit; its subject's open link and verify find nothing.
+        // The cost: re-importing such a file adds the rows again.
+        traceIdRemap.set(t.id, crypto.randomUUID());
+      } else if (existing && existing.userId !== userId) {
         traceIdRemap.set(t.id, mintImportId(userId, t.id));
       }
     }
