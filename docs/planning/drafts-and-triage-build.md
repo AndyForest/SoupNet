@@ -986,3 +986,67 @@ Carried forward:
 - **F86 and F89** in one guard-hardening pass (backlog).
 - **Slice 4's parity tests** must set the subject and the depositor separately. In slice 3 they come from one variable, so the tests can't tell them apart yet.
 - **`traceReadableByPerson` is a signed-in person's full scope.** It belongs on JWT paths only; an API-key path composes the key's narrower scope instead. The guard can't tell the two apart, so this is a review point until F89's fix names it.
+
+### Slice 4 build notes (implementing agent, 2026-09-27)
+
+Written by the builder (agent `a-drafts-build-s4-2026-09-27`) for the verifier; the verification record is the verifier's to write. Soup.net intent `int_EsmK8J2pIlCqGd1IuBwcuInh`. Built on `f6dec77`, with `origin/main` (#100, #109, #110, #111) merged in before the account-deletion rows, so S4-A1 to A5 were built and tested against main's simplified cascade (recipe `23657e4e`).
+
+**Shape.**
+
+- **Storage:** one nullable column, `traces.subject_user_id` (migration `0039_traces_draft_subject`, one `ADD COLUMN`, no backfill, no index). No depositor column: the depositor is `user_id` until verification and the `recipe.checked` audit row after it.
+- **The module:** `subjectOf` reads `COALESCE(subject_user_id, user_id)` and is the only place the visibility rules read the column; `depositorOf` stays `user_id`. `draftStateShownTo` shows the depositor the unpublished states. Three naming fragments (`onBehalfSubjectOf`, `onBehalfSideFor`, `onBehalfPartyFor`) let a statement name the other party without reading the column by hand. `authz/naming.ts` holds who may be named (`resolveNameableSubject`, one statement over `lower(email)`, `membershipOf`, `WRITE_ROLES`, and `activeUserPredicate`). `unpublishedDraftManagement` in `roles.ts` decides move and delete of an unpublished draft; `roleInBookOfTrace` now reports such a draft to its depositor as well as its subject.
+- **Resolution:** `resolveDraft` sets `user_id` to the subject and clears `subject_user_id` on verification only, and writes its own audit row in the same statement (a data-modifying CTE), with `previousAuthorId` when the author changed and `verifiedByDepositingKey` for an agent. The three callers no longer write resolution audit rows themselves, so none can forget.
+- **The deposit:** naming runs right after the target book is resolved, before anything is embedded, stored, or searched. An on-behalf deposit's `recipe.checked` row is inserted inside the deposit transaction and completed with the search's fields afterwards (one row per check, so the per-key budget is unchanged); an ordinary check writes its row after the search as before. The refusal names the target book's slug and echoes no email.
+- **Surfaces:** `on_behalf_of` on remote MCP, the stdio proxy, `GET` and `POST /check` (urlencoded and multipart), and the HTML form, carried like `draft`. `draftDepositedBy` and `draftAbout` on result rows (MCP, `/check`, `/recipes`, `get_recipes`, the lookup markdown), on `checked`, on `GET /traces/:id`, and as `depositedBy` / `about` on queue items. Export carries `onBehalfOf`; import runs such rows through the naming rule. A key's label is shown only under its owner's authorship (open question 40), on the detail page and in the queue.
+- **Account deletion:** the cascade's collection adds `draftAwaitingReviewBy` for the departing person (S4-A3); everything else is main's cascade.
+- **Frontend:** the queue and detail page name the other party as text, word the ratings as the depositing agent's, tie the depositor's reason to the action group, hide the resolving reactions from the depositor, and name what her delete control removes.
+
+**Rubric rows.** Met unless noted.
+
+- S4-F1: partly. F89 is closed (`b33b8bd`: the guard fingerprints `traceReadableByPerson` calls, with a plant). The nine F86 forms stay in the backlog: their detail is in the private audit, which this builder did not have, so the verifier plants each new slice 4 statement's fragment deletion by hand, as the row allows.
+- S4-M1 to M5: met. M2's parity tests set the subject and the depositor separately (viewer is subject only, depositor only, both, neither, over every state). M4 has the static test (only `draft-resolution.ts` writes an existing recipe's `user_id` or `subject_user_id`). "No membership anywhere" is not constructible (every account has a personal book), so a member of another book only stands for it.
+- S4-M6: met on the builder's side. Every changed statement is re-registered with its reason; the on-behalf fragments are fingerprinted with the statements but do not count toward `composes`. `ranking-isolation.test.ts` forbids the subject terms, and the hand plant is the verifier's.
+- S4-S1 to S4-S3: met.
+- S4-S4: met, with one simplification (below): the transactional write is proven by code and by reading the rows back, including after the depositor's account is deleted, but no test makes the audit insert fail.
+- S4-W1 to W6: met. W3 compares the row and the draft notice with and without the parameter, not the whole response. W5 combines `decided_at`, ratings, and a ride-along feedback row; attachments, `intent`, and `known_recipes` are untouched code paths and not combined in a test.
+- S4-V1 to V3, S4-L1 to L4, S4-Q1 to Q5, S4-R1 to R4, S4-D1 to D4, S4-C1: met. R1 is shown with a Dana-deposited draft through the reaction route (which the queue's confirm uses) and `verify_draft`; the slice 2 and 3 resolution suites pass unchanged but were not re-parameterized.
+- S4-A1 to A5: met on the merged cascade. A5's owner is a separate person (Owen) rather than Sam, since Sam owns the shared book the rest of the suite uses.
+- S4-E1, E3: met. S4-E2: met with a deviation: an unnameable row refuses the whole import (import's existing all-or-nothing validation) rather than skipping the row (recipe `a8916b66`).
+- S4-U1: met, byte-compared on MCP markdown, MCP structured, `/check` JSON, and `/check` HTML (after replacing every echo of the typed value), plus import. Timing is not measured.
+- S4-U2, U3: met for Sam, Olive, and the system user on `GET /traces/:id`, the reaction, not chosen, move, delete, and the id-list link, and for Sam's key, P2, and D2 on `get_recipes` (full id and prefix) and `verify_draft`. Feedback targets are covered by the slice 2 suite's by-id rule, not re-run with an on-behalf draft.
+- S4-Z1 to Z5: met (numbers below).
+- S4-UI1 to UI3: built; the browser run is the verifier's.
+
+**Simplified instead of built (thin assumptions, for a ruling).**
+
+1. S4-S4's failure-injection test: making the audit insert fail inside a live deposit needs a trigger or fault hook in the test database, which is machinery for a case the code rules out by construction (the insert is in the transaction). Recorded rather than built.
+2. S4-E2's per-row refusal: the whole import is refused instead, matching import's existing validation; a file naming someone who cannot write the target book is rare.
+3. S4-U2's full slice 2 and 3 comparison harness is not re-run with an on-behalf draft; the new suite covers the by-id routes that differ.
+
+**Interpretations the verifier should check.**
+
+1. The subject's label still reads "visible only to them and their agents": within the Z3 budget the label names the depositor ("deposited by …") but does not restate that she can see it. The deposit notice, the queue, and the detail page's tooltip say it in full.
+2. The depositor's `stale` reaction on an unpublished draft is recorded (it resolves nothing); her `still_true` and `wrong` get the honest 403. The detail page offers her no reactions.
+3. A depositor's not-chosen request on a draft that is already rejected answers `already_resolved` (409), since she can read it.
+4. After the subject's account deletion, a rejected draft about him keeps its `subject_user_id` (a dangling id): the depositor still sees it as "about" nobody resolvable, and its label has no email. Nothing reads the id except the naming fragments.
+5. The on-behalf deposit's `recipe.checked` row is completed by an `UPDATE` of its metadata after the search: the row is still one event written once; only its search fields arrive later.
+
+**Found on the way.**
+
+- `ranking-isolation.test.ts`'s draft-column pattern (slice 2) held two literal backspace characters where `\b` was meant, so it never matched anything: the draft half of that guard was toothless. Fixed in `ed89afa`; the five ranking files pass it.
+- `origin/main` as merged fails `check:authz-seam`: #100 and #110 each updated the recipe register against their own copy of `user-delete.service.ts`, and the merged file has three recipe-table mentions where the register says two. This branch's merge refreshes the entry (`93c0857`); main stays red on that check until this lands or it is fixed there.
+
+**Budgets.**
+
+| Measure | Before (slice 3) | After (slice 4) | Cap |
+|---|---|---|---|
+| Remote `tools/list` | 16,853 bytes | 16,986 | 17,000 (held) |
+| Stdio `tools/list` | 13,063 bytes | 13,196 | 13,670 (held) |
+| `on_behalf_of` property, remote | | 117 bytes; description 83 characters | one line, at most 90 |
+| Shared descriptions | 5,968 characters | 6,051 | 6,000 → 6,080, dated comment |
+| Unverified label, 16-character email | 100 bytes | 131 ("deposited by") / 123 ("about") | email + 20 |
+| New-draft notice, 73-character URL | 344 characters | 285 on behalf (318 with the override clause) | 344 + 60 + email |
+
+**Test-first:** not held strictly. The domain, module, and frontend tests were written alongside their code; the Layer 3 suite (`routes/drafts-on-behalf.test.ts`, 35 tests) after it. Its teeth: with `subjectOf` forced back to `user_id`, 22 of the 35 fail.
+
+**Build-both:** not used. The rulings and the amended rubric settled every fork this slice met (the column, the idempotency key, who may be named, where the audit row is written, what the depositor may do); the remaining choices (the label wording, the whole-file import refusal) were cheap to change later rather than worth building twice.

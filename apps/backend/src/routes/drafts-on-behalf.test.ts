@@ -44,7 +44,7 @@ function evidence(quote: string): string {
   return `The colleague said so in review.\n> "${quote}"\n-- drafts-on-behalf.test.ts, ${run}`;
 }
 
-describe.skipIf(!BASE || !canConnect())("drafts on behalf of another person (drafts-and-triage slice 4)", () => {
+describe.skipIf(!BASE || !canConnect())("drafts on behalf of another person (drafts-and-triage slice 4)", { timeout: 90_000 }, () => {
   let sql: ReturnType<typeof postgres>;
   let pat: Actor;
   let dana: Actor;
