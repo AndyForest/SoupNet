@@ -31,11 +31,11 @@
  * may be linked from other users' traces.
  *
  * Isolation → DETERMINISTIC MINT (v1.1, Andy 2026-07-13): import produces a
- * fully independent subgraph per importer. Any row that exists here as (or
- * linked into) ANOTHER user's graph — traces by ownership, evidence and
- * references by being linked from a foreign trace — is minted the importer's
- * own copy under mintImportId(userId, originalId), and every in-file
- * reference to it is rewritten. No cross-user rows are ever shared or linked
+ * fully independent subgraph per importer. Any existing row that is not the
+ * importer's own — traces by ownership, evidence and references unless every
+ * recipe they hang off is the importer's (authz/content-ownership.ts, [F98])
+ * — is minted the importer's own copy under mintImportId(userId, originalId),
+ * and every in-file reference to it is rewritten. No cross-user rows are ever shared or linked
  * ("no cross recipe book or cross user connections so that parallel benchmark
  * runs are not cross contaminated, and can also each be easily deleted on
  * their own"). Because the mint is deterministic, a re-import computes the
@@ -43,8 +43,10 @@
  * while different importers of one source corpus derive disjoint ids. The
  * old→new mapping is returned in `idMap`. The SAME-owner path is unchanged —
  * a re-import of your own corpus still upserts on the preserved ids
- * (idempotency + citation stability), and rows that exist but are linked to
- * nobody else's traces are reused, not copied.
+ * (idempotency + citation stability), and evidence and references that hang
+ * off only the importer's own recipes are reused, not copied. A link whose
+ * endpoint is absent from the file may name only the importer's own rows;
+ * any other id is treated as missing and the link counted orphaned [F98].
  *
  * Prompt-injection posture (design point 3): everything in the file is stored
  * as data via parameterized inserts; nothing is interpreted, executed, or fed
@@ -75,6 +77,7 @@ import { getEmbeddingModelId } from "../lib/embeddings/provider";
 import { deleteEmbeddingChainForSource } from "./trace-delete.service";
 import { normalizeOnBehalfOf, resolveNameableSubject, onBehalfSubjectOf } from "../authz";
 import { onBehalfRefusal } from "@soupnet/domain";
+import { ownedEvidenceIds, ownedReferenceIds } from "../authz";
 import type { ParsedExport, ImportTraceRow } from "./import-validate";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -331,13 +334,13 @@ export async function importCorpus(
     }
 
     // ── 2. Classify evidence + references ─────────────────────────────────
-    // Existing rows are reused ONLY when they aren't part of anyone else's
-    // graph. Evidence/references have no owner column; foreignness is being
-    // linked (through trace_evidence / trace_references / evidence_references)
-    // to a trace the importer doesn't own. Foreign-linked rows are minted the
-    // importer's own deterministic copies in §2a — sharing them would create
-    // exactly the cross-user edges the isolation ruling forbids, and would
-    // leave the importer's runs undeletable-in-isolation.
+    // Existing rows are reused ONLY when they are the importer's own: every
+    // recipe they hang off is the importer's, and there is at least one
+    // (authz/content-ownership.ts). Any other existing row — linked to
+    // someone else's recipe, or to nobody's — is minted the importer's own
+    // deterministic copy in §2a [F98]. Sharing it would create exactly the
+    // cross-user edges the isolation ruling forbids, and would leave the
+    // importer's runs undeletable-in-isolation.
     const existingEvidence = new Map<string, { content: string }>();
     const fetchEvidenceInto = async (ids: string[]): Promise<void> => {
       for (const chunk of chunks(ids)) {
@@ -352,21 +355,13 @@ export async function importCorpus(
     };
     await fetchEvidenceInto(parsed.evidence.map((e) => e.id));
 
-    // ── 2a. Isolation remap for evidence: foreign-linked → mint ───────────
+    // ── 2a. Isolation remap for evidence: not the importer's own → mint ───
     const evidenceIdRemap = new Map<string, string>();
     {
       const existingIdsList = parsed.evidence.map((e) => e.id).filter((id) => existingEvidence.has(id));
-      for (const chunk of chunks(existingIdsList)) {
-        const rows = await tx.execute(sql`
-          SELECT DISTINCT te.evidence_id AS "id"
-          FROM claimnet.trace_evidence te
-          JOIN claimnet.traces t ON t.id = te.trace_id
-          WHERE te.evidence_id IN (${sql.join(chunk.map((id) => sql`${id}::uuid`), sql`, `)})
-            AND t.user_id <> ${userId}::uuid
-        `);
-        for (const r of rows as unknown as Array<{ id: string }>) {
-          evidenceIdRemap.set(r.id, mintImportId(userId, r.id));
-        }
+      const owned = await ownedEvidenceIds(tx, userId, existingIdsList);
+      for (const id of existingIdsList) {
+        if (!owned.has(id)) evidenceIdRemap.set(id, mintImportId(userId, id));
       }
     }
     // Minted evidence ids may exist from a prior run of this file — fetch them
@@ -402,29 +397,15 @@ export async function importCorpus(
     };
     await fetchReferencesInto(parsed.references.map((r) => r.id));
 
-    // ── 2b. Isolation remap for references: foreign-linked → mint ─────────
-    // Foreign directly (trace_references to another user's trace) or through
-    // evidence (evidence_references → trace_evidence → another user's trace).
+    // ── 2b. Isolation remap for references: not the importer's own → mint ─
+    // A reference hangs off recipes directly (trace_references) or through
+    // the evidence it quotes (evidence_references → trace_evidence).
     const referenceIdRemap = new Map<string, string>();
     {
       const existingIdsList = parsed.references.map((r) => r.id).filter((id) => existingReferences.has(id));
-      for (const chunk of chunks(existingIdsList)) {
-        const inList = sql.join(chunk.map((id) => sql`${id}::uuid`), sql`, `);
-        const rows = await tx.execute(sql`
-          SELECT DISTINCT tr.reference_id AS "id"
-          FROM claimnet.trace_references tr
-          JOIN claimnet.traces t ON t.id = tr.trace_id
-          WHERE tr.reference_id IN (${inList}) AND t.user_id <> ${userId}::uuid
-          UNION
-          SELECT DISTINCT er.reference_id AS "id"
-          FROM claimnet.evidence_references er
-          JOIN claimnet.trace_evidence te ON te.evidence_id = er.evidence_id
-          JOIN claimnet.traces t ON t.id = te.trace_id
-          WHERE er.reference_id IN (${inList}) AND t.user_id <> ${userId}::uuid
-        `);
-        for (const r of rows as unknown as Array<{ id: string }>) {
-          referenceIdRemap.set(r.id, mintImportId(userId, r.id));
-        }
+      const owned = await ownedReferenceIds(tx, userId, existingIdsList);
+      for (const id of existingIdsList) {
+        if (!owned.has(id)) referenceIdRemap.set(id, mintImportId(userId, id));
       }
     }
     await fetchReferencesInto([...referenceIdRemap.values()]);
@@ -604,14 +585,19 @@ export async function importCorpus(
     }
 
     // ── 7. Links ──────────────────────────────────────────────────────────
-    // A link is importable when its trace endpoint is owned by the importer
-    // (inserted, skipped-identical, conflicted, or overwritten — all owned)
-    // and its other endpoint exists (in the file, or already in the DB).
+    // A link is importable when every endpoint is the importer's own: its
+    // trace (inserted, skipped-identical, conflicted, or overwritten — all
+    // owned), and its evidence and reference, either from the file (after
+    // the §2 remap every file row is the importer's) or already in the DB
+    // and owned by the importer. Anyone else's id is treated as missing and
+    // the link is orphaned [F98]: linking it would let the importer read
+    // that row through their own recipe, keep it alive past its owner's
+    // deletion, or attach a quote to its owner's recipe.
     // A draft the importer deposited about someone else is not hers to add
-    // to: evidence and quotes attached after its review link went out would
-    // publish under its subject's name unreviewed ([F97]). New on-behalf rows
-    // in this file were given fresh ids above ([F96]), so they are new
-    // deposits and take their own links.
+    // to either: evidence and quotes attached after its review link went out
+    // would publish under its subject's name unreviewed ([F97]). New
+    // on-behalf rows in this file were given fresh ids above ([F96]), so they
+    // are new deposits and take their own links.
     const ownedTraceIds = new Set<string>();
     for (const t of wTraces) {
       const existing = existingTraces.get(t.id);
@@ -621,7 +607,8 @@ export async function importCorpus(
     const fileEvidenceIds = new Set(wEvidence.map((e) => e.id));
     const fileReferenceIds = new Set(wReferences.map((r) => r.id));
 
-    // Endpoints referenced by links but absent from the file — verify in DB.
+    // Endpoints referenced by links but absent from the file — usable only
+    // when the DB row is the importer's own.
     const unknownEvidenceIds = new Set<string>();
     const unknownReferenceIds = new Set<string>();
     for (const l of wTraceEvidence) {
@@ -634,17 +621,17 @@ export async function importCorpus(
     for (const l of wTraceReferences) {
       if (!fileReferenceIds.has(l.referenceId)) unknownReferenceIds.add(l.referenceId);
     }
-    const dbEvidenceIds = await existingIds(tx, "evidence", [...unknownEvidenceIds]);
-    const dbReferenceIds = await existingIds(tx, "references", [...unknownReferenceIds]);
-    const evidenceExists = (id: string): boolean => fileEvidenceIds.has(id) || dbEvidenceIds.has(id);
-    const referenceExists = (id: string): boolean => fileReferenceIds.has(id) || dbReferenceIds.has(id);
+    const dbEvidenceIds = await ownedEvidenceIds(tx, userId, [...unknownEvidenceIds]);
+    const dbReferenceIds = await ownedReferenceIds(tx, userId, [...unknownReferenceIds]);
+    const evidenceUsable = (id: string): boolean => fileEvidenceIds.has(id) || dbEvidenceIds.has(id);
+    const referenceUsable = (id: string): boolean => fileReferenceIds.has(id) || dbReferenceIds.has(id);
 
     let linksInserted = 0;
     let linksSkipped = 0;
     let linksOrphaned = 0;
 
     const importableTE = wTraceEvidence.filter((l) => {
-      const ok = ownedTraceIds.has(l.traceId) && evidenceExists(l.evidenceId);
+      const ok = ownedTraceIds.has(l.traceId) && evidenceUsable(l.evidenceId);
       if (!ok) linksOrphaned++;
       return ok;
     });
@@ -668,7 +655,7 @@ export async function importCorpus(
     }
 
     const importableTR = wTraceReferences.filter((l) => {
-      const ok = ownedTraceIds.has(l.traceId) && referenceExists(l.referenceId);
+      const ok = ownedTraceIds.has(l.traceId) && referenceUsable(l.referenceId);
       if (!ok) linksOrphaned++;
       return ok;
     });
@@ -689,7 +676,7 @@ export async function importCorpus(
     }
 
     const importableER = wEvidenceReferences.filter((l) => {
-      const ok = evidenceExists(l.evidenceId) && referenceExists(l.referenceId);
+      const ok = evidenceUsable(l.evidenceId) && referenceUsable(l.referenceId);
       if (!ok) linksOrphaned++;
       return ok;
     });
@@ -863,25 +850,6 @@ async function createImportBook(
   });
 
   return { id: group.id, name: bookName, slug, created: true };
-}
-
-// ── Link/table helpers ───────────────────────────────────────────────────────
-
-async function existingIds(
-  db: PostgresJsDatabase,
-  table: "evidence" | "references",
-  ids: string[],
-): Promise<Set<string>> {
-  const found = new Set<string>();
-  for (const chunk of chunks(ids)) {
-    if (chunk.length === 0) continue;
-    const rows = await db.execute(sql`
-      SELECT id FROM ${sql.raw(`claimnet."${table}"`)}
-      WHERE id IN (${sql.join(chunk.map((id) => sql`${id}::uuid`), sql`, `)})
-    `);
-    for (const r of rows as unknown as Array<{ id: string }>) found.add(r.id);
-  }
-  return found;
 }
 
 // ── Evidence embedding stubs ─────────────────────────────────────────────────

@@ -57,6 +57,10 @@ API keys freeze their read scope at mint time, so a key created before an import
 
 Since 2026-09-19 a key's scope follows live membership: when its owner leaves a recipe book (or is removed), the key stops reading and writing that book on its next request, and gets it back if they rejoin. The agent sees the book vanish from its briefing, and a deposit that relied on a now-missing default is refused with a message naming `recipe_book`. The human sees nothing: the API Keys page still lists the key with its original books. Show granted-versus-effective books on the keys page (and the OAuth connections view, once that exists), so "my agent can't see the team book any more" has an answer in the UI.
 
+### `[IMPL]` F98 follow-ups: import's minted ids, and rows linked before the fix
+
+The F98 fix (2026-09-27) makes import link or reuse only the importer's own evidence and references (`authz/content-ownership.ts`). Two related pieces are still open. First, apply the same ownership test when a deterministically minted id already exists. Second, check the link rows that imports created before the fix, on each deployment. Detail is in the private security notes, not here.
+
 ---
 
 ## Evidence ingestion
