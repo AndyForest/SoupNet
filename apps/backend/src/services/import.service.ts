@@ -20,11 +20,13 @@
  *      (recipe 8ba10d32).
  *
  * Where each file row lands:
- *   - Its id is new to the server → inserted under that id.
+ *   - A trace whose id is new to the server → inserted under that id.
  *   - A trace whose id is the importer's own ordinary recipe → kept as it is:
  *     skipped-identical, or a reported conflict when its content differs.
- *   - An evidence or reference row whose id exists, and which nothing this
- *     import creates links to → kept as it is (skipped-existing).
+ *   - An evidence or reference row is written only when a row this import
+ *     creates links to it ([F103]), under its id when that is new. One
+ *     nothing created links to is kept when its id exists (skipped-existing)
+ *     and otherwise not written (orphaned).
  *   - Anything else that exists (someone else's recipe, a draft about someone
  *     else, evidence a created recipe of this file links to) → a fresh id: the
  *     importer's deterministic mint, mintImportId(userId, id), when that is
@@ -119,8 +121,10 @@ export interface ImportResult {
        *  `idMap` carries the old→new detail. */
       remapped: number;
     };
-    evidence: { inserted: number; skippedExisting: number; remapped: number };
-    references: { inserted: number; skippedExisting: number; remapped: number };
+    /** `orphaned`: file rows nothing this import creates links to and whose
+     *  id is new, so they were not written ([F103]). */
+    evidence: { inserted: number; skippedExisting: number; orphaned: number; remapped: number };
+    references: { inserted: number; skippedExisting: number; orphaned: number; remapped: number };
     links: { inserted: number; skippedExisting: number; orphaned: number };
   };
   /** Per-row collision detail for kept traces, capped at MAX_CONFLICT_DETAIL. */
@@ -194,6 +198,8 @@ interface ExistingTrace {
 interface Landing {
   id: string;
   create: boolean;
+  /** An evidence or reference row that is neither created nor kept ([F103]). */
+  dropped?: true;
 }
 
 /** Existing traces among `ids`, with what classification needs. */
@@ -232,16 +238,18 @@ async function existingIds(
 }
 
 /**
- * Where an evidence or reference row lands. A row that is new to the server
- * is inserted under its id. An existing one is kept when nothing this import
- * creates links to it (at the importer's mint when that exists, so a
- * re-import reports the same idMap), and otherwise gets a fresh row: the
- * mint when it is free, else a random id ([F100]).
+ * Where an evidence or reference row lands. It is created only when a row
+ * this import creates links to it, so every content row import writes is
+ * reachable from a recipe and goes when that recipe goes ([F103]): under its
+ * id when that is new to the server, else the importer's mint when that is
+ * free, else a random id ([F100]). A row nothing created links to is not
+ * written: it is kept when its id exists (skipped-existing), and otherwise
+ * dropped and counted orphaned.
  */
 function landContent(id: string, userId: string, exists: Set<string>, linkedByCreated: boolean): Landing {
+  if (!linkedByCreated) return exists.has(id) ? { id, create: false } : { id, create: false, dropped: true };
   if (!exists.has(id)) return { id, create: true };
   const mint = mintImportId(userId, id);
-  if (!linkedByCreated) return { id: exists.has(mint) ? mint : id, create: false };
   return exists.has(mint) ? { id: crypto.randomUUID(), create: true } : { id: mint, create: true };
 }
 
@@ -499,7 +507,7 @@ export async function importCorpus(
       bInserted: Set<string>,
     ): [string, string] | null => {
       if (a && b && aInserted.has(a.id) && bInserted.has(b.id)) return [a.id, b.id];
-      if (a && b && !a.create && !b.create) linksSkipped++;
+      if (a && b && !a.create && !b.create && !a.dropped && !b.dropped) linksSkipped++;
       else linksOrphaned++;
       return null;
     };
@@ -607,12 +615,14 @@ export async function importCorpus(
       idMap,
       evidenceCounts: {
         inserted: insertedEvidenceIds.size,
-        skippedExisting: parsed.evidence.length - insertedEvidenceIds.size,
+        skippedExisting: [...evidenceLanding.values()].filter((l) => !l.create && !l.dropped).length,
+        orphaned: [...evidenceLanding.values()].filter((l) => l.dropped).length,
         remapped: idMap.filter((m) => m.entity === "evidence").length,
       },
       referenceCounts: {
         inserted: insertedReferenceIds.size,
-        skippedExisting: parsed.references.length - insertedReferenceIds.size,
+        skippedExisting: [...referenceLanding.values()].filter((l) => !l.create && !l.dropped).length,
+        orphaned: [...referenceLanding.values()].filter((l) => l.dropped).length,
         remapped: idMap.filter((m) => m.entity === "reference").length,
       },
       linkCounts: { inserted: linksInserted, skippedExisting: linksSkipped, orphaned: linksOrphaned },
