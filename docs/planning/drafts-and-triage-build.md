@@ -1450,3 +1450,14 @@ Written by the builder (agent `a-drafts-build-s5-2026-09-28`) for the verifier; 
 **Test-first:** held for the predicate table, the static guard, the domain notice and refusal tests, and the briefing section test; each was run and failed before its code. The frontend helpers and their test were written together, and the Layer 3 suite after the code. The suite's teeth are the mutation run above.
 
 **Build-both:** not used. The rulings settled the forks this slice met (storage, which keys, descriptions). What remained, the notice wording and where the section sits, was cheap to change later rather than worth building twice.
+
+**Gate** (`TESTCI_PGPORT=5824 npm run test:ci` at `5a6c1a1`, with another session's gate running on 5814). It is not green: both runs exited 1, and no slice 5 test and no assertion about slice 5 behaviour failed in either run.
+
+| Run | Exit | Tests | Failures |
+|---|---|---|---|
+| 1 | 1 | 1,783 passed, 6 failed | Setup-hook timeouts (30 s and 60 s) in `groups`, `import`, `keys` (F33 briefing), `ranking-regression`, `trace-delete.service`, and `vector-search`. 15 s test timeouts in `oauth-flow`, `check`, `workspaces` (3), and `draft-queue` S3-Q2, plus the 60 s cascade test. `draft-queue` S3-Q3 then counted 6 against 5, after S3-Q2 timed out mid-run in the same suite. |
+| 2 | 1 | 1,844 passed, 1 failed | `waitlist.test.ts` "register stores the optional signup reason…": a 15 s test timeout. |
+
+- The eleven files that failed in run 1, run alone on a fresh stack, all pass: 206 tests, exit 0.
+- These are the known setup-hook and timeout flakes under concurrent load, which the gate-reliability work is fixing.
+
