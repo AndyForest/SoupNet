@@ -606,7 +606,6 @@ Feature: Drafts, triage ratings, and deciding by building both
       And Dana can still open and delete her draft, and Pat can open it but not confirm it
 
   # ─────────────────────────────────────────────────────────────────────────
-  @unreleased
   Rule: A headless key deposits only drafts, and its derived keys inherit that
     # Guards: drafts-and-triage.md §Headless keys; recipe e263dc40;
     # design-thinking.md §Agent Type D (headless keys), §Orchestrators;
@@ -622,7 +621,7 @@ Feature: Drafts, triage ratings, and deciding by building both
       And the response says it was stored as a draft because the key is headless, and gives Pat's review link
       And checking the same text again through that key returns the same draft, still unpublished
 
-    @DT-HDL-02 @derived-keys
+    @DT-HDL-02 @derived-keys @unreleased
     Scenario: A derived key of a headless key cannot deposit a non-draft
       # Decided: build log open question 44 (accepted 2026-09-28). Derived keys
       # are not built; this scenario ships with them.

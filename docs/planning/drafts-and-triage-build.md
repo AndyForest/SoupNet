@@ -1393,3 +1393,60 @@ No slice 4 test failed, and `origin/main` had not moved.
 - **41, 43, 44: accepted as recommended.** Storage is one `deposit_level` text column, default `full`, minted only as `full` or `drafts`, with `none` reserved. Only scoped keys can be headless. The derived-key rule stays in the derived-keys design and is not built.
 - **42: overridden.** A headless key may update a recipe book description like any other key, with no refusal. A headless agent is autonomous but still directly supervised by its person, autonomous only to save their attention (recipe `e0d2c1c9`), and the operator encourages agents to keep book descriptions current (recipe `94e0e682`). Headless means exactly one thing: its deposits are drafts. S5-W6, S5-U1, S5-Z4, the security properties, and DT-HDL-07 were amended to match before any code was written.
 - **Standing rule:** no machinery for situations nobody is in. Where a rubric row asks for that, the builder builds the simple version and lists the row.
+
+### Slice 5 build notes (implementing agent, 2026-09-28)
+
+Written by the builder (agent `a-drafts-build-s5-2026-09-28`) for the verifier; the verification record is the verifier's to write. Soup.net intent `int_EOyohT19iZmgSYHAaonKSWdd`. Built on `c91fdce` (slices 1 to 4 merged); `origin/main` had not moved. The rubric was amended for the orchestrator's ruling on question 42 before any code (`dcba918`).
+
+**Shape.**
+
+- **Storage:** `api_keys.deposit_level text NOT NULL DEFAULT 'full'` (migration `0040_api_keys_deposit_level`, one `ADD COLUMN`, no `UPDATE`), vocabulary in the schema comment. No boolean column.
+- **The module:** `authenticateKey` selects the column in its one statement and the `Principal` carries `depositLevel`. `keyForcesDrafts` and `keyMayVerifyDrafts` sit together in `authz/roles.ts`; both fail closed (only the exact string `full` is an ordinary key). No route or service compares the level itself.
+- **The deposit:** `trace.service.ts` computes `forcedDraft = subject || keyForcesDrafts(principal)` where it already forced drafts for `on_behalf_of`; the stored state, the notice, the override clause, and the audit row's `draft` flag all read it. No surface file changed.
+- **Verify:** `verifyDraft` returns a new `key_cannot_verify` status before any lookup; REST answers 403. The stdio proxy is unchanged and relays the REST text (its existing "relays the backend's refusal verbatim" test).
+- **Keys:** `POST /keys/scoped` takes `depositLevel: "full" | "drafts"` (zod enum; anything else 400); the mint response and `GET /keys` carry it. `POST /keys/daily` refuses any other level with `daily_keys_are_full`. OAuth is untouched.
+- **Briefing:** `HEADLESS_KEY_SECTION` (351 characters) is inserted after the key section when `composeBriefing` sees `keyForcesDrafts(principal)`, so every briefing surface gets it with its own profile.
+- **Frontend:** a "Headless" checkbox on the scoped-key form (label, `aria-describedby` description); "Headless: deposits drafts only" as text on the key's row and in the just-created banner; the expanded key says the setting is fixed and to make a new key. Pure helpers in `lib/headless-key.ts`.
+
+**Rubric rows.** Met unless noted.
+
+- S5-M1, M2, M3: met. M2's table covers `full`, `drafts`, `none`, `""`, `FULL`, `full `, and an unknown word. With both predicates mutated to ordinary-key behaviour, 16 of the 18 Layer 3 tests and 6 table rows fail.
+- S5-S1: met. The "every pre-slice row reads `full`" check is the column default itself; no test migrates a pre-slice database.
+- S5-S2: met by `authz/deposit-level.test.ts`: only `key-auth.ts` and `api-key.service.ts` name the column, nothing assigns it, and the daily mint, revoke, and every OAuth file never name it (recipe `8bd999dd`).
+- S5-S3: met; both changed register entries keep their reason and add the slice 5 clause.
+- S5-W1: met, simplified. Remote MCP structured runs all five `draft` values; MCP markdown, `GET /check` JSON, `POST /check` urlencoded, multipart, and the HTML `GET` run one value each rather than the full surface-by-value cross product. K's baseline runs absent, false, and true.
+- S5-W2, W4: met.
+- S5-W3: met for `on_behalf_of`, `decided_at`, `impact`, a ride-along feedback row, and a deposit into an H-created workspace. Attachments, `intent`, and `known_recipes` are untouched code paths and not combined in a test.
+- S5-W5: met for `search_recipes`, `get_recipes`, `GET /recipes`, `list_my_recipe_books`, `/check?filter=`, `log_feedback`, `/health/integrity`, `/health/version` (status), `POST /uploads`, and `POST /workspaces` (status and shape); `get_briefing` and `GET /briefing` are covered by S5-B1. `GET`/`POST /feedback` and the intent surfaces are not separately compared. Found on the way: once H creates a workspace, H reads one book K does not, because the workspace binds to its creating key. The parity test therefore runs before the workspace test. This is the existing self-binding rule, not a headless difference.
+- S5-W6 (as amended): met. H updates a description it may write, the audit row appears, and H and K get the same answers for the read-only book and a missing slug.
+- S5-R1: met on remote MCP and REST (403; row, evidence, reaction, and audit unchanged). Stdio relays the REST text through the unchanged proxy; it is not run live.
+- S5-R2, S5-U1, S5-U2: met. U1 compares five ids on MCP and REST. U2 uses Sam's and Olive's keys on `get_recipes`, and Sam's on REST verify and search; the slice 2 to 4 suites run unchanged in the gate.
+- S5-K1, K2, O1: met. K2's route check: `PATCH`, `PUT`, and `POST /keys/:id` are 404.
+- S5-K3: met on the builder's side (frontend unit test; Layer 3 `POST /keys/briefing` for H and K). The page itself is the browser run's.
+- S5-B1: met. The domain test shows, for the thin and full profiles, that the headless text equals the ordinary text with exactly the section inserted; Layer 3 covers remote `get_briefing`, `GET /briefing` with the stdio surface header, and `POST /keys/briefing`.
+- S5-Z1 to Z5: met (numbers below). Z3's "before and after the slice" comparison is the domain fixture against the unchanged 18,200 ceiling plus the H-versus-K Layer 3 comparison, not a recorded pre-slice `GET /briefing`.
+- S5-UI1 to UI3: built; the browser run is the verifier's.
+
+**Interpretations the verifier should check.**
+
+1. When a headless key also names `on_behalf_of`, the notice is slice 4's on-behalf notice unchanged (as S5-W3 asks), so it does not mention that the key is headless.
+2. The daily refusal treats any present `depositLevel` other than the string `full`, `null` included, as a request for a different level.
+3. The frontend label fails closed like the server (any level but `full` reads as headless) but reads a missing field as ordinary, so an older server's list shows no label.
+4. The verify refusal echoes the id as the caller gave it, in the text and in the queue link.
+
+**Budgets.**
+
+| Measure | Before (slice 4) | After (slice 5) | Cap |
+|---|---|---|---|
+| Remote `tools/list` | 16,986 bytes | 16,986, identical for H | 17,000 (held) |
+| Stdio `tools/list` | 13,196 bytes | 13,196 (no stdio source change) | 13,670 (held) |
+| Shared descriptions | 6,051 characters | 6,051 | 6,080 (held) |
+| Thin briefing fixture | 18,183 characters | 18,183; headless 18,536 | 18,200 (held); headless 18,600 (new) |
+| Full briefing fixture | 24,119 characters | 24,119; headless 24,472 | none |
+| Headless section | | 351 characters | 400 |
+| New-draft notice, 73-character URL | 344 (self draft) | 338 headless; 371 with the override clause | 344 + 80 |
+| Verify refusal | | 289 characters plus the link | 320 plus the link |
+
+**Test-first:** held for the predicate table, the static guard, the domain notice and refusal tests, and the briefing section test; each was run and failed before its code. The frontend helpers and their test were written together, and the Layer 3 suite after the code. The suite's teeth are the mutation run above.
+
+**Build-both:** not used. The rulings settled the forks this slice met (storage, which keys, descriptions). What remained, the notice wording and where the section sits, was cheap to change later rather than worth building twice.
