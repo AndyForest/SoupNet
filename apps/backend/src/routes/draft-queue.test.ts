@@ -5,6 +5,7 @@ import { compareForTriage } from "@soupnet/domain";
 import { getDb } from "../db";
 import { authenticateKey } from "../authz";
 import { searchWithoutLogging } from "../services/trace.service";
+import { seedVerifiedUser } from "../test-users";
 
 /**
  * Layer 3: the review queue (drafts-and-triage slice 3).
@@ -92,15 +93,7 @@ describe.skipIf(!BASE || !canConnect())("the review queue (drafts-and-triage sli
 
   async function registerAndVerify(label: string): Promise<Actor> {
     const email = `test-queue-${label}-${run}@test.local`;
-    const reg = await fetch(`${BASE}/auth/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password: PASSWORD, tosAccepted: true }),
-    });
-    const vtok = ((await reg.json()) as { data?: { verificationToken?: string } }).data?.verificationToken;
-    if (!vtok) throw new Error(`register failed for ${email}`);
-    await fetch(`${BASE}/auth/verify`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: vtok }) });
-    const jwt = await login(email, PASSWORD);
+    const jwt = ((await (await seedVerifiedUser(email, PASSWORD)).json()) as { data?: { token?: string } }).data?.token ?? "";
     const me = (await (await call({ jwt }, "GET", "/auth/me")).json()) as { data?: { id?: string; user?: { id: string } } };
     const books = ((await (await call({ jwt }, "GET", "/recipe-books")).json()) as { data: Array<{ id: string; organization_id: string }> }).data;
     return { email, jwt, userId: me.data?.user?.id ?? me.data?.id ?? "", personalBookId: books[0]?.id ?? "", orgId: books[0]?.organization_id ?? "" };

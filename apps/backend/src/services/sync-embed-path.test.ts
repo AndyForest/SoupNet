@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
+import { seedVerifiedUser } from "../test-users";
 
 /**
  * Sync embedding path integration tests — requires running backend + postgres.
@@ -76,26 +77,7 @@ describe.skipIf(!BASE)("sync embedding path (recipe check write)", () => {
     // Register + verify + login a throwaway user, mint a daily key
     const email = `test-syncembed-${uid}@test.local`;
     const password = "syncembed-test-password";
-    const regRes = await fetch(`${BASE}/auth/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, tosAccepted: true }),
-    });
-    const regBody = (await regRes.json()) as { data?: { verificationToken?: string } };
-    const verificationToken = regBody.data?.verificationToken;
-    if (!verificationToken) throw new Error("Backend did not return verificationToken — ALLOW_AUTO_SETUP must be true");
-    const verifyRes = await fetch(`${BASE}/auth/verify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: verificationToken }),
-    });
-    if (!verifyRes.ok) throw new Error("Failed to verify test user");
-
-    const loginRes = await fetch(`${BASE}/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
+    const loginRes = await seedVerifiedUser(email, password);
     const loginBody = (await loginRes.json()) as { data?: { token?: string } };
     const token = loginBody.data?.token ?? "";
     if (!token) throw new Error("Failed to log in test user");

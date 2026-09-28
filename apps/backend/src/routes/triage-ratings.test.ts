@@ -10,6 +10,7 @@
  * Requires a running backend (BACKEND_URL); skipped otherwise.
  */
 import { describe, it, expect, beforeAll } from "vitest";
+import { seedVerifiedUser } from "../test-users";
 
 const BASE = process.env["BACKEND_URL"] ?? "";
 const ACCEPT_BOTH = "application/json, text/event-stream";
@@ -38,23 +39,7 @@ function recipeText(topic: string): string {
 async function register(tag: string): Promise<Identity> {
   const email = `triage-${tag}-${run}@test.local`;
   const password = "triage-test-password-123";
-  const reg = await fetch(`${BASE}/auth/register`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password, tosAccepted: true }),
-  });
-  const vtok = ((await reg.json()) as { data?: { verificationToken?: string } }).data?.verificationToken;
-  if (!vtok) throw new Error("register failed");
-  await fetch(`${BASE}/auth/verify`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token: vtok }),
-  });
-  const login = await fetch(`${BASE}/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
-  });
+  const login = await seedVerifiedUser(email, password);
   const jwt = ((await login.json()) as { data?: { token?: string } }).data?.token ?? "";
   const keyRes = await fetch(`${BASE}/keys/daily`, {
     method: "POST",

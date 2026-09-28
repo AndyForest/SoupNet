@@ -247,6 +247,10 @@ async function main() {
         ...CI_PG,
         BACKEND_URL: CI_BACKEND,
         FRONTEND_URL: CI_FRONTEND,
+        // ci.yml sets JWT_SECRET job-wide, so CI's vitest sees it. Mirror it:
+        // test-users.ts creates setup users in-process with registerUser
+        // (which signs a token), and waitlist.service.test.ts skips without it.
+        JWT_SECRET: "ci-test-secret-64-char-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         GEMINI_API_KEY: "",
         EMBEDDINGS_PROVIDER: "stub",
         SYNTHESIS_PROVIDER: "stub",

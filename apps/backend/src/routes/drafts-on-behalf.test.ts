@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { seedVerifiedUser } from "../test-users";
 import postgres from "postgres";
 
 /**
@@ -76,14 +77,15 @@ describe.skipIf(!BASE || !canConnect())("drafts on behalf of another person (dra
   }
   async function register(label: string, verify = true): Promise<Actor> {
     const email = `test-obo-${label}-${run}@test.local`;
-    const reg = await fetch(`${BASE}/auth/register`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password: PASSWORD, tosAccepted: true }),
-    });
-    const vtok = ((await reg.json()) as { data?: { verificationToken?: string } }).data?.verificationToken;
-    if (!vtok) throw new Error(`register failed for ${email}`);
     if (verify) {
-      await fetch(`${BASE}/auth/verify`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: vtok }) });
+      await seedVerifiedUser(email, PASSWORD);
+    } else {
+      // An unverified account goes through the real signup (no verify step).
+      const reg = await fetch(`${BASE}/auth/register`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password: PASSWORD, tosAccepted: true }),
+      });
+      if (!reg.ok) throw new Error(`register failed for ${email}`);
     }
     const jwt = await login(email, PASSWORD);
     const me = (await (await call({ jwt }, "GET", "/auth/me")).json()) as { data?: { id?: string; user?: { id: string } } };

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { stubEmbeddingVector } from "@soupnet/domain";
+import { seedVerifiedUser } from "../test-users";
 
 /**
  * Vector search integration tests — requires running backend + postgres.
@@ -94,30 +95,7 @@ describe.skipIf(!BASE)("vector search integration (seeded vectors)", () => {
     // Register a test user
     const email = `test-vecsearch-${uid}@test.local`;
     const password = "vecsearch-test-password";
-    const regRes = await fetch(`${BASE}/auth/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, tosAccepted: true }),
-    });
-    const regBody = (await regRes.json()) as { data?: { verificationToken?: string } };
-
-    // F15: verify the user before key creation. Dev backend exposes the
-    // verification token in the register response when ALLOW_AUTO_SETUP=true.
-    const verificationToken = regBody.data?.verificationToken;
-    if (!verificationToken) throw new Error("Backend did not return verificationToken — ALLOW_AUTO_SETUP must be true");
-    const verifyRes = await fetch(`${BASE}/auth/verify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: verificationToken }),
-    });
-    if (!verifyRes.ok) throw new Error("Failed to verify test user for vector search tests");
-
-    // F30: log in for the JWT (register no longer returns it).
-    const loginRes = await fetch(`${BASE}/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
+    const loginRes = await seedVerifiedUser(email, password);
     const loginBody = (await loginRes.json()) as { data?: { token?: string } };
     token = loginBody.data?.token ?? "";
     if (!token) throw new Error("Failed to log in test user for vector search tests");

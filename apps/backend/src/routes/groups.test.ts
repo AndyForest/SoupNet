@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
+import { seedVerifiedUser } from "../test-users";
 
 /**
  * Integration tests for group member management — requires running backend.
@@ -23,26 +24,7 @@ let sharedGroupId = "";
 
 describe.skipIf(!BASE)("group member management", () => {
   async function registerAndVerify(email: string, password: string): Promise<string> {
-    const reg = await fetch(`${BASE}/auth/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, tosAccepted: true }),
-    });
-    const regBody = (await reg.json()) as { data?: { verificationToken?: string } };
-    const verificationToken = regBody.data?.verificationToken;
-    if (!verificationToken) throw new Error("Backend did not return verificationToken — ALLOW_AUTO_SETUP must be true");
-    const verify = await fetch(`${BASE}/auth/verify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: verificationToken }),
-    });
-    if (!verify.ok) throw new Error(`Failed to verify ${email}`);
-    // F30: register no longer returns a JWT — log in to get one.
-    const login = await fetch(`${BASE}/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
+    const login = await seedVerifiedUser(email, password);
     const loginBody = (await login.json()) as { data?: { token?: string } };
     const token = loginBody.data?.token ?? "";
     if (!token) throw new Error(`Failed to log in ${email}`);
@@ -858,24 +840,7 @@ describe.skipIf(!BASE)("email case-insensitivity", () => {
   let caseGroupId = "";
 
   async function registerAndVerify(email: string, password: string): Promise<string> {
-    const reg = await fetch(`${BASE}/auth/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, tosAccepted: true }),
-    });
-    const regBody = (await reg.json()) as { data?: { verificationToken?: string } };
-    const verificationToken = regBody.data?.verificationToken;
-    if (!verificationToken) throw new Error("Backend did not return verificationToken — ALLOW_AUTO_SETUP must be true");
-    await fetch(`${BASE}/auth/verify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: verificationToken }),
-    });
-    const login = await fetch(`${BASE}/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
+    const login = await seedVerifiedUser(email, password);
     const loginBody = (await login.json()) as { data?: { token?: string } };
     const token = loginBody.data?.token ?? "";
     if (!token) throw new Error(`Failed to log in ${email}`);

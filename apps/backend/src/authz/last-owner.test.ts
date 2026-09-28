@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
+import { seedVerifiedUser } from "../test-users";
 
 /**
  * "A book always keeps an owner" lives in the module's removal statement, not
@@ -39,23 +40,7 @@ describe.skipIf(!canConnect() || !BASE)("removeMember keeps the last owner", () 
 
   async function registerAndVerify(label: string): Promise<Actor> {
     const email = `test-last-owner-${label}-${uid}@test.local`;
-    const reg = await fetch(`${BASE}/auth/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password: PASSWORD, tosAccepted: true }),
-    });
-    const vtok = ((await reg.json()) as { data?: { verificationToken?: string } }).data?.verificationToken;
-    if (!vtok) throw new Error(`Setup failed for ${email}`);
-    await fetch(`${BASE}/auth/verify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: vtok }),
-    });
-    const login = await fetch(`${BASE}/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password: PASSWORD }),
-    });
+    const login = await seedVerifiedUser(email, PASSWORD);
     const loginBody = (await login.json()) as { data?: { token?: string; user?: { id: string } } };
     const token = loginBody.data?.token ?? "";
     const userId = loginBody.data?.user?.id ?? "";

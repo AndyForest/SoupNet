@@ -1,4 +1,5 @@
 import { describe, it, expect, afterAll } from "vitest";
+import { seedVerifiedUser } from "../test-users";
 
 /**
  * Layer 3 integration tests for the 2026-07-05 check-surface hardening
@@ -46,24 +47,7 @@ async function setupUserWithKey(tag: string): Promise<{ apiKey: string; jwt: str
   const uid = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
   const email = `checkhard-${tag}-${uid}@test.local`;
   const password = "check-hardening-pw-123";
-  const reg = await fetch(`${BASE}/auth/register`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password, tosAccepted: true }),
-  });
-  const regBody = (await reg.json()) as { data?: { verificationToken?: string } };
-  const vtok = regBody.data?.verificationToken;
-  if (!vtok) throw new Error(`Setup failed: register (${tag})`);
-  await fetch(`${BASE}/auth/verify`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token: vtok }),
-  });
-  const login = await fetch(`${BASE}/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
-  });
+  const login = await seedVerifiedUser(email, password);
   const loginBody = (await login.json()) as { data?: { token?: string } };
   const jwt = loginBody.data?.token ?? "";
   if (!jwt) throw new Error(`Setup failed: login (${tag})`);

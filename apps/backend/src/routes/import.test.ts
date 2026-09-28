@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import crypto from "node:crypto";
 import { mintImportId } from "../lib/deterministic-id";
+import { seedVerifiedUser } from "../test-users";
 
 /**
  * Layer 3 integration tests for POST /import — requires a running backend
@@ -78,24 +79,7 @@ function buildExportFile(): { file: ExportFile; traceIds: string[]; evidenceId: 
 }
 
 async function registerAndVerify(email: string, password: string): Promise<string> {
-  const reg = await fetch(`${BASE}/auth/register`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password, tosAccepted: true }),
-  });
-  const regBody = (await reg.json()) as { data?: { verificationToken?: string } };
-  const vtok = regBody.data?.verificationToken;
-  if (!vtok) throw new Error(`Setup failed for ${email}`);
-  await fetch(`${BASE}/auth/verify`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token: vtok }),
-  });
-  const login = await fetch(`${BASE}/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
-  });
+  const login = await seedVerifiedUser(email, password);
   const loginBody = (await login.json()) as { data?: { token?: string } };
   const t = loginBody.data?.token ?? "";
   if (!t) throw new Error(`Login failed for ${email}`);

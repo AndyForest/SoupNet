@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
+import { seedVerifiedUser } from "../test-users";
 
 /**
  * Integration tests for /mcp in stateless mode.
@@ -21,25 +22,7 @@ describe.skipIf(!BASE)("/mcp stateless behavior", () => {
     const uid = Date.now();
     const email = `mcp-test-${uid}@test.local`;
     const password = "mcp-test-password-123";
-    const reg = await fetch(`${BASE}/auth/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, tosAccepted: true }),
-    });
-    const regBody = (await reg.json()) as { data?: { verificationToken?: string } };
-    const vtok = regBody.data?.verificationToken;
-    if (!vtok) throw new Error("Setup failed");
-    await fetch(`${BASE}/auth/verify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: vtok }),
-    });
-    // F30: /auth/register no longer auto-logs-in.
-    const login = await fetch(`${BASE}/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
+    const login = await seedVerifiedUser(email, password);
     const loginBody = (await login.json()) as { data?: { token?: string } };
     const t = loginBody.data?.token;
     if (!t) throw new Error("Login after register failed");
@@ -111,24 +94,7 @@ describe.skipIf(!BASE)("/mcp stateless behavior", () => {
     const uid = Date.now();
     const email = `mcp-update-desc-${uid}@test.local`;
     const password = "mcp-test-password-123";
-    const reg = await fetch(`${BASE}/auth/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, tosAccepted: true }),
-    });
-    const regBody = (await reg.json()) as { data?: { verificationToken?: string } };
-    const vtok = regBody.data?.verificationToken ?? "";
-    await fetch(`${BASE}/auth/verify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: vtok }),
-    });
-    // F30: log in for the JWT (register no longer returns it).
-    const login = await fetch(`${BASE}/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
+    const login = await seedVerifiedUser(email, password);
     const loginBody = (await login.json()) as { data?: { token?: string } };
     const jwt = loginBody.data?.token ?? "";
 
@@ -321,23 +287,7 @@ describe.skipIf(!BASE)("/mcp stateless behavior", () => {
     const uid = Date.now();
     const email = `mcp-synth-${uid}@test.local`;
     const password = "mcp-test-password-123";
-    const reg = await fetch(`${BASE}/auth/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, tosAccepted: true }),
-    });
-    const regBody = (await reg.json()) as { data?: { verificationToken?: string } };
-    const vtok = regBody.data?.verificationToken ?? "";
-    await fetch(`${BASE}/auth/verify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: vtok }),
-    });
-    const login = await fetch(`${BASE}/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
+    const login = await seedVerifiedUser(email, password);
     const jwt = ((await login.json()) as { data?: { token?: string } }).data?.token ?? "";
     const keyRes = await fetch(`${BASE}/keys/daily`, {
       method: "POST",

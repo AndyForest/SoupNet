@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
+import { seedVerifiedUser } from "../test-users";
 import crypto from "node:crypto";
 import postgres from "postgres";
 
@@ -42,10 +43,6 @@ interface TokenResponse {
   scope?: string;
   error?: string;
   error_description?: string;
-}
-
-interface RegisterResponse {
-  data?: { verificationToken?: string };
 }
 
 let userToken = "";
@@ -152,12 +149,7 @@ describe.skipIf(!BASE)("OAuth 2.1 end-to-end flow", () => {
     const email = `oauth-${uid}@test.local`;
     userEmail = email;
     const password = "oauth-test-password-123";
-    const regRes = await postJson("/auth/register", { email, password, tosAccepted: true });
-    const regBody = (await regRes.json()) as RegisterResponse;
-    const vtok = regBody.data?.verificationToken;
-    if (!vtok) throw new Error("Setup: missing verificationToken");
-    await postJson("/auth/verify", { token: vtok });
-    const loginRes = await postJson("/auth/login", { email, password });
+    const loginRes = await seedVerifiedUser(email, password);
     const loginBody = (await loginRes.json()) as { data?: { token?: string } };
     userToken = loginBody.data?.token ?? "";
     if (!userToken) throw new Error("Setup: login failed");
