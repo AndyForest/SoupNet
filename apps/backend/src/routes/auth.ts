@@ -5,7 +5,7 @@ import { sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { registerUser, loginUser, requireAuth, requireVerifiedEmail, hashPassword, verifyPassword } from "../auth";
 import { writeAudit } from "../services/audit-log.service";
-import { isSignupCapReached, mayRegister } from "../services/system-settings.service";
+import { isSignupCapReached, logSignupCapState, mayRegister } from "../services/system-settings.service";
 import { purgeStaleWaitlistedUsers } from "../services/waitlist.service";
 import { deleteUserCascade } from "../services/user-delete.service";
 import { sendVerificationEmail, sendPasswordResetEmail } from "../services/email.service";
@@ -182,6 +182,9 @@ auth.post("/register", authRateLimit, async (c) => {
     void sendVerificationEmail(email, verificationToken, { waitlisted }).catch((err) => {
       console.error("[auth/register] Failed to send verification email:", err);
     });
+    // Operator alerting: "[signup-cap] reached/near" lines. Fire-and-forget,
+    // like the email, so it adds nothing to the response time.
+    void logSignupCapState(db, { waitlisted });
 
     // F31: group join is deferred to POST /invitations/:id/accept after
     // verification. Don't auto-join here even though the invite + email
@@ -692,6 +695,11 @@ auth.post("/verify", verifyRateLimit, async (c) => {
       AND expires_at > now()
   `);
   const pendingCount = ((pendingInviteCount as unknown as Array<{ total: number }>)[0]?.total) ?? 0;
+
+  // A verification can take the last slots (verified users count against
+  // the cap), so check for "near" here too. Waitlisted verifications don't
+  // consume a slot and are reported at registration, not again here.
+  if (!updated.waitlisted) void logSignupCapState(db, { waitlisted: false });
 
   return c.json({
     ok: true,

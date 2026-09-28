@@ -183,6 +183,17 @@ describe.skipIf(!canConnect() || !BASE)("authz seam — API-key authentication",
       expect((await authz.authenticateKey(getDb(), key))?.userId).toBe(solo.userId);
     });
 
+    it("is null while the owner is waitlisted, and works again once they are not [F75]", async () => {
+      // No path mints a key for a waitlisted account today (login refuses it
+      // a session); this pins that the predicate states the whole rule.
+      const solo = await registerAndVerify("waitlisted");
+      const key = await mintScopedKey(solo, [solo.personalBookId], solo.personalBookId);
+      await getDb().execute(sql`UPDATE claimnet.users SET waitlisted_at = NOW() WHERE id = ${solo.userId}::uuid`);
+      expect(await authz.authenticateKey(getDb(), key)).toBeNull();
+      await getDb().execute(sql`UPDATE claimnet.users SET waitlisted_at = NULL WHERE id = ${solo.userId}::uuid`);
+      expect((await authz.authenticateKey(getDb(), key))?.userId).toBe(solo.userId);
+    });
+
     it("with ownerUserId, accepts only that user's own key", async () => {
       const key = await mintScopedKey(member, [member.personalBookId], member.personalBookId);
       expect(await authz.authenticateKey(getDb(), key, { ownerUserId: owner.userId })).toBeNull();
