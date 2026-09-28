@@ -55,3 +55,76 @@ describe("POST /auth/register with Turnstile on", () => {
     expect(((await res.json()) as { code?: string }).code).toBe("turnstile_failed");
   });
 });
+
+/**
+ * The other paths a stranger's address can be sent mail through: password
+ * reset (public) and verification resend (a signed-in, unverified account,
+ * which bots created before signup was protected). Both refuse without a
+ * valid token before any lookup or send.
+ */
+describe("email-sending auth routes with Turnstile on", () => {
+  const saved = {
+    secret: process.env["TURNSTILE_SECRET_KEY"],
+    rate: process.env["DISABLE_RATE_LIMIT"],
+    jwt: process.env["JWT_SECRET"],
+  };
+
+  beforeEach(() => {
+    process.env["TURNSTILE_SECRET_KEY"] = "test-secret";
+    process.env["DISABLE_RATE_LIMIT"] = "true";
+    process.env["JWT_SECRET"] ??= "turnstile-route-test-secret-0123456789abcdef";
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    for (const [k, v] of [["TURNSTILE_SECRET_KEY", saved.secret], ["DISABLE_RATE_LIMIT", saved.rate], ["JWT_SECRET", saved.jwt]] as const) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+
+  const rejectAll = () => vi.fn(async () => new Response(JSON.stringify({ success: false, "error-codes": ["invalid-input-response"] }), { status: 200 }));
+
+  it("password reset refuses a missing token without calling Cloudflare", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const res = await makeApp().request("/auth/forgot-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "someone@test.local" }),
+    });
+    expect(res.status, "a reset request without a token must be refused").toBe(400);
+    expect(((await res.json()) as { code?: string }).code).toBe("turnstile_failed");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("password reset refuses a token Cloudflare rejects", async () => {
+    vi.stubGlobal("fetch", rejectAll());
+    const res = await makeApp().request("/auth/forgot-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "someone@test.local", turnstileToken: "forged" }),
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { code?: string }).code).toBe("turnstile_failed");
+  });
+
+  it("verification resend refuses a signed-in request without a token", async () => {
+    const { signToken } = await import("../auth");
+    const jwt = signToken({ sub: "00000000-0000-0000-0000-000000000001", email: "someone@test.local", role: "tenant" } as never);
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const res = await makeApp().request("/auth/resend-verification", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${jwt}`, "Content-Type": "application/json" },
+      body: "{}",
+    });
+    expect(res.status, "a resend without a token must be refused").toBe(400);
+    expect(((await res.json()) as { code?: string }).code).toBe("turnstile_failed");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("verification resend still requires sign-in first", async () => {
+    const res = await makeApp().request("/auth/resend-verification", { method: "POST", body: "{}" });
+    expect(res.status, "no bearer token is a 401, before any bot check").toBe(401);
+  });
+});

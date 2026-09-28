@@ -33,7 +33,9 @@ export default defineConfig({
     launchOptions: { slowMo: Number(process.env["E2E_SLOWMO"] ?? 0) },
   },
   projects: [
-    { name: "desktop", use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 } } },
+    // @mobile tests also run here (a desktop result for the same steps);
+    // @mobile-only keeps a phone-specific expectation off the desktop project.
+    { name: "desktop", use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 } }, grepInvert: /@mobile-only/ },
     // Mobile runs only tests tagged @mobile: the phone layout is checked
     // where a PR changes what a phone user sees, not on every spec.
     { name: "mobile", use: { ...devices["Pixel 7"] }, grep: /@mobile/ },

@@ -1,7 +1,7 @@
 import { expect, test, type APIRequestContext, type Browser, type BrowserContext, type Locator, type Page, type TestInfo } from "@playwright/test";
 import { BACKEND_URL, FRONTEND_URL } from "../../playwright.config";
 import { asUser, seedUser, signIn, type SeededUser } from "./helpers/accounts";
-import { shot } from "./helpers/evidence";
+import { assertNoHorizontalScroll, shot } from "./helpers/evidence";
 import AxeBuilder from "@axe-core/playwright";
 
 // Browser verification for SoupNet branch fix/ui-followups.
@@ -502,7 +502,9 @@ test("U6 Settings works at phone width @mobile", async ({ page, request }, testI
       });
       note(testInfo, `U6 ${p.path}`, JSON.stringify(m));
       await shot(page, testInfo, p.name);
-      expect.soft(m.scrollWidth, `${p.path} should not overflow horizontally`).toBeLessThanOrEqual(m.clientWidth);
+      // Device width, not clientWidth: on the phone project clientWidth grows
+      // with over-wide content (harness handback, drafts slice 4).
+      await assertNoHorizontalScroll(page, testInfo, p.path);
       expect.soft(m.navBottom, `${p.path}: the Settings nav should sit above the content`).toBeLessThanOrEqual(m.cardTop);
       if (p.path.endsWith("/account")) {
         expect.soft(m.cardWidth, "the Account card should be at least most of the viewport wide").toBeGreaterThan(m.clientWidth * 0.5);

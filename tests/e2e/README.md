@@ -26,6 +26,8 @@ If a run fails oddly, run `npx playwright test smoke` first. It proves a seeded 
 - Every assertion message states the expected behaviour in words: `expect(link, "the error should link to Recipe Books").toBeVisible()`.
 - Screenshots go through `shot(page, testInfo, "<fixed name>")` from `helpers/evidence.ts`, using the names the expectations file fixed, so the report and the results file refer to the same image.
 - Accounts come from `seedUser(request, "<label>")` in `helpers/accounts.ts`, fresh per test. Sign in with `signIn(page, user, path)`. The real login form is only for specs about login itself.
-- Tag a test `@mobile` to also run it on the phone project.
+- Tag a test `@mobile` to also run it on the phone project (Pixel 7). It still runs on desktop too, so a failure has two results; read the project name. Tag `@mobile-only` (it contains `@mobile`) to run it on the phone project alone.
+- Horizontal overflow: use `assertNoHorizontalScroll(page, testInfo, label)` or `horizontalOverflow(page)` from `helpers/evidence.ts`. Never compare `scrollWidth` with `window.innerWidth` or the root's `clientWidth`: on the phone project Chrome widens the layout viewport to fit over-wide content, so those comparisons pass on a page that overflows the phone. `harness.spec.ts` pins this.
+- A second actor: `signInNewContext(browser, testInfo, user, path)` from `helpers/accounts.ts` opens a signed-in context with the project's device settings. A bare `browser.newContext()` runs at desktop size even on the phone project.
 - `axeScan(page, testInfo, name)` attaches the full axe result and returns the serious and critical violations. `axeFindings(...)` returns all of them grouped as `{ blocking, moderate, minor }`, for specs that record moderate findings.
 - Not part of `test:ci`: it needs the dev stack and a browser.
