@@ -489,14 +489,18 @@ export async function importCorpus(
       else linksOrphaned++;
       return null;
     };
-    const linkId = (fileLinkId: string, ...endpoints: Array<[string, string]>): string =>
-      endpoints.every(([from, to]) => from === to) ? fileLinkId : crypto.randomUUID();
+    // Every written link gets a fresh id ([F101]). A link table's only key
+    // is its id, so keeping the file's id would let a row someone else
+    // created under it silently suppress the link. Idempotency does not need
+    // link ids: on a re-import both endpoints are kept and the link is
+    // counted skipped before any insert.
+    const linkId = (): string => crypto.randomUUID();
 
     const teRows: ImportTraceEvidenceRow[] = [];
     for (const l of parsed.traceEvidence) {
       const ends = classify(traceLanding.get(l.traceId), insertedTraceIds, evidenceLanding.get(l.evidenceId), insertedEvidenceIds);
       if (!ends) continue;
-      teRows.push({ ...l, id: linkId(l.id, [l.traceId, ends[0]], [l.evidenceId, ends[1]]), traceId: ends[0], evidenceId: ends[1] });
+      teRows.push({ ...l, id: linkId(), traceId: ends[0], evidenceId: ends[1] });
     }
     for (const chunk of chunks(teRows)) {
       const rows = await tx
@@ -521,7 +525,7 @@ export async function importCorpus(
     for (const l of parsed.traceReferences) {
       const ends = classify(traceLanding.get(l.traceId), insertedTraceIds, referenceLanding.get(l.referenceId), insertedReferenceIds);
       if (!ends) continue;
-      trRows.push({ ...l, id: linkId(l.id, [l.traceId, ends[0]], [l.referenceId, ends[1]]), traceId: ends[0], referenceId: ends[1] });
+      trRows.push({ ...l, id: linkId(), traceId: ends[0], referenceId: ends[1] });
     }
     for (const chunk of chunks(trRows)) {
       const rows = await tx
@@ -543,7 +547,7 @@ export async function importCorpus(
     for (const l of parsed.evidenceReferences) {
       const ends = classify(evidenceLanding.get(l.evidenceId), insertedEvidenceIds, referenceLanding.get(l.referenceId), insertedReferenceIds);
       if (!ends) continue;
-      erRows.push({ ...l, id: linkId(l.id, [l.evidenceId, ends[0]], [l.referenceId, ends[1]]), evidenceId: ends[0], referenceId: ends[1] });
+      erRows.push({ ...l, id: linkId(), evidenceId: ends[0], referenceId: ends[1] });
     }
     for (const chunk of chunks(erRows)) {
       const rows = await tx

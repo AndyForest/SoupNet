@@ -664,6 +664,30 @@ describe.skipIf(!BASE)("POST /import", () => {
     expect(exportedC.evidence.some((e) => e.content === "C's own text under a colliding id")).toBe(true);
   });
 
+  it("[F101] link ids another account already used cannot strip the links from an import", async () => {
+    // C imports her own rows under link rows that reuse the ids of the links
+    // in B's file; B, the first to import that file, must still get every link.
+    const victim = buildExportFile();
+    const squat = carrierFile("link-squat");
+    const sqEv = crypto.randomUUID();
+    const sqRef = crypto.randomUUID();
+    squat.file.evidence.push({ id: sqEv, content: "C's evidence", createdAt: NOW, updatedAt: NOW });
+    squat.file.references.push({ id: sqRef, quote: "C's quote", source: "C", fileUrl: null, fileMimeType: null, fileHash: null, createdAt: NOW });
+    squat.file.traceEvidence.push({ id: victim.file.traceEvidence[0]!["id"], traceId: squat.traceId, evidenceId: sqEv, stance: "for", apiKeyId: null, createdAt: NOW });
+    squat.file.traceReferences.push({ id: victim.file.traceReferences[0]!["id"], traceId: squat.traceId, referenceId: sqRef, apiKeyId: null, createdAt: NOW });
+    squat.file.evidenceReferences.push({ id: victim.file.evidenceReferences[0]!["id"], evidenceId: sqEv, referenceId: sqRef, createdAt: NOW });
+    expect((await postImport(tokenC, JSON.stringify(squat.file))).body.data!.counts.links.inserted).toBe(3);
+
+    const { status, body } = await postImport(tokenB, JSON.stringify(victim.file));
+    expect(status).toBe(200);
+    expect(body.data!.counts.traces.inserted).toBe(2);
+    expect(body.data!.counts.links).toEqual({ inserted: 3, skippedExisting: 0, orphaned: 0 });
+    const exportedB = await exportAccount(tokenB);
+    expect(exportedB.traceEvidence.some((l) => l.traceId === victim.traceIds[0] && l.evidenceId === victim.evidenceId)).toBe(true);
+    expect(exportedB.traceReferences.some((l) => l.traceId === victim.traceIds[0] && l.referenceId === victim.referenceId)).toBe(true);
+    expect(exportedB.evidenceReferences.some((l) => l.evidenceId === victim.evidenceId && l.referenceId === victim.referenceId)).toBe(true);
+  });
+
   it("[F100] rows pre-planted under the importer's mint are never taken as the importer's own", async () => {
     // The mint is public, so C can create rows under B's minted ids before B
     // imports a file naming A's rows. B's rows must land under fresh ids with
