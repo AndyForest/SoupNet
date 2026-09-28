@@ -1563,3 +1563,21 @@ Written by the builder (agent `a-drafts-build-s5-2026-09-28`) for the verifier; 
 - The eleven files that failed in run 1, run alone on a fresh stack, all pass: 206 tests, exit 0.
 - These are the known setup-hook and timeout flakes under concurrent load, which the gate-reliability work is fixing.
 
+### Slice 5 fix pass (implementing agent, 2026-09-28)
+
+After the verification record (`b73cc9f`) and the read-only security audit (private); both recommend accepting. `origin/main` had not moved. Each fix has a test that failed before it: 2 of the suite's 20 tests failed before the fixes.
+
+- **Unknown fields on scoped-key creation** (`58d359e`, `9904190`): the `POST /keys/scoped` schema is `.strict()`, so a snake-case or misspelled level field, or `headless: true`, is a 400 that mints nothing, instead of an ordinary key. No client sends extra fields: the keys page, the testing plan's curl, and every test body send only the schema's fields. `POST /keys/daily` still reads its body loosely; the audit's note also names a snake-case level there, which the orchestrator did not ask to change. `9904190` rewords a comment that named the column, which the S5-S2 guard caught in the first gate run.
+- **The `/check` HTML form** (`58d359e`): for a headless key the "Deposit as a draft" checkbox is checked and disabled, with the reason ("always on: this API key is headless…"). An ordinary key's form is unchanged.
+- **The S5-W5 `/check?filter=` pair** (`58d359e`): it compared `r.id`, which results do not carry, so both sides were lists of `undefined`. It now compares `recipeId` and requires a non-empty list of real ids. With the fix the pair still matches.
+- **Backlog** (`ba868fe`): F104 is folded into the F86/F95 guard-hardening item, by number only. The pre-existing contrast item now also names the keys page's 1.52:1 "expires" date, its unlabelled raw-key input, and key rows that expand only on a mouse click.
+
+**Gate** (`TESTCI_PGPORT=5824 npm run test:ci`):
+
+| Run | At | Exit | Tests | Failures |
+|---|---|---|---|---|
+| 1 | `ba868fe` | 1 | 1,820 passed, 2 failed | `deposit-level.test.ts`: a real failure, fixed in `9904190`. Also an `import.test.ts` setup-hook timeout and a 15 s `waitlist.test.ts` timeout. |
+| 2 | `9904190` | 1 | 1,821 passed, 1 failed | Timeouts only: the `import.test.ts` setup hook (30 s) and `waitlist.test.ts` "register stores the optional signup reason" (15 s). |
+
+Per the operator, GitHub CI is the judge when the local gate fails only on timeouts.
+
