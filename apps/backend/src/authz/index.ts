@@ -20,6 +20,8 @@
  *                        mayReadTrace in roles.ts); its facts helpers stay
  *                        internal
  *   draft-resolution.ts — the one statement that verifies or rejects a draft
+ *   content-ownership.ts — whose evidence and references a caller may link
+ *                        to or reuse by id: only their own [F98]
  *
  * Import from here. See docs/engineering-principles.md §7.
  */
@@ -44,3 +46,4 @@ export {
 } from "./draft-sql";
 export type { DraftAudience, SharedAudience, TraceAlias } from "./draft-sql";
 export * from "./draft-resolution";
+export * from "./content-ownership";

@@ -263,8 +263,8 @@ const TRACE_READS = {
     why: "feedback target ACL: prefix scan and readable set use traceReadableById (RP-11, RP-18); check_feedback inserts and the per-key budget count are writes and the caller's own rows",
   },
   "apps/backend/src/services/import.service.ts": {
-    n: 22, fp: "961569af51d1", composes: false,
-    why: "import writes the importer's own recipes and reads rows by id to classify skip / conflict / remap (RP-35)",
+    n: 16, fp: "1d3e708b0e99", composes: false,
+    why: "import writes the importer's own recipes and reads rows by id to classify skip / conflict / remap (RP-35); which evidence and references it may reuse or link comes from the module's content-ownership helpers [F98]",
   },
   "apps/backend/src/services/integrity-repair.service.ts": {
     n: 10, fp: "1bf65a3a7142", composes: false,

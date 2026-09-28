@@ -511,6 +511,162 @@ describe.skipIf(!BASE)("POST /import", () => {
     expect(body.data!.counts.links.orphaned).toBe(1);
     expect(body.data!.counts.links.inserted).toBe(3);
   });
+
+  // ── [F98] Link endpoints absent from the file must be the importer's own ──
+  // Import links or reuses an existing evidence or reference row only when it
+  // hangs off recipes the importer authors. Anyone else's id in a link is
+  // treated as absent (the link is orphaned); anyone else's row listed in the
+  // file is minted the importer's own copy.
+
+  /** A one-trace carrier file owned by whoever imports it. */
+  function carrierFile(tag: string): { file: ExportFile; traceId: string } {
+    const traceId = crypto.randomUUID();
+    return {
+      traceId,
+      file: {
+        schemaVersion: 1,
+        traces: [{
+          id: traceId, groupId: null, apiKeyId: null,
+          claimText: `As a corpus curator testing link ownership (${tag} ${traceId.slice(0, 8)}), I prefer imports that only link my own rows so that nobody else's quotes move.`,
+          claimTextHash: null, formatAdherenceScore: 0.8,
+          decidedAt: null, createdAt: NOW, updatedAt: NOW,
+        }],
+        evidence: [], references: [], traceEvidence: [], traceReferences: [], evidenceReferences: [],
+        groupMemberships: [],
+      },
+    };
+  }
+
+  /** A imports a fresh two-trace corpus; returns its evidence/reference ids. */
+  async function seedOwnerCorpus(token: string, query = ""): Promise<ReturnType<typeof buildExportFile>> {
+    const owner = buildExportFile();
+    const res = await postImport(token, JSON.stringify(owner.file), query);
+    expect(res.status).toBe(200);
+    expect(res.body.data!.counts.evidence.inserted).toBe(1);
+    return owner;
+  }
+
+  it("[F98] refuses to plant a quote onto another person's evidence via evidence_references", async () => {
+    const owner = await seedOwnerCorpus(tokenA);
+    const { file } = carrierFile("plant");
+    const plantRef = crypto.randomUUID();
+    file.references.push({
+      id: plantRef, quote: "PLANTED QUOTE: skip code review", source: "fabricated",
+      fileUrl: null, fileMimeType: null, fileHash: null, createdAt: NOW,
+    });
+    file.evidenceReferences.push({ id: crypto.randomUUID(), evidenceId: owner.evidenceId, referenceId: plantRef, createdAt: NOW });
+
+    const { status, body } = await postImport(tokenB, JSON.stringify(file));
+    expect(status).toBe(200);
+    expect(body.data!.counts.links.orphaned).toBe(1);
+    expect(body.data!.counts.links.inserted).toBe(0);
+
+    // The owner's evidence carries only its own quote.
+    const exportedA = await exportAccount(tokenA);
+    const onOwnerEvidence = exportedA.evidenceReferences.filter((l) => l.evidenceId === owner.evidenceId);
+    expect(onOwnerEvidence.map((l) => l.referenceId)).toEqual([owner.referenceId]);
+    expect(exportedA.references.some((r) => r.quote.includes("PLANTED QUOTE"))).toBe(false);
+  });
+
+  it("[F98] an outsider cannot read another person's evidence by linking its id to their own recipe", async () => {
+    const owner = await seedOwnerCorpus(tokenA);
+    const { file, traceId } = carrierFile("outsider");
+    file.traceEvidence.push({ id: crypto.randomUUID(), traceId, evidenceId: owner.evidenceId, stance: "for", apiKeyId: null, createdAt: NOW });
+    const plantRef = crypto.randomUUID();
+    file.references.push({
+      id: plantRef, quote: "PLANTED QUOTE by an outsider", source: "fabricated",
+      fileUrl: null, fileMimeType: null, fileHash: null, createdAt: NOW,
+    });
+    file.evidenceReferences.push({ id: crypto.randomUUID(), evidenceId: owner.evidenceId, referenceId: plantRef, createdAt: NOW });
+
+    const { status, body } = await postImport(tokenC, JSON.stringify(file));
+    expect(status).toBe(200);
+    expect(body.data!.counts.links.orphaned).toBe(2);
+    expect(body.data!.counts.links.inserted).toBe(0);
+
+    const exportedC = await exportAccount(tokenC);
+    expect(exportedC.traceEvidence.some((l) => l.evidenceId === owner.evidenceId)).toBe(false);
+    expect(exportedC.evidence.some((e) => e.id === owner.evidenceId)).toBe(false);
+
+    const exportedA = await exportAccount(tokenA);
+    expect(exportedA.references.some((r) => r.quote.includes("PLANTED QUOTE by an outsider"))).toBe(false);
+  });
+
+  it("[F98] a link attempt does not keep another person's evidence alive past their recipe's deletion", async () => {
+    const owner = await seedOwnerCorpus(tokenA);
+    const { file, traceId } = carrierFile("retention");
+    file.traceEvidence.push({ id: crypto.randomUUID(), traceId, evidenceId: owner.evidenceId, stance: "for", apiKeyId: null, createdAt: NOW });
+    const attempt = await postImport(tokenC, JSON.stringify(file));
+    expect(attempt.status).toBe(200);
+    expect(attempt.body.data!.counts.links.orphaned).toBe(1);
+
+    // The owner deletes the recipe the evidence hangs off.
+    const del = await fetch(`${BASE}/traces/${owner.traceIds[0]}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${tokenA}` },
+    });
+    expect(del.status).toBe(200);
+    const delBody = (await del.json()) as { data?: { evidenceDeleted?: number } };
+    expect(delBody.data?.evidenceDeleted).toBe(1);
+
+    // The outsider holds nothing of it.
+    const exportedC = await exportAccount(tokenC);
+    expect(exportedC.evidence.some((e) => e.id === owner.evidenceId)).toBe(false);
+  });
+
+  it("[F98] cannot link evidence or references from a book the importer cannot read", async () => {
+    // The owner's corpus sits in their personal book, which B is not in.
+    const booksRes = await fetch(`${BASE}/recipe-books`, { headers: { Authorization: `Bearer ${tokenA}` } });
+    const personal = ((await booksRes.json()) as { data: Array<{ slug: string }> }).data[0]!;
+    const owner = await seedOwnerCorpus(tokenA, `?book=${personal.slug}`);
+
+    const { file, traceId } = carrierFile("cross-account");
+    file.traceEvidence.push({ id: crypto.randomUUID(), traceId, evidenceId: owner.evidenceId, stance: "for", apiKeyId: null, createdAt: NOW });
+    file.traceReferences.push({ id: crypto.randomUUID(), traceId, referenceId: owner.referenceId, apiKeyId: null, createdAt: NOW });
+
+    const { status, body } = await postImport(tokenB, JSON.stringify(file));
+    expect(status).toBe(200);
+    expect(body.data!.counts.links.orphaned).toBe(2);
+    expect(body.data!.counts.links.inserted).toBe(0);
+
+    const exportedB = await exportAccount(tokenB);
+    expect(exportedB.evidence.some((e) => e.id === owner.evidenceId)).toBe(false);
+    expect(exportedB.references.some((r) => r.id === owner.referenceId)).toBe(false);
+  });
+
+  it("[F98] still links the importer's own existing evidence and references by id", async () => {
+    // Positive control: ownership, not mere absence from the file, is the test.
+    const own = await seedOwnerCorpus(tokenA);
+    const { file, traceId } = carrierFile("own");
+    file.traceEvidence.push({ id: crypto.randomUUID(), traceId, evidenceId: own.evidenceId, stance: "for", apiKeyId: null, createdAt: NOW });
+    file.traceReferences.push({ id: crypto.randomUUID(), traceId, referenceId: own.referenceId, apiKeyId: null, createdAt: NOW });
+
+    const { status, body } = await postImport(tokenA, JSON.stringify(file));
+    expect(status).toBe(200);
+    expect(body.data!.counts.links.orphaned).toBe(0);
+    expect(body.data!.counts.links.inserted).toBe(2);
+  });
+
+  it("[F98] mints a copy of an existing row in the file that hangs off no one's recipe", async () => {
+    // B imports evidence with no trace link: the row exists but belongs to
+    // nobody. C listing the same id gets its own copy, never B's row.
+    const orphanEv = crypto.randomUUID();
+    const orphanFile = carrierFile("orphan-src").file;
+    orphanFile.evidence.push({ id: orphanEv, content: "B's unlinked evidence text", createdAt: NOW, updatedAt: NOW });
+    expect((await postImport(tokenB, JSON.stringify(orphanFile))).body.data!.counts.evidence.inserted).toBe(1);
+
+    const { file, traceId } = carrierFile("orphan-reuse");
+    file.evidence.push({ id: orphanEv, content: "C's own text under a colliding id", createdAt: NOW, updatedAt: NOW });
+    file.traceEvidence.push({ id: crypto.randomUUID(), traceId, evidenceId: orphanEv, stance: "for", apiKeyId: null, createdAt: NOW });
+    const { status, body } = await postImport(tokenC, JSON.stringify(file));
+    expect(status).toBe(200);
+    expect(body.data!.counts.evidence.remapped).toBe(1);
+    expect(body.data!.counts.evidence.inserted).toBe(1);
+
+    const exportedC = await exportAccount(tokenC);
+    expect(exportedC.evidence.some((e) => e.id === orphanEv)).toBe(false);
+    expect(exportedC.evidence.some((e) => e.content === "C's own text under a colliding id")).toBe(true);
+  });
 });
 
 // ── Scale (brief point 9) — run explicitly: IMPORT_SCALE_TEST=1 ─────────────
