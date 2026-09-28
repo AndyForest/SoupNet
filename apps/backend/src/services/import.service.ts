@@ -139,7 +139,7 @@ export interface ImportResult {
 
 export class ImportError extends Error {
   constructor(
-    public readonly status: 400 | 403 | 404 | 500,
+    public readonly status: 400 | 403 | 404 | 409 | 500,
     message: string,
   ) {
     super(message);
@@ -148,6 +148,18 @@ export class ImportError extends Error {
 }
 
 const CHUNK = 500;
+
+/** Rows decided "create" were not all created: a concurrent import (or a row
+ *  planted at the importer's mint while this one ran) claimed some of their
+ *  ids first. The whole import rolls back ([F102]); a retry sees those rows
+ *  and gives the file's rows fresh ids, so re-uploading stays the resume
+ *  path and no run ever gets a 200 with rows silently missing. */
+function claimedConcurrently(): ImportError {
+  return new ImportError(
+    409,
+    "Another import claimed some of this file's ids while it ran, so nothing was imported. Retry with the same file: the retry gives those rows their own ids.",
+  );
+}
 const MAX_CONFLICT_DETAIL = 200;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -368,9 +380,8 @@ export async function importCorpus(
     }
 
     // ── 4. Insert traces (chunked batches; explicit ids + timestamps) ──────
-    // Links below go only onto rows these statements actually returned, so a
-    // row someone else created under the same id in the meantime is never
-    // linked into.
+    // Every insert must return every row it was given; a row claimed by a
+    // concurrent import fails the whole import with a retryable 409 ([F102]).
     const insertedTraceIds = new Set<string>();
     if (tracesToInsert.length > 0) {
       if (!dest) throw new ImportError(500, "internal: destination book unresolved");
@@ -433,6 +444,7 @@ export async function importCorpus(
           }))
           .onConflictDoNothing()
           .returning({ id: tracesTable.id });
+        if (rows.length < chunk.length) throw claimedConcurrently();
         for (const r of rows) insertedTraceIds.add(r.id);
       }
     }
@@ -450,6 +462,7 @@ export async function importCorpus(
         })))
         .onConflictDoNothing()
         .returning({ id: evidenceTable.id });
+      if (rows.length < chunk.length) throw claimedConcurrently();
       for (const r of rows) insertedEvidenceIds.add(r.id);
     }
 
@@ -468,6 +481,7 @@ export async function importCorpus(
         })))
         .onConflictDoNothing()
         .returning({ id: referencesTable.id });
+      if (rows.length < chunk.length) throw claimedConcurrently();
       for (const r of rows) insertedReferenceIds.add(r.id);
     }
 

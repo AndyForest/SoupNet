@@ -688,6 +688,31 @@ describe.skipIf(!BASE)("POST /import", () => {
     expect(exportedB.evidenceReferences.some((l) => l.evidenceId === victim.evidenceId && l.referenceId === victim.referenceId)).toBe(true);
   });
 
+  it("[F102] two accounts importing the same new file at once each end with a complete copy, never a 200 that dropped rows", async () => {
+    // Both imports see the file's ids as new and race to insert them. The
+    // loser must fail with a retryable 409 (its retry then mints its own
+    // copy), not answer 200 with the rows it lost silently missing.
+    const tokens = [
+      await registerAndVerify(`test-import-race1-${uid}@test.local`, "import-test-pw-race1"),
+      await registerAndVerify(`test-import-race2-${uid}@test.local`, "import-test-pw-race2"),
+    ];
+    for (let round = 0; round < 3; round++) {
+      const race = buildExportFile();
+      const body = JSON.stringify(race.file);
+      const results = await Promise.all(tokens.map((t) => postImport(t, body)));
+      for (const [i, r] of results.entries()) {
+        let res = r;
+        if (res.status === 409) {
+          expect(res.body.error).toMatch(/retry/i);
+          res = await postImport(tokens[i]!, body);
+        }
+        expect(res.status, `round ${round} user ${i}`).toBe(200);
+        expect(res.body.data!.counts.traces.inserted, `round ${round} user ${i}`).toBe(2);
+        expect(res.body.data!.counts.links.inserted, `round ${round} user ${i}`).toBe(3);
+      }
+    }
+  });
+
   it("[F100] rows pre-planted under the importer's mint are never taken as the importer's own", async () => {
     // The mint is public, so C can create rows under B's minted ids before B
     // imports a file naming A's rows. B's rows must land under fresh ids with
