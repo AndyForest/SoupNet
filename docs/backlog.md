@@ -126,6 +126,16 @@ Diagnosed 2026-07-21 during the ephemeral-workspaces gate: three rotating single
 
 Seen during the drafts-and-triage slice 2 gates (2026-09-27), unconfirmed. The test inserts an OAuth key row whose `expires_at` is the epoch (the pre-0028 consumed shape), so the OAuth service's opportunistic purge of long-dead rows (`maybeCleanupOAuthArtifacts` in `services/oauth.service.ts`, the F39 sweep) is allowed to delete it. The test warms the purge's throttle with one `/oauth/token` call and then waits 300 ms, but the purge that call starts is fire-and-forget: if its `DELETE` statement begins only after the fixture's `INSERT` has committed (a busy pool during the parallel full suite would do it), it removes the fixture between the test's write and its read. Suggested fix: make the fixture's `expires_at` sweep-proof while keeping the consumed shape the guard tests (or await an exported cleanup promise in the test), and pin it with a test that runs the purge between insert and read. Remove this item if a fix shows a different cause.
 
+### `[IMPL]` Gate reliability: most local gate runs now hit at least one flake
+
+Since the drafts suites landed (2026-09-27), three of four local `test:ci` runs on main failed without a code cause. The failures were 30s `beforeAll` timeouts in `trace-delete.service.test.ts` and `import.test.ts`, the workspace-expiry pair, and one F90 assertion. The suite is 124 files and 1,712 tests, and one run summed 2,199s of test time into a 154s wall clock. So many files run in parallel against one backend, and setup hooks that register users over HTTP (register, verify, login) wait behind each other. Each flake has its own entry (workspace expiry, the sync-embed and import-overwrite races with the worker sweep, the vitest worker exit, the OAuth epoch-row read, the F90 sequence). This item is the umbrella. The cost is agents re-running gates, and a real failure getting waved off as a flake.
+
+Measure before cutting anything: per-file duration, and backend CPU during a run, to see whether it's backend saturation or suite size. Likely fixes, cheapest first:
+- Seed test users in SQL instead of through the HTTP signup flow.
+- Cap parallelism for the integration files that share the backend.
+- Fix the known races.
+- Only then look for redundant tests.
+
 ### `[IMPL]` test:ci flake: workspace-expiry assertions at "now"
 
 Found 2026-09-27 on `feat/drafts-and-triage` slice 3, gate run 1 (run 2 green on the same tree): `authz/key-auth.test.ts` "drops a disposed workspace…" and `routes/workspaces.test.ts` "(3) after expire-now…" failed together, alongside a vitest worker exit. Both assert on an ephemeral workspace's expiry at the current moment, so a clock or transaction-timestamp boundary is the likely cause (unconfirmed). Neither file was touched by the slice. Next step: rerun both files in a loop to reproduce, then compare the assertion's clock with the database's `NOW()`.
