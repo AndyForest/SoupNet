@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { draftStatusLabel, draftPartyLine, deleteDraftAccessibleName } from "./draft-status-label";
+import { draftStatusLabel, draftPartyLine, deleteDraftAccessibleName, showsKeyBadge } from "./draft-status-label";
 
 // drafts-and-triage slice 2: the trace detail page tells the person a recipe
 // is their draft, and how it was verified (build log open question 14: show
@@ -60,5 +60,13 @@ describe("slice 4: on-behalf drafts on the detail page (S4-L1, S4-UI2)", () => {
   it("the status title tells each party who can see it", () => {
     expect(draftStatusLabel({ draftState: "unverified", draftAbout: "pat@test.local" })!.title).toContain("only they and you");
     expect(draftStatusLabel({ draftState: "unverified", draftDepositedBy: "dana@test.local" })!.title).toContain("dana@test.local's agent");
+  });
+});
+
+describe("[F93] the key badge shows only under its owner's authorship", () => {
+  it("shows for the author's own key, and hides entirely for a verified on-behalf recipe's key", () => {
+    expect(showsKeyBadge({ apiKeyId: "k1", apiKeyIsAuthors: true })).toBe(true);
+    expect(showsKeyBadge({ apiKeyId: "k1", apiKeyIsAuthors: false })).toBe(false);
+    expect(showsKeyBadge({ apiKeyId: null, apiKeyIsAuthors: true })).toBe(false);
   });
 });

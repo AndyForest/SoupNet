@@ -15,7 +15,7 @@ import { ApiKeyBadge } from "../components/ApiKeyBadge.js";
 import { DeleteTraceConfirmModal } from "../components/DeleteTraceConfirmModal.js";
 import { MoveTraceModal } from "../components/MoveTraceModal.js";
 import { triageRatingsLabel, TRIAGE_RATINGS_TITLE } from "../lib/triage-ratings-label.js";
-import { draftStatusLabel, draftPartyLine, deleteDraftAccessibleName } from "../lib/draft-status-label.js";
+import { draftStatusLabel, draftPartyLine, deleteDraftAccessibleName, showsKeyBadge } from "../lib/draft-status-label.js";
 
 export function TraceDetailPage() {
   const { traceId } = useParams({ strict: false }) as { traceId: string };
@@ -141,7 +141,7 @@ export function TraceDetailPage() {
 
         <div style={{ display: "flex", gap: "var(--space-sm)", marginTop: "var(--space-md)", flexWrap: "wrap" }}>
           <UserBadge user={{ email: trace.userEmail }} />
-          <ApiKeyBadge apiKey={{ id: trace.apiKeyId, label: trace.apiKeyLabel ?? null }} />
+          {showsKeyBadge(trace) && <ApiKeyBadge apiKey={{ id: trace.apiKeyId, label: trace.apiKeyLabel ?? null }} />}
         </div>
 
         {/* Human reaction — one click per user, latest wins; clicking the

@@ -603,6 +603,21 @@ describe.skipIf(!BASE || !canConnect())("drafts on behalf of another person (dra
     expect(JSON.stringify(patList)).toContain(verifiedId);
   });
 
+  it("[F93] / S4-L2: once verified, no list or detail surface shows Dana's key as the agent of Pat's recipe", async () => {
+    type Row = { id: string; apiKeyLabel: string | null };
+    const bookList = (await (await call(sam, "GET", `/traces?groupId=${shared.id}&limit=100`)).json()) as { data: Row[] };
+    expect(bookList.data.find((r) => r.id === verifiedId)).toMatchObject({ apiKeyLabel: null });
+    const patList = (await (await call(pat, "GET", "/traces?limit=100")).json()) as { data: Row[] };
+    expect(patList.data.find((r) => r.id === verifiedId)).toMatchObject({ apiKeyLabel: null });
+    for (const actor of [sam, dana, pat]) {
+      expect(dataOf((await detail(actor, verifiedId)).body)["apiKeyIsAuthors"]).toBe(false);
+    }
+    // A recipe deposited by its own author's key keeps its label and badge.
+    const danaOwn = bookList.data.find((r) => r.apiKeyLabel === `Dana key ${run}`);
+    expect(danaOwn).toBeDefined();
+    expect(dataOf((await detail(sam, danaOwn!.id)).body)).toMatchObject({ apiKeyIsAuthors: true, apiKeyLabel: `Dana key ${run}` });
+  });
+
   it("S4-D4: after verification Dana gets what any member gets (403 on delete); Pat deletes it as its author", async () => {
     const id = await onBehalf("verify then delete");
     expect((await call(pat, "PUT", `/traces/${id}/reaction`, { reaction: "still_true" })).status).toBe(200);

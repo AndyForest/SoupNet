@@ -396,7 +396,9 @@ traces.get("/", async (c) => {
         COALESCE(ec.evidence_count, 0)::int AS "evidenceCount",
         COALESCE(rc.ref_count, 0)::int AS "referenceCount",
         g.name AS "groupName",
-        ak.label AS "apiKeyLabel",
+        -- A key's label only under its owner's authorship (open question 40,
+        -- [F93]): a verified on-behalf recipe's depositing key is not its author's.
+        (CASE WHEN ak.user_id = t.user_id THEN ak.label ELSE NULL END) AS "apiKeyLabel",
         u.email AS "userEmail",
         ${draftStateShownTo("t", user.id)} AS "draftState"
       FROM claimnet.traces t
@@ -442,7 +444,8 @@ traces.get("/", async (c) => {
       COALESCE(ec.evidence_count, 0)::int AS "evidenceCount",
       COALESCE(rc.ref_count, 0)::int AS "referenceCount",
       g.name AS "groupName",
-      ak.label AS "apiKeyLabel",
+      -- A key's label only under its owner's authorship ([F93]).
+      (CASE WHEN ak.user_id = t.user_id THEN ak.label ELSE NULL END) AS "apiKeyLabel",
       ${draftStateShownTo("t", user.id)} AS "draftState"
     FROM claimnet.traces t
     LEFT JOIN claimnet.groups g ON g.id = t.group_id

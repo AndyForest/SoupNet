@@ -24,6 +24,16 @@ export interface DraftStatusLike {
 }
 
 /**
+ * Whether the detail page shows the agent (API key) badge ([F93], S4-L2):
+ * only when the key belongs to the recipe's author. A verified on-behalf
+ * recipe's key is its depositor's, so it shows no key at all rather than
+ * "No label set" beside someone else's key id.
+ */
+export function showsKeyBadge(t: { apiKeyId?: string | null; apiKeyIsAuthors?: boolean }): boolean {
+  return !!t.apiKeyId && t.apiKeyIsAuthors !== false;
+}
+
+/**
  * The line naming the other party of an unpublished on-behalf draft (slice
  * 4, S4-L1, S4-UI2): text, never colour or an icon alone. Null otherwise.
  */

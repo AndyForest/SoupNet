@@ -60,6 +60,10 @@ export interface TraceDetail {
   updatedAt: string;
   groupName: string | null;
   apiKeyLabel: string | null;
+  /** The depositing key belongs to the recipe's author. False on a verified
+   *  on-behalf recipe (the key is the depositor's): surfaces then show no key
+   *  label and no key badge at all ([F93], open question 40). */
+  apiKeyIsAuthors: boolean;
   userEmail: string | null;
   /** Triage ratings (slice 1): the depositing agent's, null = not rated. */
   impact: string | null;
@@ -108,6 +112,7 @@ const DETAIL_COLUMNS: SQL = sql`,
       -- a subject verifies a draft deposited about them, the depositing key's
       -- label is not theirs (slice 4, open question 40).
       (CASE WHEN ak.user_id = t.user_id THEN ak.label ELSE NULL END) AS "apiKeyLabel",
+      (ak.user_id IS NOT NULL AND ak.user_id = t.user_id) AS "apiKeyIsAuthors",
       u.email AS "userEmail",
       t.impact AS "impact",
       t.uncertainty AS "uncertainty",
@@ -264,6 +269,7 @@ export async function readableTraceFor(
       updatedAt: row.updatedAt ?? "",
       groupName: row.groupName ?? null,
       apiKeyLabel: row.apiKeyLabel ?? null,
+      apiKeyIsAuthors: row.apiKeyIsAuthors === true,
       userEmail: row.userEmail ?? null,
       impact: row.impact ?? null,
       uncertainty: row.uncertainty ?? null,

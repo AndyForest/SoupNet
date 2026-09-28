@@ -100,6 +100,9 @@ export interface TraceDetail extends Trace {
    *  viewer's side (the depositor to its subject, the subject to its depositor). */
   draftDepositedBy?: string | null;
   draftAbout?: string | null;
+  /** The depositing key belongs to the recipe's author; false on a verified
+   *  on-behalf recipe, which then shows no key at all ([F93]). */
+  apiKeyIsAuthors?: boolean;
   userId: string;
   userEmail: string | null;
   groupName?: string | null;

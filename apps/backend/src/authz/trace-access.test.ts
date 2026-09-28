@@ -178,6 +178,7 @@ describe("the read rule is applied in one place", () => {
       updatedAt: "2026-09-19T00:00:00Z",
       groupName: "Book",
       apiKeyLabel: null,
+      apiKeyIsAuthors: false,
       userEmail: "author@test.local",
       impact: null,
       uncertainty: null,
