@@ -1,3 +1,4 @@
+import { TurnstileWidget } from "../components/TurnstileWidget";
 import { useState } from "react";
 import { safeReturnTarget } from "../lib/return-target.js";
 import { useNavigate, useLocation, Link } from "@tanstack/react-router";
@@ -40,6 +41,7 @@ async function registerRequest(body: {
   inviteToken?: string | undefined;
   reason?: string | undefined;
   tosAccepted: boolean;
+  turnstileToken?: string | undefined;
 }): Promise<AuthResponse> {
   const res = await fetch(`${API_BASE}/auth/register`, {
     method: "POST",
@@ -49,8 +51,14 @@ async function registerRequest(body: {
   return res.json() as Promise<AuthResponse>;
 }
 
+// Cloudflare Turnstile on the signup form, only when the build sets a site
+// key (the backend checks the token only when it has the secret).
+const TURNSTILE_SITE_KEY = (import.meta.env["VITE_TURNSTILE_SITE_KEY"] as string | undefined) || undefined;
+
 export function LoginPage() {
   const navigate = useNavigate();
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const [turnstileReset, setTurnstileReset] = useState(0);
   const location = useLocation();
   const queryClient = useQueryClient();
   const [email, setEmail] = useState("");
@@ -136,6 +144,7 @@ export function LoginPage() {
             inviteToken: inviteToken ?? undefined,
             reason: reason.trim() || undefined,
             tosAccepted: true,
+            turnstileToken: turnstileToken ?? undefined,
           })
         : loginRequest(body),
     onSuccess: (data) => {
@@ -182,6 +191,8 @@ export function LoginPage() {
         setNotice(data.message ?? "You're on the waitlist — we'll email you when a spot opens.");
       } else {
         setError(data.error ?? "Authentication failed");
+        // A Turnstile token is single-use: get a fresh one for the retry.
+        if (isRegister && TURNSTILE_SITE_KEY) setTurnstileReset((n) => n + 1);
       }
     },
     onError: () => {
@@ -200,6 +211,10 @@ export function LoginPage() {
     }
     if (isRegister && !tosAccepted) {
       setError("You must accept the Terms of Service and Privacy Policy.");
+      return;
+    }
+    if (isRegister && TURNSTILE_SITE_KEY && !turnstileToken) {
+      setError("Please complete the check above the button first.");
       return;
     }
     mutation.mutate({ email, password });
@@ -455,6 +470,10 @@ export function LoginPage() {
                 <Link to="/info/privacy" target="_blank">Privacy Policy</Link>.
               </label>
             </div>
+          )}
+
+          {isRegister && TURNSTILE_SITE_KEY && (
+            <TurnstileWidget siteKey={TURNSTILE_SITE_KEY} onToken={setTurnstileToken} resetKey={turnstileReset} />
           )}
 
           {error && (
