@@ -248,7 +248,9 @@ describe.skipIf(!BASE || !canConnect())("drafts on behalf of another person (dra
       const notice = String(s["draftNotice"] ?? "");
       expect(notice).toContain(`draft about ${pat.email}`);
       expect(notice).toContain("on their behalf");
-      if (draft === undefined || draft === false || draft === "false") expect(notice).toContain("your draft flag was overridden");
+      // S4-L3: the override clause only when a false flag was actually sent.
+      if (draft === false || draft === "false") expect(notice).toContain("your draft flag was overridden");
+      else expect(notice, String(draft)).not.toContain("overridden");
       if (!mainDraft) { mainDraft = id; mainToken = tokenOf(text); }
     }
   });

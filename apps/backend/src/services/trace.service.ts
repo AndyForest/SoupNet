@@ -1027,7 +1027,9 @@ export async function submitAndSearch(
       existing: isExisting,
       queueUrl: draftQueueUrl([traceId]),
       onBehalfOf: storedSubjectEmail ?? undefined,
-      draftFlagOverridden: !!subject && !requestedDraft.draft,
+      // Only when a flag was sent and read as false (S4-L3): with no draft
+      // parameter there is nothing to override.
+      draftFlagOverridden: !!subject && params.draft !== undefined && params.draft !== null && !requestedDraft.draft,
     }),
   ].filter(Boolean).join(" ") || undefined;
 
