@@ -142,3 +142,41 @@ Import produces a **fully independent subgraph per importer**, minted **determin
 - **PK-less rows stay random-minted** (v1.1 §1): a row that never had an id has no stable identity to be deterministic about, so they are not idempotent across re-imports — acceptable for the hand-trimmed one-off files that motivated accepting them.
 
 Tests: isolation subgraph (route), re-import idempotency + stable `idMap` (route), parallel-importer disjointness (route), deterministic-mint properties + frozen-namespace pin (`deterministic-id.test.ts`). Recipe: `c40fd228`.
+
+## v2 — create-only import (2026-09-27)
+
+The import path produced one security finding after another, each from import reusing an id or linking into a row that already existed. Andy accepted the rethink that removes the whole class instead of guarding each path:
+
+> "I agree with your rethink, that sounds like what we shuold have done!"
+> — Andy, 2026-09-27, replying to the proposed rule "import only creates rows; links only connect rows within the same file; existing ids are always skipped or given fresh ones" (recipe `5d541d2c`)
+
+This section supersedes v1 design point 7's `overwrite` clause, v1.1 §1's "Same-owner path preserved" upsert wording, and v1.2's "Reuse only what touches nobody else" bullet. What stays: the deterministic per-importer mint and its idempotency and isolation (recipe `c40fd228`), `idMap`, the lazily created destination book, and the one all-or-nothing transaction.
+
+### Where each file row lands
+
+- **An id new to the server** is inserted under that id, as before.
+- **A trace whose id is the importer's own ordinary recipe** is kept as it is: skipped-identical, or a reported conflict (`kept: "existing"`) when its claim text or `decidedAt` differs.
+- **An evidence or reference row whose id exists, and which nothing this import creates links to**, is kept as it is (skipped-existing). This is what a re-import of the same file sees, so it stays idempotent.
+- **Anything else that exists** gets a fresh id: another person's recipe, a draft the importer deposited about someone else, or evidence and references that a recipe the import creates links to. The fresh id is the importer's mint, `mintImportId(userId, id)`, when that id is free; when the mint already exists it is kept on the same terms as the file's id, and otherwise the row gets a random id. The random fallback closes the case where someone pre-creates a row under the importer's public mint (private finding F100).
+- **A row about someone else** (`onBehalfOf`) always gets a random id, as before (F96).
+
+### Links
+
+A link row is written only when both of its rows were created by this import, as returned by the inserts themselves. A link between two kept rows is counted `skippedExisting`; any other link, whether it has a kept row on one side or an id that is not in the file, is counted `orphaned`. Nothing is looked up in the database to decide a link, so no link can attach a quote to, read, or keep alive a row that existed before the import. The ownership rule that used to decide this (`authz/content-ownership.ts`, private finding F98) is removed.
+
+### `overwrite` removed
+
+`overwrite=true` on the importer's own recipes was removed rather than narrowed, because nothing depends on it: the two eval scripts passed `overwrite: false`, the frontend has no import control, and the only callers were its own Layer 3 test and the private security probes. The query parameter is now ignored; a changed row of your own is kept and reported as a conflict, which was already the default. Removing it also removes the embedding teardown that raced the worker sweep (the `import overwrite races the worker strategy sweep` flake).
+
+### What changed in the response
+
+- `counts.traces.overwritten` is gone.
+- `counts.evidence.conflicted` and `counts.references.conflicted` are gone. Kept evidence and references are no longer compared with the file: without an ownership lookup, a content comparison against a row that may be someone else's would tell the importer whether their guess of its content was right.
+- `conflicts` now only ever lists traces, always with `kept: "existing"`.
+
+### What this costs
+
+- A link from an existing recipe of yours to a new row in the file is counted orphaned, not written. Every link in an export joins rows of the same export, so this happens only when the destination already holds an older copy of a recipe, for example one verified with new evidence since the last import: the new evidence row is inserted but not attached to the existing recipe.
+- Linking a new recipe to evidence or references by an id that is not in the file no longer works, even for your own rows. Include the rows in the file.
+
+Recipes: `5d541d2c` (the rule), `cbe5dfad` (removing `overwrite`), `5b1ceb91` (links only between created rows; no ownership lookup).

@@ -144,7 +144,7 @@ Rubric: build log §Slice 4 rubric (ids `S4-*`). From slice 4 a draft's subject 
 | RP-27, RP-28, RP-29 | Own list and count are by author, so they follow the flip; the check log is by audit actor, so Dana's log keeps her deposit (amended, `b89db1f0`) | listed once he verifies it | listed, labelled, until verified | n/a | S4-M3, S4-V2 |
 | RP-30 | Export by author, so it follows the flip; unresolved rows carry the subject's email (amended, `b89db1f0`) | carries it once verified | carries it until verified | n/a | S4-E1 |
 | RP-31 to RP-33 | Admin counts by author, following the flip (amended, `b89db1f0`) | counts once verified | counts until verified | n/a | S4-C1 |
-| RP-35 | Import applies the naming rule; on-behalf rows restore as unverified | | row restored or uniformly refused | n/a | S4-E2, S4-E3 |
+| RP-35 | Import applies the naming rule; on-behalf rows restore as unverified under a fresh random id ([F96]). Import only creates rows (amended 2026-09-27, recipe `5d541d2c`): a draft about someone else is never kept, changed, or linked to by an import, so a file row carrying its id lands under a fresh id as the importer's own recipe | | row restored under a fresh id, or uniformly refused | n/a | S4-E2, S4-E3 |
 | RP-37 | Account deletion collects by author, plus unverified drafts about the departing person; books follow `23657e4e` (nobody added, memberless books stay) (amended, `b89db1f0`, `23657e4e`) | his deletion takes what he verified and unverified drafts about him | her deletion takes her unverified, rejected, and not-chosen deposits | n/a | S4-A3 to A5 |
 | RP-39 to RP-41 | Fragments read the subject column (`subjectOf`) | own drafts in results | deposits in results | unchanged | S4-M2 |
 | RP-46 | Depositor's `verify_draft` gets an honest refusal naming who can verify | verifies | refused, nothing stored | uniform | S4-R2 |
@@ -171,7 +171,7 @@ Added by slice 4:
 
 | # | Path | file:line | What it reads | Draft disposition |
 |---|---|---|---|---|
-| RP-35 | `POST /import` | `services/import.service.ts` ~234, ~268 | existing rows by id to classify skip / conflict / remap; foreign ids are remapped to a deterministic per-importer id rather than reported | `decide`: the export format has no draft state today, so a draft exported and re-imported would come back as an ordinary recipe |
+| RP-35 | `POST /import` | `services/import.service.ts` ~188 (`loadTraces`) | existing traces by id (the file's ids and the importer's mints) to decide kept or fresh id; a trace is kept only when it is the importer's own and has no on-behalf subject, and no link is ever written onto an existing row (amended 2026-09-27, recipe `5d541d2c`) | resolved: the export carries `draftState` and `onBehalfOf` (DT-VIS-16, S4-E1), and a draft about someone else is never kept or extended by import |
 | RP-36 | Trace move and delete services | `services/trace-move.service.ts` ~130, `services/trace-delete.service.ts` ~67 | the row under lock | covered by RP-23 |
 | RP-37 | Account deletion | `services/user-delete.service.ts` ~255, `authz/book-succession.ts:112` | the user's traces for the cascade | `irrelevant` (deletion) |
 | RP-38 | Ephemeral workspace reaper | `services/ephemeral-workspace.service.ts` ~281 | traces in an expiring book | `irrelevant` (deletion) |
