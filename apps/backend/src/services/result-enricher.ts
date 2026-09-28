@@ -16,7 +16,7 @@
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import type { SearchResultItem } from "./trace.service";
-import { isPublishedDraftState } from "../authz";
+import { isPublishedDraftState, onBehalfSideFor, onBehalfPartyFor } from "../authz";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -90,6 +90,10 @@ export interface EnrichedResult {
    *  them. Display only, never ranking. */
   impact?: string | null | undefined;
   uncertainty?: string | null | undefined;
+  /** Slice 4 (S4-L1): on an unpublished on-behalf draft, the other party
+   *  from the viewer's side. */
+  draftDepositedBy?: string | undefined;
+  draftAbout?: string | undefined;
 }
 
 // ── Main function ────────────────────────────────────────────────────────────
@@ -97,6 +101,9 @@ export interface EnrichedResult {
 export async function enrichResults(
   db: PostgresJsDatabase,
   results: SearchResultItem[],
+  /** The viewer, so an on-behalf draft can name the other party from their
+   *  side (slice 4, S4-L1). Without it no party is named. */
+  viewerUserId?: string,
 ): Promise<EnrichedResult[]> {
   if (results.length === 0) return [];
 
@@ -109,14 +116,17 @@ export async function enrichResults(
   // 0. Load group info for all trace IDs
   const groupRows = await db.execute(sql`
     SELECT t.id AS trace_id, g.id AS group_id, g.name AS group_name, g.description AS group_description,
-           t.draft_state AS draft_state, t.impact AS impact, t.uncertainty AS uncertainty
+           t.draft_state AS draft_state, t.impact AS impact, t.uncertainty AS uncertainty,
+           ${viewerUserId ? onBehalfSideFor("t", viewerUserId) : sql`NULL`} AS on_behalf_side,
+           ou.email AS on_behalf_email
     FROM claimnet.traces t
     JOIN claimnet.groups g ON g.id = t.group_id
+    LEFT JOIN claimnet.users ou ON ou.id = ${viewerUserId ? onBehalfPartyFor("t", viewerUserId) : sql`NULL::uuid`}
     WHERE t.id IN (${traceIdsSql})
   `);
 
   const traceGroupMap = new Map<string, EnrichedRecipeBook>();
-  const draftStateMap = new Map<string, { state: string; impact: string | null; uncertainty: string | null }>();
+  const draftStateMap = new Map<string, { state: string; impact: string | null; uncertainty: string | null; side: string | null; email: string | null }>();
   for (const row of groupRows as unknown as Record<string, unknown>[]) {
     const state = row["draft_state"] as string | null;
     if (!isPublishedDraftState(state) && state) {
@@ -124,6 +134,8 @@ export async function enrichResults(
         state,
         impact: (row["impact"] as string | null) ?? null,
         uncertainty: (row["uncertainty"] as string | null) ?? null,
+        side: (row["on_behalf_side"] as string | null) ?? null,
+        email: (row["on_behalf_email"] as string | null) ?? null,
       });
     }
     traceGroupMap.set(row["trace_id"] as string, {
@@ -222,9 +234,18 @@ export async function enrichResults(
         draftState: draftStateMap.get(r.id)!.state,
         impact: draftStateMap.get(r.id)!.impact,
         uncertainty: draftStateMap.get(r.id)!.uncertainty,
+        ...onBehalfFields(draftStateMap.get(r.id)!),
       }
       : {}),
   }));
+}
+
+/** The S4-L1 field for a row, from the viewer's side. */
+function onBehalfFields(d: { side: string | null; email: string | null }): { draftDepositedBy?: string; draftAbout?: string } {
+  if (!d.email) return {};
+  if (d.side === "depositedBy") return { draftDepositedBy: d.email };
+  if (d.side === "about") return { draftAbout: d.email };
+  return {};
 }
 
 // ── Evidence clustering ─────────────────────────────────────────────────────

@@ -444,7 +444,6 @@ async function setupArm(
   const result = await importCorpus(db, parsed.data, {
     userId: user.id,
     newBookName: `rankeval ${armName} ${runTag}`,
-    overwrite: false,
   });
   if (!result.book) throw new Error(`[${armName}] import created no destination book`);
   console.log(

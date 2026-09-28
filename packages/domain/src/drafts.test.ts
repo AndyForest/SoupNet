@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseDraftFlag, draftDepositNotice, draftLabel, validateVerificationEvidence } from "./drafts";
+import { parseDraftFlag, draftDepositNotice, draftLabel, validateVerificationEvidence, onBehalfRefusal, onlySubjectReviewsReason } from "./drafts";
 
 describe("parseDraftFlag", () => {
   it("DT-VIS-01: true and its usual wire spellings mean draft", () => {
@@ -175,5 +175,88 @@ describe("draftLabel with the agent's ratings (S3-AG2, S3-Z4)", () => {
   it("names both ratings, 'not rated' for a missing one, inside the label", () => {
     expect(draftLabel("unverified", { impact: "high", uncertainty: null })).toMatch(/; impact high, uncertainty not rated\]$/);
     expect(draftLabel("unverified", { impact: "low", uncertainty: "medium" })).toMatch(/; impact low, uncertainty medium\]$/);
+  });
+});
+
+// ── Slice 4: drafts on behalf of another person ─────────────────────────────
+
+describe("on-behalf labels (S4-L1, S4-Z3)", () => {
+  const PAT = "pat@example.test";
+  const DANA = "dana@example.test";
+
+  it("names the depositor to the subject and the subject to the depositor, inside the label", () => {
+    expect(draftLabel("unverified", { draftDepositedBy: DANA })).toContain(`unverified draft, deposited by ${DANA}:`);
+    expect(draftLabel("unverified", { draftAbout: PAT })).toContain(`unverified draft about ${PAT}:`);
+    expect(draftLabel("rejected", { draftAbout: PAT })).toBe(`[rejected draft about ${PAT}: the person said this is wrong]`);
+    expect(draftLabel("not_chosen", { draftDepositedBy: DANA })).toBe(`[draft not chosen, deposited by ${DANA}]`);
+  });
+
+  it("a self draft's label and a published row are unchanged byte for byte", () => {
+    for (const s of ["unverified", "rejected", "not_chosen"]) {
+      expect(draftLabel(s, { draftDepositedBy: null, draftAbout: null })).toBe(draftLabel(s));
+    }
+    expect(draftLabel(null, { draftDepositedBy: DANA })).toBe("");
+    expect(draftLabel("verified", { draftAbout: PAT })).toBe("");
+  });
+
+  it("adds at most the other party's email plus 20 bytes, with or without ratings", () => {
+    for (const s of ["unverified", "rejected", "not_chosen"]) {
+      for (const ratings of [{}, { impact: "high", uncertainty: "low" }]) {
+        const self = Buffer.byteLength(draftLabel(s, ratings));
+        expect(Buffer.byteLength(draftLabel(s, { ...ratings, draftDepositedBy: DANA })) - self).toBeLessThanOrEqual(DANA.length + 20);
+        expect(Buffer.byteLength(draftLabel(s, { ...ratings, draftAbout: PAT })) - self).toBeLessThanOrEqual(PAT.length + 20);
+      }
+    }
+  });
+});
+
+describe("on-behalf deposit notices (S4-L3, S4-L4, S4-Z4)", () => {
+  const PAT = "pat@example.test";
+  const URL = "http://localhost:5273/app/drafts?ids=0f4b7a8e-2d1c-4e5f-9a0b-1c2d3e4f5a6b";
+
+  it("a new on-behalf draft says why it is a draft, who can see it, who confirms it, and the link to hand them", () => {
+    const n = draftDepositNotice({ storedState: "unverified", requestedDraft: true, existing: false, queueUrl: URL, onBehalfOf: PAT })!;
+    expect(n).toContain(`draft about ${PAT}`);
+    expect(n).toContain("on their behalf");
+    expect(n).toContain("only they can confirm or reject it");
+    expect(n).toContain(URL);
+    expect(n).not.toContain("verify_draft");
+    expect(n).not.toContain("overridden");
+  });
+
+  it("says when the draft flag was overridden", () => {
+    const n = draftDepositNotice({ storedState: "unverified", requestedDraft: true, existing: false, queueUrl: URL, onBehalfOf: PAT, draftFlagOverridden: true })!;
+    expect(n).toContain("your draft flag was overridden");
+  });
+
+  it("is at most 60 characters longer than today's new-draft notice plus the subject's email", () => {
+    const today = draftDepositNotice({ storedState: "unverified", requestedDraft: true, existing: false, queueUrl: URL })!;
+    for (const draftFlagOverridden of [false, true]) {
+      const n = draftDepositNotice({ storedState: "unverified", requestedDraft: true, existing: false, queueUrl: URL, onBehalfOf: PAT, draftFlagOverridden })!;
+      expect(n.length).toBeLessThanOrEqual(today.length + 60 + PAT.length);
+    }
+  });
+
+  it("an identical repeat is worded for the subject, and never offers verification to the depositor", () => {
+    const still = draftDepositNotice({ storedState: "unverified", requestedDraft: true, existing: true, queueUrl: URL, onBehalfOf: PAT })!;
+    expect(still).toContain(`still a draft`);
+    expect(still).toContain(`draft about ${PAT}`);
+    expect(still).toContain(URL);
+    expect(still).not.toContain("verify_draft");
+    const rejected = draftDepositNotice({ storedState: "rejected", requestedDraft: true, existing: true, onBehalfOf: PAT })!;
+    expect(rejected).toContain(`draft about ${PAT} that has since been rejected`);
+    expect(rejected).toContain("nothing new was stored");
+  });
+
+  it("the naming refusal is one answer that names the way forward and echoes no email", () => {
+    const r = onBehalfRefusal("team-notes");
+    expect(r).toContain("nothing was stored");
+    expect(r).toContain("check without on_behalf_of");
+    expect(r).not.toMatch(/@/);
+  });
+
+  it("the depositor's refusal names who reviews it and the link to hand them", () => {
+    expect(onlySubjectReviewsReason(PAT, URL)).toBe(`Only ${PAT} can review this draft: it is about them. Hand them their review link: ${URL}`);
+    expect(onlySubjectReviewsReason(null)).toContain("the person it is about");
   });
 });

@@ -1,9 +1,9 @@
 # ClaimNet Data Model — Generated Reference
 
-> **Auto-generated** from Drizzle migration snapshot `0038_snapshot.json`.
+> **Auto-generated** from Drizzle migration snapshot `0039_snapshot.json`.
 > Do not edit by hand. Regenerate with: `npx tsx scripts/generate-data-model-docs.ts`
 >
-> Schema as of migration `0038_traces_draft_state` (2026-09-27).
+> Schema as of migration `0039_traces_draft_subject` (2026-09-28).
 > Tables: 31 | Schema: `claimnet`
 
 For design rationale, conventions, and context, see [data-model.md](data-model.md).
@@ -332,6 +332,7 @@ erDiagram
         timestamptz draft_resolved_at
         uuid draft_resolved_by_user_id
         uuid draft_resolved_by_key_id
+        uuid subject_user_id
         timestamptz created_at
         timestamptz updated_at
     }
@@ -578,6 +579,7 @@ These are created by raw SQL in migration files and are not captured in the snap
 | `draft_resolved_at` | `timestamptz` | YES |  |  |
 | `draft_resolved_by_user_id` | `uuid` | YES |  |  |
 | `draft_resolved_by_key_id` | `uuid` | YES |  |  |
+| `subject_user_id` | `uuid` | YES |  |  |
 | `created_at` | `timestamptz` | NO | `now()` |  |
 | `updated_at` | `timestamptz` | NO | `now()` |  |
 

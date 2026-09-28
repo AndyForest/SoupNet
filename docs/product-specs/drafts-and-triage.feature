@@ -433,7 +433,6 @@ Feature: Drafts, triage ratings, and deciding by building both
         | not chosen  | not chosen  |
 
   # ─────────────────────────────────────────────────────────────────────────
-  @unreleased
   Rule: A draft may be deposited on behalf of another person, and is always a draft
     # Guards: drafts-and-triage.md §The model (table); recipes 94e0e682 and
     # 9e663b62 (the author is the depositing key's owner; the subject is a

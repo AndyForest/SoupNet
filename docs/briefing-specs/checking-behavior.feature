@@ -77,3 +77,12 @@ Feature: Checking behavior — genuine hypotheses, autonomous timing
     When the person returns and the agent reports what it left open
     Then it gives the person one review-queue link naming those drafts (/app/drafts?ids=…)
     And it does not ask the person to look the drafts up by id in prose
+
+  @unreleased
+  Scenario: A briefed agent records a colleague's judgment as a draft on their behalf and hands over their review link
+    # Guards: MCP_PARAM_DESCRIPTIONS.onBehalfOf (recipe-guide-content.ts), the on-behalf deposit notice (packages/domain/src/drafts.ts); docs/planning/drafts-and-triage.md §The model; spec-decision-log.md 2026-09-27 (drafts-and-triage slice 4). The parameter ships in slice 4; the scenario stays @unreleased until the briefing body teaches drafting (slice 7) and the harness can run it.
+    Given the agent is reading a colleague's own artifacts that record a decision the colleague made
+    When it records that decision
+    Then it checks the recipe with on_behalf_of set to the colleague's email, in the colleague's functional role
+    And its evidence quotes the colleague's own words from those artifacts
+    And it hands its person the colleague's review link from the response, rather than calling the draft verified

@@ -33,7 +33,7 @@ import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { enrichResults } from "./result-enricher";
 import { isTraceIdPrefix, uuidPrefixRange } from "./feedback.service";
 import type { SearchResultItem } from "./trace.service";
-import { inBooks, traceReadableById } from "../authz";
+import { inBooks, traceReadableById, onBehalfSideFor, onBehalfPartyFor } from "../authz";
 import { draftLabel, isShownDraftState } from "@soupnet/domain";
 
 /** Hard cap on ids per lookup call. Routes reject above this; the briefing
@@ -71,6 +71,10 @@ export interface RecipeLookupFound {
   evidence: RecipeLookupEvidence[];
   /** Present only on the caller's own unpublished draft (slice 2). */
   draftState?: "unverified" | "rejected" | "not_chosen" | undefined;
+  /** Slice 4 (S4-L1): on an unpublished on-behalf draft, the other party
+   *  from the caller's side. */
+  draftDepositedBy?: string | undefined;
+  draftAbout?: string | undefined;
 }
 
 export interface RecipeLookupMarker {
@@ -113,6 +117,8 @@ interface TraceRow {
   authorEmail: string | null;
   authorDisplayName: string | null;
   draftState: string | null;
+  onBehalfSide: "depositedBy" | "about" | null;
+  onBehalfEmail: string | null;
 }
 
 /** Who is looking: the key's effective read scope and the key's user. */
@@ -205,10 +211,13 @@ export async function lookupRecipes(
         g.name              AS "groupName",
         u.email             AS "authorEmail",
         u.display_name      AS "authorDisplayName",
-        t.draft_state       AS "draftState"
+        t.draft_state       AS "draftState",
+        ${onBehalfSideFor("t", viewer.userId)} AS "onBehalfSide",
+        ou.email            AS "onBehalfEmail"
       FROM claimnet.traces t
       LEFT JOIN claimnet.groups g ON g.id = t.group_id
       LEFT JOIN claimnet.users u ON u.id = t.user_id
+      LEFT JOIN claimnet.users ou ON ou.id = ${onBehalfPartyFor("t", viewer.userId)}
       WHERE t.id IN (${sql.join(validIds.map((id) => sql`${id}::uuid`), sql`, `)})
         AND ${inBooks(sql`t.group_id`, liveReadGroupIds)}
         AND ${traceReadableById("t", viewer.userId)}
@@ -259,6 +268,8 @@ export async function lookupRecipes(
           loggedAt: new Date(row.createdAt).toISOString(),
           evidence,
           ...(isShownDraftState(row.draftState) ? { draftState: row.draftState } : {}),
+          ...(row.onBehalfSide === "depositedBy" && row.onBehalfEmail ? { draftDepositedBy: row.onBehalfEmail } : {}),
+          ...(row.onBehalfSide === "about" && row.onBehalfEmail ? { draftAbout: row.onBehalfEmail } : {}),
         });
       }
     }
@@ -315,7 +326,7 @@ export function renderRecipeEntries(entries: RecipeLookupEntry[]): string {
     ].join("\n");
 
     // The caller's own unpublished draft is labelled (DT-VIS-06).
-    const label = draftLabel(entry.draftState);
+    const label = draftLabel(entry.draftState, entry);
     let text = `${metaLines}${label ? `\nDraft: ${label}` : ""}\n\n${entry.recipe}`;
 
     if (entry.evidence.length > 0) {

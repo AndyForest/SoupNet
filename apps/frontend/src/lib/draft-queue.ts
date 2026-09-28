@@ -24,6 +24,10 @@ export interface QueueItem {
   depositedAt: string;
   decidedAt?: string | null;
   keyLabel: string | null;
+  /** Slice 4: on a draft about you that someone else's agent deposited, their email. */
+  depositedBy?: string | null;
+  /** Slice 4: on a draft your agent deposited about someone else, their email. */
+  about?: string | null;
   firstInterpretation: string | null;
   state: QueueItemState;
   canResolve: boolean;
@@ -43,9 +47,27 @@ export function excerpt(text: string, max = NAME_EXCERPT): string {
 }
 
 /** "Agent's ratings: impact high · uncertainty not rated", or "…: not rated". */
-export function queueRatingsText(item: Pick<QueueItem, "impact" | "uncertainty">): string {
-  if (item.impact === null && item.uncertainty === null) return "Agent's ratings: not rated";
-  return `Agent's ratings: impact ${item.impact ?? "not rated"} · uncertainty ${item.uncertainty ?? "not rated"}`;
+export function queueRatingsText(item: Pick<QueueItem, "impact" | "uncertainty"> & Pick<Partial<QueueItem>, "depositedBy">): string {
+  // On a draft someone else's agent deposited, the ratings are theirs (S4-Q2).
+  const whose = item.depositedBy ? "Depositing agent's ratings" : "Agent's ratings";
+  if (item.impact === null && item.uncertainty === null) return `${whose}: not rated`;
+  return `${whose}: impact ${item.impact ?? "not rated"} · uncertainty ${item.uncertainty ?? "not rated"}`;
+}
+
+/**
+ * The id-list view's heading: "your agent" only when every linked draft was
+ * deposited by the viewer's own agent (slice 4 fix pass: a link a colleague's
+ * agent made, or one the viewer's agent made about a colleague, says neither).
+ */
+export function linkHeading(items: ReadonlyArray<Pick<Partial<QueueItem>, "depositedBy" | "about">>): string {
+  return items.some((i) => i.depositedBy || i.about) ? "Linked drafts" : "Drafts your agent linked";
+}
+
+/** Slice 4 (S4-Q2, S4-Q5): the line naming the other party of an on-behalf draft, as text. */
+export function partyText(item: Pick<Partial<QueueItem>, "depositedBy" | "about">): string | null {
+  if (item.depositedBy) return `Deposited on your behalf by ${item.depositedBy}`;
+  if (item.about) return `About ${item.about}`;
+  return null;
 }
 
 /** The button's visible label. */
@@ -100,15 +122,19 @@ export function stateLabel(state: QueueItemState): string | null {
 
 /** The label for the first evidence interpretation: the agent's reason on a
  *  draft, plain evidence on a recipe that was never one. */
-export function whyLabel(state: QueueItemState): string {
-  return state === "published" ? "Evidence:" : "Why your agent drafted it:";
+export function whyLabel(state: QueueItemState, item?: Pick<Partial<QueueItem>, "depositedBy">): string {
+  if (state === "published") return "Evidence:";
+  return item?.depositedBy ? "Why their agent drafted it:" : "Why your agent drafted it:";
 }
 
 /** "Deposited 27 Sep 2026 by Claude Code key" (key label when known). */
-export function depositedText(item: Pick<QueueItem, "depositedAt" | "keyLabel">, locale?: string): string {
+export function depositedText(item: Pick<QueueItem, "depositedAt" | "keyLabel"> & Pick<Partial<QueueItem>, "depositedBy">, locale?: string): string {
   const d = new Date(item.depositedAt);
   const when = Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString(locale, { year: "numeric", month: "short", day: "numeric" });
-  const by = item.keyLabel ? ` by ${item.keyLabel}` : " by an agent key";
+  // The depositor's email beside the key label when it is someone else's
+  // agent (S4-Q2: accountability by design).
+  const key = item.keyLabel ? item.keyLabel : "an agent key";
+  const by = item.depositedBy ? ` by ${item.depositedBy} (${key})` : ` by ${key}`;
   return `Deposited${when ? ` ${when}` : ""}${by}`;
 }
 

@@ -198,8 +198,14 @@ describe("MCP tool description budget", () => {
     // a genuinely new affordance, the session_id / search_recipes class of
     // raise (recipes 8dd573b4, 6ae9a299). The when-to-draft depth stays out
     // of schema (briefing body, slice 7). Prior total 5,510, new total 5,965.
+    // 6,000 → 6,080 (2026-09-27), UP: drafts-and-triage slice 4 adds the
+    // `on_behalf_of` param on check_recipe, a genuinely new affordance the
+    // design names (build log open question 38 and rubric S4-Z2: raise by at
+    // most the new description's length, 83 characters, rather than trim
+    // unrelated copy for a proxy measure). The served tools/list caps are
+    // held. Prior total 5,968, new total 6,051.
     const total = Object.values(all).reduce((n, s) => n + s.length, 0);
-    expect(total).toBeLessThanOrEqual(6000);
+    expect(total).toBeLessThanOrEqual(6080);
   });
 
   it("keeps the shared params that repeat across tools to one line (≤ 120 chars) — S1-Z5", () => {

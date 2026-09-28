@@ -23,7 +23,7 @@ import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { mayReadTrace, isPublishedDraftState } from "./roles";
 import type { BookRole } from "./roles";
 import { membershipOf } from "./membership-sql";
-import { subjectOf, depositorOf, traceReadableByPerson } from "./draft-sql";
+import { subjectOf, depositorOf, onBehalfSubjectOf, traceReadableByPerson } from "./draft-sql";
 import { bookIdsFor } from "./book-access";
 
 /** The facts about one viewer and one trace. */
@@ -39,9 +39,11 @@ export interface TraceAccess {
   role: BookRole;
   /** The recipe's draft state; null when it was never a draft. */
   draftState: string | null;
-  /** The viewer is the person the draft is about (slice 2: its author). */
+  /** The viewer is the person the draft is about: the on-behalf subject
+   *  where one is set (slice 4), otherwise its author. */
   isDraftSubject: boolean;
-  /** The viewer is the person whose agent deposited it (always its author). */
+  /** The viewer is the person whose agent deposited it: its author while it
+   *  is unpublished (verification moves the author to the subject). */
   isDraftDepositor: boolean;
 }
 
@@ -58,6 +60,10 @@ export interface TraceDetail {
   updatedAt: string;
   groupName: string | null;
   apiKeyLabel: string | null;
+  /** The depositing key belongs to the recipe's author. False on a verified
+   *  on-behalf recipe (the key is the depositor's): surfaces then show no key
+   *  label and no key badge at all ([F93], open question 40). */
+  apiKeyIsAuthors: boolean;
   userEmail: string | null;
   /** Triage ratings (slice 1): the depositing agent's, null = not rated. */
   impact: string | null;
@@ -74,6 +80,11 @@ export interface TraceDetail {
   draftResolvedByEmail: string | null;
   /** The viewer is the one who resolved the draft (the "by you" label). */
   draftResolvedByViewer: boolean;
+  /** Slice 4 (S4-L1): on an unpublished on-behalf draft, the other party
+   *  from the viewer's side: the depositor's email for its subject, the
+   *  subject's email for its depositor. Null everywhere else. */
+  draftDepositedBy: string | null;
+  draftAbout: string | null;
 }
 
 export interface ReadableTrace {
@@ -86,6 +97,8 @@ type Locator = { traceId: string } | { feedbackId: string };
 
 type Row = Partial<TraceAccess> & Partial<Omit<TraceDetail, "id" | "claimText" | "userId" | "groupId">> & {
   draftResolvedByUserId?: string | null;
+  subjectUserId?: string | null;
+  subjectEmail?: string | null;
 };
 
 const DETAIL_COLUMNS: SQL = sql`,
@@ -95,20 +108,27 @@ const DETAIL_COLUMNS: SQL = sql`,
       t.created_at AS "createdAt",
       t.updated_at AS "updatedAt",
       g.name AS "groupName",
-      ak.label AS "apiKeyLabel",
+      -- A key's label is shown only under its own owner's authorship: after
+      -- a subject verifies a draft deposited about them, the depositing key's
+      -- label is not theirs (slice 4, open question 40).
+      (CASE WHEN ak.user_id = t.user_id THEN ak.label ELSE NULL END) AS "apiKeyLabel",
+      (ak.user_id IS NOT NULL AND ak.user_id = t.user_id) AS "apiKeyIsAuthors",
       u.email AS "userEmail",
       t.impact AS "impact",
       t.uncertainty AS "uncertainty",
       t.draft_resolved_at AS "draftResolvedAt",
       t.draft_resolved_by_key_id AS "draftResolvedByKeyId",
       ru.email AS "draftResolvedByEmail",
-      t.draft_resolved_by_user_id AS "draftResolvedByUserId"`;
+      t.draft_resolved_by_user_id AS "draftResolvedByUserId",
+      ${onBehalfSubjectOf("t")} AS "subjectUserId",
+      su.email AS "subjectEmail"`;
 
 const DETAIL_JOINS: SQL = sql`
     LEFT JOIN claimnet.groups g ON g.id = t.group_id
     LEFT JOIN claimnet.api_keys ak ON ak.id = t.api_key_id
     LEFT JOIN claimnet.users u ON u.id = t.user_id
-    LEFT JOIN claimnet.users ru ON ru.id = t.draft_resolved_by_user_id`;
+    LEFT JOIN claimnet.users ru ON ru.id = t.draft_resolved_by_user_id
+    LEFT JOIN claimnet.users su ON su.id = ${onBehalfSubjectOf("t")}`;
 
 /**
  * The one statement. `(group_id, user_id)` is unique on the membership table,
@@ -168,10 +188,12 @@ function toAccess(row: Row): TraceAccess {
 
 /**
  * The viewer's standing on a trace, or null when the trace does not exist —
- * or is an unpublished draft this viewer may not manage. Move and delete of a
- * draft belong to the person it is about alone (build log open question 11,
- * DT-VIS-15): for anyone else, a book owner or a system user included, the
- * draft is the same null, and the route's uniform 404, as a missing id.
+ * or is an unpublished draft this viewer cannot read. An unpublished draft is
+ * the business of its subject and its depositor alone (build log open
+ * questions 11 and 30, DT-VIS-15): for anyone else, a book owner or a system
+ * user included, the draft is the same null, and the route's uniform 404, as
+ * a missing id. Which of move and delete each of the two may do is
+ * `unpublishedDraftManagement` (roles.ts).
  *
  * Returns facts for a viewer with NO access to a published recipe as well —
  * move and delete need to tell "not yours" from "not there" there, and a
@@ -186,7 +208,7 @@ export async function roleInBookOfTrace(
   const row = await fetchAccess(db, userId, { traceId }, false);
   if (!row) return null;
   const access = toAccess(row);
-  if (!isPublishedDraftState(access.draftState) && !access.isDraftSubject) return null;
+  if (!isPublishedDraftState(access.draftState) && !access.isDraftSubject && !access.isDraftDepositor) return null;
   return access;
 }
 
@@ -247,12 +269,16 @@ export async function readableTraceFor(
       updatedAt: row.updatedAt ?? "",
       groupName: row.groupName ?? null,
       apiKeyLabel: row.apiKeyLabel ?? null,
+      apiKeyIsAuthors: row.apiKeyIsAuthors === true,
       userEmail: row.userEmail ?? null,
       impact: row.impact ?? null,
       uncertainty: row.uncertainty ?? null,
       // Draft state and verification details are the draft subject's alone
       // ([F83]): to anyone else a verified draft is an ordinary recipe, with
-      // no state, verifier, key, or dates.
+      // no state, verifier, key, or dates. The depositor of an unpublished
+      // draft sees its state, since she can read it only because of the
+      // draft rule and needs to know it is not published, but not who
+      // resolved it or when (slice 4, S4-M3).
       ...(access.isDraftSubject
         ? {
           draftState: access.draftState,
@@ -262,14 +288,30 @@ export async function readableTraceFor(
           draftResolvedByViewer: (row.draftResolvedByUserId ?? null) === userId,
         }
         : {
-          draftState: null,
+          draftState: access.isDraftDepositor && !isPublishedDraftState(access.draftState) ? access.draftState : null,
           draftResolvedAt: null,
           draftResolvedByKeyId: null,
           draftResolvedByEmail: null,
           draftResolvedByViewer: false,
         }),
+      ...onBehalfParties(access, row),
     },
   };
+}
+
+/**
+ * The other party of an unpublished on-behalf draft, from the viewer's side
+ * (S4-L1); both null on anything else. Once the subject verifies it, the
+ * subject column is cleared and the recipe is theirs, so no label remains
+ * (S4-L2).
+ */
+function onBehalfParties(access: TraceAccess, row: Row): { draftDepositedBy: string | null; draftAbout: string | null } {
+  const subjectId = row.subjectUserId ?? null;
+  const onBehalf = subjectId !== null && subjectId !== access.authorId && !isPublishedDraftState(access.draftState);
+  if (!onBehalf) return { draftDepositedBy: null, draftAbout: null };
+  if (access.isDraftSubject) return { draftDepositedBy: row.userEmail ?? null, draftAbout: null };
+  if (access.isDraftDepositor) return { draftDepositedBy: null, draftAbout: row.subjectEmail ?? null };
+  return { draftDepositedBy: null, draftAbout: null };
 }
 
 /**

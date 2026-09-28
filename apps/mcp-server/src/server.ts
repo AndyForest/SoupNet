@@ -157,6 +157,9 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
       // Draft (slice 2): served as a boolean; a wrong-type value is forwarded
       // for the backend's lenient parser rather than failing the check.
       draft: z.boolean().optional().catch((ctx) => ctx.input as boolean | undefined).describe(MCP_PARAM_DESCRIPTIONS.draft),
+      // On behalf of (slice 4): forwarded as given; the backend decides who
+      // may be named and refuses everything else with one uniform answer.
+      on_behalf_of: z.string().optional().catch((ctx) => ctx.input as string | undefined).describe(MCP_PARAM_DESCRIPTIONS.onBehalfOf),
       // Rows take log_feedback's fields; the description points there instead
       // of repeating the per-field schema (slice 1, S1-Z4). A record, not a
       // bare object, so the SDK keeps every field for the /feedback forward.
@@ -177,7 +180,7 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
       idempotentHint: false,
       openWorldHint: true,
     },
-    async ({ recipe, supporting_evidence, verbosity, clusters, max_chars, decided_at, response_format, known_recipes, session_id, intent, agent_id, synthesize, impact, uncertainty, draft, feedback, file }) => {
+    async ({ recipe, supporting_evidence, verbosity, clusters, max_chars, decided_at, response_format, known_recipes, session_id, intent, agent_id, synthesize, impact, uncertainty, draft, on_behalf_of, feedback, file }) => {
       if (!apiKey) {
         return {
           content: [{ type: "text" as const, text: "Error: SOUPNET_API_KEY not configured. Get a key from your Soup.net dashboard." }],
@@ -229,6 +232,7 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
           if (impact !== undefined) formData.set("impact", impact);
           if (uncertainty !== undefined) formData.set("uncertainty", uncertainty);
           if (draft !== undefined) formData.set("draft", String(draft));
+          if (on_behalf_of !== undefined) formData.set("on_behalf_of", String(on_behalf_of));
           formData.set("format", "json");
           // Wrap in a fresh Uint8Array so the BlobPart type is Uint8Array<ArrayBuffer>
           // rather than Node's Buffer<ArrayBufferLike> (which TS rejects as a
@@ -258,6 +262,7 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
           if (impact !== undefined) params.set("impact", impact);
           if (uncertainty !== undefined) params.set("uncertainty", uncertainty);
           if (draft !== undefined) params.set("draft", String(draft));
+          if (on_behalf_of !== undefined) params.set("on_behalf_of", String(on_behalf_of));
           params.set("format", "json");
 
           response = await fetch(`${backendUrl}/check?${params.toString()}`, {

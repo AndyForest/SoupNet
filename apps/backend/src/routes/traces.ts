@@ -26,7 +26,8 @@ import {
   needsWriteAccessReason,
 } from "../services/draft-queue.service";
 import type { SharedAudience } from "../authz";
-import { TRACE_REACTIONS, vocab, authorizeTraceMove } from "@soupnet/domain";
+import { TRACE_REACTIONS, vocab, authorizeTraceMove, onlySubjectReviewsReason } from "@soupnet/domain";
+import { draftQueueUrl } from "../lib/key-remediation";
 import {
   bookIdsFor,
   roleIn,
@@ -38,6 +39,7 @@ import {
   isOwnerOrAdmin,
   isPublishedDraftState,
   mayResolveDraft,
+  unpublishedDraftManagement,
   publishedTrace,
   traceReadableById,
   resolveDraft,
@@ -394,7 +396,9 @@ traces.get("/", async (c) => {
         COALESCE(ec.evidence_count, 0)::int AS "evidenceCount",
         COALESCE(rc.ref_count, 0)::int AS "referenceCount",
         g.name AS "groupName",
-        ak.label AS "apiKeyLabel",
+        -- A key's label only under its owner's authorship (open question 40,
+        -- [F93]): a verified on-behalf recipe's depositing key is not its author's.
+        (CASE WHEN ak.user_id = t.user_id THEN ak.label ELSE NULL END) AS "apiKeyLabel",
         u.email AS "userEmail",
         ${draftStateShownTo("t", user.id)} AS "draftState"
       FROM claimnet.traces t
@@ -440,7 +444,8 @@ traces.get("/", async (c) => {
       COALESCE(ec.evidence_count, 0)::int AS "evidenceCount",
       COALESCE(rc.ref_count, 0)::int AS "referenceCount",
       g.name AS "groupName",
-      ak.label AS "apiKeyLabel",
+      -- A key's label only under its owner's authorship ([F93]).
+      (CASE WHEN ak.user_id = t.user_id THEN ak.label ELSE NULL END) AS "apiKeyLabel",
       ${draftStateShownTo("t", user.id)} AS "draftState"
     FROM claimnet.traces t
     LEFT JOIN claimnet.groups g ON g.id = t.group_id
@@ -605,6 +610,12 @@ traces.put("/:id/reaction", async (c) => {
   if (resolution) {
     const facts = await roleInBookOfTrace(db, user.id, traceId);
     ownDraft = !!facts?.isDraftSubject && facts.draftState !== null;
+    // The depositor of a draft about someone else can read it, so she gets
+    // the honest refusal rather than the uniform 404 (slice 4, S4-R2): only
+    // the person it is about reviews it. Nothing is recorded.
+    if (facts && facts.draftState === "unverified" && !facts.isDraftSubject && facts.isDraftDepositor) {
+      return c.json(await onlySubjectReviewsBody(db, user.id, traceId), 403);
+    }
     if (
       facts
       && facts.draftState === "unverified"
@@ -622,18 +633,14 @@ traces.put("/:id/reaction", async (c) => {
       DO UPDATE SET reaction = ${reaction}, updated_at = NOW()
     `);
     if (!resolution) return false;
-    return (await resolveDraft(tx, { traceId, actorUserId: user.id, resolution, byKeyId: null, authority: { kind: "member" } })) !== null;
+    // The resolving statement writes its own audit row (and, for a
+    // verification of a draft deposited about the viewer, moves the author
+    // to them), in this transaction.
+    return (await resolveDraft(tx, {
+      traceId, actorUserId: user.id, resolution, byKeyId: null, authority: { kind: "member" },
+      auditMetadata: { via: "reaction", reaction },
+    })) !== null;
   });
-
-  if (resolved && resolution) {
-    await writeAudit(db, {
-      actorUserId: user.id,
-      action: resolution === "verified" ? "recipe.draft_verified" : "recipe.draft_rejected",
-      targetType: "trace",
-      targetId: traceId,
-      metadata: { via: "reaction", reaction },
-    });
-  }
 
   // A repeat (or a race lost to another resolution) on the viewer's own
   // draft is reported as already resolved, with where it stands (S3-A2); the
@@ -644,6 +651,21 @@ traces.put("/:id/reaction", async (c) => {
   }
   return c.json({ ok: true, data: { reaction, ...(resolved && resolution ? { draftState: resolution } : {}) } });
 });
+
+/**
+ * The honest refusal for the depositor of a draft about someone else (slice
+ * 4, S4-R2): she can read it, so naming who reviews it leaks nothing, and the
+ * link is the one to hand them.
+ */
+async function onlySubjectReviewsBody(db: ReturnType<typeof getDb>, userId: string, traceId: string) {
+  const readable = await readableTraceFor(db, userId, traceId);
+  const about = readable?.trace.draftAbout ?? null;
+  return {
+    ok: false as const,
+    status: "only_subject_reviews" as const,
+    error: onlySubjectReviewsReason(about, draftQueueUrl([traceId])),
+  };
+}
 
 /**
  * The honest refusal for a draft's own person who lacks write authority on
@@ -700,9 +722,15 @@ traces.post("/:id/not-chosen", async (c) => {
   if (isPublishedDraftState(facts.draftState)) {
     return c.json({ ok: false, status: "not_a_draft", error: "This recipe is not a draft, so there is nothing to mark not chosen." }, 409);
   }
-  // Unpublished and readable means it is the viewer's own draft: only its
-  // subject or depositor may read it, and in this slice they are one person.
-  if (!facts.isDraftSubject) return notFound();
+  // Unpublished and readable means the viewer is its subject or its
+  // depositor. The depositor of a draft about someone else gets the honest
+  // refusal (slice 4, S4-R2); only the subject marks it.
+  if (!facts.isDraftSubject) {
+    if (facts.isDraftDepositor && facts.draftState === "unverified") {
+      return c.json(await onlySubjectReviewsBody(db, user.id, traceId), 403);
+    }
+    if (!facts.isDraftDepositor) return notFound();
+  }
   if (facts.draftState !== "unverified") {
     return c.json({ ok: false, status: "already_resolved", draftState: facts.draftState, error: `This draft was already resolved (${facts.draftState}); resolution is one-way.` }, 409);
   }
@@ -716,6 +744,7 @@ traces.post("/:id/not-chosen", async (c) => {
     resolution: "not_chosen",
     byKeyId: null,
     authority: { kind: "member" },
+    auditMetadata: { via: "queue" },
   });
   if (!resolved) {
     // Lost a race to another resolution, or to a membership change.
@@ -729,13 +758,6 @@ traces.post("/:id/not-chosen", async (c) => {
     return notFound();
   }
 
-  await writeAudit(db, {
-    actorUserId: user.id,
-    action: "recipe.draft_not_chosen",
-    targetType: "trace",
-    targetId: traceId,
-    metadata: { via: "queue" },
-  });
   return c.json({ ok: true, data: { draftState: "not_chosen" } });
 });
 
@@ -795,15 +817,15 @@ traces.get("/:id", async (c) => {
 
   const isGroupAdmin = isOwnerOrAdmin(access.role);
   const isSystem = user.role === "system";
-  // An unpublished draft is managed by the person it is about alone
-  // (DT-VIS-15); roleInBookOfTrace answers "not found" to anyone else.
-  const canDelete = isPublishedDraftState(access.draftState)
-    ? isTraceOwner || isGroupAdmin || isSystem
-    : access.isDraftSubject;
+  // An unpublished draft is managed by its subject and, for delete only, its
+  // depositor (DT-VIS-15, slice 4 S4-M5); roleInBookOfTrace answers "not
+  // found" to anyone else.
+  const draftManagement = unpublishedDraftManagement(access);
+  const canDelete = draftManagement ? draftManagement.delete : isTraceOwner || isGroupAdmin || isSystem;
   // Source gate only. Whether a given DESTINATION book will accept the recipe
   // is decided at move time against that book's membership — the UI can't know
   // it here, and asking would leak which books the trace could be moved into.
-  const canMove = canDelete;
+  const canMove = draftManagement ? draftManagement.move : canDelete;
   // The person the draft is about may verify or reject it with a reaction,
   // while they can write the book it is in ([F79]).
   const canResolveDraft = mayResolveDraft({
@@ -909,6 +931,10 @@ traces.patch("/:id", async (c) => {
   // and what is this user's standing on it?
   const access = await roleInBookOfTrace(db, user.id, traceId);
   if (!access) return c.json({ ok: false, error: "Trace not found" }, 404);
+  // An unpublished draft moves only at its subject's hand; its depositor gets
+  // the same 404 as a random id (slice 4, S4-D2).
+  const draftManagement = unpublishedDraftManagement(access);
+  if (draftManagement && !draftManagement.move) return c.json({ ok: false, error: "Trace not found" }, 404);
 
   // Destination side: the user's role there, and the book's name for the
   // feedback row. A destination the user can't see resolves to no role, which
@@ -922,7 +948,8 @@ traces.patch("/:id", async (c) => {
   const destRole = dest ? await roleIn(db, user.id, destGroupId) : null;
 
   const authz = authorizeTraceMove({
-    isTraceOwner: access.isAuthor,
+    // The subject of an unpublished draft moves it as its owner would.
+    isTraceOwner: draftManagement ? true : access.isAuthor,
     sourceRole: access.role,
     destRole,
     isSystem: user.role === "system",
@@ -1021,9 +1048,17 @@ traces.delete("/:id", async (c) => {
   const isGroupAdmin = isOwnerOrAdmin(access.role);
   const isSystem = user.role === "system";
 
-  if (!isTraceOwner && !isGroupAdmin && !isSystem) {
+  // An unpublished draft: its subject or its depositor, nobody else (slice 4,
+  // S4-M5, S4-D1, S4-D3). A published recipe: the ordinary rule.
+  const draftManagement = unpublishedDraftManagement(access);
+  if (draftManagement) {
+    if (!draftManagement.delete) return c.json({ ok: false, error: "Trace not found" }, 404);
+  } else if (!isTraceOwner && !isGroupAdmin && !isSystem) {
     return c.json({ ok: false, error: "Forbidden" }, 403);
   }
+  // The author of an unpublished draft is its depositor ("owner"); its
+  // subject, when someone else deposited it, is "draft_subject".
+  const actorRelation = isTraceOwner ? "owner" : draftManagement ? "draft_subject" : isSystem ? "system" : "group_admin";
 
   let result;
   try {
@@ -1052,7 +1087,7 @@ traces.delete("/:id", async (c) => {
       groupId: access.bookId,
       traceUserId: access.authorId,
       claimText: access.claimText,
-      actorRelation: isTraceOwner ? "owner" : isSystem ? "system" : "group_admin",
+      actorRelation,
       ...(reason ? { reason } : {}),
       evidenceDeleted: result.evidenceDeleted,
       referencesDeleted: result.referencesDeleted,

@@ -24,7 +24,7 @@
 
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { parseSearchQuery } from "@soupnet/domain";
+import { parseSearchQuery, onlySubjectReviewsReason } from "@soupnet/domain";
 import type { ParsedSearchQuery } from "@soupnet/domain";
 import {
   booksFor,
@@ -33,6 +33,8 @@ import {
   traceReadableById,
   draftAwaitingReviewBy,
   draftStateShownTo,
+  onBehalfSideFor,
+  onBehalfPartyFor,
   hasWriteAuthority,
   resolveReadableTraceRefs,
 } from "../authz";
@@ -43,6 +45,7 @@ import { resolveStructuredFilters } from "./trace.service";
 import { triageOrderSql } from "./search-selection";
 import { isTraceIdPrefix, uuidPrefixRange } from "./feedback.service";
 import { RECIPE_LOOKUP_MAX_IDS } from "./recipe-lookup.service";
+import { draftQueueUrl } from "../lib/key-remediation";
 
 /** Drafts per page of the queue. */
 export const DRAFT_QUEUE_PAGE_SIZE = 20;
@@ -74,8 +77,15 @@ export interface DraftQueueItem {
   depositedAt: string;
   /** The judgment date, when it differs from the deposit (a backfilled decision). */
   decidedAt: string | null;
-  /** The label of the key whose agent deposited it. */
+  /** The label of the key whose agent deposited it, when that key belongs to
+   *  the recipe's author (slice 4, open question 40). */
   keyLabel: string | null;
+  /** Slice 4 (S4-Q2): on a draft about the viewer that someone else's agent
+   *  deposited, that person's email; the ratings are their agent's. */
+  depositedBy: string | null;
+  /** Slice 4 (S4-Q5): on a draft the viewer's agent deposited about someone
+   *  else, that person's email; only they can review it. */
+  about: string | null;
   /** The first evidence entry's interpretation: why the agent couldn't ask
    *  and what would settle it, shown without opening the recipe (DT-QUE-05). */
   firstInterpretation: string | null;
@@ -83,7 +93,8 @@ export interface DraftQueueItem {
   /** The three actions are available: an unresolved draft whose book the
    *  person may write at this moment (S3-A4). */
   canResolve: boolean;
-  /** Why an unresolved draft's actions are unavailable, naming the book. */
+  /** Why an unresolved draft's actions are unavailable: the book the person
+   *  cannot write, or (for its depositor) who alone can review it. */
   blockedReason?: string;
 }
 
@@ -282,8 +293,10 @@ async function loadItems(
       t.uncertainty,
       t.created_at AS "depositedAt",
       t.decided_at AS "decidedAt",
-      ak.label AS "keyLabel",
+      (CASE WHEN ak.user_id = t.user_id THEN ak.label ELSE NULL END) AS "keyLabel",
       ${draftStateShownTo("t", userId)} AS "draftState",
+      ${onBehalfSideFor("t", userId)} AS "onBehalfSide",
+      ou.email AS "onBehalfEmail",
       (SELECT e.content FROM claimnet.trace_evidence te
          JOIN claimnet.evidence e ON e.id = te.evidence_id
         WHERE te.trace_id = t.id
@@ -292,6 +305,7 @@ async function loadItems(
     FROM claimnet.traces t
     JOIN claimnet.groups g ON g.id = t.group_id
     LEFT JOIN claimnet.api_keys ak ON ak.id = t.api_key_id
+    LEFT JOIN claimnet.users ou ON ou.id = ${onBehalfPartyFor("t", userId)}
     WHERE t.id IN (${sql.join(ids.map((id) => sql`${id}::uuid`), sql`, `)})
       AND ${traceReadableById("t", userId)}
   `);
@@ -299,6 +313,7 @@ async function loadItems(
     id: string; recipe: string; bookId: string; bookName: string; bookSlug: string;
     impact: string | null; uncertainty: string | null; depositedAt: string | Date; decidedAt: string | Date | null;
     keyLabel: string | null; draftState: string | null; firstInterpretation: string | null;
+    onBehalfSide: string | null; onBehalfEmail: string | null;
   };
   const byId = new Map((rows as unknown as Row[]).map((r) => [r.id, r]));
   const iso = (v: string | Date | null): string | null => (v === null ? null : new Date(v).toISOString());
@@ -312,7 +327,12 @@ async function loadItems(
       ? (r.draftState as QueueItemState)
       : "published";
     const writable = hasWriteAuthority({ kind: "member", role: roleOf.get(r.bookId) ?? null }, r.bookId);
-    const canResolve = state === "unverified" && writable;
+    const depositedBy = r.onBehalfSide === "depositedBy" ? r.onBehalfEmail : null;
+    const about = r.onBehalfSide === "about" ? r.onBehalfEmail : null;
+    // The depositor of a draft about someone else reads it but never
+    // resolves it (slice 4, S4-Q5): only its subject does.
+    const isDepositorOnly = r.onBehalfSide === "about";
+    const canResolve = state === "unverified" && writable && !isDepositorOnly;
     out.push({
       id: r.id,
       recipe: r.recipe,
@@ -322,12 +342,16 @@ async function loadItems(
       depositedAt: iso(r.depositedAt) ?? "",
       decidedAt: iso(r.decidedAt),
       keyLabel: r.keyLabel,
+      depositedBy,
+      about,
       firstInterpretation: r.firstInterpretation,
       state,
       canResolve,
-      ...(state === "unverified" && !writable
-        ? { blockedReason: needsWriteAccessReason(r.bookName) }
-        : {}),
+      ...(state === "unverified" && isDepositorOnly
+        ? { blockedReason: onlySubjectReviewsReason(about, draftQueueUrl([r.id])) }
+        : state === "unverified" && !writable
+          ? { blockedReason: needsWriteAccessReason(r.bookName) }
+          : {}),
     });
   }
   return out;

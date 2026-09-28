@@ -35,13 +35,12 @@
  */
 
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { validateVerificationEvidence } from "@soupnet/domain";
+import { validateVerificationEvidence, onlySubjectReviewsReason } from "@soupnet/domain";
 import { keyMayVerifyDrafts, resolveDraft, hasWriteAuthority } from "../authz";
 import type { Principal } from "../authz";
 import { parseEvidenceMarkdown } from "./evidence-parser";
 import { insertEvidenceEntries } from "./trace.service";
 import { lookupRecipes } from "./recipe-lookup.service";
-import { writeAudit } from "./audit-log.service";
 import { draftQueueUrl } from "../lib/key-remediation";
 
 export type VerifyDraftResult =
@@ -51,6 +50,7 @@ export type VerifyDraftResult =
   | { status: "not_a_draft"; recipeId: string }
   | { status: "already_resolved"; recipeId: string; draftState: string }
   | { status: "needs_write_access"; recipeId: string; recipeBook: { slug: string; name: string } }
+  | { status: "only_subject_reviews"; recipeId: string; subjectEmail: string }
   | { status: "refused"; recipeId: string; error: string };
 
 /** Human-readable text for a result — the MCP tool's reply and the REST error. */
@@ -68,6 +68,8 @@ export function describeVerifyResult(r: VerifyDraftResult): string {
       return `${r.recipeId} was already resolved (${r.draftState}); resolution is one-way and nothing was stored.`;
     case "needs_write_access":
       return `${r.recipeId} is a draft in the recipe book "${r.recipeBook.name}" (${r.recipeBook.slug}), and verifying it needs write access to this recipe book, which this API key does not have; nothing was stored. Verify it with a key that can write ${r.recipeBook.slug}, or ask the person to confirm it in their review queue: ${draftQueueUrl([r.recipeId])}`;
+    case "only_subject_reviews":
+      return `${onlySubjectReviewsReason(r.subjectEmail, draftQueueUrl([r.recipeId]))} Nothing was stored.`;
     case "refused":
       return r.error;
   }
@@ -100,6 +102,12 @@ export async function verifyDraft(
   if (entry.draftState !== "unverified") {
     return { status: "already_resolved", recipeId: entry.recipeId, draftState: entry.draftState };
   }
+  // A draft this key's person deposited about someone else (slice 4, S4-R2):
+  // readable, so the refusal is honest; only the person it is about can
+  // verify it, and the answer hands over their review link.
+  if (entry.draftAbout) {
+    return { status: "only_subject_reviews", recipeId: entry.recipeId, subjectEmail: entry.draftAbout };
+  }
 
   // Write authority on the recipe's book ([F78]): publishing into a book is a
   // write. The key can read this draft (it is the key's own person's), so the
@@ -124,12 +132,16 @@ export async function verifyDraft(
   const fresh = entries.filter((e) => !e.quote || !known.has(e.quote.replace(/\s+/g, " ").trim().toLowerCase()));
 
   const outcome = await db.transaction(async (tx) => {
+    // The resolving statement writes the audit row itself, in this
+    // transaction, naming the previous author when a draft deposited about
+    // this person becomes theirs (S4-R4).
     const resolved = await resolveDraft(tx, {
       traceId: entry.recipeId,
       actorUserId: principal.userId,
       resolution: "verified",
       byKeyId: principal.keyId,
       authority,
+      auditMetadata: { via: "agent", evidenceAdded: fresh.length },
     });
     // Resolved by a concurrent call, moved out of the key's write scope
     // meanwhile, or (from slice 4) not the person it is about: nothing is
@@ -160,14 +172,6 @@ export async function verifyDraft(
   }
 
   const verifiedByDepositingKey = outcome.depositingKeyId === principal.keyId;
-  await writeAudit(db, {
-    actorUserId: principal.userId,
-    apiKeyId: principal.keyId,
-    action: "recipe.draft_verified",
-    targetType: "trace",
-    targetId: entry.recipeId,
-    metadata: { via: "agent", evidenceAdded: fresh.length, verifiedByDepositingKey },
-  });
 
   return { status: "verified", recipeId: entry.recipeId, draftState: "verified", evidenceAdded: fresh.length, verifiedByDepositingKey };
 }

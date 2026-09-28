@@ -151,11 +151,8 @@ export async function deleteTraceCascade(
 /**
  * Remove the four-table embedding chain (sources → strategies → chunks →
  * vectors) for one polymorphic source. vector_cache is deliberately untouched
- * (see header). Exported for two callers beyond this file:
- * trace-move.service.ts, which redacts de-selected evidence on the same terms
- * a delete would; and the corpus-import overwrite path (import.service.ts),
- * which replaces a trace's claim text and must drop the stale embeddings so
- * the worker sweep re-embeds the new text.
+ * (see header). Exported for trace-move.service.ts, which redacts
+ * de-selected evidence on the same terms a delete would.
  */
 export async function deleteEmbeddingChainForSource(
   tx: PostgresJsDatabase,

@@ -151,6 +151,10 @@ export const CHECK_PARAMS = [
   // of the recipe being checked, so it carries like the ratings: re-checking
   // from the page must not quietly publish what was deposited as a draft.
   { field: "draft",       wire: "draft",             aliases: [],              roundTrip: "carry" },
+  // On behalf of (drafts-and-triage slice 4): the email of the person the
+  // recipe is about. Carries like draft: re-checking from the page must not
+  // quietly turn a draft about someone else into the key user's own recipe.
+  { field: "onBehalfOf",  wire: "on_behalf_of",      aliases: [],              roundTrip: "carry" },
   // Premium opt-in behavior flag — carries like the other intent-preserving
   // params (agent_id, decided_at) so an opted-in caller keeps synthesis on
   // across the page's re-check form and Copy-URL round-trips, rather than
@@ -270,6 +274,7 @@ function buildJsonResponse(
             uncertainty: result.ratings?.uncertainty ?? null,
             // Present only when the deposit is an unpublished draft (slice 2).
             ...(isShownDraftState(result.draftState) ? { draftState: result.draftState } : {}),
+            ...(isShownDraftState(result.draftState) && result.draftAbout ? { draftAbout: result.draftAbout } : {}),
           } satisfies Recipe,
         }
         : {}),
@@ -1140,6 +1145,9 @@ function renderPage(
 
       <label for="draft"><input type="checkbox" id="draft" name="draft" value="true"${parseDraftFlag(params.draft).draft ? " checked" : ""}> Deposit as a draft &mdash; the person could not be asked; only they and their agents see it until they verify it</label>
 
+      <label for="on_behalf_of">On behalf of &mdash; the email of the person this recipe is about, if not you (optional; always a draft only they can verify)</label>
+      <input type="email" id="on_behalf_of" name="on_behalf_of" value="${esc(params.onBehalfOf ?? "")}" autocomplete="off">
+
       <label for="mix">Mix traces (trace_id:weight, comma-separated)</label>
       <input type="text" id="mix" name="mix" placeholder="4821:1.0, 3102:0.5, 3450:-0.3">
     </details>
@@ -1305,6 +1313,7 @@ async function handleCheck(
       impact: params.impact,
       uncertainty: params.uncertainty,
       draft: params.draft,
+      onBehalfOf: params.onBehalfOf,
     });
   } else if (principal && params.filter && !params.trace) {
     // The sanctioned no-logging path: filter (alias f) with no recipe runs a
@@ -1374,7 +1383,7 @@ async function handleCheck(
       return c.json(withFeedbackField({ ok: false, error: result.error }, feedbackResults), 400);
     }
     const db = getDb();
-    let enriched = await enrichResults(db, result.results);
+    let enriched = await enrichResults(db, result.results, principal?.userId);
     enriched = await clusterEvidenceInResults(db, enriched);
     const page = params.page ? parseInt(params.page, 10) : 1;
     const synthesis = await resolveSynthesis(db, params, principal, result, enriched, searchOnly);
@@ -1387,7 +1396,7 @@ async function handleCheck(
   let enriched: EnrichedResult[] | undefined;
   if (result && !result.error && result.results.length > 0) {
     const db = getDb();
-    enriched = await enrichResults(db, result.results);
+    enriched = await enrichResults(db, result.results, principal?.userId);
     enriched = await clusterEvidenceInResults(db, enriched);
   }
 

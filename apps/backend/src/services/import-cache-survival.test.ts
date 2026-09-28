@@ -153,7 +153,7 @@ describe.skipIf(!canRun())("vector_cache survives user deletion → cross-user r
     const parsedA = parseExportPayload(corpus);
     expect(parsedA.ok).toBe(true);
     if (!parsedA.ok) return;
-    await importCorpus(db, parsedA.data, { userId: a.userId, overwrite: false });
+    await importCorpus(db, parsedA.data, { userId: a.userId });
 
     const chunkA = await readEvidenceChunk(a.userId);
     // First embed = cache miss → stub provider → writes vector_cache.
@@ -183,7 +183,7 @@ describe.skipIf(!canRun())("vector_cache survives user deletion → cross-user r
     const parsedB = parseExportPayload(corpus);
     expect(parsedB.ok).toBe(true);
     if (!parsedB.ok) return;
-    await importCorpus(db, parsedB.data, { userId: b.userId, overwrite: false });
+    await importCorpus(db, parsedB.data, { userId: b.userId });
 
     const chunkB = await readEvidenceChunk(b.userId);
     // Identical content ⇒ identical content hash ⇒ the surviving cache row is

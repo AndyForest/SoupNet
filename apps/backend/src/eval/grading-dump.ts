@@ -76,7 +76,6 @@ async function prepare(db: PostgresJsDatabase, datasetDir: string): Promise<Prep
   const result = await importCorpus(db, parsed.data, {
     userId: user.id,
     newBookName: `gradeprep ${runTag}`,
-    overwrite: false,
   });
   if (!result.book) throw new Error("import created no destination book");
   const groupId = result.book.id;

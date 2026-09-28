@@ -1,0 +1,1 @@
+ALTER TABLE "claimnet"."traces" ADD COLUMN "subject_user_id" uuid;

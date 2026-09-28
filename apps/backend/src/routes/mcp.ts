@@ -439,6 +439,10 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
       // instead of failing the check, which takes an unrecognized value as a
       // draft, the private side.
       draft: draftParam(),
+      // On behalf of (slice 4). Served as a string; `.catch` hands a value of
+      // the wrong type to the service, which refuses it with the one uniform
+      // naming answer rather than an SDK validation error (S4-W4, S4-U1).
+      on_behalf_of: z.string().optional().catch((ctx) => ctx.input as string | undefined).describe(MCP_PARAM_DESCRIPTIONS.onBehalfOf),
       feedback: z.array(feedbackRowSchema).optional().describe(MCP_PARAM_DESCRIPTIONS.feedbackParam),
       axes: z.string().optional().describe(
         "Two comma-separated concept terms; each result gets x/y similarity positions (0-1) against them (semantic projection)."
@@ -501,7 +505,7 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
       idempotentHint: true,
       openWorldHint: true,
     },
-    async ({ recipe, supporting_evidence, verbosity, clusters, max_chars, decided_at, axes, recipe_book, read_recipe_books, file_url, file_base64, file_name, file_mime_type, region, response_format, known_recipes, session_id, intent, agent_id, synthesize, impact, uncertainty, draft, feedback }) => {
+    async ({ recipe, supporting_evidence, verbosity, clusters, max_chars, decided_at, axes, recipe_book, read_recipe_books, file_url, file_base64, file_name, file_mime_type, region, response_format, known_recipes, session_id, intent, agent_id, synthesize, impact, uncertainty, draft, on_behalf_of, feedback }) => {
       // Size steer: explicit verbosity wins; with NO steer at all, the
       // internal "auto" sentinel takes the automatic path (ranking-config
       // autoK — ships as the fixed 3-exemplar default). Legacy clusters /
@@ -605,6 +609,7 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
           impact,
           uncertainty,
           draft,
+          onBehalfOf: on_behalf_of,
         });
 
         if (result.error) {
@@ -614,7 +619,7 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
 
         // Enrich results with evidence/references (same pipeline as /check JSON)
         const db = getDb();
-        let enriched = await enrichResults(db, result.results);
+        let enriched = await enrichResults(db, result.results, principal?.userId);
         enriched = await clusterEvidenceInResults(db, enriched);
 
         // Premium synthesis (opt-in). Eligibility is resolved inside
@@ -750,7 +755,7 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
         }
 
         const db = getDb();
-        let enriched = await enrichResults(db, result.results);
+        let enriched = await enrichResults(db, result.results, principal?.userId);
         enriched = await clusterEvidenceInResults(db, enriched);
 
         const jsonResponse = buildMcpJsonResponse(result, enriched, 1, knownRecipeIds);
@@ -1245,6 +1250,7 @@ export function buildMcpJsonResponse(
           uncertainty: result.ratings?.uncertainty ?? null,
           // Present only when the deposit is an unpublished draft (slice 2).
           ...(isShownDraftState(result.draftState) ? { draftState: result.draftState } : {}),
+          ...(isShownDraftState(result.draftState) && result.draftAbout ? { draftAbout: result.draftAbout } : {}),
         } satisfies Recipe,
       }
       : {}),

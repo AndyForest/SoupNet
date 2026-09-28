@@ -10,6 +10,7 @@ import {
   lockBooksForDeparture,
   removeMembershipsInOrgsOwnedBy,
   removeAllMembershipsOf,
+  draftAwaitingReviewBy,
 } from "../authz";
 
 export interface UserDeleteResult {
@@ -265,7 +266,12 @@ export async function deleteUserCascade(
 
 /**
  * Trace ids to cascade for a user: the traces they authored (in any book),
- * plus whatever remains in books of organizations they own that have NO
+ * plus the unverified drafts about them that someone else's agent deposited
+ * (drafts-and-triage slice 4, S4-A3; build log open question 35): those
+ * exist only for this person's review and nobody else can ever resolve them.
+ * Drafts about them they rejected or marked not chosen stay their depositor's
+ * (recipe b89db1f0), and a draft they verified is already theirs by author.
+ * Plus whatever remains in books of organizations they own that have NO
  * member other than them — those books are deleted with the account, so
  * nothing in them can outlive it. A book with another member never
  * contributes another author's trace here [F70]; the NOT EXISTS is the
@@ -276,7 +282,8 @@ async function collectUserTraceIds(
   userId: string,
 ): Promise<string[]> {
   const authoredRows = await db.execute(sql`
-    SELECT id FROM claimnet.traces WHERE user_id = ${userId}::uuid
+    SELECT t.id FROM claimnet.traces t
+    WHERE t.user_id = ${userId}::uuid OR ${draftAwaitingReviewBy("t", userId)}
   `);
   const authored = (authoredRows as unknown as Array<{ id: string }>).map((r) => r.id);
   const inSoleMemberBooks = await traceIdsInSoleMemberBooksOwnedBy(db, userId);

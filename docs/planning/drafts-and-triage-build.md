@@ -763,6 +763,165 @@ The other slice 3 follow-ups were closed in the fix pass (`2feb9b7`, `8c3ed74`);
 
 **Briefing-copy declaration.** The `on_behalf_of` description, the on-behalf deposit and repeat notices, the on-behalf labels, and the depositor's refusal copy on `verify_draft` and the reaction route are agent-facing copy under [../briefing-specs/README.md](../briefing-specs/README.md) §The regression rule. The slice 4 PR appends a `spec-decision-log.md` entry (mirrored in the commit body) that declares a new `@unreleased` scenario (a briefed agent recording another person's judgment from their own artifacts deposits it with `on_behalf_of`, quotes that person's words as evidence, and hands its human the review link for that person rather than calling the draft verified), names as watched the slice 2 drafting scenario in `checking-behavior.feature` with a rationale, and records the bytes before and after for `tools/list`, the shared descriptions, the notice, and the label. The when-to-draft guidance in the briefing body stays in slice 7.
 
+### Slice 4 verification record
+
+Written 2026-09-27 by the functional verifier (agent `a-drafts-verify-s4-2026-09-27`, Soup.net intent `int_k3zC1wjtvOq0Jrr1c0zSi8NE`), who did not build the slice and changed no application code. Verified at branch tip `f3615d0` in a throwaway detached worktree after `npm ci` and `npm run build:packages`. Verdicts were formed from the verifier's own probes and code review before the builder's build notes were read; the notes were then checked against that evidence (see "Builder's interpretations" below).
+
+**Verdict: accept with minor follow-ups.** Of the 57 rows, 53 pass, three of them with deviations the orchestrator accepted. Three are partial: S4-L2 (the key-id badge), S4-L3 (one untrue clause), and S4-UI3 (a pre-existing heading overflow). One is not met as written: S4-UI1, whose serious contrast violations come from badge and evidence styles the slice did not touch. No security property failed.
+
+**How it was verified.**
+
+- **Gate:** `TESTCI_PGPORT=5724 npm run test:ci`, one run, **exit code 0**: 123 test files passed and 3 skipped, 1,768 tests passed and 10 skipped; the golden-set ranking eval reported "All 9 thresholds green."
+- **Targeted re-run** against the verifier's own stack: the ten files that carry this slice's criteria (`routes/drafts-on-behalf.test.ts`, `authz/naming.test.ts`, `authz/draft-sql.test.ts`, `authz/roles.test.ts`, `authz/trace-access.test.ts`, `authz/seam-guard.test.ts`, `services/ranking-isolation.test.ts`, domain `drafts.test.ts`, frontend `draft-queue.test.ts` and `draft-status-label.test.ts`): 180 tests passed, none skipped. The slice 4 Layer 3 suite (35 tests) takes about 14 seconds on an idle stack.
+- **Independent probe:** a script of the verifier's own (196 assertions, plus three follow-up probes) against the built backend on a throwaway stack (compose project `soupnet-ci-5724`, backend on :3291 with the test-ci environment and stub embeddings), torn down afterwards. Cast: Pat (subject), Dana (depositor), Sam (owner of the shared book), Olive (outsider, owner of her own book), Mo (a member of Olive's book only), Uma (a shared-book member with an unverified email), and the system user; keys P, P2, D (labelled "Dana laptop agent"), D2, Sam's and Olive's. Account deletion ran on four fresh casts.
+- **Tests fail without the slice's rules** (mutations in the throwaway tree, reverted): `subjectOf` back to `user_id` fails 6 tests in `draft-sql.test.ts`; letting the depositor move fails `roles.test.ts`; showing the depositor a verified state fails the S4-M3 parity test.
+- **Code review** of the slice's diff (`0949691..f3615d0`, first-parent slice commits `7f7dd54` to `e527e15`).
+
+**Carried in**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S4-F1 | pass (separable path) | F86 stays open in `docs/backlog.md`; F89 is closed (`b33b8bd`). The row's fallback was run by hand: deleting the draft fragment from the account-deletion collection (`user-delete.service.ts`), the on-behalf party fragment from the by-id lookup (`recipe-lookup.service.ts`), and the subject fragment from the export (`routes/auth.ts`) each makes `check:authz-seam` exit 1 naming the file and its new fingerprint; the clean tree exits 0. F86 is not closed. |
+
+**Where it lives**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S4-M1 | pass | `authz/naming.ts`: one statement over `lower(u.email)` composing `membershipOf`, `WRITE_ROLES`, and `activeUserPredicate` (which reads verified and not waitlisted). Live: an owner-role member is nameable; Mo (another book only), Olive (her own book only), Uma (unverified member), Pat named into a book he is not in, and Pat after removal from the book are all refused. A mixed-case, padded email is accepted. No `group_members` read outside the module (guard green). |
+| S4-M2 | pass | `subjectOf` is `COALESCE(t.subject_user_id, t.user_id)`, `depositorOf` is `user_id`; `trace-access.ts` reads both through them. The parity tests vary subject and depositor separately; the mutation above fails them. |
+| S4-M3 | pass | Dana's `GET /traces/:id` on her unverified draft: `draftState: unverified`, `draftAbout: <Pat>`, resolution fields null; on the rejected one, `rejected`. After Pat verifies: no state, no `draftAbout`, no key label. Pat sees every state. The mutation fails the parity test. |
+| S4-M4 | pass | Pat's confirm: `user_id` Pat, subject NULL, resolver Pat, `api_key_id` still D. Reject and not chosen: `user_id` Dana, subject Pat. The static test passes and a repo grep finds no other `UPDATE claimnet.traces` that sets `user_id` (import's overwrite and the move set other columns). Nothing else moved the author: Dana's identical re-check after verification, her move (refused), and her delete (403) all left it Pat's. The row's "module tests calling `resolveDraft` directly" are Layer 3 tests plus the static test; the verifier's probe covered all three outcomes. |
+| S4-M5 | pass | `unpublishedDraftManagement` in `roles.ts`; the detail page gives Dana `canDelete: true, canMove: false`, Pat both. The mutation fails its unit test. |
+| S4-M6 | pass | Every changed statement is re-registered with a reason; `ranking-isolation.test.ts` forbids `subject_user_id`, `subjectUserId`, and `onBehalf*` (and its draft pattern now actually matches: it held backspace characters before `ed89afa`). Hand plants: see S4-F1. |
+
+**Storage**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S4-S1 | pass | Migration `0039_traces_draft_subject.sql` is one `ALTER TABLE … ADD COLUMN "subject_user_id" uuid;` with no foreign key and no `UPDATE`; `check:data-model` passed in the gate. |
+| S4-S2 | pass | Dana repeating identical text naming Sam returns the draft about Pat, subject unchanged; the slice 1 and 2 idempotency tests pass. |
+| S4-S3 | pass | No index; the count composes `draftAwaitingReviewBy`. |
+| S4-S4 | pass (accepted deviation) | The on-behalf `recipe.checked` insert sits inside the deposit transaction and the verification's audit row is written by the resolving statement itself (a data-modifying CTE), so neither can be skipped. After Dana's account is deleted, `audit_log` alone still names her as the depositor (`recipe.checked` actor) and the previous author (`previousAuthorId` on `recipe.draft_verified`). Accepted deviation: no failure-injection test. |
+
+**The wire parameter**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S4-W1 | pass | Remote MCP, `GET /check`, `POST /check` urlencoded and multipart each store a draft about Pat with a padded, upper-cased email; the HTML page shows "draft about <Pat>" and the re-check form carries `name="on_behalf_of" value="<Pat>"`; the stdio test forwards the value. |
+| S4-W2 | pass | `draft` absent, `false`, `"false"`, `"maybe"`, `true`: each stores `unverified`, subject Pat, author Dana, key D. |
+| S4-W3 | pass | Naming Dana herself (padded, upper case) stores an ordinary recipe; the structured response equals the no-parameter one apart from `totalResults` (one higher, from the probe's own previous deposit); with `draft=true` it is an ordinary self draft. |
+| S4-W4 | pass | Empty and whitespace-only values equal absent. 14 unnameable values (unknown, Olive, Mo, Uma, malformed, `pat@`, an injection-shaped string, a `+` alias, a 5,000-character address, a Cyrillic homoglyph, and on MCP a number, array, object, and boolean) store no recipe and write no `recipe.checked` row. |
+| S4-W5 | pass | One deposit with `on_behalf_of`, `decided_at`, `impact`, `intent`, `known_recipes`, and a PNG attachment: stored as specified, one audit row carrying `subjectUserId`, `intentId`, and `hasFile`; no audit metadata contains an email, and no row mentions the refused addresses. |
+| S4-W6 | pass | `check_recipe` gains exactly one property; `search_recipes` none; `/check?filter=` with an unknown `on_behalf_of` answers 200 with the results and no refusal. |
+
+**Visibility**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S4-V1 | pass | Pat's agents: `is:draft` lists it with `draftDepositedBy`, markdown "deposited by <Dana>", in his own check's results, and by prefix. Dana's agents: absent from the default search and from `is:draft`, present under `author:me` (with `draftAbout`) and `author:anyone`, readable by id. P2, D2, Sam's and Olive's keys: absent from `author:anyone` search, and `get_recipes` (full and prefix), `GET /recipes`, `verify_draft`, `POST /recipes/:id/verify`, `log_feedback`'s target, and briefing `recipe_ids` each equal a random id. Sam, Olive, Mo, and the system user: absent from `GET /traces?groupId=`. |
+| S4-V2 | pass | After Pat confirms: Sam reads it with Pat as author and no draft state, on-behalf field, or key label; `author:<Pat>` finds it and `author:<Dana>` does not; Pat's `author:me` finds it without on-behalf fields; Dana's `author:me` no longer does. |
+| S4-V3 | pass | Rejected: readable by id to Dana ("about Pat") and Pat ("deposited by Dana") with its state, 404 for Sam, gone from Dana's `author:me`, Sam's `get_recipes` equals a random id. |
+
+**Labels and notices**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S4-L1 | pass | Structured, markdown, `get_recipes`, and detail-page fields name the other party from each side, only on unpublished on-behalf rows; `/schemas/recipe.json` declares `draftAbout` and `draftDepositedBy`. |
+| S4-L2 | partial | After verification there is no on-behalf field for anyone. The API returns a null key label to Pat, Dana, and Sam (the key is Dana's and the author is Pat), and it stays null after Dana's account is deleted. But the detail page's agent badge still shows the key, reading "No label set" and the first eight characters of Dana's key id, to every reader. So the depositing key still appears as the agent of Pat's recipe, and "No label set" is untrue of that key. Follow-up: when the key is not the author's, show no key at all. |
+| S4-L3 | partial | The notice names Pat, says it is a draft because it is on his behalf, who can see it, that only he confirms, and gives `<FRONTEND_URL>/app/drafts?ids=<id>`; it never mentions `verify_draft`. But it says "(your draft flag was overridden)" when no `draft` was sent, because the code tests only that the parsed flag is not true (`draftFlagOverridden: !!subject && !requestedDraft.draft`); the rubric scopes that clause to a false flag. Follow-up: send the clause only for an explicit false (recipe `9172f109`). |
+| S4-L4 | pass | Repeats with `draft=false` and no `on_behalf_of`, and naming Sam, return the same id with "…logged this recipe as a draft about <Pat>, and it is still a draft: checking it again does not verify it; only they can." and the link. |
+
+**The queue**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S4-Q1 | pass | Pat's queue total 6 = `/traces/drafts/count` 6 = briefing "Drafts: 6 unverified drafts about your user…". |
+| S4-Q2 | pass | Item carries `depositedBy: <Dana>` and `keyLabel: "Dana laptop agent"`; rendering: browser run. |
+| S4-Q3 | pass | `author:<Dana>` narrows Pat's queue to items deposited by Dana. |
+| S4-Q4 | pass | Dana's queue holds no item with `about`, and her count equals her total. |
+| S4-Q5 | pass | Dana's id-list view: `canResolve: false`, `blockedReason` names Pat and the link; Pat's: `canResolve: true`. |
+
+**Verification and resolution**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S4-R1 | pass | Pat's reaction and Pat's agent's `verify_draft` both resolve a Dana-deposited draft; not chosen and reject work from the queue and reaction. The slice 2 and 3 suites pass unchanged but were not re-parameterized with an on-behalf draft (builder's note); the probe covers each route. |
+| S4-R2 | pass | Dana's `verify_draft` names Pat and the link; REST verify 403 `only_subject_reviews`; `still_true` and `wrong` 403; not chosen 403; no reaction row, still unverified. |
+| S4-R3 | pass | See S4-M4; the agent verification's text and audit say nothing about the depositing agent verifying (`verifiedByDepositingKey: false`). |
+| S4-R4 | pass | One `recipe.draft_verified` row per verification, actor Pat, `previousAuthorId` Dana; reject and not chosen rows name Pat and carry no `previousAuthorId`. |
+
+**Deletion and move**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S4-D1 | pass | Dana's `DELETE /traces/:id` on her unverified draft: 200, row gone, Pat's count one lower; no agent tool added. |
+| S4-D2 | pass | Dana's move equals a random id's 404 byte for byte. Pat moves one into his personal book: still unverified, about Pat, authored by Dana; Dana still reads it by id through the human route, her key D does not (out of scope), Sam gets 404, and Dana can still delete it. |
+| S4-D3 | pass | Sam, Olive, Mo, and the system user: move and delete equal a random id byte for byte; nothing changed. |
+| S4-D4 | pass | After verification Dana's delete is 403 and her move is refused; Sam (owner) deletes a verified one. Rejected and not-chosen stay Dana's; Pat (subject) deleted an unverified one. |
+
+**Account deletion and removal**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S4-A1 | pass | Pat removed: queue drops it; his link shows `canResolve: false` naming the book; his confirm is an honest 403; Dana's view unchanged; Pat cannot be named meanwhile; rejoining restores it. |
+| S4-A2 | pass | Dana removed: her key reads it as a random id; she still reads it by id and deletes another of her unverified deposits; Pat verifies one and it becomes his. |
+| S4-A3 | pass | Subject deletes his account: his verified on-behalf recipe and the unverified drafts about him go (embeddings too), including one in a book he had already left; the rejected one stays Dana's; a new account with his email has an empty queue and gets a random id's 404; audit rows remain. |
+| S4-A4 | pass | Depositor deletes her account: her unverified, rejected, and not-chosen deposits go; Pat's verified one stays his; Pat's count drops by one; `audit_log` still names her. |
+| S4-A5 | pass | Owner deletes his account after the other members were removed: the book survives with no members in the depositor's personal organization, with one `recipe_book.left_without_members` row; Dana reads and deletes her draft; Pat reads it but his confirm is refused (403). |
+
+**Export and import**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S4-E1 | pass | Dana's export: the unverified and rejected drafts with `onBehalfOf: <Pat>`, not the verified one. Pat's: the verified one without `onBehalfOf`, not the unverified one. Sam's: none. |
+| S4-E2 | pass (accepted deviation) | Rows naming Pat (one marked `verified` in the file) import as unverified drafts about Pat by Dana. Refusals: unknown, Olive, and Pat-into-a-book-he-is-not-in give identical 400 bodies; Uma and a malformed address identical 400 bodies in the target book; nothing stored. A row naming the importer imports as today; Pat's verified recipe re-imports as his own. Accepted deviation: the whole file is refused, not the row (recipe `a8916b66`). |
+| S4-E3 | pass | Imported on-behalf rows carry Dana as author and no resolution fields. |
+
+**Admin counts, uniform responses, budgets**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S4-C1 | pass | `GET /admin/users` `recipeCount`: Dana 15 → 14 and Pat 2 → 3 when Pat verifies. |
+| S4-U1 | pass | Over the 14 unnameable values, one variant each on MCP markdown, MCP structured, `/check` JSON, `POST /check` urlencoded, multipart, and `/check` HTML (after replacing the echoed value); import refusals as in S4-E2. The lookup is one statement for every input. Timing not measured (deviation the row allows). |
+| S4-U2 | pass (accepted deviation) | The slice 2/3 harness was not re-run (accepted); the verifier's own on-behalf comparison: for Sam, Olive, Mo, and the system user, `GET /traces/:id`, move, delete, `still_true` and `stale` reactions, not chosen, and the id-list link by full id and prefix are byte-identical to a random id (status and body); for P2, D2, Sam's and Olive's keys, the agent by-id surfaces listed under S4-V1. No reaction row was written. |
+| S4-U3 | pass | Honest refusals appear only for Pat and Dana; the same actions from Sam, Olive, Mo, and the system user are the uniform 404. |
+| S4-Z1 | pass | Remote `tools/list` **16,986** bytes (cap 17,000); stdio **13,196** (cap 13,670); `on_behalf_of` description 83 characters; `draft`'s unchanged at 171. |
+| S4-Z2 | pass | Shared descriptions **6,051** characters; cap raised 6,000 → 6,080 (by 80, at most the new description's 83) with a dated comment. |
+| S4-Z3 | pass | The label adds " about <email>" (email + 7) or ", deposited by <email>" (email + 15); self and published labels unchanged. |
+| S4-Z4 | pass | On-behalf new-draft notice 336 characters against the self notice's 344 (34-character email, same URL). |
+| S4-Z5 | pass (code review) | No briefing source changed apart from the new parameter description; the Drafts line counts through `draftAwaitingReviewBy` and read "6 unverified drafts about your user" for Pat. No pre-slice byte comparison was run. |
+
+**Accessibility and phone width** (browser run: expectations and results in the private companion repo under `docs/working/browser-verification/2026-09-27-drafts-slice4/`; spec `tests/e2e/drafts-slice4.spec.ts`, written by a separate verifier agent and not committed; desktop 13 tests, 11 passed; mobile 1 test, failed. The verifier opened the key screenshots itself.)
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S4-UI1 | not met as written (pre-existing cause) | axe finds no serious or critical violation on Pat's queue or Dana's id-list view. Each of the three detail pages (Pat's and Dana's for the unresolved draft, Sam's for the verified one) has one serious `color-contrast` violation on four nodes: the "Human user" and "Agent (API key)" badge captions and the key-id prefix (1.52:1), and the evidence source line (1.76:1). They come from `--color-outline-variant` in `UserBadge.tsx`, `ApiKeyBadge.tsx`, and the evidence card, which the slice did not change; the new "Deposited by" and "About" lines pass. Not a slice 4 regression, but the row names these pages. |
+| S4-UI2 | pass | The party lines are text ("Deposited on your behalf by <Dana>", "About <Pat>: only they can confirm or reject it"). Dana's reason is tied to the `role="group"` action group by `aria-describedby`. Her delete control's accessible name is "Delete draft about <Pat>: As a backend maintainer …", and the keyboard reaches it with a visible focus ring. |
+| S4-UI3 | partial (pre-existing cause) | At 412 px the queue and Dana's id-list view have no horizontal scroll and a 90-character email wraps. On a detail page whose recipe text also holds a 90-character unbroken token, the page is 1,232 px wide because the recipe `<h1>` has no `overflow-wrap`, while the party line (`overflowWrap: "anywhere"`) wraps. The same page with ordinary text measures 412. The heading predates the slice and also overflows at 1,440 px. |
+
+
+**Security properties.** On behalf of someone else is always a draft (S4-W2, S4-E2), and the depositor could not publish it by `verify_draft`, REST verify, reaction, not chosen, import, or re-check (S4-R2, S4-L4, S4-E2). Naming is decided once, by one statement, with one refusal per surface (S4-M1, S4-U1). The subject is a user id; a re-registered email inherits nothing (S4-A3). The author changes only in the resolving statement, and the depositor stays in `audit_log` after her account is gone (S4-M4, S4-S4). Collaborators, outsiders, and out-of-scope keys see a random id's bytes (S4-U2); honest refusals go only to the two parties (S4-U3). The rule is in the module, guarded by the seam check and the parity tests, and the subject cannot reach ranking (S4-M2 to M6). The security audit is a separate role; its findings go to the private repo.
+
+**Builder's interpretations** (build notes, 1 to 5), checked after the verdicts above.
+
+1. The subject's label says "visible only to them and their agents" without naming the depositor: agreed as within the byte budget; the depositor's label has the same ambiguity ("about <Pat>: … visible only to them"). Copy follow-up, not a row failure.
+2. The depositor's `stale` reaction is recorded: confirmed (200, one reaction row, no state change). The verifier also found that Dana's `still_true` on a draft Pat already rejected is recorded (200, one row), while on the unverified draft it is a 403. S4-R2 names only the unverified case, so this passes the row, but a depositor's reactions on a draft about someone else are rows in that draft's counts. Follow-up: decide whether a depositor-only viewer reacts at all.
+3. Not chosen by the depositor on a resolved draft answers `already_resolved` (409): confirmed, and honest since she can read it.
+4. A rejected draft keeps a dangling `subject_user_id` after the subject's account is deleted: agreed; only the naming fragments read it, and it stays visible to its author alone.
+5. The on-behalf `recipe.checked` row is completed by an `UPDATE` after the search: agreed; the deposit's fields are committed with the recipe, and one check is still one row.
+
+**The builder's timeout changes.**
+
+- **90-second per-test timeout on the slice 4 suite** (`2882e1b`): absorbs load only. The 35 tests run in about 14 seconds on an idle stack, and a timeout can only fail a slow test; it cannot turn a failing assertion into a pass.
+- **S2-B2's embedding wait, 80 s → 200 s** (`e527e15`): absorbs load. The loop is a readiness poll that breaks as soon as the embeddings land, and the assertions are unchanged. A weakness that predates this change: when the poll runs out it falls through silently, and if the draft's own evidence never embedded, "the draft's evidence never surfaces" would pass vacuously. The longer wait makes that less likely, not more. Follow-up: assert the draft's evidence embedded after the loop.
+
+**Found beyond the rubric** (none blocking).
+
+- **Import resurrects a rejected draft.** Dana's export carries rejected drafts about Pat with `onBehalfOf`; importing them into a book Pat writes restores them as fresh unverified drafts in his queue (as S4-E2 specifies: "whatever state the file carries"). A draft Pat rejected can therefore come back for review. Worth an operator ruling on whether rejected and not-chosen rows should import in their state.
+- **Import's overwrite path, by code reading (not probed):** `overwrite=true` replaces an owned row's text where `user_id` is the importer, so a depositor can change the text of an unverified draft about someone else after deposit, as any author can for her own recipes. Pat would review whatever text is current when he acts.
+
+**Follow-ups** (none blocking): no key badge on a recipe whose key is not its author's (S4-L2); the pre-existing badge and evidence-source contrast and the detail heading's missing `overflow-wrap` (S4-UI1, S4-UI3); the depositor-facing copy the browser run found (on a rejected draft Dana still reads "only they can confirm or reject it" and the tooltip "You marked this draft wrong"; her id-list view says "Drafts your agent linked"; Pat's detail page says "Agent's ratings" where his queue says "Depositing agent's ratings"; after a delete she lands on the public landing page); the override clause in the on-behalf notice only for an explicit false flag (S4-L3); the label wording for both sides (interpretation 1); whether a depositor-only viewer may react (interpretation 2); whether import should keep a rejected or not-chosen state (above); S2-B2's post-poll assertion; F86 remains open.
+
 ## Open design questions
 
 Found on contact with the code (`feat/authz-seam-keys`, 2026-09-27). Each has a recommendation; the slice that meets it gets a ruling first. Scenarios marked `# Pending decision:` in the feature file, and `decide` rows in the read-path inventory, point here.
@@ -960,6 +1119,8 @@ Written by the builder (agent `a-drafts-slice3-2026-09-27`) for the verifier; th
 
 **Budgets:** remote `tools/list` 16,854 → 16,853 bytes (cap 17,000); stdio 13,064 → 13,063 (cap 13,670); shared descriptions 5,965 → 5,968 characters (cap 6,000); `searchQuery` 412 → 415 (cap 420); the deposit notice +60 characters with a 73-character URL; a rated draft label at most +38 bytes.
 
+**Gate** (`TESTCI_PGPORT=5574 npm run test:ci`): run 1 exit 1 (vitest worker exit; 15 s and 30 s timeouts in the new suite and `import.test.ts`; S2-B2); run 2 exit 1 (S2-B2 again, the F90 assertion); after the slice 4 suite's per-test timeout and S2-B2's longer embedding wait, run 3 exit 0 (123 files, 1,768 tests passed, 10 skipped) at `e527e15`, and run 4 exit 0 with the same counts at `abef1a5`, after merging `origin/main` again. The flakes are recorded under the backlog's gate-reliability item.
+
 **Test-first:** not held strictly. The Layer 1 tests were written alongside their functions; the Layer 3 suite (`routes/draft-queue.test.ts`, 31 tests) after the routes. The F1 tests assert statuses the pre-slice code could not produce (409 and 403 where it answered 404).
 
 **Build-both:** not used. The rulings settled every fork this slice met (route shape, order, the exclude-own default, where the rating filter lives, refusal wording), and the remaining choices (page size, whether an acted-on item stays in the link view) were cheap to change later rather than worth building twice.
@@ -986,3 +1147,115 @@ Carried forward:
 - **F86 and F89** in one guard-hardening pass (backlog).
 - **Slice 4's parity tests** must set the subject and the depositor separately. In slice 3 they come from one variable, so the tests can't tell them apart yet.
 - **`traceReadableByPerson` is a signed-in person's full scope.** It belongs on JWT paths only; an API-key path composes the key's narrower scope instead. The guard can't tell the two apart, so this is a review point until F89's fix names it.
+
+### Slice 4 build notes (implementing agent, 2026-09-27)
+
+Written by the builder (agent `a-drafts-build-s4-2026-09-27`) for the verifier; the verification record is the verifier's to write. Soup.net intent `int_EsmK8J2pIlCqGd1IuBwcuInh`. Built on `f6dec77`, with `origin/main` (#100, #109, #110, #111) merged in before the account-deletion rows, so S4-A1 to A5 were built and tested against main's simplified cascade (recipe `23657e4e`).
+
+**Shape.**
+
+- **Storage:** one nullable column, `traces.subject_user_id` (migration `0039_traces_draft_subject`, one `ADD COLUMN`, no backfill, no index). No depositor column: the depositor is `user_id` until verification and the `recipe.checked` audit row after it.
+- **The module:** `subjectOf` reads `COALESCE(subject_user_id, user_id)` and is the only place the visibility rules read the column; `depositorOf` stays `user_id`. `draftStateShownTo` shows the depositor the unpublished states. Three naming fragments (`onBehalfSubjectOf`, `onBehalfSideFor`, `onBehalfPartyFor`) let a statement name the other party without reading the column by hand. `authz/naming.ts` holds who may be named (`resolveNameableSubject`, one statement over `lower(email)`, `membershipOf`, `WRITE_ROLES`, and `activeUserPredicate`). `unpublishedDraftManagement` in `roles.ts` decides move and delete of an unpublished draft; `roleInBookOfTrace` now reports such a draft to its depositor as well as its subject.
+- **Resolution:** `resolveDraft` sets `user_id` to the subject and clears `subject_user_id` on verification only, and writes its own audit row in the same statement (a data-modifying CTE), with `previousAuthorId` when the author changed and `verifiedByDepositingKey` for an agent. The three callers no longer write resolution audit rows themselves, so none can forget.
+- **The deposit:** naming runs right after the target book is resolved, before anything is embedded, stored, or searched. An on-behalf deposit's `recipe.checked` row is inserted inside the deposit transaction and completed with the search's fields afterwards (one row per check, so the per-key budget is unchanged); an ordinary check writes its row after the search as before. The refusal names the target book's slug and echoes no email.
+- **Surfaces:** `on_behalf_of` on remote MCP, the stdio proxy, `GET` and `POST /check` (urlencoded and multipart), and the HTML form, carried like `draft`. `draftDepositedBy` and `draftAbout` on result rows (MCP, `/check`, `/recipes`, `get_recipes`, the lookup markdown), on `checked`, on `GET /traces/:id`, and as `depositedBy` / `about` on queue items. Export carries `onBehalfOf`; import runs such rows through the naming rule. A key's label is shown only under its owner's authorship (open question 40), on the detail page and in the queue.
+- **Account deletion:** the cascade's collection adds `draftAwaitingReviewBy` for the departing person (S4-A3); everything else is main's cascade.
+- **Frontend:** the queue and detail page name the other party as text, word the ratings as the depositing agent's, tie the depositor's reason to the action group, hide the resolving reactions from the depositor, and name what her delete control removes.
+
+**Rubric rows.** Met unless noted.
+
+- S4-F1: partly. F89 is closed (`b33b8bd`: the guard fingerprints `traceReadableByPerson` calls, with a plant). The nine F86 forms stay in the backlog: their detail is in the private audit, which this builder did not have, so the verifier plants each new slice 4 statement's fragment deletion by hand, as the row allows.
+- S4-M1 to M5: met. M2's parity tests set the subject and the depositor separately (viewer is subject only, depositor only, both, neither, over every state). M4 has the static test (only `draft-resolution.ts` writes an existing recipe's `user_id` or `subject_user_id`). "No membership anywhere" is not constructible (every account has a personal book), so a member of another book only stands for it.
+- S4-M6: met on the builder's side. Every changed statement is re-registered with its reason; the on-behalf fragments are fingerprinted with the statements but do not count toward `composes`. `ranking-isolation.test.ts` forbids the subject terms, and the hand plant is the verifier's.
+- S4-S1 to S4-S3: met.
+- S4-S4: met, with one simplification (below): the transactional write is proven by code and by reading the rows back, including after the depositor's account is deleted, but no test makes the audit insert fail.
+- S4-W1 to W6: met. W3 compares the row and the draft notice with and without the parameter, not the whole response. W5 combines `decided_at`, ratings, and a ride-along feedback row; attachments, `intent`, and `known_recipes` are untouched code paths and not combined in a test.
+- S4-V1 to V3, S4-L1 to L4, S4-Q1 to Q5, S4-R1 to R4, S4-D1 to D4, S4-C1: met. R1 is shown with a Dana-deposited draft through the reaction route (which the queue's confirm uses) and `verify_draft`; the slice 2 and 3 resolution suites pass unchanged but were not re-parameterized.
+- S4-A1 to A5: met on the merged cascade. A5's owner is a separate person (Owen) rather than Sam, since Sam owns the shared book the rest of the suite uses.
+- S4-E1, E3: met. S4-E2: met with a deviation: an unnameable row refuses the whole import (import's existing all-or-nothing validation) rather than skipping the row (recipe `a8916b66`).
+- S4-U1: met, byte-compared on MCP markdown, MCP structured, `/check` JSON, and `/check` HTML (after replacing every echo of the typed value), plus import. Timing is not measured.
+- S4-U2, U3: met for Sam, Olive, and the system user on `GET /traces/:id`, the reaction, not chosen, move, delete, and the id-list link, and for Sam's key, P2, and D2 on `get_recipes` (full id and prefix) and `verify_draft`. Feedback targets are covered by the slice 2 suite's by-id rule, not re-run with an on-behalf draft.
+- S4-Z1 to Z5: met (numbers below).
+- S4-UI1 to UI3: built; the browser run is the verifier's.
+
+**Simplified instead of built (thin assumptions, for a ruling).**
+
+1. S4-S4's failure-injection test: making the audit insert fail inside a live deposit needs a trigger or fault hook in the test database, which is machinery for a case the code rules out by construction (the insert is in the transaction). Recorded rather than built.
+2. S4-E2's per-row refusal: the whole import is refused instead, matching import's existing validation; a file naming someone who cannot write the target book is rare.
+3. S4-U2's full slice 2 and 3 comparison harness is not re-run with an on-behalf draft; the new suite covers the by-id routes that differ.
+
+**Interpretations the verifier should check.**
+
+1. The subject's label still reads "visible only to them and their agents": within the Z3 budget the label names the depositor ("deposited by …") but does not restate that she can see it. The deposit notice, the queue, and the detail page's tooltip say it in full.
+2. The depositor's `stale` reaction on an unpublished draft is recorded (it resolves nothing); her `still_true` and `wrong` get the honest 403. The detail page offers her no reactions.
+3. A depositor's not-chosen request on a draft that is already rejected answers `already_resolved` (409), since she can read it.
+4. After the subject's account deletion, a rejected draft about him keeps its `subject_user_id` (a dangling id): the depositor still sees it as "about" nobody resolvable, and its label has no email. Nothing reads the id except the naming fragments.
+5. The on-behalf deposit's `recipe.checked` row is completed by an `UPDATE` of its metadata after the search: the row is still one event written once; only its search fields arrive later.
+
+**Found on the way.**
+
+- `ranking-isolation.test.ts`'s draft-column pattern (slice 2) held two literal backspace characters where `\b` was meant, so it never matched anything: the draft half of that guard was toothless. Fixed in `ed89afa`; the five ranking files pass it.
+- `origin/main` as merged after #100 and #110 failed `check:authz-seam` (the recipe register counted two recipe-table mentions in `user-delete.service.ts`, where the merged file has three). This branch refreshed the entry in `93c0857`; main fixed it in #115, and the second merge of `origin/main` (`c816809`) kept this branch's entry, whose fingerprint also covers the S4-A3 fragment.
+
+**Budgets.**
+
+| Measure | Before (slice 3) | After (slice 4) | Cap |
+|---|---|---|---|
+| Remote `tools/list` | 16,853 bytes | 16,986 | 17,000 (held) |
+| Stdio `tools/list` | 13,063 bytes | 13,196 | 13,670 (held) |
+| `on_behalf_of` property, remote | | 117 bytes; description 83 characters | one line, at most 90 |
+| Shared descriptions | 5,968 characters | 6,051 | 6,000 → 6,080, dated comment |
+| Unverified label, 16-character email | 100 bytes | 131 ("deposited by") / 123 ("about") | email + 20 |
+| New-draft notice, 73-character URL | 344 characters | 285 on behalf (318 with the override clause) | 344 + 60 + email |
+
+**Test-first:** not held strictly. The domain, module, and frontend tests were written alongside their code; the Layer 3 suite (`routes/drafts-on-behalf.test.ts`, 35 tests) after it. Its teeth: with `subjectOf` forced back to `user_id`, 22 of the 35 fail.
+
+**Build-both:** not used. The rulings and the amended rubric settled every fork this slice met (the column, the idempotency key, who may be named, where the audit row is written, what the depositor may do); the remaining choices (the label wording, the whole-file import refusal) were cheap to change later rather than worth building twice.
+
+### Slice 4 fix pass (implementing agent, 2026-09-27)
+
+After the verification record (`9b30e51`) and the read-only security audit (private, F92 to F95), following the orchestrator's rulings. `origin/main` was merged first (`92227a3`: Turnstile signup and the docs PRs; one import-line conflict in `routes/auth.ts`). Each fix is its own commit, with a test that fails without it.
+
+- **F92 [P2]** (`d7961fe`): import's `overwrite=true` no longer changes a draft the importer deposited about someone else. The row is kept and reported as a conflict (`kept: "existing"`), the way import reports any row it keeps, and the overwrite `UPDATE` itself requires no on-behalf subject (`onBehalfSubjectOf("t") IS NULL`). "Unresolved" is read as "has an on-behalf subject": verification clears the column, so this covers every unverified, rejected, or not-chosen draft about someone else, and a verified one is the subject's own recipe, which the depositor could never overwrite anyway. No confirm-time text hash, as ruled. Recipe `44c5e754`. Test: `drafts-on-behalf.test.ts` "[F92] …" (it counted `overwritten: 1` before the fix).
+- **F93 and S4-L2** (`ca45c9b`): both `GET /traces` lists return no key label when the depositing key is not the recipe author's, which covers the book page's "via …" and the dashboard. The detail row gains `apiKeyIsAuthors`, and the detail page shows no agent badge at all when it is false: no "No label set" and no key-id prefix. Raw `apiKeyId` fields and pre-publication feedback rows are unchanged, as ruled. Tests: `drafts-on-behalf.test.ts` "[F93] / S4-L2 …" (Sam's book list carried Dana's label before the fix) and `showsKeyBadge` in `draft-status-label.test.ts`.
+- **F94** (`50e91d0`): `memberlessBooksWithOthersRecipes` no longer counts unverified drafts about the departing person (`draftAwaitingReviewBy`), since the S4-A3 cascade deletes them. A book left holding only those is deleted with the person. Test: `drafts-on-behalf.test.ts` "[F94] …" (the book survived before the fix).
+- **S4-L3** (`bcb3a3e`): "(your draft flag was overridden)" appears only when a `draft` value was sent and read as false. S4-W2's assertions were tightened first and failed.
+- **Depositor-facing copy** (`c40624d`): on a resolved draft she deposited, Dana's party line reads "About <Pat>" without "only they can confirm or reject it", and the tooltip names who resolved it ("<Pat> marked this draft wrong…", "…marked this option not chosen…") instead of "You". The id-list heading says "Drafts your agent linked" only when every linked draft was deposited by the viewer's own agent, and "Linked drafts" otherwise. No new states. Tests in `draft-status-label.test.ts` and `draft-queue.test.ts` failed first.
+- **S2-B2** (`20067fc`): after the embedding poll the test asserts that the draft's evidence, and the book's other evidence, embedded, so the absence check can no longer pass vacuously. With the poll cut to zero iterations the new assertion fails, where the old test would have passed.
+- **Backlog** (`fa72cc9`): F95 is folded into the F86 guard-hardening item, by F-number only. A new `[IMPL]` item covers the detail page's pre-existing badge and evidence-source contrast and its recipe heading's missing `overflow-wrap`.
+
+**Ruled, not fixed:**
+- A depositor's `stale` reaction on an unverified draft about someone else stays allowed.
+- A rejected or not-chosen on-behalf draft re-imports as a fresh unverified draft. That is a new deposit, which the subject can reject again.
+- The landing page after a delete is unchanged.
+- The pre-existing contrast and heading-overflow issues are in the backlog, as above.
+- F95 is in the guard-hardening backlog item.
+
+**Gate** (`TESTCI_PGPORT=5574 npm run test:ci`, at `fa72cc9`). It is not green. Three runs all exited 1, and no slice 4 test failed in any of them.
+
+| Run | Exit | Tests | Failures |
+|---|---|---|---|
+| 1 | 1 | 1,771 passed, 1 failed | `groups.test.ts` "Owner can list + revoke pending invitations": the revoked invitation was still listed. The vitest "Worker exited unexpectedly" error also appeared. |
+| 2 | 1 | 1,733 passed | `trace-delete.service.test.ts`: its `beforeAll` timed out at 30 s. The worker exit appeared again. |
+| 3 | 1 | 1,778 passed | The `trace-delete.service.test.ts` `beforeAll` timeout again. |
+
+- The invitations failure did not repeat in runs 2 and 3.
+- On a fresh stack, `trace-delete.service.test.ts` and `groups.test.ts` pass when run alone: 42 tests in 6.6 s.
+- These are flakes the orchestrator has also seen on merged main. The `trace-delete` hook timeout recurs, so it belongs under the backlog's gate-reliability item. The fix pass adds three tests to the slice 4 suite, which adds a little load.
+
+### Slice 4 second fix pass (implementing agent, 2026-09-27)
+
+After the fix verification (private). It confirmed F93 and F94, and found that F92 was closed only on the overwrite path. The orchestrator's ruling replaces the earlier premise that "once overwrite is closed, a draft's text has no other path to change". There is still no confirm-time hash check. Each fix is its own commit, and its test is the audit's reproduction, which failed before the fix.
+
+- **F96** (`306e929`): an imported row that carries `onBehalfOf` always lands under a fresh random id. It never gets the file's id, and never a deterministic mint, which a delete-then-reimport would reproduce. The new id is reported in `idMap`. A delete-then-reimport of the id the subject is reviewing now creates a new draft: his open link, his confirm, and his agent's `verify_draft` on the old id find nothing.
+  - The row is named by its `onBehalfOf`, before the naming rule resolves whether the email is the importer's own. A hand-made row naming the importer also gets a fresh id; export never writes such a row.
+  - This departs from import's deterministic per-importer mint (recipe `c40fd228`) for these rows only. Re-importing a file with on-behalf rows adds them again rather than skipping them.
+  - S4-E2's test now follows the row through `idMap`.
+- **F97** (`6214014`): the link step's `ownedTraceIds` excludes existing rows with an on-behalf subject, the same condition as the F92 classification. A file can no longer add evidence, references, or quotes to a draft deposited about someone else. New on-behalf rows in a file have fresh ids (F96), so they are new deposits and take their own links.
+- **F98** (import accepting other people's evidence ids) is not fixed here: it is on main already and a separate branch handles it.
+
+**Gate** (`TESTCI_PGPORT=5574 npm run test:ci` at `6214014`, one run): exit 1, 1,783 passed, 2 failed.
+- `workspaces.test.ts` "(3) after expire-now …": the known workspace-expiry flake, the "timestamp-at-now" item in the backlog.
+- `draft-queue.test.ts` S3-Q2: a 15-second test timeout, not an assertion failure, under the load of the full run.
+
+No slice 4 test failed, and `origin/main` had not moved.

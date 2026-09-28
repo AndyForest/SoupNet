@@ -258,11 +258,16 @@ describe.skipIf(!BASE || !canConnect())("drafts for the key's own user (drafts-a
     expect(JSON.stringify(map)).not.toContain(draftId);
   });
 
-  it("S2-B2 / DT-VIS-03: the draft's evidence never surfaces as related evidence for Sam", { timeout: 120_000 }, async () => {
+  it("S2-B2 / DT-VIS-03: the draft's evidence never surfaces as related evidence for Sam", { timeout: 240_000 }, async () => {
+    // Slice 4: the wait was 80 s; under the full gate with the slice 4 suite
+    // depositing alongside, the embedding worker's backlog (experimental
+    // strategy backfills) twice kept this book's evidence pending past it.
+    // The wait is now 200 s; the assertion is unchanged.
     // Wait for the evidence embeddings (the async worker, busy under the full
     // suite): the draft's, so a leak would show, and every other evidence
     // entry in the shared book, so the channel is live for the check below.
-    for (let i = 0; i < 160; i++) {
+    let w: { draft_done: number; others_pending: number; others_done: number } | undefined;
+    for (let i = 0; i < 400; i++) {
       const rows = await sql`
         SELECT
           count(*) FILTER (WHERE te.trace_id = ${draftId}::uuid AND ev.id IS NOT NULL)::int AS draft_done,
@@ -275,10 +280,15 @@ describe.skipIf(!BASE || !canConnect())("drafts for the key's own user (drafts-a
         JOIN claimnet.embedding_chunks ec ON ec.chunk_strategy_id = ecs.id
         LEFT JOIN claimnet.embedding_vectors ev ON ev.embedding_chunk_id = ec.id AND ev.status = 'complete'
         WHERE es.source_type = 'evidence'`;
-      const w = rows[0] as { draft_done: number; others_pending: number; others_done: number } | undefined;
+      w = rows[0] as { draft_done: number; others_pending: number; others_done: number } | undefined;
       if (w && w.draft_done > 0 && w.others_pending === 0 && w.others_done > 0) break;
       await new Promise((r) => setTimeout(r, 500));
     }
+    // The poll must have seen the draft's own evidence embedded: otherwise
+    // "never surfaces" below would pass without the draft ever being a
+    // candidate (slice 4 verification follow-up).
+    expect(w?.draft_done ?? 0, "the draft's evidence never embedded within the wait").toBeGreaterThan(0);
+    expect(w?.others_done ?? 0, "no other evidence in the book embedded within the wait").toBeGreaterThan(0);
     const r = await mcp(samKey, "check_recipe", {
       recipe: recipe("related evidence probe"), supporting_evidence: evidence(draftQuote), clusters: 100, response_format: "structured",
     });
@@ -596,7 +606,7 @@ describe.skipIf(!BASE || !canConnect())("drafts for the key's own user (drafts-a
   it("S2-B10 / S2-B11 / DT-VER-04, DT-VER-09: Pat's agent verifies with a new quote: verified by that key, evidence attached, Sam finds it, ranking inputs untouched", async () => {
     const before = await traceRow(draftId);
     const embBefore = await sql`
-      SELECT es.id::text AS id FROM claimnet.embedding_sources es
+      SELECT es.id::text AS id, es.source_text AS text FROM claimnet.embedding_sources es
       WHERE es.source_type = 'trace' AND es.source_id = ${draftId}::uuid ORDER BY es.id`;
     const query = `author:me draft visibility ${MARKER}`;
     const patSearchBefore = await mcp(patKey, "search_recipes", { query, verbosity: "high", response_format: "structured" });
@@ -614,11 +624,16 @@ describe.skipIf(!BASE || !canConnect())("drafts for the key's own user (drafts-a
     expect(after?.["claim_text"]).toBe(before?.["claim_text"]);
     expect(String(after?.["decided_at"])).toBe(String(before?.["decided_at"]));
     expect(after?.["impact"]).toBe("high");
-    // …and so are the recipe's own embeddings.
+    // …and so are the recipe's own embeddings: every source that existed
+    // before verification is still there with the same text. The worker's
+    // strategy sweep may add a source for a new strategy mid-test, so
+    // extra rows are not a verification effect.
     const embAfter = await sql`
-      SELECT es.id::text AS id FROM claimnet.embedding_sources es
+      SELECT es.id::text AS id, es.source_text AS text FROM claimnet.embedding_sources es
       WHERE es.source_type = 'trace' AND es.source_id = ${draftId}::uuid ORDER BY es.id`;
-    expect(embAfter.map((e) => e["id"])).toEqual(embBefore.map((e) => e["id"]));
+    const afterById = new Map(embAfter.map((e) => [e["id"], e["text"]]));
+    expect(embBefore.length).toBeGreaterThan(0);
+    for (const e of embBefore) expect(afterById.get(e["id"])).toBe(e["text"]);
     // The new evidence is attached, by the verifying key.
     const quotes = await sql`
       SELECT r.quote FROM claimnet.trace_references tr JOIN claimnet.references r ON r.id = tr.reference_id

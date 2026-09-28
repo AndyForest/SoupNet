@@ -4,6 +4,38 @@ Every PR that touches briefing copy (`packages/domain/src/recipe-guide-content.t
 
 (Renamed from declared-intent-log.md on 2026-08-23: "intent" now names the runtime intent-registration mechanism — cold-start v2 Phase C — so the discipline's log takes an unambiguous name. The discipline itself is unchanged.)
 
+## 2026-09-27 — Drafts-and-triage slice 4: on_behalf_of, the on-behalf notices and labels, and the depositor's refusals
+
+Design: [../planning/drafts-and-triage.md](../planning/drafts-and-triage.md) §The model. Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 4 rubric, open questions 28 to 40 as amended (recipes b89db1f0, 23657e4e).
+
+### Edits
+
+1. **New `on_behalf_of` parameter on `check_recipe` (both MCP servers):** "Email of the person this recipe is about, if not you: a draft only they can verify." (83 characters). The forcing rule and who may be named live in the deposit notice and the refusal, not in the description. The `draft` description is unchanged. Shared-description total 5,968 → 6,051; its cap moves 6,000 → 6,080 with a dated comment (build log open question 38: raise by at most the new line's length rather than trim unrelated copy).
+2. **On-behalf deposit notice (new):** "Deposited as a draft about <email>, because it is on their behalf[ (your draft flag was overridden)]. Until they verify it, only they and you, with your agents, can see it; only they can confirm or reject it. Hand them their review link: <link>". It never mentions `verify_draft`. 285 characters (318 with the override clause) against 344 for today's new-draft notice, with a 73-character URL and a 16-character email.
+3. **On-behalf repeat notices (new):** an identical repeat reports "…logged this recipe as a draft about <email>, and it is still a draft: checking it again does not verify it; only they can." with the link, or the rejected / not-chosen wording naming the subject.
+4. **Labels (markdown):** an on-behalf draft's label names the other party after the state: "[unverified draft, deposited by <email>: …]" to the subject's agents and "[unverified draft about <email>: …]" to the depositor's (at most the email plus 15 bytes). A self draft's label and a published row are byte for byte unchanged. JSON and structured rows carry `draftDepositedBy` or `draftAbout` only on such rows; the published schema describes both.
+5. **The naming refusal (new error copy):** "on_behalf_of must be the email of a person who can write to the recipe book "<slug>"; nothing was stored. Name a member with write access to that book, or check without on_behalf_of to record the recipe as your own." One answer for every refused value; it echoes no email.
+6. **The depositor's refusal (new):** `verify_draft`, `POST /recipes/:id/verify`, the resolving reactions, and not chosen answer "Only <email> can review this draft: it is about them. Hand them their review link: <link>".
+
+`/briefing` output is unchanged: the Drafts line already counts drafts about the person, which now includes other people's deposits, with its current wording (rubric S4-Z5).
+
+### Scenarios intended to move
+
+- **New `@unreleased` scenario** in `checking-behavior.feature`: "A briefed agent records a colleague's judgment as a draft on their behalf and hands over their review link" (added in this PR). It stays `@unreleased` until the briefing body teaches drafting (slice 7) and the harness can run it.
+
+### Scenarios watched, with rationale for holding
+
+- **`checking-behavior.feature` "An agent drafts only when it cannot ask, and says why in the first evidence entry"** (slice 2): the `draft` description is unchanged, and a check without `on_behalf_of` behaves exactly as before, so the when-to-draft behaviour it pins has nothing new to react to. The new parameter's line says whom a recipe is about, not when to draft.
+- **`checking-behavior.feature` "An agent that deposited drafts hands its person the queue link rather than listing ids"** (slice 3): the self-draft notice is unchanged; the on-behalf notice carries the same kind of link, addressed to the subject.
+- **`recipe-voice.feature`:** the recipe is still written in the voice of the person whose judgment it records; `on_behalf_of` only names that person when it is not the key's user.
+
+### Served `tools/list` bytes
+
+| Server | Before (slice 3) | After (slice 4) | Cap |
+|---|---|---|---|
+| Remote | 16,853 | 16,986 | 17,000 |
+| Stdio | 13,063 | 13,196 | 13,670 |
+
 ## 2026-09-27 — Drafts-and-triage slice 3: the review queue's qualifiers, the queue link in the deposit notice, and ratings on own-draft labels
 
 Design: [../planning/drafts-and-triage.md](../planning/drafts-and-triage.md) §Verifying a draft ("Links"). Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 3 rubric, rulings 21 to 27.

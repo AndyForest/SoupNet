@@ -29,10 +29,13 @@
  *     in any state, so the person can still open a resolved one.
  *
  * "The viewer's own" means the viewer is the draft's subject (who it is about)
- * or its depositor (whose agent deposited it). In slice 2 both are the author,
- * `user_id`: a draft is always about the key's own user (on-behalf-of is slice
- * 4, and the operator ruled that `user_id` stays the depositing key's owner —
- * recipe 9e663b62 — so slice 4 changes `subjectOf` here and nothing else).
+ * or its depositor (whose agent deposited it). The depositor is the author,
+ * `user_id`, for as long as the draft is unpublished (recipe 9e663b62). The
+ * subject is `subject_user_id` on an on-behalf draft (slice 4) and the author
+ * otherwise: the column is NULL for every ordinary recipe and self draft.
+ * Verification moves the author to the subject and clears the column, so a
+ * verified on-behalf recipe is an ordinary recipe of its subject's (recipe
+ * b89db1f0; draft-resolution.ts). `subjectOf` is the one place that reads it.
  *
  * Every fragment composes with the caller's book scope (`inBooks`); a draft
  * never widens a key's scope, because the book condition is ANDed separately.
@@ -44,7 +47,7 @@ import { inBooks } from "./scope-sql";
 
 /**
  * The aliases the fragments may be applied to: `t` and `tr` for statements
- * that read `claimnet.traces`, and `dv`, the alias the id-keyed form gives
+ * that read `claimnet.traces`, `dv`, the alias the id-keyed form gives
  * its own lookup. A closed set, so only these constants reach `sql.raw`.
  */
 const ALIASES = {
@@ -86,19 +89,30 @@ function isShared(audience: DraftAudience): audience is typeof SHARED_AUDIENCE {
 // Internal to the module (not re-exported from index.ts): trace-access.ts
 // selects the same two columns to hand `mayReadTrace` its facts.
 
-/** The column naming who a draft is about. Slice 2: the author. */
+/**
+ * Who a draft is about: the on-behalf subject where one is set (slice 4),
+ * and the author otherwise (NULL means "about its author").
+ */
 export function subjectOf(alias: TraceAlias): SQL {
-  return sql`${aliasSql(alias)}.user_id`;
+  const a = aliasSql(alias);
+  return sql`COALESCE(${a}.subject_user_id, ${a}.user_id)`;
 }
 
-/** The column naming whose agent deposited a draft: always the author (ruling 9e663b62). */
+/** Whose agent deposited a draft: the author while it is unpublished (ruling 9e663b62, amended b89db1f0). */
 export function depositorOf(alias: TraceAlias): SQL {
   return sql`${aliasSql(alias)}.user_id`;
 }
 
+/**
+ * The on-behalf subject column itself: NULL unless the row is a draft one
+ * person's agent deposited about another. For statements that must name the
+ * other party (export, labels); the visibility rules use `subjectOf`.
+ */
+export function onBehalfSubjectOf(alias: TraceAlias): SQL {
+  return sql`${aliasSql(alias)}.subject_user_id`;
+}
+
 function ownDraft(alias: TraceAlias, viewerUserId: string): SQL {
-  // In slice 2 the two columns are the same one, so this reads
-  // `(t.user_id = $1 OR t.user_id = $2)`; the planner folds the duplicate.
   return sql`(${subjectOf(alias)} = ${viewerUserId}::uuid OR ${depositorOf(alias)} = ${viewerUserId}::uuid)`;
 }
 
@@ -140,14 +154,42 @@ export function traceReadableByPerson(alias: TraceAlias, viewerUserId: string, m
 }
 
 /**
- * The row's draft state as this viewer may see it ([F83]): the state for the
- * person the draft is about, NULL for everyone else, so a verified draft is
- * an ordinary recipe on shared surfaces and nobody else learns it was one.
+ * The row's draft state as this viewer may see it ([F83]): every state for
+ * the person the draft is about; the unpublished states (unverified,
+ * rejected, not chosen) for its depositor, who needs the label to know it is
+ * not published (slice 4, S4-M3); NULL for everyone else, so a verified draft
+ * is an ordinary recipe on shared surfaces and nobody else learns it was one.
  * (Others never receive an unpublished draft's row at all.)
  */
 export function draftStateShownTo(alias: TraceAlias, viewerUserId: string): SQL {
   const a = aliasSql(alias);
-  return sql`(CASE WHEN ${subjectOf(alias)} = ${viewerUserId}::uuid THEN ${a}.draft_state ELSE NULL END)`;
+  return sql`(CASE WHEN ${subjectOf(alias)} = ${viewerUserId}::uuid THEN ${a}.draft_state
+    WHEN ${depositorOf(alias)} = ${viewerUserId}::uuid AND NOT ${publishedTrace(alias)} THEN ${a}.draft_state
+    ELSE NULL END)`;
+}
+
+/**
+ * The other party of an unpublished on-behalf draft, as this viewer sees it
+ * (slice 4, S4-L1): the depositor's user id when the viewer is its subject,
+ * the subject's when the viewer is its depositor, NULL otherwise (a self
+ * draft, a published recipe, or a viewer who is neither).
+ * `onBehalfSideFor` says which: 'depositedBy' or 'about'.
+ */
+export function onBehalfPartyFor(alias: TraceAlias, viewerUserId: string): SQL {
+  const a = aliasSql(alias);
+  return sql`(CASE WHEN ${a}.subject_user_id IS NULL OR ${a}.subject_user_id = ${a}.user_id OR ${publishedTrace(alias)} THEN NULL
+    WHEN ${a}.subject_user_id = ${viewerUserId}::uuid THEN ${a}.user_id
+    WHEN ${a}.user_id = ${viewerUserId}::uuid THEN ${a}.subject_user_id
+    ELSE NULL END)`;
+}
+
+/** Which side of an on-behalf draft the viewer is on; see `onBehalfPartyFor`. */
+export function onBehalfSideFor(alias: TraceAlias, viewerUserId: string): SQL {
+  const a = aliasSql(alias);
+  return sql`(CASE WHEN ${a}.subject_user_id IS NULL OR ${a}.subject_user_id = ${a}.user_id OR ${publishedTrace(alias)} THEN NULL
+    WHEN ${a}.subject_user_id = ${viewerUserId}::uuid THEN 'depositedBy'
+    WHEN ${a}.user_id = ${viewerUserId}::uuid THEN 'about'
+    ELSE NULL END)`;
 }
 
 /**

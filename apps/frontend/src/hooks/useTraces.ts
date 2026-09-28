@@ -96,6 +96,13 @@ export interface TraceDetail extends Trace {
   draftResolvedByViewer?: boolean;
   /** The person this draft is about may verify or reject it with a reaction. */
   canResolveDraft?: boolean;
+  /** Slice 4: the other party of an unpublished on-behalf draft, from the
+   *  viewer's side (the depositor to its subject, the subject to its depositor). */
+  draftDepositedBy?: string | null;
+  draftAbout?: string | null;
+  /** The depositing key belongs to the recipe's author; false on a verified
+   *  on-behalf recipe, which then shows no key at all ([F93]). */
+  apiKeyIsAuthors?: boolean;
   userId: string;
   userEmail: string | null;
   groupName?: string | null;

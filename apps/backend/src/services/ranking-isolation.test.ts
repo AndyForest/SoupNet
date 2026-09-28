@@ -51,7 +51,10 @@ describe("ranking code never reads triage ratings (S1-B8 b, DT-RAT-07)", () => {
   // which keep the columns out of this code; what they must never do is read
   // the draft or verification columns themselves, to score, order, or
   // cluster by them.
-  const DRAFT_TERMS = /(draft_state|draftState|draft_resolved_\w+|draftResolved\w*)/;
+  // Slice 4 (S4-M6): the on-behalf subject column too. (Until slice 4 this
+  // pattern held two literal backspace characters where word boundaries
+  // were meant, so it could never match: found and fixed 2026-09-27.)
+  const DRAFT_TERMS = /\b(draft_state|draftState|draft_resolved_\w+|draftResolved\w*|subject_user_id|subjectUserId|onBehalf\w*)\b/;
   for (const file of RANKING_FILES) {
     it(`${file} does not reference the draft or verification columns (slice 2)`, () => {
       const source = readFileSync(join(repo, file), "utf-8");

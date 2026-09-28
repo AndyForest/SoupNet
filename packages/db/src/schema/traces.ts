@@ -87,6 +87,20 @@ export const traces = claimnetSchema.table(
     draftResolvedAt: timestamp("draft_resolved_at", { withTimezone: true }),
     draftResolvedByUserId: uuid("draft_resolved_by_user_id"),
     draftResolvedByKeyId: uuid("draft_resolved_by_key_id"),
+    // Who an on-behalf draft is about (drafts-and-triage slice 4). NULL for
+    // every ordinary recipe and every draft about its own author: NULL means
+    // "about user_id". Set only when one person's agent deposits a draft
+    // about another (the `on_behalf_of` check parameter, which accepts only
+    // a live writer of the target book), and cleared when that person
+    // verifies it: verification also moves `user_id` to them, so a verified
+    // on-behalf recipe is an ordinary recipe of its subject's (recipe
+    // b89db1f0). A rejected or not-chosen one keeps it and stays the
+    // depositor's. The depositor is `user_id` until verification and the
+    // append-only `recipe.checked` audit row after it; there is no depositor
+    // column. No foreign key, like `user_id`. The draft rules read it only
+    // through `subjectOf` in apps/backend/src/authz/draft-sql.ts, and ranking
+    // never reads it (ranking-isolation.test.ts).
+    subjectUserId: uuid("subject_user_id"),
 
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),

@@ -4,6 +4,24 @@ Items moved here from `backlog.md` when finished. Date-stamped so we can see wha
 
 ---
 
+## 2026-09-27 — corpus import only creates rows
+
+Branch `refactor/import-create-only`, stacked on `feat/drafts-and-triage`. Import no longer reuses, changes, or links into rows that existed before it ran (recipe `5d541d2c`): a trace is kept only when it is the importer's own ordinary recipe, anything else that exists gets the importer's mint or, when that is taken, a random id, and links are written only between rows the import created. `overwrite=true` is removed, and `authz/content-ownership.ts` with it. The timeline entry is `docs/planning/corpus-import.md` § v2.
+
+### Moved items (verbatim):
+
+### `[IMPL]` F98 follow-ups: import's minted ids, and rows linked before the fix
+
+The F98 fix (2026-09-27) makes import link or reuse only the importer's own evidence and references (`authz/content-ownership.ts`). Two related pieces are still open. First, apply the same ownership test when a deterministically minted id already exists (F100). Second, check the link rows that imports created before the fix, on each deployment. Detail is in the private security notes, not here.
+
+**Resolution (2026-09-27):** F100 is closed by the create-only rule: a row under the importer's mint is kept only on the same terms as the file's id, and otherwise the row gets a random id (Layer 3 test `[F100]` in `routes/import.test.ts`). The ownership test the item proposed is no longer needed, since no link is written onto an existing row. The check of pre-fix link rows was declined by the operator: "Not a worry in prod, there are no collaborators really. So nothing to worry about" (Andy, 2026-09-27, quoted in recipe `5d541d2c`).
+
+### `[IMPL]` test:ci flake: import overwrite races the worker strategy sweep (FK violation, 500)
+
+Pre-existing; not caused by the branch it was seen on. Observed 2026-09-27 on `feat/authz-seam-keys` (gate run 4, `TESTCI_PGPORT=5574`; the branch does not touch import or the embedding worker): `routes/import.test.ts` "overwrite=true replaces owned trace content and reports kept=incoming" got HTTP 500 instead of 200. The backend log shows the overwrite's embedding teardown losing a race with the sweep: `[import] failed: DrizzleQueryError: Failed query: DELETE FROM claimnet.embedding_sources WHERE source_type = $1 AND source_id = $2::uuid`, cause `update or delete on table "embedding_sources" violates foreign key constraint "embedding_chunk_strategies_embedding_source_id_embedding_source" on table "embedding_chunk_strategies"`, raised from `deleteEmbeddingChainForSource` inside `importCorpus`. Likely mechanism (unverified): `deleteEmbeddingChainForSource` deletes the chain bottom-up, and `embedding-worker/jobs/strategy-check.ts` inserted an `embedding_chunk_strategies` row for an existing source of the same trace between the child deletes and the source delete. The overwrite does hold the trace row (it runs `UPDATE claimnet.traces` first), and the sweep's `embedding_sources` insert locks the trace row, but its follow-up `embedding_chunk_strategies` insert is only FK-protected (the code comment there says so), and nothing locks the source rows before their children are deleted. Likely fix: lock the source rows `FOR UPDATE` before deleting their children in `deleteEmbeddingChainForSource`, so a concurrent child insert waits and then fails its FK check on the sweep side, which already tolerates that. Then add a regression test that runs the sweep concurrently. Same family as the sync-embed-path and account-deletion races (the latter fixed in the test on 2026-09-27, where the rows were only being counted). It fails the gate intermittently at full-suite scale, and it is a real, if narrow, production bug: an import overwrite can 500 while the sweep is backfilling.
+
+**Resolution (2026-09-27):** the overwrite path, and with it the test that flaked, was removed when import became create-only. The helper-level race is kept open as a smaller backlog item.
+
 ## 2026-08-19 — Anthropic Connectors Directory: APPROVED and listed
 
 Soup.net is officially listed in the [Anthropic Connectors Directory](https://claude.com/connectors) — searchable as "SoupNet", available on every Claude plan including Free (directory connectors are plan-universal per Anthropic's Connectors Directory FAQ; custom connectors are the path that plan-gates). The submission-prep section below is moved from backlog.md as completed; docs were updated the same day (README auth paths incl. OAuth 2.1 + DCR, docs/connectors/index.md directory-first Claude steps + Claude Code `.mcp.json` example, briefing chat-AI bullet, llms.txt + `.md` twins for agent readability of the client-rendered site — see the feat/recipe-search branch).

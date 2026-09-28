@@ -192,7 +192,9 @@ const NON_AUTHORIZING_KEY_SQL = {
  * `claimnet.embedding_sources` (drafts-and-triage slice 2). `composes: true`
  * claims every result-set, count, or aggregate statement in the file applies
  * the module's draft fragments (publishedTrace, traceVisibleTo,
- * traceIdVisibleTo, traceReadableById, draftAwaitingReviewBy); the check
+ * traceIdVisibleTo, traceReadableById, traceReadableByPerson,
+ * draftAwaitingReviewBy, draftStateShownTo; [F89] added the person-scope
+ * form); the check
  * verifies the file references at least one. `composes: false` needs a `why`
  * saying why the draft rule does not apply. The read-path inventory
  * (docs/planning/drafts-and-triage-read-paths.md) maps each RP row here.
@@ -231,8 +233,8 @@ const TRACE_READS = {
     why: "system-role totals and embedding coverage counts for the operator (RP-31 to RP-34)",
   },
   "apps/backend/src/routes/auth.ts": {
-    n: 13, fp: "0d131b0de6ab", composes: false,
-    why: "data export of the signed-in user's own recipes, draft state included (RP-30); account deletion guard",
+    n: 13, fp: "b90e83f235d1", composes: false,
+    why: "data export of the signed-in user's own recipes, draft state and an on-behalf draft's subject email (onBehalfSubjectOf) included (RP-30, S4-E1); account deletion guard",
   },
   "apps/backend/src/routes/integrity.ts": {
     n: 4, fp: "b2b641494fea", composes: false,
@@ -251,8 +253,8 @@ const TRACE_READS = {
     why: "loads author, evidence, and references by id for exemplars the pipeline chose under SHARED_AUDIENCE (RP-10, RP-42)",
   },
   "apps/backend/src/services/draft-queue.service.ts": {
-    n: 5, fp: "93c0496c2c29", composes: true,
-    why: "the review queue (slice 3): listing and count compose draftAwaitingReviewBy and traceVisibleTo over the person's live books; item details use traceReadableById for ids already resolved through the module",
+    n: 5, fp: "06c2cb347827", composes: true,
+    why: "the review queue (slice 3): listing and count compose draftAwaitingReviewBy and traceVisibleTo over the person's live books; item details use traceReadableById for ids already resolved through the module, and name an on-behalf draft's other party through onBehalfSideFor and onBehalfPartyFor (slice 4)",
   },
   "apps/backend/src/services/ephemeral-workspace.service.ts": {
     n: 5, fp: "c8d8ebe28b99", composes: false,
@@ -263,28 +265,28 @@ const TRACE_READS = {
     why: "feedback target ACL: prefix scan and readable set use traceReadableById (RP-11, RP-18); check_feedback inserts and the per-key budget count are writes and the caller's own rows",
   },
   "apps/backend/src/services/import.service.ts": {
-    n: 22, fp: "961569af51d1", composes: false,
-    why: "import writes the importer's own recipes and reads rows by id to classify skip / conflict / remap (RP-35)",
+    n: 14, fp: "2a85fc1ca09d", composes: false,
+    why: "import only creates rows: it reads rows by id to decide skip / conflict / fresh id (RP-35), keeps a trace only when it is the importer's own and not a draft about someone else (onBehalfSubjectOf, [F92] [F97]), writes links only between rows it created (recipe 5d541d2c), and an on-behalf row's subject goes through the module's naming rule (S4-E2)",
   },
   "apps/backend/src/services/integrity-repair.service.ts": {
     n: 10, fp: "1bf65a3a7142", composes: false,
     why: "deletes orphaned embedding rows whose recipe no longer exists; operator-only",
   },
   "apps/backend/src/services/recipe-lookup.service.ts": {
-    n: 2, fp: "523be2ce45e7", composes: true,
-    why: "by-id lookup: prefix scan and main select use traceReadableById (RP-06, RP-08, RP-16)",
+    n: 2, fp: "84de1157101c", composes: true,
+    why: "by-id lookup: prefix scan and main select use traceReadableById (RP-06, RP-08, RP-16); an on-behalf draft's other party is named through onBehalfSideFor and onBehalfPartyFor (S4-L1)",
   },
   "apps/backend/src/services/result-enricher.ts": {
-    n: 4, fp: "1c4f0341fd55", composes: false,
-    why: "loads book, draft label, evidence, and references by id for results a filtered statement already chose (RP-42)",
+    n: 4, fp: "1c4f660984be", composes: false,
+    why: "loads book, draft label, evidence, and references by id for results a filtered statement already chose (RP-42); names an on-behalf draft's other party through onBehalfSideFor and onBehalfPartyFor (S4-L1)",
   },
   "apps/backend/src/services/search-pipeline.ts": {
     n: 5, fp: "27cc9110e6b6", composes: true,
     why: "corpus mode rows and honest total use traceVisibleTo (RP-41); vector loads are by id for filtered results (RP-42)",
   },
   "apps/backend/src/services/trace.service.ts": {
-    n: 10, fp: "379ca3033782", composes: true,
-    why: "deposit INSERT, the depositing key's own idempotency row (RP-04), session ledger ids (RP-05), and zero-result scope counts that use traceVisibleTo (RP-03)",
+    n: 10, fp: "d4e19a98ba6d", composes: true,
+    why: "deposit INSERT (the on-behalf subject from the module's naming rule, S4-M1), the depositing key's own idempotency row with its subject through onBehalfSubjectOf (RP-04, S4-L4), session ledger ids (RP-05), and zero-result scope counts that use traceVisibleTo (RP-03)",
   },
   "apps/backend/src/services/trace-delete.service.ts": {
     n: 15, fp: "66a8c2514e26", composes: false,
@@ -295,8 +297,8 @@ const TRACE_READS = {
     why: "moves one recipe under lock after the route's access check; draft state rides along unchanged (RP-36)",
   },
   "apps/backend/src/services/user-delete.service.ts": {
-    n: 3, fp: "b5f74ff7f35a", composes: false,
-    why: "account-deletion cascade over the user's own recipes (RP-37), and the book delete's any-recipe-left guard, which must count drafts too",
+    n: 3, fp: "fb9e54dc855f", composes: false,
+    why: "account-deletion cascade over the user's own recipes (RP-37), plus the unverified drafts about them (draftAwaitingReviewBy, S4-A3), and the book delete's any-recipe-left guard, which must count drafts too",
   },
   "apps/backend/src/services/vector-search.service.ts": {
     n: 11, fp: "7beb48e89474", composes: true,
@@ -316,8 +318,16 @@ const TRACE_READS = {
   },
 };
 
+/**
+ * Every module fragment whose call lines are fingerprinted with the
+ * statements: the draft fragments plus slice 4's on-behalf ones (which name
+ * the other party of a draft; they are not a visibility condition, so they
+ * do not count toward `composes`).
+ */
+const MODULE_FRAGMENT = /\b(publishedTrace|traceVisibleTo|traceIdVisibleTo|traceReadableById|traceReadableByPerson|draftAwaitingReviewBy|draftStateShownTo|onBehalfSubjectOf|onBehalfSideFor|onBehalfPartyFor|resolveNameableSubject)\(/;
+
 /** The module's draft fragments; a `composes: true` file must reference one. */
-const DRAFT_FRAGMENT = /\b(publishedTrace|traceVisibleTo|traceIdVisibleTo|traceReadableById|draftAwaitingReviewBy|draftStateShownTo)\(/;
+const DRAFT_FRAGMENT = /\b(publishedTrace|traceVisibleTo|traceIdVisibleTo|traceReadableById|traceReadableByPerson|draftAwaitingReviewBy|draftStateShownTo)\(/;
 
 /** SQL table names of the recipe rule, and their Drizzle exports. */
 const TRACE_TABLES = ["traces", "embedding_sources", "embedding_chunks", "trace_evidence", "trace_references", "check_feedback", "trace_reactions"];
@@ -433,7 +443,7 @@ const RULES = [
     pattern: TRACE_SQL,
     matcher: traceMatcher,
     window: "statement",
-    alsoFingerprint: DRAFT_FRAGMENT,
+    alsoFingerprint: MODULE_FRAGMENT,
     lists: { TRACE_READS },
     failure: [
       "a file outside apps/backend/src/authz/ reads recipes (claimnet.traces or embedding_sources) and is not registered.",

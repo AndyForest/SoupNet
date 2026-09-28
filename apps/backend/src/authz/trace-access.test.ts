@@ -178,6 +178,7 @@ describe("the read rule is applied in one place", () => {
       updatedAt: "2026-09-19T00:00:00Z",
       groupName: "Book",
       apiKeyLabel: null,
+      apiKeyIsAuthors: false,
       userEmail: "author@test.local",
       impact: null,
       uncertainty: null,
@@ -186,8 +187,51 @@ describe("the read rule is applied in one place", () => {
       draftResolvedByKeyId: null,
       draftResolvedByEmail: null,
       draftResolvedByViewer: false,
+      draftDepositedBy: null,
+      draftAbout: null,
     });
     // The viewer's role drives the route's flags; it is not part of the payload.
     expect("role" in (found?.trace ?? {})).toBe(false);
+  });
+});
+
+describe("slice 4: the depositor and the subject of an on-behalf draft", () => {
+  const SUBJECT = "66666666-6666-4666-8666-666666666666";
+  const onBehalf = (facts: { isAuthor: boolean; isDraftSubject: boolean; isDraftDepositor: boolean; draftState: string }) => ({
+    ...row({ role: "member", ...facts }),
+    subjectUserId: SUBJECT,
+    subjectEmail: "pat@test.local",
+    draftResolvedAt: "2026-09-27T10:00:00Z",
+    draftResolvedByEmail: "pat@test.local",
+    draftResolvedByUserId: SUBJECT,
+  });
+
+  it("[S4-M5] roleInBookOfTrace reports an unpublished draft to its depositor as well as its subject, and to nobody else", async () => {
+    for (const draftState of ["unverified", "rejected", "not_chosen"]) {
+      const dep = fakeDb([onBehalf({ isAuthor: true, isDraftSubject: false, isDraftDepositor: true, draftState })]);
+      expect((await roleInBookOfTrace(dep.db, VIEWER, TRACE))?.isDraftDepositor, draftState).toBe(true);
+      const subj = fakeDb([onBehalf({ isAuthor: false, isDraftSubject: true, isDraftDepositor: false, draftState })]);
+      expect((await roleInBookOfTrace(subj.db, VIEWER, TRACE))?.isDraftSubject, draftState).toBe(true);
+      const other = fakeDb([onBehalf({ isAuthor: false, isDraftSubject: false, isDraftDepositor: false, draftState })]);
+      expect(await roleInBookOfTrace(other.db, VIEWER, TRACE), draftState).toBeNull();
+    }
+  });
+
+  it("[S4-M3][S4-L1] the depositor sees the unpublished state and whom it is about, never who resolved it", async () => {
+    const found = await readableTraceFor(fakeDb([onBehalf({ isAuthor: true, isDraftSubject: false, isDraftDepositor: true, draftState: "rejected" })]).db, VIEWER, TRACE);
+    expect(found?.trace).toMatchObject({
+      draftState: "rejected", draftResolvedAt: null, draftResolvedByEmail: null, draftResolvedByViewer: false,
+      draftAbout: "pat@test.local", draftDepositedBy: null,
+    });
+  });
+
+  it("[S4-L1] the subject sees who deposited it, with the resolution details", async () => {
+    const found = await readableTraceFor(fakeDb([onBehalf({ isAuthor: false, isDraftSubject: true, isDraftDepositor: false, draftState: "unverified" })]).db, VIEWER, TRACE);
+    expect(found?.trace).toMatchObject({ draftState: "unverified", draftDepositedBy: "author@test.local", draftAbout: null });
+  });
+
+  it("[S4-L2] no label on anything published", async () => {
+    const found = await readableTraceFor(fakeDb([onBehalf({ isAuthor: true, isDraftSubject: false, isDraftDepositor: true, draftState: "verified" })]).db, VIEWER, TRACE);
+    expect(found?.trace).toMatchObject({ draftState: null, draftDepositedBy: null, draftAbout: null });
   });
 });
