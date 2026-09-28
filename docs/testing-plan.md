@@ -52,14 +52,18 @@ npm run test:ci                   # full CI reproduction — see below
 2. Builds packages + backend
 3. Starts the backend (runs migrations from scratch, creates system user)
 4. Seeds system settings (signup cap)
-5. Runs all tests with `GEMINI_API_KEY=""` (lexical-only fallback)
+5. Runs all tests with `GEMINI_API_KEY=""` and `EMBEDDINGS_PROVIDER=stub` (deterministic fake vectors, no API calls)
 6. Tears down everything
 
 Use this when:
 - CI fails but local tests pass (different data, different postgres state)
 - Testing migrations work from scratch
-- Verifying lexical-only search behavior (no Gemini key)
+- Verifying behavior without a Gemini key (stub embeddings)
 - Debugging cold-start behavior
+
+**Setup users.** Integration tests that need a verified user for setup call `seedVerifiedUser(email, password)` from `apps/backend/src/test-users.ts` rather than walking register, verify and login over HTTP. It runs the product's `registerUser` in the test worker, stores a 4-round hash, and returns the real `/auth/login` response. Each HTTP signup costs the backend two 12-round bcryptjs operations on its single thread, and ~170 of them per gate run kept it saturated for ~100 s and timed out setup hooks (measured 2026-09-28). Tests of signup itself (register, verify, the waitlist, invite-on-register, unverified accounts) stay on HTTP. The helper needs `JWT_SECRET` in the test env, which `ci.yml` and the local gate both set.
+
+**Reading a red gate.** Add `--reporter=default --reporter=json --outputFile.json=<path>` (`node scripts/test-ci-local.mjs <args>` passes them to vitest). "Worker exited unexpectedly" with every reported test passing is the known native worker crash (exit status 3221226505 on Windows, see the backlog). The file it hit shows its tests as `pending` in the JSON. A failure that compares an expiry with `NOW()` can come from Docker Desktop's VM clock stepping back 20-30 ms every 30 s (see the backlog item on expiries stamped with `NOW()`). Treat anything else as real.
 
 You can also use the CI postgres manually:
 ```bash
