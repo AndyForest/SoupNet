@@ -21,6 +21,21 @@
  *
  * Ranking inputs are untouched (DT-VER-09): text, embeddings, judgment date,
  * and ratings are not in the SET list.
+ *
+ * Ownership moves at verification (slice 4, recipe b89db1f0): a draft one
+ * person's agent deposited about another belongs to the depositor until its
+ * subject verifies it, and from then on is the subject's recipe. So a
+ * verification sets `user_id` to the subject and clears `subject_user_id`
+ * in the same UPDATE; a rejection or not chosen changes neither, and those
+ * drafts stay the depositor's. For a draft about its own author both SET
+ * expressions leave the row as it was. This is the only statement that
+ * changes an existing recipe's author.
+ *
+ * The audit row is written by this same statement (a data-modifying CTE), so
+ * no caller can resolve a draft without it, and it is the durable record of
+ * the depositor once the author has moved: a verification that changed the
+ * author names the previous one in `metadata.previousAuthorId` (S4-S4,
+ * S4-R4; recipe c6aa9587).
  */
 
 import { sql } from "drizzle-orm";
@@ -31,6 +46,12 @@ import { inBooks } from "./scope-sql";
 import { membershipOf } from "./membership-sql";
 import { WRITE_ROLES } from "./roles";
 import type { ResolveAuthority } from "./roles";
+
+const RESOLUTION_ACTIONS: Record<DraftResolution, string> = {
+  verified: "recipe.draft_verified",
+  rejected: "recipe.draft_rejected",
+  not_chosen: "recipe.draft_not_chosen",
+};
 
 /** Anything that can run a statement: the pool or a transaction. */
 type Executor = Pick<PostgresJsDatabase, "execute">;
@@ -75,9 +96,10 @@ export function writeAuthoritySql(_alias: "t", authority: ResolveAuthority, acto
 /**
  * Resolve the draft if `actorUserId` is the person it is about and it is still
  * unverified. `byKeyId` is the verifying agent's key, or null when the person
- * resolved it themselves. Returns null when nothing changed; otherwise the key
- * that deposited the draft, so a caller can record whether the depositing
- * agent verified its own draft (build log open question 14).
+ * resolved it themselves. Returns null when nothing changed (and no audit row
+ * is written); otherwise the key that deposited the draft, so a caller can
+ * record whether the depositing agent verified its own draft (build log open
+ * question 14), and the author before the statement ran.
  */
 export async function resolveDraft(
   db: Executor,
@@ -88,25 +110,50 @@ export async function resolveDraft(
     byKeyId: string | null;
     /** Write authority on the draft's book, checked in this statement ([F78], [F79]). */
     authority: ResolveAuthority;
+    /** The audit row's metadata (how it was resolved: `via`, and anything the
+     *  caller adds). `previousAuthorId` and, for an agent, whether the
+     *  depositing key verified its own draft, are added here. */
+    auditMetadata: Record<string, unknown>;
   },
-): Promise<{ depositingKeyId: string | null } | null> {
+): Promise<{ depositingKeyId: string | null; previousAuthorId: string } | null> {
+  const verified = params.resolution === "verified";
   // The resolution columns are written outright, not COALESCEd: the WHERE
   // already makes resolution one-way (only an unverified row matches), and a
   // value that came from anywhere else (an import) must never survive a real
-  // resolution ([F83]).
+  // resolution ([F83]). `prev` is the row as it was before this statement
+  // (the self-join reads the statement's snapshot), so the audit row can name
+  // the author a verification replaced.
   const rows = await db.execute(sql`
-    UPDATE claimnet.traces t
-    SET draft_state = ${params.resolution},
-        draft_resolved_at = NOW(),
-        draft_resolved_by_user_id = ${params.actorUserId}::uuid,
-        draft_resolved_by_key_id = ${params.byKeyId}::uuid,
-        updated_at = NOW()
-    WHERE t.id = ${params.traceId}::uuid
-      AND t.draft_state = 'unverified'
-      AND ${subjectOf("t")} = ${params.actorUserId}::uuid
-      AND ${writeAuthoritySql("t", params.authority, params.actorUserId)}
-    RETURNING t.id, t.api_key_id AS "depositingKeyId"
+    WITH upd AS (
+      UPDATE claimnet.traces t
+      SET draft_state = ${params.resolution},
+          draft_resolved_at = NOW(),
+          draft_resolved_by_user_id = ${params.actorUserId}::uuid,
+          draft_resolved_by_key_id = ${params.byKeyId}::uuid,
+          user_id = ${verified ? sql`${subjectOf("t")}` : sql`t.user_id`},
+          subject_user_id = ${verified ? sql`NULL` : sql`t.subject_user_id`},
+          updated_at = NOW()
+      FROM claimnet.traces prev
+      WHERE t.id = ${params.traceId}::uuid
+        AND prev.id = t.id
+        AND t.draft_state = 'unverified'
+        AND ${subjectOf("t")} = ${params.actorUserId}::uuid
+        AND ${writeAuthoritySql("t", params.authority, params.actorUserId)}
+      RETURNING t.id, t.api_key_id, prev.user_id AS prev_author, t.user_id AS new_author
+    ), audit AS (
+      INSERT INTO claimnet.audit_log (actor_user_id, action, target_type, target_id, api_key_id, metadata)
+      SELECT ${params.actorUserId}::uuid, ${RESOLUTION_ACTIONS[params.resolution]}, 'trace', upd.id,
+        ${params.byKeyId}::uuid,
+        ${JSON.stringify(params.auditMetadata)}::jsonb
+          || CASE WHEN upd.prev_author <> upd.new_author
+               THEN jsonb_build_object('previousAuthorId', upd.prev_author) ELSE '{}'::jsonb END
+          || CASE WHEN ${params.byKeyId}::uuid IS NOT NULL
+               THEN jsonb_build_object('verifiedByDepositingKey', upd.api_key_id IS NOT DISTINCT FROM ${params.byKeyId}::uuid) ELSE '{}'::jsonb END
+      FROM upd
+      RETURNING id
+    )
+    SELECT upd.api_key_id AS "depositingKeyId", upd.prev_author AS "previousAuthorId" FROM upd
   `);
-  const row = (rows as unknown as Array<{ depositingKeyId: string | null }>)[0];
-  return row ? { depositingKeyId: row.depositingKeyId ?? null } : null;
+  const row = (rows as unknown as Array<{ depositingKeyId: string | null; previousAuthorId: string }>)[0];
+  return row ? { depositingKeyId: row.depositingKeyId ?? null, previousAuthorId: row.previousAuthorId } : null;
 }

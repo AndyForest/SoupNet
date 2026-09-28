@@ -119,6 +119,30 @@ export function mayResolveDraft(facts: {
 }
 
 /**
+ * Move and delete of an UNPUBLISHED draft (slice 4, S4-M5; build log open
+ * question 30, recipes 5f0717b7 and b89db1f0). The subject may move or delete
+ * it (slice 2's rule). The depositor, who is its author until it is verified,
+ * may delete it (withdrawing a wrong attribution is the accountable person's
+ * job) but may not move it: the subject needs write access where it lives to
+ * review it, so a depositor's move could strand it. Everyone else, a book
+ * owner and a system user included, gets neither (the route's uniform 404).
+ *
+ * Null for a published recipe (never a draft, or verified): the ordinary
+ * author, book owner or admin, and system rules apply, and after a subject
+ * verifies an on-behalf draft its author is the subject.
+ */
+export function unpublishedDraftManagement(facts: {
+  draftState: string | null | undefined;
+  isDraftSubject: boolean;
+  isDraftDepositor: boolean;
+}): { move: boolean; delete: boolean } | null {
+  if (isPublishedDraftState(facts.draftState)) return null;
+  if (facts.isDraftSubject) return { move: true, delete: true };
+  if (facts.isDraftDepositor) return { move: false, delete: true };
+  return { move: false, delete: false };
+}
+
+/**
  * May a request authenticated by this key verify drafts through the agent
  * operation? Every key may today. Slice 5's headless keys may not (build log
  * open question 13, DT-HDL-04): that is the one line that changes here, so a

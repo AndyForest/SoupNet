@@ -10,6 +10,10 @@ import {
   traceIdVisibleTo,
   traceReadableById,
   traceReadableByPerson,
+  draftStateShownTo,
+  onBehalfSideFor,
+  onBehalfPartyFor,
+  subjectOf,
   SHARED_AUDIENCE,
 } from "./draft-sql";
 import { mayReadTrace, isPublishedDraftState, mayResolveDraft, hasWriteAuthority } from "./roles";
@@ -41,7 +45,8 @@ describe("draft SQL fragments (Layer 1)", () => {
     const q = dialect.sqlToQuery(traceVisibleTo("tr", { viewerUserId: VIEWER }));
     expect(q.sql).toContain("tr.draft_state IS NULL OR tr.draft_state = 'verified'");
     expect(q.sql).toContain("tr.draft_state = 'unverified'");
-    expect(q.sql).toContain("tr.user_id = $1::uuid");
+    expect(q.sql).toMatch(/COALESCE\(tr\.subject_user_id, tr\.user_id\) = \$\d::uuid/);
+    expect(q.sql).toMatch(/tr\.user_id = \$\d::uuid/);
     expect(q.params.every((p) => p === VIEWER)).toBe(true);
   });
 
@@ -49,7 +54,7 @@ describe("draft SQL fragments (Layer 1)", () => {
     const q = dialect.sqlToQuery(traceReadableById("t", VIEWER));
     expect(q.sql).toContain("t.draft_state IS NULL OR t.draft_state = 'verified'");
     expect(q.sql).not.toContain("'unverified'");
-    expect(q.sql).toContain("t.user_id = $1::uuid");
+    expect(q.sql).toMatch(/t\.user_id = \$\d::uuid/);
   });
 
   it("the id-keyed form reads the draft state from claimnet.traces, never from a copy", () => {
@@ -57,6 +62,10 @@ describe("draft SQL fragments (Layer 1)", () => {
     expect(q.sql).toContain("claimnet.traces dv");
     expect(q.sql).toContain("dv.id = es.source_id");
     expect(q.sql).not.toMatch(/es\.draft/);
+  });
+
+  it("[S4-M2] the subject is the on-behalf column where set, and the author otherwise", () => {
+    expect(dialect.sqlToQuery(subjectOf("t")).sql).toBe("COALESCE(t.subject_user_id, t.user_id)");
   });
 
   it("uses an alias from a closed set", () => {
@@ -171,25 +180,42 @@ describe("the draft condition is written once", () => {
 
 const canConnect = !!(process.env["DATABASE_URL"] || process.env["PGHOST"]);
 
+/**
+ * Slice 4 (S4-M2): the subject and the depositor vary separately. Each row
+ * is an author (the depositor while the draft is unpublished) and an
+ * on-behalf subject (NULL: about its author). The viewer is the subject only,
+ * the depositor only, both, or neither.
+ */
+const THIRD = "55555555-5555-4555-8555-555555555555";
+const PARTIES: Array<{ author: string; subject: string | null; label: string }> = [
+  { author: VIEWER, subject: null, label: "viewer's own (subject and depositor)" },
+  { author: OTHER, subject: null, label: "someone else's own" },
+  { author: OTHER, subject: VIEWER, label: "viewer is subject only" },
+  { author: VIEWER, subject: OTHER, label: "viewer is depositor only" },
+  { author: OTHER, subject: THIRD, label: "viewer is neither (on-behalf)" },
+];
+function factsFor(p: { author: string; subject: string | null }) {
+  const subject = p.subject ?? p.author;
+  return { isAuthor: p.author === VIEWER, isDraftSubject: subject === VIEWER, isDraftDepositor: p.author === VIEWER };
+}
+
 describe.skipIf(!canConnect)("the SQL fragments and mayReadTrace agree on every combination", () => {
   const states: Array<string | null> = [null, "unverified", "verified", "rejected", "not_chosen", "garbage"];
-  const owners = [VIEWER, OTHER];
 
   it("by-id SQL equals mayReadTrace for an author-or-member viewer", async () => {
     const { getDb } = await import("../db");
     const db = getDb();
     for (const draftState of states) {
-      for (const owner of owners) {
+      for (const p of PARTIES) {
         const rows = await db.execute(sql`
           SELECT ${traceReadableById("t", VIEWER)} AS ok
-          FROM (VALUES (${owner}::uuid, ${draftState}::text)) AS t(user_id, draft_state)
+          FROM (VALUES (${p.author}::uuid, ${p.subject}::uuid, ${draftState}::text)) AS t(user_id, subject_user_id, draft_state)
         `);
         const sqlSays = (rows as unknown as Array<{ ok: boolean }>)[0]?.ok === true;
-        const own = owner === VIEWER;
         // A viewer who reached a by-id statement through scope is a member (or
         // the author); the JS rule's answer for that viewer:
-        const jsSays = mayReadTrace({ isAuthor: own, role: "member", draftState, isDraftSubject: own, isDraftDepositor: own });
-        expect(sqlSays, `state=${String(draftState)} own=${own}`).toBe(jsSays);
+        const jsSays = mayReadTrace({ ...factsFor(p), role: "member", draftState });
+        expect(sqlSays, `state=${String(draftState)} ${p.label}`).toBe(jsSays);
       }
     }
   });
@@ -198,17 +224,18 @@ describe.skipIf(!canConnect)("the SQL fragments and mayReadTrace agree on every 
     const { getDb } = await import("../db");
     const db = getDb();
     for (const draftState of states) {
-      for (const owner of owners) {
+      for (const p of PARTIES) {
         const rows = await db.execute(sql`
           SELECT ${traceVisibleTo("t", { viewerUserId: VIEWER })} AS viewer,
                  ${traceVisibleTo("t", SHARED_AUDIENCE)} AS shared
-          FROM (VALUES (${owner}::uuid, ${draftState}::text)) AS t(user_id, draft_state)
+          FROM (VALUES (${p.author}::uuid, ${p.subject}::uuid, ${draftState}::text)) AS t(user_id, subject_user_id, draft_state)
         `);
         const row = (rows as unknown as Array<{ viewer: boolean; shared: boolean }>)[0]!;
-        const own = owner === VIEWER;
+        const f = factsFor(p);
+        const own = f.isDraftSubject || f.isDraftDepositor;
         const published = isPublishedDraftState(draftState);
         expect(row.shared, `shared state=${String(draftState)}`).toBe(published);
-        expect(row.viewer, `viewer state=${String(draftState)} own=${own}`).toBe(published || (own && draftState === "unverified"));
+        expect(row.viewer, `viewer state=${String(draftState)} ${p.label}`).toBe(published || (own && draftState === "unverified"));
       }
     }
   });
@@ -219,24 +246,61 @@ describe.skipIf(!canConnect)("the SQL fragments and mayReadTrace agree on every 
     const BOOK = "33333333-3333-4333-8333-333333333333";
     const ELSEWHERE = "44444444-4444-4444-8444-444444444444";
     for (const draftState of states) {
-      for (const owner of owners) {
+      for (const p of PARTIES) {
         for (const member of [true, false]) {
           const rows = await db.execute(sql`
             SELECT ${traceReadableByPerson("t", VIEWER, member ? [BOOK] : [ELSEWHERE])} AS ok
-            FROM (VALUES (${owner}::uuid, ${draftState}::text, ${BOOK}::uuid)) AS t(user_id, draft_state, group_id)
+            FROM (VALUES (${p.author}::uuid, ${p.subject}::uuid, ${draftState}::text, ${BOOK}::uuid)) AS t(user_id, subject_user_id, draft_state, group_id)
           `);
           const sqlSays = (rows as unknown as Array<{ ok: boolean }>)[0]?.ok === true;
-          const own = owner === VIEWER;
-          const jsSays = mayReadTrace({ isAuthor: own, role: member ? "member" : null, draftState, isDraftSubject: own, isDraftDepositor: own });
-          expect(sqlSays, `state=${String(draftState)} own=${own} member=${member}`).toBe(jsSays);
+          const jsSays = mayReadTrace({ ...factsFor(p), role: member ? "member" : null, draftState });
+          expect(sqlSays, `state=${String(draftState)} ${p.label} member=${member}`).toBe(jsSays);
         }
       }
     }
     // No live books at all: only the viewer's own rows.
     const none = await db.execute(sql`
       SELECT ${traceReadableByPerson("t", VIEWER, [])} AS ok
-      FROM (VALUES (${OTHER}::uuid, ${null}::text, ${BOOK}::uuid)) AS t(user_id, draft_state, group_id)
+      FROM (VALUES (${OTHER}::uuid, ${null}::uuid, ${null}::text, ${BOOK}::uuid)) AS t(user_id, subject_user_id, draft_state, group_id)
     `);
     expect((none as unknown as Array<{ ok: boolean }>)[0]?.ok).toBe(false);
+  });
+
+  it("[S4-M3] draftStateShownTo: every state for the subject, unpublished states for the depositor, nothing for anyone else", async () => {
+    const { getDb } = await import("../db");
+    const db = getDb();
+    for (const draftState of states) {
+      for (const p of PARTIES) {
+        const rows = await db.execute(sql`
+          SELECT ${draftStateShownTo("t", VIEWER)} AS shown
+          FROM (VALUES (${p.author}::uuid, ${p.subject}::uuid, ${draftState}::text)) AS t(user_id, subject_user_id, draft_state)
+        `);
+        const shown = (rows as unknown as Array<{ shown: string | null }>)[0]?.shown ?? null;
+        const f = factsFor(p);
+        const expected = f.isDraftSubject
+          ? draftState
+          : f.isDraftDepositor && !isPublishedDraftState(draftState) ? draftState : null;
+        expect(shown, `state=${String(draftState)} ${p.label}`).toBe(expected);
+      }
+    }
+  });
+
+  it("[S4-L1] the other party of an unpublished on-behalf draft, from each side", async () => {
+    const { getDb } = await import("../db");
+    const db = getDb();
+    for (const draftState of states) {
+      for (const p of PARTIES) {
+        const rows = await db.execute(sql`
+          SELECT ${onBehalfSideFor("t", VIEWER)} AS side, ${onBehalfPartyFor("t", VIEWER)} AS party
+          FROM (VALUES (${p.author}::uuid, ${p.subject}::uuid, ${draftState}::text)) AS t(user_id, subject_user_id, draft_state)
+        `);
+        const row = (rows as unknown as Array<{ side: string | null; party: string | null }>)[0]!;
+        const onBehalf = p.subject !== null && !isPublishedDraftState(draftState);
+        const expectedSide = !onBehalf ? null : p.subject === VIEWER ? "depositedBy" : p.author === VIEWER ? "about" : null;
+        const expectedParty = expectedSide === "depositedBy" ? p.author : expectedSide === "about" ? p.subject : null;
+        expect(row.side, `state=${String(draftState)} ${p.label}`).toBe(expectedSide);
+        expect(row.party, `state=${String(draftState)} ${p.label}`).toBe(expectedParty);
+      }
+    }
   });
 });

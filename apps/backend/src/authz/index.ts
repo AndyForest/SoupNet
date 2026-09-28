@@ -20,6 +20,8 @@
  *                        mayReadTrace in roles.ts); its facts helpers stay
  *                        internal
  *   draft-resolution.ts — the one statement that verifies or rejects a draft
+ *   naming.ts          — who may be named as the subject of a draft deposited
+ *                        on their behalf (slice 4)
  *
  * Import from here. See docs/engineering-principles.md §7.
  */
@@ -39,8 +41,12 @@ export {
   traceReadableByPerson,
   draftAwaitingReviewBy,
   draftStateShownTo,
+  onBehalfSubjectOf,
+  onBehalfPartyFor,
+  onBehalfSideFor,
   SHARED_AUDIENCE,
   isSharedAudience,
 } from "./draft-sql";
 export type { DraftAudience, SharedAudience, TraceAlias } from "./draft-sql";
 export * from "./draft-resolution";
+export * from "./naming";
