@@ -94,7 +94,7 @@ Soup.net maintainers have technical access to all data for the purposes of opera
 - **Google Cloud (Gemini API)** — Generates vector embeddings. We send recipe text, evidence text, and uploaded file content. We do not send your user identifier. Processed in Google's data centers under Google's standard API terms.
 - **Amazon Web Services (AWS)** — Hosting and infrastructure (database, file storage, application servers). All service data is hosted in AWS regions in the United States.
 - **AWS Simple Email Service (SES)** — Sends transactional email (verification, password reset, invitations).
-- **Cloudflare Turnstile** — Checks that a signup comes from a person, not a bot. The signup page loads Cloudflare's check, which processes signals from your browser and your IP address; we receive only whether the check passed.
+- **Cloudflare Turnstile** — Checks that a person, not a bot, is creating an account or asking us to send an email (sign-up, password reset, a new verification link). Those pages load Cloudflare's check, which processes signals from your browser and your IP address; we receive only whether the check passed.
 
 We don't share data with any other third party. We don't use any analytics, advertising, or social-media third-party services.
 
