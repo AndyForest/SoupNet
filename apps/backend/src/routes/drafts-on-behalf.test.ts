@@ -764,6 +764,30 @@ describe.skipIf(!BASE || !canConnect())("drafts on behalf of another person (dra
     expect(await row(moved!.to)).toMatchObject({ user_id: dana.userId, subject_user_id: pat.userId, draft_state: "unverified" });
   });
 
+  it("[F97] import links never attach evidence or references to a draft the importer deposited about someone else", async () => {
+    const id = await onBehalf("links target");
+    const current = (await sql`SELECT claim_text, created_at FROM claimnet.traces WHERE id = ${id}::uuid`)[0]!;
+    const counts = async (): Promise<[number, number]> => {
+      const e = await sql`SELECT count(*)::int AS n FROM claimnet.trace_evidence WHERE trace_id = ${id}::uuid`;
+      const r = await sql`SELECT count(*)::int AS n FROM claimnet.trace_references WHERE trace_id = ${id}::uuid`;
+      return [Number(e[0]?.["n"]), Number(r[0]?.["n"])];
+    };
+    const before = await counts();
+    const now = new Date().toISOString();
+    const evidenceId = crypto.randomUUID();
+    const referenceId = crypto.randomUUID();
+    const res = await importFile(dana, {
+      // The draft's own row, unchanged and without onBehalfOf: the importer's own existing row.
+      traces: [{ id, claimText: String(current["claim_text"]), createdAt: new Date(String(current["created_at"])).toISOString() }],
+      evidence: [{ id: evidenceId, content: "Pat said to delete the audit log", createdAt: now }],
+      references: [{ id: referenceId, quote: "delete the audit log weekly", source: "fabricated", createdAt: now }],
+      traceEvidence: [{ id: crypto.randomUUID(), traceId: id, evidenceId, stance: "for", createdAt: now }],
+      traceReferences: [{ id: crypto.randomUUID(), traceId: id, referenceId, createdAt: now }],
+    });
+    expect(res.status).toBe(200);
+    expect(await counts()).toEqual(before);
+  });
+
   // ── Leaving the book (S4-A1, S4-A2) ──────────────────────────────────────
 
   it("S4-A1 / DT-OBO-12: Pat removed from the book: the draft stays; his queue drops it; his link shows it with the book as the reason; rejoining restores it", async () => {

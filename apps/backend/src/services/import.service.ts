@@ -607,10 +607,15 @@ export async function importCorpus(
     // A link is importable when its trace endpoint is owned by the importer
     // (inserted, skipped-identical, conflicted, or overwritten — all owned)
     // and its other endpoint exists (in the file, or already in the DB).
+    // A draft the importer deposited about someone else is not hers to add
+    // to: evidence and quotes attached after its review link went out would
+    // publish under its subject's name unreviewed ([F97]). New on-behalf rows
+    // in this file were given fresh ids above ([F96]), so they are new
+    // deposits and take their own links.
     const ownedTraceIds = new Set<string>();
     for (const t of wTraces) {
       const existing = existingTraces.get(t.id);
-      if (!existing || existing.userId === userId) ownedTraceIds.add(t.id);
+      if (!existing || (existing.userId === userId && !existing.subjectUserId)) ownedTraceIds.add(t.id);
     }
 
     const fileEvidenceIds = new Set(wEvidence.map((e) => e.id));
