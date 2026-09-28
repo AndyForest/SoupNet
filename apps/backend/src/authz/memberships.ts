@@ -155,9 +155,15 @@ export type RemoveMemberResult = "removed" | "not_a_member" | "last_owner";
  *
  *   - Ids are compared by the database as uuids, never as strings, so however
  *     the caller's copy of an id is written it names the same member.
- *   - The book's owner rows are locked (in a fixed order) before the decision.
- *     Two owners leaving at the same moment are serialized: the second waits,
- *     then decides on what the first left behind, and is refused.
+ *   - The book's row is locked first, then its owner rows (in a fixed order),
+ *     before the decision. Two owners leaving at the same moment are
+ *     serialized: the second waits, then decides on what the first left
+ *     behind, and is refused. Book row before membership rows is the lock
+ *     order account deletion uses too (book-succession.ts), so a removal and
+ *     a deletion on the same book queue instead of deadlocking [F74].
+ *   - The removed member's pending invitations to the book expire in the same
+ *     transaction [F90]: an invitation is only as good as its sender's
+ *     membership.
  *
  * Pass a transaction handle as `db` to make the removal part of a larger unit;
  * the locks are then held until that transaction ends.
@@ -172,6 +178,9 @@ export async function removeMember(
   userId: string,
 ): Promise<RemoveMemberResult> {
   return db.transaction(async (tx) => {
+    await tx.execute(sql`
+      SELECT id FROM claimnet.groups WHERE id = ${bookId}::uuid FOR UPDATE
+    `);
     const ownerRows = await tx.execute(sql`
       SELECT ${membershipOf("gm", userId)} AS "isTarget"
       FROM claimnet.group_members gm
@@ -188,7 +197,18 @@ export async function removeMember(
       WHERE group_id = ${bookId}::uuid AND user_id = ${userId}::uuid
       RETURNING id
     `);
-    return (deleted as unknown as unknown[]).length > 0 ? "removed" : "not_a_member";
+    if ((deleted as unknown as unknown[]).length === 0) return "not_a_member";
+
+    // Invitations follow the inviter's membership [F90]: the pending ones this
+    // person sent to this book expire with the removal, so nobody (their own
+    // other address included) gets in on an invitation from someone who is no
+    // longer a member. Expired rather than deleted, as re-inviting does.
+    await tx.execute(sql`
+      UPDATE claimnet.invitations SET expires_at = NOW()
+      WHERE group_id = ${bookId}::uuid AND inviter_id = ${userId}::uuid
+        AND accepted_at IS NULL AND declined_at IS NULL AND expires_at > NOW()
+    `);
+    return "removed";
   });
 }
 

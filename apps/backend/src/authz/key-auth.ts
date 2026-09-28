@@ -93,18 +93,25 @@ function hashCredential(raw: string): string {
  * embeds THIS fragment — key authentication, refresh-token rotation, and
  * workspace scope binding below, plus authorization-code redemption in
  * services/oauth.service.ts — so the rule cannot drift between them (F66).
+ * Book succession (book-succession.ts) ranks who may inherit a book by the
+ * same fragment, so an account that cannot act is never preferred as a
+ * book's new owner (F75).
  *
- * Today the rule is a verified email (F15).
+ * Today the rule is a verified email (F15) on an account that is not on the
+ * waitlist. Login already refuses a waitlisted account a session, so no path
+ * mints it a credential; the condition is here so that every consumer states
+ * the whole rule.
  *
  * ACCOUNT DISABLEMENT LANDS HERE, and only here: add the account-state column
  * test to this fragment (for example `AND u.<disabled column> IS NULL`) and
- * every consumer inherits it, reversibly, with no sweep over keys. Whether
+ * every consumer, succession included, inherits it, reversibly, with no sweep
+ * over keys. Whether
  * that column is the existing `users.suspended_at` or a new one is an open
  * operator decision; until it is made this fragment deliberately does not
  * read `suspended_at`.
  */
 export function activeUserPredicate(): SQL {
-  return sql`u.email_verified_at IS NOT NULL`;
+  return sql`(u.email_verified_at IS NOT NULL AND u.waitlisted_at IS NULL)`;
 }
 
 /**

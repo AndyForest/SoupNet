@@ -6,6 +6,8 @@ import {
   pickSuccessor,
   promoteToOwner,
   traceIdsInSoleMemberBooksOwnedBy,
+  memberlessBooksWithOthersRecipes,
+  lockBooksForDeparture,
   removeMembershipsInOrgsOwnedBy,
   removeAllMembershipsOf,
 } from "../authz";
@@ -62,9 +64,10 @@ export interface BookHandover {
  *     and the rows become undeletable orphans
  *   - uploads owned by the user's api keys, then api_keys
  *   - oauth_authorization_codes
- *   - owned books that have no other members (their memberships, the book
- *     ids purged from any remaining key's scope arrays, the groups rows),
- *     the user's organizations, remaining memberships, then the users row
+ *   - owned books that hold nobody else — no other member, no other
+ *     person's recipe (their memberships, the book ids purged from any
+ *     remaining key's scope arrays, the groups rows), the user's
+ *     organizations, remaining memberships, then the users row
  *     (FK cascades: invitations.inviter_id, trace_reactions.user_id,
  *     check_feedback_stars.user_id)
  *
@@ -76,8 +79,18 @@ export interface BookHandover {
  *     other members' recipes, memberships, invitations and already-issued
  *     API keys (whose scope arrays hold book ids) are untouched.
  *   - Books the user merely belongs to lose the membership and the user's
- *     authored recipes, nothing else.
- *   - Only books with no other members are deleted.
+ *     authored recipes, nothing else — even when that leaves them with no
+ *     members.
+ *   - A book in the user's organizations with no other member that still
+ *     holds other people's recipes (former members') is not deleted and not
+ *     given to anyone [F73, F87] (operator rulings 2026-09-27, Soup.net
+ *     recipes f46cfc50 and 23657e4e): it moves into the personal
+ *     organization of the author of its earliest remaining recipe, because a
+ *     book must live in some organization and the user's are going, and it
+ *     stays with no members. Nobody gains access to anything; each author
+ *     still reaches their own recipes by id. Such books are left for a
+ *     developer to deal with if anyone ever asks.
+ *   - Only books that hold nothing but the user's own work are deleted.
  *
  * Deliberately preserved:
  *   - vector_cache — content-hash keyed, stores no source text and no FKs
@@ -117,9 +130,10 @@ export async function deleteUserCascade(
   let evidenceDeleted = 0;
   let referencesDeleted = 0;
 
-  // Phase 0: hand shared books on to a remaining member BEFORE anything is
-  // deleted, so from here on every book still in the user's organizations is
-  // one nobody else belongs to.
+  // Phase 0: hand shared books on to a remaining member, and move books
+  // holding other people's recipes out of the user's organizations, BEFORE
+  // anything is deleted, so from here on every book still in the user's
+  // organizations holds nothing but the user's own work.
   const booksHandedOver = await db.transaction((tx) =>
     handOverSharedBooks(tx as unknown as PostgresJsDatabase, userId),
   );
@@ -157,19 +171,16 @@ export async function deleteUserCascade(
       DELETE FROM claimnet.oauth_authorization_codes WHERE user_id = ${userId}::uuid
     `);
 
-    // Lock the books that are about to be deleted. A concurrent membership
-    // insert takes a key-share lock on its groups row, so it now waits for
-    // this transaction — nobody can join a book between the hand-over
-    // re-check below and the delete. Then hand on any book that gained a
-    // member since phase 0.
-    await tx.execute(sql`
-      SELECT g.id FROM claimnet.groups g
-      WHERE g.organization_id IN (
-        SELECT id FROM claimnet.organizations WHERE owner_id = ${userId}::uuid
-      )
-      ORDER BY g.id
-      FOR UPDATE OF g
-    `);
+    // Lock every book this transaction may change or delete — books in the
+    // user's organizations and books they belong to — in one statement, in
+    // id order, before touching any membership row [F74]. A concurrent
+    // membership insert takes a key-share lock on its groups row and
+    // removeMember locks the groups row first, so both now wait for this
+    // transaction: nobody can join, leave, or be removed between the
+    // hand-over re-check below and the delete, and a removal racing the
+    // teardown queues instead of deadlocking. Then hand on any book that
+    // gained a member since phase 0.
+    await lockBooksForDeparture(txDb, userId);
     booksHandedOver.push(...(await handOverSharedBooks(txDb, userId)));
 
     // Stragglers: traces created between phase 1 and this transaction
@@ -183,10 +194,16 @@ export async function deleteUserCascade(
       referencesDeleted += result.referencesDeleted;
     }
 
-    // Owned organizations bottom-up. Every book still here has no member
-    // other than the user (shared ones were handed on above): memberships in
-    // those books, the book ids purged from any remaining key's scope, the
-    // books, the orgs. Their traces are already gone via the cascade above.
+    // Owned organizations bottom-up. Every book still here holds nobody
+    // else: shared ones were handed on and books holding other people's
+    // recipes were moved out above. Memberships in those books, the book ids
+    // purged from any remaining key's scope, the books, the orgs. Their
+    // traces are already gone via the cascade above.
+    //
+    // A book anywhere else keeps whatever it holds: the user's membership
+    // goes (below) and the book stays where it is, even with no members left
+    // [F73, F74]. Deletion removes what is the user's; it never deletes or
+    // hands over what is not.
     //
     // Scope purge: a FORMER member's still-live key can carry a deleted
     // book's id. Same repair the ephemeral-book reaper applies (recipe
@@ -215,11 +232,18 @@ export async function deleteUserCascade(
       `);
     }
     await removeMembershipsInOrgsOwnedBy(tx, userId);
+    // Only an empty book is deleted: the condition is on the statement itself,
+    // so a recipe filed into the book after the move-out above (traces take
+    // no lock on their book; traces.group_id has no foreign key) keeps the
+    // book, and the organization delete below then fails on its foreign key
+    // and rolls the teardown back. Nothing is lost; a retry moves the book
+    // out [F88].
     await tx.execute(sql`
-      DELETE FROM claimnet.groups
-      WHERE organization_id IN (
+      DELETE FROM claimnet.groups g
+      WHERE g.organization_id IN (
         SELECT id FROM claimnet.organizations WHERE owner_id = ${userId}::uuid
       )
+      AND NOT EXISTS (SELECT 1 FROM claimnet.traces t WHERE t.group_id = g.id)
     `);
     await tx.execute(sql`
       DELETE FROM claimnet.organizations WHERE owner_id = ${userId}::uuid
@@ -267,11 +291,16 @@ async function collectUserTraceIds(
  *
  * Which books: those with at least one OTHER member that either live in an
  * organization the user owns, or have the user as a role-'owner' member.
+ * Then books in the user's organizations left with no other member that
+ * still hold other people's recipes are moved out with nobody added (see the
+ * loop at the end).
  *
  * Succession: another existing owner if there is one; else the
  * longest-standing admin; else the longest-standing member (joined_at, id
- * as the tie-break). The successor is promoted to 'owner' unless they
- * already are one.
+ * as the tie-break), preferring accounts that can act (verified, not
+ * waitlisted) and falling back to the rest only when none can [F75]; see
+ * pickSuccessor. The successor is promoted to 'owner' unless they already
+ * are one.
  *
  * Re-homing: books live inside an organization and the departing user's
  * organizations are removed with the account, so a book in one of them moves
@@ -348,6 +377,32 @@ async function handOverSharedBooks(
       )
     `);
     handovers.push(handover);
+  }
+
+  // Books left without members that still hold other people's recipes: move
+  // them out of the user's organizations, add nobody [F73, F87]. Audited like
+  // a hand-over, so a developer can find them.
+  for (const book of await memberlessBooksWithOthersRecipes(db, userId)) {
+    const newOrganizationId = await resolvePersonalOrganization(db, book.authorUserId);
+    const newSlug = await freeSlugIn(db, newOrganizationId, book.slug);
+    await db.execute(sql`
+      UPDATE claimnet.groups
+      SET organization_id = ${newOrganizationId}::uuid, slug = ${newSlug}, updated_at = NOW()
+      WHERE id = ${book.id}::uuid
+    `);
+    await db.execute(sql`
+      INSERT INTO claimnet.audit_log (actor_user_id, action, target_type, target_id, metadata)
+      VALUES (
+        ${userId}::uuid, 'recipe_book.left_without_members', 'group', ${book.id}::uuid,
+        ${JSON.stringify({
+          reason: "owner_account_deleted",
+          previousOrganizationId: book.organizationId,
+          newOrganizationId,
+          previousSlug: book.slug,
+          newSlug,
+        })}::jsonb
+      )
+    `);
   }
   return handovers;
 }
