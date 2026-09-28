@@ -1,6 +1,6 @@
 # Privacy Policy — Soup.net
 
-**Effective date:** 2026-05-12 (retention wording clarified 2026-06-11)
+**Effective date:** 2026-05-12 (retention wording clarified 2026-06-11; third parties updated 2026-09-27)
 **Service:** Soup.net — a stigmergic search engine for taste and judgment
 **Maintained by:** Andy Forest, in Canada
 **Contact:** admin@soup.net
@@ -94,6 +94,7 @@ Soup.net maintainers have technical access to all data for the purposes of opera
 - **Google Cloud (Gemini API)** — Generates vector embeddings. We send recipe text, evidence text, and uploaded file content. We do not send your user identifier. Processed in Google's data centers under Google's standard API terms.
 - **Amazon Web Services (AWS)** — Hosting and infrastructure (database, file storage, application servers). All service data is hosted in AWS regions in the United States.
 - **AWS Simple Email Service (SES)** — Sends transactional email (verification, password reset, invitations).
+- **Cloudflare Turnstile** — Checks that a signup comes from a person, not a bot. The signup page loads Cloudflare's check, which processes signals from your browser and your IP address; we receive only whether the check passed.
 
 We don't share data with any other third party. We don't use any analytics, advertising, or social-media third-party services.
 
