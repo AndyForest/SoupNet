@@ -110,6 +110,20 @@ describe("[F80][F84] the recipe register catches each planted bypass", { timeout
     expect(r.output).toContain(path);
   });
 
+  it("[F89] a new call to the person-scope read fragment in a registered file fails", () => {
+    // traceReadableByPerson is a signed-in person's full scope; a call to it
+    // outside the module must be fingerprinted like every other draft fragment.
+    const path = "apps/backend/src/services/draft-queue.service.ts";
+    const planted = read(path).replace(
+      "export const DRAFT_QUEUE_PAGE_SIZE = 20;",
+      "export const DRAFT_QUEUE_PAGE_SIZE = 20;\nexport const plantedScope = (u: string) => traceReadableByPerson(\"t\", u, []);",
+    );
+    expect(planted).not.toBe(read(path));
+    const r = guardPasses({ [path]: planted });
+    expect(r.ok, r.output).toBe(false);
+    expect(r.output).toContain(path);
+  });
+
   it("[F84] a table name that merely resembles a recipe table does not count", () => {
     const r = guardPasses({ [NEW_FILE]: 'import { sql } from "drizzle-orm";\nexport const q = sql`SELECT id FROM\n  claimnet.traces_archive_view`;\n' });
     expect(r.ok, r.output).toBe(true);

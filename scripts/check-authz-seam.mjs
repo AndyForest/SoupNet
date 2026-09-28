@@ -192,7 +192,9 @@ const NON_AUTHORIZING_KEY_SQL = {
  * `claimnet.embedding_sources` (drafts-and-triage slice 2). `composes: true`
  * claims every result-set, count, or aggregate statement in the file applies
  * the module's draft fragments (publishedTrace, traceVisibleTo,
- * traceIdVisibleTo, traceReadableById, draftAwaitingReviewBy); the check
+ * traceIdVisibleTo, traceReadableById, traceReadableByPerson,
+ * draftAwaitingReviewBy, draftStateShownTo; [F89] added the person-scope
+ * form); the check
  * verifies the file references at least one. `composes: false` needs a `why`
  * saying why the draft rule does not apply. The read-path inventory
  * (docs/planning/drafts-and-triage-read-paths.md) maps each RP row here.
@@ -317,7 +319,7 @@ const TRACE_READS = {
 };
 
 /** The module's draft fragments; a `composes: true` file must reference one. */
-const DRAFT_FRAGMENT = /\b(publishedTrace|traceVisibleTo|traceIdVisibleTo|traceReadableById|draftAwaitingReviewBy|draftStateShownTo)\(/;
+const DRAFT_FRAGMENT = /\b(publishedTrace|traceVisibleTo|traceIdVisibleTo|traceReadableById|traceReadableByPerson|draftAwaitingReviewBy|draftStateShownTo)\(/;
 
 /** SQL table names of the recipe rule, and their Drizzle exports. */
 const TRACE_TABLES = ["traces", "embedding_sources", "embedding_chunks", "trace_evidence", "trace_references", "check_feedback", "trace_reactions"];
