@@ -8,9 +8,10 @@
  *   npx tsx scripts/embedding-cache.mts harvest [--from URL]… # copy vectors the cache lacks
  *   npx tsx scripts/embedding-cache.mts backup                # pg_dump + sorted key list + manifest
  *   npx tsx scripts/embedding-cache.mts verify                # newest backup is intact and lost no keys
- *   npx tsx scripts/embedding-cache.mts prune [--keep 3]      # verify, then delete backups beyond --keep
+ *   npx tsx scripts/embedding-cache.mts prune                 # verify, then keep 2 dailies + a weekly + a monthly
  *   npx tsx scripts/embedding-cache.mts restore-test          # restore newest backup into a scratch DB and compare
- *   npx tsx scripts/embedding-cache.mts nightly [--backup-every-days 7] [--keep 3]
+ *   npx tsx scripts/embedding-cache.mts nightly [--backup-every-days 1]
+ *   (prune and nightly take --daily 2 --weekly-max-days 12 --monthly-max-days 45)
  *
  * Environment (defaults suit docker-compose.embedding-cache.yml):
  *   EMBEDDING_CACHE_URL        writer connection (select + insert only)
@@ -35,7 +36,7 @@ import {
   isBackupName,
   keyOf,
   redactUrl,
-  selectPrunable,
+  selectRetained,
   type CacheKey,
 } from "./embedding-cache/lib.mts";
 
@@ -307,10 +308,12 @@ async function backup(): Promise<string> {
       const gz = zlib.createGzip();
       const written = pipeline(gz, fs.createWriteStream(keysFile));
       for await (const batch of tx.unsafe(
-        `SELECT content_hash, model_id, task_type FROM claimnet.vector_cache ORDER BY ${KEY_ORDER}`,
+        // md5 of each vector's exact text form: lets verify catch a vector that
+        // changed, not only one that went missing.
+        `SELECT content_hash, model_id, task_type, md5(vector::text) AS fp FROM claimnet.vector_cache ORDER BY ${KEY_ORDER}`,
       ).cursor(20_000)) {
-        for (const r of batch as unknown as CacheKey[]) {
-          if (!gz.write(`${keyOf(r)}\n`)) await new Promise((res) => gz.once("drain", res));
+        for (const r of batch as unknown as Array<CacheKey & { fp: string }>) {
+          if (!gz.write(`${keyOf(r)}\t${r.fp}\n`)) await new Promise((res) => gz.once("drain", res));
           rows++;
         }
       }
@@ -345,7 +348,7 @@ async function backup(): Promise<string> {
   return name;
 }
 
-/** Check the newest backup on its own and against its predecessor. Returns the problems found. */
+/** Check the newest backup on its own and against every older kept backup. Returns the problems found. */
 async function verify(): Promise<string[]> {
   const dir = requireBackupDir();
   const names = listBackups(dir);
@@ -364,23 +367,23 @@ async function verify(): Promise<string[]> {
   });
   if (toc && !/TABLE DATA claimnet vector_cache/.test(toc)) problems.push(`${newest}: dump has no vector_cache table data`);
 
-  const previous = names.at(-2);
-  if (previous) {
-    const cmp = await compareKeyStreams(keyLines(path.join(dir, previous, "keys.txt.gz")), keyLines(keysFile));
+  // Against every older backup still kept, not only the previous one: a bad
+  // backup that slipped past one check still can't replace the older ones.
+  const older = names.slice(0, -1).reverse();
+  if (!older.length) log(`verify ${newest}: first backup, nothing to compare against`);
+  for (const prev of older) {
+    const cmp = await compareKeyStreams(keyLines(path.join(dir, prev, "keys.txt.gz")), keyLines(keysFile));
     if (cmp.newerCount !== m.rows) problems.push(`${newest}: key list has ${cmp.newerCount} keys, manifest says ${m.rows}`);
-    if (cmp.missingCount > 0) {
-      problems.push(`${newest}: lost ${cmp.missingCount} keys that ${previous} has (e.g. ${cmp.missingSample[0]})`);
-    }
-    log(`verify ${newest}: ${cmp.newerCount} keys, ${cmp.newerCount - cmp.olderCount} more than ${previous}, ${cmp.missingCount} missing`);
-  } else {
-    log(`verify ${newest}: first backup, nothing to compare against`);
+    if (cmp.missingCount > 0) problems.push(`${newest}: lost ${cmp.missingCount} keys that ${prev} has (e.g. ${cmp.missingSample[0]})`);
+    if (cmp.changedCount > 0) problems.push(`${newest}: ${cmp.changedCount} vectors differ from ${prev} (e.g. ${cmp.changedSample[0]})`);
+    log(`verify ${newest} vs ${prev}: ${cmp.newerCount - cmp.olderCount} more keys, ${cmp.missingCount} missing, ${cmp.changedCount} changed`);
   }
   for (const p of problems) log(`verify: PROBLEM ${p}`);
   if (!problems.length) log(`verify ${newest}: ok`);
   return problems;
 }
 
-async function prune(keep: number): Promise<void> {
+async function prune(): Promise<void> {
   const dir = requireBackupDir();
   const problems = await verify();
   if (problems.length) {
@@ -388,7 +391,14 @@ async function prune(keep: number): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  for (const name of selectPrunable(listBackups(dir), keep)) {
+  const backups = listBackups(dir).map((name) => ({ name, createdAt: new Date(readManifest(dir, name).createdAt) }));
+  const { keep, prune: doomed } = selectRetained(backups, new Date(), {
+    daily: Number(arg("--daily") ?? 2),
+    weeklyMaxDays: Number(arg("--weekly-max-days") ?? 12),
+    monthlyMaxDays: Number(arg("--monthly-max-days") ?? 45),
+  });
+  log(`prune: keeping ${keep.map((k) => `${k.name} (${k.slot})`).join(", ")}`);
+  for (const name of doomed) {
     fs.rmSync(path.join(dir, name), { recursive: true, force: true });
     log(`prune: deleted ${name}`);
   }
@@ -486,12 +496,12 @@ async function nightly(): Promise<void> {
     }
   }
   const dir = requireBackupDir();
-  const every = Number(arg("--backup-every-days") ?? 7);
+  const every = Number(arg("--backup-every-days") ?? 1);
   const newest = listBackups(dir).at(-1);
   const ageDays = newest ? (Date.now() - Date.parse(readManifest(dir, newest).createdAt)) / 86_400_000 : Infinity;
   if (ageDays >= every) await backup();
   else log(`backup: newest is ${ageDays.toFixed(1)} days old, next after ${every}`);
-  await prune(Number(arg("--keep") ?? 3));
+  await prune();
   if (failed) process.exitCode = 1;
 }
 
@@ -507,7 +517,7 @@ const commands: Record<string, () => Promise<unknown>> = {
   verify: async () => {
     if ((await verify()).length) process.exitCode = 1;
   },
-  prune: () => prune(Number(arg("--keep") ?? 3)),
+  prune,
   "restore-test": restoreTest,
   nightly,
 };

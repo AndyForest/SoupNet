@@ -15,13 +15,14 @@ The cache table never changes a row once written. The app inserts with `ON CONFL
 - **The cache database.** `docker-compose.embedding-cache.yml` runs Postgres with pgvector as its own compose project (`soupnet-embedding-cache`), on `127.0.0.1:5733`, with its own named volume. Tearing down the dev stack never touches it.
 - **An insert-only writer.** `setup` creates the table (the same shape as the app's) and a `cache_writer` role that may only `SELECT` and `INSERT`. `setup` and `status` both prove the writer is denied `UPDATE`, `DELETE` and `TRUNCATE`.
 - **Harvest.** Copies every vector a source database has and the cache lacks. It's idempotent, skips stub vectors, and checks each copied vector against its source exactly.
-- **Backups.** Each backup is a `pg_dump` of the table, the sorted list of its keys, and a manifest (row counts per model, checksums, versions). The dump and the key list are read from one snapshot, so the list describes exactly the rows in the dump.
-- **Verify and prune.** Before an old backup is deleted, the newest must:
+- **Backups.** Each backup is a `pg_dump` of the table, the sorted list of its keys with an md5 fingerprint of each vector, and a manifest (row counts per model, checksums, versions). The dump and the key list are read from one snapshot, so the list describes exactly the rows in the dump.
+- **Verify.** Before anything is deleted, the newest backup must:
   - match its checksums;
   - be readable by `pg_restore`;
-  - still hold every key of the backup before it.
+  - hold every key of every older backup still kept, with the same vector fingerprint.
 
-  The cache only grows, so any missing key stops the prune.
+  The cache only grows and never changes a row, so a missing key or a changed vector stops the prune.
+- **Retention.** A backup a day. Prune keeps the two newest, a weekly and a monthly. The weekly slot holds a backup until it is 12 days old, then takes the next-oldest daily. When the monthly passes 45 days, it's replaced by a weekly that has aged out. So there is always one backup between 2 and 12 days old and one between 12 and about 55. Backups of different ages mean a bad backup can't replace every good one before it's noticed. The 120-day simulation in `scripts/embedding-cache/lib.test.mts` pins this. `--daily`, `--weekly-max-days` and `--monthly-max-days` change the tiers.
 - **Restoring.** A backup is a dump of the one table, without its schema. Restore onto a server where `setup` has run: `pg_restore --data-only --no-owner --no-privileges`. That works into the cache database, or into a dev database's own `claimnet.vector_cache` to start it warm.
 - **Restore test.** Restores the newest backup into a scratch database. It compares every key against the key list, and a sample of vectors against the live cache, value for value.
 
@@ -42,11 +43,11 @@ Backups need `EMBEDDING_CACHE_BACKUP_DIR`, with room for a little more than the 
 ```bash
 npx tsx scripts/embedding-cache.mts backup
 npx tsx scripts/embedding-cache.mts verify
-npx tsx scripts/embedding-cache.mts prune --keep 3
+npx tsx scripts/embedding-cache.mts prune
 npx tsx scripts/embedding-cache.mts restore-test      # now and then: proves a backup restores
 ```
 
-`nightly` combines them for a scheduler. It harvests every source in `EMBEDDING_CACHE_SOURCES`, backs up when the newest backup is older than `--backup-every-days` (default 7), then verifies and prunes (`--keep`, default 3). It exits non-zero if anything failed.
+`nightly` combines them for a scheduler. It harvests every source in `EMBEDDING_CACHE_SOURCES`, backs up when the newest backup is older than `--backup-every-days` (default 1), then verifies and prunes. It exits non-zero if anything failed. Four backups take about four times the table on disk.
 
 The connection settings and their defaults are listed at the top of `scripts/embedding-cache.mts`. The defaults match the compose file.
 
