@@ -156,7 +156,7 @@ export function DraftQueuePage() {
   const heading = linkMode ? linkHeading(linkQuery.data?.items ?? []) : "Drafts awaiting your review";
 
   return (
-    <div>
+    <div data-testid="drafts-queue">
       <header style={{ marginBottom: "var(--space-md)" }}>
         <h1 ref={headingRef} tabIndex={-1} className={styles["heading"]}>{heading}</h1>
       </header>
