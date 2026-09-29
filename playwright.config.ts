@@ -11,18 +11,33 @@ import { defineConfig, devices } from "@playwright/test";
 export const FRONTEND_URL = process.env["E2E_FRONTEND_URL"] ?? "http://localhost:5273";
 export const BACKEND_URL = process.env["E2E_BACKEND_URL"] ?? "http://localhost:3101";
 
+// Every run empties its output folder and rewrites its report. Parallel
+// verifiers on one stack give each run its own, e.g. E2E_RUN=regression-s3
+// writes test-results/regression-s3 and playwright-report-regression-s3.
+const RUN = process.env["E2E_RUN"];
+const OUTPUT_DIR = RUN ? `test-results/${RUN}` : "test-results/e2e";
+const REPORT_DIR = RUN ? `playwright-report-${RUN}` : "playwright-report";
+// Command-line --reporter replaces the reporters below; these variables send
+// its html and json output to the same run folders.
+process.env["PLAYWRIGHT_HTML_OUTPUT_DIR"] ??= REPORT_DIR;
+process.env["PLAYWRIGHT_JSON_OUTPUT_FILE"] ??= `${OUTPUT_DIR}/results.json`;
+
 export default defineConfig({
   testDir: "tests/e2e",
-  outputDir: "test-results/e2e",
+  outputDir: OUTPUT_DIR,
   // One worker keeps the report in reading order; each test seeds its own
   // accounts, so raising this is safe when speed matters more than order.
   workers: 1,
+  // One retry absorbs a dev-server blip (Vite re-optimising dependencies
+  // after an install refuses a request); the report marks such a test
+  // "flaky", so a pass on retry is visible, never silent.
+  retries: 1,
   timeout: 60_000,
   expect: { timeout: 10_000 },
   reporter: [
     ["list"],
-    ["html", { outputFolder: "playwright-report", open: "never" }],
-    ["json", { outputFile: "test-results/e2e/results.json" }],
+    ["html", { outputFolder: REPORT_DIR, open: "never" }],
+    ["json", { outputFile: `${OUTPUT_DIR}/results.json` }],
   ],
   use: {
     baseURL: FRONTEND_URL,

@@ -14,6 +14,7 @@ You are the orchestrator. You write the expectations and relay the results. You 
 - **The harness.** If `@playwright/test` is missing from the worktree, run `npm install`. Then `npx playwright install chromium`, then `npx playwright test smoke`. Don't go on until smoke passes.
 - **Open handbacks.** Look for `handback.md` files in earlier run folders that have no closing line, and handle them first: they are harness problems an earlier run found.
 - **One dev server serves one head.** PRs in a stack are verified one after another. If other sessions use the stack, tell them before you move the frontend.
+- **The stack is as new as the head.** A backend container built before the head's last commit tests old code. Compare `docker inspect soupnet-backend-1 --format '{{.Created}}'` with `git log -1 --format=%cI <head>`, and rebuild if the container is older.
 
 ## 1. Expectations, before any browser opens
 
@@ -69,4 +70,17 @@ Use the Agent tool with `subagent_type: general-purpose`, in the background. Nev
 - The command: `npm run test:e2e:report`, run from the worktree. It serves the HTML report, and the trace viewer is one click from each test.
 - The results in chat, in this order: that the run happened (head, counts); what did not run; one line per expectation with its status; findings with the screenshot name to look at; the seeded-account cleanup command.
 - For a PR that isn't merged yet: draft the description's verification under **Verified by Claude Code Agent**, with an empty **Verified Manually Myself** heading carrying the same steps. Never write a step as done by the person.
-- The spec: offer it for `tests/e2e/`, naming which tests pin a decision worth keeping. The author decides. Don't commit it unasked.
+- The spec: offer it for `tests/e2e/`, naming which tests pin a decision worth keeping. The author decides. Don't commit it unasked. Ask in the PR description ("Keep `tests/e2e/pr-<n>.spec.ts` as a regression test?"), so the question is answered before merge. A spec left in a notes folder protects nothing. The post-merge sweep below is how stranded specs reach `main`.
+
+## Post-merge sweep (a feature that landed over several PRs)
+
+Each PR was verified at its own head. Nobody has checked `main` with all of them together, where a later PR can quietly undo an earlier one's behaviour. Run two verifiers in parallel on one stack at `main`:
+
+- **Regression verifier.** Moves each PR's pre-merge spec into `tests/e2e/` and runs it against `main`, with the earlier expectations files as its contracts. It sorts every failure into one of four kinds:
+  - **regression:** the assertion stays failing;
+  - **intended change:** only with a quoted source (a ruling, a fix pass or a PR description), cited in a code comment;
+  - **spec bug or harness:** fix the spec;
+  - **known not-met from the earlier run:** report its current state.
+- **New-coverage verifier.** Checks new expectations written for claims no run has covered. These usually come from the feature spec (`docs/product-specs/*.feature`) rather than from one PR.
+
+Parallel verifiers get separate spec files and separate results files (`results-regression.md`, `results-new.md`), seed their own accounts, and share one `handback.md`. Each run uses its own output folders through `E2E_RUN=<name>`; without it, one verifier's run wipes the other's evidence. Before offering the specs as a suite, turn failures the backlog already tracks into `known-issue` annotations (tests/e2e/README), so the suite passes by default and still fails on anything new. Relay both results files. Offer the moved specs for `tests/e2e/` in one PR.

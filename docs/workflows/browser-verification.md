@@ -10,6 +10,7 @@ The harness is Playwright Test in `tests/e2e/` (see its [README](../../tests/e2e
 
 - A pull request changes what a user sees or does in the SPA: new states, error messages, buttons, copy that makes a promise.
 - Before merge, on the PR branch, so the description's Demo and validation steps describe what the browser did. After merge, on `main`, when the pre-merge run was skipped or the change landed as part of a stack.
+- After a feature lands over several PRs: a **post-merge sweep** on `main` re-runs each PR's spec as a regression test, beside new coverage for claims no run has checked. Each PR was verified alone, so this is the first check of all of them together (see the `browser-verify` skill).
 - Not for backend-only changes the SPA never reaches. Those are covered by route tests (testing-plan Layers 2–3).
 
 ## Three roles, three files
@@ -56,7 +57,7 @@ The orchestrator then reads the results against the screenshots and relays them 
 
 ## The spec afterwards
 
-A spec that passes on the merged change is a candidate regression test. The PR's author decides whether it stays in `tests/e2e/`. Keep a test that pins a decision a later change could silently undo (the error link, the control), and drop the rest. The e2e suite is not part of `test:ci`: it needs the running dev stack and a browser.
+A spec that passes on the merged change is a candidate regression test. The PR's author decides whether it stays in `tests/e2e/`. Ask in the PR description, so it's decided before merge. A spec that stays in a notes folder protects nothing, and the post-merge sweep exists to bring such specs onto `main`. Keep a test that pins a decision a later change could silently undo (the error link, the control), and drop the rest. The e2e suite is not part of `test:ci`: it needs the running dev stack and a browser.
 
 ## Where the files live
 

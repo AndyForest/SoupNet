@@ -18,6 +18,8 @@ Other hosts: `E2E_FRONTEND_URL` and `E2E_BACKEND_URL`. For example, `E2E_FRONTEN
 
 Passing `--reporter=list` (or any `--reporter`) replaces the configured reporters, so no HTML report is written. To keep it, use `--reporter=list,html`.
 
+Every run empties its output folder and rewrites its report. When two verifiers share the stack, give each run its own with `E2E_RUN=<name>`: it writes `test-results/<name>` and `playwright-report-<name>`. Open one with `npx playwright show-report playwright-report-<name>`.
+
 If a run fails oddly, run `npx playwright test smoke` first. It proves a seeded account can reach the dashboard.
 
 ## Conventions
@@ -30,4 +32,5 @@ If a run fails oddly, run `npx playwright test smoke` first. It proves a seeded 
 - Horizontal overflow: use `assertNoHorizontalScroll(page, testInfo, label)` or `horizontalOverflow(page)` from `helpers/evidence.ts`. Never compare `scrollWidth` with `window.innerWidth` or the root's `clientWidth`: on the phone project Chrome widens the layout viewport to fit over-wide content, so those comparisons pass on a page that overflows the phone. `harness.spec.ts` pins this.
 - A second actor: `signInNewContext(browser, testInfo, user, path)` from `helpers/accounts.ts` opens a signed-in context with the project's device settings. A bare `browser.newContext()` runs at desktop size even on the phone project.
 - `axeScan(page, testInfo, name)` attaches the full axe result and returns the serious and critical violations. `axeFindings(...)` returns all of them grouped as `{ blocking, moderate, minor }`, for specs that record moderate findings.
+- **Known issues.** A spec kept as a regression test doesn't fail on an issue the backlog already tracks. It records it with `test.info().annotations.push({ type: "known-issue", description: "<what> — backlog: <item>" })` and keeps asserting on everything else. For axe, that means filtering known violations by rule id and target, never dropping a whole rule. Don't use `test.fail()`: it passes the test even when a functional assertion regresses. Delete the annotation when the backlog item is fixed.
 - Not part of `test:ci`: it needs the dev stack and a browser.
