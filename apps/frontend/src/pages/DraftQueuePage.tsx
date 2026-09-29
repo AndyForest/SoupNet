@@ -14,6 +14,7 @@ import {
   nextFocusId,
   partyText,
   linkHeading,
+  queueIntro,
   queueRatingsText,
   queueTotalText,
   stateLabel,
@@ -159,11 +160,7 @@ export function DraftQueuePage() {
       <header style={{ marginBottom: "var(--space-md)" }}>
         <h1 ref={headingRef} tabIndex={-1} className={styles["heading"]}>{heading}</h1>
       </header>
-      <p className={styles["intro"]}>
-        Your agents parked these hypotheses about your taste and judgment because they could not ask you.
-        Confirming publishes a draft to its recipe book, where collaborators can find it; rejecting it or
-        marking it not chosen keeps it private to you and your agents. Each choice is final.
-      </p>
+      <p className={styles["intro"]}>{queueIntro(items)}</p>
 
       {linkMode ? (
         <p className={styles["hint"]}>
