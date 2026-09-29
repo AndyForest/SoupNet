@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { draftStatusLabel, draftPartyLine, deleteDraftAccessibleName, showsKeyBadge } from "./draft-status-label";
+import { draftStatusLabel, draftPartyLine, deleteDraftAccessibleName, showsKeyBadge, reactionPrompt, offeredReactions } from "./draft-status-label";
 
 // drafts-and-triage slice 2: the trace detail page tells the person a recipe
 // is their draft, and how it was verified (build log open question 14: show
@@ -87,5 +87,48 @@ describe("depositor-facing copy is true for the depositor (slice 4 fix pass)", (
     expect(notChosen.title).toContain("pat@test.local");
     // The subject's own view is unchanged.
     expect(draftStatusLabel({ draftState: "rejected" })!.title).toContain("You marked this draft wrong");
+  });
+});
+
+// Post-merge findings (2026-09-29): the line beside the reactions says what is
+// true for the viewer, and a draft offers only the reactions that resolve it.
+describe("reactionPrompt", () => {
+  it("asks the subject to review an unresolved draft", () => {
+    expect(reactionPrompt({ canResolveDraft: true, draftState: "unverified" })).toBe("Is this draft right? Still true verifies it; Wrong rejects it.");
+  });
+
+  it("tells the depositor who reviews an unresolved draft, with the review-link instruction", () => {
+    expect(reactionPrompt({ draftAbout: "pat@test.local", draftState: "unverified" })).toBe(
+      "Only pat@test.local can review this draft; send them the review link from your agent.",
+    );
+  });
+
+  it("tells the depositor a resolved draft is resolved, with no review-link instruction", () => {
+    for (const draftState of ["rejected", "not_chosen"]) {
+      const line = reactionPrompt({ draftAbout: "pat@test.local", draftState });
+      expect(line).toBe("pat@test.local has resolved this draft; there is nothing left to review.");
+      expect(line).not.toMatch(/review link/);
+    }
+  });
+
+  it("asks about any other recipe as before", () => {
+    expect(reactionPrompt({ draftState: null })).toBe("Is this recipe still right?");
+    expect(reactionPrompt({ draftState: "rejected" })).toBe("Is this recipe still right?");
+  });
+});
+
+describe("offeredReactions", () => {
+  it("offers only Still true and Wrong on an unresolved draft, as the prompt says", () => {
+    expect(offeredReactions({ draftState: "unverified" }, null)).toEqual(["still_true", "wrong"]);
+  });
+
+  it("keeps Stale when it is the viewer's own reaction, so it can be cleared", () => {
+    expect(offeredReactions({ draftState: "unverified" }, "stale")).toEqual(["still_true", "stale", "wrong"]);
+  });
+
+  it("offers all three on any other recipe", () => {
+    for (const draftState of [null, undefined, "verified", "rejected", "not_chosen"]) {
+      expect(offeredReactions({ draftState }, null)).toEqual(["still_true", "stale", "wrong"]);
+    }
   });
 });
