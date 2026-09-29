@@ -127,7 +127,8 @@ describe("offeredReactions", () => {
   });
 
   it("offers all three on any other recipe", () => {
-    for (const draftState of [null, undefined, "verified", "rejected", "not_chosen"]) {
+    expect(offeredReactions({}, null)).toEqual(["still_true", "stale", "wrong"]);
+    for (const draftState of [null, "verified", "rejected", "not_chosen"]) {
       expect(offeredReactions({ draftState }, null)).toEqual(["still_true", "stale", "wrong"]);
     }
   });
