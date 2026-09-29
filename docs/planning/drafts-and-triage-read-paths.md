@@ -88,7 +88,7 @@ Added by slice 2:
 
 | # | Tool / path | file (function) | Returns / counts | Who can call | Trace filtering | Draft disposition |
 |---|---|---|---|---|---|---|
-| RP-46 | `verify_draft` (MCP, remote and stdio) and `POST /recipes/:id/verify` | `services/draft-verify.service.ts` (`verifyDraft`) via `lookupRecipes`, then `authz/draft-resolution.ts` (`resolveDraft`) | on success the recipe id, `draftState: verified`, evidence count; otherwise the uniform `not_found_or_unreadable` (404 on REST), `ambiguous_prefix`, "not a draft", "already resolved", or an evidence refusal | API key; the key must be allowed to verify (`keyMayVerifyDrafts`, every key today, not headless keys from slice 5), and the draft's book must be in its effective write scope ([F78]) | module: readable by id through `traceReadableById`; `hasWriteAuthority`; the resolving UPDATE requires the key's user to be the draft's subject and the book to be writable | `exclude` for everyone else (uniform absence, DT-VER-07); a one-way write for the person's own agents |
+| RP-46 | `verify_draft` (MCP, remote and stdio) and `POST /recipes/:id/verify` | `services/draft-verify.service.ts` (`verifyDraft`) via `lookupRecipes`, then `authz/draft-resolution.ts` (`resolveDraft`) | on success the recipe id, `draftState: verified`, evidence count; otherwise the uniform `not_found_or_unreadable` (404 on REST), `ambiguous_prefix`, "not a draft", "already resolved", or an evidence refusal | API key; the key must be allowed to verify (`keyMayVerifyDrafts`: only a `full` key; a headless key is refused before lookup, slice 5), and the draft's book must be in its effective write scope ([F78]) | module: readable by id through `traceReadableById`; `hasWriteAuthority`; the resolving UPDATE requires the key's user to be the draft's subject and the book to be writable | `exclude` for everyone else (uniform absence, DT-VER-07); a one-way write for the person's own agents |
 
 **Stdio server** (`apps/mcp-server/src/index.ts`): a thin proxy with no database access. `check_recipe` → `POST /check` (or `GET /check?...&format=json`), `search_recipes` → `GET /check?filter=`, `get_briefing` → `GET /briefing`, `get_recipes` → `GET /recipes?ids=`, `log_feedback` → `POST /feedback`. It inherits RP-01, RP-02, RP-07, RP-06, and RP-11 exactly; no separate row.
 
@@ -155,6 +155,18 @@ Added by slice 4:
 | # | Path | file (function) | Returns / counts | Who can call | Trace filtering | Draft disposition |
 |---|---|---|---|---|---|---|
 | RP-51 | The naming lookup inside a deposit (and import) | `apps/backend/src/authz/naming.ts` (`resolveNameableSubject`) | the subject's user id, or nothing | reached only through a check or import by a key or person who can write the target book | module: one statement over `users` by `lower(email)`, `membershipOf`, `WRITE_ROLES`, `activeUserPredicate`; reads no recipe | `irrelevant` for recipes; the answer is uniform for every refused email so it is not an account-existence oracle (S4-U1) |
+
+### Touched by slice 5 (headless keys)
+
+Rubric: build log §Slice 5 rubric (ids `S5-*`). A headless key is one whose `api_keys.deposit_level` is `drafts`; `authenticateKey` reads it into the `Principal`, and `keyForcesDrafts` / `keyMayVerifyDrafts` in `authz/roles.ts` interpret it. No read rule changes: a headless key reads exactly what an ordinary key of the same person and scope reads, drafts included. Only the rows below change, and all of them are writes or copy. Rows not listed are unchanged (S5-W5).
+
+| # | What slice 5 changes | Headless key (H) | Everyone else | Rubric |
+|---|---|---|---|---|
+| RP-01, RP-13 | Deposit: the stored state is forced to `unverified` whatever `draft` says; the notice gives the headless reason and the queue link | every deposit a draft about its person (or an on-behalf draft under slice 4's rules) | unchanged: H's drafts are ordinary drafts (absent) | S5-M3, S5-W1 to W3, S5-U2 |
+| RP-04 | Idempotency key unchanged; every recipe H deposited is a draft, so a repeat through H can only return a draft or its resolved state | never publishes | n/a | S5-W4 |
+| RP-07, RP-15 | Briefing selects the headless profile from the principal: the same text as an ordinary key's plus one short section | headless section added | ordinary briefings byte-identical | S5-B1, S5-Z3 |
+| RP-46 | `verify_draft` and `POST /recipes/:id/verify` refused before lookup (`keyMayVerifyDrafts`), REST 403, same bytes for any id | refused, nothing stored | unchanged | S5-R1, S5-U1 |
+| (write, no trace read) | `update_recipe_book_description`: no change. Open question 42's refusal was overridden (orchestrator, 2026-09-28): headless means only that deposits are drafts | same answers as an ordinary key | unchanged | S5-W6 (amended) |
 
 ## Admin (system role only, `routes/admin.ts`)
 

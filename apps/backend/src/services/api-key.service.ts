@@ -53,6 +53,8 @@ interface ApiKeyRow {
   defaultWriteGroupId: string;
   label: string | null;
   keyType: string;
+  /** 'full' | 'drafts' (headless) — see the api_keys schema comment. */
+  depositLevel: string;
   expiresAt: Date;
   lastUsedAt: Date | null;
   createdAt: Date;
@@ -67,7 +69,12 @@ interface GenerateKeyResult {
   readGroupIds: string[];
   writeGroupIds: string[];
   defaultWriteGroupId: string;
+  depositLevel: DepositLevel;
 }
+
+/** The levels a person may mint (drafts-and-triage slice 5). 'none' is
+ *  reserved in the schema vocabulary and is not mintable (open question 41). */
+export type DepositLevel = "full" | "drafts";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -137,6 +144,8 @@ export async function generateDailyKey(
     readGroupIds,
     writeGroupIds: effectiveWriteGroupIds,
     defaultWriteGroupId: effectiveDefaultWrite,
+    // Daily keys keep the column default (slice 5, S5-O1).
+    depositLevel: "full",
   };
 }
 
@@ -153,14 +162,17 @@ export async function generateScopedKey(
     defaultWriteGroupId: string;
     expiresAt: Date;
     label?: string;
+    /** Chosen once, here, and never changed (slice 5, S5-S2). Default 'full'. */
+    depositLevel?: DepositLevel;
   },
 ): Promise<GenerateKeyResult> {
   const rawKey = generateRawKey("cn_s_");
+  const depositLevel: DepositLevel = params.depositLevel ?? "full";
   const hashedKey = hashKey(rawKey);
   const keyPrefix = rawKey.slice(0, 8);
 
   await db.execute(sql`
-    INSERT INTO claimnet.api_keys (id, key, key_prefix, user_id, read_group_ids, write_group_ids, default_write_group_id, label, key_type, expires_at, created_at)
+    INSERT INTO claimnet.api_keys (id, key, key_prefix, user_id, read_group_ids, write_group_ids, default_write_group_id, label, key_type, deposit_level, expires_at, created_at)
     VALUES (
       gen_random_uuid(),
       ${hashedKey},
@@ -171,6 +183,7 @@ export async function generateScopedKey(
       ${params.defaultWriteGroupId}::uuid,
       ${params.label ?? null},
       'scoped',
+      ${depositLevel},
       ${params.expiresAt.toISOString()}::timestamptz,
       NOW()
     )
@@ -183,6 +196,7 @@ export async function generateScopedKey(
     readGroupIds: params.readGroupIds,
     writeGroupIds: params.writeGroupIds,
     defaultWriteGroupId: params.defaultWriteGroupId,
+    depositLevel,
   };
 }
 
@@ -199,7 +213,7 @@ export async function listKeys(
   userId: string,
 ): Promise<ApiKeyListItem[]> {
   const rows = await db.execute(sql`
-    SELECT id, key_prefix, key_type, read_group_ids, write_group_ids, default_write_group_id, label, expires_at, created_at
+    SELECT id, key_prefix, key_type, deposit_level, read_group_ids, write_group_ids, default_write_group_id, label, expires_at, created_at
     FROM claimnet.api_keys
     WHERE user_id = ${userId}
       AND expires_at > NOW()
@@ -216,6 +230,7 @@ export async function listKeys(
     defaultWriteGroupId: row["default_write_group_id"] as string,
     label: (row["label"] as string) ?? null,
     keyType: row["key_type"] as string,
+    depositLevel: row["deposit_level"] as string,
     expiresAt: new Date(row["expires_at"] as string),
     createdAt: new Date(row["created_at"] as string),
   }));

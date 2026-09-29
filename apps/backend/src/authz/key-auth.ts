@@ -56,6 +56,13 @@ export interface Principal {
   oauthClientId: string | null;
   /** When the presenting key expires. Only ever the caller's own key. */
   expiresAt: Date;
+  /**
+   * `api_keys.deposit_level` as stored: 'full', 'drafts' (headless), or
+   * 'none' (reserved). Consumers never compare it themselves: its meaning is
+   * decided by `keyForcesDrafts` and `keyMayVerifyDrafts` in roles.ts, which
+   * fail closed on anything but 'full'.
+   */
+  depositLevel: string;
   /** Books the key may read now, in the order they were granted. */
   readGroupIds: string[];
   /** Books the key may write now, in the order they were granted. */
@@ -214,7 +221,7 @@ export async function authenticateKey(
 
   const rows = await db.execute(sql`
     SELECT k.id, k.user_id, k.key_type, k.oauth_client_id, k.expires_at,
-           k.default_write_group_id,
+           k.default_write_group_id, k.deposit_level,
            ${effectiveScopeColumns()}
     FROM claimnet.api_keys k
     JOIN claimnet.users u ON u.id = k.user_id
@@ -232,6 +239,7 @@ export async function authenticateKey(
     key_type: string;
     oauth_client_id: string | null;
     expires_at: string;
+    deposit_level: string;
   }>)[0];
   if (!row) return null;
 
@@ -253,6 +261,7 @@ export async function authenticateKey(
     keyType: row.key_type,
     oauthClientId: row.oauth_client_id ?? null,
     expiresAt: new Date(row.expires_at),
+    depositLevel: row.deposit_level,
     readGroupIds: row.effective_read_ids,
     writeGroupIds: row.effective_write_ids,
     defaultWriteGroupId: effectiveDefault(row),

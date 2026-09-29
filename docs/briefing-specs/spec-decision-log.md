@@ -4,6 +4,39 @@ Every PR that touches briefing copy (`packages/domain/src/recipe-guide-content.t
 
 (Renamed from declared-intent-log.md on 2026-08-23: "intent" now names the runtime intent-registration mechanism — cold-start v2 Phase C — so the discipline's log takes an unambiguous name. The discipline itself is unchanged.)
 
+## 2026-09-28 — Drafts-and-triage slice 5: the headless briefing section, the headless deposit notice, and the verify refusal
+
+Design: [../planning/drafts-and-triage.md](../planning/drafts-and-triage.md) §Headless keys. Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 5 rubric, open questions 41 to 44 with the orchestrator's rulings of 2026-09-28 (42 overridden: a headless key updates book descriptions like any key, so there is no description refusal).
+
+### Edits
+
+1. **Headless briefing section (new, only for a headless key):** "## This key is headless / Every recipe you check through this key is stored as a draft that only your user and their agents see until your user confirms it, and this key cannot verify drafts. In each draft, say why your user couldn't be asked and what would settle it. End the session with one `outcome` feedback row listing the draft ids you left open." 351 characters, inserted after the key section on every surface profile (`HEADLESS_KEY_SECTION`, selected in `composeBriefing` by `keyForcesDrafts`). An ordinary key's briefing is byte for byte unchanged.
+2. **Headless deposit notice (new):** "Deposited as a draft because this API key is headless, a setting chosen when the key was made[ (your draft flag was overridden)]. Until the person confirms it, only you and your own agents can see it; it appears on no shared surface. This key cannot verify drafts; hand the person their review link: <link>". It never mentions `verify_draft`. 338 characters (371 with the override clause) against 344 for a self draft's new-draft notice, with a 73-character URL. The override clause appears only for an explicit false (recipe 9172f109). When `on_behalf_of` also applies, slice 4's on-behalf notice is used unchanged, since it names who can review the draft.
+3. **Headless repeat notice (new):** "An identical earlier check from this key logged this recipe as a draft, and it is still a draft: checking it again does not verify it, and this headless key cannot; hand the person their review link: <link>". The rejected and not-chosen repeat wordings are unchanged.
+4. **Verify refusal (new):** `verify_draft` and `POST /recipes/:id/verify` through a headless key answer "This API key is headless, a setting chosen when the key was made, so it cannot verify drafts; nothing was stored. The person can confirm <id> in their review queue: <link> Or an agent on one of their ordinary keys can verify it with their answer quoted and cited." 289 characters plus the link, the same for every id apart from the echo. It replaces the placeholder "This API key cannot verify drafts." that no key could reach before this slice.
+
+No tool or parameter description changed.
+
+### Scenarios intended to move
+
+- **New `@unreleased` scenario** in `briefing-surfaces.feature`: "A briefed agent on a headless key drafts with what would settle each draft, and closes with the open ids" (added in this PR). It stays `@unreleased` until slice 7 teaches drafting in the briefing body and the harness can run it.
+
+### Scenarios watched, with rationale for holding
+
+- **Every `briefing-surfaces.feature` scenario:** the profile now also depends on the key, but for every ordinary key the thin and full briefings are byte-identical to before (domain test: the headless text equals the ordinary text with exactly the one section inserted; Layer 3: `get_briefing`, `GET /briefing`, and `POST /keys/briefing` for a headless and an ordinary key of the same scope).
+- **`checking-behavior.feature` drafting scenarios (slices 2 to 4):** the self-draft and on-behalf notices are unchanged for ordinary keys; the headless notice differs only in its reason and in handing over the link instead of suggesting `verify_draft`.
+
+### Measured
+
+| Measure | Before | After | Cap |
+|---|---|---|---|
+| Remote `tools/list` | 16,986 bytes | 16,986 (identical for a headless key) | 17,000 |
+| Stdio `tools/list` | 13,196 bytes | 13,196 | 13,670 |
+| Shared descriptions | 6,051 characters | 6,051 | 6,080 |
+| Thin briefing fixture | 18,183 characters | 18,183; headless 18,536 | 18,200; headless 18,600 |
+| Full briefing fixture | 24,119 characters | 24,119; headless 24,472 | none |
+| Headless section | | 351 characters | 400 |
+
 ## 2026-09-27 — Drafts-and-triage slice 4: on_behalf_of, the on-behalf notices and labels, and the depositor's refusals
 
 Design: [../planning/drafts-and-triage.md](../planning/drafts-and-triage.md) §The model. Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 4 rubric, open questions 28 to 40 as amended (recipes b89db1f0, 23657e4e).

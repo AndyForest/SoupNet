@@ -142,13 +142,37 @@ export function unpublishedDraftManagement(facts: {
   return { move: false, delete: false };
 }
 
+// ── The key's deposit level (drafts-and-triage slice 5) ─────────────────────
+//
+// The key's deposit level (an api_keys column) is the ladder of what it may write: 'full',
+// 'drafts' (a headless key), and 'none' (reserved for the no-deposit
+// principal; not mintable). It is read once, by `authenticateKey`, and what it
+// means is decided here and nowhere else (rubric S5-M2). Both predicates fail
+// closed: only the exact value 'full' is an ordinary key, so a reserved level,
+// an empty string, or a value this code has never seen deposits drafts and
+// cannot verify.
+
 /**
- * May a request authenticated by this key verify drafts through the agent
- * operation? Every key may today. Slice 5's headless keys may not (build log
- * open question 13, DT-HDL-04): that is the one line that changes here, so a
- * key's verify authority comes from a property of the key rather than from
- * "any key of the person".
+ * Does every deposit through this key become an unverified draft, whatever the
+ * call's `draft` parameter says? True for a headless key and for anything that
+ * is not exactly 'full'. Read by the one deposit statement (trace.service.ts).
  */
-export function keyMayVerifyDrafts(_key: { keyType: string }): boolean {
-  return true;
+export function keyForcesDrafts(key: { depositLevel: string }): boolean {
+  return key.depositLevel !== "full";
+}
+
+/**
+ * May a request authenticated by this key resolve drafts through an agent
+ * operation? Only an ordinary ('full') key may (build log open question 13,
+ * DT-HDL-04): otherwise the agent whose deposits were forced to drafts could
+ * publish them a moment later.
+ *
+ * Every agent operation that publishes or resolves a draft takes its authority
+ * from THIS predicate, decided before any lookup so the refusal is not an
+ * oracle: `verify_draft` and its REST twin POST /recipes/:id/verify today;
+ * option-set resolution (slice 6) and any agent reject or not-chosen outcome
+ * later (docs/planning/pr-review-helpers.md §6).
+ */
+export function keyMayVerifyDrafts(key: { depositLevel: string }): boolean {
+  return key.depositLevel === "full";
 }
