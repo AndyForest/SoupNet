@@ -43,6 +43,14 @@ export const apiKeys = claimnetSchema.table(
 
     keyType: text("key_type").notNull(), // 'daily' | 'scoped' | 'oauth'
 
+    // What the key may write (drafts-and-triage slice 5): 'full' | 'drafts' | 'none'.
+    // 'drafts' is a headless key: every deposit is an unverified draft and the
+    // key cannot verify drafts. 'none' is reserved for the no-deposit principal
+    // and is not mintable. Written once, at mint (scoped keys only), and never
+    // updated. Interpreted fail-closed in apps/backend/src/authz/roles.ts
+    // (anything but 'full' forces drafts).
+    depositLevel: text("deposit_level").notNull().default("full"),
+
     // OAuth fields — null for 'daily' and 'scoped'. Populated for 'oauth' keys.
     // refreshTokenHash + refreshTokenExpiresAt: SHA-256 of the refresh token
     // and its expiry. Rotation (OAuth 2.1 §6.1) issues a new api_keys row on

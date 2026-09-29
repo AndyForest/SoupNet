@@ -1,0 +1,1 @@
+ALTER TABLE "claimnet"."api_keys" ADD COLUMN "deposit_level" text DEFAULT 'full' NOT NULL;

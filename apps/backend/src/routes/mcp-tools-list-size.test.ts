@@ -15,6 +15,8 @@
  *   after slice 1 (2026-09-27):  15,864 bytes, with impact and uncertainty added
  *   after slice 2 (2026-09-27):  16,854 bytes, with draft and verify_draft added
  *   after slice 3 (2026-09-27):  16,853 bytes (search_recipes query names is:draft, impact:, uncertainty:; cap not raised)
+ *   after slice 4 (2026-09-27):  16,986 bytes (on_behalf_of)
+ *   after slice 5 (2026-09-28):  16,986 bytes, identical for a headless key (S5-Z1)
  * The stdio twin lives in apps/mcp-server/src/server.test.ts.
  */
 import { describe, it, expect } from "vitest";
@@ -37,6 +39,7 @@ const stubPrincipal: Principal = {
   keyType: "daily",
   oauthClientId: null,
   expiresAt: new Date("2099-01-01T00:00:00Z"),
+  depositLevel: "full",
   readGroupIds: [],
   writeGroupIds: [],
   defaultWriteGroupId: null,
@@ -51,8 +54,8 @@ interface ServedTool {
 
 /** Send initialize + tools/list over an in-memory transport and return the
  *  reply's `result` as the server serialized it, with its UTF-8 size. */
-async function servedToolsList(): Promise<{ bytes: number; tools: ServedTool[] }> {
-  const server = createMcpServer("http://localhost:0", stubPrincipal);
+async function servedToolsList(principal: Principal = stubPrincipal): Promise<{ bytes: number; tools: ServedTool[]; json: string }> {
+  const server = createMcpServer("http://localhost:0", principal);
   const [client, serverSide] = InMemoryTransport.createLinkedPair();
   const replies = new Map<number, JSONRPCMessage>();
   client.onmessage = (m) => {
@@ -73,7 +76,8 @@ async function servedToolsList(): Promise<{ bytes: number; tools: ServedTool[] }
   await server.close();
   const reply = replies.get(2) as { result?: { tools: ServedTool[] } } | undefined;
   if (!reply?.result) throw new Error("no tools/list reply");
-  return { bytes: Buffer.byteLength(JSON.stringify(reply.result), "utf8"), tools: reply.result.tools };
+  const json = JSON.stringify(reply.result);
+  return { bytes: Buffer.byteLength(json, "utf8"), tools: reply.result.tools, json };
 }
 
 function tool(tools: ServedTool[], name: string): ServedTool {
@@ -86,6 +90,13 @@ describe("remote MCP tools/list as served (drafts-and-triage slice 1)", () => {
   it(`S1-Z1 / DT-TOOL-01: the served payload is at most ${REMOTE_TOOLS_LIST_MAX_BYTES} bytes`, async () => {
     const { bytes } = await servedToolsList();
     expect(bytes, `served tools/list is ${bytes} bytes`).toBeLessThanOrEqual(REMOTE_TOOLS_LIST_MAX_BYTES);
+  });
+
+  it("S5-Z1: a headless key is served the same tools/list, byte for byte, verify_draft included", async () => {
+    const ordinary = await servedToolsList();
+    const headless = await servedToolsList({ ...stubPrincipal, depositLevel: "drafts" });
+    expect(headless.json).toBe(ordinary.json);
+    expect(headless.tools.map((t) => t.name)).toContain("verify_draft");
   });
 
   it("S1-B1 / DT-TOOL-01: check_recipe lists impact and uncertainty as plain strings naming the vocabulary", async () => {

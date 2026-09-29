@@ -28,7 +28,7 @@ import type {
 } from "@soupnet/domain";
 import { fetchBriefingExemplars } from "./briefing-exemplars";
 import { fetchBookStats } from "./book-stats.service";
-import { listMembersOfBooks } from "../authz";
+import { listMembersOfBooks, keyForcesDrafts } from "../authz";
 import type { Principal } from "../authz";
 import { writeAudit } from "./audit-log.service";
 import {
@@ -195,6 +195,12 @@ ${renderRecipeEntries(entries)}${truncated}`;
     // the OAuth branch (OAuth key-section note wins; mcp drops setup anyway).
     surface: scope.mcpSurface ? "mcp" : "full",
     ...(isOAuth ? { oauthConnection: true } : {}),
+    // A headless key's briefing is the same profile plus one section (slice
+    // 5, S5-B1), selected from the principal by the module's predicate, so
+    // every surface that composes here (get_briefing remote and stdio,
+    // GET /briefing, POST /keys/briefing) gets it and ordinary keys are
+    // byte-identical (S5-Z3).
+    ...(keyForcesDrafts(input.principal) ? { headless: true } : {}),
     ...(exemplarsSection ? { exemplarsSection } : {}),
     ...(scope.options.purpose ? { purpose: scope.options.purpose } : {}),
     ...(intentNotice ? { intentNotice } : {}),

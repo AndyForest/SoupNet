@@ -26,7 +26,7 @@ import {
 } from "@soupnet/db";
 import { getDb } from "../db";
 import { parseEvidenceMarkdown } from "./evidence-parser";
-import { inBooks, traceVisibleTo, normalizeOnBehalfOf, resolveNameableSubject, onBehalfSubjectOf } from "../authz";
+import { inBooks, traceVisibleTo, normalizeOnBehalfOf, resolveNameableSubject, onBehalfSubjectOf, keyForcesDrafts } from "../authz";
 import type { Principal } from "../authz";
 import {
   enqueueEmbedding,
@@ -669,8 +669,13 @@ export async function submitAndSearch(
   // 1g. Draft flag (slice 2): capture-only like the ratings. An
   // unrecognized value is taken as a draft (the private side) with a notice.
   const requestedDraft = parseDraftFlag(params.draft);
-  // On behalf of someone else always implies draft (S4-W2).
-  let storedDraftState: string | null = requestedDraft.draft || subject ? "unverified" : null;
+  // On behalf of someone else always implies draft (S4-W2), and so does a
+  // headless key (slice 5, S5-M3): the one place the key's deposit level
+  // reaches a deposit, decided by the module's fail-closed predicate from the
+  // key row, with no call parameter that opts out.
+  const headless = keyForcesDrafts(params.principal);
+  const forcedDraft = !!subject || headless;
+  let storedDraftState: string | null = requestedDraft.draft || forcedDraft ? "unverified" : null;
   // The subject of the recipe this call returns: the named person for a new
   // on-behalf draft, the stored one on an identical repeat.
   let storedSubjectEmail: string | null = subject?.email ?? null;
@@ -714,7 +719,7 @@ export async function submitAndSearch(
   // audit trail is the only record of who deposited it.
   const auditMetadata = depositAuditMetadata({
     params, keyId, keyType, oauthClientId, sessionId: session.sessionId, intentId: intent.intentId,
-    ratings: requestedRatings.ratings, draft: requestedDraft.draft || !!subject, subjectUserId: subject?.userId ?? null,
+    ratings: requestedRatings.ratings, draft: requestedDraft.draft || forcedDraft, subjectUserId: subject?.userId ?? null,
   });
   let depositAuditId: string | null = null;
 
@@ -1023,13 +1028,14 @@ export async function submitAndSearch(
     // hands its person for review.
     draftDepositNotice({
       storedState: storedDraftState,
-      requestedDraft: requestedDraft.draft || !!subject,
+      requestedDraft: requestedDraft.draft || forcedDraft,
       existing: isExisting,
       queueUrl: draftQueueUrl([traceId]),
       onBehalfOf: storedSubjectEmail ?? undefined,
+      headless,
       // Only when a flag was sent and read as false (S4-L3): with no draft
       // parameter there is nothing to override.
-      draftFlagOverridden: !!subject && params.draft !== undefined && params.draft !== null && !requestedDraft.draft,
+      draftFlagOverridden: forcedDraft && params.draft !== undefined && params.draft !== null && !requestedDraft.draft,
     }),
   ].filter(Boolean).join(" ") || undefined;
 

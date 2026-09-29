@@ -180,3 +180,13 @@ A link row is written only when both of its rows were created by this import, as
 - Linking a new recipe to evidence or references by an id that is not in the file no longer works, even for your own rows. Include the rows in the file.
 
 Recipes: `5d541d2c` (the rule), `cbe5dfad` (removing `overwrite`), `5b1ceb91` (links only between created rows; no ownership lookup).
+
+## v2.1 — audit follow-ups on the create-only import (2026-09-28)
+
+A private audit of v2 found three narrow gaps (F101 to F103). Each fix stays inside the v2 rule.
+
+- **Every link row gets a fresh id (F101).** A link table's only key is its id, so keeping the file's link id let a row another account had already created under that id silently suppress the link, reported as skipped-existing. Import now gives every link row it writes a random id. Idempotency does not need link ids: on a re-import both endpoints are kept, so the link is counted skipped before any insert. This supersedes v1.2's "a link with any remapped endpoint gets its own PK minted deterministically from the original link id".
+- **A row lost to a concurrent import fails the whole import with a retryable 409 (F102).** Landing decisions are read at the start of the transaction, so two imports of one new file at the same moment raced for the same ids, and the loser answered 200 with rows silently missing and an empty new book. Every insert must now return every row it was given; otherwise the import rolls back with a 409 that says to retry. The retry sees the winner's rows and gives the file's rows the importer's own ids, so "re-uploading the same file is the resume path" stays true, and two concurrent imports by the same person still end with one copy rather than two. Recipe `88454703`.
+- **Evidence and references are written only when a created row links to them (F103).** Deletion reaches these rows only through a recipe's links, so an unlinked row, or new evidence linked only from a recipe the importer already had, outlived the importer's account. Such rows are now not written: kept when their id exists (skipped-existing), otherwise counted in the new `counts.evidence.orphaned` / `counts.references.orphaned`. A kept content row no longer points `idMap` at the importer's mint; only rows the import writes under a new id appear there.
+
+The v2 cost "the new evidence row is inserted but not attached to the existing recipe" now reads: the new evidence row is not written, and is counted orphaned.

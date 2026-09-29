@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseDraftFlag, draftDepositNotice, draftLabel, validateVerificationEvidence, onBehalfRefusal, onlySubjectReviewsReason } from "./drafts";
+import { parseDraftFlag, draftDepositNotice, draftLabel, validateVerificationEvidence, onBehalfRefusal, onlySubjectReviewsReason, headlessVerifyRefusal } from "./drafts";
 
 describe("parseDraftFlag", () => {
   it("DT-VIS-01: true and its usual wire spellings mean draft", () => {
@@ -258,5 +258,84 @@ describe("on-behalf deposit notices (S4-L3, S4-L4, S4-Z4)", () => {
   it("the depositor's refusal names who reviews it and the link to hand them", () => {
     expect(onlySubjectReviewsReason(PAT, URL)).toBe(`Only ${PAT} can review this draft: it is about them. Hand them their review link: ${URL}`);
     expect(onlySubjectReviewsReason(null)).toContain("the person it is about");
+  });
+});
+
+describe("headless deposit notices (slice 5, S5-W2, S5-W4, S5-Z4)", () => {
+  const ID = "0f4b7a8e-2d1c-4e5f-9a0b-1c2d3e4f5a6b";
+  const URL = `http://localhost:5273/app/drafts?ids=${ID}`;
+  const base = { storedState: "unverified", requestedDraft: true, queueUrl: URL, headless: true } as const;
+
+  it("a new draft says it is a draft because the key is headless, a setting chosen at mint, with the queue link and no verify_draft", () => {
+    const n = draftDepositNotice({ ...base, existing: false })!;
+    expect(n).toContain("because this API key is headless, a setting chosen when the key was made");
+    expect(n).toContain(URL);
+    expect(n).not.toContain("verify_draft");
+    expect(n).not.toContain("overridden");
+  });
+
+  it("says the draft flag was overridden only when told to", () => {
+    expect(draftDepositNotice({ ...base, existing: false, draftFlagOverridden: true })).toContain("(your draft flag was overridden)");
+  });
+
+  it("S5-Z4: is at most 80 characters longer than a self draft's new-draft notice with the same URL", () => {
+    const self = draftDepositNotice({ storedState: "unverified", requestedDraft: true, existing: false, queueUrl: URL })!;
+    for (const draftFlagOverridden of [false, true]) {
+      const n = draftDepositNotice({ ...base, existing: false, draftFlagOverridden })!;
+      expect(n.length, n).toBeLessThanOrEqual(self.length + 80);
+    }
+  });
+
+  it("S5-W4: an identical repeat is still a draft, never offers verify_draft, and hands over the link", () => {
+    const still = draftDepositNotice({ ...base, existing: true })!;
+    expect(still).toContain("still a draft");
+    expect(still).toContain(URL);
+    expect(still).not.toContain("verify_draft");
+    const rejected = draftDepositNotice({ ...base, storedState: "rejected", existing: true })!;
+    expect(rejected).toContain("has since been rejected");
+    expect(rejected).not.toContain("verify_draft");
+  });
+
+  it("without a queue URL it points to the recipe's page, still without verify_draft", () => {
+    const n = draftDepositNotice({ storedState: "unverified", requestedDraft: true, existing: false, headless: true })!;
+    expect(n).toContain("recipe's page");
+    expect(n).not.toContain("verify_draft");
+  });
+
+  it("the on-behalf reason wins over the headless one, since it names who can review the draft (S5-W3)", () => {
+    const n = draftDepositNotice({ ...base, existing: false, onBehalfOf: "pat@example.test" })!;
+    expect(n).toContain("on their behalf");
+    expect(n).not.toContain("headless");
+  });
+
+  it("an ordinary key's notice is unchanged when headless is false or absent", () => {
+    for (const existing of [false, true]) {
+      const plain = draftDepositNotice({ storedState: "unverified", requestedDraft: true, existing, queueUrl: URL });
+      expect(draftDepositNotice({ storedState: "unverified", requestedDraft: true, existing, queueUrl: URL, headless: false })).toBe(plain);
+    }
+  });
+});
+
+describe("the headless verify refusal (slice 5, S5-R1, S5-Z4)", () => {
+  const URL = "http://localhost:5273/app/drafts?ids=abc12345";
+
+  it("names the setting, says nothing was stored, and gives both ways forward", () => {
+    const r = headlessVerifyRefusal("abc12345", URL);
+    expect(r).toContain("headless");
+    expect(r).toContain("nothing was stored");
+    expect(r).toContain(URL);
+    expect(r).toContain("ordinary");
+    expect(r).toContain("quoted");
+  });
+
+  it("is at most 320 characters plus the link", () => {
+    const r = headlessVerifyRefusal("abc12345", URL);
+    expect(r.length - URL.length, r).toBeLessThanOrEqual(320);
+  });
+
+  it("differs between ids only by the echoed id", () => {
+    const a = headlessVerifyRefusal("abc12345", "U/abc12345");
+    const b = headlessVerifyRefusal("ffffffff-0000-4000-8000-000000000000", "U/ffffffff-0000-4000-8000-000000000000");
+    expect(a.split("abc12345").join("<ID>")).toBe(b.split("ffffffff-0000-4000-8000-000000000000").join("<ID>"));
   });
 });

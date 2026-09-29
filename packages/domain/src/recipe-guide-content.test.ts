@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { BRIEFING, BRIEFING_KEY_PLACEHOLDER, buildCorpusContextSection } from "./recipe-guide-content";
+import { BRIEFING, BRIEFING_KEY_PLACEHOLDER, HEADLESS_KEY_SECTION, buildCorpusContextSection } from "./recipe-guide-content";
 import type { BriefingBuildInput, BriefingGroup } from "./recipe-guide-content";
 
 /**
@@ -343,5 +343,38 @@ describe("buildCorpusContextSection", () => {
     expect(text).toContain("Default write recipe book: none right now");
     expect(text).toContain("recipe_book");
     expect(text).not.toContain("Default write recipe book: personal");
+  });
+});
+
+describe("BRIEFING.build — the headless key section (drafts-and-triage slice 5, S5-B1, S5-Z3)", () => {
+  const profiles: Array<[string, () => BriefingBuildInput]> = [
+    ["thin", () => thinInput()],
+    ["full", () => buildInput()],
+  ];
+
+  for (const [name, input] of profiles) {
+    it(`${name}: a headless key's briefing is the ordinary one with exactly the one section inserted`, () => {
+      const ordinary = BRIEFING.build(input());
+      const headless = BRIEFING.build({ ...input(), headless: true });
+      expect(headless).toContain(HEADLESS_KEY_SECTION);
+      expect(headless.replace(`\n\n${HEADLESS_KEY_SECTION}`, "")).toBe(ordinary);
+      // Absent and false are the same ordinary briefing, byte for byte.
+      expect(BRIEFING.build({ ...input(), headless: false })).toBe(ordinary);
+    });
+  }
+
+  it("says what the key is and what to do, in at most 400 characters", () => {
+    expect(HEADLESS_KEY_SECTION.length).toBeLessThanOrEqual(400);
+    expect(HEADLESS_KEY_SECTION.startsWith("## This key is headless\n")).toBe(true);
+    expect(HEADLESS_KEY_SECTION).toContain("stored as a draft");
+    expect(HEADLESS_KEY_SECTION).toContain("cannot verify drafts");
+    expect(HEADLESS_KEY_SECTION).toContain("what would settle it");
+    expect(HEADLESS_KEY_SECTION).toContain("`outcome`");
+    // Copy constraint: the dashboard substitutes the key placeholder at copy time.
+    expect(HEADLESS_KEY_SECTION).not.toContain(BRIEFING_KEY_PLACEHOLDER);
+  });
+
+  it("holds the thin headless briefing at most 18,600 characters (fixed fixture)", () => {
+    expect(BRIEFING.build({ ...thinInput(), headless: true }).length).toBeLessThanOrEqual(18_600);
   });
 });

@@ -140,6 +140,10 @@ recipes.post("/:id/verify", recipesIpRateLimit, recipesPerKeyRateLimit, async (c
       // The depositor of a draft about someone else can read it (slice 4,
       // S4-R2): honest refusal with the link to hand its subject.
       return c.json({ ok: false, error: describeVerifyResult(result), recipeId: result.recipeId, status: result.status }, 403);
+    case "key_cannot_verify":
+      // A headless key (slice 5, S5-R1): missing authority, not malformed
+      // input, so 403; decided before any lookup, so the same for every id.
+      return c.json({ ok: false, error: describeVerifyResult(result), recipeId: result.recipeId, status: result.status }, 403);
     case "refused":
       return c.json({ ok: false, error: result.error, recipeId: result.recipeId, status: result.status }, 400);
   }

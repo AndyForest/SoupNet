@@ -1,9 +1,9 @@
 # ClaimNet Data Model — Generated Reference
 
-> **Auto-generated** from Drizzle migration snapshot `0039_snapshot.json`.
+> **Auto-generated** from Drizzle migration snapshot `0040_snapshot.json`.
 > Do not edit by hand. Regenerate with: `npx tsx scripts/generate-data-model-docs.ts`
 >
-> Schema as of migration `0039_traces_draft_subject` (2026-09-28).
+> Schema as of migration `0040_api_keys_deposit_level` (2026-09-28).
 > Tables: 31 | Schema: `claimnet`
 
 For design rationale, conventions, and context, see [data-model.md](data-model.md).
@@ -37,6 +37,7 @@ erDiagram
         uuid default_write_group_id
         text label
         text key_type
+        text deposit_level
         text refresh_token_hash
         timestamptz refresh_token_expires_at
         text oauth_client_id
@@ -865,6 +866,7 @@ These are created by raw SQL in migration files and are not captured in the snap
 | `default_write_group_id` | `uuid` | NO |  |  |
 | `label` | `text` | YES |  |  |
 | `key_type` | `text` | NO |  |  |
+| `deposit_level` | `text` | NO | `'full'` |  |
 | `refresh_token_hash` | `text` | YES |  |  |
 | `refresh_token_expires_at` | `timestamptz` | YES |  |  |
 | `oauth_client_id` | `text` | YES |  |  |

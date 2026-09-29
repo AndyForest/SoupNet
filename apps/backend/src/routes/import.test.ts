@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import crypto from "node:crypto";
+import postgres from "postgres";
 import { mintImportId } from "../lib/deterministic-id";
 import { seedVerifiedUser } from "../test-users";
 
@@ -106,8 +107,8 @@ interface ImportResponse {
     book: { id: string; name: string; slug: string; created: boolean } | null;
     counts: {
       traces: { inserted: number; skippedIdentical: number; conflicted: number; remapped: number };
-      evidence: { inserted: number; skippedExisting: number; remapped: number };
-      references: { inserted: number; skippedExisting: number; remapped: number };
+      evidence: { inserted: number; skippedExisting: number; orphaned: number; remapped: number };
+      references: { inserted: number; skippedExisting: number; orphaned: number; remapped: number };
       links: { inserted: number; skippedExisting: number; orphaned: number };
     };
     conflicts: Array<{ entity: string; id: string; fields: string[]; kept: string }>;
@@ -136,11 +137,23 @@ async function exportAccount(token: string): Promise<ExportedData> {
 }
 
 let tokenA = "";
+let sql: postgres.Sql;
 let tokenB = "";
 let tokenC = "";
 
 describe.skipIf(!BASE)("POST /import", () => {
+  afterAll(async () => {
+    await sql?.end();
+  });
+
   beforeAll(async () => {
+    sql = postgres({
+      host: process.env["PGHOST"] ?? "localhost",
+      port: Number(process.env["PGPORT"] ?? 5633),
+      user: process.env["PGUSER"] ?? "claimnet",
+      password: process.env["PGPASSWORD"] ?? "claimnet",
+      database: process.env["PGDATABASE"] ?? "claimnet",
+    });
     tokenA = await registerAndVerify(`test-import-a-${uid}@test.local`, "import-test-pw-aaa1");
     tokenB = await registerAndVerify(`test-import-b-${uid}@test.local`, "import-test-pw-bbb1");
     tokenC = await registerAndVerify(`test-import-c-${uid}@test.local`, "import-test-pw-ccc1");
@@ -253,8 +266,8 @@ describe.skipIf(!BASE)("POST /import", () => {
     expect(data.counts.traces).toEqual({
       inserted: 0, skippedIdentical: 2, conflicted: 0, remapped: 0,
     });
-    expect(data.counts.evidence).toEqual({ inserted: 0, skippedExisting: 1, remapped: 0 });
-    expect(data.counts.references).toEqual({ inserted: 0, skippedExisting: 1, remapped: 0 });
+    expect(data.counts.evidence).toEqual({ inserted: 0, skippedExisting: 1, orphaned: 0, remapped: 0 });
+    expect(data.counts.references).toEqual({ inserted: 0, skippedExisting: 1, orphaned: 0, remapped: 0 });
     expect(data.counts.links.inserted).toBe(0);
     expect(data.counts.links.skippedExisting).toBe(3);
     // Fully-skipped import must not litter an empty book.
@@ -627,25 +640,104 @@ describe.skipIf(!BASE)("POST /import", () => {
     expect(body.data!.counts.links.inserted).toBe(0);
   });
 
-  it("[F98] mints a copy of an existing row in the file that hangs off no one's recipe", async () => {
-    // B imports evidence with no trace link: the row exists but belongs to
-    // nobody. C listing the same id gets its own copy, never B's row.
-    const orphanEv = crypto.randomUUID();
-    const orphanFile = carrierFile("orphan-src").file;
-    orphanFile.evidence.push({ id: orphanEv, content: "B's unlinked evidence text", createdAt: NOW, updatedAt: NOW });
-    expect((await postImport(tokenB, JSON.stringify(orphanFile))).body.data!.counts.evidence.inserted).toBe(1);
+  it("[F103] import creates no evidence or reference that no written link reaches, so account deletion leaves nothing behind", async () => {
+    // The audit's 10i: unlinked rows, and new evidence linked only from a
+    // recipe the importer already has, used to be inserted with no link any
+    // deletion path follows, so they outlived the account.
+    const email = `test-import-ghost-${uid}@test.local`;
+    const password = "import-test-pw-ghost1";
+    const ghost = await registerAndVerify(email, password);
+    const tag = `ghost-${uid}`;
 
-    const { file, traceId } = carrierFile("orphan-reuse");
-    file.evidence.push({ id: orphanEv, content: "C's own text under a colliding id", createdAt: NOW, updatedAt: NOW });
-    file.traceEvidence.push({ id: crypto.randomUUID(), traceId, evidenceId: orphanEv, stance: "for", apiKeyId: null, createdAt: NOW });
-    const { status, body } = await postImport(tokenC, JSON.stringify(file));
+    const unlinked = carrierFile("ghost-unlinked").file;
+    unlinked.traces = [];
+    const unlinkedEv = crypto.randomUUID();
+    unlinked.evidence.push({ id: unlinkedEv, content: `${tag} unlinked evidence`, createdAt: NOW, updatedAt: NOW });
+    unlinked.references.push({ id: crypto.randomUUID(), quote: `${tag} unlinked quote`, source: "ghost", fileUrl: null, fileMimeType: null, fileHash: null, createdAt: NOW });
+    const first = await postImport(ghost, JSON.stringify(unlinked));
+    expect(first.status).toBe(200);
+    expect(first.body.data!.counts.evidence).toMatchObject({ inserted: 0, orphaned: 1 });
+    expect(first.body.data!.counts.references).toMatchObject({ inserted: 0, orphaned: 1 });
+    expect(first.body.data!.book).toBeNull();
+
+    const own = carrierFile("ghost-own");
+    expect((await postImport(ghost, JSON.stringify(own.file))).body.data!.counts.traces.inserted).toBe(1);
+    const again = structuredClone(own.file);
+    const lateEv = crypto.randomUUID();
+    again.evidence.push({ id: lateEv, content: `${tag} evidence on a kept recipe`, createdAt: NOW, updatedAt: NOW });
+    again.traceEvidence.push({ id: crypto.randomUUID(), traceId: own.traceId, evidenceId: lateEv, stance: "for", apiKeyId: null, createdAt: NOW });
+    const second = await postImport(ghost, JSON.stringify(again));
+    expect(second.status).toBe(200);
+    expect(second.body.data!.counts.evidence).toMatchObject({ inserted: 0, orphaned: 1 });
+    expect(second.body.data!.counts.links.orphaned).toBe(1);
+
+    // Another account listing the unlinked id with a link of its own gets it
+    // under that id: nothing was ever created there.
+    const other = carrierFile("ghost-other");
+    other.file.evidence.push({ id: unlinkedEv, content: "C's own text under the same id", createdAt: NOW, updatedAt: NOW });
+    other.file.traceEvidence.push({ id: crypto.randomUUID(), traceId: other.traceId, evidenceId: unlinkedEv, stance: "for", apiKeyId: null, createdAt: NOW });
+    const byC = await postImport(tokenC, JSON.stringify(other.file));
+    expect(byC.body.data!.counts.evidence).toMatchObject({ inserted: 1, remapped: 0 });
+
+    const del = await fetch(`${BASE}/auth/me`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${ghost}` },
+      body: JSON.stringify({ password }),
+    });
+    expect(del.status).toBe(200);
+    const ev = await sql`SELECT count(*)::int AS n FROM claimnet.evidence WHERE content LIKE ${tag + "%"}`;
+    const refs = await sql`SELECT count(*)::int AS n FROM claimnet.references WHERE quote LIKE ${tag + "%"}`;
+    expect(Number(ev[0]?.["n"])).toBe(0);
+    expect(Number(refs[0]?.["n"])).toBe(0);
+  });
+
+  it("[F101] link ids another account already used cannot strip the links from an import", async () => {
+    // C imports her own rows under link rows that reuse the ids of the links
+    // in B's file; B, the first to import that file, must still get every link.
+    const victim = buildExportFile();
+    const squat = carrierFile("link-squat");
+    const sqEv = crypto.randomUUID();
+    const sqRef = crypto.randomUUID();
+    squat.file.evidence.push({ id: sqEv, content: "C's evidence", createdAt: NOW, updatedAt: NOW });
+    squat.file.references.push({ id: sqRef, quote: "C's quote", source: "C", fileUrl: null, fileMimeType: null, fileHash: null, createdAt: NOW });
+    squat.file.traceEvidence.push({ id: victim.file.traceEvidence[0]!["id"], traceId: squat.traceId, evidenceId: sqEv, stance: "for", apiKeyId: null, createdAt: NOW });
+    squat.file.traceReferences.push({ id: victim.file.traceReferences[0]!["id"], traceId: squat.traceId, referenceId: sqRef, apiKeyId: null, createdAt: NOW });
+    squat.file.evidenceReferences.push({ id: victim.file.evidenceReferences[0]!["id"], evidenceId: sqEv, referenceId: sqRef, createdAt: NOW });
+    expect((await postImport(tokenC, JSON.stringify(squat.file))).body.data!.counts.links.inserted).toBe(3);
+
+    const { status, body } = await postImport(tokenB, JSON.stringify(victim.file));
     expect(status).toBe(200);
-    expect(body.data!.counts.evidence.remapped).toBe(1);
-    expect(body.data!.counts.evidence.inserted).toBe(1);
+    expect(body.data!.counts.traces.inserted).toBe(2);
+    expect(body.data!.counts.links).toEqual({ inserted: 3, skippedExisting: 0, orphaned: 0 });
+    const exportedB = await exportAccount(tokenB);
+    expect(exportedB.traceEvidence.some((l) => l.traceId === victim.traceIds[0] && l.evidenceId === victim.evidenceId)).toBe(true);
+    expect(exportedB.traceReferences.some((l) => l.traceId === victim.traceIds[0] && l.referenceId === victim.referenceId)).toBe(true);
+    expect(exportedB.evidenceReferences.some((l) => l.evidenceId === victim.evidenceId && l.referenceId === victim.referenceId)).toBe(true);
+  });
 
-    const exportedC = await exportAccount(tokenC);
-    expect(exportedC.evidence.some((e) => e.id === orphanEv)).toBe(false);
-    expect(exportedC.evidence.some((e) => e.content === "C's own text under a colliding id")).toBe(true);
+  it("[F102] two accounts importing the same new file at once each end with a complete copy, never a 200 that dropped rows", async () => {
+    // Both imports see the file's ids as new and race to insert them. The
+    // loser must fail with a retryable 409 (its retry then mints its own
+    // copy), not answer 200 with the rows it lost silently missing.
+    const tokens = [
+      await registerAndVerify(`test-import-race1-${uid}@test.local`, "import-test-pw-race1"),
+      await registerAndVerify(`test-import-race2-${uid}@test.local`, "import-test-pw-race2"),
+    ];
+    for (let round = 0; round < 3; round++) {
+      const race = buildExportFile();
+      const body = JSON.stringify(race.file);
+      const results = await Promise.all(tokens.map((t) => postImport(t, body)));
+      for (const [i, r] of results.entries()) {
+        let res = r;
+        if (res.status === 409) {
+          expect(res.body.error).toMatch(/retry/i);
+          res = await postImport(tokens[i]!, body);
+        }
+        expect(res.status, `round ${round} user ${i}`).toBe(200);
+        expect(res.body.data!.counts.traces.inserted, `round ${round} user ${i}`).toBe(2);
+        expect(res.body.data!.counts.links.inserted, `round ${round} user ${i}`).toBe(3);
+      }
+    }
   });
 
   it("[F100] rows pre-planted under the importer's mint are never taken as the importer's own", async () => {

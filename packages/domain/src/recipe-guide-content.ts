@@ -470,6 +470,16 @@ export interface BriefingMapContext {
  */
 export const BRIEFING_KEY_PLACEHOLDER = "YOUR_API_KEY";
 
+/**
+ * The one section a headless key's briefing adds (drafts-and-triage slice 5,
+ * S5-B1): what the key is, and what to do about it. It composes with every
+ * surface profile, and an ordinary key's briefing is byte-identical without
+ * it (S5-Z3). Slice 7 owns the fuller how-to-draft guidance; this only says
+ * what the key is. At most 400 characters (pinned in the test).
+ */
+export const HEADLESS_KEY_SECTION = `## This key is headless
+Every recipe you check through this key is stored as a draft that only your user and their agents see until your user confirms it, and this key cannot verify drafts. In each draft, say why your user couldn't be asked and what would settle it. End the session with one \`outcome\` feedback row listing the draft ids you left open.`;
+
 export interface BriefingBuildInput {
   user: BriefingUser;
   backendUrl: string;
@@ -503,11 +513,14 @@ export interface BriefingBuildInput {
    *  everything because the receiver is unknown (operator ruling 2026-08-23).
    *  Headings that survive are never retitled (cross-refs stay stable). */
   surface?: "mcp" | "full";
+  /** The presenting key is headless (slice 5): insert HEADLESS_KEY_SECTION
+   *  after the key section. Absent or false: the ordinary briefing. */
+  headless?: boolean;
 }
 
 export const BRIEFING = {
   title: "Soup.net agent briefing",
-  build: ({ user, backendUrl, frontendUrl, groups, exemplarsSection, purpose, requestedRecipesSection, oauthConnection, surface, intentNotice }: BriefingBuildInput) => {
+  build: ({ user, backendUrl, frontendUrl, groups, exemplarsSection, purpose, requestedRecipesSection, oauthConnection, surface, intentNotice, headless }: BriefingBuildInput) => {
     const mcpProfile = surface === "mcp";
     // Placeholder mode is the only non-OAuth mode: every key interpolation
     // renders the literal placeholder, never a raw credential (see
@@ -652,7 +665,7 @@ ${ROLE_PATTERNS}
 
 ${corpusContext}
 
-${keySection}
+${keySection}${headless ? `\n\n${HEADLESS_KEY_SECTION}` : ""}
 
 ${mcpProfile ? "" : `${mcpSetupSection}
 
