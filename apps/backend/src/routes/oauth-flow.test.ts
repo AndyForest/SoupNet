@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
+import { seedVerifiedUser } from "../test-users";
 import crypto from "node:crypto";
 import postgres from "postgres";
 
@@ -42,10 +43,6 @@ interface TokenResponse {
   scope?: string;
   error?: string;
   error_description?: string;
-}
-
-interface RegisterResponse {
-  data?: { verificationToken?: string };
 }
 
 let userToken = "";
@@ -152,12 +149,7 @@ describe.skipIf(!BASE)("OAuth 2.1 end-to-end flow", () => {
     const email = `oauth-${uid}@test.local`;
     userEmail = email;
     const password = "oauth-test-password-123";
-    const regRes = await postJson("/auth/register", { email, password, tosAccepted: true });
-    const regBody = (await regRes.json()) as RegisterResponse;
-    const vtok = regBody.data?.verificationToken;
-    if (!vtok) throw new Error("Setup: missing verificationToken");
-    await postJson("/auth/verify", { token: vtok });
-    const loginRes = await postJson("/auth/login", { email, password });
+    const loginRes = await seedVerifiedUser(email, password);
     const loginBody = (await loginRes.json()) as { data?: { token?: string } };
     userToken = loginBody.data?.token ?? "";
     if (!userToken) throw new Error("Setup: login failed");
@@ -535,6 +527,15 @@ describe.skipIf(!BASE)("OAuth 2.1 end-to-end flow", () => {
     await new Promise((r) => setTimeout(r, 300));
 
     const sql = dbConn();
+    // Holds a FOR KEY SHARE lock on the fixture row for the rest of the test.
+    // The fixture is sweepable by design (epoch expires_at), and
+    // oauth.service.test.ts calls cleanupOAuthArtifacts directly, unthrottled,
+    // in a parallel worker: in gate runs that sweep deleted the row between
+    // the insert and the backfill SELECT below (2026-09-28, "expected [] to
+    // have a length of 1"). The sweep's DELETE waits on this lock; the
+    // backend's refresh UPDATE and the backfill UPDATE don't, since neither
+    // conflicts with FOR KEY SHARE.
+    const lock = await sql.reserve();
     try {
       const users = await sql<Array<{ id: string }>>`
         SELECT id FROM claimnet.users WHERE email = ${userEmail}
@@ -544,7 +545,9 @@ describe.skipIf(!BASE)("OAuth 2.1 end-to-end flow", () => {
 
       // Exactly the shape the pre-0028 code left behind after consuming a
       // refresh token: expires_at = epoch, consumed_at not yet in existence.
-      await sql`
+      // Inserted (committed, so the backend sees it) and then locked; a sweep
+      // landing in between is retried.
+      const insertFixture = () => sql`
         INSERT INTO claimnet.api_keys
           (key, key_prefix, user_id, read_group_ids, write_group_ids, default_write_group_id,
            label, key_type, refresh_token_hash, refresh_token_expires_at, oauth_client_id,
@@ -555,7 +558,17 @@ describe.skipIf(!BASE)("OAuth 2.1 end-to-end flow", () => {
            ${"oauth: legacy-consumed-fixture"}, 'oauth',
            ${sha256hex(legacyRefresh)}, NOW() + INTERVAL '10 days', ${client.client_id},
            to_timestamp(0), NOW() - INTERVAL '1 day')
+        ON CONFLICT DO NOTHING
       `;
+      await lock`BEGIN`;
+      let held = 0;
+      for (let attempt = 0; attempt < 3 && held === 0; attempt++) {
+        await insertFixture();
+        held = (await lock`
+          SELECT 1 FROM claimnet.api_keys WHERE key = ${sha256hex(legacyAccess)} FOR KEY SHARE
+        `).length;
+      }
+      expect(held).toBe(1);
 
       // Layer 1: even before any backfill, the epoch guard refuses to rotate.
       const preBackfillRes = await refreshWith(legacyRefresh);
@@ -579,6 +592,8 @@ describe.skipIf(!BASE)("OAuth 2.1 end-to-end flow", () => {
       expect(postBackfillRes.status).toBe(400);
       expect(((await postBackfillRes.json()) as TokenResponse).error).toBe("invalid_grant");
     } finally {
+      await lock`COMMIT`.catch(() => undefined);
+      lock.release();
       await sql`DELETE FROM claimnet.api_keys WHERE key = ${sha256hex(legacyAccess)}`.catch(() => undefined);
       await sql.end();
     }

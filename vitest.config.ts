@@ -41,13 +41,13 @@ export default defineConfig({
       "scripts/**/*.test.mts",
     ],
     env: loadDotEnv(),
-    // Integration beforeAll hooks chain register → verify → login, and each
-    // register costs a bcrypt hash (12 rounds) on the backend; with ~12 test
-    // files running in parallel plus the waitlist DB-fixture suite doing its
-    // own bcrypt work, the 10s default hook timeout is marginal on a loaded
-    // machine (observed tipping over 2026-06-11 when the dev Docker stack ran
-    // alongside the gate). These are ceilings, not targets — passing runs
-    // are unaffected.
+    // Set 2026-06-11 when integration beforeAll hooks signed users up over
+    // HTTP (register → verify → login), each costing the backend a 12-round
+    // bcryptjs hash on its single thread; the 10s default hook timeout was
+    // marginal on a loaded machine. Setup users now come from
+    // apps/backend/src/test-users.ts, which keeps that work off the backend
+    // (2026-09-28). These are ceilings, not targets: passing runs are
+    // unaffected.
     hookTimeout: 30_000,
     testTimeout: 15_000,
   },

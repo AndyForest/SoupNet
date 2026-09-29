@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import postgres from "postgres";
+import { seedVerifiedUser } from "../test-users";
 
 /**
  * Integration test for the account-deletion data-retention fix (2026-07-12):
@@ -27,9 +28,6 @@ import postgres from "postgres";
 
 const BASE = process.env["BACKEND_URL"] ?? "";
 
-interface RegisterResponse {
-  data?: { verificationToken?: string };
-}
 interface LoginResponse {
   data?: { token?: string };
 }
@@ -47,24 +45,7 @@ function makeSql() {
 async function provisionUser(suffix: string): Promise<{ token: string; userId: string; email: string; password: string }> {
   const email = `cascade-${Date.now()}-${suffix}@test.local`;
   const password = "cascade-test-password-123";
-  const reg = await fetch(`${BASE}/auth/register`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password, tosAccepted: true }),
-  });
-  const regBody = (await reg.json()) as RegisterResponse;
-  const vtok = regBody.data?.verificationToken;
-  if (!vtok) throw new Error("Setup: verificationToken missing");
-  await fetch(`${BASE}/auth/verify`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token: vtok }),
-  });
-  const login = await fetch(`${BASE}/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
-  });
+  const login = await seedVerifiedUser(email, password);
   const loginBody = (await login.json()) as LoginResponse;
   const token = loginBody.data?.token;
   if (!token) throw new Error("Setup: login failed");

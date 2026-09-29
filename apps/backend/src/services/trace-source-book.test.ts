@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
+import { seedVerifiedUser } from "../test-users";
 
 /**
  * Move and delete act on the book they were authorized against — requires
@@ -99,23 +100,7 @@ describe.skipIf(!canConnect() || !BASE)("move / delete refuse when the recipe le
     del = await import("./trace-delete.service");
 
     const email = `test-source-book-${uid}@test.local`;
-    const reg = await fetch(`${BASE}/auth/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password: PASSWORD, tosAccepted: true }),
-    });
-    const vtok = ((await reg.json()) as { data?: { verificationToken?: string } }).data?.verificationToken;
-    if (!vtok) throw new Error(`Setup failed for ${email}`);
-    await fetch(`${BASE}/auth/verify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: vtok }),
-    });
-    const login = await fetch(`${BASE}/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password: PASSWORD }),
-    });
+    const login = await seedVerifiedUser(email, PASSWORD);
     const loginBody = (await login.json()) as { data?: { token?: string; user?: { id: string } } };
     token = loginBody.data?.token ?? "";
     userId = loginBody.data?.user?.id ?? "";

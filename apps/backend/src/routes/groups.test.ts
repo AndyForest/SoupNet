@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
+import { seedVerifiedUser } from "../test-users";
 
 /**
  * Integration tests for group member management — requires running backend.
@@ -23,26 +24,7 @@ let sharedGroupId = "";
 
 describe.skipIf(!BASE)("group member management", () => {
   async function registerAndVerify(email: string, password: string): Promise<string> {
-    const reg = await fetch(`${BASE}/auth/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, tosAccepted: true }),
-    });
-    const regBody = (await reg.json()) as { data?: { verificationToken?: string } };
-    const verificationToken = regBody.data?.verificationToken;
-    if (!verificationToken) throw new Error("Backend did not return verificationToken — ALLOW_AUTO_SETUP must be true");
-    const verify = await fetch(`${BASE}/auth/verify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: verificationToken }),
-    });
-    if (!verify.ok) throw new Error(`Failed to verify ${email}`);
-    // F30: register no longer returns a JWT — log in to get one.
-    const login = await fetch(`${BASE}/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
+    const login = await seedVerifiedUser(email, password);
     const loginBody = (await login.json()) as { data?: { token?: string } };
     const token = loginBody.data?.token ?? "";
     if (!token) throw new Error(`Failed to log in ${email}`);
@@ -463,6 +445,49 @@ describe.skipIf(!BASE)("group invitations (spam-safe)", () => {
     expect(listAfterBody.data.find((i) => i.id === inviteId)).toBeUndefined();
   });
 
+  // A revoked or superseded invitation is stamped a minute in the past, not
+  // NOW(), so it stays dead in a later transaction even if the database clock
+  // steps back (Docker Desktop's VM steps 20-30 ms every 30 s). Stepping the
+  // clock isn't possible here, so this pins the margin that makes it safe.
+  it("re-invite and revoke stamp the old invitation's expiry clearly in the past", async () => {
+    const email = `test-inv-margin-${inviteUid}@test.local`;
+    const send = async (): Promise<string> => {
+      const res = await fetch(`${BASE}/recipe-books/${invGroupId}/invite`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${ownerToken}` },
+        body: JSON.stringify({ email }),
+      });
+      return ((await res.json()) as { data?: { id: string } }).data?.id ?? "";
+    };
+    const first = await send();
+    const second = await send();
+    expect(first && second && first !== second).toBeTruthy();
+    const rev = await fetch(`${BASE}/recipe-books/${invGroupId}/invitations/${second}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${ownerToken}` },
+    });
+    expect(rev.status).toBe(200);
+
+    const postgres = (await import("postgres")).default;
+    const sql = postgres({
+      host: process.env["PGHOST"] ?? "localhost",
+      port: Number(process.env["PGPORT"] ?? 5633),
+      user: process.env["PGUSER"] ?? "claimnet",
+      password: process.env["PGPASSWORD"] ?? "claimnet",
+      database: process.env["PGDATABASE"] ?? "claimnet",
+    });
+    try {
+      const rows: Array<{ id: string; margin_ok: boolean }> = await sql`
+        SELECT id, expires_at < NOW() - interval '30 seconds' AS margin_ok
+        FROM claimnet.invitations WHERE id IN (${first}::uuid, ${second}::uuid)
+      `;
+      expect(rows).toHaveLength(2);
+      expect(rows.every((r) => r.margin_ok)).toBe(true);
+    } finally {
+      await sql.end();
+    }
+  });
+
   it("Non-owner cannot list or revoke invitations", async () => {
     const list = await fetch(`${BASE}/recipe-books/${invGroupId}/invitations`, {
       headers: { Authorization: `Bearer ${registeredInviteeToken}` },
@@ -858,24 +883,7 @@ describe.skipIf(!BASE)("email case-insensitivity", () => {
   let caseGroupId = "";
 
   async function registerAndVerify(email: string, password: string): Promise<string> {
-    const reg = await fetch(`${BASE}/auth/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, tosAccepted: true }),
-    });
-    const regBody = (await reg.json()) as { data?: { verificationToken?: string } };
-    const verificationToken = regBody.data?.verificationToken;
-    if (!verificationToken) throw new Error("Backend did not return verificationToken — ALLOW_AUTO_SETUP must be true");
-    await fetch(`${BASE}/auth/verify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: verificationToken }),
-    });
-    const login = await fetch(`${BASE}/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
+    const login = await seedVerifiedUser(email, password);
     const loginBody = (await login.json()) as { data?: { token?: string } };
     const token = loginBody.data?.token ?? "";
     if (!token) throw new Error(`Failed to log in ${email}`);

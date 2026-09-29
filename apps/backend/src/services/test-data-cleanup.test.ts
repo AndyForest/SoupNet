@@ -5,6 +5,7 @@ import {
   MAX_DISPOSABLE_RECIPES,
   selectDisposableTestUsers,
 } from "./test-data-cleanup.service";
+import { seedVerifiedUser } from "../test-users";
 
 /**
  * Bounds for the test-data cleanup (scripts/cleanup-test-data.mts). It runs
@@ -55,24 +56,7 @@ type Sql = ReturnType<typeof makeSql>;
 
 async function provisionUser(sql: Sql, email: string): Promise<TestUser> {
   const password = "cleanup-bounds-password-123";
-  const reg = await fetch(`${BASE}/auth/register`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password, tosAccepted: true }),
-  });
-  const regBody = (await reg.json()) as { data?: { verificationToken?: string } };
-  const vtok = regBody.data?.verificationToken;
-  if (!vtok) throw new Error(`Setup: verificationToken missing for ${email}`);
-  await fetch(`${BASE}/auth/verify`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token: vtok }),
-  });
-  const login = await fetch(`${BASE}/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
-  });
+  const login = await seedVerifiedUser(email, password);
   const token = ((await login.json()) as { data?: { token?: string } }).data?.token;
   if (!token) throw new Error(`Setup: login failed for ${email}`);
   const rows: Array<{ id: string; personal_organization_id: string | null }> = await sql`

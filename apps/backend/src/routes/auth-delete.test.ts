@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { seedVerifiedUser } from "../test-users";
 
 /**
  * Integration tests for DELETE /auth/me (self-serve account deletion).
@@ -8,9 +9,6 @@ import { describe, it, expect } from "vitest";
 
 const BASE = process.env["BACKEND_URL"] ?? "";
 
-interface RegisterResponse {
-  data?: { verificationToken?: string };
-}
 interface LoginResponse {
   data?: { token?: string };
 }
@@ -18,24 +16,7 @@ interface LoginResponse {
 async function provisionUser(suffix: string): Promise<{ token: string; userId: string; email: string; password: string }> {
   const email = `delete-${Date.now()}-${suffix}@test.local`;
   const password = "delete-test-password-123";
-  const reg = await fetch(`${BASE}/auth/register`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password, tosAccepted: true }),
-  });
-  const regBody = (await reg.json()) as RegisterResponse;
-  const vtok = regBody.data?.verificationToken;
-  if (!vtok) throw new Error("Setup: verificationToken missing");
-  await fetch(`${BASE}/auth/verify`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token: vtok }),
-  });
-  const login = await fetch(`${BASE}/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
-  });
+  const login = await seedVerifiedUser(email, password);
   const loginBody = (await login.json()) as LoginResponse;
   const token = loginBody.data?.token;
   if (!token) throw new Error("Setup: login failed");

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
+import { seedVerifiedUser } from "../test-users";
 
 /**
  * Integration tests for /traces/map — requires running backend.
@@ -19,25 +20,7 @@ let orgId = "";
 
 describe.skipIf(!BASE)("/traces/map groupIds scoping", () => {
   async function registerAndVerify(email: string, password: string): Promise<string> {
-    const reg = await fetch(`${BASE}/auth/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, tosAccepted: true }),
-    });
-    const regBody = (await reg.json()) as { data?: { verificationToken?: string } };
-    const vtok = regBody.data?.verificationToken;
-    if (!vtok) throw new Error(`Setup failed for ${email}`);
-    await fetch(`${BASE}/auth/verify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: vtok }),
-    });
-    // F30: log in for the JWT (register no longer returns it).
-    const login = await fetch(`${BASE}/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
+    const login = await seedVerifiedUser(email, password);
     const loginBody = (await login.json()) as { data?: { token?: string } };
     const t = loginBody.data?.token ?? "";
     if (!t) throw new Error(`Login failed for ${email}`);
@@ -147,25 +130,7 @@ describe.skipIf(!BASE)("/traces/map cross-author visibility in shared groups", (
   let authorPersonalGroupId = "";
 
   async function registerAndVerify(email: string, password: string): Promise<{ token: string; userId: string }> {
-    const reg = await fetch(`${BASE}/auth/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, tosAccepted: true }),
-    });
-    const regBody = (await reg.json()) as { data?: { verificationToken?: string } };
-    const vtok = regBody.data?.verificationToken;
-    if (!vtok) throw new Error(`Setup failed for ${email}`);
-    await fetch(`${BASE}/auth/verify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: vtok }),
-    });
-    // F30: register no longer returns token + user — log in, then read /auth/me for the userId.
-    const login = await fetch(`${BASE}/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
+    const login = await seedVerifiedUser(email, password);
     const loginBody = (await login.json()) as { data?: { token?: string; user?: { id: string } } };
     const t = loginBody.data?.token ?? "";
     const userId = loginBody.data?.user?.id ?? "";
@@ -360,22 +325,7 @@ describe.skipIf(!BASE)("/traces/map layout cache + read-time vector truncation",
   }
 
   beforeAll(async () => {
-    const reg = await fetch(`${BASE}/auth/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, tosAccepted: true }),
-    });
-    const regBody = (await reg.json()) as { data?: { verificationToken?: string } };
-    await fetch(`${BASE}/auth/verify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: regBody.data?.verificationToken ?? "" }),
-    });
-    const login = await fetch(`${BASE}/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
+    const login = await seedVerifiedUser(email, password);
     jwt = ((await login.json()) as { data?: { token?: string } }).data?.token ?? "";
     const keyRes = await fetch(`${BASE}/keys/daily`, {
       method: "POST",

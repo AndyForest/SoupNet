@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import crypto from "node:crypto";
 import postgres from "postgres";
+import { seedVerifiedUser } from "../test-users";
 
 /**
  * Layer 3: drafts for the key's own user (drafts-and-triage slice 2).
@@ -71,19 +72,7 @@ describe.skipIf(!BASE || !canConnect())("drafts for the key's own user (drafts-a
 
   async function registerAndVerify(label: string): Promise<Actor> {
     const email = `test-drafts-${label}-${run}@test.local`;
-    const reg = await fetch(`${BASE}/auth/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password: PASSWORD, tosAccepted: true }),
-    });
-    const vtok = ((await reg.json()) as { data?: { verificationToken?: string } }).data?.verificationToken;
-    if (!vtok) throw new Error(`register failed for ${email}`);
-    await fetch(`${BASE}/auth/verify`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: vtok }) });
-    const login = await fetch(`${BASE}/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password: PASSWORD }),
-    });
+    const login = await seedVerifiedUser(email, PASSWORD);
     const lb = (await login.json()) as { data?: { token?: string; user?: { id: string } } };
     const jwt = lb.data?.token ?? "";
     const userId = lb.data?.user?.id ?? "";

@@ -202,9 +202,11 @@ export async function removeMember(
     // Invitations follow the inviter's membership [F90]: the pending ones this
     // person sent to this book expire with the removal, so nobody (their own
     // other address included) gets in on an invitation from someone who is no
-    // longer a member. Expired rather than deleted, as re-inviting does.
+    // longer a member. Expired rather than deleted, as re-inviting does, and
+    // a minute in the past so a database clock stepping back can't make them
+    // live again (see the invitation revoke in routes/groups.ts).
     await tx.execute(sql`
-      UPDATE claimnet.invitations SET expires_at = NOW()
+      UPDATE claimnet.invitations SET expires_at = NOW() - interval '1 minute'
       WHERE group_id = ${bookId}::uuid AND inviter_id = ${userId}::uuid
         AND accepted_at IS NULL AND declined_at IS NULL AND expires_at > NOW()
     `);

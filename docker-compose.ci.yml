@@ -16,7 +16,7 @@
 #   - Reproducing CI failures locally
 #   - Testing against an empty database (cold start)
 #   - Verifying migrations work from scratch
-#   - Testing without Gemini API key (lexical-only fallback)
+#   - Testing without a Gemini API key (the gate runs stub embeddings)
 
 services:
   postgres-ci:

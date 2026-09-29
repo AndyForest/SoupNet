@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
+import { seedVerifiedUser } from "../test-users";
 
 /**
  * Integration tests for /keys routes — requires running backend.
@@ -44,24 +45,7 @@ describe.skipIf(!BASE)("/keys briefing — F33 lookup-by-hashed-key", () => {
     const password = "f33-test-password-123";
 
     // Register + verify + log in (F30: register no longer auto-logs-in).
-    const regRes = await fetch(`${BASE}/auth/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, tosAccepted: true }),
-    });
-    const regBody = (await regRes.json()) as { data?: { verificationToken?: string } };
-    const vtok = regBody.data?.verificationToken;
-    if (!vtok) throw new Error("Setup: missing verificationToken (ALLOW_AUTO_SETUP must be true)");
-    await fetch(`${BASE}/auth/verify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: vtok }),
-    });
-    const loginRes = await fetch(`${BASE}/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
+    const loginRes = await seedVerifiedUser(email, password);
     const loginBody = (await loginRes.json()) as { data?: { token?: string } };
     userToken = loginBody.data?.token ?? "";
     if (!userToken) throw new Error("Setup: failed to log in");
@@ -183,22 +167,7 @@ describe.skipIf(!BASE)("/keys briefing — F33 lookup-by-hashed-key", () => {
     // Register a second user; their keys must not be returnable via this user.
     const otherEmail = `keys-f33-other-${uid}@test.local`;
     const otherPassword = "f33-other-password-123";
-    const reg = await fetch(`${BASE}/auth/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: otherEmail, password: otherPassword, tosAccepted: true }),
-    });
-    const regBody = (await reg.json()) as { data?: { verificationToken?: string } };
-    await fetch(`${BASE}/auth/verify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: regBody.data?.verificationToken }),
-    });
-    const otherLogin = await fetch(`${BASE}/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: otherEmail, password: otherPassword }),
-    });
+    const otherLogin = await seedVerifiedUser(otherEmail, otherPassword);
     const otherLoginBody = (await otherLogin.json()) as { data?: { token?: string } };
     const otherToken = otherLoginBody.data?.token ?? "";
 
@@ -224,22 +193,7 @@ describe.skipIf(!BASE)("/keys/daily — label passthrough", () => {
   it("stores and returns a caller-supplied label", async () => {
     const email = `keys-label-${uid}@test.local`;
     const password = "label-test-password-123";
-    const reg = await fetch(`${BASE}/auth/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, tosAccepted: true }),
-    });
-    const regBody = (await reg.json()) as { data?: { verificationToken?: string } };
-    await fetch(`${BASE}/auth/verify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: regBody.data?.verificationToken }),
-    });
-    const login = await fetch(`${BASE}/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
+    const login = await seedVerifiedUser(email, password);
     const loginBody = (await login.json()) as { data?: { token?: string } };
     const token = loginBody.data?.token ?? "";
     expect(token).toBeTruthy();
@@ -262,22 +216,7 @@ describe.skipIf(!BASE)("/keys/daily — label passthrough", () => {
   it("omitting a label still mints a key (label stays null, unchanged behavior)", async () => {
     const email = `keys-nolabel-${uid}@test.local`;
     const password = "nolabel-test-password-123";
-    const reg = await fetch(`${BASE}/auth/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, tosAccepted: true }),
-    });
-    const regBody = (await reg.json()) as { data?: { verificationToken?: string } };
-    await fetch(`${BASE}/auth/verify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: regBody.data?.verificationToken }),
-    });
-    const login = await fetch(`${BASE}/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
+    const login = await seedVerifiedUser(email, password);
     const loginBody = (await login.json()) as { data?: { token?: string } };
     const token = loginBody.data?.token ?? "";
 

@@ -140,6 +140,7 @@ async function waitForHealth(url, maxRetries = 45) {
 async function main() {
   const extraArgs = process.argv.slice(2).join(" ");
   let backendProcess;
+  let backendExpectedExit = false;
 
   try {
     // 1. Start fresh CI postgres
@@ -212,6 +213,13 @@ async function main() {
       },
       stdio: "inherit",
     });
+    // A backend that dies mid-run shows up only as ECONNREFUSED in whichever
+    // tests come next (seen 2026-09-19); say so, with its exit code.
+    backendProcess.on("exit", (code, signal) => {
+      if (!backendExpectedExit) {
+        console.error(`\n=== Backend exited unexpectedly: code=${code} signal=${signal} ===`);
+      }
+    });
 
     console.log("Waiting for backend health...");
     await waitForHealth(CI_BACKEND);
@@ -247,6 +255,10 @@ async function main() {
         ...CI_PG,
         BACKEND_URL: CI_BACKEND,
         FRONTEND_URL: CI_FRONTEND,
+        // ci.yml sets JWT_SECRET job-wide, so CI's vitest sees it. Mirror it:
+        // test-users.ts creates setup users in-process with registerUser
+        // (which signs a token), and waitlist.service.test.ts skips without it.
+        JWT_SECRET: "ci-test-secret-64-char-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         GEMINI_API_KEY: "",
         EMBEDDINGS_PROVIDER: "stub",
         SYNTHESIS_PROVIDER: "stub",
@@ -286,11 +298,17 @@ async function main() {
     // swallowed waitForHealth timeout looked like a silent test failure).
     console.error("\n=== CI tests FAILED ===");
     console.error(err instanceof Error ? `${err.message}\n${err.stack}` : err);
+    // execSync errors carry the child's exit status. 3221226505 (0xC0000409)
+    // is a Windows native fast-fail: the process died without a JS error.
+    if (err && typeof err === "object" && "status" in err) {
+      console.error(`Exit status: ${err.status}${err.signal ? ` signal ${err.signal}` : ""}`);
+    }
     process.exitCode = 1;
   } finally {
     // 8. Tear down
     console.log("\n=== Cleaning up ===");
     if (backendProcess) {
+      backendExpectedExit = true;
       backendProcess.kill();
     }
     try {

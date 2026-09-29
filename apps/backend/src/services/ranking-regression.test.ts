@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll } from "vitest";
 import crypto from "node:crypto";
 import { DEFAULT_RANKING } from "@soupnet/domain";
 import type { RankingConfig } from "@soupnet/domain";
+import { seedVerifiedUser } from "../test-users";
 
 /**
  * Ranking-pipeline regression tests — full-stack, over the REAL
@@ -107,24 +108,7 @@ interface Agent {
 async function registerAgent(tag: string): Promise<Agent> {
   const email = `test-rankreg-${tag}-${uid}@test.local`;
   const password = "rankreg-test-password";
-  const reg = await fetch(`${BASE}/auth/register`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password, tosAccepted: true }),
-  });
-  const regBody = (await reg.json()) as { data?: { verificationToken?: string } };
-  const vtok = regBody.data?.verificationToken;
-  if (!vtok) throw new Error("Backend did not return verificationToken — ALLOW_AUTO_SETUP must be true");
-  await fetch(`${BASE}/auth/verify`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token: vtok }),
-  });
-  const login = await fetch(`${BASE}/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
-  });
+  const login = await seedVerifiedUser(email, password);
   const jwt = ((await login.json()) as { data?: { token?: string } }).data?.token ?? "";
   const keyRes = await fetch(`${BASE}/keys/daily`, {
     method: "POST",

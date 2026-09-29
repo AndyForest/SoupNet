@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
+import { seedVerifiedUser } from "../test-users";
 
 /**
  * Integration tests for /check routes — requires running backend.
@@ -29,31 +30,8 @@ describe.skipIf(!BASE)("/check routes integration", () => {
     checkEmail = `test-check-${uid}@test.local`;
     const checkPassword = "check-test-password-123";
 
-    // Register a test user. F30: /auth/register no longer auto-logs-in.
-    const regRes = await fetch(`${BASE}/auth/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: checkEmail, password: checkPassword, tosAccepted: true }),
-    });
-    const regBody = (await regRes.json()) as { data?: { verificationToken?: string } };
-
-    // F15: verify the user before creating keys. The dev backend exposes the
-    // verification token in the register response when ALLOW_AUTO_SETUP=true.
-    const verificationToken = regBody.data?.verificationToken;
-    if (!verificationToken) throw new Error("Backend did not return verificationToken — ALLOW_AUTO_SETUP must be true in dev");
-    const verifyRes = await fetch(`${BASE}/auth/verify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: verificationToken }),
-    });
-    if (!verifyRes.ok) throw new Error("Failed to verify test user");
-
-    // Log in to obtain the JWT (F30: not returned from /register anymore).
-    const loginRes = await fetch(`${BASE}/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: checkEmail, password: checkPassword }),
-    });
+    // A verified test user, logged in.
+    const loginRes = await seedVerifiedUser(checkEmail, checkPassword);
     const loginBody = (await loginRes.json()) as { data?: { token?: string } };
     token = loginBody.data?.token ?? "";
     if (!token) throw new Error("Failed to log in test user");

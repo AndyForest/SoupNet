@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import postgres from "postgres";
+import { seedVerifiedUser } from "../test-users";
 
 /**
  * Integration tests for what account deletion does to recipe books [F70].
@@ -50,24 +51,7 @@ let userCounter = 0;
 async function provisionUser(sql: Sql, suffix: string): Promise<TestUser> {
   const email = `handover-${Date.now()}-${userCounter++}-${suffix}@test.local`;
   const password = "handover-test-password-123";
-  const reg = await fetch(`${BASE}/auth/register`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password, tosAccepted: true }),
-  });
-  const regBody = (await reg.json()) as { data?: { verificationToken?: string } };
-  const vtok = regBody.data?.verificationToken;
-  if (!vtok) throw new Error("Setup: verificationToken missing");
-  await fetch(`${BASE}/auth/verify`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token: vtok }),
-  });
-  const login = await fetch(`${BASE}/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
-  });
+  const login = await seedVerifiedUser(email, password);
   const loginBody = (await login.json()) as { data?: { token?: string } };
   const token = loginBody.data?.token;
   if (!token) throw new Error("Setup: login failed");
@@ -1017,6 +1001,14 @@ describe.skipIf(!BASE)("removing a member revokes the invitations they sent [F90
       expect(await pendingIds(alt)).toContain(fromAdmin);
 
       await removeFromBook(owner, bookId, admin);
+
+      // Stamped a minute in the past, not NOW(), so the revocation holds in a
+      // later transaction even if the database clock steps back.
+      const [stamp] = await sql<Array<{ margin_ok: boolean }>>`
+        SELECT expires_at < NOW() - interval '30 seconds' AS margin_ok
+        FROM claimnet.invitations WHERE id = ${fromAdmin}::uuid
+      `;
+      expect(stamp?.margin_ok).toBe(true);
 
       expect(await pendingIds(alt)).not.toContain(fromAdmin);
       const refused = await accept(alt, fromAdmin);

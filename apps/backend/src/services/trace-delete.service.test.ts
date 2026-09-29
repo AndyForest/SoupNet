@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import crypto from "node:crypto";
+import { seedVerifiedUser } from "../test-users";
 
 /**
  * Integration tests for trace-delete.service.ts and DELETE /traces/:id route.
@@ -49,25 +50,7 @@ describe.skipIf(!canConnect() || !BASE)("DELETE /traces/:id integration", () => 
   let orgId: string;
 
   async function registerAndVerify(email: string, password: string): Promise<{ token: string; userId: string }> {
-    const reg = await fetch(`${BASE}/auth/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, tosAccepted: true }),
-    });
-    const regBody = (await reg.json()) as { data?: { verificationToken?: string } };
-    const vtok = regBody.data?.verificationToken;
-    if (!vtok) throw new Error(`Setup failed for ${email}`);
-    await fetch(`${BASE}/auth/verify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: vtok }),
-    });
-    // F30: register no longer returns token/user — log in to get them.
-    const login = await fetch(`${BASE}/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
+    const login = await seedVerifiedUser(email, password);
     const loginBody = (await login.json()) as { data?: { token?: string; user?: { id: string } } };
     const token = loginBody.data?.token ?? "";
     const userId = loginBody.data?.user?.id ?? "";
@@ -75,9 +58,9 @@ describe.skipIf(!canConnect() || !BASE)("DELETE /traces/:id integration", () => 
     return { token, userId };
   }
 
-  // F30 lengthened setup: each registerAndVerify is now three round-trips
-  // (register → verify → login) instead of one, so the original 10s hook
-  // budget is tight for 3 users.
+  // Users come from test-users.ts (created in-process, cheap login), not the
+  // HTTP signup flow: three sequential HTTP signups here timed out the 30s
+  // hook whenever the gate's other files were signing up at the same time.
   beforeAll(async () => {
     const dbMod = await import("../db");
     const drizzleMod = await import("drizzle-orm");

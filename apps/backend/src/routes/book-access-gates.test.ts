@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
+import { seedVerifiedUser } from "../test-users";
 
 /**
  * Characterization tests for the human (JWT-path) recipe-book access gates in
@@ -53,24 +54,7 @@ describe.skipIf(!canConnect() || !BASE)("recipe-book access gates (characterizat
 
   async function registerAndVerify(label: string): Promise<Actor> {
     const email = `test-gates-${label}-${uid}@test.local`;
-    const reg = await fetch(`${BASE}/auth/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password: PASSWORD, tosAccepted: true }),
-    });
-    const regBody = (await reg.json()) as { data?: { verificationToken?: string } };
-    const vtok = regBody.data?.verificationToken;
-    if (!vtok) throw new Error(`Setup failed for ${email}`);
-    await fetch(`${BASE}/auth/verify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: vtok }),
-    });
-    const login = await fetch(`${BASE}/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password: PASSWORD }),
-    });
+    const login = await seedVerifiedUser(email, PASSWORD);
     const loginBody = (await login.json()) as { data?: { token?: string; user?: { id: string } } };
     const token = loginBody.data?.token ?? "";
     const userId = loginBody.data?.user?.id ?? "";
