@@ -12,6 +12,8 @@
  * agent's, as on the detail page (S3-Q4).
  */
 
+import { RATINGS_LABEL } from "./triage-ratings-label.js";
+
 /** `verified` reaches only the draft's own person; anyone else sees `published` ([F83]). */
 export type QueueItemState = "unverified" | "verified" | "rejected" | "not_chosen" | "published";
 
@@ -46,12 +48,14 @@ export function excerpt(text: string, max = NAME_EXCERPT): string {
   return flat.length > max ? `${flat.slice(0, max - 1).trimEnd()}…` : flat;
 }
 
-/** "Agent's ratings: impact high · uncertainty not rated", or "…: not rated". */
-export function queueRatingsText(item: Pick<QueueItem, "impact" | "uncertainty"> & Pick<Partial<QueueItem>, "depositedBy">): string {
-  // On a draft someone else's agent deposited, the ratings are theirs (S4-Q2).
-  const whose = item.depositedBy ? "Depositing agent's ratings" : "Agent's ratings";
-  if (item.impact === null && item.uncertainty === null) return `${whose}: not rated`;
-  return `${whose}: impact ${item.impact ?? "not rated"} · uncertainty ${item.uncertainty ?? "not rated"}`;
+/**
+ * "Depositing agent's ratings: impact high · uncertainty not rated", or
+ * "…: not rated". The same label as the detail page's (S4-Q2 asks for the
+ * depositing agent's on an on-behalf draft; it is true of every draft).
+ */
+export function queueRatingsText(item: Pick<QueueItem, "impact" | "uncertainty">): string {
+  if (item.impact === null && item.uncertainty === null) return `${RATINGS_LABEL}: not rated`;
+  return `${RATINGS_LABEL}: impact ${item.impact ?? "not rated"} · uncertainty ${item.uncertainty ?? "not rated"}`;
 }
 
 /**
@@ -61,6 +65,22 @@ export function queueRatingsText(item: Pick<QueueItem, "impact" | "uncertainty">
  */
 export function linkHeading(items: ReadonlyArray<Pick<Partial<QueueItem>, "depositedBy" | "about">>): string {
   return items.some((i) => i.depositedBy || i.about) ? "Linked drafts" : "Drafts your agent linked";
+}
+
+/**
+ * The page's intro, true for the viewer (post-merge findings, 2026-09-29):
+ * "your agents … about your taste and judgment" only when every listed draft
+ * is the viewer's own agents' about the viewer, as for the heading.
+ */
+export function queueIntro(items: ReadonlyArray<Pick<Partial<QueueItem>, "depositedBy" | "about">>): string {
+  if (items.some((i) => i.depositedBy || i.about)) {
+    return "Agents parked these hypotheses about a person's taste and judgment because they could not ask them. "
+      + "Only the person a draft is about can confirm or reject it: confirming publishes it to its recipe book, where collaborators can find it; "
+      + "rejecting it or marking it not chosen keeps it private. Each choice is final.";
+  }
+  return "Your agents parked these hypotheses about your taste and judgment because they could not ask you. "
+    + "Confirming publishes a draft to its recipe book, where collaborators can find it; rejecting it or "
+    + "marking it not chosen keeps it private to you and your agents. Each choice is final.";
 }
 
 /** Slice 4 (S4-Q2, S4-Q5): the line naming the other party of an on-behalf draft, as text. */
@@ -124,7 +144,8 @@ export function stateLabel(state: QueueItemState): string | null {
  *  draft, plain evidence on a recipe that was never one. */
 export function whyLabel(state: QueueItemState, item?: Pick<Partial<QueueItem>, "depositedBy">): string {
   if (state === "published") return "Evidence:";
-  return item?.depositedBy ? "Why their agent drafted it:" : "Why your agent drafted it:";
+  // The depositor reads her own agent's reason; the subject reads whose it is.
+  return item?.depositedBy ? `Why ${item.depositedBy}'s agent drafted it:` : "Why your agent drafted it:";
 }
 
 /** "Deposited 27 Sep 2026 by Claude Code key" (key label when known). */

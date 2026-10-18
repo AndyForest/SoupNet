@@ -5,6 +5,8 @@ import type { GroupTrace } from "../hooks/useTraces.js";
 import { Icon } from "../components/Icon.js";
 import { DeleteTraceConfirmModal } from "../components/DeleteTraceConfirmModal.js";
 import { draftStatusLabel } from "../lib/draft-status-label.js";
+import { bookRecipesHeading } from "../lib/book-recipes-heading.js";
+import { useRecipeBooks } from "../hooks/useRecipeBooks.js";
 
 /**
  * Per-recipe-book moderation list. Any member can view; per-row delete
@@ -23,15 +25,16 @@ export function GroupTracesPage() {
   const params = useParams({ strict: false }) as { groupId?: string; bookId?: string };
   const recipeBookId = params.bookId ?? params.groupId ?? "";
   const { data, isLoading, isError } = useGroupTraces(recipeBookId);
+  const { data: books } = useRecipeBooks();
   const deleteTrace = useDeleteTrace();
   const [confirmTrace, setConfirmTrace] = useState<GroupTrace | null>(null);
 
   if (isLoading) {
-    return <p style={{ color: "var(--color-on-surface-variant)" }}>Loading recipe book traces…</p>;
+    return <p style={{ color: "var(--color-on-surface-variant)" }}>Loading recipe book…</p>;
   }
 
   if (isError) {
-    return <p style={{ color: "var(--color-error)" }}>Failed to load recipe book traces.</p>;
+    return <p style={{ color: "var(--color-error)" }}>Failed to load this recipe book.</p>;
   }
 
   if (!Array.isArray(data)) {
@@ -47,7 +50,7 @@ export function GroupTracesPage() {
   }
 
   const traces = data;
-  const groupName = traces[0]?.groupName ?? "this recipe book";
+  const heading = bookRecipesHeading(recipeBookId, books, traces);
 
   return (
     <div>
@@ -55,17 +58,17 @@ export function GroupTracesPage() {
 
       <header style={{ marginBottom: "var(--space-2xl)" }}>
         <h1 style={{ fontSize: "1.5rem", marginBottom: "var(--space-xs)" }}>
-          Traces in {groupName}
+          {heading}
         </h1>
         <p className="text-xs" style={{ color: "var(--color-on-surface-variant)" }}>
-          All traces in this recipe book, regardless of author. Owners and admins can delete malformed
+          All recipes in this recipe book that you can see, regardless of author. Owners and admins can delete malformed
           entries — every member can scan. Outdated-but-correct recipes should not be deleted; log a
           fresh recipe and let temporal weighting de-emphasize the old one.
         </p>
       </header>
 
       {traces.length === 0 ? (
-        <p style={{ color: "var(--color-on-surface-variant)" }}>No traces in this recipe book yet.</p>
+        <p style={{ color: "var(--color-on-surface-variant)" }}>No recipes in this recipe book yet.</p>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-sm)" }}>
           {traces.map((trace) => (

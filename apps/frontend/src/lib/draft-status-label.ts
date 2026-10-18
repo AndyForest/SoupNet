@@ -45,6 +45,36 @@ export function draftPartyLine(t: Pick<DraftStatusLike, "draftDepositedBy" | "dr
 }
 
 /**
+ * The line beside the detail page's reactions, true for the viewer. The
+ * depositor of a draft about someone else is told who reviews it while it is
+ * unresolved, and that it is resolved afterwards (post-merge findings,
+ * 2026-09-29: the review-link instruction outlived the review).
+ */
+export function reactionPrompt(t: Pick<DraftStatusLike, "draftAbout" | "draftState"> & { canResolveDraft?: boolean }): string {
+  if (t.canResolveDraft) return "Is this draft right? Still true verifies it; Wrong rejects it.";
+  if (t.draftAbout) {
+    return t.draftState === "unverified"
+      ? `Only ${t.draftAbout} can review this draft; send them the review link from your agent.`
+      : `${t.draftAbout} has resolved this draft; there is nothing left to review.`;
+  }
+  return "Is this recipe still right?";
+}
+
+export type Reaction = "still_true" | "stale" | "wrong";
+
+/**
+ * The reactions the detail page offers. An unresolved draft offers only the
+ * two that resolve it, as its prompt says: a Stale reaction is recorded but
+ * leaves the draft waiting (the backend's resolutionForReaction), and
+ * "no longer true" has no meaning for a hypothesis nobody has confirmed.
+ * The viewer's own Stale stays, so it can be cleared.
+ */
+export function offeredReactions(t: Pick<DraftStatusLike, "draftState">, mine: string | null | undefined): Reaction[] {
+  if (t.draftState === "unverified" && mine !== "stale") return ["still_true", "wrong"];
+  return ["still_true", "stale", "wrong"];
+}
+
+/**
  * The delete control's accessible name on a draft the viewer deposited about
  * someone else (S4-UI2): it says what it removes. Undefined otherwise, so
  * the visible label stands.

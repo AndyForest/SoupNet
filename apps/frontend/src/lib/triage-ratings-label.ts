@@ -12,11 +12,18 @@ export interface TriageRatingsLike {
   uncertainty?: string | null;
 }
 
+/**
+ * One label on every page (post-merge findings, 2026-09-29: the detail page
+ * said "Agent's ratings" and the queue "Depositing agent's ratings"). The
+ * ratings are always the depositing agent's, whoever that agent works for.
+ */
+export const RATINGS_LABEL = "Depositing agent's ratings";
+
 export function triageRatingsLabel(r: TriageRatingsLike): string | null {
   const impact = r.impact ?? null;
   const uncertainty = r.uncertainty ?? null;
   if (impact === null && uncertainty === null) return null;
-  return `Agent's ratings: impact ${impact ?? "not rated"} · uncertainty ${uncertainty ?? "not rated"}`;
+  return `${RATINGS_LABEL}: impact ${impact ?? "not rated"} · uncertainty ${uncertainty ?? "not rated"}`;
 }
 
 /** Hover text: whose ratings these are, and what they are for. */
