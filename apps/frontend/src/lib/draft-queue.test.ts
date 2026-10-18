@@ -14,6 +14,7 @@ import {
   whyLabel,
   partyText,
   linkHeading,
+  queueIntro,
   QUEUE_ACTIONS,
 } from "./draft-queue.js";
 import type { QueueItem } from "./draft-queue.js";
@@ -32,10 +33,10 @@ const item: QueueItem = {
 };
 
 describe("queue item wording (S3-Q4, S3-UI3)", () => {
-  it("ratings are the agent's, in words, with not rated for a missing one", () => {
-    expect(queueRatingsText(item)).toBe("Agent's ratings: impact high · uncertainty not rated");
-    expect(queueRatingsText({ impact: null, uncertainty: null })).toBe("Agent's ratings: not rated");
-    expect(queueRatingsText({ impact: "low", uncertainty: "medium" })).toBe("Agent's ratings: impact low · uncertainty medium");
+  it("ratings are the depositing agent's, one label on every page, in words, with not rated for a missing one", () => {
+    expect(queueRatingsText(item)).toBe("Depositing agent's ratings: impact high · uncertainty not rated");
+    expect(queueRatingsText({ impact: null, uncertainty: null })).toBe("Depositing agent's ratings: not rated");
+    expect(queueRatingsText({ impact: "low", uncertainty: "medium" })).toBe("Depositing agent's ratings: impact low · uncertainty medium");
   });
 
   it("the deposit line names when and which key", () => {
@@ -142,7 +143,7 @@ describe("slice 4: drafts deposited on someone else's behalf (S4-Q2, S4-Q5, S4-U
     const item = { ...base, depositedBy: "dana@test.local" };
     expect(depositedText(item, "en-GB")).toContain("by dana@test.local (Dana laptop)");
     expect(queueRatingsText(item)).toBe("Depositing agent's ratings: impact high · uncertainty not rated");
-    expect(whyLabel("unverified", item)).toBe("Why their agent drafted it:");
+    expect(whyLabel("unverified", item)).toBe("Why dana@test.local's agent drafted it:");
     expect(partyText(item)).toBe("Deposited on your behalf by dana@test.local");
   });
 
@@ -152,7 +153,7 @@ describe("slice 4: drafts deposited on someone else's behalf (S4-Q2, S4-Q5, S4-U
 
   it("a draft the person's own agent deposited reads as before", () => {
     expect(depositedText(base, "en-GB")).toContain("by Dana laptop");
-    expect(queueRatingsText(base)).toBe("Agent's ratings: impact high · uncertainty not rated");
+    expect(queueRatingsText(base)).toBe("Depositing agent's ratings: impact high · uncertainty not rated");
     expect(whyLabel("unverified")).toBe("Why your agent drafted it:");
     expect(partyText({})).toBeNull();
   });
@@ -164,5 +165,21 @@ describe("the id-list heading is true for whoever opens the link (slice 4 fix pa
     expect(linkHeading([{ depositedBy: null, about: "pat@test.local" }])).toBe("Linked drafts");
     expect(linkHeading([{ depositedBy: "dana@test.local", about: null }])).toBe("Linked drafts");
     expect(linkHeading([])).toBe("Drafts your agent linked");
+  });
+});
+
+describe("the intro is true for whoever reads it (post-merge findings, 2026-09-29)", () => {
+  it("speaks of 'your agents' only when every listed draft is about the viewer and by their own agents", () => {
+    expect(queueIntro([])).toMatch(/^Your agents parked these hypotheses about your taste and judgment/);
+    expect(queueIntro([{ depositedBy: null, about: null }])).toMatch(/^Your agents parked/);
+  });
+
+  it("words drafts about someone else, or by someone else's agent, for the viewer", () => {
+    for (const items of [[{ about: "pat@test.local" }], [{ depositedBy: "dana@test.local" }], [{}, { about: "pat@test.local" }]]) {
+      const intro = queueIntro(items);
+      expect(intro).not.toMatch(/Your agents parked/);
+      expect(intro).not.toMatch(/your taste and judgment/);
+      expect(intro).toMatch(/Only the person a draft is about can confirm or reject it/);
+    }
   });
 });

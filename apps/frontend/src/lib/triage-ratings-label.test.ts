@@ -6,16 +6,16 @@ import { triageRatingsLabel, TRIAGE_RATINGS_TITLE } from "./triage-ratings-label
 describe("triageRatingsLabel (S1-B7 / DT-RAT-09)", () => {
   it("labels both ratings as the agent's", () => {
     expect(triageRatingsLabel({ impact: "high", uncertainty: "high" })).toBe(
-      "Agent's ratings: impact high · uncertainty high",
+      "Depositing agent's ratings: impact high · uncertainty high",
     );
   });
 
   it("names a missing rating as not rated", () => {
     expect(triageRatingsLabel({ impact: "low", uncertainty: null })).toBe(
-      "Agent's ratings: impact low · uncertainty not rated",
+      "Depositing agent's ratings: impact low · uncertainty not rated",
     );
     expect(triageRatingsLabel({ uncertainty: "medium" })).toBe(
-      "Agent's ratings: impact not rated · uncertainty medium",
+      "Depositing agent's ratings: impact not rated · uncertainty medium",
     );
   });
 

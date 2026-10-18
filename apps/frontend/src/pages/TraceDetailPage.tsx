@@ -8,14 +8,14 @@ import {
   useSetTraceReaction,
   useSetFeedbackStar,
 } from "../hooks/useTraces.js";
-import type { GroupedReference, TraceFeedbackRow, TraceReaction } from "../hooks/useTraces.js";
+import type { GroupedReference, TraceFeedbackRow } from "../hooks/useTraces.js";
 import { Icon } from "../components/Icon.js";
 import { UserBadge } from "../components/UserBadge.js";
 import { ApiKeyBadge } from "../components/ApiKeyBadge.js";
 import { DeleteTraceConfirmModal } from "../components/DeleteTraceConfirmModal.js";
 import { MoveTraceModal } from "../components/MoveTraceModal.js";
 import { triageRatingsLabel, TRIAGE_RATINGS_TITLE } from "../lib/triage-ratings-label.js";
-import { draftStatusLabel, draftPartyLine, deleteDraftAccessibleName, showsKeyBadge } from "../lib/draft-status-label.js";
+import { draftStatusLabel, draftPartyLine, deleteDraftAccessibleName, showsKeyBadge, reactionPrompt, offeredReactions } from "../lib/draft-status-label.js";
 
 export function TraceDetailPage() {
   const { traceId } = useParams({ strict: false }) as { traceId: string };
@@ -149,15 +149,11 @@ export function TraceDetailPage() {
             agent feedback (UVP Layer 3). */}
         <div style={{ display: "flex", gap: "var(--space-xs)", marginTop: "var(--space-md)", alignItems: "center", flexWrap: "wrap" }}>
           <span className="text-xs" style={{ color: "var(--color-on-surface-variant)" }}>
-            {trace.canResolveDraft
-              ? "Is this draft right? Still true verifies it; Wrong rejects it."
-              : trace.draftAbout
-                ? `Only ${trace.draftAbout} can review this draft; send them the review link from your agent.`
-                : "Is this recipe still right?"}
+            {reactionPrompt(trace)}
           </span>
           {/* The depositor of a draft about someone else cannot verify or
               reject it (S4-R2), so the reactions are not offered. */}
-          {!trace.draftAbout && (["still_true", "stale", "wrong"] as TraceReaction[]).map((r) => {
+          {!trace.draftAbout && offeredReactions(trace, feedbackData?.reactions.mine).map((r) => {
             const active = feedbackData?.reactions.mine === r;
             const count = feedbackData?.reactions.counts[r] ?? 0;
             const label = r === "still_true" ? "Still true" : r === "stale" ? "Stale" : "Wrong";

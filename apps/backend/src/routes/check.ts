@@ -700,7 +700,7 @@ interface KeyGroup {
   isDefault: boolean;
 }
 
-function renderPage(
+export function renderPage(
   params: PageParams,
   result?: SubmitAndSearchResult,
   enriched?: EnrichedResult[],
@@ -709,7 +709,8 @@ function renderPage(
   synthesisResult?: SynthesisResult,
   feedbackResults?: FeedbackRowResult[],
   /** The presenting key is headless (slice 5): the form shows the draft
-   *  state as forced rather than as a choice. */
+   *  state as forced rather than as a choice, above the collapsed Advanced
+   *  section so the page says it without being opened. */
   headless = false,
 ): string {
   const hasSearch = !!(params.trace && params.ef && params.key);
@@ -1120,6 +1121,10 @@ function renderPage(
     </select>
     ` : ""}` : ""}
 
+    ${headless
+      ? `<label for="draft"><input type="checkbox" id="draft" name="draft" value="true" checked disabled> Deposit as a draft &mdash; always on: this API key is headless, so every recipe it checks is stored as a draft until the person confirms it</label>`
+      : ""}
+
     <details>
       <summary>Advanced</summary>
 
@@ -1147,7 +1152,7 @@ function renderPage(
       </select>
 
       ${headless
-        ? `<label for="draft"><input type="checkbox" id="draft" name="draft" value="true" checked disabled> Deposit as a draft &mdash; always on: this API key is headless, so every recipe it checks is stored as a draft until the person confirms it</label>`
+        ? ""
         : `<label for="draft"><input type="checkbox" id="draft" name="draft" value="true"${parseDraftFlag(params.draft).draft ? " checked" : ""}> Deposit as a draft &mdash; the person could not be asked; only they and their agents see it until they verify it</label>`}
 
       <label for="on_behalf_of">On behalf of &mdash; the email of the person this recipe is about, if not you (optional; always a draft only they can verify)</label>
