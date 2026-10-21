@@ -206,4 +206,5 @@ apps/mcp-server/.bundle/
 # Playwright browser verification (tests/e2e) — evidence may show local dev data
 test-results/
 playwright-report/
+playwright-report-*/
 blob-report/

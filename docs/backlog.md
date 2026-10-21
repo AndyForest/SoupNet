@@ -484,6 +484,7 @@ Recorded so it isn't re-proposed. The `trace.moved` audit row already reconstruc
 Found 2026-09-27 by the drafts slice 4 browser run (axe on the detail page), and 2026-09-28 by the slice 5 browser run (the keys page). These predate the slices.
 - The detail page's badge captions ("Human user", "Agent (API key)"), the key-id prefix (1.52:1), and the evidence source line (1.76:1) fail colour contrast (serious). They use `--color-outline-variant`, in `UserBadge.tsx`, `ApiKeyBadge.tsx`, and the evidence card.
 - The recipe heading has no `overflow-wrap`, so a long unbroken token (a URL, a long email) pushes the page wider than a 412 px viewport (1,232 px with a 90-character token).
+- The recipe-book trace list (`GroupTracesPage` `TraceRow`): the "via <key>" and "N evidence" captions fail colour contrast on the same `--color-outline-variant` (found by the 2026-09-29 drafts post-merge browser run).
 - The backend's `/check` HTML page scrolls sideways at 412 px with a long unbroken word in a recipe (968 px on the device-width helper; post-merge drafts run, 2026-09-29). The drafts notice itself wraps.
 - Keys page (`ApiKeysPage.tsx`): a key row's "expires" date fails colour contrast at 1.52:1 (the same `--color-outline-variant`); the just-created raw-key input has no label; and key rows expand only on a mouse click (the header is a `div` with an `onClick`, not a button, so it is not reachable or operable by keyboard).
 

@@ -1,4 +1,5 @@
 import AxeBuilder from "@axe-core/playwright";
+import { writeFileSync } from "node:fs";
 import { expect, type Page, type TestInfo } from "@playwright/test";
 
 // Evidence helpers: everything a person needs to judge a step lands in the
@@ -36,10 +37,11 @@ const describeViolation = (v: { id: string; impact?: string | null; nodes: Array
  */
 export async function axeFindings(page: Page, testInfo: TestInfo, name: string): Promise<AxeFindings> {
   const results = await new AxeBuilder({ page }).analyze();
-  await testInfo.attach(`${name}-axe.json`, {
-    body: JSON.stringify(results.violations, null, 2),
-    contentType: "application/json",
-  });
+  // Written to the test's output folder as well as attached, so the failing
+  // elements can be read without unzipping the HTML report.
+  const file = testInfo.outputPath(`${name}-axe.json`);
+  writeFileSync(file, JSON.stringify(results.violations, null, 2));
+  await testInfo.attach(`${name}-axe.json`, { path: file, contentType: "application/json" });
   const by = (...impacts: string[]) => results.violations.filter((v) => impacts.includes(v.impact ?? "")).map(describeViolation);
   return { blocking: by("serious", "critical"), moderate: by("moderate"), minor: by("minor") };
 }
@@ -69,4 +71,17 @@ export async function assertNoHorizontalScroll(page: Page, testInfo: TestInfo, l
   await testInfo.attach(`${label}-overflow.json`, { body: JSON.stringify(m), contentType: "application/json" });
   expect.soft(m.contentWidth, `${label} should fit the ${m.deviceWidth}px device width without horizontal scrolling`).toBeLessThanOrEqual(m.deviceWidth);
   return m;
+}
+
+/**
+ * Screenshot a page that holds a secret (the agent-facing /check?key=… page):
+ * masks the key inputs, and fails if any secret appears in the visible text,
+ * so an evidence image can't leak a key.
+ */
+export async function shotMasked(page: Page, testInfo: TestInfo, name: string, secrets: string[]): Promise<void> {
+  const text = await page.locator("body").innerText();
+  for (const s of secrets) expect(text.includes(s), `${name}: a secret must not appear in the page's visible text`).toBe(false);
+  const file = testInfo.outputPath(`${name}.png`);
+  await page.screenshot({ path: file, fullPage: true, mask: [page.locator('input[name="key"], input[type="password"]')] });
+  await testInfo.attach(name, { path: file, contentType: "image/png" });
 }
