@@ -9,6 +9,7 @@ import { LoginPage } from "./pages/LoginPage.js";
 import { DashboardPage } from "./pages/DashboardPage.js";
 import { CheckRecipePage } from "./pages/CheckRecipePage.js";
 import { TraceDetailPage } from "./pages/TraceDetailPage.js";
+import { IntentPage } from "./pages/IntentPage.js";
 import { ApiKeysPage } from "./pages/ApiKeysPage.js";
 import { GroupsPage } from "./pages/GroupsPage.js";
 import { GroupTracesPage } from "./pages/GroupTracesPage.js";
@@ -235,6 +236,14 @@ const traceDetailRoute = createRoute({
   component: TraceDetailPage,
 });
 
+// One declared intent and its lineage (drafts-and-triage slice 9), linked
+// from the intent id on a feedback row.
+const intentRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "intents/$intentId",
+  component: IntentPage,
+});
+
 const keysRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "keys",
@@ -383,6 +392,7 @@ export const routeTree = rootRoute.addChildren([
     draftsRoute,
     checkRoute,
     traceDetailRoute,
+    intentRoute,
     keysRoute,
     recipeBooksRoute,
     recipeBookTracesRoute,

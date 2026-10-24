@@ -218,6 +218,9 @@ export interface TraceFeedbackRow {
   harness: string | null;
   harnessVersion: string | null;
   relatedTraceIds: string[] | null;
+  /** The declared intent the reporting agent carried (`int_…`), linked to
+   *  its intent page (slice 9). Null when the row carried none. */
+  intentId: string | null;
   createdAt: string;
   apiKeyLabel: string | null;
   /** Set on human-origin rows (a re-filing correction); apiKeyLabel is null. */
@@ -290,6 +293,8 @@ export function useSetFeedbackStar(traceId: string) {
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["trace-feedback", traceId] });
+      // The intent page renders the same rows (slice 9).
+      void queryClient.invalidateQueries({ queryKey: ["intent"] });
     },
   });
 }
