@@ -2435,6 +2435,8 @@ On the verification record above and the browser run (`tests/e2e/pr-slice9.spec.
 
 After the fix pass: 286 backend tests and the 10 browser tests pass against the worktree backend; S9-I4's deposits half stays to be re-verified on the branch rebased onto 6a.
 
+`npm run test:ci` (`TESTCI_PGPORT=5620`) at `c86ffb7`: passed on the third run, 1,925 tests. The first two runs passed every test that reported and failed only on the known Windows native worker crash (backlog, "Worker exited unexpectedly"); the JSON report named `auth-delete-shared-books.test.ts` as the file it hit, and that file passes alone (18 of 18).
+
 For the rebase onto 6a and 8a: stream D's `GET /feedback` change (recipe `1bbc63f1`) edits the write handler in `routes/feedback.ts` below this slice's `/rows` handler, and its target-less outcome rows (recipe `831a11ea`) name no recipe, so the listing already treats them like search rows. On rebase, add `briefingId` to the row shape and `briefing_audit_id` to the export, and add the intent page link beside stream B's queue heading.
 
 ### Slice 8b rubric: unattended readers (stream F, after 6c, 6a and 8a merge)
