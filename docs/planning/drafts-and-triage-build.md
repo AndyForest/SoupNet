@@ -2338,6 +2338,35 @@ Settled before this rubric (not reopened here): the caller's user's rows only (r
 | S9-Z1 | No MCP tool is added and no tool description changes: remote and stdio `tools/list` and the shared descriptions measure the same before and after. | The size tests' figures, recorded in the build notes. |
 | S9-Z2 | The two response shapes are documented where report writers look: `docs/api/reports.md`, linked from the backend's route list in CLAUDE.md. | Review. |
 
+### Slice 9 build notes (stream E, agent `a-drafts-9-2026-10-24`, 2026-10-24)
+
+Branch `drafts/9-read-paths`, from the A0 commit. Intent `int_vc465vtmHo1AwpjPBGwQ3lSS`. Soup.net was unreachable for the first part of the session (an expired key in the MCP configuration); the rubric was written before the checks and the checks below were made once the key was replaced, before any code they rest on was committed.
+
+**What was built**
+
+- `apps/backend/src/authz/report-scope.ts`: `feedbackOwnedBy(userId)` (the row's key belongs to the user today, or the row is a human-origin row of theirs) and `traceReadableByViewer(viewer)` (a key: its books and `traceReadableById`; a person: `traceReadableByPerson`). The `claimnet.api_keys` subquery that attributes a row lives here, inside the seam.
+- `apps/backend/src/services/report-params.ts`: the strict parser. 30 Layer 1 tests cover every branch (S9-P1).
+- `apps/backend/src/services/intent-read.service.ts`: `listIntents`, `getIntent` (summary plus one page of a single timeline, ordered and paged in SQL), `listFeedbackRows`. Counts and lineage use the same conditions, so they agree by construction.
+- Routes: `routes/intents.ts` (mounted at `/intents`), `GET /feedback/rows` added above the write form in `routes/feedback.ts`, `GET /me/intents/:id` in `routes/me.ts` for the web.
+- Export: `intents` and `checkFeedback` in `GET /auth/me/export`, `schemaVersion` 1. Import already ignored unknown top-level keys; the integration test round-trips a fresh export.
+- Web: the feedback card moved to `components/FeedbackCard.tsx` (shared by the detail page and the intent page; a row about a search shows no star), the intent id rendered and linked on it, `pages/IntentPage.tsx` at `/app/intents/$intentId`.
+- Seam register: `traceReadableByViewer` added to the guard's fragment lists (it composes `traceReadableById` and `traceReadableByPerson`), the service registered in `TRACE_READS` as composing, its two key-label joins in `NON_AUTHORIZING_KEY_SQL`, and `routes/auth.ts` re-fingerprinted for the export's feedback query.
+- `docs/api/reports.md`, and the CLAUDE.md route list.
+
+**Verification by the builder** (the separate verifier's record goes below): `report-read-paths.test.ts`, 18 Layer 3 tests over the rubric rows, against a worktree backend on a throwaway database. The suite was then run against a mutated backend with the ownership condition and the key-scope condition each replaced by `TRUE`: 8 of the 18 failed (S9-I1, S9-I2, S9-F1, S9-F3, S9-S2, S9-E1), so the scope rows are load-bearing. The neighbouring suites (feedback, intents, import, traces-feedback, auth, auth-delete, authz) pass unchanged: 286 tests. The MCP size tests pass with no change to any tool or description (S9-Z1); no file under `apps/mcp-server`, `packages/`, or `routes/mcp.ts` changed.
+
+**Recipe checks** (soupnet-oss, under the intent): the key-scope rule for recipe-naming rows with intents per user (`389cce42`; the corpus returned the ruling's own recipe `6680321b` and the principal-scope design `c46002d0`, both consistent); strict parameters (`3bd3b3d7`; consistent with stream D's dispatch guard `fc4d3038`); attribution through the writing key (`e2f021a3`, rated high uncertainty, which is open question 56); Bearer only on read paths (`6f80d407`; the `/keys/briefing` move `58d3741d` and its hardening recipe `f1543441` keep keys out of URLs for the same reason).
+
+**Decided here, affecting other streams**
+
+- Stream B: the intent page is `/app/intents/$intentId`. B's queue heading links to the queue filter (`/app/drafts?q=intent:<id>`) for now; when E rebases onto 6a, E adds the intent page link beside it in `DraftQueuePage.tsx` (agreed with stream B by message).
+- Stream B's `traces.intent_id` (migration 0041 on `drafts/6a-intent-link`): deposits per intent are traces with that intent id, under the same read rule as everything else that names a recipe. A verified on-behalf recipe keeps its depositor's intent id; the depositor's report counts it only while the presenting key can read it. Built on a sub-branch against B's commit and folded in after 6a merges (S9-I4).
+
+**Questions for the operator**
+
+56. **Attributing a feedback row to its user.** `check_feedback` has no user column; a row is the user's through its key (`api_key_id`, no FK), the same join account deletion uses. When a key is deleted (revoked on the keys page, or an OAuth key swept 30 days after it expired), its rows stop belonging to anyone and drop out of the report, so a report of connector-driven sessions undercounts after a month. Recommendation: a follow-up PR after slice 9 adds `check_feedback.user_id`, stamped at write and backfilled from the keys that still exist, and `feedbackOwnedBy` changes to read it (one fragment). It is the smallest change that keeps reports complete, and slice 9 is built so that nothing else moves. The alternative, keeping the key join, is right if reports are meant to describe only what current keys did. Not built here because it adds a second migration beside stream B's in the same merge window and touches `feedback.service.ts`, which is stream D's file.
+57. **Should a scoped key list every intent of its user?** Built: yes. Intents carry no recipe book; the story is the person's own agents' text; and a report key is usually a person's own script. Everything an intent names (shown recipes, deposits, feedback about recipes) is narrowed to the key's books. Recommendation: keep it. The alternative, listing only intents registered by keys that share a book with the presenting key, becomes right when a key can act for someone other than its owner, which is the organization-accounts question and can be revisited there.
+
 ### Slice 8b rubric: unattended readers (stream F, after 6c, 6a and 8a merge)
 
 ### Slice 6b rubric: option sets (stream G, after 6c and 6a merge)
