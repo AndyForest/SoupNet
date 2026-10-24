@@ -138,7 +138,12 @@ async function waitForHealth(url, maxRetries = 45) {
 }
 
 async function main() {
-  const extraArgs = process.argv.slice(2).join(" ");
+  // `node scripts/test-ci-local.mjs -- --reporter verbose` (the usage above)
+  // leaves the `--` in argv, unlike `npm run test:ci -- …`; passed through,
+  // vitest reads everything after it as nothing and silently runs the whole
+  // suite with the default reporter. Drop a leading `--`.
+  const argv = process.argv.slice(2);
+  const extraArgs = (argv[0] === "--" ? argv.slice(1) : argv).join(" ");
   let backendProcess;
   let backendExpectedExit = false;
 
