@@ -1726,7 +1726,9 @@ Branch `drafts/6c-resolution`, from the A0 commit `32ffa5c`. Agent `a-drafts-6c-
 
 **Environment note for every stream:** the worktrees were moved from `C:\github\SoupNet-wt\` to `C:\github\SoupNet\SoupNet-wt\`, and the `@soupnet/*` links under each worktree's `node_modules` still pointed at the old path, so vitest silently resolved the main checkout's stale packages (size tests failed on a clean branch). Re-pointing the nine links as junctions fixed it; streams B, C and D confirmed the same fix.
 
-**Questions for the operator:** none open. Every call above was reversible and the corpus confirmed it.
+**Questions for the operator:**
+
+56. **Rejection evidence on a draft about someone else, seen by its depositor.** When Pat's agent rejects a draft Dana deposited about Pat, the new evidence is attached to the draft, and Dana, who can still read the draft (it stays hers), now sees that evidence card on her detail page; `GET /traces/:id` also returns the entry's `createdAt`. Before 6c a rejection added no evidence, so S4-M3 ("Resolution details (who, when, which key) stay the subject's alone") was never tested by it. The card names no key, but it shows that an agent resolved the draft and roughly when. **Recommendation: keep it, and narrow S4-M3 to the resolution columns and the resolving key.** A rejected on-behalf draft remains Dana's own recipe (recipe `b89db1f0`), the evidence is the record of why her hypothesis did not hold, which is what she would want, and hiding entries on her own recipe from her would be odd. **The alternative is right** if the subject's activity on a colleague's draft should stay private beyond its outcome: then the read paths (the detail page, `GET /recipes`, `get_recipes`) would leave out, for the depositor, the evidence entries added by the resolving key, through a fragment in the authz module. My recommendation is deposited as draft `1063b420` under this stream's intent; your yes or no settles it, and I will build the alternative on this branch if you choose it.
 
 ### Slice 6c verification record
 
@@ -1806,6 +1808,15 @@ What was done with each finding of the verification record above:
 - **Headless key with a mistyped outcome gets the outcome refusal first:** left as is. Both refusals are decided before any lookup and neither depends on the id, so the order reveals nothing; the outcome refusal is input validation and comes first on every key.
 - **Version skew:** a backend from before 6c ignores `outcome`, so a stdio `.mcpb` built from this branch and pointed at an older backend would publish a draft it meant to reject. The remote MCP tool is served by the backend itself and cannot skew. Deploy the backend before releasing a `.mcpb` that sends `outcome`; the PR says so.
 - **Gate runs:** `TESTCI_PGPORT=5544 npm run test:ci` exit 0 at `f273fb2` (133 files and 1,899 tests passed; 2 files and 6 tests skipped); scoped verbose run `drafts-resolution.test.ts` 13/13 with `drafts.test.ts` 45/45; the verifier's run at `9c96fdd` exit 0. After these fixes, `TESTCI_PGPORT=5544 npm run test:ci` exit 0 at `bfd6ba4` (133 files and 1,902 tests passed; 2 files and 6 tests skipped).
+
+### Slice 6c browser verification (2026-10-24)
+
+Run by the browser-verify skill at `5b11a7b` on an isolated stack (the worktree's backend on 127.0.0.1:3144 against a throwaway database, Vite on 127.0.0.1:5294; the shared dev stack untouched). Expectations and results are in the private repo's `docs/working/browser-verification/2026-10-24-drafts-6c/`. Spec: `tests/e2e/pr-137.spec.ts`, untracked, offered for the PR.
+
+- E1 to E6 and E8 to E10 met. The detail page reads "Rejected draft (by your agent on …)", "(by the agent that deposited it on …)", "Draft not chosen (by your agent on …)" and, after the Wrong reaction or the queue, "(by you on …)"; the dashboard and book page rows read "[Rejected draft]", "[Draft not chosen]" and "[Verified draft]" with no "by"; at 412 px the longest line fits with no horizontal scroll; axe finds nothing beyond the known colour-contrast list.
+- E7 not met on one clause, an error in the expectation, not in the app: the depositor's line reads "Rejected draft" without a date, because S4-M3 withholds the resolution date from the depositor.
+- Found, not listed: the depositor sees the rejecting agent's evidence (question 56); a person's own resolved draft still offers Still true, Stale and Wrong under "Is this recipe still right?" (pre-existing since slice 2, backlog); the title for a draft rejected by its depositing agent is the same as for another agent's (only the line tells them apart; left as is).
+- Harness: the isolated backend ran without `DISABLE_RATE_LIMIT=true`, so seeding hit the auth rate limit; the spec worked around it per actor. Recorded in the run's `handback.md`.
 
 ### Slice 6a rubric: the intent link (stream B)
 
