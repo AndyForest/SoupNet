@@ -418,7 +418,7 @@ describe("BRIEFING.build — slice 7: when to draft (7a)", () => {
       // recommendation, drafted as the return path when work continues;
       // otherwise draft, say what would settle it, rate it, come back.
       expect(drafts).toContain("if you'll act on it, check it as an ordinary recipe and own it");
-      expect(drafts).toContain("if it's a person's call and they're reachable, ask plainly with your recommendation, and if you keep working meanwhile");
+      expect(drafts).toContain("if it's a person's call and they're reachable, ask plainly with your recommendation and its reasoning, and if you keep working meanwhile");
       expect(drafts).toContain("draft that recommendation under your intent so their answer reaches you wherever it's given");
       expect(drafts).toContain("say in the first evidence entry what would settle it, rate it, and return when that lands");
       // S7-A3: a draft is yours to resolve; whoever holds the settling context

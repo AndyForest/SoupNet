@@ -12,7 +12,7 @@ Written against stream A's `outcome` on `verify_draft` (6c) and stream B's `inte
 
 ### Edits and the scenarios they move
 
-1. **Drafts section (new, shared body, both profiles; 7a, with the operator's addition of 2026-10-24, revision commit `a7f4d20`).** A draft is "a hypothesis you can't yet stand behind from the context you hold"; the order of moves (act on it: check it as an ordinary recipe and own it; a person's call and they're reachable: ask plainly with your recommendation, and if you keep working meanwhile, draft that recommendation under your intent so their answer reaches you wherever it's given; otherwise draft, say in the first evidence entry what would settle it, rate it, and return when that lands); "A draft is yours to resolve": whichever of a person's agents holds the settling context, the depositor included once the work or a reply settles it, resolves it with `verify_draft` (verified, rejected, or not chosen) under the same confidence rule as any check, quoting their words wherever they gave them; "A draft waits for a person's click only while nothing any agent holds settles it"; running sub-agents is live work (poll `is:draft intent:<id>`, correct mid-run, resolve what you can before finishing). "A person", not "the person", since in a shared book the call may be a colleague's (recipe `7b89581e`).
+1. **Drafts section (new, shared body, both profiles; 7a, with the operator's addition of 2026-10-24, revision commit `a7f4d20`).** A draft is "a hypothesis you can't yet stand behind from the context you hold"; the order of moves (act on it: check it as an ordinary recipe and own it; a person's call and they're reachable: ask plainly with your recommendation and its reasoning, and if you keep working meanwhile, draft that recommendation under your intent so their answer reaches you wherever it's given; otherwise draft, say in the first evidence entry what would settle it, rate it, and return when that lands); "A draft is yours to resolve": whichever of a person's agents holds the settling context, the depositor included once the work or a reply settles it, resolves it with `verify_draft` (verified, rejected, or not chosen) under the same confidence rule as any check, quoting their words wherever they gave them; "A draft waits for a person's click only while nothing any agent holds settles it"; with sub-agents, work live (poll `is:draft intent:<id>`, correct mid-run, resolve what you can before finishing). "A person", not "the person", since in a shared book the call may be a colleague's (recipe `7b89581e`).
    → Moves: `checking-behavior.feature` "An agent drafts only when it cannot ask…" rewritten as "An agent drafts only a call it cannot stand behind, and a person's call it keeps working on becomes a draft it owns", out of `@unreleased`; new "An agent resolves a draft once a reply or the work settles it"; `advanced-workflows.feature` new "An orchestrator watches its run's drafts live…"; `checking-behavior.feature` "hands its person the queue link" and "records a colleague's judgment as a draft on their behalf" out of `@unreleased` (slice 7 was what they waited on).
 2. **Building both, in Divergent recipe checks (7a, 7b's divergent sentence).** "The exception is building both: when every option will genuinely be pursued, check each as an ordinary recipe; when you can't stand behind any yet, draft each under one intent, with the rubric for choosing stated first. Then check the chosen path with the outcome as evidence and leave feedback on the rest." "Wait for the choice, then check only the chosen one" stays for the ordinary case.
    → Moves: `divergent-checks.feature` new "Options that will all be pursued are each checked as ordinary recipes".
@@ -58,12 +58,12 @@ Fixture from `recipe-guide-content.test.ts`; the five-exemplar section is built 
 
 | Measure | Before | After | Cap |
 |---|---|---|---|
-| Thin briefing fixture | 18,183 characters (18,297 bytes) | 20,978 (21,091 bytes), +2,795 | 21,000 (unchanged) |
-| Thin headless fixture | 18,536 | 21,378 | 21,500 (unchanged) |
+| Thin briefing fixture | 18,183 characters (18,297 bytes) | 20,993 (21,106 bytes), +2,810 | 21,000 (unchanged) |
+| Thin headless fixture | 18,536 | 21,393 | 21,500 (unchanged) |
 | Headless section | 351 | 398 | 400 (unchanged) |
-| Full briefing fixture | 24,119 | 27,256, +3,137 | none |
+| Full briefing fixture | 24,119 | 27,271, +3,152 | none |
 | Five-exemplar section | 4,990 | 3,732, −1,258 | none |
-| Full briefing with that section | 29,059 | 30,938, +1,879 | none |
+| Full briefing with that section | 29,059 | 30,953, +1,894 | none |
 | Remote `tools/list` / stdio / shared descriptions | 16,986 bytes / 13,196 / 6,051 characters | unchanged | 18,200 / 14,700 / 6,600 |
 
 ## 2026-10-24 — Drafts-and-triage slices 6 to 9, scaffold (PR A0): four size caps raised ahead of parallel streams; no copy changed

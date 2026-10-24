@@ -42,4 +42,5 @@ Feature: Advanced workflows — archaeology, fleets, interface fluidity
     Then the orchestrator searches is:draft intent:<its intent id> during the run, not only at the end
     And it corrects a sub-agent mid-run when a draft shows a wrong call
     When the run ends
-    Then every draft from the run is either resolved with verify_draft or listed to the person with a recommendation
+    Then it resolves with verify_draft every draft from the run that the run's outcome settles
+    And each draft it leaves open says in its first evidence entry what would settle it

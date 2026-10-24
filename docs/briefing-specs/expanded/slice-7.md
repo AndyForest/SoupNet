@@ -17,7 +17,7 @@ A draft is yours to resolve. Whichever of a person's agents holds the settling c
 Orchestrating sub-agents is live work: sub-agents decide as they go and raise only high impact × uncertainty calls, without blocking; poll your run's drafts (`is:draft intent:<id>`) during the run, correct mid-run, ratify what you can settle, and after the run resolve your sub-agents' drafts or list them with a recommendation.
 ```
 
-Trimmed away in the served form: "its id is where a later correction attaches"; "and its reasoning"; "through the corpus … in chat, a review, or a commit message"; "ask the person only when that's useful" (superseded by the click sentence); the shared-book sentence (the served "you included" is wrong for a draft on a colleague's behalf, and the server refuses it with `only_subject_reviews`); "without blocking", "ratify what you can settle", and "list them with a recommendation" in the orchestration sentence.
+Trimmed away in the served form: "its id is where a later correction attaches"; "through the corpus … in chat, a review, or a commit message"; "ask the person only when that's useful" (superseded by the click sentence); the shared-book sentence (the served "you included" is wrong for a draft on a colleague's behalf, and the server refuses it with `only_subject_reviews`); "without blocking", "ratify what you can settle", and "list them with a recommendation" in the orchestration sentence.
 
 ## slice7.over-caution-example
 
