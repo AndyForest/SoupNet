@@ -250,7 +250,14 @@ describe("BRIEFING.build — surface profiles (cold-start v2 Phase B)", () => {
     // which loads once per session; the feedback pointer names log_feedback's
     // fields. Served tools/list fell 18,090 → 15,864 bytes; this text grew
     // ~17,685 → 18,111 chars.
-    expect(mcpText.length).toBeLessThanOrEqual(18_200);
+    // 18,200 → 21,000 (2026-10-24, drafts-and-triage slice 7, scaffold PR A0):
+    // the when-to-draft section, the corrected tool copy, and the field's
+    // briefing additions (calls not rules, two check moments, two axes,
+    // recipient roles, tension trigger, own drafts are not evidence, probe is
+    // a search, thin results) land with one slimming lever (recipe aae000d2)
+    // in the same PR, so the net growth is well under this ceiling; measured
+    // 18,183 before. Re-tightened to the measured figure after slice 7 ships.
+    expect(mcpText.length).toBeLessThanOrEqual(21_000);
     expect(mcpText.length).toBeLessThan(fullText.length);
   });
 
@@ -374,7 +381,8 @@ describe("BRIEFING.build — the headless key section (drafts-and-triage slice 5
     expect(HEADLESS_KEY_SECTION).not.toContain(BRIEFING_KEY_PLACEHOLDER);
   });
 
-  it("holds the thin headless briefing at most 18,600 characters (fixed fixture)", () => {
-    expect(BRIEFING.build({ ...thinInput(), headless: true }).length).toBeLessThanOrEqual(18_600);
+  it("holds the thin headless briefing at most 21,500 characters (fixed fixture)", () => {
+    // 18,600 → 21,500 (2026-10-24, PR A0): moves with the thin ceiling above.
+    expect(BRIEFING.build({ ...thinInput(), headless: true }).length).toBeLessThanOrEqual(21_500);
   });
 });

@@ -204,8 +204,14 @@ describe("MCP tool description budget", () => {
     // most the new description's length, 83 characters, rather than trim
     // unrelated copy for a proxy measure). The served tools/list caps are
     // held. Prior total 5,968, new total 6,051.
+    // 6,080 → 6,600 (2026-10-24), UP: drafts-and-triage slices 6 to 9, one
+    // raise for the batch (scaffold PR A0) so parallel streams never edit
+    // this line: verify_draft's `outcome` values (6c), search_recipes'
+    // `intent:` term (6a), and the enumerations log_feedback and get_recipes
+    // now spell out (8a). Prior total 6,051; each PR records its total in
+    // spec-decision-log.md; re-tightened to the measured figure after 8b/6b.
     const total = Object.values(all).reduce((n, s) => n + s.length, 0);
-    expect(total).toBeLessThanOrEqual(6080);
+    expect(total).toBeLessThanOrEqual(6600);
   });
 
   it("keeps the shared params that repeat across tools to one line (≤ 120 chars) — S1-Z5", () => {

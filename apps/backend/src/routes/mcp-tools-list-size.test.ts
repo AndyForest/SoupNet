@@ -17,6 +17,7 @@
  *   after slice 3 (2026-09-27):  16,853 bytes (search_recipes query names is:draft, impact:, uncertainty:; cap not raised)
  *   after slice 4 (2026-09-27):  16,986 bytes (on_behalf_of)
  *   after slice 5 (2026-09-28):  16,986 bytes, identical for a headless key (S5-Z1)
+ *   before slices 6 to 9 (2026-10-24): 16,986 bytes; cap raised ahead of them (PR A0, see below)
  * The stdio twin lives in apps/mcp-server/src/server.test.ts.
  */
 import { describe, it, expect } from "vitest";
@@ -30,8 +31,16 @@ import type { Principal } from "../authz";
  *  16,000 → 17,000 (2026-09-27, drafts-and-triage slice 2): the `draft` param
  *  and the verify_draft tool, the one new agent operation the design names
  *  (recipe 6ae9a299). Measured 15,864 → 16,854; still 1,236 bytes under the
- *  pre-slice-1 roster (18,090). */
-const REMOTE_TOOLS_LIST_MAX_BYTES = 17_000;
+ *  pre-slice-1 roster (18,090).
+ *  17,000 → 18,200 (2026-10-24, drafts-and-triage slices 6 to 9, scaffold PR A0):
+ *  one raise sized for the whole batch so parallel streams never edit this
+ *  line: the `outcome` enumeration on verify_draft (6c), the `intent:` term
+ *  in search_recipes (6a), and the log_feedback / get_recipes enumerations
+ *  moved into parameter descriptions (8a). Each PR records its bytes in
+ *  spec-decision-log.md; after slices 8b and 6b merge the cap is re-tightened
+ *  to the measured figure (docs/planning/drafts-and-triage-slices-6-9-
+ *  implementation-plan.md, PR A0). */
+const REMOTE_TOOLS_LIST_MAX_BYTES = 18_200;
 
 const stubPrincipal: Principal = {
   keyId: "00000000-0000-0000-0000-000000000001",

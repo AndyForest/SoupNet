@@ -21,7 +21,10 @@ import { createStdioServer } from "./server.js";
 import { servedToolsList } from "./served-tools-list.js";
 
 /** S1-Z2: the stdio roster may not grow past its pre-slice-1 size. */
-const STDIO_TOOLS_LIST_MAX_BYTES = 13_670;
+/** 13,670 → 14,700 (2026-10-24, drafts-and-triage slices 6 to 9, scaffold PR A0): moves with
+ *  the remote roster cap (17,000 → 18,200); reason and re-tightening note in
+ *  apps/backend/src/routes/mcp-tools-list-size.test.ts. */
+const STDIO_TOOLS_LIST_MAX_BYTES = 14_700;
 
 const BACKEND = "http://backend.test";
 

@@ -32,8 +32,12 @@ Planned order. Each one ships something usable and keeps the gate green.
 3. **Review queue.** The human search page gains a drafts filter and `impact:` / `uncertainty:` qualifiers, sorted for triage, with confirm, reject, and not-chosen actions and an id-list link form.
 4. **Drafts on behalf of another person.** Limited to people with write access to the target book; the verified-org-domain case waits for organization accounts.
 5. **Headless keys.** A key setting that forces every deposit to be a draft, inherited by derived keys, with its own briefing profile. Designed together with the capability ladder (full, drafts only, nothing). Derived keys are not built yet, so the inheritance rule is recorded in [derived-agent-keys.md](derived-agent-keys.md) and built with them (open question 44).
-6. **Option sets.** The recipe-to-intent link, linked drafts under one intent with a rubric set in advance, and resolution into verified and not chosen.
-7. **Briefing copy.** The when-to-draft guidance, the "checkable by someone who wasn't there" phrase, and the headless profile, declared under the briefing regression-spec process.
+6. **Option sets**, re-planned on 2026-10-24 after four weeks of field use ([drafts-and-triage-slices-6-7-revision.md](drafts-and-triage-slices-6-7-revision.md), ratified; open questions 45 to 55 ruled there) and split into three PRs in the order the field needs: **6c** agent-side resolution (`outcome: verified | rejected | not_chosen` on `verify_draft` and its REST twin, evidence parsed as `check_recipe` parses it), **6a** the recipe-to-intent link and the `intent:` qualifier, **6b** sets of options under one intent (as drafts, or as ordinary recipes when every option is pursued) with `resolve_siblings`, and ruling 17's server-side rubric test dropped for the confidence rule (6d).
+7. **Briefing copy.** The when-to-draft guidance reframed (a draft is a hypothesis the agent cannot yet stand behind from the context it holds; ask when the call is the person's and they are reachable), the tool and web copy that contradicted the rulings, the "checkable by someone who wasn't there" phrase, the headless profile, and eight additions from the field, under one dated cap raise with one slimming lever, declared under the briefing regression-spec process.
+8. **Unattended readers.** 8a: the tool-shape fixes the field logged (array ids, whole-row validation errors with the enumerations in the descriptions, `outcome` rows on `intent_id`, a briefing id for feedback, the exclude-own hint, unknown parameters refused or warned). 8b: a flat paged list for qualifier-only searches, changed-since, Members and pending-invites lines, own open drafts set apart in check results, related-item promotion if the ranking guard allows.
+9. **Read paths for reports.** `GET /intents`, `GET /intents/:id`, `GET /feedback/rows` under the API key for the caller's own fleet, the intent id rendered on the web, an intent page, intents and feedback in the export. The operator's ask of 2026-10-24.
+
+Slices 6 to 9 run as parallel streams in separate worktrees under [drafts-and-triage-slices-6-9-implementation-plan.md](drafts-and-triage-slices-6-9-implementation-plan.md); each stream writes its rubric under its own heading below before implementing, and puts the questions that need the operator under that heading, numbered on from 56, each with a recommendation.
 
 Rubrics for each slice are written in the next section before that slice starts.
 
@@ -1598,3 +1602,31 @@ From the post-merge browser verification of slices 1 to 5 on `main` (`720e71a`; 
   - Before Pat confirms, both detail pages show Dana's agent badge. Dana is the author until verification, so her key is the author's key (open question 40's rule); F93's hiding applies once the recipe is Pat's.
   - "Recipes Checked" on the dashboard counts the person's own drafts. Only the person sees that figure (open question 9).
 - **Out of scope:** the `/check` page's horizontal scroll at 412 px with a long unbroken word is one more instance for the backlog's heading-overflow item.
+
+## Slices 6 to 9 (2026-10-24 onward): one heading per stream
+
+Scaffolded by PR A0 so that concurrent streams edit separate hunks. Each stream writes under its own heading: the rubric (pass/fail rows), the build notes, the verification record by a separate agent, and a "Questions for the operator" list numbered on from 56. The rulings on open questions 45 to 55 are in the revision doc.
+
+### Slice 6c rubric: agent-side resolution (stream A)
+
+Rubric to be written by stream A from the revision doc's 6c and 6f before implementation.
+
+### Slice 6a rubric: the intent link (stream B)
+
+Rubric to be written by stream B from the revision doc's 6a and 6f before implementation.
+
+### Slice 7 rubric: briefing copy (stream C)
+
+Rubric to be written by stream C from the revision doc's 7a to 7e before implementation. C1 carries one slimming lever (recipe `aae000d2`); C2 the tool and web copy after 6c and 6a merge.
+
+### Slice 8a rubric: tool shapes (stream D)
+
+Rubric to be written by stream D from the revision doc's slice 8 items 4 to 7 before implementation.
+
+### Slice 9 rubric: read paths for reports (stream E)
+
+Rubric to be written by stream E from the revision doc's slice 9 before implementation.
+
+### Slice 8b rubric: unattended readers (stream F, after 6c, 6a and 8a merge)
+
+### Slice 6b rubric: option sets (stream G, after 6c and 6a merge)

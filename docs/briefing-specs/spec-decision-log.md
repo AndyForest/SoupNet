@@ -4,6 +4,33 @@ Every PR that touches briefing copy (`packages/domain/src/recipe-guide-content.t
 
 (Renamed from declared-intent-log.md on 2026-08-23: "intent" now names the runtime intent-registration mechanism — cold-start v2 Phase C — so the discipline's log takes an unambiguous name. The discipline itself is unchanged.)
 
+## 2026-10-24 — Drafts-and-triage slices 6 to 9, scaffold (PR A0): four size caps raised ahead of parallel streams; no copy changed
+
+Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-and-triage-slices-6-7-revision.md) (ratified 2026-10-24) and [../planning/drafts-and-triage-slices-6-9-implementation-plan.md](../planning/drafts-and-triage-slices-6-9-implementation-plan.md) §PR A0. Build log: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slices 6 to 9.
+
+### Edits
+
+None to any briefing text, tool description, parameter description, notice, or label. This PR moves the four ceilings once, dated, so that the five streams that follow (6c, 6a, 7, 8a, 9), each of which adds a measured amount to one or more of them, never edit the same assertion line in parallel. Each stream's own entry below this one records its bytes before and after; a follow-up after slices 8b and 6b re-tightens every cap to the measured figure plus the usual slack (backlog row "Drafts and triage, slices 6 to 9: follow-ups").
+
+What the raise is sized for: the `outcome` enumeration on `verify_draft` (6c); the `intent:` term in `search_recipes` (6a); the enumerations `log_feedback` and `get_recipes` spell out in their parameter descriptions (8a); and in the thin briefing the when-to-draft section, the corrected tool copy, and eight field additions, landing with one slimming lever (recipe `aae000d2`) in the same PR (7).
+
+### Scenarios intended to move
+
+None.
+
+### Scenarios watched, with rationale for holding
+
+All: nothing an agent reads changed; both fixtures and the served rosters are byte-identical before and after this PR.
+
+### Measured
+
+| Measure | Before | After | Cap before | Cap after |
+|---|---|---|---|---|
+| Remote `tools/list` | 16,986 bytes | 16,986 | 17,000 | 18,200 |
+| Stdio `tools/list` | 13,196 bytes | 13,196 | 13,670 | 14,700 |
+| Shared descriptions | 6,051 characters | 6,051 | 6,080 | 6,600 |
+| Thin briefing fixture | 18,183 characters; headless 18,536 | unchanged | 18,200; headless 18,600 | 21,000; headless 21,500 |
+
 ## 2026-09-28 — Drafts-and-triage slice 5: the headless briefing section, the headless deposit notice, and the verify refusal
 
 Design: [../planning/drafts-and-triage.md](../planning/drafts-and-triage.md) §Headless keys. Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 5 rubric, open questions 41 to 44 with the orchestrator's rulings of 2026-09-28 (42 overridden: a headless key updates book descriptions like any key, so there is no description refusal).
