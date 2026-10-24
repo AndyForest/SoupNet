@@ -86,8 +86,21 @@ export function deleteDraftAccessibleName(t: Pick<DraftStatusLike, "draftAbout">
   return `Delete draft about ${t.draftAbout}: ${text}`;
 }
 
+/**
+ * Who resolved a draft, for the subject's own view (the only one that
+ * carries the resolver, [F83]): the person through a reaction or the queue,
+ * one of their agents with new evidence, or the agent that deposited it.
+ */
+function resolvedBy(t: DraftStatusLike): string {
+  if (!t.draftResolvedByKeyId) return t.draftResolvedByViewer ? "by you" : "by the person it is about";
+  return t.draftResolvedByKeyId === t.apiKeyId ? "by the agent that deposited it" : "by your agent";
+}
+
 export function draftStatusLabel(t: DraftStatusLike): { text: string; title: string } | null {
   const when = t.draftResolvedAt ? ` on ${new Date(t.draftResolvedAt).toLocaleDateString()}` : "";
+  // Slice 6c: an agent may reject a draft or mark it not chosen as well as
+  // verify it, so those lines name the resolver the same way (S6c-C2).
+  const byAgent = !!t.draftResolvedByKeyId;
   switch (t.draftState ?? null) {
     case null:
       return null;
@@ -106,26 +119,33 @@ export function draftStatusLabel(t: DraftStatusLike): { text: string; title: str
             : "An agent parked this as a hypothesis about your taste and judgment. Only you and your agents can see it. ") +
           "Still true verifies it and makes it an ordinary recipe; Wrong rejects it and keeps it private.",
       };
-    case "verified": {
-      const by = !t.draftResolvedByKeyId
-        ? (t.draftResolvedByViewer ? "by you" : "by the person it is about")
-        : t.draftResolvedByKeyId === t.apiKeyId
-          ? "by the agent that deposited it"
-          : "by your agent";
+    case "verified":
       return {
-        text: `Verified draft (${by}${when})`,
+        text: `Verified draft (${resolvedBy(t)}${when})`,
         title: "Verified drafts are ordinary recipes: collaborators can find them. An agent's verification cites your answer in the evidence below.",
       };
-    }
     case "rejected":
-      // The depositor of a draft about someone else did not resolve it.
-      return t.draftAbout
-        ? { text: `Rejected draft${when}`, title: `${t.draftAbout} marked this draft wrong. It stays private to them and to you.` }
-        : { text: `Rejected draft${when}`, title: "You marked this draft wrong. It stays private to you and your agents." };
+      // The depositor of a draft about someone else did not resolve it, and
+      // is not told whether the person or their agent did ([F83], S4-M3).
+      if (t.draftAbout) {
+        return { text: `Rejected draft${when}`, title: `${t.draftAbout} rejected this draft. It stays private to them and to you.` };
+      }
+      return {
+        text: `Rejected draft (${resolvedBy(t)}${when})`,
+        title: byAgent
+          ? "An agent of yours rejected this draft; its evidence below says why. It stays private to you and your agents."
+          : "You marked this draft wrong. It stays private to you and your agents.",
+      };
     case "not_chosen":
-      return t.draftAbout
-        ? { text: `Draft not chosen${when}`, title: `${t.draftAbout} marked this option not chosen. It stays private to them and to you.` }
-        : { text: `Draft not chosen${when}`, title: "This option lost to another. It stays private to you and your agents." };
+      if (t.draftAbout) {
+        return { text: `Draft not chosen${when}`, title: `${t.draftAbout} marked this option not chosen. It stays private to them and to you.` };
+      }
+      return {
+        text: `Draft not chosen (${resolvedBy(t)}${when})`,
+        title: byAgent
+          ? "An agent of yours marked this option not chosen; its evidence below says why. It stays private to you and your agents."
+          : "This option lost to another. It stays private to you and your agents.",
+      };
     default:
       return { text: "Draft", title: "Only you and your agents can see it." };
   }
