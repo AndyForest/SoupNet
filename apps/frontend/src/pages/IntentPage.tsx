@@ -102,7 +102,7 @@ function LineageItem({ entry }: { entry: LineageEntry }) {
           )}
           {!entry.feedback.traceId && entry.feedback.searchId && " · about a search"}
         </p>
-        <FeedbackCard row={entry.feedback} traceId={entry.feedback.traceId} />
+        <FeedbackCard row={entry.feedback} traceId={entry.feedback.traceId} showIntent={false} />
       </div>
     );
   }

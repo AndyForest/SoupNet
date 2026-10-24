@@ -10,7 +10,8 @@ import { shortIntentId } from "../lib/intent-link.js";
  *
  * `traceId` is the recipe the row is about. A row about a read-only search
  * has none, and is shown without the star (a star is a reader's mark on a
- * recipe's lineage).
+ * recipe's lineage). `showIntent` is false on the intent page itself, where
+ * the intent link would point at the page already open.
  */
 
 /** Small labeled chip for feedback enum values. Impact gets a color accent —
@@ -37,7 +38,7 @@ function FeedbackChip({ label, value, accent }: { label: string; value: string; 
 
 const LINK_STYLE = { color: "var(--color-primary)", textDecoration: "none", fontFamily: "var(--font-mono, monospace)" } as const;
 
-export function FeedbackCard({ row, traceId }: { row: TraceFeedbackRow; traceId: string | null }) {
+export function FeedbackCard({ row, traceId, showIntent = true }: { row: TraceFeedbackRow; traceId: string | null; showIntent?: boolean }) {
   const setStar = useSetFeedbackStar(traceId ?? "");
   const createdAt = new Date(row.createdAt);
   // Human-origin rows (a re-filing correction) carry actorUserId and no api key.
@@ -103,7 +104,7 @@ export function FeedbackCard({ row, traceId }: { row: TraceFeedbackRow; traceId:
         </p>
       )}
 
-      {row.intentId && (
+      {showIntent && row.intentId && (
         <p className="text-xs" style={{ marginTop: "var(--space-xs)" }} data-testid="feedback-intent">
           Intent:{" "}
           <Link to="/app/intents/$intentId" params={{ intentId: row.intentId }} title={row.intentId} style={LINK_STYLE}>
