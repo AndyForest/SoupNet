@@ -60,11 +60,15 @@ function editDistance(a: string, b: string): number {
 /** The declared name an unknown one most plausibly meant: the same name in
  *  another case or separator style, its singular or plural, a name that
  *  contains it (recipe_books → read_recipe_books), or one a two-letter typo
- *  away. Undefined when nothing is close. */
-export function nearMissParam(name: string, accepted: readonly string[]): string | undefined {
+ *  away. A name the call already sent is never suggested ("did you mean
+ *  recipe?" beside a recipe the agent did send). Undefined when nothing is
+ *  close. */
+export function nearMissParam(name: string, accepted: readonly string[], sent: readonly string[] = []): string | undefined {
   const n = normalize(name);
+  const already = new Set(sent);
   let best: { name: string; score: number } | undefined;
   for (const candidate of accepted) {
+    if (already.has(candidate)) continue;
     const c = normalize(candidate);
     let score: number | undefined;
     // Lower is closer: same name, then singular/plural, then a typo of at
@@ -94,9 +98,10 @@ export function unknownParamsMessage(
   unknown: readonly string[],
   accepted: readonly string[],
   mode: UnknownParamMode,
+  sent: readonly string[] = [],
 ): string {
   const described = listNames(unknown.map((u) => {
-    const guess = nearMissParam(u, accepted);
+    const guess = nearMissParam(u, accepted, sent);
     return guess ? `${u} (did you mean ${guess}?)` : u;
   }));
   if (mode === "refuse") {
@@ -125,17 +130,23 @@ function asToolCall(message: unknown): ToolCall | undefined {
   return { id: m.id, name: params.name, args: params.arguments };
 }
 
+/** Most warned requests awaiting a reply at once. A stdio transport lives as
+ *  long as its client, so the pending map is bounded: past this, the oldest
+ *  entry is dropped (its reply then goes out without the warning line). */
+export const MAX_PENDING_WARNINGS = 256;
+
 /**
  * Install the guard on a connected transport (call after `server.connect`,
  * which installs the protocol's inbound hook). `acceptedFor` returns a tool's
  * declared parameter names, or undefined for a tool it does not know, which
  * passes through untouched so the SDK gives its own "tool not found".
+ * Returns the map of warnings awaiting their reply, for tests.
  */
 export function guardUnknownParams(
   transport: McpTransportLike,
   acceptedFor: (tool: string) => readonly string[] | undefined,
   mode: UnknownParamMode = UNKNOWN_PARAM_MODE,
-): void {
+): ReadonlyMap<string | number, string> {
   const inbound = transport.onmessage;
   const outbound = transport.send.bind(transport);
   const warnings = new Map<string | number, string>();
@@ -145,12 +156,15 @@ export function guardUnknownParams(
     const accepted = call ? acceptedFor(call.name) : undefined;
     const unknown = call && accepted ? findUnknownParams(call.args, accepted) : [];
     if (call && accepted && unknown.length > 0) {
-      const text = unknownParamsMessage(call.name, unknown, accepted, mode);
+      const sent = call.args !== null && typeof call.args === "object" ? Object.keys(call.args) : [];
+      const text = unknownParamsMessage(call.name, unknown, accepted, mode, sent);
       if (mode === "refuse") {
         void outbound({ jsonrpc: "2.0", id: call.id, result: { content: [{ type: "text", text }], isError: true } });
         return;
       }
       warnings.set(call.id, text);
+      // Maps iterate in insertion order, so the first key is the oldest.
+      if (warnings.size > MAX_PENDING_WARNINGS) warnings.delete(warnings.keys().next().value!);
     }
     inbound?.(message, extra);
   };
@@ -159,12 +173,18 @@ export function guardUnknownParams(
     const m = message as { id?: unknown; result?: { content?: unknown } } | null;
     const id = m && (typeof m.id === "string" || typeof m.id === "number") ? m.id : undefined;
     const warning = id !== undefined ? warnings.get(id) : undefined;
-    if (warning !== undefined && id !== undefined && m?.result && Array.isArray(m.result.content)) {
+    if (warning !== undefined && id !== undefined) {
+      // Any reply to the request clears its entry (F107): an error reply, or
+      // a result without content, gets no warning line but must not leave
+      // the entry behind on a long-lived transport.
       warnings.delete(id);
-      message = { ...m, result: { ...m.result, content: [{ type: "text", text: warning }, ...m.result.content] } };
+      if (m?.result && Array.isArray(m.result.content)) {
+        message = { ...m, result: { ...m.result, content: [{ type: "text", text: warning }, ...m.result.content] } };
+      }
     }
     return outbound(message, options);
   };
+  return warnings;
 }
 
 /**

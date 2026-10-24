@@ -92,10 +92,6 @@ function formatLookupEntries(entries: LookupEntry[]): string {
   }).join("\n\n");
 }
 
-/** A triage-rating param (slice 1) that never fails the check on a wrong
- *  JSON type: non-strings are forwarded as their JSON text, so the backend
- *  stores them as not rated with its notice. Mirrors routes/mcp.ts; the
- *  served schema still says "string". */
 // recipe_ids on get_recipes and get_briefing (drafts-and-triage slice 8a,
 // S8a-I1): an array of ids or the comma/whitespace-separated string, same as
 // the remote tools. The backend's parseRecipeIds reads either once joined.
@@ -107,6 +103,10 @@ function joinRecipeIds(ids: string | string[]): string {
   return Array.isArray(ids) ? ids.join(",") : ids;
 }
 
+/** A triage-rating param (slice 1) that never fails the check on a wrong
+ *  JSON type: non-strings are forwarded as their JSON text, so the backend
+ *  stores them as not rated with its notice. Mirrors routes/mcp.ts; the
+ *  served schema still says "string". */
 function ratingParam(description: string) {
   return z
     .preprocess((v) => (v === undefined || v === null ? undefined : typeof v === "string" ? v : JSON.stringify(v)), z.string().optional())

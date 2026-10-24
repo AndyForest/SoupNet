@@ -41,9 +41,22 @@ describe("nearMissParam", () => {
     expect(nearMissParam("recipe_boook", ["recipe", "recipe_book", "read_recipe_books"])).toBe("recipe_book");
   });
 
+  it("never suggests a name the call already sent (verifier finding 3)", () => {
+    expect(nearMissParam("recipe_boook", ["recipe", "supporting_evidence"], ["recipe", "recipe_boook"])).toBeUndefined();
+    expect(nearMissParam("recipe_id", ["recipe_ids"], ["recipe_ids", "recipe_id"])).toBeUndefined();
+  });
+
   it("suggests nothing for an unrelated name", () => {
     expect(nearMissParam("limit", accepted)).toBeUndefined();
     expect(nearMissParam("page", accepted)).toBeUndefined();
+  });
+});
+
+describe("unknownParamsMessage — names already sent", () => {
+  it("leaves out a suggestion the call already holds", () => {
+    expect(unknownParamsMessage("check_recipe", ["recipe_boook"], ["recipe", "supporting_evidence"], "refuse", ["recipe", "recipe_boook"])).toBe(
+      "Error: check_recipe does not take recipe_boook. Nothing was run; send it again with the names it takes: recipe, supporting_evidence.",
+    );
   });
 });
 
@@ -140,12 +153,35 @@ describe("guardUnknownParams — warn", () => {
       id: 9,
       result: {
         content: [
-          { type: "text", text: "Warning: get_recipes ignored recipe_id (did you mean recipe_ids?), which it does not take; the call ran without it. It takes: recipe_ids." },
+          { type: "text", text: "Warning: get_recipes ignored recipe_id, which it does not take; the call ran without it. It takes: recipe_ids." },
           { type: "text", text: "Requested recipes" },
         ],
         structuredContent: { a: 1 },
       },
     }]);
+  });
+
+  // F107: an error reply (or any reply without a content array) must still
+  // clear the request's entry, or the long-lived stdio transport leaks one
+  // entry per warned call that failed.
+  it("clears a warned request's entry on an error reply, so the map does not grow", async () => {
+    const t = fakeTransport();
+    const warnings = guardUnknownParams(t, acceptedFor, "warn");
+    t.deliver(call(5, { recipe_id: "b" }));
+    expect(warnings.size).toBe(1);
+    const error = { jsonrpc: "2.0", id: 5, error: { code: -32603, message: "boom" } };
+    await t.send(error);
+    expect(t.sent).toEqual([error]);
+    expect(warnings.size).toBe(0);
+  });
+
+  it("bounds the map: past the limit the oldest pending warning is dropped", () => {
+    const t = fakeTransport();
+    const warnings = guardUnknownParams(t, acceptedFor, "warn");
+    for (let i = 0; i < 300; i++) t.deliver(call(i, { recipe_id: "b" }));
+    expect(warnings.size).toBe(256);
+    expect(warnings.has(0)).toBe(false);
+    expect(warnings.has(299)).toBe(true);
   });
 
   it("leaves responses to other requests untouched", async () => {

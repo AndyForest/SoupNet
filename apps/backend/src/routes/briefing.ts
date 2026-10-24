@@ -52,8 +52,9 @@ briefing.get("/", async (c) => {
 
   // WT-3: purpose biases within-cluster exemplar choice; recipe_ids renders
   // a "Requested recipes" section (same service/ACL/markers as GET /recipes).
-  const recipeIdsParam = c.req.query("recipe_ids");
-  const recipeIds = recipeIdsParam ? parseRecipeIds(recipeIdsParam) : undefined;
+  // Every recipe_ids value, as GET /recipes reads every ids (slice 8a).
+  const recipeIdsParams = c.req.queries("recipe_ids");
+  const recipeIds = recipeIdsParams ? parseRecipeIds(recipeIdsParams) : undefined;
 
   // Connection surface (cold-start v2 Phase A): the stdio MCP proxy
   // self-identifies via the same X-SoupNet-Surface header it sends on /check;

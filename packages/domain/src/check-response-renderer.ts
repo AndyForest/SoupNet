@@ -426,15 +426,6 @@ export function fenceCheckResponseMarkdown(markdown: string): string {
   return "```markdown soup-net-check-result.md\n" + markdown + "\n```";
 }
 
-/**
- * Own-author exclusion disclosure for zero-result searches (cold-start v2
- * Phase A). On surfaces with the exclude-own default, "no matches among N
- * recipes in scope" can describe a solo corpus whose every recipe was
- * structurally excluded — this note names the exclusion at the moment it
- * bites. ONE phrasing, used by both the JSON notice builder
- * (trace.service.buildSearchOnlyNotice) and the markdown renderer above.
- * Returns "" when no own-exclusion applied.
- */
 /** The last line of a briefing served to an agent: the id a feedback row
  *  carries as briefing_id, so the briefing surface can be scored like a
  *  check or a search (drafts-and-triage slice 8a, S8a-O4). Mirrors the
@@ -461,6 +452,15 @@ export function ownExcludedLead(opts: { filter: string; ownExcluded: number | un
   return `Your own recipes were left out by default (${opts.ownExcluded}${of}). The same search including them: ${ownExcludedQuery(opts.filter)}`;
 }
 
+/**
+ * Own-author exclusion disclosure for zero-result searches (cold-start v2
+ * Phase A). On surfaces with the exclude-own default, "no matches among N
+ * recipes in scope" can describe a solo corpus whose every recipe was
+ * structurally excluded — this note names the exclusion at the moment it
+ * bites. ONE phrasing, used by both the JSON notice builder
+ * (trace.service.buildSearchOnlyNotice) and the markdown renderer above.
+ * Returns "" when no own-exclusion applied.
+ */
 export function buildOwnExcludedNote(
   ownExcluded: number | undefined,
   corpusSize: number | undefined,

@@ -358,6 +358,14 @@ function imageFromBase64(base64: string, filename: string, mimeTypeHint?: string
 // "object" for the item type.
 const feedbackRowSchema = z.record(z.unknown()).catch((ctx) => ctx.input as Record<string, unknown>);
 
+// recipe_ids on get_recipes and get_briefing (drafts-and-triage slice 8a,
+// S8a-I1): an array of ids or the comma/whitespace-separated string. The
+// plural name invites an array and three field sessions sent one; before
+// this the SDK refused it as "expected string". parseRecipeIds takes both.
+function recipeIdsParam() {
+  return z.union([z.string(), z.array(z.string())]);
+}
+
 // Triage ratings (slice 1). A value of the wrong JSON type (impact: 3) is an
 // unrecognized rating like any other: stored as not rated, with the notice,
 // and the check deposits (S1-B3; recipe 4cfd166e). z.string() alone would
@@ -366,14 +374,6 @@ const feedbackRowSchema = z.record(z.unknown()).catch((ctx) => ctx.input as Reco
 // still says "string".
 function draftParam() {
   return z.boolean().optional().catch((ctx) => ctx.input as boolean | undefined).describe(MCP_PARAM_DESCRIPTIONS.draft);
-}
-
-// recipe_ids on get_recipes and get_briefing (drafts-and-triage slice 8a,
-// S8a-I1): an array of ids or the comma/whitespace-separated string. The
-// plural name invites an array and three field sessions sent one; before
-// this the SDK refused it as "expected string". parseRecipeIds takes both.
-function recipeIdsParam() {
-  return z.union([z.string(), z.array(z.string())]);
 }
 
 function ratingParam(description: string) {

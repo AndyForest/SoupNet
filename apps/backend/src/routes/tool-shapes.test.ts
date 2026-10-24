@@ -159,6 +159,19 @@ describe.skipIf(!BASE)("slice 8a tool shapes", () => {
     expect(theirs.text).toContain("not_found_or_unreadable");
   });
 
+  it("S8a-I4: in array form, another person's unverified draft also reads exactly like a random id", async () => {
+    const drafted = await mcp(b.apiKey, "check_recipe", {
+      recipe: `As a developer testing id arrays, I drafted a call only I and my agents may see. (${RUN} b-draft)`,
+      supporting_evidence: `Draft because it is a test.\n> "quote"\n-- tool-shapes suite`,
+      draft: true,
+    });
+    const draftId = /Recipe checked as #([0-9a-f-]{36})/.exec(drafted.text)?.[1];
+    expect(draftId, drafted.text.slice(0, 200)).toBeTruthy();
+    const theirs = await mcp(a.apiKey, "get_recipes", { recipe_ids: [draftId!] });
+    const random = await mcp(a.apiKey, "get_recipes", { recipe_ids: [UNKNOWN_UUID] });
+    expect(theirs.text.replaceAll(draftId!, "<id>")).toBe(random.text.replaceAll(UNKNOWN_UUID, "<id>"));
+  });
+
   it("S8a-I4: the 20-id cap applies after parsing the array", async () => {
     const ids = Array.from({ length: 21 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`);
     const r = await mcp(a.apiKey, "get_recipes", { recipe_ids: ids });
@@ -301,18 +314,29 @@ describe.skipIf(!BASE)("slice 8a tool shapes", () => {
 
   it("S8a-U2: the /mcp route refuses an undeclared name before anything runs", async () => {
     const userId = (await authenticateKey(getDb(), a.apiKey))!.userId;
-    const checks = async () => ((await getDb().execute(sql`
-      SELECT count(*)::int AS n FROM claimnet.audit_log WHERE action = 'recipe.checked' AND actor_user_id = ${userId}::uuid
-    `)) as unknown as Array<{ n: number }>)[0]?.n;
-    const before = await checks();
+    // Both the audit row a check writes and the trace itself: a refusal
+    // must leave neither (the verifier's finding 2 on this row).
+    const counts = async () => ((await getDb().execute(sql`
+      SELECT
+        (SELECT count(*)::int FROM claimnet.audit_log WHERE action = 'recipe.checked' AND actor_user_id = ${userId}::uuid) AS checks,
+        (SELECT count(*)::int FROM claimnet.traces WHERE user_id = ${userId}::uuid) AS traces
+    `)) as unknown as Array<{ checks: number; traces: number }>)[0];
+    const before = await counts();
+    const recipe = `As a developer testing unknown names, I chose refusal so that a typo never writes. (${RUN})`;
     const r = await mcp(a.apiKey, "check_recipe", {
-      recipe: `As a developer testing unknown names, I chose refusal so that a typo never writes. (${RUN})`,
+      recipe,
       supporting_evidence: `Why.\n> "quote"\n-- suite`,
       recipe_boook: "soupnet-oss",
     });
     expect(r.isError).toBe(true);
     expect(r.text).toMatch(/^Error: check_recipe does not take recipe_boook \(did you mean recipe_book\?\)\. Nothing was run;/);
-    expect(await checks()).toBe(before);
+    expect(await counts()).toEqual(before);
+  });
+
+  it("S8a-U2: the near miss is offered when the intended name was not also sent", async () => {
+    const r = await mcp(a.apiKey, "get_recipes", { recipe_id: traceA });
+    expect(r.isError).toBe(true);
+    expect(r.text).toBe("Error: get_recipes does not take recipe_id (did you mean recipe_ids?). Nothing was run; send it again with the names it takes: recipe_ids.");
   });
 
   /** One tools/call through an in-process server with the guard in the given
@@ -342,11 +366,11 @@ describe.skipIf(!BASE)("slice 8a tool shapes", () => {
     const refused = await guarded("refuse", a.apiKey, "get_recipes", args);
     const warned = await guarded("warn", a.apiKey, "get_recipes", args);
     expect(refused).toEqual({
-      content: [{ type: "text", text: "Error: get_recipes does not take recipe_id (did you mean recipe_ids?). Nothing was run; send it again with the names it takes: recipe_ids." }],
+      content: [{ type: "text", text: "Error: get_recipes does not take recipe_id. Nothing was run; send it again with the names it takes: recipe_ids." }],
       isError: true,
     });
     expect(warned.isError).toBeFalsy();
-    expect(warned.content[0]?.text).toBe("Warning: get_recipes ignored recipe_id (did you mean recipe_ids?), which it does not take; the call ran without it. It takes: recipe_ids.");
+    expect(warned.content[0]?.text).toBe("Warning: get_recipes ignored recipe_id, which it does not take; the call ran without it. It takes: recipe_ids.");
     expect(warned.content[1]?.text).toContain("1 of 1 resolved");
   }, 30_000);
 
