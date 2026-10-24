@@ -53,36 +53,95 @@ Feature: Checking behavior — genuine hypotheses, autonomous timing
     Then the evidence interpretation attributes the hypothesis to observed artifacts ("suggesting a preference"), not to a user statement
     And the quoted reference is from the artifact, not an invented user quote
 
-  @unreleased
   Scenario: A rated check uses the rating vocabulary and leaves out a rating it has no view on
-    # Guards: MCP_PARAM_DESCRIPTIONS.impact and .uncertainty (recipe-guide-content.ts); docs/planning/drafts-and-triage.md §Triage ratings; spec-decision-log.md 2026-09-27 (drafts-and-triage slice 1). The parameters ship in slice 1; the scenario stays @unreleased until the briefing body teaches rating (slice 7) and the harness can run it.
+    # Guards: MCP_PARAM_DESCRIPTIONS.impact and .uncertainty, and the briefing's "How to check" ratings clause (recipe-guide-content.ts); docs/planning/drafts-and-triage.md §Triage ratings; spec-decision-log.md 2026-09-27 (drafts-and-triage slice 1). Out of @unreleased with drafts-and-triage slice 7 (build log §Slice 7 rubric; spec-decision-log.md 2026-10-24, C1): the briefing body now teaches rating.
     When the agent makes a check where it has a view on how much rides on the call but none on how sure it is of the person's position
     Then any rating it sends on check_recipe is one of "low", "medium", or "high"
     And it sends impact and leaves uncertainty out, rather than sending uncertainty "medium" as a default
 
-  @unreleased
-  Scenario: An agent drafts only when it cannot ask, and says why in the first evidence entry
-    # Guards: MCP_PARAM_DESCRIPTIONS.draft (recipe-guide-content.ts); docs/planning/drafts-and-triage.md §When to draft, and when to ask instead; spec-decision-log.md 2026-09-27 (drafts-and-triage slice 2). The parameter ships in slice 2; the scenario stays @unreleased until the briefing body teaches when to draft (slice 7) and the harness can run it.
+  Scenario: An agent drafts only a call it cannot stand behind, and says in the first evidence entry what would settle it
+    # Guards: the briefing's "## Drafts" section (BRIEFING.build, recipe-guide-content.ts); recipes 5d76a576 (a draft is a hypothesis the agent cannot yet stand behind) and 31b80b8b (ask when the call is the person's and they are reachable); docs/planning/drafts-and-triage-slices-6-7-revision.md §7a. Rewritten and out of @unreleased with drafts-and-triage slice 7 (build log §Slice 7 rubric; spec-decision-log.md 2026-10-24, C1); it replaces "An agent drafts only when it cannot ask", whose absence framing the field read literally.
     Given the person is reachable in the conversation
     When the agent faces a high-impact, uncertain call about the person's taste and judgment
-    Then it asks the person, or presents divergent options, rather than depositing a draft
-    When the person cannot be asked now and the agent has to proceed
+    Then it settles the call from the context it holds and checks it as an ordinary recipe, or asks the person in plain words with its recommendation and reasoning, or presents divergent options
+    And it does not deposit a draft for the person to settle later
+    When the agent cannot settle the call from its context and the call is not one to put to the person now
     Then it checks the recipe with draft set to true
-    And the first evidence entry's interpretation says why the person could not be asked and what would settle it
+    And the first evidence entry's interpretation says what would settle it
+    And the interpretation does not give the person's absence as the reason for drafting
 
-  @unreleased
   Scenario: An agent that deposited drafts hands its person the queue link rather than listing ids
-    # Guards: draftDepositNotice (packages/domain/src/drafts.ts), the queue link it carries; docs/planning/drafts-and-triage.md §Verifying a draft ("Links"); spec-decision-log.md 2026-09-27 (drafts-and-triage slice 3). The link ships in slice 3; the scenario stays @unreleased until the briefing body teaches drafting (slice 7) and the harness can run it.
+    # Guards: draftDepositNotice (packages/domain/src/drafts.ts), the queue link it carries; docs/planning/drafts-and-triage.md §Verifying a draft ("Links"); spec-decision-log.md 2026-09-27 (drafts-and-triage slice 3). Out of @unreleased with drafts-and-triage slice 7 (build log §Slice 7 rubric; spec-decision-log.md 2026-10-24, C1): the briefing body now teaches drafting.
     Given the agent deposited drafts during a session its person was away for
     When the person returns and the agent reports what it left open
     Then it gives the person one review-queue link naming those drafts (/app/drafts?ids=…)
     And it does not ask the person to look the drafts up by id in prose
 
-  @unreleased
   Scenario: A briefed agent records a colleague's judgment as a draft on their behalf and hands over their review link
-    # Guards: MCP_PARAM_DESCRIPTIONS.onBehalfOf (recipe-guide-content.ts), the on-behalf deposit notice (packages/domain/src/drafts.ts); docs/planning/drafts-and-triage.md §The model; spec-decision-log.md 2026-09-27 (drafts-and-triage slice 4). The parameter ships in slice 4; the scenario stays @unreleased until the briefing body teaches drafting (slice 7) and the harness can run it.
+    # Guards: MCP_PARAM_DESCRIPTIONS.onBehalfOf (recipe-guide-content.ts), the on-behalf deposit notice (packages/domain/src/drafts.ts); docs/planning/drafts-and-triage.md §The model; spec-decision-log.md 2026-09-27 (drafts-and-triage slice 4). Out of @unreleased with drafts-and-triage slice 7 (build log §Slice 7 rubric; spec-decision-log.md 2026-10-24, C1): the briefing body now teaches drafting.
     Given the agent is reading a colleague's own artifacts that record a decision the colleague made
     When it records that decision
     Then it checks the recipe with on_behalf_of set to the colleague's email, in the colleague's functional role
     And its evidence quotes the colleague's own words from those artifacts
     And it hands its person the colleague's review link from the response, rather than calling the draft verified
+
+  Scenario: The person's own agent resolves a draft its context now settles
+    # Guards: the briefing's "## Drafts" section, resolution paragraph; recipe 200ed4fe (an agent ratifies drafts "in the exact same way that it can make recipe checks autonomously if it's confident in the same ways"); drafts-and-triage slice 7 (build log §Slice 7 rubric; spec-decision-log.md 2026-10-24, C1).
+    Given an open draft about the person whose first evidence entry names what would settle it
+    And that settling fact has since landed in the agent's context (a file, a decision recorded elsewhere, a verified recipe covering the same call)
+    When the agent comes back to the draft
+    Then it calls verify_draft with an outcome that matches the settling fact (verified, rejected, or not chosen) and that fact quoted and cited as new evidence
+    And it does not wait for the person's confirmation in their own words before resolving it
+
+  Scenario: A returned recipe is weighed as a call made in its own context, not applied as a rule
+    # Guards: the briefing's "## Reading results" section; docs/planning/drafts-and-triage-slices-6-7-revision.md §7d item 1 and field item 7; drafts-and-triage slice 7 (build log §Slice 7 rubric; spec-decision-log.md 2026-10-24, C1).
+    Given a check returns a closely matching recipe recorded in a different context from the current task
+    When the agent uses it in its reasoning or its reply
+    Then it says how that recipe applies to the current situation ("in their context they chose X")
+    And it does not call the recipe "the rule", or treat it as settling the current call without weighing the difference in context
+
+  Scenario: A familiar judgment in a new context is logged, not skipped as already recorded
+    # Guards: the briefing's "## Reading results" section ("A familiar judgment in a new context is worth logging"); drafts-and-triage slice 7 (build log §Slice 7 rubric; spec-decision-log.md 2026-10-24, C1).
+    Given the agent holds a judgment the person has made before, and a check returns that earlier recipe
+    When the same judgment comes up in a new context
+    Then the agent checks a recipe for the new instance with the new context as evidence
+    And it does not skip the check on the ground that a similar recipe already exists
+
+  Scenario: Extending something that already has a default is checked as a call
+    # Guards: WORKFLOW_WHEN, the "already has a default" moment; recipe 72f788bf; drafts-and-triage slice 7 (build log §Slice 7 rubric; spec-decision-log.md 2026-10-24, C1).
+    Given the agent is extending a component whose existing behavior allows (or refuses) everything no rule matches
+    When it writes the extension
+    Then it checks what should happen when nothing matches before writing that behavior into the extension
+
+  Scenario: Writing for a particular reader is checked before the first version is written
+    # Guards: WORKFLOW_WHEN, the "particular reader in a particular place" moment; docs/planning/drafts-and-triage-slices-6-7-revision.md §7d item 2; drafts-and-triage slice 7 (build log §Slice 7 rubric; spec-decision-log.md 2026-10-24, C1).
+    Given the agent is asked to write a document for a named kind of reader in a named place
+    When it begins
+    Then it checks or searches for that reader's preferences before producing the first version
+
+  Scenario: An instruction that pulls against the agent's judgment is checked, then followed
+    # Guards: WORKFLOW_WHEN, the instruction-versus-judgment moment; docs/planning/drafts-and-triage-slices-6-7-revision.md §7d item 5; drafts-and-triage slice 7 (build log §Slice 7 rubric; spec-decision-log.md 2026-10-24, C1).
+    Given the person's instruction conflicts with what the agent judges right for the person's goal
+    When the agent proceeds
+    Then it checks the call it judges right, with the instruction quoted in the evidence
+    And it then proceeds with the work rather than stopping to argue
+
+  Scenario: The agent's own open draft is not read as support
+    # Guards: the briefing's "## Reading results" section (own open draft); docs/planning/drafts-and-triage-slices-6-7-revision.md §7d item 6; drafts-and-triage slice 7 (build log §Slice 7 rubric; spec-decision-log.md 2026-10-24, C1).
+    Given a check returns, as its nearest neighbor, an unverified draft the same agent deposited earlier in the session
+    When the agent reports what the check found
+    Then it names that recipe as its own earlier assumption
+    And it does not count it as evidence that the person holds the position
+
+  Scenario: A probe of the corpus is made as a search
+    # Guards: the briefing's "Search vs check" paragraph (probing the corpus is a search); docs/planning/drafts-and-triage-slices-6-7-revision.md §7d item 7; drafts-and-triage slice 7 (build log §Slice 7 rubric; spec-decision-log.md 2026-10-24, C1).
+    When the agent wants to see what the corpus holds on a topic, or how a role phrasing clusters
+    Then it calls search_recipes (or the check page's filter)
+    And it does not call check_recipe with a probe recipe
+
+  Scenario: Thin results lead to more checks, not a stretched match
+    # Guards: the check response's empty-result line (check-response-renderer.ts); recipe b7e90f25; drafts-and-triage slice 7 (build log §Slice 7 rubric; spec-decision-log.md 2026-10-24, C1).
+    Given a check in the current context returns no similar recipes, or only distant ones
+    When the agent continues the task
+    Then it checks its subsequent calls in that area rather than fewer
+    And it does not present a distant result as settling the call

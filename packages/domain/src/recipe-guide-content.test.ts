@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { BRIEFING, BRIEFING_KEY_PLACEHOLDER, HEADLESS_KEY_SECTION, buildCorpusContextSection } from "./recipe-guide-content";
-import type { BriefingBuildInput, BriefingGroup } from "./recipe-guide-content";
+import { BRIEFING, BRIEFING_KEY_PLACEHOLDER, HEADLESS_KEY_SECTION, buildCorpusContextSection, buildExemplarsSection } from "./recipe-guide-content";
+import type { BriefingBuildInput, BriefingExemplar, BriefingGroup } from "./recipe-guide-content";
 
 /**
  * Briefing template tests — the no-raw-credential invariant.
@@ -384,5 +384,178 @@ describe("BRIEFING.build — the headless key section (drafts-and-triage slice 5
   it("holds the thin headless briefing at most 21,500 characters (fixed fixture)", () => {
     // 18,600 → 21,500 (2026-10-24, PR A0): moves with the thin ceiling above.
     expect(BRIEFING.build({ ...thinInput(), headless: true }).length).toBeLessThanOrEqual(21_500);
+  });
+});
+
+/** The four compositions every slice 7 assertion runs over: both surface
+ *  profiles, each with and without the headless section. */
+function allCompositions(): Array<[string, string]> {
+  return [
+    ["thin", BRIEFING.build(thinInput())],
+    ["full", BRIEFING.build(buildInput())],
+    ["thin headless", BRIEFING.build({ ...thinInput(), headless: true })],
+    ["full headless", BRIEFING.build({ ...buildInput(), headless: true })],
+  ];
+}
+
+/** The text of one "## " section, up to the next heading or the end. */
+function section(text: string, heading: string): string {
+  const start = text.indexOf(`\n${heading}\n`);
+  if (start < 0) return "";
+  const rest = text.slice(start + heading.length + 2);
+  const next = rest.search(/\n## /);
+  return next < 0 ? rest : rest.slice(0, next);
+}
+
+describe("BRIEFING.build — slice 7: when to draft (7a)", () => {
+  for (const [name, text] of allCompositions()) {
+    it(`${name}: carries the Drafts section with the definition, the order of moves, resolution, and live orchestration`, () => {
+      const drafts = section(text, "## Drafts");
+      // S7-A1: a hypothesis the agent can't yet stand behind, private until resolved.
+      expect(drafts).toContain("is a hypothesis you can't yet stand behind from the context you hold");
+      expect(drafts).toContain("only your user and their agents see it until it's resolved");
+      // S7-A2: act → check and own; the person's call and reachable → ask with a
+      // recommendation; otherwise draft, say what would settle it, come back.
+      expect(drafts).toContain("if you'll act on it, check it as an ordinary recipe and own it");
+      expect(drafts).toContain("if it's your user's call and they're reachable, ask in plain words, with your recommendation and its reasoning");
+      expect(drafts).toContain("say in the first evidence entry what would settle it, and return when that lands");
+      expect(drafts).toContain("not your user's to-do item");
+      // S7-A3: the person's own agents resolve under the confidence rule, every outcome.
+      expect(drafts).toContain("`verify_draft` it (verified, rejected, or not chosen) with that context as new evidence");
+      // S7-A4: orchestration is live.
+      expect(drafts).toContain("raise only high impact × uncertainty calls");
+      expect(drafts).toContain("`is:draft intent:<id>`");
+      expect(drafts).toContain("list the rest with a recommendation");
+    });
+
+    it(`${name}: nothing frames drafting as the move for when the person can't be asked (S7-A5)`, () => {
+      expect(text).not.toMatch(/can(?:'|no)t be asked|couldn't be asked|could not be asked|cannot ask/);
+    });
+  }
+});
+
+describe("BRIEFING.build — slice 7: the planned content (7c)", () => {
+  const thin = BRIEFING.build(thinInput());
+  const full = BRIEFING.build(buildInput());
+
+  it("S7-C1: Truthfulness asks for evidence checkable by someone who wasn't there", () => {
+    for (const text of [thin, full]) {
+      expect(text).toContain("needs to be true at the moment you submit, and checkable by someone who wasn't there.");
+    }
+  });
+
+  it("S7-C2: How to check names the triage ratings, their vocabulary, and leaving out a rating with no view", () => {
+    expect(section(thin, "## How to check")).toContain("`impact` and `uncertainty` (triage ratings, low | medium | high; leave out one you have no view on)");
+  });
+
+  it("S7-C3: the headless section says what would settle a draft, the ratings, and building both, and no longer asks why", () => {
+    expect(HEADLESS_KEY_SECTION).toContain("say in each what would settle it, rate it, and draft open options under one intent");
+    expect(HEADLESS_KEY_SECTION).toContain("(see Drafts)");
+    expect(HEADLESS_KEY_SECTION).not.toContain("couldn't be asked");
+  });
+
+  it("S7-C4: divergent checks carve out building both and keep wait-for-the-choice for the ordinary case", () => {
+    const divergent = section(thin, "## Divergent recipe checks");
+    expect(divergent).toContain("wait for the choice, then check only the chosen one.");
+    expect(divergent).toContain("when every option will genuinely be pursued, check each as an ordinary recipe");
+    expect(divergent).toContain("when you can't stand behind any yet, draft each under one intent, with the rubric stated first");
+    expect(divergent).toContain("check the chosen path with the outcome as evidence and leave feedback on the rest");
+  });
+});
+
+describe("BRIEFING.build — slice 7: the field additions (7d)", () => {
+  for (const [name, text] of allCompositions()) {
+    it(`${name}: carries every addition`, () => {
+      // S7-D1, S7-D6: Reading results, in the shared body.
+      const reading = section(text, "## Reading results");
+      expect(reading).toContain("A returned recipe is a call someone made in their context, not a rule");
+      expect(reading).toContain("A familiar judgment in a new context is worth logging, with that context as evidence");
+      expect(reading).toContain("A neighbor that is your own open draft is your assumption coming back");
+      // S7-D2, S7-D5: three moments in When to check, as example and goal.
+      const when = section(text, "## When to check");
+      expect(when).toContain("- Extending something that already has a default");
+      expect(when).toContain("- Writing for a particular reader in a particular place?");
+      expect(when).toContain("- An instruction pulling against your judgment? Check the call you think is right, then proceed");
+      // S7-D3: two axes in Authoring for retrieval.
+      expect(text).toContain("Granularity and generality are separate axes");
+      expect(text).toContain("put the specifics in the evidence, where they stay read and checkable");
+      // S7-D4: the fourth role pattern.
+      expect(text).toContain("Four patterns keep it transferable");
+      expect(text).toContain("- **For what the user receives**");
+      // S7-D7: a probe is a search.
+      expect(section(text, "## How to check")).toContain("Probing the corpus itself (what's there, how a role clusters) is a search too");
+    });
+  }
+
+  it("S7-V1: the added guidance reads as what is useful, not as rules", () => {
+    const thinHeadless = BRIEFING.build({ ...thinInput(), headless: true });
+    const when = section(thinHeadless, "## When to check");
+    const added = [
+      section(thinHeadless, "## Drafts"),
+      section(thinHeadless, "## Reading results"),
+      when.slice(when.indexOf("- Extending")),
+      HEADLESS_KEY_SECTION,
+    ];
+    for (const text of added) {
+      expect(text.length).toBeGreaterThan(0);
+      expect(text).not.toMatch(/\b(must|never|always|do not|don't)\b/i);
+    }
+  });
+});
+
+describe("BRIEFING.build — slice 7: duplicates of the MCP tool schema leave the thin profile only", () => {
+  // The session_id parameter already says to omit it after compaction, and
+  // the supporting_evidence parameter already gives the entry shape; a paste
+  // reader has no tool schema, so the full profile keeps both lines.
+  const compaction = "If you auto-compact your context or otherwise no longer hold the recipes you've been shown";
+  const evidenceShape = "Evidence entries follow this shape:";
+
+  it("thin omits them", () => {
+    const thin = BRIEFING.build(thinInput());
+    expect(thin).not.toContain(compaction);
+    expect(thin).not.toContain(evidenceShape);
+  });
+
+  it("full keeps them", () => {
+    const full = BRIEFING.build(buildInput());
+    expect(full).toContain(compaction);
+    expect(full).toContain(evidenceShape);
+  });
+});
+
+describe("buildExemplarsSection — the slimming lever (recipe aae000d2, S7-L1)", () => {
+  const id = "11111111-2222-3333-4444-555555555555";
+  const entry = (n: number) => `Interpretation ${n}.\n> "quote ${n}"\n-- source ${n}`;
+  const exemplar = (evidenceBlocks: string[]): BriefingExemplar => ({
+    recipeId: id,
+    recipeBookSlug: "personal",
+    loggedDate: "2026-10-24",
+    memberCount: 3,
+    claimText: "As a developer working on X, I prefer Y so that Z.",
+    evidenceBlocks,
+  });
+  const render = (blocks: string[]) => buildExemplarsSection("all your recipe books", { k: 1, mode: "umap" }, [exemplar(blocks)]);
+
+  it("renders only the top evidence entry and points to the rest by id", () => {
+    const text = render([entry(1), entry(2), entry(3)]);
+    expect(text).toContain(`Evidence:\n${entry(1)}\n(2 more evidence entries: get_recipes or GET /recipes?ids=${id})`);
+    expect(text).not.toContain("quote 2");
+    expect(text).not.toContain("quote 3");
+  });
+
+  it("names a single extra entry in the singular", () => {
+    expect(render([entry(1), entry(2)])).toContain(`(1 more evidence entry: get_recipes or GET /recipes?ids=${id})`);
+  });
+
+  it("renders one entry as before, with no pointer", () => {
+    const text = render([entry(1)]);
+    expect(text.endsWith(`Evidence:\n${entry(1)}`)).toBe(true);
+    expect(text).not.toContain("more evidence");
+  });
+
+  it("renders no Evidence block for an exemplar without evidence (blank entries ignored)", () => {
+    const text = render(["   "]);
+    expect(text).not.toContain("Evidence:");
+    expect(text.endsWith("As a developer working on X, I prefer Y so that Z.")).toBe(true);
   });
 });

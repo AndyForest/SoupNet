@@ -32,3 +32,9 @@ Feature: Evidence integrity — interpretation, verbatim quote, citation
     When the agent holds a hypothesis it cannot support with any observable source
     Then it gathers evidence first, asks the user, or does not check
     And it does not invent a quote or a source
+
+  Scenario: Evidence is checkable by someone who wasn't there
+    # Guards: PRINCIPLES "Truthfulness" ("checkable by someone who wasn't there"); docs/planning/drafts-and-triage.md §Truthfulness; drafts-and-triage slice 7 (build log §Slice 7 rubric; spec-decision-log.md 2026-10-24, C1).
+    When the agent logs a recipe whose evidence comes from the current session
+    Then each citation names where a reader outside the session could find the quoted words (a file path, a commit, a dated message, a URL)
+    And no evidence entry depends on context only the session holds ("as discussed above")
