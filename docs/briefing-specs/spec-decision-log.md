@@ -11,10 +11,10 @@ Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-
 ### Edits
 
 1. **`verify_draft` description, both MCP servers** (`MCP_TOOL_DESCRIPTIONS.verifyDraft`): "Publish your user's draft recipe once they confirm it, with new evidence quoting their answer and a citation. Evidence that adds nothing new is refused." becomes the revision doc's 7b text, "Publish, reject, or mark not chosen a draft about your user once you or they can stand behind the answer: new evidence quoting their words, or the context that settles it. Evidence that adds nothing new is refused." (152 → 214 characters). The old text read as a rule that the person must be asked (field item 2), which ruling 46 and recipe `200ed4fe` say it is not.
-2. **New `outcome` parameter, both MCP servers** (`MCP_PARAM_DESCRIPTIONS.draftOutcome`, a plain string, not a schema enum): "verified (default) | rejected | not_chosen. Reject when it does not hold or a verified recipe covers it (cite its id)." (118 characters). The tool's annotation title becomes "Resolve a draft".
+2. **New `outcome` parameter, both MCP servers** (`MCP_PARAM_DESCRIPTIONS.draftOutcome`, a plain string, not a schema enum): "verified (default) | rejected | not_chosen. Reject when it does not hold or a verified recipe covers it (cite its id); not_chosen when a viable option lost." (156 characters). The tool's annotation title becomes "Resolve a draft".
 3. **`supporting_evidence` on `verify_draft`** (`verificationEvidence`): "Your interpretation, then > the person's answer verbatim, then -- where they said it." becomes "Your interpretation, then > a person's answer or a covering recipe's words, verbatim, then -- where they were said (or recipe <id>)." (85 → 132 characters). "A person", not "the person", throughout the new copy: in a shared book the call may be a colleague's (Andy, 2026-10-24; recipe `5d3ddfc7`).
 4. **Replies:** a rejection answers "Draft <id> is rejected: it stays private, leaves the review queue, and no longer appears in results; your evidence is attached (n entries)."; not chosen the same with "is marked not chosen". The verified reply is unchanged. The stdio server now words its reply with the same domain function as the remote tool (`describeResolution`).
-5. **Refusals:** the evidence refusal opens per outcome ("Verifying", "Rejecting", "Marking a draft not chosen … needs new evidence"). The rejection form says the quote may be "a person's answer, or the words of the verified recipe that covers the same call" cited as "-- recipe <id>", and every refusal for missing evidence now ends by saying how the text was read ("The text was read as 2 entries: entry 1 has a quote but no citation; entry 2 has a citation but no quote."). The verification form now says "a person's answer, or the words that settle it", where it said "the person's answer". An unknown outcome answers "outcome "<value>" is not one of verified | rejected | not_chosen (verified when omitted); nothing was stored.", followed by "Also: " and the evidence refusal when the evidence is also short. "is not a draft, so there is nothing to verify" becomes "… nothing to resolve".
+5. **Refusals:** the evidence refusal opens per outcome ("Verifying", "Rejecting", "Marking a draft not chosen … needs new evidence"). The rejection form says the quote may be "a person's answer, or the words of the verified recipe that covers the same call" cited as "-- recipe <id>", and every refusal for missing evidence now ends by saying how the text was read ("The text was read as 2 entries: entry 1 has a quote but no citation; entry 2 has a citation but no quote."). The verification form now says "a person's answer, or the words that settle it", where it said "the person's answer". An unknown outcome answers "outcome "<value>" is not one of verified | rejected | not_chosen (verified when omitted); nothing was stored.", followed by "Also: " and the evidence refusal when the evidence is also short. "is not a draft, so there is nothing to verify" becomes "… nothing to resolve", and the write-access refusal says "resolving it needs write access … Resolve it with a key that can write <book>, or hand the review link to the person it is about".
 6. **Label of a rejected draft on agent surfaces** (`draftLabel`): "[rejected draft: the person said this is wrong]" becomes "[rejected draft: its evidence says why]", since an agent may now reject on the settling context.
 
 ### Scenarios intended to move
@@ -31,10 +31,10 @@ Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-
 
 | Measure | Before | After | Cap (A0) |
 |---|---|---|---|
-| Remote `tools/list` | 16,986 bytes | 17,259 | 18,200 |
-| Stdio `tools/list` | 13,196 bytes | 13,469 | 14,700 |
-| Shared descriptions | 6,051 characters | 6,278 | 6,600 |
-| `verify_draft` as served (remote) | 774 bytes | 1,047 | |
+| Remote `tools/list` | 16,986 bytes | 17,297 | 18,200 |
+| Stdio `tools/list` | 13,196 bytes | 13,507 | 14,700 |
+| Shared descriptions | 6,051 characters | 6,316 | 6,600 |
+| `verify_draft` as served (remote) | 774 bytes | 1,085 | |
 
 ## 2026-10-24 — Drafts-and-triage slices 6 to 9, scaffold (PR A0): four size caps raised ahead of parallel streams; no copy changed
 

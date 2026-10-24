@@ -1721,7 +1721,7 @@ Branch `drafts/6c-resolution`, from the A0 commit `32ffa5c`. Agent `a-drafts-6c-
 
 - For C (C1 and C2): the parameter is `outcome` on `verify_draft` and `POST /recipes/:id/verify`, values `verified` (default) | `rejected` | `not_chosen`; a superseded draft is `rejected` quoting the covering recipe and citing `-- recipe <id>`. The briefing scenario for resolving drafts belongs in `checking-behavior.feature` (C's file) and lands with C1, which merges after A1; the A1 decision-log entry says so.
 - For D (8a): agreed in session that D does not edit `verify_draft`'s schema, descriptions or service; the "every failing field at once" rule for `verify_draft` is met here (S6c-B6). D's unknown-parameter guard reads the registered schemas, so it picks up `outcome` without a list.
-- For B and D, the shared budget: A1 takes remote `tools/list` from 16,986 to 17,259 bytes (cap 18,200), stdio from 13,196 to 13,469 (cap 14,700), and the shared descriptions from 6,051 to 6,278 characters (cap 6,600), leaving 322 characters for B's `intent:` term and D's enumerations.
+- For B and D, the shared budget: A1 takes remote `tools/list` from 16,986 to 17,297 bytes (cap 18,200), stdio from 13,196 to 13,507 (cap 14,700), and the shared descriptions from 6,051 to 6,316 characters (cap 6,600), leaving 284 characters for B's `intent:` term and D's enumerations.
 - For B: 6c never writes `intent_id`; `resolveDraft`'s UPDATE is unchanged.
 
 **Environment note for every stream:** the worktrees were moved from `C:\github\SoupNet-wt\` to `C:\github\SoupNet\SoupNet-wt\`, and the `@soupnet/*` links under each worktree's `node_modules` still pointed at the old path, so vitest silently resolved the main checkout's stale packages (size tests failed on a clean branch). Re-pointing the nine links as junctions fixed it; streams B, C and D confirmed the same fix.
@@ -1794,6 +1794,18 @@ Written 2026-10-24 by an independent verifier (agent `v-drafts-6c-2026-10-24`, S
 
 - The verified line's "(by the person it is about)" in list rows predates 6c (slice 2); defect 1's fix covers it.
 - The review queue, reaction and not-chosen routes, and option sets (6b), are unchanged here and were not re-verified.
+
+### Slice 6c after verification (stream A, 2026-10-24)
+
+What was done with each finding of the verification record above:
+
+- **Defect 1, list rows misattribute the resolver:** fixed in `42ecc9d`. The resolver clause appears only on a row that says who resolved it (the detail page sends `draftResolvedByViewer` and the resolving key; `GET /traces` rows send neither), so the dashboard and book page read "Rejected draft", "Draft not chosen" or "Verified draft". This also fixes the verified line's list fault from slice 2.
+- **Defect 2, a later cited quote joined an earlier uncited one:** fixed in `3afcec6`. A quote continues the open entry only while that entry has no quote or its quote is still unclosed; otherwise it stays its own entry, as before 6c (check `3123c1e1`).
+- **Defect 3, S6c-C1 partial:** the `outcome` description now ends "; not_chosen when a viable option lost." (156 characters, under the row's 160).
+- **Refusals that said "verify" on a rejection call:** the write-access refusal now says "resolving it needs write access … Resolve it with a key that can write <book>, or hand the review link to the person it is about". The headless refusal keeps slice 5's wording ("cannot verify drafts"), which is still true of every outcome.
+- **Headless key with a mistyped outcome gets the outcome refusal first:** left as is. Both refusals are decided before any lookup and neither depends on the id, so the order reveals nothing; the outcome refusal is input validation and comes first on every key.
+- **Version skew:** a backend from before 6c ignores `outcome`, so a stdio `.mcpb` built from this branch and pointed at an older backend would publish a draft it meant to reject. The remote MCP tool is served by the backend itself and cannot skew. Deploy the backend before releasing a `.mcpb` that sends `outcome`; the PR says so.
+- **Gate runs:** `TESTCI_PGPORT=5544 npm run test:ci` exit 0 at `f273fb2` (133 files and 1,899 tests passed; 2 files and 6 tests skipped); scoped verbose run `drafts-resolution.test.ts` 13/13 with `drafts.test.ts` 45/45; the verifier's run at `9c96fdd` exit 0. The run after these fixes is recorded below when it lands.
 
 ### Slice 6a rubric: the intent link (stream B)
 

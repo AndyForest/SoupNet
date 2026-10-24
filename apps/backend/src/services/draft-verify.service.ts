@@ -79,7 +79,7 @@ export function describeVerifyResult(r: VerifyDraftResult): string {
     case "already_resolved":
       return `${r.recipeId} was already resolved (${r.draftState}); resolution is one-way and nothing was stored.`;
     case "needs_write_access":
-      return `${r.recipeId} is a draft in the recipe book "${r.recipeBook.name}" (${r.recipeBook.slug}), and verifying it needs write access to this recipe book, which this API key does not have; nothing was stored. Verify it with a key that can write ${r.recipeBook.slug}, or ask the person to confirm it in their review queue: ${draftQueueUrl([r.recipeId])}`;
+      return `${r.recipeId} is a draft in the recipe book "${r.recipeBook.name}" (${r.recipeBook.slug}), and resolving it needs write access to this recipe book, which this API key does not have; nothing was stored. Resolve it with a key that can write ${r.recipeBook.slug}, or hand the review link to the person it is about: ${draftQueueUrl([r.recipeId])}`;
     case "only_subject_reviews":
       return `${onlySubjectReviewsReason(r.subjectEmail, draftQueueUrl([r.recipeId]))} Nothing was stored.`;
     case "key_cannot_verify":

@@ -1118,7 +1118,7 @@ export const MCP_PARAM_DESCRIPTIONS = {
    *  and names it with any evidence problem in one reply. */
   draftOutcome:
     "verified (default) | rejected | not_chosen. Reject when it does not hold or a verified " +
-    "recipe covers it (cite its id).",
+    "recipe covers it (cite its id); not_chosen when a viable option lost.",
 } as const;
 
 /** Compose the full check_recipe tool description, optionally with the file-attachment sentence. */
