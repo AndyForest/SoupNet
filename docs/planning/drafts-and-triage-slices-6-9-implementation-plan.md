@@ -52,6 +52,7 @@ Paths are the ones the streams will touch most; a stream may touch others it alo
 | `docs/planning/drafts-and-triage-build.md` | all | Write only under your own heading (A0 creates them). |
 | `docs/briefing-specs/spec-decision-log.md` | A, B, C, D | Append-only; one entry per PR; rebase before opening. |
 | size-cap tests | A0 only | Everyone else only records figures. |
+| `packages/db/migrations/` (the next migration number) | B, D; later F, G | Added 2026-10-24 after streams B and D both minted `0041` (audit finding F106): one stream holds the next number at a time. Standing ruling from 2026-07-13 (recipe `84e8deed`, and CLAUDE.md §Parallel sessions in worktrees): freeze migrations for the batch while an unmerged branch claims the next number. For this batch: D merges first with `0041`; B renumbers to `0042` after rebasing. F and G ask the operator for their number before generating, and whichever needs no schema change says so. Migrations apply at backend startup, so a broken chain on `main` is an outage, not a failed deploy (recipe `c26fa597`). |
 
 ## Sequence and merge order
 
