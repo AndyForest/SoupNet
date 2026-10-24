@@ -15,7 +15,7 @@ import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { authenticateKey, keyForcesDrafts } from "../authz";
 import type { Principal } from "../authz";
-import { HTML_ACCEPT_TYPES, renderCheckResponseMarkdown, fenceCheckResponseMarkdown, parseVerbosity, renderRatingsMarkdown, isShownDraftState, parseDraftFlag, draftLabel } from "@soupnet/domain";
+import { HTML_ACCEPT_TYPES, renderCheckResponseMarkdown, fenceCheckResponseMarkdown, parseVerbosity, renderRatingsMarkdown, isShownDraftState, parseDraftFlag, draftLabel, INTENT_QUALIFIER_NOT_RECOGNIZED } from "@soupnet/domain";
 import type { CheckResponseJson } from "@soupnet/domain";
 import type { Recipe } from "@soupnet/contracts";
 import { TRIAGE_RATING_VALUES } from "@soupnet/contracts";
@@ -460,6 +460,7 @@ function buildSearchOnlyJsonResponse(
     ...(result.searchId ? { searchId: result.searchId } : {}),
     ...(result.searchedCorpusSize !== undefined ? { searchedCorpusSize: result.searchedCorpusSize } : {}),
     ...(result.searchedOwnExcluded !== undefined ? { searchedOwnExcluded: result.searchedOwnExcluded } : {}),
+    ...(result.intentNotRecognized ? { intentNotRecognized: true } : {}),
     ...data,
   };
   return response;
@@ -908,9 +909,11 @@ export function renderPage(
     const headingLabel = isSearchOnly
       ? `Results (${result.totalResults}${result.clustered ? `, ${result.results.length} exemplars shown` : ""})`
       : `Similar recipes (${result.totalResults} found${result.clustered ? `, ${result.results.length} exemplars shown` : ""})`;
-    const emptyLine = isSearchOnly && result.searchedCorpusSize !== undefined
-      ? `<p>No matches among the ${result.searchedCorpusSize} recipes in scope.</p>`
-      : "<p>No matching recipes found.</p>";
+    const emptyLine = isSearchOnly && result.intentNotRecognized
+      ? `<p>No matches: ${esc(INTENT_QUALIFIER_NOT_RECOGNIZED)}.</p>`
+      : isSearchOnly && result.searchedCorpusSize !== undefined
+        ? `<p>No matches among the ${result.searchedCorpusSize} recipes in scope.</p>`
+        : "<p>No matching recipes found.</p>";
 
     resultsHtml = `
   <section id="results">
@@ -1052,6 +1055,7 @@ export function renderPage(
       <li>Bare words search by meaning. <code>"quoted terms"</code> match exactly (filenames, identifiers) &mdash; including inside evidence and its citations. Group with <code>("a" OR "b")</code>; exclude with <code>-"term"</code>.</li>
       <li><code>author:jane@example.com</code>, <code>author:me</code> &mdash; filter by who made the call. <code>after:2026-06-01</code> / <code>before:2026-06-14</code> bound the judgment date.</li>
       <li><code>is:draft</code> lists your own drafts awaiting review; <code>impact:high</code> / <code>uncertainty:low</code> (low, medium, or high) filter by the depositing agent's ratings.</li>
+      <li><code>intent:int_&hellip;</code> lists the recipes deposited under one of your declared intents (the id a response returned); with <code>is:draft</code>, that intent's open drafts.</li>
       <li>Clustered results show one exemplar per group of similar recipes &mdash; &ldquo;Show all&rdquo; flattens them.</li>
       <li>Searching is read-only; checking a recipe (below) is what adds to the corpus. <code>?format=json</code> returns structured data.</li>
     </ul>

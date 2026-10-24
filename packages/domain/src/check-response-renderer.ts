@@ -135,6 +135,10 @@ export interface CheckResponseData {
    *  recipes are the caller's own (structurally excluded by the surface
    *  default) — a solo corpus must never read as empty. */
   searchedOwnExcluded?: number;
+  /** Search-only: the query's `intent:` id named none of the caller's
+   *  intents (unknown or someone else's, deliberately one answer; slice 6a),
+   *  so it matched nothing. */
+  intentNotRecognized?: boolean;
   /** Declared intent (cold-start v2 Phase C): the resolved/registered id. */
   intentId?: string;
   /** One-line intent echo/notice (registration ack, carry-the-id protocol,
@@ -339,10 +343,7 @@ export function renderCheckResponseMarkdown(
       // Thinness is signal, not failure (team-trial evidence §2.4): the scope
       // size distinguishes a thin corpus from a bad minute, and the pointer
       // closes the feedback loop on null results.
-      const scope = data.searchedCorpusSize !== undefined
-        ? ` among the ${data.searchedCorpusSize} recipes in scope`
-        : "";
-      text += `\nNo matches${scope}${buildOwnExcludedNote(data.searchedOwnExcluded, data.searchedCorpusSize)} — a thin-corpus signal worth a feedback row (story_fulfilled: no).`;
+      text += `\n${searchZeroResultLine(data)}`;
     } else {
       text += "\nNo similar recipes found.";
     }
@@ -426,6 +427,33 @@ export function fenceCheckResponseMarkdown(markdown: string): string {
  *  search response's "Search id" line. */
 export function renderBriefingIdLine(briefingId: string): string {
   return `Briefing id: ${briefingId} — log_feedback accepts it as briefing_id, for feedback about this briefing.`;
+}
+
+/**
+ * The `intent:` qualifier's answer when its id names none of the viewer's
+ * intents (drafts-and-triage slice 6a). One sentence for an unknown id and
+ * for another person's, so the qualifier never confirms that someone else's
+ * intent exists. Shared by every search surface and the review queue.
+ */
+export const INTENT_QUALIFIER_NOT_RECOGNIZED =
+  "the intent: id was not recognized (unknown or not yours, deliberately indistinguishable), so it matched nothing";
+
+/**
+ * The zero-result line of a read-only search: ONE phrasing for the JSON
+ * notice builder (trace.service.buildSearchOnlyNotice) and the markdown
+ * renderer above. An unrecognized intent: id replaces the thin-corpus
+ * pointer, since the corpus is not thin; the id selected nothing.
+ */
+export function searchZeroResultLine(data: {
+  searchedCorpusSize?: number | undefined;
+  searchedOwnExcluded?: number | undefined;
+  intentNotRecognized?: boolean | undefined;
+}): string {
+  const scope = data.searchedCorpusSize !== undefined
+    ? ` among the ${data.searchedCorpusSize} recipes in scope`
+    : "";
+  if (data.intentNotRecognized) return `No matches${scope}: ${INTENT_QUALIFIER_NOT_RECOGNIZED}.`;
+  return `No matches${scope}${buildOwnExcludedNote(data.searchedOwnExcluded, data.searchedCorpusSize)} — a thin-corpus signal worth a feedback row (story_fulfilled: no).`;
 }
 
 /**

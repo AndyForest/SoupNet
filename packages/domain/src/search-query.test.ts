@@ -252,7 +252,7 @@ describe("parseSearchQuery — unknown qualifiers (loud rejection)", () => {
   it("rejects unknown qualifier-shaped tokens naming the valid set", () => {
     const e = errorOf("athor:jane@x.com");
     expect(e).toMatch(/unknown qualifier "athor:"/);
-    expect(e).toMatch(/author:, after:, before:, is:draft, impact: and uncertainty:/);
+    expect(e).toMatch(/author:, after:, before:, is:draft, intent: \(an int_… id\), impact: and uncertainty:/);
   });
 
   it("suggests quoting for colon-bearing text", () => {
@@ -394,7 +394,7 @@ describe("parseSearchQuery — the new qualifiers compose (S3-G6) and the error 
 
   it("the unknown-qualifier error lists every valid qualifier and value", () => {
     const e = errorOf("imapct:high");
-    for (const part of ["author:", "after:", "before:", "is:draft", "impact:", "uncertainty:", "low", "medium", "high"]) {
+    for (const part of ["author:", "after:", "before:", "is:draft", "intent:", "int_", "impact:", "uncertainty:", "low", "medium", "high"]) {
       expect(e, part).toContain(part);
     }
   });
@@ -427,5 +427,74 @@ describe("parseSearchQuery — adversarial values for the new qualifiers (S3-G5)
     expect(q.isDraft).toBe(true);
     expect(q.impact?.equals).toBe("high");
     expect(q.uncertainty?.excluded).toEqual(["low"]);
+  });
+});
+
+// ── Drafts-and-triage slice 6a: intent: ─────────────────────────────────────
+
+describe("parseSearchQuery — intent: (S6a-Q1)", () => {
+  const ID = "int_AbCdEfGhIjKlMnOpQrStUv01";
+
+  it("intent:<id> selects by the declared intent, keeping the id's case", () => {
+    const q = parsed(`intent:${ID}`);
+    expect(q.intent).toBe(ID);
+    expect(q.semanticText).toBe("");
+    expect(parsed(`INTENT:${ID} cache`).intent).toBe(ID);
+    expect(parsed(`INTENT:${ID} cache`).semanticText).toBe("cache");
+  });
+
+  it("a quoted id is the same id", () => {
+    expect(parsed(`intent:"${ID}"`).intent).toBe(ID);
+  });
+
+  it("no intent: leaves the field absent", () => {
+    expect("intent" in parsed("cache strategy")).toBe(false);
+  });
+
+  it("repeating the same id is harmless; two different ids are refused", () => {
+    expect(parsed(`intent:${ID} intent:${ID}`).intent).toBe(ID);
+    expect(errorOf(`intent:${ID} intent:int_000000000000000000000000`)).toMatch(/one intent:/);
+  });
+
+  it("rejects a malformed id, naming the form", () => {
+    for (const bad of [
+      "intent:int_short",
+      "intent:INT_AbCdEfGhIjKlMnOpQrStUv01",
+      "intent:int_AbCdEfGhIjKlMnOpQrStUv012",
+      "intent:int_AbCdEfGhIjKlMnOpQrStU-01",
+      "intent:As-a-developer",
+      'intent:"As a developer working on X"',
+    ]) {
+      expect(errorOf(bad), bad).toMatch(/intent: takes an intent id \(int_ and 24 letters or digits\)/);
+    }
+    expect(errorOf("intent:")).toMatch(/intent: needs a value/);
+  });
+
+  it("refuses a group and a negation", () => {
+    expect(errorOf(`intent:(${ID} OR int_000000000000000000000000)`)).toMatch(/one intent:/);
+    expect(errorOf(`-intent:${ID}`)).toMatch(/-intent: is not supported/);
+  });
+
+  it("composes with every other qualifier (S6a-Q3)", () => {
+    const q = parsed(`is:draft intent:${ID} impact:high -uncertainty:low author:me after:2026-10-01 "cache" strategy`);
+    expect(q.intent).toBe(ID);
+    expect(q.isDraft).toBe(true);
+    expect(q.impact?.equals).toBe("high");
+    expect(q.uncertainty?.excluded).toEqual(["low"]);
+    expect(q.authors).toEqual({ kind: "listed", values: [AUTHOR_ME] });
+    expect(q.after).toBe("2026-10-01");
+    expect(q.lexicalGroups).toEqual([["cache"]]);
+    expect(q.semanticText).toBe("strategy");
+  });
+
+  it("hostile values never parse", () => {
+    for (const input of [
+      `intent:${ID}';DROP TABLE claimnet.traces;--`,
+      `intent:"${ID}' OR 1=1 --"`,
+      "intent:int_%%%%%%%%%%%%%%%%%%%%%%%%",
+      `intent:${ID}%00`,
+    ]) {
+      expect(parseSearchQuery(input).ok, input).toBe(false);
+    }
   });
 });

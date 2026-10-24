@@ -788,6 +788,7 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
             ...(result.searchId ? { searchId: result.searchId } : {}),
             ...(result.searchedCorpusSize !== undefined ? { searchedCorpusSize: result.searchedCorpusSize } : {}),
             ...(result.searchedOwnExcluded !== undefined ? { searchedOwnExcluded: result.searchedOwnExcluded } : {}),
+            ...(result.intentNotRecognized ? { intentNotRecognized: true } : {}),
             ...data,
           };
         }
