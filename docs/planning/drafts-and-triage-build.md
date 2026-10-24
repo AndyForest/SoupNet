@@ -1805,7 +1805,7 @@ What was done with each finding of the verification record above:
 - **Refusals that said "verify" on a rejection call:** the write-access refusal now says "resolving it needs write access … Resolve it with a key that can write <book>, or hand the review link to the person it is about". The headless refusal keeps slice 5's wording ("cannot verify drafts"), which is still true of every outcome.
 - **Headless key with a mistyped outcome gets the outcome refusal first:** left as is. Both refusals are decided before any lookup and neither depends on the id, so the order reveals nothing; the outcome refusal is input validation and comes first on every key.
 - **Version skew:** a backend from before 6c ignores `outcome`, so a stdio `.mcpb` built from this branch and pointed at an older backend would publish a draft it meant to reject. The remote MCP tool is served by the backend itself and cannot skew. Deploy the backend before releasing a `.mcpb` that sends `outcome`; the PR says so.
-- **Gate runs:** `TESTCI_PGPORT=5544 npm run test:ci` exit 0 at `f273fb2` (133 files and 1,899 tests passed; 2 files and 6 tests skipped); scoped verbose run `drafts-resolution.test.ts` 13/13 with `drafts.test.ts` 45/45; the verifier's run at `9c96fdd` exit 0. The run after these fixes is recorded below when it lands.
+- **Gate runs:** `TESTCI_PGPORT=5544 npm run test:ci` exit 0 at `f273fb2` (133 files and 1,899 tests passed; 2 files and 6 tests skipped); scoped verbose run `drafts-resolution.test.ts` 13/13 with `drafts.test.ts` 45/45; the verifier's run at `9c96fdd` exit 0. After these fixes, `TESTCI_PGPORT=5544 npm run test:ci` exit 0 at `bfd6ba4` (133 files and 1,902 tests passed; 2 files and 6 tests skipped).
 
 ### Slice 6a rubric: the intent link (stream B)
 
