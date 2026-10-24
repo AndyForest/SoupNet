@@ -464,7 +464,7 @@ describe("BRIEFING.build — slice 7: the planned content (7c)", () => {
     expect(divergent).toContain("wait for the choice, then check only the chosen one.");
     expect(divergent).toContain("when every option will genuinely be pursued, check each as an ordinary recipe");
     expect(divergent).toContain("when you can't stand behind any yet, draft each under one intent, with the rubric for choosing stated first");
-    expect(divergent).toContain("check the chosen path with the outcome as evidence and leave feedback on the rest");
+    expect(divergent).toContain("check the chosen path, the outcome as evidence, and leave feedback on the rest");
   });
 });
 
@@ -490,6 +490,10 @@ describe("BRIEFING.build — slice 7: the field additions (7d)", () => {
       // Stream D (8a): an outcome row may join the intent alone; the headless
       // section's closing outcome row needs this target.
       expect(section(text, "## Closing the loop — feedback")).toContain("A whole-session outcome row with no single recipe can carry your intent_id alone.");
+      // Recipe 885143c2 (supersedes 303e17cf): the MCP search includes the
+      // caller's own recipes by default again; stream D flips the tool in 8a.
+      expect(section(text, "## How to check")).toContain("It includes your own recipes: `author:<email>` narrows to one person, `-author:me` leaves yours out");
+      expect(text).not.toContain("exclude your own recipes by default");
       // S7-D7: a probe is a search.
       expect(section(text, "## How to check")).toContain("Probing the corpus (what's there, how a role clusters) is a search too");
     });
