@@ -928,7 +928,8 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
   // ── verify_draft tool ──────────────────────────────────────────────────────
   //
   // Drafts-and-triage slice 2: the one agent operation that changes a draft's
-  // state (a separate tool rather than a mode of check_recipe or a kind of
+  // state, resolving it as verified, rejected, or not chosen (slice 6c)
+  // (a separate tool rather than a mode of check_recipe or a kind of
   // feedback row, so each tool keeps one contract — recipe 6201b444; the
   // design names exactly one new agent operation). REST twin:
   // POST /recipes/:id/verify. The service holds every rule
@@ -943,9 +944,14 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
     {
       recipe_id: z.string().describe(MCP_PARAM_DESCRIPTIONS.draftRecipeId),
       supporting_evidence: z.string().describe(MCP_PARAM_DESCRIPTIONS.verificationEvidence),
+      // A plain string, not an enum (slice 6c): the service judges it, so an
+      // unknown value and an evidence problem are named in one refusal, and an
+      // unknown value stores nothing (fails closed). Precedent: the triage
+      // ratings (recipe 10e3d7e1), which take the lenient side instead.
+      outcome: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.draftOutcome),
     },
     {
-      title: "Verify a draft",
+      title: "Resolve a draft",
       // A one-way state change plus appended evidence: not read-only, not
       // destructive, and a repeat is refused rather than repeated.
       readOnlyHint: false,
@@ -953,9 +959,9 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
       idempotentHint: false,
       openWorldHint: false,
     },
-    async ({ recipe_id, supporting_evidence }) => {
+    async ({ recipe_id, supporting_evidence, outcome }) => {
       try {
-        const result = await verifyDraft(getDb(), { principal, recipeId: recipe_id, evidence: supporting_evidence });
+        const result = await verifyDraft(getDb(), { principal, recipeId: recipe_id, evidence: supporting_evidence, outcome });
         return { content: [{ type: "text" as const, text: describeVerifyResult(result) }] };
       } catch (err) {
         return { content: [{ type: "text" as const, text: toolErrorText(err, "verify_draft") }] };

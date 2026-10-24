@@ -925,10 +925,13 @@ export const MCP_TOOL_DESCRIPTIONS = {
 
   /** Shared by HTTP and stdio MCP (drafts-and-triage slice 2): the one agent
    *  operation that changes a draft's state. Its REST twin is
-   *  POST /recipes/:id/verify. */
+   *  POST /recipes/:id/verify. Slice 6c: the revision doc's 7b wording, with
+   *  the three outcomes; "once they confirm it" read as a rule that the person
+   *  must be asked, which ruling 46 and recipe 200ed4fe say it is not. */
   verifyDraft:
-    "Publish your user's draft recipe once they confirm it, with new evidence quoting their " +
-    "answer and a citation. Evidence that adds nothing new is refused.",
+    "Publish, reject, or mark not chosen a draft about your user once you or they can stand " +
+    "behind the answer: new evidence quoting their words, or the context that settles it. " +
+    "Evidence that adds nothing new is refused.",
 
   /** HTTP-only today; stdio may grow this tool later. */
   listMyRecipeBooks:
@@ -1103,9 +1106,18 @@ export const MCP_PARAM_DESCRIPTIONS = {
   /** verify_draft's id param. */
   draftRecipeId: "The draft's id (full UUID or 8+ char short id).",
 
-  /** verify_draft's evidence param: the same entry shape as check_recipe's. */
+  /** verify_draft's evidence param: the same entry shape as check_recipe's.
+   *  Slice 6c: a rejection may quote a covering verified recipe, cited by id. */
   verificationEvidence:
-    "Your interpretation, then > the person's answer verbatim, then -- where they said it.",
+    "Your interpretation, then > the person's answer or a covering recipe's words, verbatim, " +
+    "then -- where they were said (or recipe <id>).",
+
+  /** verify_draft's outcome param (slice 6c). The values sit in the
+   *  description, not in a schema enum: the service refuses an unknown one
+   *  and names it with any evidence problem in one reply. */
+  draftOutcome:
+    "verified (default) | rejected | not_chosen. Reject when it does not hold or a verified " +
+    "recipe covers it (cite its id).",
 } as const;
 
 /** Compose the full check_recipe tool description, optionally with the file-attachment sentence. */
