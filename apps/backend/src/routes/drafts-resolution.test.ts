@@ -360,6 +360,14 @@ describe.skipIf(!BASE || !canConnect())("agent-side resolution of a draft (draft
     expect(after["draft_state"]).toBe("rejected");
     expect(after["user_id"]).toBe(dana.userId);
     expect(after["subject_user_id"]).toBe(pat.userId);
+
+    // Ruling 56: the rejected draft stays Dana's, so she sees the evidence
+    // Pat's agent attached (why her hypothesis did not hold); S4-M3 keeps
+    // only the resolution columns and the resolving key from her.
+    const d = ((await (await call(dana, "GET", `/traces/${id}`)).json()) as { data: Json }).data;
+    expect(d).toMatchObject({ draftState: "rejected", draftAbout: pat.email, draftResolvedAt: null, draftResolvedByEmail: null, draftResolvedByViewer: false });
+    expect(d["draftResolvedByKeyId"] ?? null).toBeNull();
+    expect((d["references"] as Array<{ quote: string }>).map((q) => q.quote)).toContain(`settled pat rejects dana's ${run}`);
   });
 
   it("S6c-A3 / DT-VER-07: Sam's key gets a random id's answer for every outcome on Pat's draft, on MCP and REST", async () => {

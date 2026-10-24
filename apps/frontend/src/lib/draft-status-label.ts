@@ -133,7 +133,8 @@ export function draftStatusLabel(t: DraftStatusLike): { text: string; title: str
       };
     case "rejected":
       // The depositor of a draft about someone else did not resolve it, and
-      // is not told whether the person or their agent did ([F83], S4-M3).
+      // this line does not say whether the person or their agent did ([F83],
+      // S4-M3); evidence an agent attached shows below it (ruling 56).
       if (t.draftAbout) {
         return { text: `Rejected draft${when}`, title: `${t.draftAbout} rejected this draft. It stays private to them and to you.` };
       }
