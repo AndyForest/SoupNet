@@ -1820,7 +1820,93 @@ Run by the browser-verify skill at `5b11a7b` on an isolated stack (the worktree'
 
 ### Slice 6a rubric: the intent link (stream B)
 
-Rubric to be written by stream B from the revision doc's 6a and 6f before implementation.
+Written 2026-10-24 by agent `a-drafts-6a-2026-10-24` (stream B), before implementation, from the revision doc's 6a and 6f, the implementation plan's stream B, and the code at `32ffa5c`. Consumer: agent (`intent:` on `search_recipes` and `/check?filter=`, the orchestrator's poll) and human (the review queue's intent groups, `intent:` in the queue's search box). Security-relevant: yes. The slice adds a stored link from a recipe to a private per-user object and a qualifier that selects by it, so the qualifier must not become an oracle for other people's intents, and the link must not widen anyone's view of a recipe or of an intent's story. The queue page changes, so the slice also gets a browser verification run.
+
+Settled before this rubric (not reopened here): the qualifier is a selection, built outside the five ranking files as the rating filters were (ruling 23); an intent is the set, no option-set entity (revision doc §Considered and set aside); no MCP tool and no REST route for intents in this slice (slice 9 owns those); export carries the link, and import restores it only for the importer's own intents (6a).
+
+**Decisions this rubric makes**, each recorded in the build notes with its reasoning, and each a reversible call:
+
+1. **Which intent a deposit links to.** The intent the check itself resolved: an `int_…` id the server matched to the caller's own intent, or the intent the same check registered from story text (the check's `intentId` echo). Both are the caller's own by construction, and an orchestrator's first check often registers. Never raw client text, never an id that did not resolve (unknown, another user's, budget exceeded, oversize story): those deposit with `intent_id` NULL, as today.
+2. **Whose intents the qualifier selects by.** The viewer's own only. `intent:<id>` resolves the id against the viewer's intents; an unknown id and another person's id yield the same empty set and the same note. Within the viewer's own intent, the ordinary visibility rules still decide which recipes come back.
+3. **`intent:` lifts the surface's exclude-own default**, as `is:draft` does (ruling 24): every recipe under the viewer's own intent was deposited by the viewer, so with the default applied the poll would always come back empty.
+4. **Queue headings show only the viewer's own intents.** A draft about Pat that Dana's agent deposited under Dana's intent is listed ungrouped in Pat's queue: Dana's intent story is never shown to Pat.
+5. **No foreign key** on `traces.intent_id`, in the house style of `traces.user_id` and `check_feedback.intent_id`; a link whose intent is gone (its owner's account erased) is inert, since every read resolves the id against the viewer's intents.
+
+Cast, as in the feature file: Pat (the key's owner), Sam (a member of Pat's shared book), Dana (a writer of the shared book who deposits on Pat's behalf). Intents: I1 and I2 are Pat's; J1 is Sam's; D1 is Dana's.
+
+**Baselines**, measured by this agent at `32ffa5c` with the slice 1 method (after re-pointing the worktree's `node_modules/@soupnet/*` junctions, which pointed at the worktree's old location and so resolved the main checkout's packages):
+
+| Measure | Value | Cap (after A0) | Headroom |
+|---|---|---|---|
+| Remote `tools/list` | 16,986 bytes | 18,200 | 1,214 |
+| Shared descriptions | 6,051 characters | 6,600 | 549 |
+| `searchQuery` parameter description | 415 characters | | |
+
+**Storage and the one writer**
+
+| # | Criterion | Evidence the verifier looks for |
+|---|---|---|
+| S6a-S1 | `traces` gains one nullable column, `intent_id text`, no default, no foreign key, with a schema comment naming its one writer and its read rule, and one partial index `(intent_id) WHERE intent_id IS NOT NULL` serving the qualifier. One Drizzle migration with no `UPDATE`; every existing row reads NULL; `npm run check:data-model` passes with the regenerated doc. | Migration SQL reviewed; data-model check output. |
+| S6a-S2 | The deposit writes it in the one deposit statement (`INSERT INTO claimnet.traces` in `trace.service.ts`), from `resolveIntent`'s result only (decision 1). A check carrying an unknown id, another user's id, an over-budget registration, or an oversize story deposits with NULL. | Layer 3: one check per case, the row read back. |
+| S6a-S3 | First write wins: an identical repeat under a different intent keeps the stored `intent_id` (the ratings rule, DT-RAT-08). | Layer 3: deposit under I1, repeat under I2, read I1. |
+| S6a-S4 | Nothing else writes it: no `UPDATE` of `claimnet.traces` and no Drizzle `.update(traces…)` anywhere in `apps/backend/src` names the column; the only inserts that set it are the deposit and the import (S6a-E2). Verification (`verify_draft`, its REST twin, the queue's reactions and not chosen, stream A's outcomes), moves, and the on-behalf author flip leave it as deposited. | A static test in the `deposit-level.test.ts` style listing the two writers; Layer 3: an I1 draft verified, and an I1 recipe moved to another book, keep I1. |
+
+**The qualifier**
+
+| # | Criterion | Scenarios | Evidence |
+|---|---|---|---|
+| S6a-Q1 | The grammar accepts `intent:<id>` where the id has the `int_` shape (`int_` and 24 letters or digits). One value per query; a malformed value, a second `intent:`, a group (`intent:(a OR b)`), and `-intent:` are each a loud parse error naming the form. The unknown-qualifier help lists `intent:`. | | Layer 1 table tests in `search-query.test.ts`; 100% branch coverage of the new parser branch. |
+| S6a-Q2 | For the viewer's own intent, the qualifier keeps exactly the recipes whose `intent_id` is that id, ANDed with every other selection and with the visibility rule; it only removes rows. With semantic text the pipeline's order among the kept rows is unchanged (the S3-G7 shape). | | Layer 3 on `search_recipes`: deposits under I1 and I2; `intent:I1` returns only I1's; `intent:I1` plus semantic text returns I1's in the same relative order as the same text without the qualifier. |
+| S6a-Q3 | It composes with every existing qualifier: `is:draft intent:I1` returns exactly Pat's unresolved drafts under I1 (the orchestrator's poll, field item 5) and none of another session's drafts made in the same hour; `-is:draft`, `author:`, `after:`/`before:`, `impact:`/`uncertainty:`, and quoted terms each narrow it as they narrow any query. | DT-OPT-01 | Layer 3: one test per qualifier pairing on `search_recipes`. |
+| S6a-Q4 | Decision 3: `intent:I1` on `search_recipes` returns Pat's own recipes under I1 without `author:me`; `-author:me intent:I1` returns none. | | Layer 3. |
+| S6a-Q5 | Not an oracle: `intent:J1` (Sam's real intent, over Sam's published recipes in a book Pat reads) and `intent:` with a random well-formed id give Pat byte-identical answers after replacing volatile ids and timestamps: zero results and one note that the intent id was not recognized (unknown or not yours, deliberately indistinguishable). Pat's own intent with nothing under it gives zero results without that note. | | Layer 3 byte comparison on `search_recipes` and `/check?filter=` (JSON), and on the queue route (S6a-G4). |
+| S6a-Q6 | Visibility holds under the qualifier: Dana's on-behalf draft about Pat deposited under D1 is returned to Dana by `intent:D1` and to nobody by `intent:D1` on another account; after Pat verifies it, it stays under D1 (S6a-S4), so Dana still finds it with `intent:D1` and Pat does not (D1 is not his). Sam never sees Pat's unresolved I1 drafts by any query. | | Layer 3. |
+| S6a-Q7 | Three-surface parity: remote MCP `search_recipes`, `/check?filter=` (JSON and HTML), and the stdio server's search forwarding return the same set for the same query and key. The `/check` search help lists `intent:`. | | Layer 3 per surface; the stdio forwarding test passes. |
+| S6a-Q8 | Ranking isolation: `intent` (and `intentId`, `intent_id`) joins the guard's forbidden terms for the five ranking files; the selection is built in `search-selection.ts` and reaches the pipeline as an opaque `TraceSelection`. The guard passes; `ranking-regression.test.ts` is unchanged and green. | | `ranking-isolation.test.ts` diff; a mutation (naming `intent_id` in `vector-search.service.ts`) fails it. |
+| S6a-Q9 | The ownership lookup is one read of `claimnet.intents` by primary key and user, made only when the query has `intent:`; it does not touch `last_used_at` (a search by intent is a read, not a use of the intent). No query without `intent:` gains a statement. | | Code review; Layer 3: `last_used_at` unchanged after an `intent:` search. |
+
+**The review queue**
+
+| # | Criterion | Scenarios | Evidence |
+|---|---|---|---|
+| S6a-G1 | `GET /traces/drafts` items carry `intent: { id, story } \| null`, set only when the draft's intent is the viewer's own (decision 4); the id-list form carries it the same way. | DT-OPT-01 | Layer 3: Pat's I1 drafts carry I1 and its story; Dana's D1 draft about Pat carries `null` in Pat's queue and D1 in Dana's. |
+| S6a-G2 | Triage listing: drafts sharing one of the viewer's intents are contiguous, the group sitting where its highest-placed member would sit in today's triage order, members in triage order within it; drafts with no own intent keep today's relative order. Paging applies to that order, so a group may continue onto the next page. | DT-OPT-01 | Layer 3 with a fixture of mixed ratings across I1, I2, and ungrouped drafts: the exact id order asserted; a Layer 1 test of the grouping function. |
+| S6a-G3 | With semantic text the page keeps the similarity order apart from pulling a group's later members up beside its first (stable); the id-list form keeps the link's order (S3-L1) and groups only adjacent runs. | | Layer 3 for the semantic case; Layer 1 for the link case. |
+| S6a-G4 | `intent:I1` works in the queue's search box and lists only Pat's I1 drafts; `intent:` with a foreign or random id lists nothing and shows the same note as search (S6a-Q5). | | Layer 3 on the route; frontend unit test of the note. |
+| S6a-G5 | The page renders each group under a heading holding the intent's story (shortened past 200 characters, with the full story in the accessible name), and a link that filters the queue to that intent (`/app/drafts?q=intent:<id>`). Ungrouped drafts render as today. Every existing queue test and the e2e drafts suites pass unchanged. | DT-OPT-01 | Frontend unit test of the grouping render; browser run. |
+
+**Export and import**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| S6a-E1 | `GET /auth/me/export` carries `intentId` on each trace, additive and nullable (`schemaVersion` stays 1), and only when that intent is the exporter's own: an exported recipe whose intent belongs to someone else (a verified on-behalf recipe under Dana's D1, now Pat's) carries `null` in Pat's export. | Layer 3 on the export. |
+| S6a-E2 | Import restores `intentId` only when the id names an intent of the importer's (`intents.user_id` = importer); a foreign, unknown, or malformed id is dropped to NULL and the row is imported otherwise unchanged. A row kept as skipped-identical keeps its stored link (import never changes an existing row). | Layer 3: export, delete, re-import restores I1; a file naming Sam's J1 or a random id imports with NULL; `import-validate.test.ts` covers the new optional field. |
+
+**Budgets**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| S6a-Z1 | One grammar term in the `searchQuery` parameter description (the qualifier and its exclude-own effect), and nothing else in any tool or parameter description. Bytes before and after recorded in `spec-decision-log.md`: remote `tools/list` (16,986 before), stdio `tools/list`, shared descriptions (6,051 before); all under the A0 caps, which this slice does not edit. | Size tests green; the decision-log entry. |
+| S6a-Z2 | The deposit adds no statement and no round trip (the column is one more value in the existing `INSERT`); the queue adds no statement beyond one join to `claimnet.intents` in the listing it already runs. | Code review. |
+
+**Authorization and audit**
+
+- The layer touched is the read side of the search grammar and the queue listing; neither gains a book-scope or draft condition of its own. Every recipe the qualifier returns still passes `traceVisibleTo` / `traceIdVisibleTo` and the book scope, and `check:authz-seam` passes with only registered fingerprint changes (a traces read the slice adds to the queue listing is registered with its `why`).
+- Uniform answers kept: S6a-Q5 (foreign and random intent ids); the slice 2 to 4 by-id comparisons and S3-L2 unchanged.
+- Audit rows: none new. `recipe.checked` and `check.searched` already stamp `intentId` (Phase C); the deposit's row is unchanged.
+
+**Surfaces that must change:** `packages/db/src/schema/traces.ts`, one migration, the regenerated data-model doc; `trace.service.ts` (the deposit `INSERT`; `resolveStructuredFilters` and the exclude-own rule; the not-recognized note); `intent.service.ts` (a read-only ownership lookup); `search-selection.ts` (the selection); `packages/domain/src/search-query.ts` (the qualifier); `draft-queue.service.ts` and the drafts route (the `intent` field, the grouping order, the note); `apps/frontend/src/lib/draft-queue.ts` and `DraftQueuePage.tsx` (headings); `routes/auth.ts` export and `import.service.ts` / `import-validate.ts`; `routes/check.ts` (the search help line only); `MCP_PARAM_DESCRIPTIONS.searchQuery`; `ranking-isolation.test.ts`; `drafts-and-triage.feature` (DT-OPT-01 reworded to what ships, out of `@unreleased` when it passes); `drafts-and-triage-read-paths.md`; `spec-decision-log.md`; `CLAUDE.md`'s qualifier list.
+
+**Surfaces that must NOT change:** the five ranking files and `ranking-regression.test.ts`; the visibility fragments (`authz/draft-sql.ts`, `trace-access.ts`) and `resolveDraft`; `resolveIntent`'s registration and join semantics, `intent_shown`, and every intent echo line; the verify path (stream A's); the cap constants (A0's); every tool description and every parameter description but `searchQuery`; the briefing.
+
+**Security properties the verifier must see proven**
+
+- The link is written only from an intent the server resolved to the depositor, at deposit, and never changed afterwards (S6a-S2, S6a-S4); import cannot attach a recipe to anyone else's intent (S6a-E2).
+- `intent:` reveals nothing about intents that are not the viewer's (S6a-Q5, S6a-G4), and widens no one's view of a recipe (S6a-Q6).
+- No intent story reaches anyone but its owner (S6a-G1, decision 4); no export carries another person's intent id (S6a-E1).
+- Ranking never reads the link (S6a-Q8).
+
+**Briefing-copy declaration.** The `searchQuery` parameter description is agent-facing copy under [../briefing-specs/README.md](../briefing-specs/README.md) §The regression rule. The PR appends one `spec-decision-log.md` entry (mirrored in the commit body) with the bytes before and after and the scenario it moves (DT-OPT-01). The briefing's own description of the grammar is stream C's.
 
 ### Slice 7 rubric: briefing copy (stream C)
 
