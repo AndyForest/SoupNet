@@ -92,6 +92,9 @@ briefing.get("/", async (c) => {
       text: result.text,
       groups: result.groups,
       exemplarCount: result.exemplarCount,
+      // The briefing.issued row's id: a feedback row's briefing_id (slice
+      // 8a, S8a-O4). The stdio proxy renders it as the briefing's last line.
+      ...(result.briefingId ? { briefingId: result.briefingId } : {}),
     },
   });
 });

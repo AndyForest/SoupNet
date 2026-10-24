@@ -3,6 +3,8 @@ import {
   renderCheckResponseMarkdown,
   fenceCheckResponseMarkdown,
   buildOwnExcludedNote,
+  ownExcludedLead,
+  ownExcludedQuery,
 } from "./check-response-renderer";
 import type { CheckResponseJson } from "./check-response-renderer";
 
@@ -391,6 +393,52 @@ describe("buildOwnExcludedNote (cold-start v2 Phase A)", () => {
     expect(text).toContain("No matches among the 5 recipes in scope");
     expect(text).toContain("all 5 are your own recipes");
     expect(text).toContain("thin-corpus signal");
+  });
+});
+
+// drafts-and-triage slice 8a (S8a-E1, S8a-E2): when every match was hidden
+// by the exclude-own default, lead with the same query including them.
+describe("ownExcludedLead / ownExcludedQuery", () => {
+  it("prefixes the query as sent with author:me", () => {
+    expect(ownExcludedQuery("retry policy \"backoff\"")).toBe('author:me retry policy "backoff"');
+  });
+
+  it("is empty when nothing of the caller's was excluded", () => {
+    expect(ownExcludedLead({ filter: "x", ownExcluded: undefined, corpusSize: 5 })).toBe("");
+    expect(ownExcludedLead({ filter: "x", ownExcluded: 0, corpusSize: 5 })).toBe("");
+  });
+
+  it("names the count and gives the query ready to paste", () => {
+    expect(ownExcludedLead({ filter: "retry policy", ownExcluded: 3, corpusSize: 10 })).toBe(
+      "Your own recipes were left out by default (3 of the 10 in scope). The same search including them: author:me retry policy",
+    );
+  });
+
+  it("is the line right after the header in the zero-result search markdown, ahead of the existing note", () => {
+    const text = renderCheckResponseMarkdown({
+      ok: true,
+      data: {
+        searchOnly: true,
+        filter: "retry policy",
+        searchId: "s1",
+        results: [],
+        totalResults: 0,
+        searchedCorpusSize: 5,
+        searchedOwnExcluded: 5,
+      },
+    });
+    const lines = text.split("\n");
+    expect(lines[0]).toBe('Read-only search for "retry policy".');
+    expect(lines[1]).toBe("Your own recipes were left out by default (5 of the 5 in scope). The same search including them: author:me retry policy");
+    expect(text).toContain("all 5 are your own recipes");
+  });
+
+  it("leaves zero-result markdown unchanged when nothing of the caller's was excluded", () => {
+    const text = renderCheckResponseMarkdown({
+      ok: true,
+      data: { searchOnly: true, filter: "x", results: [], totalResults: 0, searchedCorpusSize: 5 },
+    });
+    expect(text).not.toContain("author:me");
   });
 });
 

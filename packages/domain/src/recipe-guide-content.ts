@@ -905,9 +905,9 @@ export const MCP_TOOL_DESCRIPTIONS = {
   logFeedback:
     "Log feedback on a PRIOR recipe check: what it surfaced and what you did with it (kind " +
     "'check-feedback'), an operational finding ('operational'), or a session wrap-up ('outcome'). " +
-    "Joined to the check by its recipe id (full UUID or 8+ char short id). Null results are worth " +
-    "a row too. Mid-flow, prefer the feedback param on your next check_recipe; this tool fits " +
-    "end-of-session rows.",
+    "Target: the check's recipe id (or its short id), a search or briefing id, or, for " +
+    "an outcome row, the intent alone. Null results earn a row. Mid-flow, " +
+    "prefer the feedback param on your next check_recipe; this tool fits end-of-session rows.",
 
   /** Identical across both MCP surfaces (WT-3 retrieval API). */
   getRecipes:
@@ -1048,8 +1048,8 @@ export const MCP_PARAM_DESCRIPTIONS = {
 
   /** get_recipes — the id list (WT-3 retrieval API). */
   recipeIds:
-    "Recipe ids — full UUIDs or 8+ char short-id prefixes (comma- or whitespace-separated, up " +
-    "to 20). Each resolves independently; unresolvable ids return a not_found_or_unreadable " +
+    "Recipe ids, up to 20: an array, or one comma- or whitespace-separated string; full UUIDs or " +
+    "8+ char short-id prefixes. Each resolves independently; unresolvable ids return a not_found_or_unreadable " +
     "marker, an ambiguous prefix names its candidates; the batch never fails.",
 
   /** get_briefing recipe_ids — same lookup, phrased for the onboarding call. */

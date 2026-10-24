@@ -261,8 +261,8 @@ const TRACE_READS = {
     why: "the reaper: deletes an expired workspace's recipes (RP-38)",
   },
   "apps/backend/src/services/feedback.service.ts": {
-    n: 19, fp: "afbcb00162f0", composes: true,
-    why: "feedback target ACL: prefix scan and readable set use traceReadableById (RP-11, RP-18); check_feedback inserts and the per-key budget count are writes and the caller's own rows",
+    n: 26, fp: "c7490c2928a4", composes: true,
+    why: "feedback target ACL: prefix scan and readable set use traceReadableById (RP-11, RP-18); check_feedback inserts and the per-key budget count are writes and the caller's own rows; search, briefing, and intent-only rows (slice 8a) attach only to the caller's user's own audit rows or intents, with dedup lookups on the caller's key",
   },
   "apps/backend/src/services/import.service.ts": {
     n: 14, fp: "e60103d132b7", composes: false,
@@ -285,7 +285,7 @@ const TRACE_READS = {
     why: "corpus mode rows and honest total use traceVisibleTo (RP-41); vector loads are by id for filtered results (RP-42)",
   },
   "apps/backend/src/services/trace.service.ts": {
-    n: 10, fp: "7c01a110f3cf", composes: true,
+    n: 10, fp: "224cd43fd6e4", composes: true,
     why: "deposit INSERT (the on-behalf subject from the module's naming rule, S4-M1; the draft state forced for a headless key by keyForcesDrafts, S5-M3), the depositing key's own idempotency row with its subject through onBehalfSubjectOf (RP-04, S4-L4), session ledger ids (RP-05), and zero-result scope counts that use traceVisibleTo (RP-03)",
   },
   "apps/backend/src/services/trace-delete.service.ts": {

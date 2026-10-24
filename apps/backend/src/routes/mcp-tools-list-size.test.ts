@@ -158,10 +158,12 @@ describe("remote MCP tools/list as served (drafts-and-triage slice 1)", () => {
     }
   });
 
+  // briefing_id joined the row fields in slice 8a (a briefing as a feedback
+  // target, S8a-O5); every field declared before stays.
   it("log_feedback's own schema keeps every row field it declared before slice 1", async () => {
     const props = tool((await servedToolsList()).tools, "log_feedback").inputSchema.properties ?? {};
     expect(Object.keys(props).sort()).toEqual([
-      "agent_id", "disposition", "harness", "harness_version", "impact", "intent_id", "kind", "model",
+      "agent_id", "briefing_id", "disposition", "harness", "harness_version", "impact", "intent_id", "kind", "model",
       "note", "related_trace_ids", "search_id", "session_id", "story", "story_fulfilled", "top_similarity", "trace_id",
     ]);
     expect(props["impact"]?.["description"]).toBe("none | new | subtle | big | operational");

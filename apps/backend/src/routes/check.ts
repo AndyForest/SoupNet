@@ -15,7 +15,7 @@ import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { authenticateKey, keyForcesDrafts } from "../authz";
 import type { Principal } from "../authz";
-import { HTML_ACCEPT_TYPES, renderCheckResponseMarkdown, fenceCheckResponseMarkdown, parseVerbosity, renderRatingsMarkdown, isShownDraftState, parseDraftFlag, draftLabel } from "@soupnet/domain";
+import { HTML_ACCEPT_TYPES, renderCheckResponseMarkdown, fenceCheckResponseMarkdown, parseVerbosity, renderRatingsMarkdown, isShownDraftState, parseDraftFlag, draftLabel, ownExcludedQuery } from "@soupnet/domain";
 import type { CheckResponseJson } from "@soupnet/domain";
 import type { Recipe } from "@soupnet/contracts";
 import { TRIAGE_RATING_VALUES } from "@soupnet/contracts";
@@ -456,10 +456,17 @@ function buildSearchOnlyJsonResponse(
   response["data"] = {
     searchOnly: true,
     filter,
-    notice: buildSearchOnlyNotice(result),
+    // The filter rides along so the stdio surface (which applies the
+    // exclude-own default here) gets the same author:me lead as the remote
+    // tool; with nothing of the caller's excluded the notice is unchanged
+    // (slice 8a, S8a-E1/E2).
+    notice: buildSearchOnlyNotice(result, filter),
     ...(result.searchId ? { searchId: result.searchId } : {}),
     ...(result.searchedCorpusSize !== undefined ? { searchedCorpusSize: result.searchedCorpusSize } : {}),
     ...(result.searchedOwnExcluded !== undefined ? { searchedOwnExcluded: result.searchedOwnExcluded } : {}),
+    ...(result.totalResults === 0 && (result.searchedOwnExcluded ?? 0) > 0
+      ? { ownExcludedQuery: ownExcludedQuery(filter) }
+      : {}),
     ...data,
   };
   return response;

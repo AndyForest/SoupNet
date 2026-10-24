@@ -352,7 +352,9 @@ describe.skipIf(!BASE || !canConnect())("drafts for the key's own user (drafts-a
   it("S2-B3 / DT-VIS-04: get_briefing with recipe_ids naming the draft is the uniform marker", async () => {
     const real = await mcp(samKey, "get_briefing", { recipe_ids: draftId });
     const random = await mcp(samKey, "get_briefing", { recipe_ids: RANDOM_UUID });
-    const section = (t: string) => t.slice(t.indexOf("## Requested recipes"));
+    // Up to the briefing id line (slice 8a), which names each call's own
+    // briefing.issued row and so differs between any two calls.
+    const section = (t: string) => t.slice(t.indexOf("## Requested recipes")).replace(/\n\nBriefing id: [0-9a-f-]{36}[^\n]*$/, "");
     expect(norm(section(real.text), draftId)).toBe(norm(section(random.text), RANDOM_UUID));
     expect(real.text).not.toContain(MARKER);
   });

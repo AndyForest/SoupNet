@@ -30,6 +30,30 @@ describe("parseRecipeIds", () => {
   it("does not validate UUID shape (malformed ids flow through to markers)", () => {
     expect(parseRecipeIds("not-a-uuid")).toEqual(["not-a-uuid"]);
   });
+
+  // S8a-I1, S8a-I2 (drafts-and-triage slice 8a): three field sessions sent a
+  // JSON array, either as an array or as its text; both resolve the ids inside.
+  it("accepts an array of ids, each entry split like the string form", () => {
+    expect(parseRecipeIds(["a", "b", "a"])).toEqual(["a", "b"]);
+    expect(parseRecipeIds(["a, b", " c "])).toEqual(["a", "b", "c"]);
+    expect(parseRecipeIds([])).toEqual([]);
+  });
+
+  it("reads a string that is itself a JSON array as the ids inside it", () => {
+    expect(parseRecipeIds('["a","b"]')).toEqual(["a", "b"]);
+    expect(parseRecipeIds("[ 'a', 'b' ]")).toEqual(["a", "b"]);
+    expect(parseRecipeIds(['["a"]', '"b"'])).toEqual(["a", "b"]);
+  });
+
+  it("strips only surrounding brackets and quotes, so a stray character inside an id still yields a marker", () => {
+    expect(parseRecipeIds('a"b')).toEqual(['a"b']);
+    expect(parseRecipeIds("a]b")).toEqual(["a]b"]);
+    expect(parseRecipeIds('[""]')).toEqual([]);
+  });
+
+  it("ignores non-string entries rather than throwing", () => {
+    expect(parseRecipeIds(["a", 7 as unknown as string, null as unknown as string])).toEqual(["a"]);
+  });
 });
 
 describe("renderRecipeEntries", () => {

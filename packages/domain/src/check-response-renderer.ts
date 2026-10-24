@@ -303,6 +303,12 @@ export function renderCheckResponseMarkdown(
   let text = data.searchOnly
     ? `Read-only search${data.filter ? ` for "${data.filter}"` : ""}.\n`
     : `Recipe checked as #${data.checked?.recipeId ?? "?"}\n`;
+  // Zero results with the caller's own excluded: the same search including
+  // them leads, right under the header (slice 8a, S8a-E1).
+  if (data.searchOnly && data.filter && (data.results ?? []).length === 0) {
+    const lead = ownExcludedLead({ filter: data.filter, ownExcluded: data.searchedOwnExcluded, corpusSize: data.searchedCorpusSize });
+    if (lead) text += `${lead}\n`;
+  }
   if (!data.searchOnly && data.checked) {
     // Triage ratings echo (drafts-and-triage slice 1): a line only when the
     // agent rated or a rating needs explaining, so agents that never rate
@@ -429,6 +435,32 @@ export function fenceCheckResponseMarkdown(markdown: string): string {
  * (trace.service.buildSearchOnlyNotice) and the markdown renderer above.
  * Returns "" when no own-exclusion applied.
  */
+/** The last line of a briefing served to an agent: the id a feedback row
+ *  carries as briefing_id, so the briefing surface can be scored like a
+ *  check or a search (drafts-and-triage slice 8a, S8a-O4). Mirrors the
+ *  search response's "Search id" line. */
+export function renderBriefingIdLine(briefingId: string): string {
+  return `Briefing id: ${briefingId} — log_feedback accepts it as briefing_id, for feedback about this briefing.`;
+}
+
+/** The query as sent, with author:me added so it includes the caller's own
+ *  recipes (drafts-and-triage slice 8a, S8a-E1). An `author:` or `is:draft`
+ *  query never reaches here: either one lifts the exclude-own default. */
+export function ownExcludedQuery(filter: string): string {
+  return `author:me ${filter}`;
+}
+
+/** First line of a zero-result search whose matches may all have been the
+ *  caller's own, hidden by the exclude-own default: the count, and the same
+ *  search including them, ready to paste. The field kept reading a bare
+ *  "No matches" as "no prior judgment" (revision doc, slice 8 item 7).
+ *  Empty when nothing of the caller's was excluded. */
+export function ownExcludedLead(opts: { filter: string; ownExcluded: number | undefined; corpusSize: number | undefined }): string {
+  if (!opts.ownExcluded || opts.ownExcluded <= 0) return "";
+  const of = opts.corpusSize !== undefined ? ` of the ${opts.corpusSize} in scope` : "";
+  return `Your own recipes were left out by default (${opts.ownExcluded}${of}). The same search including them: ${ownExcludedQuery(opts.filter)}`;
+}
+
 export function buildOwnExcludedNote(
   ownExcluded: number | undefined,
   corpusSize: number | undefined,

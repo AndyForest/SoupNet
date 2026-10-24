@@ -41,7 +41,7 @@ import { runSearchPipeline } from "./search-pipeline";
 import { StageTimer } from "../lib/stage-timer";
 import { searchSelections } from "./search-selection";
 import { draftQueueUrl } from "../lib/key-remediation";
-import { DEFAULT_RANKING, RANKING_ALGORITHM_VERSION, parseSearchQuery, AUTHOR_ME, buildOwnExcludedNote, parseTriageRating, parseTriageRatings, repeatRatingsNotice, parseDraftFlag, draftDepositNotice, isShownDraftState, onBehalfRefusal } from "@soupnet/domain";
+import { DEFAULT_RANKING, RANKING_ALGORITHM_VERSION, parseSearchQuery, AUTHOR_ME, buildOwnExcludedNote, ownExcludedLead, parseTriageRating, parseTriageRatings, repeatRatingsNotice, parseDraftFlag, draftDepositNotice, isShownDraftState, onBehalfRefusal } from "@soupnet/domain";
 import type { CandidateSignals, VerbositySteer, ParsedSearchQuery, TriageRatings } from "@soupnet/domain";
 import type { DraftState } from "@soupnet/contracts";
 import type { StructuredTraceFilters } from "./vector-search.service";
@@ -307,16 +307,25 @@ export function buildSearchOnlyNotice(result: {
   totalResults: number;
   searchedCorpusSize?: number | undefined;
   searchedOwnExcluded?: number | undefined;
-}): string {
+}, filter?: string): string {
   let zeroNotice = "";
+  // Zero results with the caller's own excluded by default: the notice's
+  // first line is the same search including them (slice 8a, S8a-E1). Both
+  // callers pass the filter; the lead appears only where the default
+  // excluded something (the MCP tool, and /check for the stdio surface).
+  let lead = "";
   if (result.totalResults === 0) {
     const scope = result.searchedCorpusSize !== undefined
       ? ` among the ${result.searchedCorpusSize} recipes in scope`
       : "";
     const own = buildOwnExcludedNote(result.searchedOwnExcluded, result.searchedCorpusSize);
     zeroNotice = ` No matches${scope}${own} — a thin-corpus signal worth a feedback row (story_fulfilled: no).`;
+    if (filter) {
+      const line = ownExcludedLead({ filter, ownExcluded: result.searchedOwnExcluded, corpusSize: result.searchedCorpusSize });
+      if (line) lead = `${line}\n`;
+    }
   }
-  return `Read-only search — nothing was written to the corpus.${zeroNotice}`;
+  return `${lead}Read-only search — nothing was written to the corpus.${zeroNotice}`;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

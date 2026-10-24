@@ -63,12 +63,14 @@ recipes.get("/", recipesIpRateLimit, recipesPerKeyRateLimit, async (c) => {
     return c.json({ ok: false, error: "Invalid or expired API key" }, 401);
   }
 
-  const idsParam = c.req.query("ids");
-  if (!idsParam || idsParam.trim().length === 0) {
+  // Every `ids` value (a repeated parameter is an array, drafts-and-triage
+  // slice 8a, S8a-I3); each may be comma-separated or a JSON array's text.
+  const idsParams = c.req.queries("ids") ?? [];
+  if (idsParams.every((p) => p.trim().length === 0)) {
     return c.json({ ok: false, error: "ids parameter is required (comma-separated recipe UUIDs or 8+ char short-id prefixes)" }, 400);
   }
 
-  const ids = parseRecipeIds(idsParam);
+  const ids = parseRecipeIds(idsParams);
   if (ids.length === 0) {
     return c.json({ ok: false, error: "ids parameter is required (comma-separated recipe UUIDs or 8+ char short-id prefixes)" }, 400);
   }
