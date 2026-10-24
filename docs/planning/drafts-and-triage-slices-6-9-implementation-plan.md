@@ -89,7 +89,7 @@ Created from `origin/main` at `e497ef9` by the planning session, no commits on t
 | D | `drafts/8a-tool-shapes` | `C:\github\SoupNet-wt\d-tool-shapes` |
 | E | `drafts/9-read-paths` | `C:\github\SoupNet-wt\e-read-paths` |
 
-B to E branch from `origin/main`, not from A0, so they can start now; each rebases onto `main` once A0 merges (A0 is small and merges first). Worktrees share the repo's object store; each needs its own `npm ci` (npm workspaces, not pnpm), then `npm run build --workspace=packages/contracts --workspace=packages/domain --workspace=packages/db` before vitest can resolve the workspace packages, and its own copy of the untracked `.env` (copied in where one existed). Option sub-branches are made by the streams themselves. The main checkout at `C:\github\SoupNet` stays on `main`, two merges behind `origin/main` until the operator fast-forwards it; nothing in the plan runs there.
+B to E were reset onto the A0 commit (`ccc7968` on `drafts/a0-scaffold`) once it existed, so they carry the caps and the build-log headings from the start; each rebases onto `main` once A0 merges there. Worktrees share the repo's object store; each needs its own `npm ci` (npm workspaces, not pnpm), then `npm run build --workspace=packages/contracts --workspace=packages/domain --workspace=packages/db` before vitest can resolve the workspace packages, and its own copy of the untracked `.env` (copied in where one existed). Option sub-branches are made by the streams themselves. The main checkout at `C:\github\SoupNet` stays on `main`, two merges behind `origin/main` until the operator fast-forwards it; nothing in the plan runs there.
 
 ## Launch prompts
 
