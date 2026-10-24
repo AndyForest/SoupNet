@@ -4,7 +4,7 @@ Every trim to the briefing is a guess about what agents can do without. This fol
 
 ## What lives here
 
-One file per briefing change that trimmed copy to fit a budget, for example [slice-7.md](slice-7.md). Each chunk has:
+One file per change that trimmed agent-facing copy to fit a budget: the briefing body, the MCP tool and parameter descriptions (`MCP_TOOL_DESCRIPTIONS`, `MCP_PARAM_DESCRIPTIONS`, the served `tools/list`), and the notices, all of which fall under the same regression rule. For example [slice-7.md](slice-7.md). Each chunk has:
 
 - an id (`<slice>.<name>`), stable so an eval can name it;
 - where the served form lives (the constant in `packages/domain/src/recipe-guide-content.ts`, and the profile that serves it);
