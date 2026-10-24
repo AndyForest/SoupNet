@@ -165,6 +165,10 @@ const NON_AUTHORIZING_KEY_SQL = {
     n: 3, fp: "a2cf40a2b65d",
     why: "display joins: a recipe's key label and type for the JWT-authed recipe views",
   },
+  "apps/backend/src/services/intent-read.service.ts": {
+    n: 2, fp: "02c04bf46aae",
+    why: "display joins: the key label on an intent and on a feedback row the report paths already scoped to the caller's user (slice 9)",
+  },
   "apps/backend/src/services/api-key.service.ts": {
     n: 5, fp: "7f64094912af",
     why: "minting, listing, and revoking a user's own keys, behind JWT auth; the scoped mint is the only statement that writes the deposit level (slice 5, S5-S2), and the list displays it",
@@ -233,8 +237,8 @@ const TRACE_READS = {
     why: "system-role totals and embedding coverage counts for the operator (RP-31 to RP-34)",
   },
   "apps/backend/src/routes/auth.ts": {
-    n: 13, fp: "b90e83f235d1", composes: false,
-    why: "data export of the signed-in user's own recipes, draft state and an on-behalf draft's subject email (onBehalfSubjectOf) included (RP-30, S4-E1); account deletion guard",
+    n: 14, fp: "50c2c6ecbc62", composes: false,
+    why: "data export of the signed-in user's own recipes, draft state and an on-behalf draft's subject email (onBehalfSubjectOf) included (RP-30, S4-E1), and of the user's own feedback rows (slice 9, S9-E1); account deletion guard",
   },
   "apps/backend/src/routes/integrity.ts": {
     n: 4, fp: "b2b641494fea", composes: false,
@@ -243,6 +247,10 @@ const TRACE_READS = {
   "apps/backend/src/routes/traces.ts": {
     n: 17, fp: "a8851b1aa871", composes: true,
     why: "map version counts and the book list compose the fragments (RP-24, RP-25); own list, own count, and own check log are the caller's rows (RP-27 to RP-29); feedback, reaction, and evidence reads for one recipe run after the module's read gate (RP-19 to RP-22), with lineage ids filtered through it",
+  },
+  "apps/backend/src/services/intent-read.service.ts": {
+    n: 10, fp: "b6b99b3fad8a", composes: true,
+    why: "report read paths (slice 9): every recipe a feedback row, shown id, or related id names passes traceReadableByViewer before it is listed or counted",
   },
   "apps/backend/src/services/book-stats.service.ts": {
     n: 6, fp: "9c1e64a70445", composes: true,
@@ -322,12 +330,14 @@ const TRACE_READS = {
  * Every module fragment whose call lines are fingerprinted with the
  * statements: the draft fragments plus slice 4's on-behalf ones (which name
  * the other party of a draft; they are not a visibility condition, so they
- * do not count toward `composes`).
+ * do not count toward `composes`). `traceReadableByViewer` (slice 9,
+ * report-scope.ts) is the key-or-person choice between `traceReadableById`
+ * under the key's book scope and `traceReadableByPerson`, so it composes.
  */
-const MODULE_FRAGMENT = /\b(publishedTrace|traceVisibleTo|traceIdVisibleTo|traceReadableById|traceReadableByPerson|draftAwaitingReviewBy|draftStateShownTo|onBehalfSubjectOf|onBehalfSideFor|onBehalfPartyFor|resolveNameableSubject)\(/;
+const MODULE_FRAGMENT = /\b(publishedTrace|traceVisibleTo|traceIdVisibleTo|traceReadableById|traceReadableByPerson|traceReadableByViewer|draftAwaitingReviewBy|draftStateShownTo|onBehalfSubjectOf|onBehalfSideFor|onBehalfPartyFor|resolveNameableSubject)\(/;
 
 /** The module's draft fragments; a `composes: true` file must reference one. */
-const DRAFT_FRAGMENT = /\b(publishedTrace|traceVisibleTo|traceIdVisibleTo|traceReadableById|traceReadableByPerson|draftAwaitingReviewBy|draftStateShownTo)\(/;
+const DRAFT_FRAGMENT = /\b(publishedTrace|traceVisibleTo|traceIdVisibleTo|traceReadableById|traceReadableByPerson|traceReadableByViewer|draftAwaitingReviewBy|draftStateShownTo)\(/;
 
 /** SQL table names of the recipe rule, and their Drizzle exports. */
 const TRACE_TABLES = ["traces", "embedding_sources", "embedding_chunks", "trace_evidence", "trace_references", "check_feedback", "trace_reactions"];

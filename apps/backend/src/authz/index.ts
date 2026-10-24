@@ -22,6 +22,8 @@
  *   draft-resolution.ts — the one statement that verifies or rejects a draft
  *   naming.ts          — who may be named as the subject of a draft deposited
  *                        on their behalf (slice 4)
+ *   report-scope.ts    — whose feedback row it is, and whether a report's
+ *                        viewer may read the recipe a row names (slice 9)
  *
  * Import from here. See docs/engineering-principles.md §7.
  */
@@ -50,3 +52,4 @@ export {
 export type { DraftAudience, SharedAudience, TraceAlias } from "./draft-sql";
 export * from "./draft-resolution";
 export * from "./naming";
+export * from "./report-scope";
