@@ -1617,7 +1617,81 @@ Rubric to be written by stream B from the revision doc's 6a and 6f before implem
 
 ### Slice 7 rubric: briefing copy (stream C)
 
-Rubric to be written by stream C from the revision doc's 7a to 7e before implementation. C1 carries one slimming lever (recipe `aae000d2`); C2 the tool and web copy after 6c and 6a merge.
+Written 2026-10-24 by agent `a-drafts-7-2026-10-24` (stream C), before implementation, from the revision doc's 7a to 7e and rulings 48 and 52, the implementation plan's stream C, and the code at `32ffa5c`. Consumer: agent (every briefing surface, and the check response's empty-result line). Security-relevant: no. The slice changes copy only; it touches no authorization layer, no read scope, no audit row, and no uniform-404 pair, so the security workflow's audit role does not apply and the rows below say so where a rubric would otherwise carry them. Two PRs: **C1** (this rubric's rows marked C1) is the briefing body, its scenarios, and one slimming lever; **C2** (rows marked C2, written in full before C2 starts) is the tool and web copy in 7b, after 6c and 6a merge.
+
+Settled before this rubric, not reopened: a draft is a hypothesis the agent cannot yet stand behind from the context it holds (recipe `5d76a576`); the person's own agents ratify drafts under the same confidence rule as an ordinary check (`200ed4fe`); ask when the call is the person's and they are reachable, with a recommendation (ruling 52); orchestration is live (`97f7c34e`); both shapes of building both (`7942b8c0`, `ea930c3d`); one dated raise already made in A0, two PRs under it, one slimming lever in the first (ruling 48); the result-header wording and the context line belong to slice 8 (ruling 49); add rather than remove, guardrails framed as truthfulness tests, not prohibitions (`fa35f3b1`); examine every surface the briefing touches before changing text (`a2c8fb64`); the operator's form for check moments is an example and a goal, never a step owed (`72f788bf`).
+
+**Cross-stream dependency, declared here because it shapes C1's text:** the Drafts section tells agents they can resolve a draft with `verify_draft` as verified, rejected, or not chosen (stream A's `outcome`, contract confirmed by stream A on 2026-10-24), and that an orchestrator polls `is:draft intent:<id>` (stream B's qualifier). C1 is written against both and merges after A1 and B, which is the plan's suggested order (A1, D, B, E, C1). If C1 ever had to merge first, the two clauses would be cut rather than shipped describing behaviour that does not exist yet.
+
+**Baselines**, measured by this agent at `32ffa5c` with the slice 5 method (`BRIEFING.build` over the fixture in `recipe-guide-content.test.ts`; a five-exemplar section built by `buildExemplarsSection` with one to three evidence entries each, for the lever):
+
+| Measure | Value | Cap (A0) |
+|---|---|---|
+| Thin (MCP) briefing, fixture | 18,183 characters (18,297 bytes) | 21,000 |
+| Thin headless briefing, fixture | 18,536 characters | 21,500 |
+| Full (web and paste) briefing, fixture | 24,119 characters | none |
+| Five-exemplar section (realistic) | 4,990 characters | none |
+| Full briefing with that section | 29,059 characters | none |
+| Remote `tools/list` / stdio / shared descriptions | 16,986 bytes / 13,196 / 6,051 characters | 18,200 / 14,700 / 6,600 |
+
+One fact the budget turns on: the thin briefing renders no exemplars at its default (`k=0` on the MCP surface, `briefing.ts`), so the `aae000d2` levers shrink the full and paste briefing and every briefing with exemplars opted in, but not the thin fixture. C1's thin growth has to fit the 21,000 ceiling by the copy's own economy. Question 56 below.
+
+**C1: the Drafts section (7a)**
+
+| # | Criterion | Scenario moved | Evidence |
+|---|---|---|---|
+| S7-A1 | The shared body (thin and full profiles alike) carries one Drafts section that defines a draft as a hypothesis the agent can't yet stand behind from the context it holds, private to the person and their agents until resolved. | `checking-behavior.feature` "An agent drafts only when it cannot ask…", rewritten | Domain test: the section's heading and definition sentence appear in both profiles. |
+| S7-A2 | The section gives the order of moves at such a call, as what is useful: acting on it, check it as an ordinary recipe and own it; the person's call and they are reachable, ask in plain words with a recommendation and its reasoning; neither, draft it, say in the first evidence entry what would settle it, rate it, and come back when that lands. A draft is framed as the agent's own hypothesis, not a note for the person's to-do list. | same | Domain test on the three moves' key phrases; reviewer reads the section against 7a. |
+| S7-A3 | The person's own agents resolve drafts under the same confidence rule as a check: when the context settles one, `verify_draft` with that context as new evidence, as verified, rejected, or not chosen; ask the person when that is useful. | same | Domain test. |
+| S7-A4 | Orchestration is live: sub-agents decide as they go and raise only high impact × uncertainty calls; the orchestrator polls its run's drafts by intent, corrects mid-run, and resolves what it can before finishing, listing the rest with a recommendation. | new `advanced-workflows.feature` scenario | Domain test; the scenario. |
+| S7-A5 | No briefing text on any profile or key (thin, full, headless) says or implies that drafting is for when the person "can't be asked" or "couldn't be asked". | | Domain test over the four compositions (thin, full, each headless) for those strings. |
+
+**C1: the planned slice 7 content (7c)**
+
+| # | Criterion | Scenario moved | Evidence |
+|---|---|---|---|
+| S7-C1 | Truthfulness says claims and quoted references are true at submission "and checkable by someone who wasn't there". | `evidence-integrity.feature`, new scenario | Domain test on the phrase. |
+| S7-C2 | "How to check" names `impact` and `uncertainty` as triage ratings, gives the vocabulary, and says to leave out a rating the agent has no view on rather than defaulting. | `checking-behavior.feature` "A rated check uses the rating vocabulary…" loses `@unreleased` | Domain test. |
+| S7-C3 | The headless section says what would settle each draft, the ratings, and drafting the options under one intent when they stay open, and points at the Drafts section; it no longer says "why your user couldn't be asked". At most 400 characters; a headless briefing is still the ordinary one with exactly that one section inserted (S5-B1's test unchanged). Moved into C1 from C2's list because it does not depend on 6c or 6a, and leaving it would contradict the new Drafts section for the interval between the PRs. | `briefing-surfaces.feature` headless scenario, rewritten and out of `@unreleased`; `drafts-and-triage.feature` DT-HDL-05 already says this | Domain tests (S5-B1 and the 400 cap). |
+| S7-C4 | Divergent recipe checks carve out building both: when every option will genuinely be pursued, check each as an ordinary recipe; when none can be stood behind yet, draft each under one intent with the rubric stated before measuring; either way, check the chosen path with the outcome as evidence and leave feedback on the others. "Wait for the choice, then check only the chosen one" stays for the ordinary case. | `divergent-checks.feature`, new scenario; "MCP agent waits for the choice" watched | Domain test. |
+
+**C1: the field additions (7d)**, each with its own scenario
+
+| # | Criterion | Scenario moved | Evidence |
+|---|---|---|---|
+| S7-D1 | A shared "Reading results" section: a returned recipe is a call someone made in their context, not a rule; weigh it against the situation and say how it applies; recurrence is not restatement, so a familiar judgment in a new context is worth logging with that context as evidence. Claims written as choices, one judgment per recipe, no "never" or "must" (placed with D3 if that reads better). | `checking-behavior.feature`, new scenario | Domain test in both profiles. |
+| S7-D2 | "When to check" gains two moments in example-and-goal form: extending something that already has a default, and writing for a particular reader in a particular place. | `checking-behavior.feature`, two new scenarios | Domain test. |
+| S7-D3 | Authoring for retrieval gains the two-axes paragraph: count and specificity are separate; the claim at the most general level still true, the specifics in the evidence, where they are still read and checkable. | `recipe-voice.feature`, new scenario | Domain test. |
+| S7-D4 | Role patterns gain a fourth: the recipient role for what the person receives, kind of thing received named, goal clause separate, "prefer" or "chose" not "want", with the stays-true-when-they-author-it test. | `recipe-voice.feature`, new scenario | Domain test. |
+| S7-D5 | "When to check" gains tension between an instruction and the agent's judgment: check the call you think is right, then proceed; the id is where redirection attaches. | `checking-behavior.feature`, new scenario | Domain test. |
+| S7-D6 | Reading results: a neighbour that is the agent's own open draft, or deposited today under its intent, is its own assumption coming back; weigh it as that. | `checking-behavior.feature`, new scenario | Domain test. |
+| S7-D7 | Search vs check: a probe of the corpus is a search, because a probe made as a check takes exemplar slots. | `checking-behavior.feature` "Probing the system…" watched; new scenario | Domain test. |
+| S7-D8 | Thin results mean think harder and check more, not stretch a near miss: one line beside the check response's empty-result message ("No similar recipes found."), and a clause in Reading results for the near-miss case the empty line cannot reach. | `checking-behavior.feature`, new scenario | Layer 1 renderer test; domain test. |
+| S7-V1 | Voice: every sentence C1 adds reads as what is useful, not as a rule. None of the added text uses "must", "never" (outside the quoted "never" of D1), "always", "do not", or "don't", and "taste" and "judgment" appear only as a pair where both are meant. | | Domain test over the added sections; reviewer read. |
+
+**C1: the slimming lever (`aae000d2`)**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| S7-L1 | Each briefing exemplar renders its first evidence entry only, followed by one line naming how many more it has and how to fetch them (`get_recipes`, or `GET /recipes?ids=` without MCP), when it has more. Claim, metadata, ordering, and selection unchanged; an exemplar with one entry or none renders as before. | Layer 1 tests of `buildExemplarsSection` for zero, one, and three entries. |
+| S7-L2 | The five-exemplar section and the full briefing with it shrink, with the before and after recorded; the thin fixture is unaffected by the lever (no exemplars). | Measured in the decision-log entry. |
+| S7-L3 | No ranking, selection, or read-scope code changes: `briefing-exemplars.ts` selection, `fetchBriefingExemplars`' queries, and the five ranking files are untouched; the cut is in the pure formatter. DT-VIS's "own drafts are not briefing exemplars" holds unchanged. | Diff review; existing suites. |
+
+**C1: budgets, parity, specs**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| S7-Z1 | Thin fixture at most 21,000 characters and thin headless at most 21,500, with no cap constant edited (A0 owns them); the net growth is recorded. | `recipe-guide-content.test.ts` green, its ceilings untouched in the diff. |
+| S7-Z2 | `tools/list` remote and stdio, and the shared descriptions, are byte-identical: C1 changes no tool or parameter description and no deposit notice. | Size tests unchanged and green. |
+| S7-P1 | Every briefing surface (`get_briefing` remote and stdio, `GET /briefing`, `POST /keys/briefing`) composes from `BRIEFING.build`, so the new text reaches all of them with no per-surface code. | `briefing-surfaces.test.ts` passes; diff shows no route change. |
+| S7-S1 | Each edit lands with the scenario it moves, in the same PR; `@unreleased` comes off the scenarios that slice 7 was the blocker for (rating, drafting, queue link, on-behalf, headless) where the briefing now teaches them, and the README's file table reflects it. | `.feature` diffs. |
+| S7-S2 | `spec-decision-log.md` gets one C1 entry: each edit, the scenario it moves, the watched scenarios with reasons, bytes before and after for every measure above; mirrored in the commit body. | The entry. |
+
+**Surfaces that must change (C1):** `packages/domain/src/recipe-guide-content.ts` (`PRINCIPLES`, `WORKFLOW_WHEN`, `ROLE_PATTERNS`, `HEADLESS_KEY_SECTION`, the `BRIEFING` body, `buildExemplarsSection`), `packages/domain/src/check-response-renderer.ts` (the empty-result line), their tests, the briefing-spec `.feature` files named above, `docs/briefing-specs/README.md`, `spec-decision-log.md`.
+
+**Surfaces that must NOT change (C1):** `MCP_TOOL_DESCRIPTIONS`, `MCP_PARAM_DESCRIPTIONS` (the `draft` parameter and `verify_draft` copy are C2 and stream A), the deposit notices in `drafts.ts`, the web pages, every cap constant, `apps/backend` routes and services, the five ranking files.
+
+**C2 (written in full before C2 starts):** `draft` parameter, the draft deposit notice, the queue page intro and the dashboard drafts card per 7b, each under the regression rule with DT-QUE-05's wording reviewed; `verify_draft`'s description is stream A's.
 
 ### Slice 8a rubric: tool shapes (stream D)
 
