@@ -1621,7 +1621,84 @@ Rubric to be written by stream C from the revision doc's 7a to 7e before impleme
 
 ### Slice 8a rubric: tool shapes (stream D)
 
-Rubric to be written by stream D from the revision doc's slice 8 items 4 to 7 before implementation.
+Written 2026-10-24 by stream D (agent `a-drafts-8a-2026-10-24`), before implementation, from the revision doc's slice 8 items 4 to 7 and its "Tool-shape gaps logged by sessions", and from the code at `32ffa5c` (the A0 scaffold). Branch `drafts/8a-tool-shapes`. Consumer: agents (MCP remote and stdio, REST). No web change. Security-relevant: yes, in two places: the id parser feeds the uniform-marker lookup, and the two new feedback targets (a briefing, an intent alone) are new read-scope checks on a write path. Both join the combined audit after A1, B, D and E merge.
+
+**Baselines**, measured by this agent at `32ffa5c` with the slice 1 method (`createMcpServer` with a stub principal and `createStdioServer`, each over the SDK in-memory transport, `initialize` then `tools/list`, the reply's `result` as minified UTF-8 JSON):
+
+| Measure | Value | Cap (A0) |
+|---|---|---|
+| Remote `tools/list` | 16,986 bytes (`get_recipes` 904, `get_briefing` 1,381, `log_feedback` 3,104, `search_recipes` 2,987) | 18,200 |
+| Stdio `tools/list` | 13,196 bytes (`get_recipes` 904, `get_briefing` 1,381, `log_feedback` 2,812) | 14,700 |
+| Shared descriptions | 6,051 characters | 6,600 |
+
+The A0 raise is shared by A (`outcome` on `verify_draft`), B (one grammar term) and D. D's share is set at most 700 bytes remote, 600 stdio, and 200 shared-description characters; the remainder is left for A and B.
+
+**Decisions this stream makes that touch other streams' surfaces** (written before building on them, per the plan):
+
+- `check_feedback` gains one nullable column, `briefing_audit_id uuid` (a soft pointer to a `briefing.issued` audit row, like `search_audit_id`), and the one-target CHECK becomes: exactly one of `trace_id`, `search_audit_id`, `briefing_audit_id`, or none of them when `kind = 'outcome'` and `intent_id` is set. One migration; it will collide by number with stream B's `traces.intent_id` migration on purpose, and whichever merges second regenerates. Stream E's `GET /feedback/rows` must expect rows whose `traceId` is null with either a `briefingId` or an `intentId` alone, and its export of `check_feedback` carries the new column.
+- The split with stream A on `verify_draft` (agreed with stream A, 2026-10-24): A1 owns `verify_draft`'s schema, its parameter descriptions and its validation. In A1, `outcome` is a plain string whose description reads "verified (default) | rejected | not_chosen", and one refusal reports a bad `outcome` and every evidence problem together. 8a does not edit `verify_draft`. 8a's unknown-parameter guard reads each tool's accepted names from the registered schemas at call time, so `outcome` is accepted the moment A1 registers it.
+- Stream C may want one line in the briefing's feedback section naming the intent-only `outcome` row and `briefing_id`. 8a does not edit the briefing body; the tool descriptions and the briefing's own id line carry it until then.
+
+**Item 4: `get_recipes` takes an array**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| S8a-I1 | `get_recipes` (remote and stdio) accepts `recipe_ids` as a JSON array of strings or as the comma- or whitespace-separated string, and both forms give byte-identical answers for the same ids. | Layer 3 on remote MCP; stdio test that the proxied `GET /recipes` URL is the same for both forms. |
+| S8a-I2 | A string that is itself a JSON array (`'["a","b"]'`, the form three field sessions sent) resolves the ids inside it instead of yielding markers for `["a` and `"b"]`. Brackets and quotes around ids are stripped; nothing else is (an id with a stray character is still a marker). | Layer 1 table test of `parseRecipeIds` over string, array, JSON-array string, mixed separators, duplicates, empty entries. |
+| S8a-I3 | `GET /recipes` accepts the same forms in `ids`, plus a repeated `ids` parameter; `get_briefing`'s `recipe_ids` and `GET /briefing?recipe_ids=` take the same forms through the same parser. | Layer 3 on REST and on `get_briefing`. |
+| S8a-I4 | The array form changes nothing about access: the 20-id cap applies after parsing; an id the key cannot read is the uniform `not_found_or_unreadable` marker in either form, byte-identical to a random id's (the RP pair: another person's draft vs a random UUID, and a published recipe in an unreadable book vs a random UUID). | Layer 3 uniform-response comparison in array form. |
+
+**Item 5: every failing field at once, with the enumerations in the descriptions**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| S8a-V1 | `validateFeedbackRow` reports every failing field in one error, in schema order, each with its allowed values and what was received; a row with one failing field gets exactly today's message for that field. | Layer 1: a row with bad `kind`, `impact`, `disposition`, `story_fulfilled`, missing `story` and a bad `top_similarity` names all six in one error. |
+| S8a-V2 | The same all-fields error reaches the agent on every feedback surface: `log_feedback` (remote and stdio), a ride-along row on `check_recipe` and `search_recipes`, `POST /feedback`, `GET /feedback`, and `feedback_*` on `/check`. | Layer 3 on remote `log_feedback` and `POST /feedback`; stdio relays the backend error verbatim (existing test shape). |
+| S8a-V3 | `log_feedback`'s parameter descriptions name each enumeration and the requirement agents tripped on: `story` is required on every row; give exactly one of `trace_id`, `search_id`, `briefing_id`, or, for an `outcome` row, `intent_id` alone. The remote and stdio `log_feedback` schemas serve identical properties apart from the description of `trace_id`. | Test comparing the two served schemas; snapshot of the served descriptions. |
+| S8a-V4 | `verify_draft` is covered by stream A's A1 rows (see the split above); 8a adds no `verify_draft` row of its own. | Pointer to A1's rubric. |
+
+**Item 6: `outcome` rows on `intent_id` alone, and an id from `get_briefing`**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| S8a-O1 | A row with `kind: outcome`, a valid `intent_id`, and no `trace_id`, `search_id` or `briefing_id` is stored with all three targets null and the intent id set. The same row with any other kind is refused with a message naming the allowed targets. | Layer 3 on `log_feedback` and `POST /feedback`, reading the row back. |
+| S8a-O2 | The intent must be the caller's user's. An unknown, malformed, or other user's intent id gets one uniform marker (`intent_id not found or not readable with this key`), byte-identical across the three cases, and no row. When a row has another target, `intent_id` stays capture-only exactly as today (a bad one stores null, never a refusal). | Layer 3 uniform comparison with two users. |
+| S8a-O3 | An identical intent-only resubmission returns the original row (`dup`), as the other targets do. | Layer 3. |
+| S8a-O4 | `get_briefing` (remote and stdio) and `GET /briefing` return a briefing id: the id of the `briefing.issued` audit row that call wrote. MCP text ends with one line naming it and `briefing_id`; REST returns `data.briefingId`. The JWT copy-briefing path (`POST /keys/briefing`) adds no line, since a pasted briefing is reused across sessions. If the audit write fails, the briefing still returns, without an id. | Layer 3 on each surface; Layer 1 on the line. |
+| S8a-O5 | A row with `briefing_id` attaches to that briefing when its audit row has `action = 'briefing.issued'` and the caller's user as actor. Any other id (unknown, another user's briefing, a search's audit id) gets one uniform marker and no row. Exactly one target per row, and naming two is refused. | Layer 3 uniform comparison. |
+| S8a-O6 | Schema: one migration adds `briefing_audit_id` and replaces the CHECK as above, plus a dedup unique for briefing rows and a partial unique for intent-only rows. `check:data-model` passes, and a pre-migration row is untouched. The CHECK refuses a row with no target and kind other than `outcome`. | Migration SQL reviewed; a direct-insert Layer 3 test of the constraint. |
+
+**Item 7: the exclude-own message**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| S8a-E1 | When a search under the exclude-own default returns nothing and the caller's own recipes in scope were excluded, the notice's first line gives the same query with `author:me` added, ready to paste (`author:me <the query as sent>`), with the count. The JSON carries it as `ownExcludedQuery`. Markdown shows it as the line after the header. | Layer 1 on the notice and renderer; Layer 3 on remote `search_recipes` (markdown and structured). |
+| S8a-E2 | Responses with results, and searches where the default did not apply (an `author:` or `is:draft` query, the web `/check` filter), are byte-identical to today. | Layer 1 and the existing search tests unchanged. |
+
+**Unknown parameter names**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| S8a-U1 | One constant, `UNKNOWN_PARAM_MODE` (`"refuse"` or `"warn"`), governs a guard at MCP dispatch on both servers. It sits on the transport and is called once from the `/mcp` route and once from the stdio entry. No tool handler changes, and accepted names come from each tool's registered schema at call time. | Code review; a test that a parameter added to a tool's schema is accepted with no other edit. |
+| S8a-U2 | Refuse: a `tools/call` naming any parameter the tool does not declare runs nothing and answers an MCP tool error (`isError: true`) listing the unknown names, the tool's accepted names, and a near-miss suggestion where one is obvious (`recipe_id` → `recipe_ids`). | Layer 3 on remote and stdio: no `recipe.checked` audit row and no trace after a refused `check_recipe`. |
+| S8a-U3 | Warn: the call runs as today (the unknown name is ignored, as the SDK strips it) and the reply's first content block is one warning line with the same facts. `structuredContent` is unchanged. | Layer 3 on remote and stdio. |
+| S8a-U4 | Calls with only declared names are byte-identical to today in both modes, and `tools/list`, `initialize` and every other method pass through untouched. | The existing MCP suites pass unchanged in both modes (run once with each). |
+| S8a-U5 | Both responses are shown to the operator (question 56) and the default is set by the ruling. | The two responses pasted under this heading. |
+
+**Budgets**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| S8a-Z1 | Remote `tools/list` grows by at most 700 bytes, stdio by at most 600, shared descriptions by at most 200 characters. The before and after figures are recorded in `spec-decision-log.md`. Caps unchanged (A0 owns them). | Size tests green; the figures. |
+| S8a-Z2 | The thin and full briefing fixtures are byte-identical: the briefing id line is composed outside `BRIEFING.build`. | `recipe-guide-content.test.ts` unchanged. |
+
+**Surfaces that must change:** `services/recipe-lookup.service.ts` (`parseRecipeIds`), `routes/recipes.ts` (the GET route only), `services/feedback.service.ts`, `routes/feedback.ts` only where the service result shape needs it, `services/briefing.ts` and `routes/briefing.ts`, the `get_recipes`, `get_briefing`, `log_feedback` registrations in `routes/mcp.ts` and `apps/mcp-server/src/server.ts`, the `/mcp` route handler (one call), the stdio entry (one call), `services/trace.service.ts` and `check-response-renderer.ts` (the exclude-own notice), `MCP_PARAM_DESCRIPTIONS.recipeIds`, `MCP_TOOL_DESCRIPTIONS.logFeedback` if needed, `packages/db/src/schema/check-feedback.ts` with its migration and the regenerated data-model doc, `docs/briefing-specs/feedback-loop.feature` and `intent-registration.feature` (one scenario each), `spec-decision-log.md`.
+
+**Surfaces that must NOT change:** `verify_draft` (stream A), the briefing body and `BRIEFING.build` (stream C), the `search_recipes` description's qualifier list (stream B), the size-cap constants (A0), the five ranking files, the authz visibility fragments, the lookup's ACL and marker text.
+
+**Briefing-copy declaration.** The `get_recipes` and `log_feedback` descriptions, the briefing id line, the exclude-own notice and the unknown-parameter messages are agent-facing copy under the regression rule. The PR appends one `spec-decision-log.md` entry naming the scenarios moved (`feedback-loop.feature`: an `outcome` row closes an intent with no single recipe; `intent-registration.feature` "Feedback closes the declared loop" gains the intent-only row) and the ones watched.
+
+**Soup.net:** intent registered with `agent_id` `a-drafts-8a-2026-10-24`. Checks in `soupnet-oss` are listed under the build notes with their feedback rows.
 
 ### Slice 9 rubric: read paths for reports (stream E)
 
