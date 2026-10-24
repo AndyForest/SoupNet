@@ -413,19 +413,24 @@ describe("BRIEFING.build — slice 7: when to draft (7a)", () => {
       const drafts = section(text, "## Drafts");
       // S7-A1: a hypothesis the agent can't yet stand behind, private until resolved.
       expect(drafts).toContain("is a hypothesis you can't yet stand behind from the context you hold");
-      expect(drafts).toContain("only your user and their agents see it until it's resolved");
-      // S7-A2: act → check and own; the person's call and reachable → ask with a
-      // recommendation; otherwise draft, say what would settle it, come back.
+      expect(drafts).toContain("private to the person it's about and their agents until resolved");
+      // S7-A2: act → check and own; a person's call and reachable → ask with a
+      // recommendation, drafted as the return path when work continues;
+      // otherwise draft, say what would settle it, rate it, come back.
       expect(drafts).toContain("if you'll act on it, check it as an ordinary recipe and own it");
-      expect(drafts).toContain("if it's your user's call and they're reachable, ask in plain words, with your recommendation and its reasoning");
-      expect(drafts).toContain("say in the first evidence entry what would settle it, and return when that lands");
-      expect(drafts).toContain("not your user's to-do item");
-      // S7-A3: the person's own agents resolve under the confidence rule, every outcome.
-      expect(drafts).toContain("`verify_draft` it (verified, rejected, or not chosen) with that context as new evidence");
+      expect(drafts).toContain("if it's a person's call and they're reachable, ask plainly with your recommendation, and if you keep working meanwhile");
+      expect(drafts).toContain("draft that recommendation under your intent so their answer reaches you wherever it's given");
+      expect(drafts).toContain("say in the first evidence entry what would settle it, rate it, and return when that lands");
+      // S7-A3: a draft is yours to resolve; whoever holds the settling context
+      // resolves under the confidence rule; a click only for what no agent settles.
+      expect(drafts).toContain("A draft is yours to resolve");
+      expect(drafts).toContain("you included once the work or a reply settles it");
+      expect(drafts).toContain("resolves it with `verify_draft` (verified, rejected, or not chosen) under the same confidence rule as any check, quoting their words wherever they gave them");
+      expect(drafts).toContain("A draft waits for a person's click only while nothing any agent holds settles it.");
       // S7-A4: orchestration is live.
       expect(drafts).toContain("raise only high impact × uncertainty calls");
       expect(drafts).toContain("`is:draft intent:<id>`");
-      expect(drafts).toContain("list the rest with a recommendation");
+      expect(drafts).toContain("resolve what you can before finishing");
     });
 
     it(`${name}: nothing frames drafting as the move for when the person can't be asked (S7-A5)`, () => {
@@ -458,7 +463,7 @@ describe("BRIEFING.build — slice 7: the planned content (7c)", () => {
     const divergent = section(thin, "## Divergent recipe checks");
     expect(divergent).toContain("wait for the choice, then check only the chosen one.");
     expect(divergent).toContain("when every option will genuinely be pursued, check each as an ordinary recipe");
-    expect(divergent).toContain("when you can't stand behind any yet, draft each under one intent, with the rubric stated first");
+    expect(divergent).toContain("when you can't stand behind any yet, draft each under one intent, with the rubric for choosing stated first");
     expect(divergent).toContain("check the chosen path with the outcome as evidence and leave feedback on the rest");
   });
 });
@@ -475,18 +480,18 @@ describe("BRIEFING.build — slice 7: the field additions (7d)", () => {
       const when = section(text, "## When to check");
       expect(when).toContain("- Extending something that already has a default");
       expect(when).toContain("- Writing for a particular reader in a particular place?");
-      expect(when).toContain("- An instruction pulling against your judgment? Check the call you think is right, then proceed");
+      expect(when).toContain("- An instruction pulling against your judgment? Check the call you think is right, with the instruction quoted, then proceed");
       // S7-D3: two axes in Authoring for retrieval.
       expect(text).toContain("Granularity and generality are separate axes");
-      expect(text).toContain("put the specifics in the evidence, where they stay read and checkable");
+      expect(text).toContain("with the specifics in the evidence, where they stay checkable");
       // S7-D4: the fourth role pattern.
       expect(text).toContain("Four patterns keep it transferable");
       expect(text).toContain("- **For what the user receives**");
       // Stream D (8a): an outcome row may join the intent alone; the headless
       // section's closing outcome row needs this target.
-      expect(section(text, "## Closing the loop — feedback")).toContain("An outcome row about the whole session, with no single recipe behind it, can carry your intent_id alone.");
+      expect(section(text, "## Closing the loop — feedback")).toContain("A whole-session outcome row with no single recipe can carry your intent_id alone.");
       // S7-D7: a probe is a search.
-      expect(section(text, "## How to check")).toContain("Probing the corpus itself (what's there, how a role clusters) is a search too");
+      expect(section(text, "## How to check")).toContain("Probing the corpus (what's there, how a role clusters) is a search too");
     });
   }
 

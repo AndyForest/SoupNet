@@ -59,16 +59,17 @@ Feature: Checking behavior — genuine hypotheses, autonomous timing
     Then any rating it sends on check_recipe is one of "low", "medium", or "high"
     And it sends impact and leaves uncertainty out, rather than sending uncertainty "medium" as a default
 
-  Scenario: An agent drafts only a call it cannot stand behind, and says in the first evidence entry what would settle it
-    # Guards: the briefing's "## Drafts" section (BRIEFING.build, recipe-guide-content.ts); recipes 5d76a576 (a draft is a hypothesis the agent cannot yet stand behind) and 31b80b8b (ask when the call is the person's and they are reachable); docs/planning/drafts-and-triage-slices-6-7-revision.md §7a. Rewritten and out of @unreleased with drafts-and-triage slice 7 (build log §Slice 7 rubric; spec-decision-log.md 2026-10-24, C1); it replaces "An agent drafts only when it cannot ask", whose absence framing the field read literally.
-    Given the person is reachable in the conversation
-    When the agent faces a high-impact, uncertain call about the person's taste and judgment
-    Then it settles the call from the context it holds and checks it as an ordinary recipe, or asks the person in plain words with its recommendation and reasoning, or presents divergent options
-    And it does not deposit a draft for the person to settle later
-    When the agent cannot settle the call from its context and the call is not one to put to the person now
+  Scenario: An agent drafts only a call it cannot stand behind, and a person's call it keeps working on becomes a draft it owns
+    # Guards: the briefing's "## Drafts" section (BRIEFING.build, recipe-guide-content.ts); recipes 5d76a576 (a draft is a hypothesis the agent cannot yet stand behind), 31b80b8b (ask when the call is a person's and they are reachable), and 0d63d839 (the recommendation goes in as a draft the asker resolves; operator direction of 2026-10-24); docs/planning/drafts-and-triage-slices-6-7-revision.md §7a. Rewritten and out of @unreleased with drafts-and-triage slice 7 (build log §Slice 7 rubric; spec-decision-log.md 2026-10-24, C1); it replaces "An agent drafts only when it cannot ask", whose absence framing the field read literally.
+    Given a person whose call it is is reachable in the conversation
+    When the agent faces a high-impact, uncertain call about that person's taste and judgment
+    Then it settles the call from the context it holds and checks it as an ordinary recipe, or asks that person plainly with its recommendation and reasoning, or presents divergent options
+    And if it keeps working while the question is open, it deposits that recommendation as a draft under its intent
+    And it does not park a draft for a person to settle later in place of asking
+    When the agent cannot settle the call from its context and the call is not one to put to a person now
     Then it checks the recipe with draft set to true
     And the first evidence entry's interpretation says what would settle it
-    And the interpretation does not give the person's absence as the reason for drafting
+    And the interpretation does not give a person's absence as the reason for drafting
 
   Scenario: An agent that deposited drafts hands its person the queue link rather than listing ids
     # Guards: draftDepositNotice (packages/domain/src/drafts.ts), the queue link it carries; docs/planning/drafts-and-triage.md §Verifying a draft ("Links"); spec-decision-log.md 2026-09-27 (drafts-and-triage slice 3). Out of @unreleased with drafts-and-triage slice 7 (build log §Slice 7 rubric; spec-decision-log.md 2026-10-24, C1): the briefing body now teaches drafting.
@@ -85,13 +86,13 @@ Feature: Checking behavior — genuine hypotheses, autonomous timing
     And its evidence quotes the colleague's own words from those artifacts
     And it hands its person the colleague's review link from the response, rather than calling the draft verified
 
-  Scenario: The person's own agent resolves a draft its context now settles
-    # Guards: the briefing's "## Drafts" section, resolution paragraph; recipe 200ed4fe (an agent ratifies drafts "in the exact same way that it can make recipe checks autonomously if it's confident in the same ways"); drafts-and-triage slice 7 (build log §Slice 7 rubric; spec-decision-log.md 2026-10-24, C1).
-    Given an open draft about the person whose first evidence entry names what would settle it
-    And that settling fact has since landed in the agent's context (a file, a decision recorded elsewhere, a verified recipe covering the same call)
+  Scenario: An agent resolves a draft once a reply or the work settles it
+    # Guards: the briefing's "## Drafts" section, "A draft is yours to resolve"; recipes 200ed4fe (an agent ratifies drafts "in the exact same way that it can make recipe checks autonomously if it's confident in the same ways") and 0d63d839; docs/planning/drafts-and-triage-slices-6-7-revision.md §7a ("A draft is yours to resolve"); drafts-and-triage slice 7 (build log §Slice 7 rubric; spec-decision-log.md 2026-10-24, C1).
+    Given an open draft about a person, deposited by this agent or another of that person's agents, whose first evidence entry names what would settle it
+    And that settling fact has since reached the agent (the person's reply in another channel, a file, a decision recorded elsewhere, a verified recipe covering the same call)
     When the agent comes back to the draft
-    Then it calls verify_draft with an outcome that matches the settling fact (verified, rejected, or not chosen) and that fact quoted and cited as new evidence
-    And it does not wait for the person's confirmation in their own words before resolving it
+    Then it calls verify_draft with an outcome that matches the settling fact (verified, rejected, or not chosen), quoting the person's words or the fact and citing where they were given
+    And it does not leave the draft for a person's click
 
   Scenario: A returned recipe is weighed as a call made in its own context, not applied as a rule
     # Guards: the briefing's "## Reading results" section; docs/planning/drafts-and-triage-slices-6-7-revision.md §7d item 1 and field item 7; drafts-and-triage slice 7 (build log §Slice 7 rubric; spec-decision-log.md 2026-10-24, C1).
