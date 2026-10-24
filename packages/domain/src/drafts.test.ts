@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseDraftFlag, draftDepositNotice, draftLabel, validateVerificationEvidence, onBehalfRefusal, onlySubjectReviewsReason, headlessVerifyRefusal } from "./drafts";
+import { parseDraftFlag, draftDepositNotice, draftLabel, validateVerificationEvidence, onBehalfRefusal, onlySubjectReviewsReason, headlessVerifyRefusal, parseDraftOutcome, DRAFT_OUTCOMES, describeResolution } from "./drafts";
 
 describe("parseDraftFlag", () => {
   it("DT-VIS-01: true and its usual wire spellings mean draft", () => {
@@ -114,6 +114,109 @@ describe("validateVerificationEvidence (DT-VER-05, DT-VER-06)", () => {
   });
 });
 
+// ── Slice 6c: agent-side resolution ─────────────────────────────────────────
+
+describe("parseDraftOutcome (S6c-M2, S6c-B6)", () => {
+  it("defaults to verified when absent, null, or empty", () => {
+    for (const raw of [undefined, null, ""]) expect(parseDraftOutcome(raw)).toEqual({ ok: true, outcome: "verified" });
+  });
+
+  it("accepts each of the three outcomes, trimmed", () => {
+    for (const o of DRAFT_OUTCOMES) expect(parseDraftOutcome(o)).toEqual({ ok: true, outcome: o });
+    expect(parseDraftOutcome(" rejected ")).toEqual({ ok: true, outcome: "rejected" });
+    expect(DRAFT_OUTCOMES).toEqual(["verified", "rejected", "not_chosen"]);
+  });
+
+  it("fails closed on anything else, naming the three values, so a typo never publishes", () => {
+    for (const raw of ["reject", "REJECTED", "not chosen", true, 1, {}, ["rejected"]]) {
+      const r = parseDraftOutcome(raw);
+      expect(r.ok, String(raw)).toBe(false);
+      if (!r.ok) {
+        expect(r.error).toContain("verified | rejected | not_chosen");
+        expect(r.error).toContain("nothing was stored");
+      }
+    }
+  });
+
+  it("echoes a long unknown value truncated", () => {
+    const r = parseDraftOutcome("x".repeat(200));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.length).toBeLessThan(260);
+  });
+});
+
+describe("validateVerificationEvidence per outcome (S6c-E1, S6c-E3)", () => {
+  const existing = ["the person said yes to option A"];
+
+  it("keeps one structural rule for every outcome: a new quote with a citation passes", () => {
+    for (const o of DRAFT_OUTCOMES) {
+      expect(validateVerificationEvidence([{ interpretation: "Settled.", quote: "No, not A", source: "chat" }], existing, o)).toEqual({ ok: true });
+    }
+  });
+
+  it("S6c-E2: a rejection citing a covering recipe by id passes; the id is not looked up", () => {
+    const r = validateVerificationEvidence(
+      [{ interpretation: "A later verified recipe covers the same call the other way.", quote: "I chose default deny", source: "recipe 1a2b3c4d" }],
+      existing,
+      "rejected",
+    );
+    expect(r).toEqual({ ok: true });
+  });
+
+  it("refuses a rejection that only re-quotes the draft's own evidence", () => {
+    const r = validateVerificationEvidence([{ interpretation: "x", quote: "the person said yes to option A", source: "chat" }], existing, "rejected");
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain("already");
+  });
+
+  it("words the refusal for the outcome: a rejection may quote the covering recipe, cited by id", () => {
+    const rej = validateVerificationEvidence([], existing, "rejected");
+    const nc = validateVerificationEvidence([], existing, "not_chosen");
+    const ver = validateVerificationEvidence([], existing);
+    expect(!rej.ok && rej.error).toMatch(/^Rejecting a draft needs new evidence/);
+    expect(!rej.ok && rej.error).toContain("-- recipe <id>");
+    expect(!nc.ok && nc.error).toMatch(/^Marking a draft not chosen needs new evidence/);
+    expect(!ver.ok && ver.error).toMatch(/^Verifying a draft needs new evidence/);
+  });
+
+  it("says how many entries the text was read as and what each lacked", () => {
+    const r = validateVerificationEvidence(
+      [
+        { interpretation: "Interpretation.", quote: "the answer", source: "" },
+        { interpretation: "", quote: "", source: "chat, 2026-10-24" },
+      ],
+      existing,
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error).toContain("read as 2 entries");
+      expect(r.error).toContain("entry 1 has a quote but no citation");
+      expect(r.error).toContain("entry 2 has a citation but no quote");
+    }
+    const none = validateVerificationEvidence([], existing);
+    expect(!none.ok && none.error).toContain("No evidence was sent");
+    const one = validateVerificationEvidence([{ interpretation: "Only words.", quote: "", source: "" }], existing);
+    expect(!one.ok && one.error).toContain("read as 1 entry: entry 1 has no quote and no citation");
+  });
+});
+
+describe("describeResolution (S6c-B4)", () => {
+  const ID = "11111111-1111-4111-8111-111111111111";
+
+  it("says what each outcome did, with the evidence count", () => {
+    expect(describeResolution(ID, "verified", 1)).toBe(
+      `Draft ${ID} is verified: it is now an ordinary recipe that collaborators can find, with your new evidence attached (1 entry).`,
+    );
+    const rej = describeResolution(ID, "rejected", 2);
+    expect(rej).toMatch(new RegExp(`^Draft ${ID} is rejected:`));
+    expect(rej).toContain("leaves their review queue");
+    expect(rej).toContain("(2 entries)");
+    const nc = describeResolution(ID, "not_chosen", 1);
+    expect(nc).toMatch(new RegExp(`^Draft ${ID} is marked not chosen:`));
+    expect(nc).toContain("private");
+  });
+});
+
 // ── Slice 3 ──────────────────────────────────────────────────────────────────
 
 describe("draftDepositNotice with the queue link (S3-L6, S3-Z3)", () => {
@@ -187,7 +290,7 @@ describe("on-behalf labels (S4-L1, S4-Z3)", () => {
   it("names the depositor to the subject and the subject to the depositor, inside the label", () => {
     expect(draftLabel("unverified", { draftDepositedBy: DANA })).toContain(`unverified draft, deposited by ${DANA}:`);
     expect(draftLabel("unverified", { draftAbout: PAT })).toContain(`unverified draft about ${PAT}:`);
-    expect(draftLabel("rejected", { draftAbout: PAT })).toBe(`[rejected draft about ${PAT}: the person said this is wrong]`);
+    expect(draftLabel("rejected", { draftAbout: PAT })).toBe(`[rejected draft about ${PAT}: its evidence says why]`);
     expect(draftLabel("not_chosen", { draftDepositedBy: DANA })).toBe(`[draft not chosen, deposited by ${DANA}]`);
   });
 

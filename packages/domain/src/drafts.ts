@@ -245,7 +245,10 @@ export function draftLabel(
       base = `[unverified draft${party}: a hypothesis the person has not confirmed; visible only to them and their agents]`;
       break;
     case "rejected":
-      base = `[rejected draft${party}: the person said this is wrong]`;
+      // Slice 6c: an agent may reject a draft on the settling context (a
+      // covering recipe cited by id), so the label no longer says the
+      // person said it was wrong; the rejection's evidence carries why.
+      base = `[rejected draft${party}: its evidence says why]`;
       break;
     case "not_chosen":
       base = `[draft not chosen${party}]`;
@@ -259,7 +262,35 @@ export function draftLabel(
   return `${base.slice(0, -1)}; impact ${impact ?? "not rated"}, uncertainty ${uncertainty ?? "not rated"}]`;
 }
 
-// ── Agent verification ───────────────────────────────────────────────────────
+// ── Agent resolution ────────────────────────────────────────────────────────
+
+/**
+ * Where an agent's resolution leaves a draft (slice 6c): the verify operation
+ * takes one `outcome`, so `verify_draft` and POST /recipes/:id/verify resolve
+ * a draft three ways with one contract (recipe d21d3894). The same three
+ * values the review queue writes (slice 3); `verified` is the default.
+ */
+export const DRAFT_OUTCOMES = ["verified", "rejected", "not_chosen"] as const;
+export type DraftOutcome = (typeof DRAFT_OUTCOMES)[number];
+
+/**
+ * The verify operation's `outcome` parameter. Absent, null, or empty means
+ * `verified`. Unlike the triage ratings (capture-only, recipe 4cfd166e) this
+ * fails closed: an unrecognized value stores nothing, since falling through
+ * to the default would publish a draft the agent meant to reject.
+ */
+export function parseDraftOutcome(raw: unknown): { ok: true; outcome: DraftOutcome } | { ok: false; error: string } {
+  if (raw === undefined || raw === null || raw === "") return { ok: true, outcome: "verified" };
+  const text = typeof raw === "string" ? raw.trim() : "";
+  const found = DRAFT_OUTCOMES.find((o) => o === text);
+  if (found) return { ok: true, outcome: found };
+  const echo = typeof raw === "string" ? raw : JSON.stringify(raw) ?? String(raw);
+  const shown = echo.length > 40 ? `${echo.slice(0, 40)}…` : echo;
+  return {
+    ok: false,
+    error: `outcome "${shown}" is not one of verified | rejected | not_chosen (verified when omitted); nothing was stored.`,
+  };
+}
 
 export interface VerificationEvidenceEntry {
   interpretation: string;
@@ -269,35 +300,81 @@ export interface VerificationEvidenceEntry {
 
 const normalizeQuote = (q: string): string => q.replace(/\s+/g, " ").trim().toLowerCase();
 
+/** What the refusal asks for, per outcome (slice 6c, S6c-E3). */
+const EVIDENCE_NEEDED: Record<DraftOutcome, string> = {
+  verified:
+    "Verifying a draft needs new evidence: an entry with your interpretation, then > \"the person's "
+    + "answer, or the words that settle it, quoted verbatim\", then -- where they were said (a citation), "
+    + "separated from other entries by a blank line.",
+  rejected:
+    "Rejecting a draft needs new evidence: an entry with your interpretation, then > \"the person's "
+    + "answer, or the words of the verified recipe that covers the same call, quoted verbatim\", then -- "
+    + "where they were said (for a recipe, -- recipe <id>), separated from other entries by a blank line.",
+  not_chosen:
+    "Marking a draft not chosen needs new evidence: an entry with your interpretation, then > \"the "
+    + "words that settle the choice (the person's answer, or the measurement), quoted verbatim\", then -- "
+    + "where they were said, separated from other entries by a blank line.",
+};
+
+/** How the evidence text was read, entry by entry (S6c-E3): the field's
+ *  refusals gave no clue that a blank line had split one entry in two. */
+function describeEntries(entries: readonly VerificationEvidenceEntry[]): string {
+  if (entries.length === 0) return "No evidence was sent.";
+  const parts = entries.slice(0, 10).map((e, i) => {
+    const q = (e.quote ?? "").trim() !== "";
+    const c = (e.source ?? "").trim() !== "";
+    const has = q && c ? "has a quote and a citation" : q ? "has a quote but no citation" : c ? "has a citation but no quote" : "has no quote and no citation";
+    return `entry ${i + 1} ${has}`;
+  });
+  const more = entries.length > 10 ? "; …" : "";
+  return `The text was read as ${entries.length} entr${entries.length === 1 ? "y" : "ies"}: ${parts.join("; ")}${more}.`;
+}
+
 /**
- * The structural rule for an agent verifying a draft (build log open
- * question 14, DT-VER-05, DT-VER-06): at least one evidence entry with a
- * verbatim quote and a citation, whose quote the draft does not already
- * carry. The server cannot know the quote is the person's own words; it can
- * require something new that anyone could check, and it records which key
- * verified, so the person can audit it.
+ * The structural rule for an agent resolving a draft, the same for every
+ * outcome (build log open question 14, ruling 46; DT-VER-05, DT-VER-06): at
+ * least one evidence entry with a verbatim quote and a citation, whose quote
+ * the draft does not already carry. The server cannot know the quote is the
+ * person's own words or that a cited recipe covers the call; it can require
+ * something new that anyone could check, and it records which key resolved
+ * the draft, so the person can audit it. A cited recipe id is never looked
+ * up: that would make this operation an existence oracle (S6c-E2).
  */
 export function validateVerificationEvidence(
   entries: readonly VerificationEvidenceEntry[],
   existingQuotes: readonly string[],
+  outcome: DraftOutcome = "verified",
 ): { ok: true } | { ok: false; error: string } {
-  const need =
-    "Verifying a draft needs new evidence: an entry with your interpretation, then > \"the person's "
-    + "answer, quoted verbatim\", then -- where they said it (a citation), separated from other "
-    + "entries by a blank line.";
+  const need = EVIDENCE_NEEDED[outcome];
   const cited = entries.filter((e) => (e.quote ?? "").trim() !== "" && (e.source ?? "").trim() !== "");
   if (cited.length === 0) {
-    return { ok: false, error: `${need} None of the evidence sent has both a quote and a citation.` };
+    return { ok: false, error: `${need} None of the evidence sent has both a quote and a citation. ${describeEntries(entries)}` };
   }
   const known = new Set(existingQuotes.map(normalizeQuote));
   const fresh = cited.filter((e) => !known.has(normalizeQuote(e.quote ?? "")));
   if (fresh.length === 0) {
     return {
       ok: false,
-      error: `${need} Every quote sent is already on the draft, so it adds nothing new; quote the person's answer to the question the draft left open.`,
+      error: `${need} Every quote sent is already on the draft, so it adds nothing new; quote what settles the question the draft left open.`,
     };
   }
   return { ok: true };
+}
+
+/**
+ * The verify operation's success reply, per outcome (S6c-B4). Shared by the
+ * remote tool and the stdio proxy so both say the same words.
+ */
+export function describeResolution(recipeId: string, outcome: DraftOutcome, evidenceAdded: number): string {
+  const attached = `(${evidenceAdded} entr${evidenceAdded === 1 ? "y" : "ies"})`;
+  switch (outcome) {
+    case "verified":
+      return `Draft ${recipeId} is verified: it is now an ordinary recipe that collaborators can find, with your new evidence attached ${attached}.`;
+    case "rejected":
+      return `Draft ${recipeId} is rejected: it stays private to the person and their agents, leaves their review queue, and no longer appears in results; your evidence is attached ${attached}.`;
+    case "not_chosen":
+      return `Draft ${recipeId} is marked not chosen: it stays private to the person and their agents, leaves their review queue, and no longer appears in results; your evidence is attached ${attached}.`;
+  }
 }
 
 /**
