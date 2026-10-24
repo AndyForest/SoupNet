@@ -285,29 +285,28 @@ describe.skipIf(!BASE)("slice 8a tool shapes", () => {
     await expect(insert("outcome", null)).rejects.toThrow();
   });
 
-  // ── Item 7: the exclude-own message ──────────────────────────────────────
+  // ── Item 7, superseded: own recipes are in the default search ───────────
+  // The operator reversed the MCP exclude-own default on 2026-10-24 (recipe
+  // 885143c2, superseding 303e17cf), which retires the author:me recovery
+  // line item 7 asked for: there is nothing hidden to recover.
 
-  it("S8a-E1: a zero-result search with own recipes hidden leads with the author:me form of the same query", async () => {
+  it("S8a-E1 (as amended): MCP search_recipes finds the caller's own recipes by default; -author:me leaves them out", async () => {
     const query = `"${RUN} one"`;
-    const md = await mcp(a.apiKey, "search_recipes", { query });
-    const lines = md.text.split("\n");
-    expect(lines[1]).toMatch(/^Your own recipes were left out by default \(\d+ of the \d+ in scope\)\. The same search including them: author:me "/);
-    expect(lines[1]!.endsWith(`author:me ${query}`)).toBe(true);
+    const found = await mcp(a.apiKey, "search_recipes", { query, response_format: "structured" });
+    const ids = ((found.structured?.["results"] ?? []) as Array<{ recipeId: string }>).map((r) => r.recipeId);
+    expect(ids).toContain(traceA);
+    expect(found.structured?.["searchedOwnExcluded"]).toBeUndefined();
 
-    const structured = await mcp(a.apiKey, "search_recipes", { query, response_format: "structured" });
-    expect(structured.structured?.["ownExcludedQuery"]).toBe(`author:me ${query}`);
-    expect(String(structured.structured?.["notice"]).split("\n")[0]).toBe(lines[1]);
-
-    const followed = await mcp(a.apiKey, "search_recipes", { query: `author:me ${query}`, response_format: "structured" });
-    expect(followed.structured?.["totalResults"]).toBeGreaterThan(0);
+    const others = await mcp(a.apiKey, "search_recipes", { query: `-author:me ${query}`, response_format: "structured" });
+    expect(others.structured?.["totalResults"]).toBe(0);
   }, 30_000);
 
-  it("S8a-E2: the web /check filter (no exclude-own default) is unchanged", async () => {
-    const qs = new URLSearchParams({ key: a.apiKey, filter: `"zzz-nothing-${RUN}"`, format: "json" });
-    const res = await fetch(`${BASE}/check?${qs.toString()}`, { headers: { Accept: "application/json" } });
-    const body = (await res.json()) as { data?: Record<string, unknown> };
-    expect(body.data?.["ownExcludedQuery"]).toBeUndefined();
-    expect(String(body.data?.["notice"])).not.toContain("author:me");
+  it("S8a-E2 (as amended): the stdio surface's search (/check with its surface header) includes own recipes too", async () => {
+    const qs = new URLSearchParams({ key: a.apiKey, filter: `"${RUN} one"`, format: "json" });
+    const res = await fetch(`${BASE}/check?${qs.toString()}`, { headers: { Accept: "application/json", "X-SoupNet-Surface": "mcp-stdio" } });
+    const body = (await res.json()) as { data?: { results?: Array<{ recipeId: string }>; notice?: string } };
+    expect((body.data?.results ?? []).map((r) => r.recipeId)).toContain(traceA);
+    expect(String(body.data?.notice)).not.toContain("your own recipes");
   });
 
   // ── Unknown parameter names ──────────────────────────────────────────────

@@ -31,7 +31,6 @@ import {
   buildCheckRecipeToolDescription,
   renderCheckResponseMarkdown,
   isShownDraftState,
-  ownExcludedQuery,
   renderBriefingIdLine,
   guardUnknownParams,
   toolParamsFromRegistry,
@@ -711,8 +710,10 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
   // ── search_recipes tool ───────────────────────────────────────────────────
   //
   // Read-only structured search (2026-08-19, docs/planning/recipe-search-design.md):
-  // the MCP twin of the /check filter path, with the exclude-own default that
-  // steers search toward collaborators' judgment (recipe 303e17cf). Calls
+  // the MCP twin of the /check filter path. It includes the caller's own
+  // recipes (recipe 885143c2, 2026-10-24, superseding the exclude-own default
+  // of recipe 303e17cf: agents deposit in their person's name, so excluding
+  // the caller emptied a book the person writes alone). Calls
   // searchWithoutLogging directly — no trace, no recipe.checked; a
   // check.searched audit row carries the measurement stamps and its id is
   // returned as searchId (the log_feedback search_id handle).
@@ -754,7 +755,8 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
           verbosity: verbosity ?? ("auto" as const),
           readGroups: read_recipe_books ?? undefined,
           surface: "mcp-http",
-          excludeOwnDefault: true,
+          // Own recipes included (recipe 885143c2); author: narrows.
+          excludeOwnDefault: false,
           sessionId: session_id ?? undefined,
           intent: intent ?? undefined,
           knownRecipeIds: knownRecipeIds.size > 0 ? [...knownRecipeIds] : undefined,
@@ -777,22 +779,15 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
         if (jsonResponse["ok"] === true) {
           const data = jsonResponse["data"] as Record<string, unknown>;
           delete data["checked"];
-          // Shared notice builder (cold-start v2 Phase A): on this surface the
-          // exclude-own default applies, so a zero-result notice additionally
-          // discloses how many in-scope recipes were the caller's own — a solo
-          // corpus must never read as empty. When some were, the notice leads
-          // with the same search including them, and ownExcludedQuery carries
-          // it for structured callers (slice 8a, S8a-E1).
+          // Shared notice builder (cold-start v2 Phase A): one phrasing for
+          // both search surfaces.
           jsonResponse["data"] = {
             searchOnly: true,
             filter: query,
-            notice: buildSearchOnlyNotice(result, query),
+            notice: buildSearchOnlyNotice(result),
             ...(result.searchId ? { searchId: result.searchId } : {}),
             ...(result.searchedCorpusSize !== undefined ? { searchedCorpusSize: result.searchedCorpusSize } : {}),
             ...(result.searchedOwnExcluded !== undefined ? { searchedOwnExcluded: result.searchedOwnExcluded } : {}),
-            ...(result.totalResults === 0 && (result.searchedOwnExcluded ?? 0) > 0
-              ? { ownExcludedQuery: ownExcludedQuery(query) }
-              : {}),
             ...data,
           };
         }

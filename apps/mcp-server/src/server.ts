@@ -355,8 +355,9 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
 
   // ── search_recipes tool ────────────────────────────────────────────────────────
   // Read-only structured search (2026-08-19) — forwards to the backend /check
-  // filter path. The X-SoupNet-Surface header carries the mcp-stdio identity,
-  // which the backend maps to the MCP exclude-own default (recipe 303e17cf).
+  // filter path. The X-SoupNet-Surface header carries the mcp-stdio identity
+  // for the audit row's surface; own recipes are included on every surface
+  // (recipe 885143c2, superseding the exclude-own default of 303e17cf).
 
   server.tool(
     "search_recipes",

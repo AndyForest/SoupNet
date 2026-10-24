@@ -1673,6 +1673,7 @@ The A0 raise is shared by A (`outcome` on `verify_draft`), B (one grammar term) 
 | # | Criterion | Evidence |
 |---|---|---|
 | S8a-E1 | When a search under the exclude-own default returns nothing and the caller's own recipes in scope were excluded, the notice's first line gives the same query with `author:me` added, ready to paste (`author:me <the query as sent>`), with the count. The JSON carries it as `ownExcludedQuery`. Markdown shows it as the line after the header. | Layer 1 on the notice and renderer; Layer 3 on remote `search_recipes` (markdown and structured). |
+| S8a-E1′ | **Replaces E1 and E2 after the operator's reversal of 2026-10-24 (recipe `885143c2`, superseding `303e17cf`).** MCP `search_recipes` and the stdio search (`/check` with its surface header) include the caller's own recipes by default, drafts under their label; `-author:me` leaves them out; nothing reports own recipes as excluded. The author:me lead E1 asked for is removed, since there is nothing to recover. | Layer 3: `tool-shapes.test.ts` S8a-E1/E2 (as amended), and the updated `check-search`, `draft-queue`, `drafts` and `drafts-on-behalf` tests. |
 | S8a-E2 | Responses with results, and searches where the default did not apply (an `author:` or `is:draft` query, the web `/check` filter), are byte-identical to today. | Layer 1 and the existing search tests unchanged. |
 
 **Unknown parameter names**
@@ -1838,6 +1839,19 @@ After the verification record and the read-only audit's hand-back (private repo,
   3. Run `npm run generate:data-model`, then `npm run check:data-model`.
   4. Run the migrations against an empty database (a fresh `TESTCI_PGPORT=<free port> npm run test:ci` does this).
   5. Say so in the PR. Main deploys to production on merge.
+
+### Slice 8a: the exclude-own default reversed (stream D, 2026-10-24)
+
+The operator reversed the MCP search's exclude-own default (recipe `885143c2`, superseding `303e17cf`). Stream E relayed it with the operator's words, and scheduling was left to him. Stream D built it as a separate commit on top of the verified work, so it can be dropped on its own (recipe `df594cda`).
+
+- **Code.** `excludeOwnDefault: false` at the two callers: the remote `search_recipes`, and `/check` for the stdio surface header. `searchWithoutLogging`'s option and `excludesOwnByDefault` stay, inert. Stream B's `intent:` lifts them in its own branch, and its test S6a-Q4 still holds. The 8a author:me lead (`ownExcludedLead`, `ownExcludedQuery`, the notice's filter argument) is removed. `trace.service.ts` is back to byte-identical with `main`, and so is its seam fingerprint.
+- **Copy.** `searchRecipes` and the last clause of `searchQuery` (agreed with stream B, which keeps its `intent:` term on rebase). C1 rewrote the briefing's "Search vs check" paragraph (stream C, `a9fc1a6`). This PR also corrects `CLAUDE.md` §Recipe Checks, `docs/architecture/search-algorithms.md`, and two comments in `drafts-and-triage.feature`.
+- **One consequence the ruling didn't name.** The old default kept a person's own unverified drafts out of a default search, because it kept all of their own recipes out. With the flip they appear under their draft label ("unverified draft … a hypothesis the person has not confirmed"), exactly as check results already show them. I chose that over a new rule hiding own drafts from search (recipe `7d034cb2`): search and check then agree, and slice 8b's "own open drafts set apart" (revision doc, slice 8 item 8) serves both with one display change. The tests that asserted the old behaviour now assert this (S2-B4, S4-V1, S3-G1, S3-G3), each with `-author:me` as the way to leave own recipes out.
+- **Bytes:** +1 on each surface for the reworded descriptions. Remote 17,319, stdio 13,822, shared descriptions 6,111. `searchRecipes` is 419 characters (cap 420), `searchQuery` 396.
+
+#### Questions for the operator (stream D), continued
+
+57. **Ship the exclude-own reversal in 8a, or split it out?** (Deposited as draft `5e9fdf61`; verifying or rejecting it is the answer.) Recommendation: in 8a, as built (a separate commit, `git revert`-able). 8a's item 7 was a recovery line for exactly this default, so shipping 8a without the flip would put copy into every zero-result search explaining a default you've already undone. The flip is two booleans and some copy. A separate PR would make sense if you want the own-drafts consequence above reviewed on its own, in which case drop the flip commit and 8a ships with the author:me lead instead (the commit before it has it). **Alternative inside the flip:** keep a person's own unverified drafts out of a default search (shown only under `is:draft` or an `author:` qualifier). That needs a new condition in `authz/draft-sql.ts`'s fragments. I'd build it only if a field agent reads its own draft as support in search before slice 8b lands.
 
 ### Slice 9 rubric: read paths for reports (stream E)
 

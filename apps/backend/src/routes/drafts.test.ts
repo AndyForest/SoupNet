@@ -406,9 +406,15 @@ describe.skipIf(!BASE || !canConnect())("drafts for the key's own user (drafts-a
     expect(page).toContain("[unverified draft");
   });
 
-  it("S2-B4 / DT-VIS-06: search excludes Pat's own drafts by default, like his other recipes", async () => {
+  // Since 2026-10-24 search includes the caller's own recipes by default
+  // (recipe 885143c2, superseding 303e17cf), so Pat's own draft is found the
+  // way checks already show it: labelled. -author:me leaves it out.
+  it("S2-B4 / DT-VIS-06: search shows Pat's own draft labelled, like his other recipes, and -author:me leaves it out", async () => {
     const r = await mcp(patKey, "search_recipes", { query: `"${MARKER}"` });
-    expect(r.text).not.toContain(draftId);
+    const line = r.text.split("\n").find((l) => l.includes(draftId));
+    expect(line).toContain("unverified draft");
+    const others = await mcp(patKey, "search_recipes", { query: `-author:me "${MARKER}"` });
+    expect(others.text).not.toContain(draftId);
   });
 
   it("S2-B4 / DT-VIS-07: a key of Pat's with no read scope on the book finds the draft uniformly absent", async () => {
