@@ -80,10 +80,16 @@ export function parseEvidenceMarkdown(text: string): EvidenceEntry[] {
     // 508f71c8 chose the tolerant parser). Stays conservative: once an entry
     // has its citation, a further orphaned block, or one with no preceding
     // entry, is kept standalone, so no reference is ever clobbered or dropped.
+    // A quote joins the open entry only when that entry has no quote yet, or
+    // its quote is still open (an opening mark not yet closed, a quote whose
+    // paragraphs are separated by a blank line). A complete quote waiting for
+    // its citation keeps a later, separately cited quote apart, so no quote
+    // is filed under another block's citation (verifier's defect 2).
     const prev = entries[entries.length - 1];
+    const prevRaw = rawQuotes[rawQuotes.length - 1] ?? "";
     const isOrphanCitation = !entry.interpretation && Boolean(entry.quote || entry.source);
-    if (prev && isOrphanCitation && !prev.source) {
-      const prevRaw = rawQuotes[rawQuotes.length - 1] ?? "";
+    const quoteMayJoin = !entry.quote || !prevRaw || isOpenQuote(prevRaw);
+    if (prev && isOrphanCitation && !prev.source && quoteMayJoin) {
       const joined = [prevRaw, rawQuote].filter(Boolean).join(" ");
       rawQuotes[rawQuotes.length - 1] = joined;
       prev.quote = stripOuterQuotes(joined);
@@ -96,6 +102,11 @@ export function parseEvidenceMarkdown(text: string): EvidenceEntry[] {
   }
 
   return entries;
+}
+
+/** A quote as written that opens with a double-quote mark and has not closed. */
+function isOpenQuote(raw: string): boolean {
+  return raw.startsWith('"') && !(raw.length >= 2 && raw.endsWith('"'));
 }
 
 /**

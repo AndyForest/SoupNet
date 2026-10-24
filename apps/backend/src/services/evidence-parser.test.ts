@@ -323,6 +323,40 @@ describe("parseEvidenceMarkdown", () => {
     ]);
   });
 
+  // Verifier's defect 2: a complete quote waiting for its citation must not
+  // swallow a later, separately cited quote, or Quote A would be filed under
+  // Source B. Only a quote still open (an opening mark not yet closed)
+  // continues across a blank line.
+  it("does not join a later cited quote onto an earlier complete quote that has no citation", () => {
+    const input = [
+      "Interp A.",
+      '> "Quote A."',
+      "",
+      '> "Quote B."',
+      "-- Source B",
+    ].join("\n");
+
+    expect(parseEvidenceMarkdown(input)).toEqual([
+      { interpretation: "Interp A.", quote: "Quote A.", source: "" },
+      { interpretation: "", quote: "Quote B.", source: "Source B" },
+    ]);
+  });
+
+  it("keeps separately quoted paragraphs as separate quotes rather than gluing their marks together", () => {
+    const input = [
+      "Interpretation.",
+      "",
+      '> "Para one."',
+      "",
+      '> "Para two."',
+      "-- chat, 2026-10-24",
+    ].join("\n");
+
+    const result = parseEvidenceMarkdown(input);
+    expect(result.map((e) => e.quote)).toEqual(["Para one.", "Para two."]);
+    expect(result.some((e) => e.quote.includes('" "'))).toBe(false);
+  });
+
   it("separates two blank-line-spaced entries at the second interpretation", () => {
     const input = [
       "First interpretation.",
