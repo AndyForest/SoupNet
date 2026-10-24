@@ -35,6 +35,8 @@ Written against stream A's `outcome` on `verify_draft` (6c) and stream B's `inte
 11. **Thin results, in the check response (7d item 8):** "No similar recipes found." gains "When results in your context are thin, think harder and check more of your calls, rather than stretching a distant match." (`check-response-renderer.ts`; not briefing text, placed where the revision put it).
    → Moves: `checking-behavior.feature` new "Thin results lead to more checks, not a stretched match".
 12. **Thin profile only: two duplicates of the MCP tool schema dropped (recipe `63abcc48`).** "If you auto-compact your context … omitting `session_id` …" (the `session_id` parameter says "Compacted your context? Omit it next check for full text again.") and "Evidence entries follow this shape: …" (the `supporting_evidence` parameter gives the same shape; Recipe format shows it with examples). Both stay in the full profile, whose paste readers have no tool schema. With every addition tightened, the thin fixture was 123 characters over its ceiling without this.
+14. **Closing the loop — feedback: one clause for stream D's intent-only outcome row (recipe `60bb0fa0`).** "An outcome row about the whole session, with no single recipe behind it, can carry your intent_id alone." Stream D (8a) made the target valid (recipe `831a11ea`), and the headless section's closing outcome row had no target the briefing named. The briefing-id line D adds is composed outside `BRIEFING.build` and describes itself where it is printed, so the briefing body does not repeat it.
+   → Moves: `feedback-loop.feature` "A session's outcome with no single recipe joins its intent alone" (added on stream D's branch, which merges before this PR).
 13. **Slimming lever (recipe `aae000d2`), `buildExemplarsSection`:** each exemplar shows its top evidence entry and "(N more evidence entries: get_recipes or GET /recipes?ids=<id>)" when it has more. Selection, ordering, claim, and metadata unchanged. The thin briefing renders no exemplars at its default, so this shrinks the full and paste briefing and any briefing with exemplars opted in, not the thin fixture (build log question 56).
 
 ### Scenarios watched, with rationale for holding
@@ -54,12 +56,12 @@ Fixture from `recipe-guide-content.test.ts`; the five-exemplar section is built 
 
 | Measure | Before | After | Cap |
 |---|---|---|---|
-| Thin briefing fixture | 18,183 characters (18,297 bytes) | 20,772 (20,885 bytes), +2,589 | 21,000 (unchanged) |
-| Thin headless fixture | 18,536 | 21,172 | 21,500 (unchanged) |
+| Thin briefing fixture | 18,183 characters (18,297 bytes) | 20,877 (20,990 bytes), +2,694 | 21,000 (unchanged) |
+| Thin headless fixture | 18,536 | 21,277 | 21,500 (unchanged) |
 | Headless section | 351 | 398 | 400 (unchanged) |
-| Full briefing fixture | 24,119 | 27,050, +2,931 | none |
+| Full briefing fixture | 24,119 | 27,155, +3,036 | none |
 | Five-exemplar section | 4,990 | 3,732, −1,258 | none |
-| Full briefing with that section | 29,059 | 30,732, +1,673 | none |
+| Full briefing with that section | 29,059 | 30,837, +1,778 | none |
 | Remote `tools/list` / stdio / shared descriptions | 16,986 bytes / 13,196 / 6,051 characters | unchanged | 18,200 / 14,700 / 6,600 |
 
 ## 2026-10-24 — Drafts-and-triage slices 6 to 9, scaffold (PR A0): four size caps raised ahead of parallel streams; no copy changed

@@ -1704,13 +1704,14 @@ One fact the budget turns on: the thin briefing renders no exemplars at its defa
 
 ### Slice 7 build notes, PR C1 (stream C, 2026-10-24)
 
-Agent `a-drafts-7-2026-10-24`, intent `int_YtrwcjA9yqBoBZYQCHlPVFnc`. Everything is in the C1 entry of [../briefing-specs/spec-decision-log.md](../briefing-specs/spec-decision-log.md): each edit, its scenario, the watched scenarios, and the bytes. In short: thin briefing 18,183 → 20,772 characters (cap 21,000), thin headless 18,536 → 21,172 (21,500), headless section 351 → 398 (400), full fixture 24,119 → 27,050; a realistic five-exemplar section 4,990 → 3,732 with the lever; `tools/list` and the shared descriptions unchanged.
+Agent `a-drafts-7-2026-10-24`, intent `int_YtrwcjA9yqBoBZYQCHlPVFnc`. Everything is in the C1 entry of [../briefing-specs/spec-decision-log.md](../briefing-specs/spec-decision-log.md): each edit, its scenario, the watched scenarios, and the bytes. In short: thin briefing 18,183 → 20,877 characters (cap 21,000), thin headless 18,536 → 21,277 (21,500), headless section 351 → 398 (400), full fixture 24,119 → 27,155; a realistic five-exemplar section 4,990 → 3,732 with the lever; `tools/list` and the shared descriptions unchanged.
 
 Calls made on the way, each recipe-checked in `soupnet-oss` and closed with feedback:
 
 - **The headless section moved from C2 into C1** (recipe `ee7d5eac`). Its correction depends on neither 6c nor 6a, and leaving it would have the headless section ask "why your user couldn't be asked" beside a body that defines drafts by what would settle them.
 - **Reading results is a new short section in the shared body** (recipe `4357942f`). The only results-interpretation text was in the paste-only JSON section, which MCP agents never see. Recipe `0c59b8a2` (fix in the existing section, no special-case framing) was the counterweight; its point was not contesting check-freely for one capability profile, and this section applies to every profile.
 - **Budget: tighten the new copy first, then drop exact duplicates from the thin profile only** (recipes `c9867351`, refined by `63abcc48`). The first draft was 21,867 characters; tightening every addition brought it to 21,123, still over; dropping the two paragraphs that repeat the MCP tool schema brought it to 20,709, and editorial fixes after a reread to 20,772. The thin-results line went to the check response, as the revision placed it, rather than the briefing.
+- **Stream D's intent-only outcome row** (recipe `60bb0fa0`): one clause in Closing the loop, added after the first C1 commit at stream D's prompt (+105 characters), so the headless section's closing outcome row has a target the briefing names; D's briefing-id line describes itself and is not repeated.
 - **Cross-stream:** the Drafts section names `verify_draft`'s outcomes (stream A confirmed the contract: `verified` default, `rejected`, `not_chosen`) and the `is:draft intent:<id>` poll (stream B). C1 merges after A1 and B.
 
 #### Questions for the operator

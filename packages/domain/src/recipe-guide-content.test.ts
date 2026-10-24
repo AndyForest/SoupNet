@@ -482,6 +482,9 @@ describe("BRIEFING.build — slice 7: the field additions (7d)", () => {
       // S7-D4: the fourth role pattern.
       expect(text).toContain("Four patterns keep it transferable");
       expect(text).toContain("- **For what the user receives**");
+      // Stream D (8a): an outcome row may join the intent alone; the headless
+      // section's closing outcome row needs this target.
+      expect(section(text, "## Closing the loop — feedback")).toContain("An outcome row about the whole session, with no single recipe behind it, can carry your intent_id alone.");
       // S7-D7: a probe is a search.
       expect(section(text, "## How to check")).toContain("Probing the corpus itself (what's there, how a role clusters) is a search too");
     });
