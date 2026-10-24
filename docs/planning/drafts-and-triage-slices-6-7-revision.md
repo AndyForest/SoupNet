@@ -96,7 +96,13 @@ The design's section opens "Drafting exists for moments when the human can't be 
 - Orchestrating sub-agents is live: sub-agents decide as they go and surface only high impact × uncertainty checks without blocking; poll your drafts by intent during the run; correct mid-run; ratify what you can settle; raise the rest; after the run, resolve your sub-agents' drafts or list them with a recommendation (`97f7c34e`).
 - A call worth deferring: when every option will genuinely be pursued, check each as an ordinary recipe; when you cannot stand behind any, draft them under one intent with the rubric stated before measuring; either way, check the chosen path with the outcome as evidence and leave feedback on the rest (`7942b8c0`, `ea930c3d`).
 
-The scenario is edited to match: given the person is reachable, the agent settles from context, asks, or presents options; given it cannot settle the call, it drafts and says what would settle it.
+- A draft is yours to resolve (operator direction, 2026-10-24). When a call is genuinely a person's to make and you keep working rather than wait, deposit your recommendation as a draft under your intent and ask that person plainly. Their answer reaches you through the corpus wherever they give it, and whichever of their agents holds the settling context verifies or rejects the draft under the same confidence rule as any check, including you once the work or their reply settles it. A draft waits for a person's click only while nothing any agent holds settles it. Their words anywhere, in chat, a review, or a commit message, are the quote to verify with. ("A person", not "the person": in a shared book the call may belong to a colleague, and a draft on their behalf is resolved by their agents; the operator's wording, 2026-10-24.)
+
+For 7d, one example-and-goal line names the over-caution case itself, since examples are how the operator's rulings travel: an orchestrator once refused to verify drafts its own context settled because the tool copy spoke of a person confirming; the goal is that a person's agent resolves what it can stand behind, and a person sees only what no agent could.
+
+Two small product companions, for stream A (6c) and stream E (9): a resolved draft fetched by id states how and when it was resolved, so a session polling its own draft gets an explicit signal; and the intent lineage read shows, per draft, who resolved it (an agent or the person) and how long it waited, which is the number that shows whether over-caution is receding.
+
+The scenario is edited to match: given the person is reachable, the agent settles from context, asks with a recommendation and deposits it as a draft it owns, or presents options; given it cannot settle the call, it drafts and says what would settle it; given the answer arrives or the work settles it, the agent resolves its own draft.
 
 ### 7b. Tool copy that contradicts the rulings
 
