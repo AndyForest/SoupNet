@@ -221,6 +221,10 @@ export interface TraceFeedbackRow {
   /** The declared intent the reporting agent carried (`int_…`), linked to
    *  its intent page (slice 9). Null when the row carried none. */
   intentId: string | null;
+  /** The row is the viewer's own (their key wrote it, or they did). Only then
+   *  is its intent theirs to open; the intent page is per person. Absent on
+   *  rows from before slice 9's route change. */
+  isMine?: boolean;
   createdAt: string;
   apiKeyLabel: string | null;
   /** Set on human-origin rows (a re-filing correction); apiKeyLabel is null. */

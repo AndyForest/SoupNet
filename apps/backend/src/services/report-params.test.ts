@@ -37,8 +37,8 @@ describe("parseReportQuery", () => {
     });
   });
 
-  it("accepts a bare date and an offset without a colon for since", () => {
-    for (const since of ["2026-10-24", "2026-10-24T09:30+0200", "2026-10-24T09:30:00.123456-05:00"]) {
+  it("accepts a bare date, a leap day, and an offset without a colon for since", () => {
+    for (const since of ["2026-10-24", "2028-02-29", "2026-10-24T09:30+0200", "2026-10-24T09:30:00.123456-05:00"]) {
       expect(parseReportQuery(q({ since }), ["since"]).ok, since).toBe(true);
     }
   });
@@ -87,6 +87,7 @@ describe("parseReportQuery", () => {
     ["agent_id", ""], ["agent_id", "x".repeat(201)],
     ["recipe_book", ""], ["recipe_book", "x".repeat(201)],
     ["since", "yesterday"], ["since", "2026-10-24T09:30:00"], ["since", "2026-13-45"],
+    ["since", "2026-02-30"], ["since", "2026-04-31T00:00:00Z"], ["since", "2025-02-29"],
   ])("refuses %s=%s", (field, value) => {
     const r = parseReportQuery(q({ [field]: value }), ALL);
     expect(r.ok === false && r.fields).toEqual([field]);

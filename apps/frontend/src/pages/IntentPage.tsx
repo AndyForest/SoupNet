@@ -19,15 +19,23 @@ import { lineageLabel } from "../lib/intent-link.js";
  */
 export function IntentPage() {
   const { intentId } = useParams({ strict: false }) as { intentId: string };
-  const [page, setPage] = useState(1);
-  const { data, isLoading } = useIntent(intentId, page);
+  // The page number belongs to one intent: following a link to another starts at page 1.
+  const [paging, setPaging] = useState({ intentId, page: 1 });
+  const page = paging.intentId === intentId ? paging.page : 1;
+  const setPage = (p: number) => setPaging({ intentId, page: p });
+  const { data: result, isLoading, isError } = useIntent(intentId, page);
 
   if (isLoading) {
     return <p style={{ color: "var(--color-on-surface-variant)" }}>Loading intent...</p>;
   }
-  if (!data) {
+  if (result?.kind === "notFound") {
     return <p style={{ color: "var(--color-error)" }} data-testid="intent-not-found">Intent not found.</p>;
   }
+  if (isError || !result || result.kind === "error") {
+    const status = result?.kind === "error" ? ` (HTTP ${result.status})` : "";
+    return <p style={{ color: "var(--color-error)" }} data-testid="intent-load-error">Could not load this intent{status}. Reload the page, or sign in again if your session has ended.</p>;
+  }
+  const data = result.data;
 
   const { intent, lineage } = data;
   const meta = [

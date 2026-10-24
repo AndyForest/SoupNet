@@ -10,7 +10,7 @@
  *
  * Who sees what (ruling 54, the caller's user's rows only; the scope rules
  * are in authz/report-scope.ts):
- *   - intents: `intents.user_id` is the viewer. Not narrowed by book: an
+ *   - intents: `intentOwnedBy`, the viewer's own. Not narrowed by book: an
  *     intent belongs to the person, not to a book (open question 57).
  *   - feedback rows: `feedbackOwnedBy`, and when the row is about a recipe,
  *     the viewer may read that recipe now. A row about a search names no
@@ -34,7 +34,7 @@
 import { sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { feedbackOwnedBy, traceReadableByViewer, viewerBookIds, inBooks } from "../authz";
+import { feedbackOwnedBy, intentOwnedBy, traceReadableByViewer, viewerBookIds, inBooks } from "../authz";
 import type { ReportViewer } from "../authz";
 import { INTENT_ID_RE } from "./intent.service";
 import type { FeedbackFilters, ReportPaging } from "./report-params";
@@ -81,6 +81,8 @@ export interface FeedbackRowOut {
   actorEmail: string | null;
   starCount: number;
   starredByMe: boolean;
+  /** The row is the viewer's own (written by their key or by them). */
+  isMine: boolean;
 }
 
 export type LineageEntry =
@@ -135,6 +137,8 @@ function feedbackSelect(viewer: ReportViewer): SQL {
       cf.created_at AS "createdAt",
       -- Display label only; the row is already the viewer's by feedbackVisible.
       ak.label AS "apiKeyLabel",
+      -- Always true here; carried so a row reads the same as on the detail page.
+      ${feedbackOwnedBy(viewer.userId)} AS "isMine",
       cf.actor_user_id AS "actorUserId",
       au.email AS "actorEmail",
       (SELECT COUNT(*) FROM claimnet.check_feedback_stars s WHERE s.feedback_id = cf.id)::int AS "starCount",
@@ -236,7 +240,7 @@ function intentSummarySelect(viewer: ReportViewer): SQL {
       i.id,
       i.story,
       i.agent_id AS "agentId",
-      -- Display label only; the intent is already the viewer's by user_id.
+      -- Display label only; the intent is already the viewer's by intentOwnedBy.
       ik.label AS "apiKeyLabel",
       i.created_at AS "createdAt",
       i.last_used_at AS "lastUsedAt",
@@ -278,12 +282,12 @@ export async function listIntents(
   paging: ReportPaging,
 ): Promise<{ items: IntentSummary[] } & Page> {
   const countRows = await db.execute(sql`
-    SELECT COUNT(*)::int AS n FROM claimnet.intents WHERE user_id = ${viewer.userId}::uuid
+    SELECT COUNT(*)::int AS n FROM claimnet.intents i WHERE ${intentOwnedBy(viewer.userId)}
   `);
   const total = (countRows as unknown as Array<{ n: number }>)[0]?.n ?? 0;
   const raw = total === 0 ? [] : await db.execute(sql`
     ${intentSummarySelect(viewer)}
-    WHERE i.user_id = ${viewer.userId}::uuid
+    WHERE ${intentOwnedBy(viewer.userId)}
     ORDER BY i.created_at DESC, i.id DESC
     LIMIT ${paging.perPage} OFFSET ${paging.offset}
   `);
@@ -305,7 +309,7 @@ export async function getIntent(
   if (!INTENT_ID_RE.test(intentId)) return null;
   const rows = await db.execute(sql`
     ${intentSummarySelect(viewer)}
-    WHERE i.id = ${intentId} AND i.user_id = ${viewer.userId}::uuid
+    WHERE i.id = ${intentId} AND ${intentOwnedBy(viewer.userId)}
   `);
   const row = (rows as unknown as RawIntent[])[0];
   if (!row) return null;

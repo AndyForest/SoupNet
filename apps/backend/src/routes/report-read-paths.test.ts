@@ -348,17 +348,42 @@ describe.skipIf(!BASE || !canConnect())("read paths for reports (drafts-and-tria
     expect(relK1.relatedTraceIds).toEqual([]); // B is outside K1
   });
 
-  it("S9-S1: no Bearer header, a bad key, and a JWT are 401 on every path", async () => {
+  it("S9-S1: no Bearer header, a bad key, an expired key, and a JWT are 401 on every path", async () => {
+    const expired = await mintKey(pat, [pat.personalBookId], "expired");
+    // Expiry is set directly: the mint refuses a past expiry, and waiting is not a test.
+    await sql`UPDATE claimnet.api_keys SET expires_at = NOW() - interval '1 minute' WHERE label = 'expired' AND user_id = ${pat.userId}::uuid`;
     for (const path of ["/intents", `/intents/${intent}`, "/feedback/rows"]) {
       expect((await fetch(`${BASE}${path}`)).status, path).toBe(401);
       expect((await get("cn_s_notARealKey000000000000000000", path)).status, path).toBe(401);
+      expect((await get(expired, path)).status, path).toBe(401);
       expect((await get(pat.jwt, path)).status, path).toBe(401);
     }
+  });
+
+  it("S9-I1: an intent registered on a check, not a briefing, is listed too", async () => {
+    const qs = new URLSearchParams({
+      key: K2, format: "json", recipe: recipe("intent on a check"), evidence: EVIDENCE,
+      intent: `As a report-path tester (${run}), I register this intent on a check so that a report lists it.`,
+    });
+    const res = await fetch(`${BASE}/check?${qs.toString()}`);
+    const viaCheck = ((await res.json()) as { data?: { intentId?: string } }).data?.intentId ?? "";
+    expect(viaCheck).toMatch(/^int_[A-Za-z0-9]{24}$/);
+    expect((await intentList(K2)).items.map((i) => i.id)).toContain(viaCheck);
+  });
+
+  it("S9-W1: the detail page's feedback rows say whether each is the viewer's own, so only those intents are linked", async () => {
+    const asSam = (await (await call(sam, "GET", `/traces/${rB}/feedback`)).json()) as { data: { feedback: Array<{ id: string; isMine: boolean; intentId: string | null }> } };
+    const patsRow = asSam.data.feedback.find((r) => r.id === fb["B"])!;
+    expect(patsRow.intentId).toBe(intent);
+    expect(patsRow.isMine).toBe(false);
+    const asPat = (await (await call(pat, "GET", `/traces/${rB}/feedback`)).json()) as { data: { feedback: Array<{ id: string; isMine: boolean }> } };
+    expect(asPat.data.feedback.find((r) => r.id === fb["B"])!.isMine).toBe(true);
   });
 
   it("S9-S3: a headless key reads exactly what an ordinary key of the same books reads", async () => {
     const strip = (v: unknown) => JSON.stringify(v);
     expect(strip(await rows(H))).toBe(strip(await rows(K2)));
+    expect(strip(await intentList(H))).toBe(strip(await intentList(K2)));
     expect(strip(await intentDetail(H, intent))).toBe(strip(await intentDetail(K2, intent)));
   });
 

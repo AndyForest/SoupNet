@@ -2,7 +2,10 @@
  * Who may read a report row (drafts-and-triage slice 9: read paths for
  * intents and feedback rows).
  *
- * Two questions, each answered once here:
+ * Three questions, each answered once here:
+ *
+ *   - Whose intent is it? `intentOwnedBy`: the `intents.user_id` it was
+ *     registered under. An intent belongs to a person, not to a book.
  *
  *   - Whose feedback row is it? `feedbackOwnedBy`. A row is the user's when
  *     the key that wrote it belongs to them today, or it is a human-origin
@@ -22,7 +25,10 @@
  *     widens what a viewer may read: a feedback row the user's agent wrote
  *     about a recipe the presenting key cannot read now is not listed.
  *
- * Ruling 54 (2026-10-24): the caller's user's rows only.
+ * Ruling 54 (2026-10-24): the caller's user's rows only. The two ownership
+ * fragments are fingerprinted by the seam guard wherever they are called
+ * (scripts/check-authz-seam.mjs, MODULE_FRAGMENT), so dropping one from a
+ * statement shows up in review like a dropped draft condition.
  */
 
 import { sql } from "drizzle-orm";
@@ -35,13 +41,20 @@ export type ReportViewer =
   | { kind: "key"; userId: string; readGroupIds: readonly string[] }
   | { kind: "person"; userId: string; memberBookIds: readonly string[] };
 
+/** The `claimnet.intents` row aliased `i` belongs to this user. */
+export function intentOwnedBy(userId: string): SQL {
+  return sql`i.user_id = ${userId}::uuid`;
+}
+
 /**
  * The `claimnet.check_feedback` row aliased `cf` belongs to this user. `cf`
  * is the only alias, so nothing from a caller reaches the statement but the
  * bound user id.
  */
 export function feedbackOwnedBy(userId: string): SQL {
-  return sql`(cf.actor_user_id = ${userId}::uuid
+  // COALESCE keeps it a strict boolean (an agent row's actor_user_id is
+  // NULL), so it can be selected as a value as well as filtered on.
+  return sql`(COALESCE(cf.actor_user_id = ${userId}::uuid, FALSE)
     OR (cf.api_key_id IS NOT NULL AND EXISTS (
       SELECT 1 FROM claimnet.api_keys own_k
       WHERE own_k.id = cf.api_key_id AND own_k.user_id = ${userId}::uuid)))`;

@@ -28,7 +28,7 @@ Every path takes `page` (from 1, default 1) and `per_page` (1 to 200, default 50
 | `trace_id` (alias `recipe_id`) | A full recipe id (UUID) |
 | `search_id` | A search id (UUID), as a search response gives it |
 | `agent_id` | The agent id exactly as the agent sent it |
-| `since` | An ISO 8601 date (`2026-10-24`) or date-time with an offset (`2026-10-24T09:30:00Z`); rows created at or after it |
+| `since` | An ISO 8601 date (`2026-10-24`) or date-time with an offset (`2026-10-24T09:30:00Z`), naming a real calendar day; rows created at or after it |
 | `recipe_book` | A recipe book's slug or id |
 
 `since` is inclusive: a sweep that stores the newest `createdAt` it saw and passes it back gets that row again rather than missing one created in the same instant.
@@ -72,7 +72,7 @@ Every list answers with its paging block: `total`, `page`, `perPage`, `totalPage
 } }
 ```
 
-The lineage is one timeline, oldest first, paged by `page` and `per_page`; `total` counts its entries. `shown` is a recipe whose full text a check, search, or briefing under this intent delivered. `deposit` is a recipe a check under this intent created (`draftState` as you may see it). `feedback` carries a feedback row shaped as below.
+The lineage is one timeline, oldest first, paged by `page` and `per_page`; `total` counts its entries. `shown` is a recipe whose full text a check, search, or briefing under this intent delivered. `deposit` is a recipe a check under this intent created (`draftState` as you may see it); deposits are recorded from drafts-and-triage slice 6a on, so an intent from before it shows none. `feedback` carries a feedback row shaped as below.
 
 ### `GET /feedback/rows`
 
@@ -83,13 +83,13 @@ The lineage is one timeline, oldest first, paged by `page` and `per_page`; `tota
     "kind": "check-feedback", "impact": "subtle", "disposition": "proceeded", "storyFulfilled": "yes",
     "story": "…", "note": "…", "topSimilarity": 0.81, "model": "…", "harness": "claude-code", "harnessVersion": null,
     "relatedTraceIds": ["…"], "createdAt": "…", "apiKeyLabel": "laptop",
-    "actorUserId": null, "actorEmail": null, "starCount": 0, "starredByMe": false
+    "actorUserId": null, "actorEmail": null, "starCount": 0, "starredByMe": false, "isMine": true
   }],
   "total": 1, "page": 1, "perPage": 50, "totalPages": 1
 } }
 ```
 
-Each row has the fields the recipe detail page's feedback list gives (`GET /traces/:id/feedback`), plus `traceId` and `searchId`; exactly one of the two is set. `relatedTraceIds` lists only the recipes the presenting key may read. A human-origin row has `actorUserId` and `actorEmail` and no `apiKeyLabel`.
+Each row has the fields the recipe detail page's feedback list gives (`GET /traces/:id/feedback`), plus `traceId` and `searchId`; exactly one of the two is set. `relatedTraceIds` lists only the recipes the presenting key may read. A human-origin row has `actorUserId` and `actorEmail` and no `apiKeyLabel`. `isMine` is always true here (every listed row is yours); the per-recipe route carries it too, where it is false for a collaborator's row.
 
 ## On the web and in the export
 

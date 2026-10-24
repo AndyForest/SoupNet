@@ -48,6 +48,7 @@ import {
   draftStateShownTo,
   SHARED_AUDIENCE,
   inBooks,
+  feedbackOwnedBy,
 } from "../authz";
 
 const traces = new Hono<AppEnv>();
@@ -507,6 +508,9 @@ traces.get("/:id/feedback", async (c) => {
       -- exposed so humans and agents can discover uses (operator direction
       -- 2026-08-23: expose the graph before designing features on it).
       cf.intent_id AS "intentId",
+      -- Whether the row is the viewer's own (slice 9): the web links the intent
+      -- id only then, since anyone else's intent page is "not found" to them.
+      ${feedbackOwnedBy(user.id)} AS "isMine",
       cf.created_at AS "createdAt",
       ak.label AS "apiKeyLabel",
       -- Human-origin rows (a re-filing correction) carry actor_user_id and a

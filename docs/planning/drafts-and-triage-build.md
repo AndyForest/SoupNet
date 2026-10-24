@@ -2420,6 +2420,21 @@ No probe showed one user's data to another or a key reading outside its books.
 
 **Recipe checks** (soupnet-oss, intent `int_3nzMq7XyK4AjTqErhlyuPDYn`): row verdicts follow the rubric's named cases, with adjacent defects listed as findings (`8f55a8d7`; consistent with `d1d07fcc` and the slice 3 record); the seam row passes on its stated claims, with the ownership gap as a separate follow-up (`e0880609`; `36875b03` leans toward partial where a rubric itself claims the guard, so that call is escalated to the operator with finding 1).
 
+### Slice 9 fix pass (stream E, 2026-10-24)
+
+On the verification record above and the browser run (`tests/e2e/pr-slice9.spec.ts`, 10 of 10 on desktop and mobile, expectations E1 to E9 met, E6 recorded):
+
+- **Finding 1 (the guard did not cover ownership), and the verifier's escalation on S9-S4.** Settled by fixing the gap rather than grading it (recipe `ec47448c`; the corpus's `e5b988a1` and `50042369` say the module owns the rule and the guard fingerprints it). Intent ownership is now the fragment `intentOwnedBy` in `authz/report-scope.ts`, used by the service and the export; `feedbackOwnedBy` and `intentOwnedBy` join the guard's fingerprinted fragment list, so removing either from a statement fails `check:authz-seam` until the register is updated in review. S9-S4 therefore holds for ownership as well.
+- **Finding 2 (`since` accepted impossible dates).** Refused now (`2026-02-30`, `2026-04-31`, `2025-02-29`); a leap day passes. Three unit cases added.
+- **Finding 4 (the intent page showed "not found" for every failure).** A 404 shows "Intent not found"; any other failure shows a load error with the status. The page number resets when the link goes to another intent.
+- **Finding 5 (collaborators' intent ids linked to a page that is always "not found" for the viewer).** The per-recipe feedback route returns `isMine` (`feedbackOwnedBy` for the viewer, made strictly boolean); the card links the intent only on the viewer's own rows and shows anyone else's as plain text. `GET /feedback/rows` carries `isMine: true`, so S9-F2's parity holds.
+- **Finding 10 and the S9-Z1 figures.** `docs/api/reports.md` says deposits start with slice 6a. No tool, description, or MCP file changed, so the served bytes are A0's: the size tests pass unchanged.
+- **Finding 12 (test gaps).** Added: an expired key is 401 on all three paths; headless parity on `GET /intents` too; an intent registered on `/check` is listed; `isMine` for Pat and for Sam on the same row.
+- **Browser run, found not listed.** The intent page's cards no longer repeat a link to the page already open. The card's pre-existing contrast failures are added to the backlog's contrast item. The intent and recipe-id links keep the house link style; changing it is the design system's call, not this slice's.
+- **Left as is:** finding 3 (S9-F2's "values equal" holds when the key reads the person's books; a narrower key correctly returns fewer related ids, by S9-S2); finding 6 (`GET /intents/` with a trailing slash is the router's 404); finding 7 (`recipe_book` slug resolution by `LIMIT 1` within the key's books, the house pattern); finding 8 (`per_page=+5` decodes to `5`).
+
+After the fix pass: 286 backend tests and the 10 browser tests pass against the worktree backend; S9-I4's deposits half stays to be re-verified on the branch rebased onto 6a.
+
 ### Slice 8b rubric: unattended readers (stream F, after 6c, 6a and 8a merge)
 
 ### Slice 6b rubric: option sets (stream G, after 6c and 6a merge)

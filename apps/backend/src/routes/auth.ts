@@ -11,7 +11,7 @@ import { deleteUserCascade } from "../services/user-delete.service";
 import { sendVerificationEmail, sendPasswordResetEmail } from "../services/email.service";
 import { rateLimit } from "../middleware/rate-limit";
 import { normalizeEmail } from "../lib/normalize-email";
-import { onBehalfSubjectOf, feedbackOwnedBy } from "../authz";
+import { onBehalfSubjectOf, feedbackOwnedBy, intentOwnedBy } from "../authz";
 import { verifyTurnstile } from "../lib/turnstile";
 import type { AppEnv } from "../types";
 
@@ -565,7 +565,7 @@ auth.get("/me/export", requireAuth, requireVerifiedEmail, async (c) => {
   `);
 
   // Declared intents and feedback rows (drafts-and-triage slice 9), so a
-  // self-hoster's report is complete. Intents are the user's by user_id;
+  // self-hoster's report is complete. Intents are the user's by intentOwnedBy;
   // feedback rows by the one ownership rule the report paths use
   // (authz/report-scope.ts). content_hash is a dedup key, not content. The
   // delivery ledger (intent_shown) is system-derived and stays out, by this
@@ -573,7 +573,7 @@ auth.get("/me/export", requireAuth, requireVerifiedEmail, async (c) => {
   const intents = await db.execute(sql`
     SELECT id, story, agent_id AS "agentId", api_key_id AS "apiKeyId",
            created_at AS "createdAt", last_used_at AS "lastUsedAt"
-    FROM claimnet.intents WHERE user_id = ${user.id}::uuid
+    FROM claimnet.intents i WHERE ${intentOwnedBy(user.id)}
     ORDER BY created_at
   `);
 

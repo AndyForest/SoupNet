@@ -48,6 +48,13 @@ const PAGING_PARAMS = ["page", "per_page"] as const;
 /** `recipe_id` is the alias the feedback write surfaces already accept for `trace_id`. */
 const ALIASES: Record<string, FeedbackFilterName> = { recipe_id: "trace_id" };
 
+/** `YYYY-MM-DD` names a real day (Date would roll 2026-02-30 over to March 2). */
+function isCalendarDate(ymd: string): boolean {
+  const [y, m, d] = ymd.split("-").map(Number) as [number, number, number];
+  const date = new Date(Date.UTC(y, m - 1, d));
+  return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d;
+}
+
 function parsePositiveInt(raw: string, max: number): number | null {
   if (!/^\d+$/.test(raw)) return null;
   const n = Number(raw);
@@ -121,7 +128,7 @@ export function parseReportQuery(
         else filters.recipeBook = value;
         break;
       case "since": {
-        const d = SINCE_RE.test(value) ? new Date(value) : null;
+        const d = SINCE_RE.test(value) && isCalendarDate(value.slice(0, 10)) ? new Date(value) : null;
         if (!d || Number.isNaN(d.getTime())) problems.push({ field: name, message: "an ISO 8601 date (2026-10-24) or date-time with an offset (2026-10-24T09:30:00Z)" });
         else filters.since = d;
         break;

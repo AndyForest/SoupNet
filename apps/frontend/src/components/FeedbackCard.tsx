@@ -107,9 +107,16 @@ export function FeedbackCard({ row, traceId, showIntent = true }: { row: TraceFe
       {showIntent && row.intentId && (
         <p className="text-xs" style={{ marginTop: "var(--space-xs)" }} data-testid="feedback-intent">
           Intent:{" "}
-          <Link to="/app/intents/$intentId" params={{ intentId: row.intentId }} title={row.intentId} style={LINK_STYLE}>
-            {shortIntentId(row.intentId)}
-          </Link>
+          {row.isMine === false ? (
+            // Another person's intent: its page is theirs alone, so the id is shown, not linked.
+            <span title={`${row.intentId} (another person's intent)`} style={{ fontFamily: "var(--font-mono, monospace)" }}>
+              {shortIntentId(row.intentId)}
+            </span>
+          ) : (
+            <Link to="/app/intents/$intentId" params={{ intentId: row.intentId }} title={row.intentId} style={LINK_STYLE}>
+              {shortIntentId(row.intentId)}
+            </Link>
+          )}
         </p>
       )}
 

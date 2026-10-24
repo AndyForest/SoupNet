@@ -4,9 +4,10 @@ import type { TraceFeedbackRow } from "./useTraces.js";
 
 /**
  * One of the person's declared intents and a page of its lineage
- * (drafts-and-triage slice 9), from GET /me/intents/:id. Null when the intent
- * is not theirs, does not exist, or the id is malformed: the server answers
- * all three alike.
+ * (drafts-and-triage slice 9), from GET /me/intents/:id. `notFound` when the
+ * intent is not theirs, does not exist, or the id is malformed (the server
+ * answers all three alike); `error` with the status for anything else, so an
+ * expired sign-in or a server fault is not shown as "not found".
  */
 
 export interface IntentSummary {
@@ -35,14 +36,20 @@ export interface IntentData {
   totalPages: number;
 }
 
+export type IntentResult =
+  | { kind: "found"; data: IntentData }
+  | { kind: "notFound" }
+  | { kind: "error"; status: number };
+
 export function useIntent(intentId: string, page: number) {
-  return useQuery<IntentData | null>({
+  return useQuery<IntentResult>({
     queryKey: ["intent", intentId, page],
     queryFn: async () => {
       const res = await authFetch(`/me/intents/${encodeURIComponent(intentId)}?page=${page}`);
-      if (!res.ok) return null;
+      if (res.status === 404) return { kind: "notFound" };
+      if (!res.ok) return { kind: "error", status: res.status };
       const json = (await res.json()) as { ok: boolean; data: IntentData };
-      return json.ok ? json.data : null;
+      return json.ok ? { kind: "found", data: json.data } : { kind: "error", status: res.status };
     },
     enabled: !!intentId,
   });
