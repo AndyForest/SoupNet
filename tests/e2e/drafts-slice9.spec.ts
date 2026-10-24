@@ -391,3 +391,31 @@ test("E9 accessibility and keyboard on the intent link and intent page", async (
     expect(r.blocking, "the intent page (header, counts, lineage labels and links) should have no serious or critical axe violation beyond the backlog's known ones").toEqual([]);
   });
 });
+
+test("E10 the review queue's intent group links to the intent page", async ({ page, request }, testInfo) => {
+  const f = await setup(request);
+  await test.step("Pat's agent deposits a draft under the intent", async () => {
+    const qs = new URLSearchParams({
+      key: f.key,
+      format: "json",
+      recipe: `As a backend maintainer working on the queue's intent link (${tag()}), I prefer the group to open the intent's page so that a person sees the whole task.`,
+      evidence: `Could not ask: the person was away.\n> "add the intent page link beside the queue heading"\n-- slice 9 rebase notes`,
+      intent: f.intentId,
+      draft: "true",
+      agent_id: AGENT_ID,
+    });
+    const res = await request.get(`${BACKEND_URL}/check?${qs.toString()}`, { headers: { Accept: "application/json" } });
+    expect(res.ok(), `the draft deposit should succeed; got ${res.status()}`).toBe(true);
+  });
+  await test.step("the queue groups it under the intent, with a link to the intent page", async () => {
+    await signIn(page, f.pat, "/app/drafts");
+    const group = page.getByTestId("queue-intent-group").first();
+    await expect(group, "the draft should sit in an intent group").toBeVisible();
+    const link = group.getByTestId("queue-intent-page-link");
+    await expect(link, "the group should link to the intent's page").toHaveAttribute("href", `/app/intents/${f.intentId}`);
+    await shot(page, testInfo, "E10-01-queue-intent-group");
+    await link.click();
+    await waitIntentPage(page, f);
+    await expect(page.getByTestId("intent-counts"), "the intent page should count the setup recipe and the draft as its two deposits").toHaveText(/ 2 deposited /);
+  });
+});

@@ -37,7 +37,7 @@ type Json = Record<string, unknown>;
 interface FeedbackRow extends Json { id: string; traceId: string | null; searchId: string | null; briefingId: string | null; intentId: string | null; relatedTraceIds: string[] | null; createdAt: string }
 interface ListPage<T> { items: T[]; total: number; page: number; perPage: number; totalPages: number }
 interface IntentSummary { id: string; story: string; agentId: string | null; apiKeyLabel: string | null; counts: { shown: number; deposits: number; feedback: number } }
-type Lineage = { type: "shown"; traceId: string; at: string } | { type: "feedback"; at: string; feedback: FeedbackRow };
+type Lineage = { type: "shown"; traceId: string; at: string } | { type: "deposit"; traceId: string; at: string; draftState: string | null } | { type: "feedback"; at: string; feedback: FeedbackRow };
 
 let n = 0;
 function recipe(topic: string): string {
@@ -59,6 +59,8 @@ describe.skipIf(!BASE || !canConnect())("read paths for reports (drafts-and-tria
   let O = "";
   let intent = "";
   let oliveIntent = "";
+  let depositIntent = "";
+  const deposits: Record<string, string> = {};
   let rA = "";
   let rB = "";
   let rC = "";
@@ -200,6 +202,13 @@ describe.skipIf(!BASE || !canConnect())("read paths for reports (drafts-and-tria
     // so the read must (S9-I3, the lineage is Pat's rows only).
     fb["OliveOnPats"] = await postFeedback(O, { trace_id: oliveRecipe, intent_id: intent });
 
+    // Deposits under their own intent (slice 6a writes traces.intent_id at
+    // deposit), so the exact shown counts above are not disturbed.
+    depositIntent = await registerIntent(K2, `As a report-path tester (${run}), I want my deposits counted so that a report shows them.`);
+    deposits["A"] = await deposit(K2, pat.personalBookId, { intent: depositIntent });
+    deposits["B"] = await deposit(K2, bookB.id, { intent: depositIntent });
+    deposits["draft"] = await deposit(K2, pat.personalBookId, { intent: depositIntent, draft: true });
+
     // The human-origin row: Pat re-files rC into B on the web.
     const moved = await call(pat, "PATCH", `/traces/${rC}`, { groupId: bookB.id });
     if (!moved.ok) throw new Error(`move failed: ${moved.status}`);
@@ -237,7 +246,7 @@ describe.skipIf(!BASE || !canConnect())("read paths for reports (drafts-and-tria
     expect(mine.counts).toEqual({ shown: 1, deposits: 0, feedback: 2 });
   });
 
-  it("S9-I2/S9-I4: the lineage is oldest first, and has no deposits before 6a", async () => {
+  it("S9-I2: the lineage is oldest first; recipes deposited without the intent are not its deposits", async () => {
     const d = await intentDetail(K2, intent);
     expect(d.intent.id).toBe(intent);
     expect(d.total).toBe(5);
@@ -246,6 +255,19 @@ describe.skipIf(!BASE || !canConnect())("read paths for reports (drafts-and-tria
     expect(d.lineage.filter((e) => e.type === "shown").map((e) => (e as { traceId: string }).traceId)).toEqual([rA, rB]);
     expect(d.lineage.filter((e) => e.type === "feedback").map((e) => (e as { feedback: FeedbackRow }).feedback.id)).toEqual([fb["A"], fb["B"], fb["S"]]);
     expect(d.lineage.some((e) => (e as { type: string }).type === "deposit")).toBe(false);
+  });
+
+  it("S9-I4: deposits under an intent are counted and listed, under the key's books, with the draft state the viewer may see", async () => {
+    const k2 = await intentDetail(K2, depositIntent);
+    expect(k2.intent.counts.deposits).toBe(3);
+    const k2Deposits = k2.lineage.filter((e) => e.type === "deposit") as Array<{ traceId: string; draftState: string | null }>;
+    expect(k2Deposits.map((e) => e.traceId)).toEqual([deposits["A"], deposits["B"], deposits["draft"]]);
+    expect(k2Deposits.map((e) => e.draftState)).toEqual([null, null, "unverified"]);
+
+    const k1 = await intentDetail(K1, depositIntent);
+    expect(k1.intent.counts.deposits).toBe(2);
+    expect(k1.lineage.filter((e) => e.type === "deposit").map((e) => (e as { traceId: string }).traceId)).toEqual([deposits["A"], deposits["draft"]]);
+    expect((await intentList(K1)).items.find((i) => i.id === depositIntent)?.counts.deposits).toBe(2);
   });
 
   it("S9-I2: the lineage pages", async () => {

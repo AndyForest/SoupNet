@@ -235,13 +235,19 @@ export function DraftQueuePage() {
                       >
                         {intentHeadingText(run.intent.story)}
                       </h2>
-                      {q !== intentFilterQuery(run.intent.id) && (
-                        <p className={styles["hint"]}>
-                          <Link to="/app/drafts" search={{ q: intentFilterQuery(run.intent.id) } as never}>
-                            Show only this intent&rsquo;s drafts
-                          </Link>
-                        </p>
-                      )}
+                      <p className={styles["hint"]}>
+                        {q !== intentFilterQuery(run.intent.id) && (
+                          <>
+                            <Link to="/app/drafts" search={{ q: intentFilterQuery(run.intent.id) } as never}>
+                              Show only this intent&rsquo;s drafts
+                            </Link>
+                            {" · "}
+                          </>
+                        )}
+                        <Link to="/app/intents/$intentId" params={{ intentId: run.intent.id }} data-testid="queue-intent-page-link">
+                          See everything under this intent
+                        </Link>
+                      </p>
                       <ol className={styles["list"]} aria-label={`Drafts under this intent: ${intentHeadingText(run.intent.story)}`}>
                         {run.items.map(renderItem)}
                       </ol>

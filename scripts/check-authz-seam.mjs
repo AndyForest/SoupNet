@@ -249,8 +249,8 @@ const TRACE_READS = {
     why: "map version counts and the book list compose the fragments (RP-24, RP-25); own list, own count, and own check log are the caller's rows (RP-27 to RP-29); feedback, reaction, and evidence reads for one recipe run after the module's read gate (RP-19 to RP-22), with lineage ids filtered through it",
   },
   "apps/backend/src/services/intent-read.service.ts": {
-    n: 10, fp: "594cdcfa578c", composes: true,
-    why: "report read paths (slice 9): every recipe a feedback row, shown id, or related id names passes traceReadableByViewer before it is listed or counted",
+    n: 11, fp: "873abdc58403", composes: true,
+    why: "report read paths (slice 9): every recipe a feedback row, shown id, deposit, or related id names passes traceReadableByViewer before it is listed or counted",
   },
   "apps/backend/src/services/book-stats.service.ts": {
     n: 6, fp: "9c1e64a70445", composes: true,

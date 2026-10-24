@@ -21,10 +21,11 @@
  * An intent that is not the viewer's, one that never existed, and a
  * malformed id are the same not-found, and none of them is touched.
  *
- * Deposits: recipes whose `traces.intent_id` is the intent. The column
- * arrives with slice 6a (stream B); until it is on this branch the deposit
- * count is 0 and the lineage has no deposit entries (implementation plan,
- * stream E).
+ * Deposits: recipes whose `traces.intent_id` is the intent (slice 6a writes
+ * it at deposit, from the depositing check's resolved intent). A verified
+ * on-behalf recipe keeps its depositor's intent id while it becomes the
+ * subject's, so it is counted here only while the viewer may read it, like
+ * every other recipe a report names.
  *
  * Reads only. Nothing here writes, audits, or touches `last_used_at` (that
  * stamp is the join recency signal of intent.service.ts, and a report
@@ -34,7 +35,7 @@
 import { sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { feedbackOwnedBy, intentOwnedBy, traceReadableByViewer, viewerBookIds, inBooks } from "../authz";
+import { feedbackOwnedBy, intentOwnedBy, traceReadableByViewer, viewerBookIds, inBooks, draftStateShownTo } from "../authz";
 import type { ReportViewer } from "../authz";
 import { INTENT_ID_RE } from "./intent.service";
 import type { FeedbackFilters, ReportPaging } from "./report-params";
@@ -99,6 +100,12 @@ type Page = ReturnType<typeof pageInfo>;
 function feedbackVisible(viewer: ReportViewer): SQL {
   return sql`${feedbackOwnedBy(viewer.userId)}
     AND (cf.trace_id IS NULL OR (t.id IS NOT NULL AND ${traceReadableByViewer(viewer)}))`;
+}
+
+/** Recipes deposited under intent `intentId` that this viewer may read (rows of `t`). */
+function depositsFrom(intentId: SQL, viewer: ReportViewer): SQL {
+  return sql`FROM claimnet.traces t
+    WHERE t.intent_id = ${intentId} AND ${traceReadableByViewer(viewer)}`;
 }
 
 /** Shown ids of intent `intentId` this viewer may read (rows of `intent_shown s` joined to `t`). */
@@ -247,6 +254,7 @@ function intentSummarySelect(viewer: ReportViewer): SQL {
       i.created_at AS "createdAt",
       i.last_used_at AS "lastUsedAt",
       (SELECT COUNT(*) ${shownFrom(sql`i.id`, viewer)})::int AS "shownCount",
+      (SELECT COUNT(*) ${depositsFrom(sql`i.id`, viewer)})::int AS "depositCount",
       (SELECT COUNT(*) FROM claimnet.check_feedback cf
          LEFT JOIN claimnet.traces t ON t.id = cf.trace_id
          WHERE cf.intent_id = i.id AND ${feedbackVisible(viewer)})::int AS "feedbackCount"
@@ -262,10 +270,11 @@ interface RawIntent {
   createdAt: unknown;
   lastUsedAt: unknown;
   shownCount: number;
+  depositCount: number;
   feedbackCount: number;
 }
 
-function toSummary(r: RawIntent, deposits: number): IntentSummary {
+function toSummary(r: RawIntent): IntentSummary {
   return {
     id: r.id,
     story: r.story,
@@ -273,7 +282,7 @@ function toSummary(r: RawIntent, deposits: number): IntentSummary {
     apiKeyLabel: r.apiKeyLabel,
     createdAt: toIso(r.createdAt),
     lastUsedAt: toIso(r.lastUsedAt),
-    counts: { shown: Number(r.shownCount), deposits, feedback: Number(r.feedbackCount) },
+    counts: { shown: Number(r.shownCount), deposits: Number(r.depositCount), feedback: Number(r.feedbackCount) },
   };
 }
 
@@ -293,7 +302,7 @@ export async function listIntents(
     ORDER BY i.created_at DESC, i.id DESC
     LIMIT ${paging.perPage} OFFSET ${paging.offset}
   `);
-  const items = (raw as unknown as RawIntent[]).map((r) => toSummary(r, 0));
+  const items = (raw as unknown as RawIntent[]).map(toSummary);
   return { items, ...pageInfo(total, paging) };
 }
 
@@ -315,18 +324,21 @@ export async function getIntent(
   `);
   const row = (rows as unknown as RawIntent[])[0];
   if (!row) return null;
-  const intent = toSummary(row, 0);
+  const intent = toSummary(row);
   const total = intent.counts.shown + intent.counts.deposits + intent.counts.feedback;
 
-  // One timeline over the two (later three) sources, ordered and paged in
-  // the database. `ref` is the trace id for a shown entry, the feedback id
-  // for a feedback entry; ties break on type then ref so pages are stable.
+  // One timeline over the three sources, ordered and paged in the database.
+  // `ref` is the trace id for a shown or deposit entry, the feedback id for a
+  // feedback entry; ties break on type then ref so pages are stable.
   const timeline = total === 0 ? [] : await db.execute(sql`
-    SELECT type, ref, at FROM (
-      SELECT 'shown' AS type, s.trace_id::text AS ref, s.shown_at AS at
+    SELECT type, ref, at, draft_state AS "draftState" FROM (
+      SELECT 'shown' AS type, s.trace_id::text AS ref, s.shown_at AS at, NULL::text AS draft_state
         ${shownFrom(sql`${intentId}`, viewer)}
       UNION ALL
-      SELECT 'feedback' AS type, cf.id::text AS ref, cf.created_at AS at
+      SELECT 'deposit' AS type, t.id::text AS ref, t.created_at AS at, ${draftStateShownTo("t", viewer.userId)} AS draft_state
+        ${depositsFrom(sql`${intentId}`, viewer)}
+      UNION ALL
+      SELECT 'feedback' AS type, cf.id::text AS ref, cf.created_at AS at, NULL::text AS draft_state
         FROM claimnet.check_feedback cf
         LEFT JOIN claimnet.traces t ON t.id = cf.trace_id
         WHERE cf.intent_id = ${intentId} AND ${feedbackVisible(viewer)}
@@ -334,7 +346,7 @@ export async function getIntent(
     ORDER BY at ASC, type ASC, ref ASC
     LIMIT ${paging.perPage} OFFSET ${paging.offset}
   `);
-  const entries = timeline as unknown as Array<{ type: "shown" | "feedback"; ref: string; at: unknown }>;
+  const entries = timeline as unknown as Array<{ type: "shown" | "deposit" | "feedback"; ref: string; at: unknown; draftState: string | null }>;
 
   const feedbackIds = entries.filter((e) => e.type === "feedback").map((e) => e.ref);
   const feedbackById = new Map<string, FeedbackRowOut>();
@@ -351,6 +363,8 @@ export async function getIntent(
   for (const e of entries) {
     if (e.type === "shown") {
       lineage.push({ type: "shown", traceId: e.ref, at: toIso(e.at) });
+    } else if (e.type === "deposit") {
+      lineage.push({ type: "deposit", traceId: e.ref, at: toIso(e.at), draftState: e.draftState });
     } else {
       const feedback = feedbackById.get(e.ref);
       if (feedback) lineage.push({ type: "feedback", at: toIso(e.at), feedback });
