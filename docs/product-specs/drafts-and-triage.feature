@@ -722,16 +722,26 @@ Feature: Drafts, triage ratings, and deciding by building both
       And Sam finds it uniformly absent until Pat confirms it
 
   # ─────────────────────────────────────────────────────────────────────────
+  Rule: A recipe remembers the intent it was deposited under
+    # Guards: docs/architecture/agent-context-seams.md gap 2 (recipe-to-intent
+    # link); drafts-and-triage-slices-6-7-revision.md §6a; build log §Slice 6a
+    # rubric. Reworded 2026-10-24 to what slice 6a ships: the link and the
+    # listing. Resolving a set is DT-OPT-02 (slice 6b).
+
+    @DT-OPT-01 @slice-6a
+    Scenario: Drafts deposited under one intent are found and listed together
+      Given Pat's agent declared an intent whose story names the choice
+      When it deposits two drafts carrying that intent
+      Then both drafts are linked to that intent
+      And "is:draft intent:<id>" returns exactly those two drafts to Pat's agents
+      And Pat's queue lists them together under the intent's story
+      And Sam, given the same intent id, finds nothing and cannot tell it from a made-up id
+
+  # ─────────────────────────────────────────────────────────────────────────
   @unreleased
   Rule: Option sets decide by building both against a rubric set in advance
     # Guards: drafts-and-triage.md §Deciding by building both; recipe ea930c3d;
-    # docs/architecture/agent-context-seams.md gap 2 (recipe-to-intent link).
-
-    @DT-OPT-01 @slice-6
-    Scenario: Drafts deposited under one intent form a set
-      Given Pat's agent declared an intent whose story names the choice and the rubric
-      When it deposits two drafts carrying that intent
-      Then both drafts are linked to that intent and listed together in Pat's queue
+    # the intent link above (DT-OPT-01, slice 6a).
 
     @DT-OPT-02 @slice-6
     Scenario: Resolving a set verifies the winner and marks the rest not chosen

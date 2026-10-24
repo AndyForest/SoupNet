@@ -4,6 +4,36 @@ Every PR that touches briefing copy (`packages/domain/src/recipe-guide-content.t
 
 (Renamed from declared-intent-log.md on 2026-08-23: "intent" now names the runtime intent-registration mechanism — cold-start v2 Phase C — so the discipline's log takes an unambiguous name. The discipline itself is unchanged.)
 
+## 2026-10-24 — Drafts-and-triage slice 6a: one grammar term in `search_recipes`, and the intent qualifier's not-recognized note
+
+Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-and-triage-slices-6-7-revision.md) §6a, §6f. Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 6a rubric (S6a-Z1).
+
+### Edits
+
+1. **`MCP_PARAM_DESCRIPTIONS.searchQuery`** (served on remote and stdio `search_recipes`): adds `intent:int_… (your intent's recipes)` and names it among the qualifiers that lift the exclude-own default. To stay inside the 420-character per-description limit (`mcp-tool-descriptions.test.ts`, not one of A0's raised caps) the text drops "and" before "citations", "for PR review" after "quote filenames" (the briefing's Search vs check paragraph keeps the PR-review example), and "ISO" before "judgment date" (the date error message spells out the format), says "open drafts" for "unresolved drafts", and shortens "author: or is:draft lifts the exclude-own default" to "author:/is:draft/intent: lift exclude-own". 415 → 417 characters.
+2. **Not-recognized note (new):** a search whose `intent:` id names none of the caller's intents answers "No matches among the N recipes in scope: the intent: id was not recognized (unknown or not yours, deliberately indistinguishable), so it matched nothing." on the JSON notice, the markdown report, and (without the scope count) the HTML page; the review queue says the same after "No drafts listed:". It replaces the thin-corpus pointer for that case only, since the corpus is not thin. One constant, `INTENT_QUALIFIER_NOT_RECOGNIZED`, with `searchZeroResultLine` shared by the JSON and markdown builders.
+3. **Grammar error (new):** "intent: takes an intent id (int_ and 24 letters or digits) — got "…". A task story goes in the intent parameter, not the query.", plus the one-id and no-negation errors; the unknown-qualifier help lists `intent:`.
+4. **`/check` search help (HTML):** one line naming `intent:int_…`.
+
+### Scenarios intended to move
+
+- `drafts-and-triage.feature` **DT-OPT-01**, reworded to what ships (found by `is:draft intent:<id>`, listed together under the story, and not an oracle for another person's id) and moved out of the `@unreleased` option-set rule into a released rule of its own.
+
+### Scenarios watched, with rationale for holding
+
+- **Search scenarios that name the grammar** (`checking-behavior.feature` search-vs-check, `known-recipes-dedup.feature`): every existing qualifier keeps its meaning and its wording in the error help; the description's trims remove words that are restated where an agent meets them (the date error, the briefing's PR-review example).
+- **Zero-result thinness scenarios** (`feedback-loop.feature` null results): the line is byte-identical for every query without `intent:` (one builder now produces it for both JSON and markdown).
+- **Every briefing scenario:** no briefing text changed.
+
+### Measured
+
+| Measure | Before | After | Cap |
+|---|---|---|---|
+| Remote `tools/list` | 16,986 bytes | 16,990 | 18,200 |
+| Stdio `tools/list` | 13,196 bytes | 13,200 | 14,700 |
+| Shared descriptions | 6,051 characters | 6,053 | 6,600 |
+| `searchQuery` | 415 characters | 417 | 420 per description |
+
 ## 2026-10-24 — Drafts-and-triage slice 6c (PR A1): `outcome` on verify_draft, its 7b description, and the per-outcome replies and refusals
 
 Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-and-triage-slices-6-7-revision.md) §6c and §7b (ratified 2026-10-24; rulings 46 and 55). Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 6c rubric.
