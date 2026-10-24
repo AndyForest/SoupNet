@@ -85,8 +85,8 @@ describe("depositor-facing copy is true for the depositor (slice 4 fix pass)", (
     expect(rejected.title).not.toContain("You marked");
     const notChosen = draftStatusLabel({ draftState: "not_chosen", draftAbout: "pat@test.local" })!;
     expect(notChosen.title).toContain("pat@test.local");
-    // The subject's own view is unchanged.
-    expect(draftStatusLabel({ draftState: "rejected" })!.title).toContain("You marked this draft wrong");
+    // The subject's own view, when it knows they resolved it themselves.
+    expect(draftStatusLabel({ draftState: "rejected", draftResolvedByKeyId: null, draftResolvedByViewer: true })!.title).toContain("You marked this draft wrong");
   });
 });
 
@@ -105,6 +105,21 @@ describe("who resolved a rejected or not-chosen draft (slice 6c)", () => {
       expect(byAgent.title).toContain("its evidence");
       const byDepositor = draftStatusLabel({ draftState, draftResolvedAt: at, draftResolvedByKeyId: KEY, apiKeyId: KEY, draftResolvedByViewer: true })!;
       expect(byDepositor.text).toContain("by the agent that deposited it");
+    }
+  });
+
+  // Verifier's defect 1: list rows (dashboard, book page) come from GET
+  // /traces, which carries the state but not who resolved it, so the label
+  // must not invent "by the person it is about" there.
+  it("names no resolver on a row that does not say who resolved it (the dashboard and book lists)", () => {
+    expect(draftStatusLabel({ draftState: "rejected" })!.text).toBe("Rejected draft");
+    expect(draftStatusLabel({ draftState: "not_chosen" })!.text).toBe("Draft not chosen");
+    expect(draftStatusLabel({ draftState: "verified" })!.text).toBe("Verified draft");
+    expect(draftStatusLabel({ draftState: "rejected", draftResolvedAt: at })!.text).toMatch(/^Rejected draft on /);
+    for (const draftState of ["rejected", "not_chosen", "verified"]) {
+      const l = draftStatusLabel({ draftState })!;
+      expect(l.text).not.toContain("by ");
+      expect(l.title).not.toContain("You marked");
     }
   });
 

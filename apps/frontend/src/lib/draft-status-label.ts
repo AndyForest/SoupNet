@@ -99,8 +99,15 @@ function resolvedBy(t: DraftStatusLike): string {
 export function draftStatusLabel(t: DraftStatusLike): { text: string; title: string } | null {
   const when = t.draftResolvedAt ? ` on ${new Date(t.draftResolvedAt).toLocaleDateString()}` : "";
   // Slice 6c: an agent may reject a draft or mark it not chosen as well as
-  // verify it, so those lines name the resolver the same way (S6c-C2).
-  const byAgent = !!t.draftResolvedByKeyId;
+  // verify it, so those lines name the resolver the same way (S6c-C2). Only
+  // a row that says who resolved it can name them: the detail page sends
+  // `draftResolvedByViewer` (and the resolving key), the list rows
+  // (dashboard, book page, from GET /traces) send neither, and there the
+  // line names nobody rather than guess (verifier's defect 1).
+  const knowsResolver = typeof t.draftResolvedByViewer === "boolean" || !!t.draftResolvedByKeyId;
+  const resolved = knowsResolver ? ` (${resolvedBy(t)}${when})` : when;
+  const byAgent = knowsResolver && !!t.draftResolvedByKeyId;
+  const byViewer = knowsResolver && !t.draftResolvedByKeyId && t.draftResolvedByViewer === true;
   switch (t.draftState ?? null) {
     case null:
       return null;
@@ -121,7 +128,7 @@ export function draftStatusLabel(t: DraftStatusLike): { text: string; title: str
       };
     case "verified":
       return {
-        text: `Verified draft (${resolvedBy(t)}${when})`,
+        text: `Verified draft${resolved}`,
         title: "Verified drafts are ordinary recipes: collaborators can find them. An agent's verification cites your answer in the evidence below.",
       };
     case "rejected":
@@ -131,17 +138,19 @@ export function draftStatusLabel(t: DraftStatusLike): { text: string; title: str
         return { text: `Rejected draft${when}`, title: `${t.draftAbout} rejected this draft. It stays private to them and to you.` };
       }
       return {
-        text: `Rejected draft (${resolvedBy(t)}${when})`,
+        text: `Rejected draft${resolved}`,
         title: byAgent
           ? "An agent of yours rejected this draft; its evidence below says why. It stays private to you and your agents."
-          : "You marked this draft wrong. It stays private to you and your agents.",
+          : byViewer
+            ? "You marked this draft wrong. It stays private to you and your agents."
+            : "This draft was rejected. It stays private to you and your agents.",
       };
     case "not_chosen":
       if (t.draftAbout) {
         return { text: `Draft not chosen${when}`, title: `${t.draftAbout} marked this option not chosen. It stays private to them and to you.` };
       }
       return {
-        text: `Draft not chosen (${resolvedBy(t)}${when})`,
+        text: `Draft not chosen${resolved}`,
         title: byAgent
           ? "An agent of yours marked this option not chosen; its evidence below says why. It stays private to you and your agents."
           : "This option lost to another. It stays private to you and your agents.",
