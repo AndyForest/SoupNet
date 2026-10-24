@@ -300,19 +300,21 @@ export interface VerificationEvidenceEntry {
 
 const normalizeQuote = (q: string): string => q.replace(/\s+/g, " ").trim().toLowerCase();
 
-/** What the refusal asks for, per outcome (slice 6c, S6c-E3). */
+/** What the refusal asks for, per outcome (slice 6c, S6c-E3). "A person", not
+ *  "the person": in a shared book the call may be a colleague's (recipe
+ *  5d3ddfc7). */
 const EVIDENCE_NEEDED: Record<DraftOutcome, string> = {
   verified:
-    "Verifying a draft needs new evidence: an entry with your interpretation, then > \"the person's "
+    "Verifying a draft needs new evidence: an entry with your interpretation, then > \"a person's "
     + "answer, or the words that settle it, quoted verbatim\", then -- where they were said (a citation), "
     + "separated from other entries by a blank line.",
   rejected:
-    "Rejecting a draft needs new evidence: an entry with your interpretation, then > \"the person's "
+    "Rejecting a draft needs new evidence: an entry with your interpretation, then > \"a person's "
     + "answer, or the words of the verified recipe that covers the same call, quoted verbatim\", then -- "
     + "where they were said (for a recipe, -- recipe <id>), separated from other entries by a blank line.",
   not_chosen:
     "Marking a draft not chosen needs new evidence: an entry with your interpretation, then > \"the "
-    + "words that settle the choice (the person's answer, or the measurement), quoted verbatim\", then -- "
+    + "words that settle the choice (a person's answer, or the measurement), quoted verbatim\", then -- "
     + "where they were said, separated from other entries by a blank line.",
 };
 
@@ -371,9 +373,9 @@ export function describeResolution(recipeId: string, outcome: DraftOutcome, evid
     case "verified":
       return `Draft ${recipeId} is verified: it is now an ordinary recipe that collaborators can find, with your new evidence attached ${attached}.`;
     case "rejected":
-      return `Draft ${recipeId} is rejected: it stays private to the person and their agents, leaves their review queue, and no longer appears in results; your evidence is attached ${attached}.`;
+      return `Draft ${recipeId} is rejected: it stays private, leaves the review queue, and no longer appears in results; your evidence is attached ${attached}.`;
     case "not_chosen":
-      return `Draft ${recipeId} is marked not chosen: it stays private to the person and their agents, leaves their review queue, and no longer appears in results; your evidence is attached ${attached}.`;
+      return `Draft ${recipeId} is marked not chosen: it stays private, leaves the review queue, and no longer appears in results; your evidence is attached ${attached}.`;
   }
 }
 

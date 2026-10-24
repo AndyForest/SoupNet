@@ -1107,9 +1107,10 @@ export const MCP_PARAM_DESCRIPTIONS = {
   draftRecipeId: "The draft's id (full UUID or 8+ char short id).",
 
   /** verify_draft's evidence param: the same entry shape as check_recipe's.
-   *  Slice 6c: a rejection may quote a covering verified recipe, cited by id. */
+   *  Slice 6c: a rejection may quote a covering verified recipe, cited by id;
+   *  "a person's", since in a shared book the call may be a colleague's. */
   verificationEvidence:
-    "Your interpretation, then > the person's answer or a covering recipe's words, verbatim, " +
+    "Your interpretation, then > a person's answer or a covering recipe's words, verbatim, " +
     "then -- where they were said (or recipe <id>).",
 
   /** verify_draft's outcome param (slice 6c). The values sit in the

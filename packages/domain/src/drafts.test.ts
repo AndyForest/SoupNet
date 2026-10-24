@@ -209,7 +209,8 @@ describe("describeResolution (S6c-B4)", () => {
     );
     const rej = describeResolution(ID, "rejected", 2);
     expect(rej).toMatch(new RegExp(`^Draft ${ID} is rejected:`));
-    expect(rej).toContain("leaves their review queue");
+    expect(rej).toContain("leaves the review queue");
+    expect(rej).not.toContain("the person");
     expect(rej).toContain("(2 entries)");
     const nc = describeResolution(ID, "not_chosen", 1);
     expect(nc).toMatch(new RegExp(`^Draft ${ID} is marked not chosen:`));
