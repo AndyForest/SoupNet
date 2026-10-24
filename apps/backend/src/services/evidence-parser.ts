@@ -35,6 +35,9 @@ export function parseEvidenceMarkdown(text: string): EvidenceEntry[] {
   const blocks = text.split(/\n\s*\n/).filter((b) => b.trim());
 
   const entries: EvidenceEntry[] = [];
+  // Each entry's quote as written, outer quote marks included, so a quote
+  // continued across a blank line is stripped once, as a whole.
+  const rawQuotes: string[] = [];
 
   for (const block of blocks) {
     const lines = block.split("\n");
@@ -58,28 +61,38 @@ export function parseEvidenceMarkdown(text: string): EvidenceEntry[] {
       }
     }
 
+    const rawQuote = quoteLines.join(" ");
     const entry: EvidenceEntry = {
       interpretation: interpretationLines.join(" "),
-      quote: stripOuterQuotes(quoteLines.join(" ")),
+      quote: stripOuterQuotes(rawQuote),
       source,
     };
 
-    // Fold an orphaned citation block (quote/source, no interpretation) into
-    // the preceding entry when that entry hasn't claimed a citation yet. This
-    // keeps the natural Markdown shape — interpretation paragraph, blank line,
-    // then its `> quote` / `-- source` block — from fragmenting into an
-    // interpretation-only entry plus a "(no interpretation)" orphan. Stays
-    // conservative: a further orphaned citation, or one with no preceding
-    // entry, is kept standalone so no reference is ever clobbered or dropped.
+    // An entry closes at its citation. A block with no interpretation (a
+    // `> quote` and/or `-- source`) continues the preceding entry while that
+    // entry has no citation yet: its quote lines are appended and its source
+    // becomes the entry's citation. This keeps the natural Markdown shape
+    // (interpretation paragraph, blank line, then its quote and citation, even
+    // with a blank line between those two, or between a quote's paragraphs)
+    // from fragmenting into an entry without a citation plus a
+    // "(no interpretation)" orphan, which check_recipe stored silently and
+    // verify_draft refused (drafts-and-triage slice 6c, S6c-E4; recipe
+    // 508f71c8 chose the tolerant parser). Stays conservative: once an entry
+    // has its citation, a further orphaned block, or one with no preceding
+    // entry, is kept standalone, so no reference is ever clobbered or dropped.
     const prev = entries[entries.length - 1];
     const isOrphanCitation = !entry.interpretation && Boolean(entry.quote || entry.source);
-    if (prev && isOrphanCitation && !prev.quote && !prev.source) {
-      prev.quote = entry.quote;
+    if (prev && isOrphanCitation && !prev.source) {
+      const prevRaw = rawQuotes[rawQuotes.length - 1] ?? "";
+      const joined = [prevRaw, rawQuote].filter(Boolean).join(" ");
+      rawQuotes[rawQuotes.length - 1] = joined;
+      prev.quote = stripOuterQuotes(joined);
       prev.source = entry.source;
       continue;
     }
 
     entries.push(entry);
+    rawQuotes.push(rawQuote);
   }
 
   return entries;

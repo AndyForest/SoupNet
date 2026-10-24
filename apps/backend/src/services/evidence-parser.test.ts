@@ -289,6 +289,61 @@ describe("parseEvidenceMarkdown", () => {
     expect(result[2]!.quote).toBe("Long term I want to make a regression testing system for tweaks.");
   });
 
+  // Slice 6c (S6c-E4): an entry closes at its citation. The briefing says
+  // the three parts are "separated by blank lines", and the field read that
+  // as blank lines between the parts: the citation used to split off into a
+  // second, interpretation-less entry, which check_recipe stored silently and
+  // verify_draft refused ("none has both a quote and a citation").
+  it("keeps interpretation, quote, and citation separated by blank lines as one entry", () => {
+    const input = [
+      "The person settled it in the session.",
+      "",
+      '> "Go with default deny."',
+      "",
+      "-- Andy, session 2026-10-24",
+    ].join("\n");
+
+    expect(parseEvidenceMarkdown(input)).toEqual([
+      { interpretation: "The person settled it in the session.", quote: "Go with default deny.", source: "Andy, session 2026-10-24" },
+    ]);
+  });
+
+  it("keeps a quote whose paragraphs are separated by blank lines as one quote in its entry", () => {
+    const input = [
+      "Interpretation.",
+      "",
+      '> "First paragraph of the answer.',
+      "",
+      '> Second paragraph of the answer."',
+      "-- chat, 2026-10-24",
+    ].join("\n");
+
+    expect(parseEvidenceMarkdown(input)).toEqual([
+      { interpretation: "Interpretation.", quote: "First paragraph of the answer. Second paragraph of the answer.", source: "chat, 2026-10-24" },
+    ]);
+  });
+
+  it("separates two blank-line-spaced entries at the second interpretation", () => {
+    const input = [
+      "First interpretation.",
+      "",
+      '> "First quote."',
+      "",
+      "-- Source A",
+      "",
+      "Second interpretation.",
+      "",
+      '> "Second quote."',
+      "",
+      "-- Source B",
+    ].join("\n");
+
+    expect(parseEvidenceMarkdown(input)).toEqual([
+      { interpretation: "First interpretation.", quote: "First quote.", source: "Source A" },
+      { interpretation: "Second interpretation.", quote: "Second quote.", source: "Source B" },
+    ]);
+  });
+
   it("handles leading and trailing whitespace on lines", () => {
     const input = [
       "  Interpretation with leading spaces.  ",
