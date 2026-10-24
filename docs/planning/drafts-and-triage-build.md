@@ -2270,7 +2270,73 @@ The operator reversed the MCP search's exclude-own default (recipe `885143c2`, s
 
 ### Slice 9 rubric: read paths for reports (stream E)
 
-Rubric to be written by stream E from the revision doc's slice 9 before implementation.
+Written 2026-10-24 by agent `a-drafts-9-2026-10-24` (stream E), before implementation, from the revision doc's slice 9, rulings 54 and 55, its "No read path for feedback rows or intents" finding, and the code at `32ffa5c`. Consumer: scripts and agents outside a session writing reports on the person's own fleet (REST, Bearer key), and the person on the web (the detail page's feedback rows and a new intent page). Security-relevant: yes. The slice opens two new read scopes over data that had none (intents, and feedback rows across recipes), so the uniform not-found and the scope rows below are the core of it, and the combined audit after A1, B, D and E covers it.
+
+Settled before this rubric (not reopened here): the caller's user's rows only (ruling 54); no MCP tool (ruling 54's slice text, "Not an MCP tool, at first"); the existing trail plus this listing is how agent-made resolutions are found, no new column for that (ruling 55); deposits per intent read `traces.intent_id` once stream B's 6a lands and are 0 before (implementation plan, stream E).
+
+**Calls this stream made, so the verifier tests these and not alternatives** (each recipe-checked as the session goes; see the build notes):
+
+- Paths: `GET /intents`, `GET /intents/:id`, `GET /feedback/rows`. Bearer key only; `?key=` is not accepted on these paths (a read path's key does not belong in a URL that lands in logs). The bare `GET /feedback` stays the URL-built write form, byte-for-byte.
+- Whose rows: an intent is the caller's user's when `intents.user_id` is that user. A feedback row is the caller's user's when its key belongs to that user today, or it is a human-origin row whose `actor_user_id` is that user. The ownership condition is one fragment in `apps/backend/src/authz/` so that a later change of attribution (open question 56) is a one-place change.
+- Scope inside the user: intents are per user, not per book, so every key of the user lists all of the user's intents. Anything that names a recipe (a feedback row about a recipe, a shown id, a deposit, a related id) is listed only when the presenting key may read that recipe now: its book is in the key's effective read scope and the draft read rule (`traceReadableById`) passes. A feedback row about a read-only search names no recipe and is listed for every key of the user. Open question 57 asks whether intents should narrow by key scope too.
+- Paging: `page` (1-based, default 1) and `per_page` (default 50, maximum 200); every list answers `total`, `page`, `perPage`, `totalPages`. Lists are newest first; an intent's lineage is oldest first ("in time order").
+- Strict parameters: an unknown parameter name, or a value that does not parse, is a 400 that names every failing parameter at once (the 8.5 rule applied to new REST from the start; a mistyped filter must never silently widen a report).
+- `since` is an ISO 8601 instant (or a date), inclusive: rows with `created_at >= since`. A sweep that stores the newest `createdAt` it saw and passes it back sees that row again rather than missing a row created in the same millisecond.
+
+**Intents**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| S9-I1 | `GET /intents` lists the caller's user's intents, newest first by `created_at` (id as tie-break), paged. Each item: `id`, `story`, `agentId`, `apiKeyLabel` (null when the registering key is gone), `createdAt`, `lastUsedAt`, and `counts` of `shown`, `deposits`, `feedback`, each counted under the same visibility rules as the lineage (S9-S2). | Layer 3: two users, each with intents registered through `get_briefing` and `/check`; each lists exactly its own, in order, with counts that match the detail. |
+| S9-I2 | `GET /intents/:id` returns the same summary plus `lineage`: one list, oldest first, of entries `{ type: "shown", traceId, at }`, `{ type: "deposit", traceId, at, draftState }` and `{ type: "feedback", at, feedback: <row as in S9-F2> }`, paged by `page`/`per_page`. | Layer 3: an intent with a check that showed recipes, a feedback row carrying it, and (after 6a) a deposit under it; lineage order and content asserted. |
+| S9-I3 | Uniform not-found: another user's intent id, a well-formed id that never existed, and a malformed id each answer 404 with a byte-identical body (`{"ok":false,"error":"Intent not found"}`), and none of them touches `intents.last_used_at`. The listing never contains another user's intent. | Layer 3 pair test over the three ids, comparing status and body; `last_used_at` read back unchanged. |
+| S9-I4 | Before 6a's column exists, `deposits` is 0 and the lineage has no deposit entries; once it exists, deposits are the traces whose `intent_id` is this intent, under S9-S2. | Layer 3 on the merged branch (rebased onto 6a); before that, the test asserts 0. |
+
+**Feedback rows**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| S9-F1 | `GET /feedback/rows` lists the caller's user's feedback rows (S9 calls, "Whose rows"), newest first, paged, with the filters `intent_id`, `trace_id` (alias `recipe_id`), `search_id`, `agent_id` (exact match), `since`, `recipe_book` (slug or id, resolved among the key's readable books). Filters compose with AND. | Layer 3: rows from two keys of one user (a scoped key and a daily key) and from another user, about recipes, about a search, and a human re-filing row; each filter alone and two combined. |
+| S9-F2 | Each row has the fields the per-recipe route (`GET /traces/:id/feedback`) gives, plus `traceId` and `searchId`: `id`, `traceId`, `searchId`, `agentId`, `kind`, `impact`, `disposition`, `storyFulfilled`, `story`, `note`, `topSimilarity`, `model`, `harness`, `harnessVersion`, `relatedTraceIds`, `sessionId`, `intentId`, `createdAt`, `apiKeyLabel`, `actorUserId`, `actorEmail`, `starCount`, `starredByMe`. | Layer 3 parity: one row read through both routes; the per-recipe row's keys are a subset of the listing row's, values equal. |
+| S9-F3 | Foreign filters give the empty page, never an error that differs: another user's intent id, another user's search id, a recipe the key cannot read, and a book the key cannot read each answer 200 with `total: 0`, the same as an id that never existed. | Layer 3 pair test. |
+| S9-F4 | `GET /feedback` (the write form) and `POST /feedback` are unchanged: their existing tests pass unedited. | `feedback.test.ts` unchanged and green. |
+
+**Scope and the read rule**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| S9-S1 | Authentication: no `Authorization: Bearer` header, a bad key, and an expired key are 401 on all three paths; a JWT is not accepted. | Layer 3. |
+| S9-S2 | A recipe id appears only when the presenting key may read the recipe now: a feedback row about a recipe outside the key's books is not listed (and not counted); a shown id or deposit in such a book, or a collaborator's hidden draft, is dropped from the lineage and from the counts; `relatedTraceIds` is filtered the same way ([F82]'s render rule, with the key's scope). | Layer 3: Pat's scoped key K1 (book A only) and K2 (books A and B); a row about a B recipe is in K2's listing and not K1's; a lineage entry for Sam's hidden draft id is absent. |
+| S9-S3 | Headless keys read these paths exactly as ordinary keys of the same books (S5-W5's rule). | Layer 3: H and K give equal answers. |
+| S9-S4 | The seam holds: the ownership condition lives in `apps/backend/src/authz/`; every new read of `claimnet.traces` composes the draft fragments and is registered in `TRACE_READS`; any `claimnet.api_keys` SQL outside the module is a display-only label join registered in `NON_AUTHORIZING_KEY_SQL`. | `npm run check:authz-seam` diff. |
+| S9-S5 | The paths are rate-limited like `/recipes` (per IP and per hashed key) and write no audit rows (reads, like `/recipes`). | Code review; the limiter is the shared middleware. |
+
+**Parameters**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| S9-P1 | An unknown parameter (including `key`) or an unparseable value (`per_page=0`, `per_page=201`, `page=0`, `since=yesterday`, `trace_id=abc`, `intent_id=int_short`) is 400, and the error names every failing parameter in one message. | Layer 1 table test of the parser; Layer 3 sample. |
+
+**Web**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| S9-W1 | On the recipe detail page, a feedback row that carries an intent id shows it (short form, full id in the title), linked to `/app/intents/<id>`. Rows without one look as they do today. | Frontend unit test; browser verification. |
+| S9-W2 | `/app/intents/<id>` shows the intent's story, agent, key label, dates, counts, and its lineage in time order, with recipe ids linked to their detail pages and feedback rows rendered as on the detail page. Its data comes from a JWT route (`GET /me/intents/:id`) over the same service, with the person's read rule (`traceReadableByPerson`) in place of the key's scope. Another person's intent, a missing one, and a malformed id give the same "Intent not found" page. | Layer 3 on the JWT route (the uniform pair); browser verification. |
+
+**Export**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| S9-E1 | `GET /auth/me/export` gains `intents` (id, story, agentId, apiKeyId, createdAt, lastUsedAt) and `checkFeedback` (the caller's user's rows by S9's ownership rule, every stored column but `content_hash`). `schemaVersion` stays 1 (additive). The delivery ledger (`intent_shown`) is system-derived and stays out, by the export's own rule. | Layer 3: the export of a user with intents and feedback holds exactly their own; another user's rows absent. |
+| S9-E2 | Import accepts an export carrying the two new arrays and ignores them (restoring them is not in this slice). | Layer 3: round-trip of a fresh export through `POST /import`. |
+
+**Budget and surfaces**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| S9-Z1 | No MCP tool is added and no tool description changes: remote and stdio `tools/list` and the shared descriptions measure the same before and after. | The size tests' figures, recorded in the build notes. |
+| S9-Z2 | The two response shapes are documented where report writers look: `docs/api/reports.md`, linked from the backend's route list in CLAUDE.md. | Review. |
 
 ### Slice 8b rubric: unattended readers (stream F, after 6c, 6a and 8a merge)
 
