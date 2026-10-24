@@ -4,6 +4,38 @@ Every PR that touches briefing copy (`packages/domain/src/recipe-guide-content.t
 
 (Renamed from declared-intent-log.md on 2026-08-23: "intent" now names the runtime intent-registration mechanism — cold-start v2 Phase C — so the discipline's log takes an unambiguous name. The discipline itself is unchanged.)
 
+## 2026-10-24 — Drafts-and-triage slice 6c (PR A1): `outcome` on verify_draft, its 7b description, and the per-outcome replies and refusals
+
+Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-and-triage-slices-6-7-revision.md) §6c and §7b (ratified 2026-10-24; rulings 46 and 55). Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 6c rubric.
+
+### Edits
+
+1. **`verify_draft` description, both MCP servers** (`MCP_TOOL_DESCRIPTIONS.verifyDraft`): "Publish your user's draft recipe once they confirm it, with new evidence quoting their answer and a citation. Evidence that adds nothing new is refused." becomes the revision doc's 7b text, "Publish, reject, or mark not chosen a draft about your user once you or they can stand behind the answer: new evidence quoting their words, or the context that settles it. Evidence that adds nothing new is refused." (152 → 214 characters). The old text read as a rule that the person must be asked (field item 2), which ruling 46 and recipe `200ed4fe` say it is not.
+2. **New `outcome` parameter, both MCP servers** (`MCP_PARAM_DESCRIPTIONS.draftOutcome`, a plain string, not a schema enum): "verified (default) | rejected | not_chosen. Reject when it does not hold or a verified recipe covers it (cite its id)." (118 characters). The tool's annotation title becomes "Resolve a draft".
+3. **`supporting_evidence` on `verify_draft`** (`verificationEvidence`): "Your interpretation, then > the person's answer verbatim, then -- where they said it." becomes "Your interpretation, then > the person's answer or a covering recipe's words, verbatim, then -- where they were said (or recipe <id>)." (85 → 134 characters).
+4. **Replies:** a rejection answers "Draft <id> is rejected: it stays private to the person and their agents, leaves their review queue, and no longer appears in results; your evidence is attached (n entries)."; not chosen the same with "is marked not chosen". The verified reply is unchanged. The stdio server now words its reply with the same domain function as the remote tool (`describeResolution`).
+5. **Refusals:** the evidence refusal opens per outcome ("Verifying", "Rejecting", "Marking a draft not chosen … needs new evidence"). The rejection form says the quote may be "the words of the verified recipe that covers the same call" cited as "-- recipe <id>", and every refusal for missing evidence now ends by saying how the text was read ("The text was read as 2 entries: entry 1 has a quote but no citation; entry 2 has a citation but no quote."). The verification form now says "the person's answer, or the words that settle it". An unknown outcome answers "outcome "<value>" is not one of verified | rejected | not_chosen (verified when omitted); nothing was stored.", followed by "Also: " and the evidence refusal when the evidence is also short. "is not a draft, so there is nothing to verify" becomes "… nothing to resolve".
+6. **Label of a rejected draft on agent surfaces** (`draftLabel`): "[rejected draft: the person said this is wrong]" becomes "[rejected draft: its evidence says why]", since an agent may now reject on the settling context.
+
+### Scenarios intended to move
+
+- **Product spec** ([../product-specs/drafts-and-triage.feature](../product-specs/drafts-and-triage.feature)): DT-VER-10 to DT-VER-14 (`@slice-6c`), added in this PR, and the Rule title, which no longer says verification needs "the person's own words".
+- **Briefing spec:** the agent-behaviour scenario "a briefed agent closes a draft settled elsewhere with `verify_draft` outcome rejected, citing the covering recipe" belongs in `checking-behavior.feature`, which stream C owns. It lands with C1, whose briefing body is what teaches resolving drafts and which merges after this PR. Until then the tool description is the only copy that says it.
+
+### Scenarios watched, with rationale for holding
+
+- **`briefing-surfaces.feature` "it does not call verify_draft"** (headless): unchanged. A headless key is refused for every outcome before any lookup, with the slice 5 text.
+- **Every briefing scenario:** no briefing text changed. Only the `verify_draft` tool and its parameters changed, and the briefing fixtures are byte-identical.
+
+### Measured
+
+| Measure | Before | After | Cap (A0) |
+|---|---|---|---|
+| Remote `tools/list` | 16,986 bytes | 17,261 | 18,200 |
+| Stdio `tools/list` | 13,196 bytes | 13,471 | 14,700 |
+| Shared descriptions | 6,051 characters | 6,280 | 6,600 |
+| `verify_draft` as served (remote) | 774 bytes | 1,049 | |
+
 ## 2026-10-24 — Drafts-and-triage slices 6 to 9, scaffold (PR A0): four size caps raised ahead of parallel streams; no copy changed
 
 Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-and-triage-slices-6-7-revision.md) (ratified 2026-10-24) and [../planning/drafts-and-triage-slices-6-9-implementation-plan.md](../planning/drafts-and-triage-slices-6-9-implementation-plan.md) §PR A0. Build log: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slices 6 to 9.
