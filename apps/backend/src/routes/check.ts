@@ -1404,18 +1404,23 @@ async function handleCheck(
       : buildJsonResponse(result, enriched, page, knownRecipeIds, synthesis), feedbackResults));
   }
 
-  // HTML response path — always enrich + cluster evidence
+  // HTML response path — always enrich + cluster evidence. A read-only search
+  // with no matches still gets its results section (an empty list), so the
+  // page says why: the scope count, or that an intent: id was not recognized
+  // (slice 6a). Before, that empty-state line was unreachable.
   let enriched: EnrichedResult[] | undefined;
   if (result && !result.error && result.results.length > 0) {
     const db = getDb();
     enriched = await enrichResults(db, result.results, principal?.userId);
     enriched = await clusterEvidenceInResults(db, enriched);
+  } else if (result && !result.error && searchOnly) {
+    enriched = [];
   }
 
   // Premium synthesis for the markdown copy-back block (same computation the
   // JSON path runs). Only fires when synthesize=true and a recipe was logged.
   let synthesisResult: SynthesisResult | undefined;
-  if (result && !result.error && enriched) {
+  if (result && !result.error && enriched && enriched.length > 0) {
     synthesisResult = await resolveSynthesis(getDb(), params, principal, result, enriched, searchOnly);
   }
 

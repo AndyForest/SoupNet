@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import postgres from "postgres";
 import { getDb } from "../db";
 import { authenticateKey } from "../authz";
-import { searchWithoutLogging } from "../services/trace.service";
+import { searchWithoutLogging, submitAndSearch } from "../services/trace.service";
 import { seedVerifiedUser } from "../test-users";
 
 /**
@@ -148,11 +148,13 @@ describe.skipIf(!BASE || !canConnect())("the recipe-to-intent link (drafts-and-t
     return (rows[0]?.["intent_id"] as string | null) ?? null;
   }
 
-  /** Replace what differs between two otherwise identical responses. */
-  function normalize(value: unknown): string {
+  /** Replace what differs between two otherwise identical responses: the
+   *  one intent id under comparison (never every int_ id, which would hide a
+   *  third id leaking), per-call uuids, and timestamps. */
+  function normalize(value: unknown, comparedIntent: string): string {
     return JSON.stringify(value)
+      .split(comparedIntent).join("<compared-intent>")
       .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, "<uuid>")
-      .replace(/int_[A-Za-z0-9]{24}/g, "<intent>")
       .replace(/\d{4}-\d{2}-\d{2}T[\d:.]+Z/g, "<time>");
   }
 
@@ -217,6 +219,30 @@ describe.skipIf(!BASE || !canConnect())("the recipe-to-intent link (drafts-and-t
     expect(await intentOf(ids["unknown"]!)).toBeNull();
     expect(await intentOf(ids["foreign"]!)).toBeNull();
     expect(await intentOf(ids["j1pub"]!)).toBe(J1);
+  });
+
+  it("S6a-S2: an oversize story and an over-budget registration deposit unlinked", async () => {
+    const tooLong = `As a developer ${"x".repeat(10_001)}`;
+    const oversize = await deposit(patKey, recipe("oversize story"), { intent: tooLong });
+    expect(oversize["intentId"]).toBeUndefined();
+    expect(await intentOf(checkedId(oversize))).toBeNull();
+    // Over budget: the deposit path in-process with a registration budget of
+    // one per hour, which Pat has already spent (envCapLocal reads the
+    // environment at call time).
+    const principal = await authenticateKey(getDb(), patKey);
+    if (!principal) throw new Error("key did not authenticate");
+    const saved = process.env["INTENT_RATE_LIMIT_HOURLY"];
+    process.env["INTENT_RATE_LIMIT_HOURLY"] = "1";
+    try {
+      const text = recipe("over budget");
+      const r = await submitAndSearch({ principal, traceText: text, evidenceFor: evidence("over budget"), intent: `As a developer over budget ${run}` });
+      expect(r.intent?.budgetExceeded).toBe(true);
+      expect(r.traceId).toBeTruthy();
+      expect(await intentOf(r.traceId!)).toBeNull();
+    } finally {
+      if (saved === undefined) delete process.env["INTENT_RATE_LIMIT_HOURLY"];
+      else process.env["INTENT_RATE_LIMIT_HOURLY"] = saved;
+    }
   });
 
   it("S6a-S3: an identical repeat under another intent keeps the first link", async () => {
@@ -294,14 +320,21 @@ describe.skipIf(!BASE || !canConnect())("the recipe-to-intent link (drafts-and-t
     expect(foreign.total).toBe(0);
     expect(foreign.data["intentNotRecognized"]).toBe(true);
     expect(String(foreign.data["notice"])).toContain("the intent: id was not recognized (unknown or not yours, deliberately indistinguishable)");
-    expect(normalize({ ...foreign.data, filter: undefined })).toBe(normalize({ ...random.data, filter: undefined }));
+    expect(normalize(foreign.data, J1)).toBe(normalize(random.data, RANDOM_INTENT));
     const fMd = (await mcp(patKey, "search_recipes", { query: `intent:${J1}` })).text;
     const rMd = (await mcp(patKey, "search_recipes", { query: `intent:${RANDOM_INTENT}` })).text;
-    expect(normalize(fMd)).toBe(normalize(rMd));
+    expect(normalize(fMd, J1)).toBe(normalize(rMd, RANDOM_INTENT));
     expect(fMd).toContain("the intent: id was not recognized");
     const webF = await webSearch(patKey, `intent:${J1}`);
     const webR = await webSearch(patKey, `intent:${RANDOM_INTENT}`);
-    expect(normalize(webF.body)).toBe(normalize(webR.body));
+    expect(normalize(webF.body, J1)).toBe(normalize(webR.body, RANDOM_INTENT));
+    // The HTML page says it too, the same for both (the results section now
+    // renders for an empty read-only search).
+    const html = async (id: string) => (await (await fetch(`${BASE}/check?${new URLSearchParams({ key: patKey, filter: `intent:${id}` }).toString()}`, { headers: { Accept: "text/html" } })).text());
+    const htmlF = await html(J1);
+    const htmlR = await html(RANDOM_INTENT);
+    expect(htmlF).toContain("the intent: id was not recognized (unknown or not yours, deliberately indistinguishable)");
+    expect(normalize(htmlF, J1)).toBe(normalize(htmlR, RANDOM_INTENT));
     const empty = await search(patKey, `intent:${EMPTY}`);
     expect(empty.total).toBe(0);
     expect(empty.data["intentNotRecognized"]).toBeUndefined();
@@ -387,7 +420,7 @@ describe.skipIf(!BASE || !canConnect())("the recipe-to-intent link (drafts-and-t
     const random = await queue(pat, `intent:${RANDOM_INTENT}`);
     expect(foreign.data.items).toEqual([]);
     expect(foreign.data.notice).toContain("the intent: id was not recognized");
-    expect(normalize(foreign.data)).toBe(normalize(random.data));
+    expect(normalize(foreign.data, J1)).toBe(normalize(random.data, RANDOM_INTENT));
     expect((await queue(pat, `intent:${EMPTY}`)).data.notice).toBeUndefined();
   });
 
@@ -427,6 +460,24 @@ describe.skipIf(!BASE || !canConnect())("the recipe-to-intent link (drafts-and-t
       expect(exists.length, String(r.claimText)).toBe(1);
       expect(exists[0]?.["intent_id"]).toBeNull();
     }
+    // Re-importing the same row: skipped as identical, and the stored link stays.
+    const again = await fetch(`${BASE}/import?book=${shared.id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${pat.jwt}` },
+      body: JSON.stringify({ ...file, traces: [{ ...row, intentId: null }] }),
+    });
+    expect(again.status).toBe(200);
+    const againBody = (await again.json()) as { data?: { counts?: { traces?: { skippedIdentical?: number } } } };
+    expect(againBody.data?.counts?.traces?.skippedIdentical).toBe(1);
+    expect(await intentOf(own)).toBe(I2);
+    // A non-string intentId is a row error, as for any optional string field.
+    const bad = await fetch(`${BASE}/import?book=${shared.id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${pat.jwt}` },
+      body: JSON.stringify({ ...file, traces: [{ ...row, id: crypto.randomUUID(), claimText: recipe("import typed"), claimTextHash: null, intentId: 7 }] }),
+    });
+    expect(bad.status).toBe(400);
+    expect(await bad.text()).toContain("intentId must be a string or null");
     // Sam importing Pat's file attaches nothing to Pat's intent either.
     const samRes = await fetch(`${BASE}/import?book=${shared.id}`, {
       method: "POST",
