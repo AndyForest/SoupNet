@@ -45,9 +45,9 @@ Slice 9's reports script (stream E) computes checks whose feedback says correcte
 
 Candidates the operator asked to collect for the enterprise plans. None is scheduled; each needs a design note and a recipe check before it moves.
 
-### `[DESIGN]` A Postgres-housed vector store as the product's core, offered on its own
+### `[DESIGN]` A Postgres-housed vector store as a self-host utility (not an enterprise feature)
 
-Operator, 2026-10-25: a basic replacement for a hosted vector database. Self-hosted, with the Postgres database exposed directly, so the customer's seam may be Postgres itself with no API needed: deposits that need embeddings land in a table and Soup.net makes the embeddings happen (the in-process worker and the embedding cache already do this for recipes). Questions for the design note: which tables are the public seam and which are internal; how a row's embedding provider and model are recorded and migrated; whether recipes stay the unit or any text row qualifies; how the authorization seam applies when the customer reads the database directly; what "basic" leaves out (filtering, hybrid search, multi-tenancy).
+Operator, 2026-10-25: a basic replacement for a hosted vector database, wanted first for the operator's own work once Soup.net runs self-hosted inside an organization; "a utility side effect, not an enterprise feature". Self-hosted, with the Postgres database exposed directly, so the seam may be Postgres itself with no API needed: rows that need embeddings land in a table and Soup.net makes the embeddings happen (the in-process worker and the embedding cache already do this for recipes). Questions for the design note: which tables are the public seam and which are internal; how a row's embedding provider and model are recorded and migrated; whether recipes stay the unit or any text row qualifies; how the authorization seam applies when the host reads the database directly; what "basic" leaves out (filtering, hybrid search, multi-tenancy). Framed as the self-hosted substrate Soup.net runs on, never as a separate vector-database product, so it does not pull against the positioning.
 
 ### Other candidates to weigh
 
