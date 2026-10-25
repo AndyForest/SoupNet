@@ -63,6 +63,37 @@ All: nothing an agent reads changed; both fixtures and the served rosters are by
 | Shared descriptions | 6,051 characters | 6,051 | 6,080 | 6,600 |
 | Thin briefing fixture | 18,183 characters; headless 18,536 | unchanged | 18,200; headless 18,600 | 21,000; headless 21,500 |
 
+## 2026-10-24 — Drafts-and-triage slice 8a (stream D): tool shapes the field logged
+
+Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-and-triage-slices-6-7-revision.md) slice 8 items 4 to 7, and [../planning/drafts-and-triage-slices-6-9-implementation-plan.md](../planning/drafts-and-triage-slices-6-9-implementation-plan.md) stream D. Rubric and build notes: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 8a.
+
+### Edits
+
+1. **`MCP_PARAM_DESCRIPTIONS.recipeIds`** names the array form: "Recipe ids, up to 20: an array, or one comma- or whitespace-separated string; …". `get_recipes` and `get_briefing` serve `recipe_ids` as a string or an array of strings on both servers.
+2. **`MCP_TOOL_DESCRIPTIONS.logFeedback`** names every target: "Target: the check's recipe id (or its short id), a search or briefing id, or, for an outcome row, the intent alone." To stay under the 420-character cap it drops "(full UUID or 8+ char short id)", a detail `trace_id`'s own description still carries, and "worth a row too" becomes "earn a row".
+3. **`log_feedback` parameter descriptions**, identical on both servers: `story` begins "Required on every row."; `trace_id` states the one-target rule; `search_id` drops its "Give exactly one of…" sentence, which `trace_id` now carries; `intent_id` says an outcome row may name it alone; and a new `briefing_id` parameter. The stdio tool gains `search_id`, which it never had, and its `trace_id` is no longer required.
+4. **The briefing id line**: "Briefing id: <uuid> — log_feedback accepts it as briefing_id, for feedback about this briefing." It's the last line of `get_briefing` on both servers, composed outside `BRIEFING.build`. `GET /briefing` returns the id as `data.briefingId`.
+5. **Search includes the caller's own recipes (the operator's ruling of 2026-10-24, recipe `885143c2`, superseding `303e17cf`).** This replaces item 7's planned "author:me" recovery line, which was built, then removed in the same PR because the default it recovered from is gone.
+   - `MCP_TOOL_DESCRIPTIONS.searchRecipes`: "For judgment made by OTHER people (a teammate's PR, a shared book); results exclude your own recipes by default." becomes "…, your own recipes included. For judgment already logged: yours, or a teammate's in a shared book (a PR area, a book you just joined)."
+   - `MCP_PARAM_DESCRIPTIONS.searchQuery`: "author: or is:draft lifts the exclude-own default." becomes "-author:me leaves out your own." Stream B owns the rest of that string and keeps its `intent:` term on rebase.
+   - Stream C's C1 rewrites the briefing's "Search vs check" paragraph to match.
+6. **Validation and refusal text**: a feedback row's rejection lists every failing field ("N fields need fixing: …"; one field reads as before). New markers: `briefing_id not found or not readable with this key` and `intent_id not found or not readable with this key`. The unknown-parameter refusal reads "Error: <tool> does not take <name> (did you mean <name>?). Nothing was run; send it again with the names it takes: …" (mode `refuse`, ruled by the operator 2026-10-24). The warning form is built but not served.
+
+Bytes, measured with the slice 1 method: remote `tools/list` 16,986 → 17,319 (cap 18,200); stdio 13,196 → 13,822 (cap 14,700; 26 bytes over the 600 share the 8a rubric set itself, which is the stdio `search_id` this PR adds); shared descriptions 6,051 → 6,111 characters (cap 6,600). The search wording in item 5 accounts for 1 byte of each. Thin and full briefing fixtures unchanged.
+
+### Scenarios intended to move
+
+- `feedback-loop.feature`: three new scenarios, "A session's outcome with no single recipe joins its intent alone", "Feedback about the briefing itself carries the briefing id", and "A rejected feedback row is fixed in one retry" (added in this PR). Stream C's C1 declares the first one moved by its briefing clause, too.
+- `intent-registration.feature` "Feedback closes the declared loop" gains the intent-only outcome row (edited in this PR).
+
+### Scenarios watched, with rationale for holding
+
+- **`feedback-loop.feature` scenarios that already existed**: the field vocabulary, the carriers (ride-along, `log_feedback`, `POST /feedback`, `GET /feedback`) and the recipe-id join are unchanged. The tool description's shorter join sentence still names the recipe id first.
+- **`known-recipes-dedup.feature`, `frontmatter-recipe-lookup.feature`**: `get_recipes` resolves the same ids the same way; only the accepted input forms widened.
+- **`checking-behavior.feature` "Probing the system does not log junk recipes"**: search stays the read-only lookup. Including the caller's own recipes only widens what it can find.
+- **`docs/product-specs/drafts-and-triage.feature`** (product spec, not briefing): two comments that cited "search excludes the caller's own recipes by default" now cite the reversal. A person's own drafts appear in a default search under their draft label, as they already do in check results, and slice 8b's "own open drafts set apart" serves both.
+- **Every other scenario**: no briefing body text changed (stream C owns it). The unknown-parameter refusal fires only on names a tool does not declare, so every documented call is byte-identical.
+
 ## 2026-09-28 — Drafts-and-triage slice 5: the headless briefing section, the headless deposit notice, and the verify refusal
 
 Design: [../planning/drafts-and-triage.md](../planning/drafts-and-triage.md) §Headless keys. Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 5 rubric, open questions 41 to 44 with the orchestrator's rulings of 2026-09-28 (42 overridden: a headless key updates book descriptions like any key, so there is no description refusal).

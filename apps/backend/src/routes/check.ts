@@ -1344,14 +1344,12 @@ async function handleCheck(
       axes: params.axes,
       readGroups: params.readGroups,
       // Structured-query extras (2026-08-19): session/known stub rendering and
-      // agent lineage, same semantics as the check path. excludeOwnDefault is
-      // an MCP-surface default (operator ruling 1, recipe 303e17cf): the
-      // stdio proxy forwards search_recipes here self-identified via
-      // X-SoupNet-Surface, so it inherits the same default as the HTTP MCP
-      // tool; the plain web filter path serves the human searching their own
-      // corpus and stays include-everything. A query-level author: qualifier
-      // overrides in every case.
-      excludeOwnDefault: surface === "mcp-stdio",
+      // agent lineage, same semantics as the check path. Every surface
+      // includes the caller's own recipes (recipe 885143c2, 2026-10-24,
+      // superseding the MCP exclude-own default of recipe 303e17cf, which
+      // reached here through the stdio proxy's X-SoupNet-Surface header).
+      // A query-level author: qualifier narrows.
+      excludeOwnDefault: false,
       sessionId: params.sessionId,
       intent: params.intent,
       knownRecipeIds: knownRecipeIds.size > 0 ? [...knownRecipeIds] : undefined,

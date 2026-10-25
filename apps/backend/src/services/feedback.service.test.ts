@@ -137,6 +137,42 @@ describe("validateFeedbackRow", () => {
     }
   });
 
+  // S8a-V1 (drafts-and-triage slice 8a): a field row landed on the fourth or
+  // fifth call because each attempt named one failing field.
+  it("names every failing field in one error, in schema order", () => {
+    const v = validateFeedbackRow(validRow({
+      kind: "bogus",
+      impact: "high",
+      disposition: "proceed",
+      story_fulfilled: true as never,
+      story: "",
+      top_similarity: 2,
+    }));
+    expect(v.ok).toBe(false);
+    if (v.ok) return;
+    expect(v.error.startsWith("6 fields need fixing: ")).toBe(true);
+    const order = ["kind must", "impact must", "disposition must", "story_fulfilled must", "story is required", "top_similarity must"];
+    const positions = order.map((s) => v.error.indexOf(s));
+    expect(positions.every((p) => p >= 0)).toBe(true);
+    expect([...positions].sort((a, b) => a - b)).toEqual(positions);
+    expect(v.error).toContain('(got "high")');
+  });
+
+  it("a single failing field gets exactly the one message, with no count prefix", () => {
+    const v = validateFeedbackRow(validRow({ kind: "bogus" }));
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.error).toBe('kind must be one of: check-feedback | operational | outcome (got "bogus")');
+  });
+
+  it("reports a bad target together with the field errors", () => {
+    const v = validateFeedbackRow(validRow({ trace_id: "xyz", impact: "bogus" }));
+    expect(v.ok).toBe(false);
+    if (v.ok) return;
+    expect(v.error.startsWith("2 fields need fixing: ")).toBe(true);
+    expect(v.error).toContain("trace_id (alias: recipe_id)");
+    expect(v.error).toContain("impact must be one of");
+  });
+
   it("rejects a missing story", () => {
     const v = validateFeedbackRow(validRow({ story: "   " }));
     expect(v.ok).toBe(false);
@@ -356,8 +392,10 @@ describe("summarizeFeedbackResults", () => {
 describe("computeFeedbackContentHash", () => {
   function row(overrides: Partial<ValidatedFeedbackRow> = {}): ValidatedFeedbackRow {
     return {
+      target: "trace",
       traceId: TRACE_ID,
       searchId: null,
+      briefingId: null,
       kind: "check-feedback",
       impact: "subtle",
       disposition: "proceeded",
@@ -461,5 +499,84 @@ describe("ingestFeedback idempotency (stubbed db)", () => {
     });
     expect(results[0]?.ok).toBe(false);
     expect(results[0]?.error).toBe("insert failed");
+  });
+});
+
+// S8a-O1, S8a-O5 (drafts-and-triage slice 8a): two targets beside a recipe
+// and a search. A briefing's audit-row id, and, for an outcome row only, the
+// intent alone.
+describe("validateFeedbackRow — briefing and intent-only targets", () => {
+  const BRIEFING_ID = "5b0f2a7e-1c3d-4e5f-8a9b-0c1d2e3f4a5b";
+  const INTENT_ID = "int_AbCdEfGhIjKlMnOpQrStUvWx";
+
+  function noTarget(overrides: Partial<RawFeedbackRow> = {}): RawFeedbackRow {
+    const row = validRow(overrides);
+    delete row.trace_id;
+    return row;
+  }
+
+  it("accepts an outcome row with intent_id alone", () => {
+    const v = validateFeedbackRow(noTarget({ kind: "outcome", intent_id: INTENT_ID }));
+    expect(v.ok).toBe(true);
+    if (!v.ok) return;
+    expect(v.row.target).toBe("intent");
+    expect(v.row.traceId).toBe("");
+    expect(v.row.searchId).toBeNull();
+    expect(v.row.briefingId).toBeNull();
+    expect(v.row.intentId).toBe(INTENT_ID);
+  });
+
+  it("refuses intent_id alone on any other kind, naming the rule", () => {
+    const v = validateFeedbackRow(noTarget({ kind: "check-feedback", intent_id: INTENT_ID }));
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.error).toContain("an outcome row may instead give intent_id alone");
+  });
+
+  it("refuses an outcome row whose only target is a malformed intent_id", () => {
+    const v = validateFeedbackRow(noTarget({ kind: "outcome", intent_id: "my task" }));
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.error).toContain("intent_id must be the int_");
+  });
+
+  it("refuses a row with no target at all, listing every target", () => {
+    const v = validateFeedbackRow(noTarget());
+    expect(v.ok).toBe(false);
+    if (!v.ok) {
+      for (const name of ["trace_id", "search_id", "briefing_id", "intent_id"]) expect(v.error).toContain(name);
+    }
+  });
+
+  it("keeps intent_id capture-only when the row has another target", () => {
+    const v = validateFeedbackRow(validRow({ kind: "outcome", intent_id: "not an id" }));
+    expect(v.ok).toBe(true);
+    if (v.ok) {
+      expect(v.row.target).toBe("trace");
+      expect(v.row.intentId).toBeNull();
+    }
+  });
+
+  it("accepts briefing_id as the target", () => {
+    const v = validateFeedbackRow(noTarget({ kind: "operational", briefing_id: BRIEFING_ID.toUpperCase() }));
+    expect(v.ok).toBe(true);
+    if (!v.ok) return;
+    expect(v.row.target).toBe("briefing");
+    expect(v.row.briefingId).toBe(BRIEFING_ID);
+    expect(v.row.traceId).toBe("");
+  });
+
+  it("refuses a malformed briefing_id", () => {
+    const v = validateFeedbackRow(noTarget({ briefing_id: "5b0f2a7e" }));
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.error).toContain("briefing_id must be the full briefingId UUID");
+  });
+
+  it("refuses two targets on one row", () => {
+    for (const extra of [{ briefing_id: BRIEFING_ID }, { search_id: BRIEFING_ID }]) {
+      const v = validateFeedbackRow(validRow(extra));
+      expect(v.ok).toBe(false);
+      if (!v.ok) expect(v.error).toContain("give exactly one of");
+    }
+    const both = validateFeedbackRow(noTarget({ search_id: BRIEFING_ID, briefing_id: BRIEFING_ID }));
+    expect(both.ok).toBe(false);
   });
 });

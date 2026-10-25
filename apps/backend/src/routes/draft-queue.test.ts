@@ -642,7 +642,7 @@ describe.skipIf(!BASE || !canConnect())("the review queue (drafts-and-triage sli
 
   // ── Agent side ─────────────────────────────────────────────────────────────
 
-  it("S3-G1 / S3-G3 / S3-AG1: Pat's is:draft on search_recipes returns exactly his unresolved drafts in the key's scope, lifting exclude-own", async () => {
+  it("S3-G1 / S3-G3 / S3-AG1: Pat's is:draft on search_recipes returns exactly his unresolved drafts in the key's scope", async () => {
     const r = await mcp(patKeyB, "search_recipes", { query: "is:draft", response_format: "structured", verbosity: "high" });
     const results = (r.structured?.["results"] ?? []) as Array<{ recipeId: string; draftState?: string }>;
     const ids = results.map((x) => x.recipeId);
@@ -650,9 +650,11 @@ describe.skipIf(!BASE || !canConnect())("the review queue (drafts-and-triage sli
     expect(new Set(ids)).toEqual(new Set((rows as unknown as Array<{ id: string }>).map((x) => x.id)));
     for (const x of results) expect(x.draftState).toBe("unverified");
     expect(ids).not.toContain(listed["personal"]); // outside this key's scope
-    // Without is:draft or author:, search keeps excluding Pat's own recipes.
-    const plain = await mcp(patKeyB, "search_recipes", { query: `"${MARKER}"`, response_format: "structured" });
-    for (const x of (plain.structured?.["results"] ?? []) as Array<{ recipeId: string }>) {
+    // -author:me leaves Pat's own recipes out, drafts included. (Without a
+    // qualifier search includes them, labelled, since the exclude-own
+    // default was retired on 2026-10-24, recipe 885143c2.)
+    const others = await mcp(patKeyB, "search_recipes", { query: `-author:me "${MARKER}"`, response_format: "structured" });
+    for (const x of (others.structured?.["results"] ?? []) as Array<{ recipeId: string }>) {
       expect(Object.values(listed)).not.toContain(x.recipeId);
     }
   });
@@ -670,14 +672,14 @@ describe.skipIf(!BASE || !canConnect())("the review queue (drafts-and-triage sli
     expect(html).toContain("impact high, uncertainty low");
   });
 
-  it("S3-G3 / S3-AG1: the stdio surface (its exclude-own default on /check) also lists Pat's drafts under is:draft", async () => {
+  it("S3-G3 / S3-AG1: the stdio surface (/check with its surface header) also lists Pat's drafts under is:draft", async () => {
     const qs = new URLSearchParams({ key: patKeyB, format: "json", filter: "is:draft", clusters: "100" });
     const stdio = (await (await fetch(`${BASE}/check?${qs.toString()}`, { headers: { Accept: "application/json", "X-SoupNet-Surface": "mcp-stdio" } })).json()) as { data: { results: Array<{ recipeId: string }> } };
     const ids = stdio.data.results.map((x) => x.recipeId);
     expect(ids).toContain(listed["shared"]);
     expect(ids).toContain(listed["quiet"]);
-    // Without is:draft the same surface still excludes Pat's own recipes.
-    const plain = new URLSearchParams({ key: patKeyB, format: "json", filter: `"${MARKER}"`, clusters: "100" });
+    // -author:me leaves Pat's own out on the same surface.
+    const plain = new URLSearchParams({ key: patKeyB, format: "json", filter: `-author:me "${MARKER}"`, clusters: "100" });
     const noDraft = (await (await fetch(`${BASE}/check?${plain.toString()}`, { headers: { Accept: "application/json", "X-SoupNet-Surface": "mcp-stdio" } })).json()) as { data: { results: Array<{ recipeId: string }> } };
     for (const x of noDraft.data.results) expect(Object.values(listed)).not.toContain(x.recipeId);
   });

@@ -420,6 +420,14 @@ export function fenceCheckResponseMarkdown(markdown: string): string {
   return "```markdown soup-net-check-result.md\n" + markdown + "\n```";
 }
 
+/** The last line of a briefing served to an agent: the id a feedback row
+ *  carries as briefing_id, so the briefing surface can be scored like a
+ *  check or a search (drafts-and-triage slice 8a, S8a-O4). Mirrors the
+ *  search response's "Search id" line. */
+export function renderBriefingIdLine(briefingId: string): string {
+  return `Briefing id: ${briefingId} — log_feedback accepts it as briefing_id, for feedback about this briefing.`;
+}
+
 /**
  * Own-author exclusion disclosure for zero-result searches (cold-start v2
  * Phase A). On surfaces with the exclude-own default, "no matches among N

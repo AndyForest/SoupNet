@@ -352,7 +352,9 @@ describe.skipIf(!BASE || !canConnect())("drafts for the key's own user (drafts-a
   it("S2-B3 / DT-VIS-04: get_briefing with recipe_ids naming the draft is the uniform marker", async () => {
     const real = await mcp(samKey, "get_briefing", { recipe_ids: draftId });
     const random = await mcp(samKey, "get_briefing", { recipe_ids: RANDOM_UUID });
-    const section = (t: string) => t.slice(t.indexOf("## Requested recipes"));
+    // Up to the briefing id line (slice 8a), which names each call's own
+    // briefing.issued row and so differs between any two calls.
+    const section = (t: string) => t.slice(t.indexOf("## Requested recipes")).replace(/\n\nBriefing id: [0-9a-f-]{36}[^\n]*$/, "");
     expect(norm(section(real.text), draftId)).toBe(norm(section(random.text), RANDOM_UUID));
     expect(real.text).not.toContain(MARKER);
   });
@@ -404,9 +406,15 @@ describe.skipIf(!BASE || !canConnect())("drafts for the key's own user (drafts-a
     expect(page).toContain("[unverified draft");
   });
 
-  it("S2-B4 / DT-VIS-06: search excludes Pat's own drafts by default, like his other recipes", async () => {
+  // Since 2026-10-24 search includes the caller's own recipes by default
+  // (recipe 885143c2, superseding 303e17cf), so Pat's own draft is found the
+  // way checks already show it: labelled. -author:me leaves it out.
+  it("S2-B4 / DT-VIS-06: search shows Pat's own draft labelled, like his other recipes, and -author:me leaves it out", async () => {
     const r = await mcp(patKey, "search_recipes", { query: `"${MARKER}"` });
-    expect(r.text).not.toContain(draftId);
+    const line = r.text.split("\n").find((l) => l.includes(draftId));
+    expect(line).toContain("unverified draft");
+    const others = await mcp(patKey, "search_recipes", { query: `-author:me "${MARKER}"` });
+    expect(others.text).not.toContain(draftId);
   });
 
   it("S2-B4 / DT-VIS-07: a key of Pat's with no read scope on the book finds the draft uniformly absent", async () => {

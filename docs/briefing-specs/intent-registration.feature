@@ -38,6 +38,7 @@ Feature: Declared intents — forward-declared task stories that link briefing, 
     Given an agent whose intent-joined check shaped a decision
     When it logs feedback about that check
     Then the row carries the intent_id (inherited on ride-along rows, explicit on log_feedback)
+    And an outcome row about the whole task may carry the intent_id as its only target (drafts-and-triage slice 8a)
     And the feedback surface never registers an intent from text
 
   Scenario: An unrecognized intent id degrades honestly

@@ -9,6 +9,8 @@
  * dashboard.
  */
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { guardUnknownParams, toolParamsFromRegistry } from "@soupnet/domain";
+import type { McpTransportLike } from "@soupnet/domain";
 import { createStdioServer } from "./server.js";
 
 const server = createStdioServer({
@@ -19,6 +21,9 @@ const server = createStdioServer({
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
+  // Same guard as the remote /mcp route: parameter names a tool does not
+  // declare are refused or warned (drafts-and-triage slice 8a).
+  guardUnknownParams(transport as unknown as McpTransportLike, toolParamsFromRegistry(server));
   console.error("[mcp-server] Soup.net MCP server started (stdio transport)");
 }
 

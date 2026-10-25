@@ -31,8 +31,11 @@ import {
   buildCheckRecipeToolDescription,
   renderCheckResponseMarkdown,
   isShownDraftState,
+  renderBriefingIdLine,
+  guardUnknownParams,
+  toolParamsFromRegistry,
 } from "@soupnet/domain";
-import type { CheckResponseJson } from "@soupnet/domain";
+import type { CheckResponseJson, McpTransportLike } from "@soupnet/domain";
 import type { Recipe } from "@soupnet/contracts";
 import { composeBriefing, composeCorpusContext } from "../services/briefing";
 import { rateLimit, perKeyRateLimit, extractMcpBearerKey, getClientIp, hashApiKey, envCap } from "../middleware/rate-limit";
@@ -66,7 +69,7 @@ import { ClientSafeError, publicErrorMessage } from "../lib/client-safe-error";
 import { invalidKeyMessage } from "../lib/key-remediation";
 import type { RawFeedbackRow } from "../services/feedback.service";
 import { verifyDraft, describeVerifyResult } from "../services/draft-verify.service";
-import { ingestFeedback, isFeedbackRowObject, summarizeFeedbackResults, withCheckDefaults } from "../services/feedback.service";
+import { feedbackTargetLabel, ingestFeedback, isFeedbackRowObject, summarizeFeedbackResults, withCheckDefaults } from "../services/feedback.service";
 
 // F47 (security-audit-2026-06-11): tool catch-alls surface only deliberate
 // ClientSafeError messages (validation, size caps, MIME — written for the
@@ -353,6 +356,14 @@ function imageFromBase64(base64: string, filename: string, mimeTypeHint?: string
 // (zod-to-json-schema renders the inner record), so agents still read
 // "object" for the item type.
 const feedbackRowSchema = z.record(z.unknown()).catch((ctx) => ctx.input as Record<string, unknown>);
+
+// recipe_ids on get_recipes and get_briefing (drafts-and-triage slice 8a,
+// S8a-I1): an array of ids or the comma/whitespace-separated string. The
+// plural name invites an array and three field sessions sent one; before
+// this the SDK refused it as "expected string". parseRecipeIds takes both.
+function recipeIdsParam() {
+  return z.union([z.string(), z.array(z.string())]);
+}
 
 // Triage ratings (slice 1). A value of the wrong JSON type (impact: 3) is an
 // unrecognized rating like any other: stored as not rated, with the notice,
@@ -699,8 +710,10 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
   // ── search_recipes tool ───────────────────────────────────────────────────
   //
   // Read-only structured search (2026-08-19, docs/planning/recipe-search-design.md):
-  // the MCP twin of the /check filter path, with the exclude-own default that
-  // steers search toward collaborators' judgment (recipe 303e17cf). Calls
+  // the MCP twin of the /check filter path. It includes the caller's own
+  // recipes (recipe 885143c2, 2026-10-24, superseding the exclude-own default
+  // of recipe 303e17cf: agents deposit in their person's name, so excluding
+  // the caller emptied a book the person writes alone). Calls
   // searchWithoutLogging directly — no trace, no recipe.checked; a
   // check.searched audit row carries the measurement stamps and its id is
   // returned as searchId (the log_feedback search_id handle).
@@ -742,7 +755,8 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
           verbosity: verbosity ?? ("auto" as const),
           readGroups: read_recipe_books ?? undefined,
           surface: "mcp-http",
-          excludeOwnDefault: true,
+          // Own recipes included (recipe 885143c2); author: narrows.
+          excludeOwnDefault: false,
           sessionId: session_id ?? undefined,
           intent: intent ?? undefined,
           knownRecipeIds: knownRecipeIds.size > 0 ? [...knownRecipeIds] : undefined,
@@ -765,10 +779,8 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
         if (jsonResponse["ok"] === true) {
           const data = jsonResponse["data"] as Record<string, unknown>;
           delete data["checked"];
-          // Shared notice builder (cold-start v2 Phase A): on this surface the
-          // exclude-own default applies, so a zero-result notice additionally
-          // discloses how many in-scope recipes were the caller's own — a solo
-          // corpus must never read as empty.
+          // Shared notice builder (cold-start v2 Phase A): one phrasing for
+          // both search surfaces.
           jsonResponse["data"] = {
             searchOnly: true,
             filter: query,
@@ -838,7 +850,7 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
     {
       purpose: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.briefingPurpose),
       intent: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.intent),
-      recipe_ids: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.briefingRecipeIds),
+      recipe_ids: recipeIdsParam().optional().describe(MCP_PARAM_DESCRIPTIONS.briefingRecipeIds),
       verbosity: z.enum(VERBOSITY_LEVELS).optional().describe(MCP_PARAM_DESCRIPTIONS.briefingVerbosity),
     },
     {
@@ -872,7 +884,10 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
           return { content: [{ type: "text" as const, text: "Error: Briefing unavailable." }] };
         }
 
-        return { content: [{ type: "text" as const, text: result.text }] };
+        // The briefing's feedback handle (slice 8a, S8a-O4), composed outside
+        // BRIEFING.build so the briefing fixtures stay byte-identical.
+        const text = result.briefingId ? `${result.text}\n\n${renderBriefingIdLine(result.briefingId)}` : result.text;
+        return { content: [{ type: "text" as const, text }] };
       } catch (err) {
         return { content: [{ type: "text" as const, text: toolErrorText(err, "get_briefing") }] };
       }
@@ -894,7 +909,7 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
     "get_recipes",
     lean ? "Fetch specific Soup.net recipes by id (comma-separated UUIDs, up to 20)." : MCP_TOOL_DESCRIPTIONS.getRecipes,
     {
-      recipe_ids: z.string().describe(MCP_PARAM_DESCRIPTIONS.recipeIds),
+      recipe_ids: recipeIdsParam().describe(MCP_PARAM_DESCRIPTIONS.recipeIds),
     },
     {
       title: "Get recipes by id",
@@ -1153,17 +1168,20 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
     MCP_TOOL_DESCRIPTIONS.logFeedback,
     {
       trace_id: z.string().optional().describe(
-        "Recipe id of the prior check — the full UUID from the check response, or an unambiguous short-id prefix (8+ chars, e.g. '18912fbd'). Ambiguous prefixes are rejected naming the candidates. Give exactly one of trace_id or search_id."
+        "Recipe id of the prior check — the full UUID from the check response, or an unambiguous short-id prefix (8+ chars, e.g. '18912fbd'). Ambiguous prefixes are rejected naming the candidates. One target per row: trace_id, search_id or briefing_id; an outcome row may give intent_id alone."
       ),
       search_id: z.string().optional().describe(
-        "searchId of a prior search_recipes call (full UUID from its response) — feedback about what a search surfaced and what you did with it. Give exactly one of trace_id or search_id."
+        "searchId of a prior search_recipes call (full UUID from its response) — feedback about what a search surfaced and what you did with it."
+      ),
+      briefing_id: z.string().optional().describe(
+        "briefingId a get_briefing response returned (full UUID) — feedback about the briefing itself."
       ),
       kind: z.string().describe("check-feedback | operational | outcome"),
       impact: z.string().describe("none | new | subtle | big | operational"),
       disposition: z.string().describe("proceeded | corrected | asked-human | charted-new | deferred"),
       story_fulfilled: z.string().describe("yes | partial | no | unknown"),
       story: z.string().describe(
-        "The user story behind the check — why it was made (e.g. 'As an AI sub-agent working on X, I wanted Y so that Z')."
+        "Required on every row. The user story behind the check — why it was made (e.g. 'As an AI sub-agent working on X, I wanted Y so that Z')."
       ),
       note: z.string().optional().describe("What you did with the result — how it changed (or confirmed) your approach."),
       agent_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.agentId),
@@ -1178,7 +1196,7 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
         "The session token from your check responses — joins your feedback to that session's check lineage. Capture only."
       ),
       intent_id: z.string().optional().describe(
-        "The int_… id from a prior response — joins this row to that declared intent (declared-intent → fulfillment). Join-only: this surface never registers; send intent TEXT on a check/search/briefing instead."
+        "The int_… id from a prior response — joins this row to that declared intent; on an outcome row it may be the only target. Never registers: send intent TEXT on a check/search/briefing instead."
       ),
     },
     {
@@ -1207,9 +1225,10 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
         });
         const r = results[0];
         if (r?.ok) {
-          // Search-target rows carry searchId and an empty traceId — name the
-          // right target so the confirmation never reads "for check " (blank).
-          const target = r.traceId ? `check ${r.traceId}` : `search ${r.searchId ?? "(unknown)"}`;
+          // Non-recipe rows (search, briefing, intent alone) carry an empty
+          // traceId: name the right target so the confirmation never reads
+          // "for check " (blank).
+          const target = feedbackTargetLabel(r);
           const text = r.dup
             ? `Feedback already recorded for ${target} (feedback id ${r.feedbackId}) — identical resubmission.`
             : `Feedback recorded for ${target} (feedback id ${r.feedbackId}).`;
@@ -1515,6 +1534,9 @@ mcpRouter.all("/", mcpBodyLimit, mcpRateLimit, mcpPerBearerBackstop, mcpPerKeyRa
   const transport = new WebStandardStreamableHTTPServerTransport({});
   const server = createMcpServer(backendUrl, principal);
   await server.connect(transport);
+  // Parameter names a tool does not declare are refused or warned before
+  // the SDK strips them (drafts-and-triage slice 8a; UNKNOWN_PARAM_MODE).
+  guardUnknownParams(transport as unknown as McpTransportLike, toolParamsFromRegistry(server));
   // No authInfo is handed to the transport: tools read the Principal their
   // server was built with, and the raw token goes no further than this handler.
   return transport.handleRequest(c.req.raw);

@@ -214,7 +214,7 @@ Feature: Drafts, triage ratings, and deciding by building both
     @DT-VIS-06 @slice-2
     Scenario: The person's own agents see their drafts, labelled
       Given Pat's agent deposited a draft
-      When any of Pat's keys with read scope on the book checks near the draft, or searches near it with author:me or author:anyone (search excludes the caller's own recipes by default)
+      When any of Pat's keys with read scope on the book checks near the draft, or searches near it (search includes the caller's own recipes by default since 2026-10-24)
       Then the draft can appear in results, ranked exactly as it would be if it were not a draft
       And each appearance is labelled as a draft in both the markdown and structured formats
 
@@ -425,7 +425,8 @@ Feature: Drafts, triage ratings, and deciding by building both
     # drafts, §Dashboard as a Feed. Build log rulings 21 to 27: the queue is
     # the SPA page /app/drafts, listed by a signed-in (JWT) route that parses
     # the search grammar over the person's live memberships; is:draft means
-    # "unresolved drafts about me" and lifts search's exclude-own default.
+    # "unresolved drafts about me" (search's exclude-own default, which it used
+    # to lift, was retired on 2026-10-24, recipe 885143c2).
     # Requirement: C01-R15 ("The review experience should share the human search page")
 
     @DT-QUE-01 @slice-3

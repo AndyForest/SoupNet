@@ -1,9 +1,9 @@
 # ClaimNet Data Model — Generated Reference
 
-> **Auto-generated** from Drizzle migration snapshot `0040_snapshot.json`.
+> **Auto-generated** from Drizzle migration snapshot `0041_snapshot.json`.
 > Do not edit by hand. Regenerate with: `npx tsx scripts/generate-data-model-docs.ts`
 >
-> Schema as of migration `0040_api_keys_deposit_level` (2026-09-28).
+> Schema as of migration `0041_check_feedback_briefing_and_intent_targets` (2026-10-24).
 > Tables: 31 | Schema: `claimnet`
 
 For design rationale, conventions, and context, see [data-model.md](data-model.md).
@@ -63,6 +63,7 @@ erDiagram
         uuid id PK
         uuid trace_id FK
         uuid search_audit_id
+        uuid briefing_audit_id
         uuid api_key_id
         uuid actor_user_id FK
         text agent_id
@@ -716,6 +717,7 @@ These are created by raw SQL in migration files and are not captured in the snap
 | `id` | `uuid` | NO | `gen_random_uuid()` | PK |
 | `trace_id` | `uuid` | YES |  |  |
 | `search_audit_id` | `uuid` | YES |  |  |
+| `briefing_audit_id` | `uuid` | YES |  |  |
 | `api_key_id` | `uuid` | YES |  |  |
 | `actor_user_id` | `uuid` | YES |  |  |
 | `agent_id` | `text` | YES |  |  |
@@ -742,10 +744,12 @@ These are created by raw SQL in migration files and are not captured in the snap
 **Unique constraints:**
 - `check_feedback_dedup_unique`: `(api_key_id, trace_id, content_hash)`
 - `check_feedback_search_dedup_unique`: `(api_key_id, search_audit_id, content_hash)`
+- `check_feedback_briefing_dedup_unique`: `(api_key_id, briefing_audit_id, content_hash)`
 
 **Indexes:**
 - `check_feedback_trace_id_idx`: `(trace_id)`
 - `check_feedback_api_key_id_created_at_idx`: `(api_key_id, created_at)`
+- `check_feedback_intent_dedup_unique`: `(api_key_id, intent_id, content_hash)` (unique)
 
 ---
 
