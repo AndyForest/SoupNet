@@ -2019,7 +2019,9 @@ Each finding from the verification record above, and what was done.
 
 Gate after the fix pass: `TESTCI_PGPORT=5611 npm run test:ci` exit 0, 135 files passed (2 skipped), 1,916 tests passed, 6 skipped, 0 failed.
 
-The verifier's draft `21d39214` (on grading rows whose named proof is missing) is the verifier's question for the operator, and is left to him.
+The verifier's draft `21d39214` (on grading rows whose named proof is missing) has been ruled and verified by the operator ("Yes to all three, confirm the drafts", 2026-10-24). A row whose behaviour the probes proved, but whose named test is missing or too weak, reads as a pass on behaviour, with the gap stated in the row and listed as a finding to close before merge. It supersedes the "partial" wording of `36875b03` that the record above used. Nothing here changes, because the fix pass closed every gap the record named.
+
+**Added 2026-10-25: prose parentheticals in the grammar.** A field agent's bare-text query "…body (merge order, open questions, verification)" was refused as a malformed group (feedback `c5af93de`, stream D). It is the backlog's Phase C friction note, now seen twice. Settled without the operator by recipes `8481d9bc` (stream D) and `f0c39b29` (this stream), on the precedent of the Gmail-shaped grammar ruling `da986c40`. A top-level group with nothing grammar-shaped inside (no quote, no uppercase `OR`, no nested parenthesis, no qualifier-shaped word) is now kept as written in the semantic text. Every other malformed group keeps its loud error, including `(author:me)` and a misspelled qualifier inside parentheses, so a typo still never turns into silent semantic text. `parseSearchQuery` gains `proseParentheticalEnd`, with Layer 1 cases in `search-query.test.ts`. No agent-facing copy changes, since the descriptions never said a prose parenthesis was an error.
 
 ### Slice 7 rubric: briefing copy (stream C)
 

@@ -108,6 +108,33 @@ describe("parseSearchQuery — quoted lexical terms", () => {
     expect(errorOf("(alpha OR beta)")).toMatch(/quote each term/);
   });
 
+  // A prose parenthetical is bare text (recipes 8481d9bc, f0c39b29): a group
+  // with nothing grammar-shaped inside reads as part of the semantic phrase.
+  it("reads a prose parenthetical as semantic text, kept as written", () => {
+    const q = parsed("draft PR body (merge order, open questions, verification)");
+    expect(q.semanticText).toBe("draft PR body (merge order, open questions, verification)");
+    expect(q.lexicalGroups).toEqual([]);
+    expect(parsed("(alpha beta) gamma").semanticText).toBe("(alpha beta) gamma");
+    expect(parsed("(alpha)").semanticText).toBe("(alpha)");
+  });
+
+  it("keeps a prose parenthetical beside quoted terms and qualifiers", () => {
+    const q = parsed('"search.ts" ranking (the MMR pass) author:me');
+    expect(q.semanticText).toBe("ranking (the MMR pass)");
+    expect(q.lexicalGroups).toEqual([["search.ts"]]);
+    expect(q.authors).toEqual({ kind: "listed", values: ["me"] });
+  });
+
+  it("keeps the strict reading for any group holding grammar", () => {
+    expect(errorOf('(alpha "b.ts")')).toMatch(/separated by OR/);
+    expect(errorOf("(alpha OR beta)")).toMatch(/quote each term/);
+    expect(errorOf("(author:me)")).toMatch(/quote each term/);
+    expect(errorOf("(see athor:me)")).toMatch(/separated by OR/);
+    expect(errorOf("(outer (inner) words)")).toMatch(/separated by OR/);
+    expect(errorOf("prose (unclosed")).toMatch(/unterminated group/);
+    expect(errorOf("( )")).toMatch(/empty group/);
+  });
+
   it("rejects OR followed by a bare word at top level", () => {
     expect(errorOf('"a.ts" OR beta')).toMatch(/quote/);
   });

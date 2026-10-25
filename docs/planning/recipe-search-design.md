@@ -35,7 +35,7 @@ narrative read model "evaluation-run.server.ts" author:jane@example.com after:20
 | --- | --- |
 | bare text | One semantic query (embedded whole, original order). No boolean operators — meaningless over a single vector. |
 | `"quoted term"` | Lexical ILIKE match across claim text, evidence content, reference quotes, and reference sources. Multiple quoted terms AND by default. |
-| `("a" OR "b")` | OR-group of quoted terms (uppercase `OR` only; lowercase `or` stays semantic text — Gmail convention). |
+| `("a" OR "b")` | OR-group of quoted terms (uppercase `OR` only; lowercase `or` stays semantic text — Gmail convention). A parenthetical with nothing grammar-shaped inside (no quote, no `OR`, no nested parenthesis, no qualifier-shaped word) is prose, kept as written in the semantic text, as Gmail reads an OR-less group; any other malformed group stays a loud error (recipes `8481d9bc`, `f0c39b29`, 2026-10-25). |
 | `-"term"`, `-author:x` | Negation. |
 | `author:` | Author email; values `me` and `anyone` reserved. `author:(a@x.com OR b@y.com)` unions. Any `author:` qualifier replaces the exclude-own default; `author:anyone` means no author filter. |
 | `after:` / `before:` | Judgment date, half-open: `after:D` ⇒ date ≥ D, `before:D` ⇒ date < D. Strict ISO (`YYYY-MM-DD` or full ISO datetime). Operates on `COALESCE(decided_at, created_at)` — the established judgment-date cascade. Duplicate `after:`/`before:` is an error. |
