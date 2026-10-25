@@ -68,7 +68,7 @@ Feature: Checking behavior — genuine hypotheses, autonomous timing
     And it does not park a draft for a person to settle later in place of asking
     When the agent cannot settle the call from its context and the call is not one to put to a person now
     Then it checks the recipe with draft set to true
-    And the first evidence entry's interpretation says what would settle it
+    And the first evidence entry's interpretation says why it is a draft rather than a check, and what would settle it
     And the interpretation does not give a person's absence as the reason for drafting
 
   Scenario: An agent that deposited drafts hands its person the queue link rather than listing ids

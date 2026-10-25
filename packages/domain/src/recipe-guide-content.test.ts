@@ -262,7 +262,7 @@ describe("BRIEFING.build — surface profiles (cold-start v2 Phase B)", () => {
     // (build log question 57, ruled 2026-10-24), the operator's 7f opening
     // (what Soup.net is) and evidence-standards paragraph (ruled 2026-10-25),
     // and the on-behalf sentence the C1 verifier asked back; measured 20,993
-    // before and 22,635 after. Re-tightened with the others after 8b and 6b.
+    // before and 22,676 after. Re-tightened with the others after 8b and 6b.
     expect(mcpText.length).toBeLessThanOrEqual(22_800);
     expect(mcpText.length).toBeLessThan(fullText.length);
   });
@@ -390,7 +390,7 @@ describe("BRIEFING.build — the headless key section (drafts-and-triage slice 5
   it("holds the thin headless briefing at most 21,500 characters (fixed fixture)", () => {
     // 18,600 → 21,500 (2026-10-24, PR A0): moves with the thin ceiling above.
     // 21,500 → 23,200 (2026-10-25, slice 7 PR C2): moves with it again;
-    // measured 21,393 before and 23,035 after.
+    // measured 21,393 before and 23,076 after.
     expect(BRIEFING.build({ ...thinInput(), headless: true }).length).toBeLessThanOrEqual(23_200);
   });
 });
@@ -428,7 +428,7 @@ describe("BRIEFING.build — slice 7: when to draft (7a)", () => {
       expect(drafts).toContain("if you'll act on it, check it as an ordinary recipe and own it");
       expect(drafts).toContain("if it's a person's call and they're reachable, ask plainly with your recommendation and its reasoning, and if you keep working meanwhile");
       expect(drafts).toContain("draft that recommendation under your intent so their answer reaches you wherever it's given");
-      expect(drafts).toContain("say in the first evidence entry what would settle it, rate it, and return when that lands");
+      expect(drafts).toContain("say in the first evidence entry why it's a draft rather than a check and what would settle it, rate it, and return when that lands");
       // S7-A3: a draft is yours to resolve; whoever holds the settling context
       // resolves under the confidence rule; a click only for what no agent settles.
       expect(drafts).toContain("A draft is yours to resolve");

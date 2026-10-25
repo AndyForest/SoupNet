@@ -53,7 +53,9 @@ This is the first of C2's two commits. It changes only `BRIEFING.build`. The 7b 
    → Watched: `checking-behavior.feature` "A briefed agent records a colleague's judgment as a draft on their behalf…" holds: it hands over the colleague's review link and does not call the draft verified, which this sentence now says in the body too.
 5. **Unknown parameter names, in How to check (S7-B7, stream D's audit).** "A tool refuses a parameter name it doesn't take, and the refusal names the ones it does." Describes 8a's refusal (#139), so an unattended reader does not take its first refusal for an outage.
    → Moves: `checking-behavior.feature` new "A refused parameter name is corrected, not read as an outage".
-6. **Caps (S7-Z3).** Thin 21,000 → 22,800 and thin headless 21,500 → 23,200, dated in the assertions. Question 57's ruled figures (21,400 and 21,900) were sized to edits 3 and 5 alone; 7f, ruled the day after, came under "the dated thin-cap raise already ruled", and this commit sizes both into it. Headless section (400), `tools/list`, and shared-description caps are unchanged.
+6. **Why it's a draft, in Drafts (S7-B11; the operator's 7f addition, his local revision commit `3960743`).** "otherwise draft it, say in the first evidence entry what would settle it" becomes "…say in the first evidence entry why it's a draft rather than a check and what would settle it". The record wants to know how much access to the person's attention the depositing agent had; that reasoning and the key's capability level already carry it, so no marker. It pairs with edit 2's "your inference …, named as inference". `HEADLESS_KEY_SECTION` is unchanged (398 of 400 characters; it points at Drafts).
+   → Moves: `checking-behavior.feature` "An agent drafts only a call it cannot stand behind…": its first-entry Then now reads "says why it is a draft rather than a check, and what would settle it". Its "does not give a person's absence as the reason" Then holds: the reason asked for is the agent's confidence to act, per edit 2's seam.
+7. **Caps (S7-Z3).** Thin 21,000 → 22,800 and thin headless 21,500 → 23,200, dated in the assertions. Question 57's ruled figures (21,400 and 21,900) were sized to edits 3 and 5 alone; 7f, ruled the day after, came under "the dated thin-cap raise already ruled", and this commit sizes both into it. Headless section (400), `tools/list`, and shared-description caps are unchanged.
 
 Nothing was trimmed to fit, so `expanded/` gains no entry.
 
@@ -72,10 +74,10 @@ Fixture from `recipe-guide-content.test.ts`.
 
 | Measure | Before (C1, `35b0d03`) | After | Cap |
 |---|---|---|---|
-| Thin briefing fixture | 20,993 characters (21,106 bytes) | 22,635 (22,748 bytes), +1,642 | 21,000 → 22,800 |
-| Thin headless fixture | 21,393 | 23,035 | 21,500 → 23,200 |
+| Thin briefing fixture | 20,993 characters (21,106 bytes) | 22,676 (22,789 bytes), +1,683 | 21,000 → 22,800 |
+| Thin headless fixture | 21,393 | 23,076 | 21,500 → 23,200 |
 | Headless section | 398 | 398 | 400 (unchanged) |
-| Full briefing fixture | 27,271 | 28,913, +1,642 | none |
+| Full briefing fixture | 27,271 | 28,954, +1,683 | none |
 | Remote `tools/list` / stdio / shared descriptions | unchanged by this commit | | 18,200 / 14,700 / 6,600 |
 
 ## 2026-10-24 — Drafts-and-triage slice 7, PR C1: the Drafts section, the planned slice 7 copy, eight field additions, and the exemplar slimming lever
