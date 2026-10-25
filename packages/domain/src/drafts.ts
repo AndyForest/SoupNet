@@ -224,6 +224,9 @@ export function onlySubjectReviewsReason(subjectEmail: string | null, queueUrl?:
  */
 export const DRAFT_INTENT_IDLE_HOURS = 24;
 export const DRAFT_NO_INTENT_LIVE_DAYS = 7;
+/** The span the books block reports expired drafts over ("M expired
+ *  unanswered in the last 7 days", S10-K1). */
+export const DRAFT_EXPIRED_REPORT_DAYS = 7;
 
 /** Why an unverified draft is expired: its intent went quiet, or it has no
  *  intent and its week is up. */

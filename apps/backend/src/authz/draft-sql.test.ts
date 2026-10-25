@@ -15,6 +15,8 @@ import {
   onBehalfPartyFor,
   subjectOf,
   SHARED_AUDIENCE,
+  draftLive,
+  draftExpired,
 } from "./draft-sql";
 import { mayReadTrace, isPublishedDraftState, mayResolveDraft, hasWriteAuthority } from "./roles";
 import { writeAuthoritySql } from "./draft-resolution";
@@ -47,7 +49,9 @@ describe("draft SQL fragments (Layer 1)", () => {
     expect(q.sql).toContain("tr.draft_state = 'unverified'");
     expect(q.sql).toMatch(/COALESCE\(tr\.subject_user_id, tr\.user_id\) = \$\d::uuid/);
     expect(q.sql).toMatch(/tr\.user_id = \$\d::uuid/);
-    expect(q.params.every((p) => p === VIEWER)).toBe(true);
+    // The viewer, and the liveness window (slice 10), are the only bindings.
+    expect(q.params.filter((p) => typeof p === "string").every((p) => p === VIEWER)).toBe(true);
+    expect(q.params.filter((p) => typeof p !== "string")).toEqual([7]);
   });
 
   it("by-id reads add the viewer's own drafts in any state", () => {
@@ -236,10 +240,12 @@ describe.skipIf(!canConnect)("the SQL fragments and mayReadTrace agree on every 
     const db = getDb();
     for (const draftState of states) {
       for (const p of PARTIES) {
+        // A fresh draft from an unknown key: inside its window (slice 10).
         const rows = await db.execute(sql`
           SELECT ${traceVisibleTo("t", { viewerUserId: VIEWER })} AS viewer,
                  ${traceVisibleTo("t", SHARED_AUDIENCE)} AS shared
-          FROM (VALUES (${p.author}::uuid, ${p.subject}::uuid, ${draftState}::text)) AS t(user_id, subject_user_id, draft_state)
+          FROM (VALUES (${p.author}::uuid, ${p.subject}::uuid, ${draftState}::text, NOW(), NULL::uuid))
+            AS t(user_id, subject_user_id, draft_state, created_at, api_key_id)
         `);
         const row = (rows as unknown as Array<{ viewer: boolean; shared: boolean }>)[0]!;
         const f = factsFor(p);
@@ -311,6 +317,66 @@ describe.skipIf(!canConnect)("the SQL fragments and mayReadTrace agree on every 
         const expectedParty = expectedSide === "depositedBy" ? p.author : expectedSide === "about" ? p.subject : null;
         expect(row.side, `state=${String(draftState)} ${p.label}`).toBe(expectedSide);
         expect(row.party, `state=${String(draftState)} ${p.label}`).toBe(expectedParty);
+      }
+    }
+  });
+});
+
+// Slice 10 (S10-M1, S10-L1, S10-X2, S10-X3): liveness, written once.
+describe("liveness (Layer 1)", () => {
+  it("a viewer's result sets hold their live drafts; includeExpired admits every unverified one", () => {
+    const live = dialect.sqlToQuery(traceVisibleTo("t", { viewerUserId: VIEWER })).sql;
+    expect(live).toContain("deposit_level IS DISTINCT FROM 'full'");
+    expect(live).toContain("make_interval(days =>");
+    const withExpired = dialect.sqlToQuery(traceVisibleTo("t", { viewerUserId: VIEWER, includeExpired: true })).sql;
+    expect(withExpired).not.toContain("make_interval");
+    expect(withExpired).toContain("t.draft_state = 'unverified'");
+  });
+
+  it("the shared audience and by-id reads never consult liveness", () => {
+    expect(dialect.sqlToQuery(traceVisibleTo("t", SHARED_AUDIENCE)).sql).not.toContain("api_keys");
+    expect(dialect.sqlToQuery(traceReadableById("t", VIEWER)).sql).not.toContain("api_keys");
+  });
+
+  it("the windows are named once: no backend file but authz/draft-sql.ts imports them", () => {
+    const backendSrc = fileURLToPath(new URL("..", import.meta.url));
+    const walk = (dir: string): string[] => readdirSync(dir).flatMap((name) => {
+      const full = join(dir, name);
+      return statSync(full).isDirectory() ? walk(full) : [full];
+    });
+    const windows = /\bDRAFT_(NO_INTENT_LIVE_DAYS|INTENT_IDLE_HOURS)\b/;
+    for (const f of walk(backendSrc).filter((x) => x.endsWith(".ts") && !x.endsWith(".test.ts"))) {
+      const file = relative(backendSrc, f).split(sep).join("/");
+      if (file === "authz/draft-sql.ts") continue;
+      expect(windows.test(readFileSync(f, "utf-8")), `${file} computes a draft window by hand`).toBe(false);
+    }
+  });
+});
+
+describe.skipIf(!canConnect)("liveness over the facts (S10-L1, S10-L4)", () => {
+  const ages: Array<{ days: number; live: boolean }> = [
+    { days: 0, live: true },
+    { days: 6.9, live: true },
+    { days: 7.1, live: false },
+    { days: 30, live: false },
+  ];
+  const states: Array<string | null> = [null, "unverified", "verified", "rejected", "not_chosen"];
+
+  it("an unverified draft is live inside its week and expired after; nothing else is either", async () => {
+    const { getDb } = await import("../db");
+    const db = getDb();
+    for (const draftState of states) {
+      for (const { days, live } of ages) {
+        // An api_key_id with no key row: judged by the window (keys are hard-deleted).
+        const rows = await db.execute(sql`
+          SELECT ${draftLive("t")} AS live, ${draftExpired("t")} AS expired
+          FROM (VALUES (${draftState}::text, NOW() - make_interval(secs => ${Math.round(days * 86400)}), ${OTHER}::uuid))
+            AS t(draft_state, created_at, api_key_id)
+        `);
+        const row = (rows as unknown as Array<{ live: boolean | null; expired: boolean | null }>)[0]!;
+        const unverified = draftState === "unverified";
+        expect(row.live === true, `live state=${String(draftState)} age=${days}d`).toBe(unverified && live);
+        expect(row.expired === true, `expired state=${String(draftState)} age=${days}d`).toBe(unverified && !live);
       }
     }
   });

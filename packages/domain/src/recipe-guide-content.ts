@@ -370,7 +370,7 @@ function renderBookStatsLine(s: BriefingBookStats): string {
   // Slice 10: expired drafts left the review queue, so the line says how many
   // went unanswered and how to list them (S10-K1); silent when there are none.
   const expiredClause = expired > 0
-    ? `${expired} expired unanswered in the last 7 days (search is:expired)`
+    ? `${expired} expired unanswered in the last ${DRAFT_EXPIRED_REPORT_DAYS} days (search is:expired)`
     : "";
   if (drafts > 0) {
     const live = drafts === 1
@@ -960,6 +960,7 @@ export const MCP_TOOL_DESCRIPTIONS = {
 // asserts each short form still shares its canonical source's load-bearing
 // phrases — an edit to either side that breaks the derivation is a red test,
 // not silent drift.
+import { DRAFT_EXPIRED_REPORT_DAYS } from "./drafts";
 import {
   RECIPE_TEXT_DEFINITION,
   KNOWN_DEFINITION,

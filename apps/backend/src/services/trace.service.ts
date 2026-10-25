@@ -1162,7 +1162,8 @@ export async function resolveStructuredFilters(
  * by them, so intent: lifts it for the same reason (slice 6a).
  */
 function excludesOwnByDefault(parsed: ParsedSearchQuery, surfaceExcludesOwn: boolean): boolean {
-  return surfaceExcludesOwn && parsed.authors.kind === "surface-default" && parsed.isDraft !== true && parsed.intent === undefined;
+  return surfaceExcludesOwn && parsed.authors.kind === "surface-default" && parsed.isDraft !== true
+    && parsed.isExpired !== true && parsed.intent === undefined;
 }
 
 export interface SearchOnlyParams {
@@ -1306,7 +1307,8 @@ export async function searchWithoutLogging(
     groupIds: effectiveReadGroupIds,
     // Own unverified drafts reach the caller's search only when an author
     // qualifier admits their own recipes (MCP search excludes them by default).
-    audience: { viewerUserId: keyResult.userId },
+    // Expired ones only when the query asks for them (slice 10, S10-X3).
+    audience: { viewerUserId: keyResult.userId, includeExpired: parsed.query.isExpired === true },
     // Qualifier-only queries have no semantic text: corpus mode, judgment-date
     // ordering, structured predicates applied in fetchCorpusTraces.
     query: parsed.query.semanticText.length > 0 ? parsed.query.semanticText : undefined,

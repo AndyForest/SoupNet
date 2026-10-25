@@ -173,6 +173,10 @@ const NON_AUTHORIZING_KEY_SQL = {
     n: 1, fp: "96bbb1f5b943",
     why: "display join: the depositing key's label on the signed-in person's review-queue items",
   },
+  "apps/backend/src/services/recipe-lookup.service.ts": {
+    n: 1, fp: "bd9a7beb976d",
+    why: "display join: the resolving key's label on a resolved draft, for its subject only and only when the key is theirs (slice 10, S10-R1)",
+  },
   "apps/backend/src/services/ephemeral-workspace.service.ts": {
     n: 1, fp: "de2edf423d7d",
     why: "the reaper: removes a deleted book's id from every key's grants",
@@ -253,8 +257,8 @@ const TRACE_READS = {
     why: "loads author, evidence, and references by id for exemplars the pipeline chose under SHARED_AUDIENCE (RP-10, RP-42)",
   },
   "apps/backend/src/services/draft-queue.service.ts": {
-    n: 5, fp: "fd5b6989f61b", composes: true,
-    why: "the review queue (slice 3): listing and count compose draftAwaitingReviewBy and traceVisibleTo over the person's live books; item details use traceReadableById for ids already resolved through the module, and name an on-behalf draft's other party through onBehalfSideFor and onBehalfPartyFor (slice 4); the listing groups by, and items show, only the viewer's own intents (a join to intents on user_id, slice 6a)",
+    n: 6, fp: "01032ec260f8", composes: true,
+    why: "the review queue (slice 3): listing and count compose draftLiveAwaitingReviewBy (or draftExpiredAwaitingReviewBy for is:expired, slice 10) and traceVisibleTo over the person's live books; item details use traceReadableById for ids already resolved through the module, and name an on-behalf draft's other party through onBehalfSideFor and onBehalfPartyFor (slice 4); the listing groups by, and items show, only the viewer's own intents (a join to intents on user_id, slice 6a)",
   },
   "apps/backend/src/services/ephemeral-workspace.service.ts": {
     n: 5, fp: "c8d8ebe28b99", composes: false,
@@ -273,8 +277,8 @@ const TRACE_READS = {
     why: "deletes orphaned embedding rows whose recipe no longer exists; operator-only",
   },
   "apps/backend/src/services/recipe-lookup.service.ts": {
-    n: 2, fp: "84de1157101c", composes: true,
-    why: "by-id lookup: prefix scan and main select use traceReadableById (RP-06, RP-08, RP-16); an on-behalf draft's other party is named through onBehalfSideFor and onBehalfPartyFor (S4-L1)",
+    n: 2, fp: "86870d6c04a8", composes: true,
+    why: "by-id lookup: prefix scan and main select use traceReadableById (RP-06, RP-08, RP-16); an on-behalf draft's other party is named through onBehalfSideFor and onBehalfPartyFor (S4-L1); the shown state, subject flag and expiry come from draftStateShownTo, viewerIsDraftSubject and draftExpiryReason (slice 10)",
   },
   "apps/backend/src/services/result-enricher.ts": {
     n: 4, fp: "1c4f660984be", composes: false,

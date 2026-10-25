@@ -21,7 +21,7 @@
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import type { BriefingBookStats } from "@soupnet/domain";
-import { inBooks, publishedTrace, draftAwaitingReviewBy } from "../authz";
+import { inBooks, publishedTrace, draftAwaitingReviewBy, draftLiveAwaitingReviewBy, draftRecentlyExpiredAwaitingReviewBy } from "../authz";
 
 interface TraceAggRow {
   groupId: string;
@@ -94,18 +94,26 @@ export async function fetchBookStats(
     out.set(row.groupId, stats);
   }
 
-  // The person's own unverified drafts, per book (their agents only).
+  // The person's own unverified drafts, per book (their agents only): the
+  // live ones, and those that expired unanswered in the last 7 days, whose
+  // window closed in that span (slice 10, S10-K1).
   const draftRows = await db.execute(sql`
-    SELECT t.group_id::text AS "groupId", count(*)::int AS n
+    SELECT t.group_id::text AS "groupId",
+      count(*) FILTER (WHERE ${draftLiveAwaitingReviewBy("t", personUserId)})::int AS live,
+      count(*) FILTER (WHERE ${draftRecentlyExpiredAwaitingReviewBy("t", personUserId)})::int AS expired
     FROM claimnet.traces t
     WHERE ${inBooks(sql`t.group_id`, groupIds)}
       AND ${draftAwaitingReviewBy("t", personUserId)}
     GROUP BY t.group_id
   `);
-  for (const row of draftRows as unknown as Array<{ groupId: string; n: number }>) {
+  for (const row of draftRows as unknown as Array<{ groupId: string; live: number; expired: number }>) {
+    const live = Number(row.live);
+    const expired = Number(row.expired);
+    if (live === 0 && expired === 0) continue;
+    const counts = { ...(live > 0 ? { ownDraftsAwaitingReview: live } : {}), ...(expired > 0 ? { ownDraftsExpiredRecently: expired } : {}) };
     const existing = out.get(row.groupId);
-    if (existing) existing.ownDraftsAwaitingReview = Number(row.n);
-    else out.set(row.groupId, { recipeCount: 0, authorCount: 0, ownDraftsAwaitingReview: Number(row.n) });
+    if (existing) Object.assign(existing, counts);
+    else out.set(row.groupId, { recipeCount: 0, authorCount: 0, ...counts });
   }
   if (out.size === 0) return out;
 

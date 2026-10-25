@@ -33,8 +33,9 @@ import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { enrichResults } from "./result-enricher";
 import { isTraceIdPrefix, uuidPrefixRange } from "./feedback.service";
 import type { SearchResultItem } from "./trace.service";
-import { inBooks, traceReadableById, onBehalfSideFor, onBehalfPartyFor } from "../authz";
-import { draftLabel, isShownDraftState } from "@soupnet/domain";
+import { inBooks, traceReadableById, onBehalfSideFor, onBehalfPartyFor, viewerIsDraftSubject, draftExpiryReason, draftStateShownTo } from "../authz";
+import { draftLabel } from "@soupnet/domain";
+import type { DraftExpiry, DraftResolutionNote } from "@soupnet/domain";
 
 /** Hard cap on ids per lookup call. Routes reject above this; the briefing
  *  surface silently truncates and says so in the rendered section. */
@@ -69,8 +70,14 @@ export interface RecipeLookupFound {
   /** Raw append time; differs from createdAt only for backfilled decisions. */
   loggedAt: string;
   evidence: RecipeLookupEvidence[];
-  /** Present only on the caller's own unpublished draft (slice 2). */
-  draftState?: "unverified" | "rejected" | "not_chosen" | undefined;
+  /** Present on the caller's own unpublished draft (slice 2), and on a
+   *  verified one when the caller's user is its subject (slice 10, S10-R1). */
+  draftState?: "unverified" | "verified" | "rejected" | "not_chosen" | undefined;
+  /** Slice 10 (S10-R3): why an unverified draft expired, when it has. */
+  draftExpired?: DraftExpiry | undefined;
+  /** Slice 10 (S10-R1): how and when a resolved draft was resolved, for its
+   *  subject only (S4-M3 as narrowed by ruling 56). */
+  draftResolution?: DraftResolutionNote | undefined;
   /** Slice 4 (S4-L1): on an unpublished on-behalf draft, the other party
    *  from the caller's side. */
   draftDepositedBy?: string | undefined;
@@ -118,6 +125,36 @@ export function parseRecipeIds(raw: string | readonly unknown[]): string[] {
 
 // ── Lookup ───────────────────────────────────────────────────────────────────
 
+/**
+ * The draft fields a by-id read carries for this row. The state, as before,
+ * for the caller's own unpublished draft; for the draft's subject, a
+ * verified draft's state too, how and when any resolved draft was resolved
+ * (S10-R1), and why an unverified one expired (S10-R3). The depositor of an
+ * on-behalf draft sees the unpublished state alone (S4-M3, S10-R2).
+ */
+const DRAFT_STATE_VALUES = ["unverified", "verified", "rejected", "not_chosen"] as const;
+function isDraftStateValue(v: string | null): v is (typeof DRAFT_STATE_VALUES)[number] {
+  return (DRAFT_STATE_VALUES as readonly string[]).includes(v ?? "");
+}
+
+function draftFieldsFor(row: TraceRow): Pick<RecipeLookupFound, "draftState" | "draftExpired" | "draftResolution"> {
+  // draftStateShownTo already gives the subject every state and the
+  // depositor the unpublished ones ([F83], S4-M3).
+  const subject = row.isSubject === true;
+  const state = isDraftStateValue(row.draftState) ? row.draftState : undefined;
+  if (!state) return {};
+  const out: Pick<RecipeLookupFound, "draftState" | "draftExpired" | "draftResolution"> = { draftState: state };
+  if (state === "unverified" && row.expiry) out.draftExpired = row.expiry;
+  if (subject && state !== "unverified" && row.resolvedAt) {
+    out.draftResolution = {
+      by: row.resolvedByKey === null ? "person" : row.byDepositingKey === true ? "depositing_agent" : "agent",
+      keyLabel: row.resolvingKeyLabel,
+      at: new Date(row.resolvedAt).toISOString(),
+    };
+  }
+  return out;
+}
+
 interface TraceRow {
   id: string;
   claimText: string;
@@ -131,6 +168,12 @@ interface TraceRow {
   draftState: string | null;
   onBehalfSide: "depositedBy" | "about" | null;
   onBehalfEmail: string | null;
+  isSubject: boolean | null;
+  expiry: DraftExpiry | null;
+  resolvedAt: string | Date | null;
+  resolvedByKey: string | null;
+  byDepositingKey: boolean | null;
+  resolvingKeyLabel: string | null;
 }
 
 /** Who is looking: the key's effective read scope and the key's user. */
@@ -223,13 +266,20 @@ export async function lookupRecipes(
         g.name              AS "groupName",
         u.email             AS "authorEmail",
         u.display_name      AS "authorDisplayName",
-        t.draft_state       AS "draftState",
+        ${draftStateShownTo("t", viewer.userId)} AS "draftState",
         ${onBehalfSideFor("t", viewer.userId)} AS "onBehalfSide",
-        ou.email            AS "onBehalfEmail"
+        ou.email            AS "onBehalfEmail",
+        ${viewerIsDraftSubject("t", viewer.userId)} AS "isSubject",
+        ${draftExpiryReason("t")} AS "expiry",
+        t.draft_resolved_at AS "resolvedAt",
+        t.draft_resolved_by_key_id::text AS "resolvedByKey",
+        (t.draft_resolved_by_key_id = t.api_key_id) AS "byDepositingKey",
+        rk.label            AS "resolvingKeyLabel"
       FROM claimnet.traces t
       LEFT JOIN claimnet.groups g ON g.id = t.group_id
       LEFT JOIN claimnet.users u ON u.id = t.user_id
       LEFT JOIN claimnet.users ou ON ou.id = ${onBehalfPartyFor("t", viewer.userId)}
+      LEFT JOIN claimnet.api_keys rk ON rk.id = t.draft_resolved_by_key_id AND rk.user_id = ${viewer.userId}::uuid
       WHERE t.id IN (${sql.join(validIds.map((id) => sql`${id}::uuid`), sql`, `)})
         AND ${inBooks(sql`t.group_id`, liveReadGroupIds)}
         AND ${traceReadableById("t", viewer.userId)}
@@ -279,7 +329,7 @@ export async function lookupRecipes(
           createdAt: new Date(row.decidedAt ?? row.createdAt).toISOString(),
           loggedAt: new Date(row.createdAt).toISOString(),
           evidence,
-          ...(isShownDraftState(row.draftState) ? { draftState: row.draftState } : {}),
+          ...draftFieldsFor(row),
           ...(row.onBehalfSide === "depositedBy" && row.onBehalfEmail ? { draftDepositedBy: row.onBehalfEmail } : {}),
           ...(row.onBehalfSide === "about" && row.onBehalfEmail ? { draftAbout: row.onBehalfEmail } : {}),
         });
@@ -338,7 +388,7 @@ export function renderRecipeEntries(entries: RecipeLookupEntry[]): string {
     ].join("\n");
 
     // The caller's own unpublished draft is labelled (DT-VIS-06).
-    const label = draftLabel(entry.draftState, entry);
+    const label = draftLabel(entry.draftState, { ...entry, expired: entry.draftExpired, resolution: entry.draftResolution });
     let text = `${metaLines}${label ? `\nDraft: ${label}` : ""}\n\n${entry.recipe}`;
 
     if (entry.evidence.length > 0) {
