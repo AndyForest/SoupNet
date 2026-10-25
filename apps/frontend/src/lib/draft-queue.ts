@@ -37,6 +37,8 @@ export interface QueueItem {
   state: QueueItemState;
   canResolve: boolean;
   blockedReason?: string;
+  /** Slice 10: an unverified draft whose task went quiet; still resolvable. */
+  expired?: boolean;
 }
 
 export type QueueAction = "confirm" | "reject" | "not_chosen";
@@ -204,6 +206,19 @@ export function dashboardDraftsEntry(count: number | null | undefined): string |
 export function queueTotalText(total: number): string {
   if (total === 0) return "No drafts await your review.";
   return total === 1 ? "1 draft awaits your review." : `${total} drafts await your review.`;
+}
+
+/**
+ * The line under the queue naming the drafts that expired out of it (slice
+ * 10, S10-K2): their agent's task went quiet, so they left the list but can
+ * still be answered. Null when there are none, or when they are what is
+ * listed.
+ */
+export function queueExpiredText(expiredTotal: number | undefined, listingExpired: boolean | undefined): string | null {
+  if (listingExpired || !expiredTotal || expiredTotal <= 0) return null;
+  return expiredTotal === 1
+    ? "1 more draft expired unanswered: the task that asked it went quiet, so it left this list. You can still answer it."
+    : `${expiredTotal} more drafts expired unanswered: the tasks that asked them went quiet, so they left this list. You can still answer them.`;
 }
 
 /** The note for ids a link named that are not shown (S3-L2, S3-L4): one wording whatever the reason. */

@@ -173,3 +173,25 @@ describe("offeredReactions", () => {
     }
   });
 });
+
+// Slice 10 (S10-C1): an expired draft's line says so and keeps its reactions.
+describe("an expired draft (slice 10)", () => {
+  it("says it expired, why, and that the person can still resolve it", () => {
+    const l = draftStatusLabel({ draftState: "unverified", draftExpiry: "age" })!;
+    expect(l.text).toBe("Unverified draft, expired");
+    expect(l.title).toContain("over a week ago with no task attached");
+    expect(l.title).toContain("left the review queue");
+    expect(l.title).toContain("Still true");
+    expect(draftStatusLabel({ draftState: "unverified", draftExpiry: "intent_idle" })!.title).toContain("quiet for over a day");
+  });
+
+  it("tells the depositor only the person it is about can resolve it", () => {
+    const l = draftStatusLabel({ draftState: "unverified", draftExpiry: "age", draftAbout: "pat@test.local" })!;
+    expect(l.title).toContain("Only pat@test.local can still verify or reject it.");
+  });
+
+  it("a live draft's line is unchanged", () => {
+    expect(draftStatusLabel({ draftState: "unverified", draftExpiry: null })!.text).toBe("Unverified draft");
+    expect(offeredReactions({ draftState: "unverified" }, null)).toEqual(["still_true", "wrong"]);
+  });
+});
