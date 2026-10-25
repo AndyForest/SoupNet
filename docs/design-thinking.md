@@ -71,6 +71,9 @@ Corrections are therefore human-only: deleting a malformed recipe, and re-filing
 
 ---
 
+### 9. Co-exist with vendor memory; never compete on it
+Every agent vendor ships memory, free, because memory keeps people on the platform (by 2026 every major assistant had, and import flows exist where export does not). Soup.net does not replace that memory or match its features. It sits beside every vendor's memory as the record of what a person and their agents decided and why: readable from any agent, exportable in full, self-hostable. Import from a vendor's memory where it helps someone start; never ask them to leave it. The feature test follows from [Strategic Differentiation](#strategic-differentiation): does it still hold value when the person changes vendors, or when the vendor copies it? If not, it is a supporting role, never the pitch. (Added 2026-10-25.)
+
 ## User Archetypes
 
 ### 1. The Solo User
@@ -218,6 +221,19 @@ A role, usually held by whoever already administers the company's identity provi
 - **Not mine to set.** *"How many seats we have and whether they're premium is set by Soup.net, not by me."*
 
 **What the admin deliberately can't do:** browse private books, see their names, read free-text audit detail about members' searches, or act on a member's account without the member being able to see that it happened.
+
+### 8. The Embedded Practitioner-Builder
+**"I know what our users need. My agent knows how to build it. Neither of us should have to re-learn the other's judgment every session."**
+
+A domain expert who sits with the end users and now ships real product changes with a coding agent, without an engineering background. The model case, from an education platform: a former teacher embedded with partner schools who co-designs tools with educators, builds and customises them on the platform, coaches teachers on responsible use, iterates on classroom realities, and documents what worked as a replicable model. Their work starts from the partner's outcomes, not from what the technology can do. Increasingly they build on top of the platform itself through coding agents, and their prototypes hand off to engineering once they need to scale. Elsewhere the same shape is a clinician, a support lead, an analyst, a designer. The recipe-book collaborator (archetype 2) describes a group sharing one concern; this archetype describes two kinds of expertise on one product, where each side's agents are blind where the other side sees.
+
+Their judgment is about people and outcomes: what a teacher will actually adopt, what a student should never be shown, when customising an existing tool beats building from scratch, how much struggle in building is itself the learning, what responsible use and privacy mean in a classroom. The engineers on the same product hold the judgment they lack: data rules, failure modes, what a change costs later, where the system fails safe. The engineers are also usually the ones furthest from the users, so the exchange matters in both directions.
+
+With Soup.net: both deposit into the same shared book. The practitioner's agent checks a call in their own words ("as a learning designer embedded with a school, building a tool for teachers, I prefer...") and meets the engineers' calls on storage, access and failure modes. The engineer's agent checks a design call and meets the practitioner's calls on what the users need. When a call belongs to the other side, a draft carries the question across the gap, and the person it is about, or their agent, answers it. The prototype-to-production handoff is the natural moment: the practitioner's judgments travel with the prototype as recipes, and the engineer's agent meets them before rebuilding.
+
+**Key needs:** The briefing's examples and roles must not assume a developer; a learning designer should recognise themselves in it. A check phrased in their vocabulary must still retrieve the engineers' calls, which is what separate role and goal clauses and the recipe book's description are for. Zero setup beyond the paste. What the engineers decided, and why, in plain words from inside their own agent. Their own judgment reaching the engineers' agents without a meeting. Privacy and responsible-use calls about the people they serve treated as judgments worth logging, not as compliance text.
+
+**What this changes for the product:** the briefing's worked examples today are a tsconfig and an API, written for developers; recipient roles matter more here, since much of this builder's judgment is about what a reader or a learner receives; and the two-way shared book is the test, because one direction alone (engineers' agents reading the practitioner's calls) is half the value. The operator named this user type on 2026-09-19 ("the people closest to the customer also doing actual development"); added here 2026-10-25 from field use, where the first such builders already ship.
 
 ---
 
@@ -773,4 +789,4 @@ Detailed design for Full/Indexed/Air-gapped storage modes has been moved to [doc
 
 ---
 
-*Last updated: 2026-06-10 — Decision Archaeology, Agent Fleets, and Reasoning-Trace Gap sections added; AI-maturity gap expanded (learn-by-doing, infinite patience, the "why is it green?" moment); Strategic Differentiation gained "Designed for agent capabilities, not human attention" and "The three deciders." Prior: 2026-05-27 (Two-layer UVP split; Archetype 5).*
+*Last updated: 2026-10-25 — Principle 9 (co-exist with vendor memory) and Archetype 8 (the embedded practitioner-builder) added. Prior: 2026-06-10 — Decision Archaeology, Agent Fleets, and Reasoning-Trace Gap sections added; AI-maturity gap expanded (learn-by-doing, infinite patience, the "why is it green?" moment); Strategic Differentiation gained "Designed for agent capabilities, not human attention" and "The three deciders." Prior: 2026-05-27 (Two-layer UVP split; Archetype 5).*
