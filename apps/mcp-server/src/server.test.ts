@@ -16,7 +16,7 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { MCP_PARAM_DESCRIPTIONS } from "@soupnet/domain";
+import { MCP_PARAM_DESCRIPTIONS, describeResolution } from "@soupnet/domain";
 import { createStdioServer } from "./server.js";
 import { servedToolsList } from "./served-tools-list.js";
 
@@ -240,6 +240,30 @@ describe("stdio drafts (slice 2)", () => {
     expect(text).toContain("is verified");
   });
 
+  it("S6c-B4: verify_draft forwards outcome and words the reply with the shared domain function", async () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(input), init });
+      return new Response(JSON.stringify({ ok: true, data: { recipeId: id, draftState: "rejected", evidenceAdded: 2 } }));
+    }));
+    const result = await callTool("verify_draft", { recipe_id: "11111111", supporting_evidence: evidence, outcome: "rejected" });
+    expect(JSON.parse(String(calls[0]!.init?.body))).toEqual({ supporting_evidence: evidence, outcome: "rejected" });
+    expect((result.content as Array<{ text: string }>)[0]!.text).toBe(describeResolution(id, "rejected", 2));
+  });
+
+  it("S6c-B6: an unknown outcome reaches the backend (no schema enum), whose refusal is relayed verbatim", async () => {
+    const refusal = 'outcome "reject" is not one of verified | rejected | not_chosen (verified when omitted); nothing was stored.';
+    const calls: Array<{ init: RequestInit | undefined }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      calls.push({ init });
+      return new Response(JSON.stringify({ ok: false, error: refusal, status: "refused" }), { status: 400 });
+    }));
+    const result = await callTool("verify_draft", { recipe_id: "x", supporting_evidence: evidence, outcome: "reject" });
+    expect(JSON.parse(String(calls[0]!.init?.body)).outcome).toBe("reject");
+    expect((result.content as Array<{ text: string }>)[0]!.text).toBe(refusal);
+  });
+
   it("verify_draft relays the backend's refusal verbatim", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ok: false, error: "x: not_found_or_unreadable — nope" }), { status: 404 })));
     const result = await callTool("verify_draft", { recipe_id: "x", supporting_evidence: evidence });
@@ -257,7 +281,7 @@ describe("stdio drafts (slice 2)", () => {
   });
 
   it("S3-F1: verify_draft relays the honest write-access refusal (403) verbatim, so the agent learns the way forward", async () => {
-    const refusal = "abc is a draft in the recipe book \"Shared\" (shared), and verifying it needs write access to this recipe book, which this API key does not have; nothing was stored.";
+    const refusal = "abc is a draft in the recipe book \"Shared\" (shared), and resolving it needs write access to this recipe book, which this API key does not have; nothing was stored.";
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ok: false, error: refusal, status: "needs_write_access" }), { status: 403 })));
     const result = await callTool("verify_draft", { recipe_id: "abc", supporting_evidence: evidence });
     expect((result.content as Array<{ text: string }>)[0]!.text).toBe(refusal);

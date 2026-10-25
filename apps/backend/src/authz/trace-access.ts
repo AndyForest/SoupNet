@@ -278,7 +278,9 @@ export async function readableTraceFor(
       // no state, verifier, key, or dates. The depositor of an unpublished
       // draft sees its state, since she can read it only because of the
       // draft rule and needs to know it is not published, but not who
-      // resolved it or when (slice 4, S4-M3).
+      // resolved it or when (slice 4, S4-M3). Evidence the subject's agent
+      // attached when rejecting it stays on her recipe for her to read
+      // (ruling 56): S4-M3 covers these columns and the resolving key.
       ...(access.isDraftSubject
         ? {
           draftState: access.draftState,
