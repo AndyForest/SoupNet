@@ -51,7 +51,7 @@ This is the first of C2's two commits. It changes only `BRIEFING.build`. The 7b 
    → Moves: `checking-behavior.feature` new "An orchestrator resolves the drafts its own context settles".
 4. **On-behalf drafts, in Drafts (S7-B10; the C1 delta verifier's note 5).** "In a shared book the call may be a colleague's; a draft on their behalf is resolved by their agents." The shared-book sentence from chunk `slice7.drafts`, without its closing "not by you". It corrects "you included", which was untrue for a draft deposited on a colleague's behalf; the server already refused that case (`only_subject_reviews`).
    → Watched: `checking-behavior.feature` "A briefed agent records a colleague's judgment as a draft on their behalf…" holds: it hands over the colleague's review link and does not call the draft verified, which this sentence now says in the body too.
-5. **Unknown parameter names, in How to check (S7-B7, stream D's audit).** "A tool refuses a parameter name it doesn't take, and the refusal names the ones it does." Describes 8a's refusal (#139), so an unattended reader does not take its first refusal for an outage.
+5. **Unknown parameter names, in How to check (S7-B7, stream D's audit).** "An MCP tool refuses a parameter name it doesn't take, and the refusal names the ones it does." Describes 8a's refusal (#139), so an unattended reader does not take its first refusal for an outage. It says "MCP tool" because 8a's guard wraps the two MCP transports only; the web `/check` page doesn't refuse an unknown name, and the full profile serves this sentence too (changed on review, 2026-10-25, +5 characters).
    → Moves: `checking-behavior.feature` new "A refused parameter name is corrected, not read as an outage".
 6. **Why it's a draft, in Drafts (S7-B11; the operator's 7f addition, his local revision commit `3960743`).** "otherwise draft it, say in the first evidence entry what would settle it" becomes "…say in the first evidence entry why it's a draft rather than a check and what would settle it". The record wants to know how much access to the person's attention the depositing agent had; that reasoning and the key's capability level already carry it, so no marker. It pairs with edit 2's "your inference …, named as inference". `HEADLESS_KEY_SECTION` is unchanged (398 of 400 characters; it points at Drafts).
    → Moves: `checking-behavior.feature` "An agent drafts only a call it cannot stand behind…": its first-entry Then now reads "says why it is a draft rather than a check, and what would settle it". Its "does not give a person's absence as the reason" Then holds: the reason asked for is the agent's confidence to act, per edit 2's seam.
@@ -74,10 +74,10 @@ Fixture from `recipe-guide-content.test.ts`.
 
 | Measure | Before (C1, `35b0d03`) | After | Cap |
 |---|---|---|---|
-| Thin briefing fixture | 20,993 characters (21,106 bytes) | 22,676 (22,789 bytes), +1,683 | 21,000 → 22,800 |
-| Thin headless fixture | 21,393 | 23,076 | 21,500 → 23,200 |
+| Thin briefing fixture | 20,993 characters (21,106 bytes) | 22,681 (22,794 bytes), +1,688 | 21,000 → 22,800 |
+| Thin headless fixture | 21,393 | 23,081 | 21,500 → 23,200 |
 | Headless section | 398 | 398 | 400 (unchanged) |
-| Full briefing fixture | 27,271 | 28,954, +1,683 | none |
+| Full briefing fixture | 27,271 | 28,959, +1,688 | none |
 | Remote `tools/list` / stdio / shared descriptions | unchanged by this commit | | 18,200 / 14,700 / 6,600 |
 
 ## 2026-10-24 — Drafts-and-triage slice 7, PR C1: the Drafts section, the planned slice 7 copy, eight field additions, and the exemplar slimming lever

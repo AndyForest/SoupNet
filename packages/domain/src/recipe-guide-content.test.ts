@@ -262,7 +262,7 @@ describe("BRIEFING.build — surface profiles (cold-start v2 Phase B)", () => {
     // (build log question 57, ruled 2026-10-24), the operator's 7f opening
     // (what Soup.net is) and evidence-standards paragraph (ruled 2026-10-25),
     // and the on-behalf sentence the C1 verifier asked back; measured 20,993
-    // before and 22,676 after. Re-tightened with the others after 8b and 6b.
+    // before and 22,681 after. Re-tightened with the others after 8b and 6b.
     expect(mcpText.length).toBeLessThanOrEqual(22_800);
     expect(mcpText.length).toBeLessThan(fullText.length);
   });
@@ -390,7 +390,7 @@ describe("BRIEFING.build — the headless key section (drafts-and-triage slice 5
   it("holds the thin headless briefing at most 21,500 characters (fixed fixture)", () => {
     // 18,600 → 21,500 (2026-10-24, PR A0): moves with the thin ceiling above.
     // 21,500 → 23,200 (2026-10-25, slice 7 PR C2): moves with it again;
-    // measured 21,393 before and 23,076 after.
+    // measured 21,393 before and 23,081 after.
     expect(BRIEFING.build({ ...thinInput(), headless: true }).length).toBeLessThanOrEqual(23_200);
   });
 });
@@ -556,7 +556,7 @@ describe("BRIEFING.build — slice 7 C2: the briefing body (7f, and the rows car
     });
 
     it(`${name}: How to check says an unknown parameter name is refused with the known ones named (S7-B7)`, () => {
-      expect(section(text, "## How to check")).toContain("A tool refuses a parameter name it doesn't take, and the refusal names the ones it does.");
+      expect(section(text, "## How to check")).toContain("An MCP tool refuses a parameter name it doesn't take, and the refusal names the ones it does.");
     });
   }
 
