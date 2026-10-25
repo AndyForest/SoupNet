@@ -15,7 +15,7 @@ The bare `GET /feedback` is a different thing: the URL-built way for web-only ag
 Send your API key as `Authorization: Bearer <key>`. A `?key=` parameter is refused on these paths, because report URLs get pasted and logged.
 
 - **Whose rows.** Only your own: intents your agents registered, and feedback rows written by your keys or by you on the web (a re-filing correction). A feedback row whose key has since been deleted (revoked, or an OAuth key swept after it expired) is no longer attributed to anyone and is not listed.
-- **Which recipes.** Anything that names a recipe (a feedback row about a recipe, a recipe shown to an intent, a deposit, a related recipe id) is included only when the key you present can read that recipe now: its recipe book is in the key's books and, if it is a draft, you may read it. A key scoped to one book therefore reports on that book. Intents themselves belong to you, not to a book, so every key of yours lists all of them. A feedback row about a read-only search names no recipe and is listed for every key of yours.
+- **Which recipes.** Anything that names a recipe (a feedback row about a recipe, a recipe shown to an intent, a deposit, a related recipe id) is included only when the key you present can read that recipe now: its recipe book is in the key's books and, if it is a draft, you may read it. A key scoped to one book therefore reports on that book. Intents themselves belong to you, not to a book, so every key of yours lists all of them. A feedback row about a read-only search or a briefing, and an outcome row, name no recipe and are listed for every key of yours.
 - **Not found.** Another person's intent, an id that never existed, and a malformed id all answer `404 {"ok":false,"error":"Intent not found"}`. A filter that names something that is not yours (someone else's intent, an unreadable recipe or book) matches nothing and answers an empty page, the same as an id that never existed.
 
 ## Parameters
@@ -79,7 +79,7 @@ The lineage is one timeline, oldest first, paged by `page` and `per_page`; `tota
 ```json
 { "ok": true, "data": {
   "items": [{
-    "id": "…", "traceId": "…", "searchId": null, "intentId": "int_…", "sessionId": "…", "agentId": "a-drafts-9",
+    "id": "…", "traceId": "…", "searchId": null, "briefingId": null, "intentId": "int_…", "sessionId": "…", "agentId": "a-drafts-9",
     "kind": "check-feedback", "impact": "subtle", "disposition": "proceeded", "storyFulfilled": "yes",
     "story": "…", "note": "…", "topSimilarity": 0.81, "model": "…", "harness": "claude-code", "harnessVersion": null,
     "relatedTraceIds": ["…"], "createdAt": "…", "apiKeyLabel": "laptop",
@@ -89,7 +89,7 @@ The lineage is one timeline, oldest first, paged by `page` and `per_page`; `tota
 } }
 ```
 
-Each row has the fields the recipe detail page's feedback list gives (`GET /traces/:id/feedback`), plus `traceId` and `searchId`; exactly one of the two is set. `relatedTraceIds` lists only the recipes the presenting key may read. A human-origin row has `actorUserId` and `actorEmail` and no `apiKeyLabel`. `isMine` is always true here (every listed row is yours); the per-recipe route carries it too, where it is false for a collaborator's row.
+Each row has the fields the recipe detail page's feedback list gives (`GET /traces/:id/feedback`), plus `traceId`, `searchId` and `briefingId`. A row names at most one of the three: the recipe, the read-only search, or the briefing it is about. An outcome row names none of them and carries only its `intentId`; it reports on the task as a whole. `relatedTraceIds` lists only the recipes the presenting key may read. A human-origin row has `actorUserId` and `actorEmail` and no `apiKeyLabel`. `isMine` is always true here (every listed row is yours); the per-recipe route carries it too, where it is false for a collaborator's row.
 
 ## On the web and in the export
 

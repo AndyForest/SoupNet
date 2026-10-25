@@ -4,7 +4,7 @@ import { useIntent } from "../hooks/useIntent.js";
 import type { LineageEntry } from "../hooks/useIntent.js";
 import { Icon } from "../components/Icon.js";
 import { FeedbackCard } from "../components/FeedbackCard.js";
-import { lineageLabel } from "../lib/intent-link.js";
+import { feedbackSubject, lineageLabel } from "../lib/intent-link.js";
 
 /**
  * /app/intents/:intentId — one declared intent (drafts-and-triage slice 9).
@@ -108,7 +108,7 @@ function LineageItem({ entry }: { entry: LineageEntry }) {
           {entry.feedback.traceId && (
             <> · about <a href={`/app/traces/${entry.feedback.traceId}`} style={{ color: "var(--color-primary)", textDecoration: "none", fontFamily: "var(--font-mono, monospace)" }}>{entry.feedback.traceId.slice(0, 8)}…</a></>
           )}
-          {!entry.feedback.traceId && entry.feedback.searchId && " · about a search"}
+          {feedbackSubject(entry.feedback) && ` · about ${feedbackSubject(entry.feedback)}`}
         </p>
         <FeedbackCard row={entry.feedback} traceId={entry.feedback.traceId} showIntent={false} />
       </div>

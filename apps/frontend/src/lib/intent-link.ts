@@ -15,3 +15,16 @@ export function lineageLabel(type: "shown" | "deposit" | "feedback", draftState?
   if (type === "deposit") return draftState === "unverified" ? "Draft deposited" : "Recipe deposited";
   return "Feedback";
 }
+
+/**
+ * What a feedback row without a recipe is about, for the intent page's
+ * timeline: a read-only search, a briefing, or (an outcome row naming only its
+ * intent, slice 8a) the task itself. Null when the row names a recipe, which
+ * the page links instead.
+ */
+export function feedbackSubject(row: { traceId: string | null; searchId: string | null; briefingId: string | null }): string | null {
+  if (row.traceId) return null;
+  if (row.searchId) return "a search";
+  if (row.briefingId) return "a briefing";
+  return "this task";
+}

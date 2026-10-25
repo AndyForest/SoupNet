@@ -61,6 +61,7 @@ export interface FeedbackRowOut {
   id: string;
   traceId: string | null;
   searchId: string | null;
+  briefingId: string | null;
   agentId: string | null;
   kind: string;
   impact: string;
@@ -120,6 +121,7 @@ function feedbackSelect(viewer: ReportViewer): SQL {
       cf.id,
       cf.trace_id AS "traceId",
       cf.search_audit_id AS "searchId",
+      cf.briefing_audit_id AS "briefingId",
       cf.agent_id AS "agentId",
       cf.kind,
       cf.impact,

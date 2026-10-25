@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { shortIntentId, lineageLabel } from "./intent-link.js";
+import { shortIntentId, lineageLabel, feedbackSubject } from "./intent-link.js";
 
 describe("shortIntentId", () => {
   it("keeps int_ and the first eight characters", () => {
@@ -18,5 +18,17 @@ describe("lineageLabel", () => {
     expect(lineageLabel("deposit", null)).toBe("Recipe deposited");
     expect(lineageLabel("deposit", "verified")).toBe("Recipe deposited");
     expect(lineageLabel("deposit", "unverified")).toBe("Draft deposited");
+  });
+});
+
+describe("feedbackSubject", () => {
+  const none = { traceId: null, searchId: null, briefingId: null };
+  it("is null for a row about a recipe, which the page links instead", () => {
+    expect(feedbackSubject({ ...none, traceId: "t" })).toBeNull();
+  });
+  it("names a search, a briefing, or the task for an outcome row", () => {
+    expect(feedbackSubject({ ...none, searchId: "s" })).toBe("a search");
+    expect(feedbackSubject({ ...none, briefingId: "b" })).toBe("a briefing");
+    expect(feedbackSubject(none)).toBe("this task");
   });
 });

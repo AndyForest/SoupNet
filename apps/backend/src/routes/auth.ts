@@ -579,7 +579,7 @@ auth.get("/me/export", requireAuth, requireVerifiedEmail, async (c) => {
 
   const checkFeedback = await db.execute(sql`
     SELECT cf.id, cf.trace_id AS "traceId", cf.search_audit_id AS "searchId",
-           cf.api_key_id AS "apiKeyId", cf.actor_user_id AS "actorUserId",
+           cf.briefing_audit_id AS "briefingId", cf.api_key_id AS "apiKeyId", cf.actor_user_id AS "actorUserId",
            cf.agent_id AS "agentId", cf.session_id AS "sessionId", cf.intent_id AS "intentId",
            cf.kind, cf.impact, cf.disposition, cf.story_fulfilled AS "storyFulfilled",
            cf.story, cf.note, cf.top_similarity AS "topSimilarity",

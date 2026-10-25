@@ -34,7 +34,7 @@ function canConnect(): boolean {
 interface Actor { email: string; jwt: string; userId: string; personalBookId: string; orgId: string }
 type Json = Record<string, unknown>;
 
-interface FeedbackRow extends Json { id: string; traceId: string | null; searchId: string | null; intentId: string | null; relatedTraceIds: string[] | null; createdAt: string }
+interface FeedbackRow extends Json { id: string; traceId: string | null; searchId: string | null; briefingId: string | null; intentId: string | null; relatedTraceIds: string[] | null; createdAt: string }
 interface ListPage<T> { items: T[]; total: number; page: number; perPage: number; totalPages: number }
 interface IntentSummary { id: string; story: string; agentId: string | null; apiKeyLabel: string | null; counts: { shown: number; deposits: number; feedback: number } }
 type Lineage = { type: "shown"; traceId: string; at: string } | { type: "feedback"; at: string; feedback: FeedbackRow };
@@ -425,6 +425,24 @@ describe.skipIf(!BASE || !canConnect())("read paths for reports (drafts-and-tria
     }
   });
 
+  it("S9-F1 (with 8a): a row about a briefing and an outcome row naming only its intent are listed for every key, with their target", async () => {
+    const own = await registerIntent(K2, `As a report-path tester (${run}), I log a briefing row and an outcome row so that a report reads them.`);
+    const brief = await fetch(`${BASE}/briefing?intent=${own}`, { headers: { Authorization: `Bearer ${K2}` } });
+    const briefingId = ((await brief.json()) as { data?: { briefingId?: string } }).data?.briefingId ?? "";
+    expect(briefingId).toMatch(/^[0-9a-f-]{36}$/);
+    fb["Brief"] = await postFeedback(K2, { briefing_id: briefingId, intent_id: own });
+    fb["Outcome"] = await postFeedback(K2, { kind: "outcome", intent_id: own });
+
+    // Neither names a recipe, so K1 (book A only) reads both, like a search row.
+    const listed = await rows(K1, `intent_id=${own}`);
+    expect(ids(listed).sort()).toEqual([fb["Brief"], fb["Outcome"]].sort());
+    const b = listed.items.find((r) => r.id === fb["Brief"])!;
+    const o = listed.items.find((r) => r.id === fb["Outcome"])!;
+    expect([b.traceId, b.searchId, b.briefingId]).toEqual([null, null, briefingId]);
+    expect([o.traceId, o.searchId, o.briefingId, o.intentId]).toEqual([null, null, null, own]);
+    expect((await intentDetail(K1, own)).intent.counts.feedback).toBe(2);
+  });
+
   // ── export ────────────────────────────────────────────────────────────────
 
   it("S9-E1/S9-E2: the export carries the user's intents and feedback rows, and imports", async () => {
@@ -440,6 +458,8 @@ describe.skipIf(!BASE || !canConnect())("read paths for reports (drafts-and-tria
     expect(exportedIds).not.toContain(fb["Olive"]);
     expect(exportedIds).not.toContain(fb["OliveOnPats"]);
     expect(exported.checkFeedback[0]).not.toHaveProperty("contentHash");
+    expect(exported.checkFeedback.find((f) => f.id === fb["Brief"])).toHaveProperty("briefingId");
+    expect(exported.checkFeedback.find((f) => f.id === fb["Outcome"])).toBeDefined();
 
     const imported = await fetch(`${BASE}/import?book_name=${encodeURIComponent(`Reimport ${run}`)}`, {
       method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${olive.jwt}` }, body: text,

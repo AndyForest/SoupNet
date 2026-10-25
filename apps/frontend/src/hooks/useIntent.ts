@@ -20,7 +20,7 @@ export interface IntentSummary {
   counts: { shown: number; deposits: number; feedback: number };
 }
 
-export type IntentFeedbackRow = TraceFeedbackRow & { traceId: string | null; searchId: string | null };
+export type IntentFeedbackRow = TraceFeedbackRow & { traceId: string | null; searchId: string | null; briefingId: string | null };
 
 export type LineageEntry =
   | { type: "shown"; traceId: string; at: string }
