@@ -67,6 +67,18 @@ Paths are the ones the streams will touch most; a stream may touch others it alo
 
 Each session's first commit is its rubric under its build-log heading, from the revision doc's 6f sketch and the slice's own section, in the build log's pass/fail form. The operator reads rubrics as they land; a stream may start implementing as soon as its rubric is committed, since the rubric is what the verifier will run. Rows every rubric carries: the authorization layer the change touches and the uniform-404 pairs it must keep; the audit rows it writes; three-surface parity where the change has a web or REST face; byte counts; the `.feature` scenario each copy change moves.
 
+## After the first PRs: what each stream takes next (2026-10-25)
+
+Assigned by the operator's direction to keep the streams working while the merges wait, with the rulings of 2026-10-25 (revision doc, "Additions ruled on 2026-10-25"). Rubric first under a new heading, as before.
+
+| Stream | Now, while its PR waits | After its PR merges |
+|---|---|---|
+| A | Rubric for slice 10, "drafts as a bus" (revision doc): liveness computed from the depositing intent's last use within 24 hours, dispatch of nearby open questions in check and search results, headless keys exempt, expiry never deletion, plus the by-id read of a resolved draft stating how and when it was resolved. | Build slice 10 on a new branch from `main`. |
+| B | Nothing until D merges. | Rebase onto `main`, renumber the migration to `0042`, refresh the seam fingerprints, reword the `intent:` description's "lift exclude-own" clause (D flipped the default), open the PR. Then rubric and build for 8b items 1 and 2: the flat paged list for qualifier-only searches and changed-since. |
+| C | PR C2 now, in two commits: first the briefing body (the opening reframed, the evidence-standards paragraph with the draft-reasoning encouragement, the over-caution example line) under the ruled thin-cap raise (7-57); then, after A and B merge, the tool copy and web copy of 7b. | Nothing further planned; C2's second commit. |
+| D | Nothing until #139 merges (it goes first, for F106). | Rubric and build for 8b item 3: a Members line always printed on shared-capable books and a pending-invites line for books the caller owns. 8b items 8 and 9 are superseded by slice 10's dispatch line and are not built. |
+| E | Nothing until #140 merges. | The ruled follow-up: `check_feedback.user_id` stamped at write and backfilled, read by the one ownership fragment. Then a reports script over the new read paths that computes the field's behaviour-change figure (checks whose feedback says corrected, by book and by month), written for the evals repo to run. |
+
 ## How each stream proceeds without the operator
 
 The operator's direction, 2026-10-24: implementation agents recipe-check their assumptions so they can proceed autonomously; a high impact × high uncertainty call that is feasible to build both ways is built both ways; the questions that genuinely need the operator go to one place the operator reads.
