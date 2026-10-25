@@ -2238,6 +2238,14 @@ Written 2026-10-24 by a second verifier (agent `a-drafts-7-verify2-2026-10-24`, 
 
 **Recipe checks by this verifier** (`soupnet-oss`, each closed with feedback): `246803ee`, re-grading rows a delta silently breaks even when the implementer did not amend them, "not met as written", non-blocking (neighbours `50c5b20e` and `8f55a8d7` agreed); `2fef6572`, passing an amended row on its new wording while recording a recipe-anchored clause the amendment dropped as a separate finding (neighbours `e0880609` and `861310a6` agreed). **Proceeded on:** both gradings, and on not re-running test:ci. **Left open for the operator:** findings 1 to 4 (amend or restore in each case), and whether C2 trims C1 copy or raises the cap for S7-B6 (finding 7).
 
+### Slice 7 build notes, PR C2, briefing body (stream C, 2026-10-25)
+
+Agent `c-briefing-75-c2-2026-10-25`, intent `int_gxl5ZMTtpO9RG0cvgsKXw5lJ`, branch `drafts/7-briefing-c2` stacked on C1. Everything is in the C2 entry of [../briefing-specs/spec-decision-log.md](../briefing-specs/spec-decision-log.md). In short: the 7f opening and evidence-standards paragraph, the over-caution line (S7-B6), the unknown-parameter clause (S7-B7), and the on-behalf sentence (S7-B10, the C1 delta verifier's note 5); thin briefing 20,993 → 22,635 characters, thin headless 21,393 → 23,035, caps moved on this branch to 22,800 and 23,200 (S7-Z3; question 57's figures predate 7f). Nothing trimmed, so `expanded/` is unchanged.
+
+- **Placement** (recipe `80b2fbb5`): each paragraph where its subject already lives, the existing opening kept whole after the new one. Evidence standards sit in Recipe format, not Drafts, because only their last two sentences are about drafts.
+- **Not added: the "drafts as a bus" briefing line** (revision §"A proposed slice 10", "C2 or with this slice"). It describes expiry, which does not exist until slice 10; it ships with that slice.
+- **Read from 7f, not from the hand-off summary:** the coordinating session's brief said the evidence paragraph asks a draft's first evidence entry to say "why it is a draft and not a check". 7f's text does not say that, and the Drafts section already asks the first entry for what would settle it, which S7-B1 makes the `draft` parameter's wording too. The served copy follows 7f.
+
 ### Slice 8a rubric: tool shapes (stream D)
 
 Written 2026-10-24 by stream D (agent `a-drafts-8a-2026-10-24`), before implementation, from the revision doc's slice 8 items 4 to 7 and its "Tool-shape gaps logged by sessions", and from the code at `32ffa5c` (the A0 scaffold). Branch `drafts/8a-tool-shapes`. Consumer: agents (MCP remote and stdio, REST). No web change. Security-relevant: yes, in two places: the id parser feeds the uniform-marker lookup, and the two new feedback targets (a briefing, an intent alone) are new read-scope checks on a write path. Both join the combined audit after A1, B, D and E merge.

@@ -4,6 +4,80 @@ Every PR that touches briefing copy (`packages/domain/src/recipe-guide-content.t
 
 (Renamed from declared-intent-log.md on 2026-08-23: "intent" now names the runtime intent-registration mechanism — cold-start v2 Phase C — so the discipline's log takes an unambiguous name. The discipline itself is unchanged.)
 
+## 2026-10-24 — Drafts-and-triage slice 6c (PR A1): `outcome` on verify_draft, its 7b description, and the per-outcome replies and refusals
+
+Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-and-triage-slices-6-7-revision.md) §6c and §7b (ratified 2026-10-24; rulings 46 and 55). Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 6c rubric.
+
+### Edits
+
+1. **`verify_draft` description, both MCP servers** (`MCP_TOOL_DESCRIPTIONS.verifyDraft`): "Publish your user's draft recipe once they confirm it, with new evidence quoting their answer and a citation. Evidence that adds nothing new is refused." becomes the revision doc's 7b text, "Publish, reject, or mark not chosen a draft about your user once you or they can stand behind the answer: new evidence quoting their words, or the context that settles it. Evidence that adds nothing new is refused." (152 → 214 characters). The old text read as a rule that the person must be asked (field item 2), which ruling 46 and recipe `200ed4fe` say it is not.
+2. **New `outcome` parameter, both MCP servers** (`MCP_PARAM_DESCRIPTIONS.draftOutcome`, a plain string, not a schema enum): "verified (default) | rejected | not_chosen. Reject when it does not hold or a verified recipe covers it (cite its id); not_chosen when a viable option lost." (156 characters). The tool's annotation title becomes "Resolve a draft".
+3. **`supporting_evidence` on `verify_draft`** (`verificationEvidence`): "Your interpretation, then > the person's answer verbatim, then -- where they said it." becomes "Your interpretation, then > a person's answer or a covering recipe's words, verbatim, then -- where they were said (or recipe <id>)." (85 → 132 characters). "A person", not "the person", throughout the new copy: in a shared book the call may be a colleague's (Andy, 2026-10-24; recipe `5d3ddfc7`).
+4. **Replies:** a rejection answers "Draft <id> is rejected: it stays private, leaves the review queue, and no longer appears in results; your evidence is attached (n entries)."; not chosen the same with "is marked not chosen". The verified reply is unchanged. The stdio server now words its reply with the same domain function as the remote tool (`describeResolution`).
+5. **Refusals:** the evidence refusal opens per outcome ("Verifying", "Rejecting", "Marking a draft not chosen … needs new evidence"). The rejection form says the quote may be "a person's answer, or the words of the verified recipe that covers the same call" cited as "-- recipe <id>", and every refusal for missing evidence now ends by saying how the text was read ("The text was read as 2 entries: entry 1 has a quote but no citation; entry 2 has a citation but no quote."). The verification form now says "a person's answer, or the words that settle it", where it said "the person's answer". An unknown outcome answers "outcome "<value>" is not one of verified | rejected | not_chosen (verified when omitted); nothing was stored.", followed by "Also: " and the evidence refusal when the evidence is also short. "is not a draft, so there is nothing to verify" becomes "… nothing to resolve", and the write-access refusal says "resolving it needs write access … Resolve it with a key that can write <book>, or hand the review link to the person it is about".
+6. **Label of a rejected draft on agent surfaces** (`draftLabel`): "[rejected draft: the person said this is wrong]" becomes "[rejected draft: its evidence says why]", since an agent may now reject on the settling context.
+
+### Scenarios intended to move
+
+- **Product spec** ([../product-specs/drafts-and-triage.feature](../product-specs/drafts-and-triage.feature)): DT-VER-10 to DT-VER-14 (`@slice-6c`), added in this PR, and the Rule title, which no longer says verification needs "the person's own words".
+- **Briefing spec:** the agent-behaviour scenario "a briefed agent closes a draft settled elsewhere with `verify_draft` outcome rejected, citing the covering recipe" belongs in `checking-behavior.feature`, which stream C owns. It lands with C1, whose briefing body is what teaches resolving drafts and which merges after this PR. Until then the tool description is the only copy that says it.
+
+### Scenarios watched, with rationale for holding
+
+- **`briefing-surfaces.feature` "it does not call verify_draft"** (headless): unchanged. A headless key is refused for every outcome before any lookup, with the slice 5 text.
+- **Every briefing scenario:** no briefing text changed. Only the `verify_draft` tool and its parameters changed, and the briefing fixtures are byte-identical.
+
+### Measured
+
+| Measure | Before | After | Cap (A0) |
+|---|---|---|---|
+| Remote `tools/list` | 16,986 bytes | 17,297 | 18,200 |
+| Stdio `tools/list` | 13,196 bytes | 13,507 | 14,700 |
+| Shared descriptions | 6,051 characters | 6,316 | 6,600 |
+| `verify_draft` as served (remote) | 774 bytes | 1,085 | |
+## 2026-10-25 — Drafts-and-triage slice 7, PR C2 (briefing body): what Soup.net is, evidence standards, the over-caution example, unknown parameter names, on-behalf drafts
+
+Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-and-triage-slices-6-7-revision.md) §7f (ruled 2026-10-25, on `main` at `e77f657`) and build log question 57 (ruled 2026-10-24). Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 7 rubric, "C2: the briefing body". Agent `c-briefing-75-c2-2026-10-25`, intent `int_gxl5ZMTtpO9RG0cvgsKXw5lJ`; placement checked as recipe `80b2fbb5` (`soupnet-oss`).
+
+This is the first of C2's two commits. It changes only `BRIEFING.build`. The 7b tool, notice, and web copy (S7-B1 to S7-B5) follow after A1 and B merge, and this entry grows with them. Stacked on C1 (`drafts/7-briefing`), so it inherits C1's merge order (after A1, D and B); S7-B7 depends on D's #139 itself.
+
+### Edits and the scenarios they move
+
+1. **The opening, reframed (7f, S7-B8), both profiles.** A new first paragraph: "Soup.net is the log of calls people and their agents made, with the reasons and the evidence. Read it as context for your next call: when nothing new is on the table, a past call usually stands; when something is, decide, and log your call beside the old one with its own reason. It's also how sessions reach each other: a draft asks a question another agent or a person can answer, an intent groups a task's checks, and feedback says what happened afterwards. It's not a source of truth and not a rulebook." 7f's text in the briefing's second person; "the person" became "a person". The existing opening paragraph follows unchanged, so persistence, the append-only side effect, check freely, no dry run, and search for lookups all stay.
+   → Moves: `briefing-surfaces.feature` new "A briefed agent reads the corpus as context for its next call, not as rules".
+2. **Evidence standards, in Recipe format (7f, S7-B9), both profiles.** After the structure sentence: what evidence rests on, so a reader who wasn't there can check it (a person's words, quoted, with where; a recipe that quotes them, by id; a document they approved; their code or artifacts; your inference, named as inference); an inference you'd act on is a check; a draft is a hypothesis you wouldn't act on without the answer; "The seam is your confidence to act, not the kind of evidence and not whether a person has spoken". 7f's paragraph verbatim apart from voice and "a person"; its closing display-consequence sentence and the parenthetical about the rejected stronger form are design notes, not briefing copy, and stay in the revision doc. Placed in Recipe format beside the existing evidence sentence, rather than in Drafts, because its subject is evidence for every recipe and only its last two sentences are about drafts (recipe `80b2fbb5`).
+   → Moves: `evidence-integrity.feature` new "An inference the agent would act on is checked, and named as inferred" and "A draft carries what its claim rests on, not a bare question".
+3. **The over-caution example, in Drafts (S7-B6, carried from C1).** "An orchestrator once refused to verify drafts its own context settled, because the tool copy spoke of a person confirming. The goal is that a person's agent resolves what it can stand behind, and a person sees only what no agent could." The text kept in `expanded/slice-7.md` chunk `slice7.over-caution-example`, verbatim.
+   → Moves: `checking-behavior.feature` new "An orchestrator resolves the drafts its own context settles".
+4. **On-behalf drafts, in Drafts (S7-B10; the C1 delta verifier's note 5).** "In a shared book the call may be a colleague's; a draft on their behalf is resolved by their agents." The shared-book sentence from chunk `slice7.drafts`, without its closing "not by you". It corrects "you included", which was untrue for a draft deposited on a colleague's behalf; the server already refused that case (`only_subject_reviews`).
+   → Watched: `checking-behavior.feature` "A briefed agent records a colleague's judgment as a draft on their behalf…" holds: it hands over the colleague's review link and does not call the draft verified, which this sentence now says in the body too.
+5. **Unknown parameter names, in How to check (S7-B7, stream D's audit).** "A tool refuses a parameter name it doesn't take, and the refusal names the ones it does." Describes 8a's refusal (#139), so an unattended reader does not take its first refusal for an outage.
+   → Moves: `checking-behavior.feature` new "A refused parameter name is corrected, not read as an outage".
+6. **Caps (S7-Z3).** Thin 21,000 → 22,800 and thin headless 21,500 → 23,200, dated in the assertions. Question 57's ruled figures (21,400 and 21,900) were sized to edits 3 and 5 alone; 7f, ruled the day after, came under "the dated thin-cap raise already ruled", and this commit sizes both into it. Headless section (400), `tools/list`, and shared-description caps are unchanged.
+
+Nothing was trimmed to fit, so `expanded/` gains no entry.
+
+### Scenarios watched, with rationale for holding
+
+- **`checking-behavior.feature` "Checks happen autonomously, without permission-seeking"**: the evidence paragraph moves the check/draft seam toward checking ("a claim with none of their words isn't thereby a draft"), and the opening adds no cost to checking.
+- **`checking-behavior.feature` "An agent drafts only a call it cannot stand behind…"**: the evidence paragraph's seam (confidence to act) is the same as the Drafts section's ("a hypothesis you can't yet stand behind from the context you hold"), and its order of moves is unchanged.
+- **`checking-behavior.feature` "A returned recipe is weighed as a call made in its own context…"**: the opening states the same point at the top; Reading results is unchanged.
+- **`evidence-integrity.feature` existing scenarios**: verbatim quotes, specific citations, and "no supportable evidence means no check" all hold; the new paragraph lists kinds of evidence and changes no quoting rule.
+- **`briefing-surfaces.feature` profile scenarios**: every addition is in the shared body; the thin profile still drops exactly the sections it dropped.
+- Suite re-run: the agent-run harness is not yet wired; the `.feature` files remain the manual checklist.
+
+### Measured
+
+Fixture from `recipe-guide-content.test.ts`.
+
+| Measure | Before (C1, `35b0d03`) | After | Cap |
+|---|---|---|---|
+| Thin briefing fixture | 20,993 characters (21,106 bytes) | 22,635 (22,748 bytes), +1,642 | 21,000 → 22,800 |
+| Thin headless fixture | 21,393 | 23,035 | 21,500 → 23,200 |
+| Headless section | 398 | 398 | 400 (unchanged) |
+| Full briefing fixture | 27,271 | 28,913, +1,642 | none |
+| Remote `tools/list` / stdio / shared descriptions | unchanged by this commit | | 18,200 / 14,700 / 6,600 |
+
 ## 2026-10-24 — Drafts-and-triage slice 7, PR C1: the Drafts section, the planned slice 7 copy, eight field additions, and the exemplar slimming lever
 
 Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-and-triage-slices-6-7-revision.md) §7a to §7e (ratified 2026-10-24; rulings 48 and 52). Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 7 rubric. Agent `a-drafts-7-2026-10-24`; the wording and budget calls are recipe-checked in `soupnet-oss` under intent `int_YtrwcjA9yqBoBZYQCHlPVFnc`.

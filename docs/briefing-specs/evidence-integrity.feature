@@ -38,3 +38,18 @@ Feature: Evidence integrity — interpretation, verbatim quote, citation
     When the agent logs a recipe whose evidence comes from the current session
     Then each citation names where a reader outside the session could find the quoted words (a file path, a commit, a dated message, a URL)
     And no evidence entry depends on context only the session holds ("as discussed above")
+
+  Scenario: An inference the agent would act on is checked, and named as inferred
+    # Guards: Recipe format, the evidence-standards paragraph ("The seam is your confidence to act, not the kind of evidence"); docs/planning/drafts-and-triage-slices-6-7-revision.md §7f "Evidence standards" (the stronger form, "when nothing ties the claim to the person it is a draft", rejected 2026-10-25); S7-B9; drafts-and-triage slice 7 (build log §Slice 7 rubric; spec-decision-log.md 2026-10-25, C2).
+    Given the agent infers a preference from the person's code or artifacts, with none of the person's words on it
+    And it would act on that inference
+    When it records the call
+    Then it checks it as an ordinary recipe, not a draft
+    And an evidence entry names the inference as inferred and cites the artifacts it rests on
+
+  Scenario: A draft carries what its claim rests on, not a bare question
+    # Guards: Recipe format, the evidence-standards paragraph ("a draft with no evidence is a question that didn't do its work"); S7-B9; drafts-and-triage slice 7 (build log §Slice 7 rubric; spec-decision-log.md 2026-10-25, C2).
+    Given the agent holds a call it would not act on without an answer
+    When it deposits the draft
+    Then its evidence cites what the claim rests on so far (a person's words, a recipe by id, a document, artifacts, or a named inference)
+    And its first evidence entry says what would settle it

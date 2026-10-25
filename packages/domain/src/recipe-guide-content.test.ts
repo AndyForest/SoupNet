@@ -257,7 +257,13 @@ describe("BRIEFING.build — surface profiles (cold-start v2 Phase B)", () => {
     // a search, thin results) land with one slimming lever (recipe aae000d2)
     // in the same PR, so the net growth is well under this ceiling; measured
     // 18,183 before. Re-tightened to the measured figure after slice 7 ships.
-    expect(mcpText.length).toBeLessThanOrEqual(21_000);
+    // 21,000 → 22,800 (2026-10-25, drafts-and-triage slice 7, PR C2): the
+    // over-caution example and the unknown-parameter clause carried from C1
+    // (build log question 57, ruled 2026-10-24), the operator's 7f opening
+    // (what Soup.net is) and evidence-standards paragraph (ruled 2026-10-25),
+    // and the on-behalf sentence the C1 verifier asked back; measured 20,993
+    // before and 22,635 after. Re-tightened with the others after 8b and 6b.
+    expect(mcpText.length).toBeLessThanOrEqual(22_800);
     expect(mcpText.length).toBeLessThan(fullText.length);
   });
 
@@ -383,7 +389,9 @@ describe("BRIEFING.build — the headless key section (drafts-and-triage slice 5
 
   it("holds the thin headless briefing at most 21,500 characters (fixed fixture)", () => {
     // 18,600 → 21,500 (2026-10-24, PR A0): moves with the thin ceiling above.
-    expect(BRIEFING.build({ ...thinInput(), headless: true }).length).toBeLessThanOrEqual(21_500);
+    // 21,500 → 23,200 (2026-10-25, slice 7 PR C2): moves with it again;
+    // measured 21,393 before and 23,035 after.
+    expect(BRIEFING.build({ ...thinInput(), headless: true }).length).toBeLessThanOrEqual(23_200);
   });
 });
 
@@ -507,6 +515,59 @@ describe("BRIEFING.build — slice 7: the field additions (7d)", () => {
       section(thinHeadless, "## Reading results"),
       when.slice(when.indexOf("- Extending")),
       HEADLESS_KEY_SECTION,
+    ];
+    for (const text of added) {
+      expect(text.length).toBeGreaterThan(0);
+      expect(text).not.toMatch(/\b(must|never|always|do not|don't)\b/i);
+    }
+  });
+});
+
+describe("BRIEFING.build — slice 7 C2: the briefing body (7f, and the rows carried from C1)", () => {
+  const opening = (text: string) => text.slice(text.indexOf("# Soup.net Agent Briefing"), text.indexOf("## Principles"));
+  const reframe = "Soup.net is the log of calls people and their agents made, with the reasons and the evidence.";
+
+  for (const [name, text] of allCompositions()) {
+    it(`${name}: opens with what Soup.net is, ahead of the existing opening (S7-B8)`, () => {
+      const head = opening(text);
+      expect(head).toContain(reframe);
+      expect(head).toContain("when nothing new is on the table, a past call usually stands; when something is, decide, and log your call beside the old one with its own reason");
+      expect(head).toContain("a draft asks a question another agent or a person can answer, an intent groups a task's checks, and feedback says what happened afterwards");
+      expect(head).toContain("It's not a source of truth and not a rulebook.");
+      expect(head.indexOf(reframe)).toBeLessThan(head.indexOf("You already work to understand your user's taste and judgment"));
+      expect(head).toContain("There are no destructive operations. Check freely and often.");
+    });
+
+    it(`${name}: Recipe format says what evidence rests on, and the seam is confidence to act (S7-B9)`, () => {
+      const format = section(text, "## Recipe format");
+      expect(format).toContain("Evidence says what the claim rests on, so a reader who wasn't there can check it");
+      expect(format).toContain("or your inference from the situation, named as inference");
+      expect(format).toContain("an inference you'd act on is a check, and saying it's inferred keeps the record honest");
+      expect(format).toContain("A draft is a hypothesis you wouldn't act on without the answer.");
+      expect(format).toContain("The seam is your confidence to act, not the kind of evidence and not whether a person has spoken");
+      expect(format).toContain("a draft with no evidence is a question that didn't do its work");
+    });
+
+    it(`${name}: Drafts names the over-caution case and who resolves an on-behalf draft (S7-B6, S7-B10)`, () => {
+      const drafts = section(text, "## Drafts");
+      expect(drafts).toContain("An orchestrator once refused to verify drafts its own context settled, because the tool copy spoke of a person confirming.");
+      expect(drafts).toContain("The goal is that a person's agent resolves what it can stand behind, and a person sees only what no agent could.");
+      expect(drafts).toContain("In a shared book the call may be a colleague's; a draft on their behalf is resolved by their agents.");
+    });
+
+    it(`${name}: How to check says an unknown parameter name is refused with the known ones named (S7-B7)`, () => {
+      expect(section(text, "## How to check")).toContain("A tool refuses a parameter name it doesn't take, and the refusal names the ones it does.");
+    });
+  }
+
+  it("the added guidance reads as what is useful, not as rules (S7-V1 over C2's additions)", () => {
+    const thin = BRIEFING.build(thinInput());
+    const format = section(thin, "## Recipe format");
+    const drafts = section(thin, "## Drafts");
+    const added = [
+      opening(thin).slice(0, opening(thin).indexOf("You already work")),
+      format.slice(format.indexOf("Evidence says what"), format.indexOf("**Example")),
+      drafts.slice(drafts.indexOf("In a shared book"), drafts.indexOf("With sub-agents")),
     ];
     for (const text of added) {
       expect(text.length).toBeGreaterThan(0);

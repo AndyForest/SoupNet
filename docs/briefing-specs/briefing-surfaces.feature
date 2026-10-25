@@ -58,3 +58,12 @@ Feature: Surface-profiled briefings — thin index for tool-connected agents, fu
     And it rates each draft's impact and uncertainty
     And it does not call verify_draft
     And it ends the session with one outcome feedback row listing the draft ids it left open
+
+  Scenario: A briefed agent reads the corpus as context for its next call, not as rules
+    # Guards: BRIEFING.build's opening ("Soup.net is the log of calls people and their agents made"); docs/planning/drafts-and-triage-slices-6-7-revision.md §7f "The opening, reframed"; recipes 672a5db2, c3bd45f5, 431a0c2c, b7e90f25; S7-B8; drafts-and-triage slice 7 (build log §Slice 7 rubric; spec-decision-log.md 2026-10-25, C2).
+    Given an agent whose only context is the briefing
+    And a check returns a past call on the question in front of it
+    When nothing in the current task is new to that call
+    Then the agent proceeds on the past call and says which recipe it is following
+    And when something in the task is new, it checks its own call with its own reason beside the old one
+    And it does not describe a returned recipe as the rule or the source of truth

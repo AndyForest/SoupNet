@@ -146,3 +146,18 @@ Feature: Checking behavior — genuine hypotheses, autonomous timing
     When the agent continues the task
     Then it checks its subsequent calls in that area rather than fewer
     And it does not present a distant result as settling the call
+
+  Scenario: An orchestrator resolves the drafts its own context settles
+    # Guards: the briefing's "## Drafts" section, the over-caution example ("An orchestrator once refused to verify drafts its own context settled"); revision commit a7f4d20 (7a and 7d); expanded/slice-7.md chunk slice7.over-caution-example; S7-B6; drafts-and-triage slice 7 (build log §Slice 7 rubric; spec-decision-log.md 2026-10-25, C2).
+    Given an orchestrator whose sub-agents deposited drafts under its intent during a run
+    And the run's own results settle some of those drafts
+    When the orchestrator finishes the run
+    Then it resolves each settled draft with verify_draft, quoting the result or the person's words and citing where they are
+    And it leaves for a person's click only the drafts nothing it holds settles
+
+  Scenario: A refused parameter name is corrected, not read as an outage
+    # Guards: "## How to check" ("A tool refuses a parameter name it doesn't take, and the refusal names the ones it does"); stream D, slice 8a (PR #139); S7-B7; drafts-and-triage slice 7 (build log §Slice 7 rubric; spec-decision-log.md 2026-10-25, C2).
+    Given an agent calls a tool with a parameter name the tool does not take
+    When the tool refuses the call and names the parameters it does take
+    Then the agent retries with one of the named parameters
+    And it does not report the tool as unavailable
