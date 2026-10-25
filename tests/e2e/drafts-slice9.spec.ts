@@ -1,18 +1,19 @@
-import { readFileSync } from "node:fs";
-import { expect, test, type APIRequestContext, type Locator, type Page, type TestInfo } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Locator, type Page } from "@playwright/test";
 import { BACKEND_URL } from "../../playwright.config";
 import { asUser, seedUser, signIn, signInNewContext, type SeededUser } from "./helpers/accounts";
-import { assertNoHorizontalScroll, axeFindings, shot } from "./helpers/evidence";
-import { BACKLOG, KNOWN_AXE } from "./drafts-known-issues";
+import { assertNoHorizontalScroll, shot } from "./helpers/evidence";
+import { axeBeyondKnown } from "./drafts-known-issues";
 
-// Browser verification: drafts-and-triage slice 9 web changes
-// (the intent id on feedback rows, and the intent page /app/intents/:id).
-// Contract: expectations E1-E9 written from the slice 9 rubric rows S9-W1 and S9-W2
-// (docs/planning/drafts-and-triage-build.md); E6 records only, it asserts no outcome.
-// Cast: Pat (owns the intent, key "Pat slice9 agent"), Olive (a second person, E5 only).
+// Slice 9 (read paths for reports) browser run, verifier agent, 2026-10-24:
+// the intent id on feedback rows and the intent page /app/intents/:id.
+// Expectations E1-E9 come from the slice 9 rubric rows S9-W1 and S9-W2
+// (docs/planning/drafts-and-triage-build.md); the results are in that file's
+// slice 9 fix pass. Kept as a regression test with the change (recipes
+// 840d65ab, dfb89586).
+// Cast: Pat (owns the intent and a scoped key), Olive (a second person, E5 only).
 
 const KEY_LABEL = "Pat slice9 agent";
-const AGENT_ID = "slice9-verifier-agent";
+const AGENT_ID = "drafts-slice9-agent";
 
 interface Fixture {
   pat: SeededUser;
@@ -302,7 +303,7 @@ test("E5 another person's, a missing and a malformed intent id all give the same
   await context.close();
 });
 
-test("E6 a feedback row about a search, on the intent page (record only)", async ({ page, request }, testInfo) => {
+test("E6 a feedback row about a search shows on the intent page, with no star and no links", async ({ page, request }, testInfo) => {
   const f = await setup(request);
   const searchRow = { story: "The search for report shapes returned my own earlier recipe; I reused its paging.", note: "Row about a search (E6)." };
   await test.step("a feedback row with search_id and Pat's intent id", async () => {
@@ -314,23 +315,16 @@ test("E6 a feedback row about a search, on the intent page (record only)", async
     expect(searchId, "the search should return a searchId").toBeTruthy();
     await postFeedback(request, f.key, { searchId, intentId: f.intentId, ...searchRow });
   });
-  await test.step("open the intent page and record what the row shows", async () => {
+  await test.step("open the intent page: the row reads 'about a search', offers no star, and links nowhere", async () => {
     await signIn(page, f.pat, `/app/intents/${f.intentId}`);
     await waitIntentPage(page, f);
     const item = page.getByTestId("intent-page").locator("ol > li").filter({ hasText: searchRow.story });
     await expect(item, "the search feedback row should appear in the lineage").toBeVisible();
-    const text = (await item.innerText()).replace(/\s+/g, " ").trim();
-    const stars = await item.getByRole("button", { name: /[☆★]/ }).count();
-    const links = await item.locator("a").evaluateAll((as) => as.map((a) => a.getAttribute("href")));
-    testInfo.annotations.push({ type: "observed", description: `row text: "${text}"` });
-    testInfo.annotations.push({ type: "observed", description: `star buttons offered: ${stars}; links in row: ${JSON.stringify(links)}` });
+    await expect(item.getByText(/^Feedback · .+ · about a search$/), "the row's heading line should say it is about a search").toBeVisible();
+    await expect(item.getByRole("button", { name: /[☆★]/ }), "a row about a search has no recipe to star").toHaveCount(0);
+    await expect(item.locator("a"), "the row should link neither a recipe (it has none) nor the intent page already open").toHaveCount(0);
     await item.scrollIntoViewIfNeeded();
     await shot(page, testInfo, "E6-01-search-feedback-on-intent-page");
-    if (stars > 0) {
-      await item.getByRole("button", { name: /[☆★]/ }).click();
-      await page.waitForTimeout(800);
-      testInfo.annotations.push({ type: "observed", description: `after clicking the star: "${(await item.innerText()).replace(/\s+/g, " ").trim()}"` });
-    }
   });
 });
 
@@ -376,11 +370,8 @@ test("E9 accessibility and keyboard on the intent link and intent page", async (
   await test.step("axe scan of the detail page with an intent-carrying row", async () => {
     await signIn(page, f.pat, `/app/traces/${f.recipeId}`);
     await openDetail(page, f.recipeId, f.recipeText);
-    const r = await axeFindings(page, testInfo, "E9-detail");
-    testInfo.annotations.push({ type: "observed", description: `detail page axe: blocking ${JSON.stringify(r.blocking)}; moderate ${JSON.stringify(r.moderate)}; minor ${JSON.stringify(r.minor)}` });
-    const c = classifyAxe(testInfo, "E9-detail");
-    expect(c.intentLink, "no serious or critical axe violation should be on the intent link").toEqual([]);
-    expect(c.other, "the detail page should have no serious or critical axe violation beyond the pre-existing ones").toEqual([]);
+    const r = await axeBeyondKnown(page, testInfo, "E9-detail");
+    expect(r.blocking, "the detail page, its intent link included, should have no serious or critical axe violation beyond the backlog's known ones").toEqual([]);
   });
   await test.step("Tab to the intent link and press Enter", async () => {
     const link = page.getByTestId("feedback-intent").getByRole("link");
@@ -396,46 +387,7 @@ test("E9 accessibility and keyboard on the intent link and intent page", async (
     await waitIntentPage(page, f);
   });
   await test.step("axe scan of the intent page", async () => {
-    const r = await axeFindings(page, testInfo, "E9-intent");
-    testInfo.annotations.push({ type: "observed", description: `intent page axe: blocking ${JSON.stringify(r.blocking)}; moderate ${JSON.stringify(r.moderate)}; minor ${JSON.stringify(r.minor)}` });
-    const c = classifyAxe(testInfo, "E9-intent");
-    expect(c.intentLink, "no serious or critical axe violation should be on an intent link").toEqual([]);
-    expect(c.other, "the intent page's own markup (header, counts, lineage labels and links) should have no serious or critical axe violation").toEqual([]);
+    const r = await axeBeyondKnown(page, testInfo, "E9-intent");
+    expect(r.blocking, "the intent page (header, counts, lineage labels and links) should have no serious or critical axe violation beyond the backlog's known ones").toEqual([]);
   });
 });
-
-// --- E9 axe classification ------------------------------------------------
-// The expectation asks for no NEW serious/critical violation attributable to the
-// intent link or the intent page. Each serious/critical node is sorted into:
-//  - intentLink: inside an intent link (fails);
-//  - known: on the drafts specs' known list (backlog "Trace detail page and keys
-//    page: pre-existing contrast ...") -> known-issue annotation;
-//  - inherited: FeedbackCard chip captions and footer line in
-//    --color-outline-variant, already present in TraceDetailPage.tsx before the
-//    slice 9 web commit (2d6823d) and reused on the intent page; not on the
-//    backlog list, so recorded as "pre-existing" and reported in the results;
-//  - other: anything else (fails).
-const OV = String.raw`color: var\(--color-outline-variant\);`;
-const INHERITED_FEEDBACKCARD: RegExp[] = [
-  new RegExp(String.raw`^<span style="${OV}">(impact|disposition|kind|fulfilled|top match|by)</span>$`),
-  new RegExp(String.raw`^<p class="text-xs" style="${OV} margin-top: var\(--space-sm\);">`),
-];
-
-function classifyAxe(testInfo: TestInfo, name: string) {
-  const raw = readFileSync(testInfo.outputPath(`${name}-axe.json`), "utf8");
-  const violations = JSON.parse(raw) as Array<{ id: string; impact?: string | null; nodes: Array<{ target: unknown[]; html: string }> }>;
-  const out = { intentLink: [] as string[], known: [] as string[], inherited: [] as string[], other: [] as string[] };
-  for (const v of violations) {
-    if (v.impact !== "serious" && v.impact !== "critical") continue;
-    for (const n of v.nodes) {
-      const d = `${v.id}: ${n.target.map(String).join(" ")} ${n.html.slice(0, 140)}`;
-      if (/\/app\/intents\/|feedback-intent/.test(n.html) || n.target.map(String).join(" ").includes("feedback-intent")) out.intentLink.push(d);
-      else if (KNOWN_AXE.some((k) => k.rule === v.id && k.html.test(n.html))) out.known.push(d);
-      else if (v.id === "color-contrast" && INHERITED_FEEDBACKCARD.some((re) => re.test(n.html))) out.inherited.push(d);
-      else out.other.push(d);
-    }
-  }
-  for (const d of out.known) testInfo.annotations.push({ type: "known-issue", description: `${name}: ${d} — backlog: ${BACKLOG}` });
-  for (const d of out.inherited) testInfo.annotations.push({ type: "pre-existing", description: `${name}: ${d} (FeedbackCard, present on the detail page before slice 9; not on the backlog list)` });
-  return out;
-}
