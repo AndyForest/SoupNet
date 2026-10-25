@@ -256,6 +256,10 @@ const TRACE_READS = {
     n: 4, fp: "8b803d685141", composes: false,
     why: "loads author, evidence, and references by id for exemplars the pipeline chose under SHARED_AUDIENCE (RP-10, RP-42)",
   },
+  "apps/backend/src/services/draft-dispatch.service.ts": {
+    n: 1, fp: "027a256672ca", composes: true,
+    why: "the dispatch line (slice 10): the caller's own live drafts in the call's scope, through traceVisibleTo and draftLive, for one line naming the nearest; ranking never reads it",
+  },
   "apps/backend/src/services/draft-queue.service.ts": {
     n: 6, fp: "01032ec260f8", composes: true,
     why: "the review queue (slice 3): listing and count compose draftLiveAwaitingReviewBy (or draftExpiredAwaitingReviewBy for is:expired, slice 10) and traceVisibleTo over the person's live books; item details use traceReadableById for ids already resolved through the module, and name an on-behalf draft's other party through onBehalfSideFor and onBehalfPartyFor (slice 4); the listing groups by, and items show, only the viewer's own intents (a join to intents on user_id, slice 6a)",

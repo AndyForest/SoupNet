@@ -16,7 +16,7 @@
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import type { SearchResultItem } from "./trace.service";
-import { isPublishedDraftState, onBehalfSideFor, onBehalfPartyFor } from "../authz";
+import { isPublishedDraftState, onBehalfSideFor, onBehalfPartyFor, draftExpiryReason } from "../authz";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -94,6 +94,9 @@ export interface EnrichedResult {
    *  from the viewer's side. */
   draftDepositedBy?: string | undefined;
   draftAbout?: string | undefined;
+  /** Slice 10 (S10-R3): why an unverified draft expired; only an
+   *  `is:expired` search returns one, since expired drafts leave results. */
+  draftExpired?: "intent_idle" | "age" | undefined;
 }
 
 // ── Main function ────────────────────────────────────────────────────────────
@@ -118,7 +121,8 @@ export async function enrichResults(
     SELECT t.id AS trace_id, g.id AS group_id, g.name AS group_name, g.description AS group_description,
            t.draft_state AS draft_state, t.impact AS impact, t.uncertainty AS uncertainty,
            ${viewerUserId ? onBehalfSideFor("t", viewerUserId) : sql`NULL`} AS on_behalf_side,
-           ou.email AS on_behalf_email
+           ou.email AS on_behalf_email,
+           ${draftExpiryReason("t")} AS draft_expiry
     FROM claimnet.traces t
     JOIN claimnet.groups g ON g.id = t.group_id
     LEFT JOIN claimnet.users ou ON ou.id = ${viewerUserId ? onBehalfPartyFor("t", viewerUserId) : sql`NULL::uuid`}
@@ -126,7 +130,7 @@ export async function enrichResults(
   `);
 
   const traceGroupMap = new Map<string, EnrichedRecipeBook>();
-  const draftStateMap = new Map<string, { state: string; impact: string | null; uncertainty: string | null; side: string | null; email: string | null }>();
+  const draftStateMap = new Map<string, { state: string; impact: string | null; uncertainty: string | null; side: string | null; email: string | null; expiry: "intent_idle" | "age" | null }>();
   for (const row of groupRows as unknown as Record<string, unknown>[]) {
     const state = row["draft_state"] as string | null;
     if (!isPublishedDraftState(state) && state) {
@@ -136,6 +140,7 @@ export async function enrichResults(
         uncertainty: (row["uncertainty"] as string | null) ?? null,
         side: (row["on_behalf_side"] as string | null) ?? null,
         email: (row["on_behalf_email"] as string | null) ?? null,
+        expiry: (row["draft_expiry"] as "intent_idle" | "age" | null) ?? null,
       });
     }
     traceGroupMap.set(row["trace_id"] as string, {
@@ -235,6 +240,7 @@ export async function enrichResults(
         impact: draftStateMap.get(r.id)!.impact,
         uncertainty: draftStateMap.get(r.id)!.uncertainty,
         ...onBehalfFields(draftStateMap.get(r.id)!),
+        ...(draftStateMap.get(r.id)!.expiry ? { draftExpired: draftStateMap.get(r.id)!.expiry! } : {}),
       }
       : {}),
   }));
