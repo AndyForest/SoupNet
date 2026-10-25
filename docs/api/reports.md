@@ -56,7 +56,7 @@ Every list answers with its paging block: `total`, `page`, `perPage`, `totalPage
 } }
 ```
 
-`apiKeyLabel` is the label of the key that registered the intent, or null when that key is gone or had none. The counts follow the scope rules above, so two keys with different books can count the same intent differently.
+`apiKeyLabel` is the label of the key that registered the intent, or null when that key is gone or had none. `lastUsedAt` is the last check, search or briefing that passed the intent's id; a feedback row carrying the id does not move it, because feedback only records an intent id and never resolves one. The counts follow the scope rules above, so two keys with different books can count the same intent differently.
 
 ### `GET /intents/:id`
 
