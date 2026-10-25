@@ -309,9 +309,12 @@ Feature: Drafts, triage ratings, and deciding by building both
       And the authz seam guard fails when a source file outside the module reads the traces table in a statement that neither uses the module's condition nor is registered with a reason
 
   # ─────────────────────────────────────────────────────────────────────────
-  Rule: A draft is verified by its person, or by their agent with the person's own words
+  Rule: A draft is resolved by its person, or by their agent with new evidence that settles it
     # The agent operation is the verify_draft MCP tool and its REST twin,
-    # POST /recipes/:id/verify (slice 2).
+    # POST /recipes/:id/verify (slice 2), with outcome verified | rejected |
+    # not_chosen from slice 6c (verified when omitted). The evidence may quote
+    # the person's answer or the context that settles the call, such as a
+    # covering verified recipe cited by id (ruling 46; recipe 200ed4fe).
     # Guards: drafts-and-triage.md §Verifying a draft; recipe 94e0e682 (agents
     # may update some surfaces; verification by the person or an agent under
     # their control).
@@ -380,6 +383,41 @@ Feature: Drafts, triage ratings, and deciding by building both
       When the draft is verified
       Then its impact is still "high"
       And the recipe's text, embeddings, and judgment date are unchanged
+
+    @DT-VER-10 @slice-6c
+    Scenario: The person's agent rejects a draft with the settling evidence
+      Given Pat's agent deposited a draft
+      When one of Pat's keys calls the verify operation with outcome rejected and a new evidence entry with a quote and a citation
+      Then the draft is rejected, recording when and which key, with no reaction
+      And the new evidence entry is attached to the draft
+      And it leaves Pat's review queue and his agents' results, and Sam still finds it uniformly absent
+
+    @DT-VER-11 @slice-6c
+    Scenario: The person's agent marks a draft not chosen
+      Given Pat's agent deposited a draft
+      When one of Pat's keys calls the verify operation with outcome not_chosen and new evidence
+      Then the draft is marked not chosen, stored distinctly from rejected, and stays hidden like any draft
+
+    @DT-VER-12 @slice-6c
+    Scenario: A draft superseded by a verified recipe is rejected citing it
+      Given Pat's agent deposited a draft
+      And a later verified recipe covers the same call
+      When one of Pat's keys rejects the draft with an entry quoting that recipe and citing it by id
+      Then the draft is rejected
+      And the server does not look the cited id up, so the same entry citing an unreadable id is accepted alike
+
+    @DT-VER-13 @slice-6c
+    Scenario: One evidence entry may have blank lines between its parts
+      Given evidence written as an interpretation, a blank line, a quote, a blank line, and a citation
+      When it is sent to the verify operation or with a check
+      Then it is read as one entry with an interpretation, a quote, and a citation
+
+    @DT-VER-14 @slice-6c
+    Scenario: An unknown outcome is refused and stores nothing
+      Given Pat's agent deposited a draft
+      When one of Pat's keys calls the verify operation with outcome "reject"
+      Then the call is refused, naming verified, rejected, and not_chosen
+      And the draft is still unverified
 
   # ─────────────────────────────────────────────────────────────────────────
   Rule: The review queue is the human search page, sorted for triage

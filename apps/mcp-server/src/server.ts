@@ -18,11 +18,13 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
+  DRAFT_OUTCOMES,
   EXT_TO_MIME,
   MCP_PARAM_DESCRIPTIONS,
   MCP_TOOL_DESCRIPTIONS,
   VERBOSITY_LEVELS,
   buildCheckRecipeToolDescription,
+  describeResolution,
   renderBriefingIdLine,
   renderCheckResponseMarkdown,
 } from "@soupnet/domain";
@@ -584,24 +586,26 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
   // backend enforces the key's read scope and returns a uniform
   // not_found_or_unreadable marker for ids that don't resolve.
 
-  // ── verify_draft tool (drafts-and-triage slice 2) ────────────────────────
+  // ── verify_draft tool (drafts-and-triage slice 2; outcomes slice 6c) ──────
   // Proxies to POST /recipes/:id/verify — same service, same rules, same
-  // uniform not-found answer as the remote tool.
+  // uniform not-found answer as the remote tool. The reply is worded by the
+  // same domain function the remote tool uses, so both say the same words.
   server.tool(
     "verify_draft",
     MCP_TOOL_DESCRIPTIONS.verifyDraft,
     {
       recipe_id: z.string().describe(MCP_PARAM_DESCRIPTIONS.draftRecipeId),
       supporting_evidence: z.string().describe(MCP_PARAM_DESCRIPTIONS.verificationEvidence),
+      outcome: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.draftOutcome),
     },
     {
-      title: "Verify a draft",
+      title: "Resolve a draft",
       readOnlyHint: false,
       destructiveHint: false,
       idempotentHint: false,
       openWorldHint: false,
     },
-    async ({ recipe_id, supporting_evidence }) => {
+    async ({ recipe_id, supporting_evidence, outcome }) => {
       if (!apiKey) {
         return {
           content: [{ type: "text" as const, text: "Error: SOUPNET_API_KEY not configured. Get a key from your Soup.net dashboard." }],
@@ -611,18 +615,15 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
         const res = await fetch(`${backendUrl}/recipes/${encodeURIComponent(recipe_id)}/verify`, {
           method: "POST",
           headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify({ supporting_evidence }),
+          body: JSON.stringify(outcome === undefined ? { supporting_evidence } : { supporting_evidence, outcome }),
         });
-        const json = (await res.json()) as { ok: boolean; error?: string; data?: { recipeId: string; evidenceAdded: number } };
+        const json = (await res.json()) as { ok: boolean; error?: string; data?: { recipeId: string; draftState?: string; evidenceAdded: number } };
         if (!json.ok || !json.data) {
           return { content: [{ type: "text" as const, text: json.error ?? "Error: verification failed" }] };
         }
-        const n = json.data.evidenceAdded;
+        const state = DRAFT_OUTCOMES.find((o) => o === json.data?.draftState) ?? "verified";
         return {
-          content: [{
-            type: "text" as const,
-            text: `Draft ${json.data.recipeId} is verified: it is now an ordinary recipe that collaborators can find, with your new evidence attached (${n} entr${n === 1 ? "y" : "ies"}).`,
-          }],
+          content: [{ type: "text" as const, text: describeResolution(json.data.recipeId, state, json.data.evidenceAdded) }],
         };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

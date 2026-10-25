@@ -88,12 +88,15 @@ recipes.get("/", recipesIpRateLimit, recipesPerKeyRateLimit, async (c) => {
   return c.json({ ok: true, data: { recipes: entries } });
 });
 
-// POST /recipes/:id/verify — verify a draft with the person's answer
-// (drafts-and-triage slice 2). The REST twin of the MCP verify_draft tool;
-// every rule lives in services/draft-verify.service.ts. Body (JSON):
-// { "supporting_evidence": "<interpretation>, then > the person's answer quoted, then -- where they said it" }
-// (`evidence` is accepted as an alias). A draft this key cannot read by id is
-// the same 404 as a random id, body included apart from the echoed id.
+// POST /recipes/:id/verify — resolve a draft with new evidence
+// (drafts-and-triage slice 2; outcomes from slice 6c). The REST twin of the
+// MCP verify_draft tool; every rule lives in services/draft-verify.service.ts.
+// Body (JSON):
+// { "supporting_evidence": "<interpretation>, then > the words that settle it, then -- where they were said",
+//   "outcome": "verified" | "rejected" | "not_chosen" }   (outcome optional, verified when omitted)
+// (`evidence` is accepted as an alias). An unrecognized outcome is a 400 and
+// stores nothing. A draft this key cannot read by id is the same 404 as a
+// random id, body included apart from the echoed id.
 recipes.post("/:id/verify", recipesIpRateLimit, recipesPerKeyRateLimit, async (c) => {
   const auth = c.req.header("Authorization") ?? "";
   const match = /^Bearer\s+(.+)$/i.exec(auth);
@@ -115,9 +118,9 @@ recipes.post("/:id/verify", recipesIpRateLimit, recipesPerKeyRateLimit, async (c
   const raw = body["supporting_evidence"] ?? body["evidence"];
   const evidence = typeof raw === "string" ? raw : "";
 
-  const result = await verifyDraft(db, { principal, recipeId: c.req.param("id") ?? "", evidence });
+  const result = await verifyDraft(db, { principal, recipeId: c.req.param("id") ?? "", evidence, outcome: body["outcome"] });
   switch (result.status) {
-    case "verified":
+    case "resolved":
       return c.json({
         ok: true,
         data: {

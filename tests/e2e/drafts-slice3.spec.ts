@@ -225,7 +225,7 @@ test("E3 each item carries what triage needs", async ({ page, request }, testInf
     const it = item(page, m.rated);
     await expect(it.locator("p[id^='draft-']"), "the item should show the recipe text").toHaveText(recipeText(m.rated));
     await expect(it, "the item should name its book").toContainText(`Recipe book: ${c.shared.name}`);
-    await expect(it, "the ratings should be worded as the agent's").toContainText("Agent's ratings: impact high · uncertainty low");
+    await expect(it, "the ratings should be worded as the agent's").toContainText("Depositing agent's ratings: impact high · uncertainty low");
     await expect(it, "the item should say when it was deposited").toContainText(`Deposited ${today}`);
     await expect(it, "the item should name the depositing key's label").toContainText(c.keyALabel);
     await expect(it.getByText(why), "the first evidence interpretation should be visible without opening anything").toBeVisible();
@@ -237,7 +237,7 @@ test("E3 each item carries what triage needs", async ({ page, request }, testInf
   });
   await test.step("the unrated item", async () => {
     const it = item(page, m.unrated);
-    await expect(it, "the unrated item should say not rated").toContainText("Agent's ratings: not rated");
+    await expect(it, "the unrated item should say not rated").toContainText("Depositing agent's ratings: not rated");
     await expect(it, "the unrated item should name its book").toContainText(`Recipe book: ${c.quiet.name}`);
     await expect(it, "the unrated item should name its key's label").toContainText(c.keyBLabel);
     await expect(it, "the unrated item should show its first interpretation").toContainText("Could not ask: the person is away.");

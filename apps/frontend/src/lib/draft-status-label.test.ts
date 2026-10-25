@@ -81,12 +81,52 @@ describe("depositor-facing copy is true for the depositor (slice 4 fix pass)", (
 
   it("the depositor's tooltip on a resolved draft names the person who resolved it, not 'you'", () => {
     const rejected = draftStatusLabel({ draftState: "rejected", draftAbout: "pat@test.local" })!;
-    expect(rejected.title).toContain("pat@test.local marked this draft wrong");
+    expect(rejected.title).toContain("pat@test.local rejected this draft");
     expect(rejected.title).not.toContain("You marked");
     const notChosen = draftStatusLabel({ draftState: "not_chosen", draftAbout: "pat@test.local" })!;
     expect(notChosen.title).toContain("pat@test.local");
-    // The subject's own view is unchanged.
-    expect(draftStatusLabel({ draftState: "rejected" })!.title).toContain("You marked this draft wrong");
+    // The subject's own view, when it knows they resolved it themselves.
+    expect(draftStatusLabel({ draftState: "rejected", draftResolvedByKeyId: null, draftResolvedByViewer: true })!.title).toContain("You marked this draft wrong");
+  });
+});
+
+// Slice 6c (S6c-C2): an agent can now reject a draft or mark it not chosen,
+// so those lines say who resolved it, as the verified line does, instead of
+// "You marked this draft wrong" whoever did it.
+describe("who resolved a rejected or not-chosen draft (slice 6c)", () => {
+  const KEY = "key-1";
+  const at = "2026-10-24T10:00:00Z";
+
+  it("names the viewer's agent, and the depositing agent, for each outcome", () => {
+    for (const [draftState, head] of [["rejected", "Rejected draft"], ["not_chosen", "Draft not chosen"]] as const) {
+      const byAgent = draftStatusLabel({ draftState, draftResolvedAt: at, draftResolvedByKeyId: KEY, apiKeyId: "other", draftResolvedByViewer: true })!;
+      expect(byAgent.text.startsWith(`${head} (by your agent on `)).toBe(true);
+      expect(byAgent.title).not.toContain("You marked");
+      expect(byAgent.title).toContain("its evidence");
+      const byDepositor = draftStatusLabel({ draftState, draftResolvedAt: at, draftResolvedByKeyId: KEY, apiKeyId: KEY, draftResolvedByViewer: true })!;
+      expect(byDepositor.text).toContain("by the agent that deposited it");
+    }
+  });
+
+  // Verifier's defect 1: list rows (dashboard, book page) come from GET
+  // /traces, which carries the state but not who resolved it, so the label
+  // must not invent "by the person it is about" there.
+  it("names no resolver on a row that does not say who resolved it (the dashboard and book lists)", () => {
+    expect(draftStatusLabel({ draftState: "rejected" })!.text).toBe("Rejected draft");
+    expect(draftStatusLabel({ draftState: "not_chosen" })!.text).toBe("Draft not chosen");
+    expect(draftStatusLabel({ draftState: "verified" })!.text).toBe("Verified draft");
+    expect(draftStatusLabel({ draftState: "rejected", draftResolvedAt: at })!.text).toMatch(/^Rejected draft on /);
+    for (const draftState of ["rejected", "not_chosen", "verified"]) {
+      const l = draftStatusLabel({ draftState })!;
+      expect(l.text).not.toContain("by ");
+      expect(l.title).not.toContain("You marked");
+    }
+  });
+
+  it("still says the viewer did it when they resolved it in the queue or with a reaction", () => {
+    const l = draftStatusLabel({ draftState: "rejected", draftResolvedAt: at, draftResolvedByKeyId: null, draftResolvedByViewer: true })!;
+    expect(l.text).toMatch(/^Rejected draft \(by you on /);
+    expect(l.title).toContain("You marked this draft wrong");
   });
 });
 

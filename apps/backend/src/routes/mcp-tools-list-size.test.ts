@@ -128,10 +128,16 @@ describe("remote MCP tools/list as served (drafts-and-triage slice 1)", () => {
     expect((t.inputSchema as { required?: string[] }).required ?? []).not.toContain("draft");
   });
 
-  it("S2-B10: verify_draft is served with a required recipe_id and supporting_evidence", async () => {
+  it("S2-B10 / S6c-M2: verify_draft is served with a required recipe_id and supporting_evidence, and an optional outcome", async () => {
     const t = tool((await servedToolsList()).tools, "verify_draft");
-    expect(Object.keys(t.inputSchema.properties ?? {}).sort()).toEqual(["recipe_id", "supporting_evidence"]);
+    const props = t.inputSchema.properties ?? {};
+    expect(Object.keys(props).sort()).toEqual(["outcome", "recipe_id", "supporting_evidence"]);
     expect(((t.inputSchema as { required?: string[] }).required ?? []).sort()).toEqual(["recipe_id", "supporting_evidence"]);
+    // A plain string naming the values, not an enum: the service refuses an
+    // unknown value itself, together with any evidence problem (S6c-B6).
+    expect(props["outcome"]?.["type"]).toBe("string");
+    expect(props["outcome"]?.["enum"]).toBeUndefined();
+    expect(String(props["outcome"]?.["description"])).toContain("verified (default) | rejected | not_chosen");
   });
 
   it("S1-Z6 / DT-TOOL-02: clusters and max_chars stay declared with a one-line pointer to verbosity", async () => {

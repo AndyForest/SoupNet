@@ -623,7 +623,7 @@ The other slice 3 follow-ups were closed in the fix pass (`2feb9b7`, `8c3ed74`);
 |---|---|---|
 | S4-M1 | Who may be named is decided once, in `apps/backend/src/authz/`: one function takes the email and the target book and returns the subject's user id or nothing, from one statement that matches `lower(email)` and composes the module's membership fragment (`membershipOf`), `WRITE_ROLES`, and the account-state predicate key authentication uses (`activeUserPredicate`), so "may be named" is exactly "could resolve it now" (open question 28). No file outside the module reads `group_members` for it; `check:authz-seam` enforces that as it does today. | Code review; a Layer 1 or module test over each case: a live writer, a member of another book only, no membership, no account, a waitlisted or unverified account, a mixed-case and padded email. |
 | S4-M2 | (Amended, `b89db1f0`.) The visibility fragments read the subject through one function. `subjectOf` in `authz/draft-sql.ts` returns the subject column where it is set and the author otherwise (`COALESCE(subject, user_id)`: NULL means the recipe is about its author), and `depositorOf` stays `user_id`, which is the depositor for as long as the draft is unpublished. That is the one-function change the slice 2 notes promised ("slice 4 changes `subjectOf` in `draft-sql.ts` and nothing else"). `fetchAccess` and `readableTraceIds` in `trace-access.ts` read `isDraftSubject` and `isDraftDepositor` through the same two functions. | `draft-sql.test.ts` gains the fact dimension "subject is not the depositor" and still proves the SQL fragments equal `mayReadTrace` on every combination (viewer is subject only, depositor only, both, neither; every draft state; member or not). |
-| S4-M3 | `draftStateShownTo` (the [F83] rule) shows the subject every state, the depositor the unpublished states (`unverified`, `rejected`, `not_chosen`) of what they deposited, and everyone else nothing; a verified on-behalf recipe reads as an ordinary recipe to the depositor as to everyone but the subject (open question 31). Resolution details (who, when, which key) stay the subject's alone. | Unit test of the fragment over the viewer and state combinations; Layer 3 on `GET /traces/:id` and `GET /traces?groupId=` for Dana. |
+| S4-M3 | `draftStateShownTo` (the [F83] rule) shows the subject every state, the depositor the unpublished states (`unverified`, `rejected`, `not_chosen`) of what they deposited, and everyone else nothing; a verified on-behalf recipe reads as an ordinary recipe to the depositor as to everyone but the subject (open question 31). Resolution details (who, when, which key) stay the subject's alone. Narrowed by ruling 56 (2026-10-24): this covers the resolution columns and the resolving key; evidence the subject's agent attaches when rejecting a draft stays visible to the depositor, with its date, since the draft stays hers. | Unit test of the fragment over the viewer and state combinations; Layer 3 on `GET /traces/:id` and `GET /traces?groupId=` for Dana. |
 | S4-M4 | (Amended, `b89db1f0`.) `resolveDraft` still resolves by `subjectOf`, so a depositor who is not the subject matches no row whatever the caller asked first. Verification moves ownership in the same UPDATE: `user_id` becomes the subject and the subject column is cleared, so a verified on-behalf recipe is an ordinary recipe of the subject's in every column the rules read. Rejection and not chosen change neither column: those drafts stay the depositor's. This is the only statement that changes a recipe's author. | Module tests calling `resolveDraft` directly: as Dana on her on-behalf draft, null and nothing changed; as Pat verifying, `user_id` = Pat and subject NULL in the returned row; as Pat rejecting and marking not chosen, `user_id` = Dana and subject = Pat. A static test that no other file writes `user_id` on an existing `traces` row. |
 | S4-M5 | Move and delete of an unpublished draft are decided in the module, not by `isAuthor` in the route: the subject may move or delete it (today the subject passes as the author, which stops being true while the draft is unverified), and the depositor may delete it but not move it (open question 30). Everyone else, the book owner and the system user included, still gets the missing-id 404. After verification the recipe is the subject's and the existing rules apply unchanged (its author, now the subject, or a book owner or admin). | Module unit test of the predicate; Layer 3 per actor (below). |
 | S4-M6 | Every new or changed statement that reads the recipe tables (the naming lookup if it joins `traces`, the queue item's depositor email, the export and import changes, the deletion cascade's collection) is registered in the `TRACE_READS` register as composing or with a one-line reason. `ranking-isolation.test.ts` gains the subject column's name among its forbidden terms. | `npm run check:authz-seam` and `ranking-isolation.test.ts` pass; the verifier deletes the draft fragment from one new statement in a scratch copy and shows the guard fail. |
@@ -1609,7 +1609,214 @@ Scaffolded by PR A0 so that concurrent streams edit separate hunks. Each stream 
 
 ### Slice 6c rubric: agent-side resolution (stream A)
 
-Rubric to be written by stream A from the revision doc's 6c and 6f before implementation.
+Written 2026-10-24 by stream A (agent `a-drafts-6c-2026-10-24`) before implementation, from the revision doc's 6c, 6e and 6f, rulings 46 and 55, and the code at `32ffa5c` (the A0 scaffold). Consumer: agent (the verify operation on remote MCP, stdio MCP and REST) and human (the detail page's state line, which today says "You marked this draft wrong" for every rejection). Security-relevant: yes. A draft can now be closed by an agent as well as published, so every authority and uniform-response row of slices 2 to 5 is re-run with the new outcomes. The combined read-only audit after A1, B, D and E covers it (implementation plan), with findings in the private repo.
+
+Settled before this rubric (not reopened): one `outcome` parameter on the existing operation, no second tool and no fourth `superseded` value (recipe `d21d3894`; revision doc, Considered and set aside); a rejection may rest on context alone under the same rule as a verification (ruling 46, recipe `200ed4fe`); the existing audit trail is enough for agent-made resolutions, with no new column (ruling 55); `resolve_siblings` and sets are slice 6b (stream G); the queue's one-click actions and the reaction route are untouched.
+
+**Calls made here** (each recorded in the build notes with its reasoning):
+
+- `outcome` fails closed. Ratings are capture-only (an unknown value becomes NULL plus a notice), but a typo of `rejected` must never fall through to the default and publish. An unknown value stores nothing. It is a plain string on both MCP servers with the values in its description, not a schema enum, so the server can name a bad outcome and every evidence problem in one refusal (agreed with stream D, which owns the "every failing field at once" rule in 8a and leaves `verify_draft` to this stream).
+- A covering recipe is cited as an ordinary evidence entry: its words quoted, `-- recipe <id>` as the citation. The server does not look up the cited id. The rule stays structural (ruling 14), and an id lookup would make the operation an existence oracle for ids the caller cannot read.
+- The blank-line bug lives in the shared parser, not in a second one. `verify_draft` and `check_recipe` already call the same `parseEvidenceMarkdown`. For "interpretation, blank line, quote, blank line, citation" (the reading of "separated by blank lines" the field used), the parser folds the quote into the interpretation and then leaves the citation as a separate entry with no interpretation. `check_recipe` silently stores that as two entries; the verify rule finds no entry with both a quote and a citation and refuses. The fix is one rule in the parser: an entry closes at its citation, and a block with no interpretation continues the open entry. The fix applies to both tools, so they parse alike.
+
+Terms and cast, as in the feature file: Pat (whose agents deposit and resolve), Sam (a member of Pat's shared book), Dana (who deposits on Pat's behalf). K is an ordinary key of Pat's that can write the book; H is a headless key of Pat's.
+
+**Baselines** at `32ffa5c`, measured with the slice 1 method (`createMcpServer` with a stub principal and `createStdioServer`, each over the SDK in-memory transport, `initialize` then `tools/list`, the reply's `result` as minified UTF-8 JSON; description totals from the `@soupnet/domain` constants):
+
+| Measure | Value | Cap (A0) |
+|---|---|---|
+| Remote `tools/list` | 16,986 bytes | 18,200 |
+| Stdio `tools/list` | 13,196 bytes | 14,700 |
+| Shared descriptions | 6,051 characters | 6,600 |
+| `verify_draft` as served (remote) | 774 bytes | |
+
+**Where it lives**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| S6c-M1 | One operation. `verifyDraft` in `draft-verify.service.ts` takes `outcome` and every surface reaches it: remote `verify_draft`, `POST /recipes/:id/verify`, and stdio `verify_draft` through the REST twin. No new tool, route or audit action. `resolveDraft` (`authz/draft-resolution.ts`) is called with the outcome as its `resolution`; its statement, authority check and audit CTE are not edited. | Diff review: `draft-resolution.ts` unchanged. |
+| S6c-M2 | The vocabulary is defined once, in `@soupnet/domain` (the three values plus one parse function that returns the outcome or a refusal sentence naming the values). The MCP description, the REST route and the service use it. | Layer 1 test of the parse function: absent, `null` and `""` give `verified`; each value is accepted; `"reject"`, `"REJECTED"`, `true` and `1` are refused. |
+
+**Behaviour**
+
+| # | Criterion | Scenarios | Evidence |
+|---|---|---|---|
+| S6c-B1 | `outcome` omitted means `verified`, with the slice 2, 4 and 5 behaviour unchanged. | DT-VER-04 | The slice 2, 4 and 5 verify tests pass unedited. |
+| S6c-B2 | `outcome: rejected` through K writes `draft_state = 'rejected'` and `draft_resolved_at`, `draft_resolved_by_user_id` and `draft_resolved_by_key_id` (K), with `user_id` and `subject_user_id` unchanged. It writes one `recipe.draft_rejected` audit row with `via: "agent"` and `evidenceAdded` (the queue's action and shape), no reaction row, and attaches the new evidence entries. Afterwards the draft is gone from Pat's queue and from his agents' results, Sam still gets the uniform answer for it, and `get_recipes` by id shows Pat's agents a rejected draft. | DT-VER-10 (new) | Layer 3 on remote MCP, reading the row, the audit table, the reaction table and the queue back. |
+| S6c-B3 | `outcome: not_chosen` is the same with `draft_state = 'not_chosen'` and `recipe.draft_not_chosen`. | DT-VER-11 (new) | Layer 3 on REST. |
+| S6c-B4 | The reply says what happened per outcome, in the same words on every surface: published (as today), rejected (stays private to the person and their agents, out of the queue, evidence attached), or marked not chosen (same). The stdio server words its reply with the same domain function and no copy of its own. | | Layer 1 of the wording; Layer 3 on remote and REST; the stdio unit test against a stubbed backend. |
+| S6c-B5 | REST success is 200 with `{ recipeId, draftState, evidenceAdded, verifiedByDepositingKey }`, where `draftState` is the outcome (the existing shape, so slice 2 clients keep working). | | Layer 3 on REST for each outcome. |
+| S6c-B6 | An unknown `outcome` is refused and nothing is stored. REST answers 400. The refusal names the three values and also reports what is wrong with the evidence, if anything, so one retry suffices. It is decided before any lookup, so the answer is the same for every id apart from the echo. | | Layer 3 on MCP and REST: `"reject"` with good evidence leaves the draft unverified and stores no row; the same call with no evidence names both problems; Pat's draft and a random UUID get the same bytes after the id is replaced. |
+| S6c-B7 | Resolution stays one-way across outcomes. Any outcome on a resolved draft is `already_resolved` (REST 409) and stores nothing. A `verified` and a `rejected` sent concurrently on one draft give exactly one resolution, one audit row and one set of evidence. | DT-VER-03 | Layer 3, including a concurrent pair. |
+
+**Evidence**
+
+| # | Criterion | Scenarios | Evidence |
+|---|---|---|---|
+| S6c-E1 | The structural rule is unchanged for every outcome. It needs at least one entry with a quote and a citation whose quote the draft does not already carry. A rejection that only re-quotes the draft's own evidence is refused with the existing "adds nothing new" message, and the draft stays unverified. | DT-VER-05, DT-VER-06 | Layer 3 for `rejected` and `not_chosen`. |
+| S6c-E2 | A rejection whose only new entry quotes a verified recipe and cites it by id (`-- recipe 1a2b3c4d`) passes. The server does not resolve the cited id: a cited id the key cannot read, or one that does not exist, passes the same way. | DT-VER-12 (new) | Layer 3. Code review: no lookup of the citation. |
+| S6c-E3 | A refusal for missing evidence says how many entries the text was read as and what each one lacked. Its wording matches the outcome: for a rejection, quote the person's answer or the recipe that covers the call, cited by id. | | Layer 1 on `validateVerificationEvidence`. |
+| S6c-E4 | Evidence written as interpretation, blank line, `> quote`, blank line, `-- citation` is one entry. A quote whose paragraphs are separated by blank lines stays one quote in that entry. The same text is accepted by remote `verify_draft`, by REST and by `check_recipe`, and stored as one entry by each. Every existing parser test passes unedited, the `a2c8fb64` regression and "does not fold a second orphaned citation" included. | DT-VER-13 (new) | Layer 1 cases in `evidence-parser.test.ts`; Layer 3: one verify call per surface with the field's shape. |
+
+**Authority and uniform responses** (slices 2 to 5 re-run with the new outcomes)
+
+| # | Criterion | Evidence |
+|---|---|---|
+| S6c-A1 | H gets `key_cannot_verify` (403) for every outcome, decided before any lookup, with the same bytes for Pat's draft, a published recipe, Sam's draft and a random id (S5-R1, S5-U1). Nothing is stored. | Layer 3 on MCP and REST per outcome. |
+| S6c-A2 | Dana, who deposited a draft about Pat, gets the honest `only_subject_reviews` refusal for `rejected` and `not_chosen` (S4-R2), and nothing is stored. Pat's agent rejecting that draft leaves it Dana's: `user_id` and `subject_user_id` are unchanged (recipe `b89db1f0`). | Layer 3 in `drafts-on-behalf.test.ts`. |
+| S6c-A3 | Sam's key calling any outcome on Pat's draft gets the same 404 and body as for a random UUID, after the id is replaced, on MCP and REST (DT-VER-07, S3-F1 (c)). | Layer 3 byte comparison per outcome. |
+| S6c-A4 | A key of Pat's that can read but not write the draft's book gets `needs_write_access` (403) for every outcome ([F78]), and nothing is stored. | Layer 3. |
+
+**Copy and the web**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| S6c-C1 | `MCP_TOOL_DESCRIPTIONS.verifyDraft` is the 7b text: "Publish, reject, or mark not chosen a draft about your user once you or they can stand behind the answer: new evidence quoting their words, or the context that settles it. Evidence that adds nothing new is refused." The `outcome` description names the three values and the default, and says what `rejected` and `not_chosen` mean in at most 160 characters. `verificationEvidence` admits a covering recipe's words as the quote. No other tool's or parameter's description changes. The `draft` parameter and the deposit notice are stream C's (C2). | `mcp-tool-descriptions.test.ts`; diff review of `recipe-guide-content.ts`. |
+| S6c-C2 | The detail page's state line for a rejected or not-chosen draft says who resolved it, as the verified line does (by you, by your agent, by the agent that deposited it). It no longer says "You marked this draft wrong" when an agent rejected it. The text still starts "Rejected draft" / "Draft not chosen", so `drafts-slice3.spec.ts` holds. | `draft-status-label.test.ts` cases per resolver. |
+| S6c-C3 | The agent-facing label for a rejected draft (`draftLabel`) no longer says "the person said this is wrong", since an agent may have rejected it on context. It says the draft was rejected and that its evidence says why. | `packages/domain/src/drafts.test.ts`. |
+| S6c-C4 | The feature file gains DT-VER-10 to DT-VER-14 tagged `@slice-6c` (14: an unknown outcome is refused). The Rule's title no longer says verification needs "the person's own words" (ruling 46 and recipe `200ed4fe` allow the settling context). | Diff review. |
+
+**Budgets**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| S6c-Z1 | Remote `tools/list`, stdio `tools/list` and the shared-description total stay under the A0 caps without touching the cap constants. Bytes before and after are recorded in `spec-decision-log.md` and here. | Size tests green; the figures. |
+| S6c-Z2 | `tools/list` stays byte-identical for H and K (S5-Z1). | Existing test. |
+
+**Surfaces that must change:** `draft-verify.service.ts`, `routes/recipes.ts` (the verify route), the `verify_draft` schema in `routes/mcp.ts` and `apps/mcp-server/src/server.ts`, `packages/domain/src/drafts.ts` (the vocabulary, the evidence refusal, the reply wording, the rejected label), `MCP_TOOL_DESCRIPTIONS.verifyDraft` and the verify entries of `MCP_PARAM_DESCRIPTIONS`, `services/evidence-parser.ts`, `apps/frontend/src/lib/draft-status-label.ts`, the drafts tests, the feature file, `spec-decision-log.md`.
+
+**Surfaces that must not change:** `authz/draft-resolution.ts` and `authz/draft-sql.ts`; the reaction, queue and not-chosen routes in `routes/traces.ts`; the size-cap constants; every description that is not `verify_draft`'s; the five ranking files and `ranking-regression.test.ts`; the idempotency key; `check_feedback`.
+
+**Security properties the verifier must see proven**
+
+- Closing a draft takes exactly the authority publishing one does: the person's ordinary key, write access to the book, and only the person the draft is about (S6c-A1 to S6c-A4).
+- No new oracle. Refusals that do not depend on the id (headless, unknown outcome) are decided before lookup; everything the key cannot read gets the uniform answer; a cited recipe id is never looked up (S6c-B6, S6c-A1, S6c-A3, S6c-E2).
+- An agent-made resolution is auditable the way a verification is: resolving key, `via: "agent"`, and the new evidence on the draft (ruling 55).
+- A mistyped outcome never publishes (S6c-B6).
+
+**Briefing-copy declaration.** The `verify_draft` description, the `outcome` and evidence parameter descriptions, the reply wording, and the refusal are agent-facing copy under [../briefing-specs/README.md](../briefing-specs/README.md) §The regression rule. The PR appends one `spec-decision-log.md` entry with the bytes before and after. The 7b scenario edits for the rest of the tool copy are stream C's (C2).
+
+### Slice 6c build notes (stream A, 2026-10-24)
+
+Branch `drafts/6c-resolution`, from the A0 commit `32ffa5c`. Agent `a-drafts-6c-2026-10-24`, intent `int_cAyrEfRTTxiQvt4shMN6tNGf`.
+
+**What was built**, one commit per unit:
+
+- `235df21` domain: `DRAFT_OUTCOMES` and `parseDraftOutcome` (fail closed), `validateVerificationEvidence` with a per-outcome refusal that says how the text was read, `describeResolution` (the reply for each outcome, shared by both MCP servers), and the rejected-draft label.
+- `4cb94ab` the shared evidence parser: an entry closes at its citation, so interpretation, blank line, quote, blank line, citation is one entry, on `check_recipe` as on `verify_draft`.
+- `ac30a8a` `outcome` through the service, `POST /recipes/:id/verify`, the remote tool and the stdio proxy; the 7b description; the `outcome` and evidence parameter descriptions. `resolveDraft` is not edited: it already writes all three outcomes, their audit actions and the one-way rule.
+- `a4080df` the detail page's rejected and not-chosen lines name who resolved the draft.
+- `d7c5bf4` DT-VER-10 to DT-VER-14 and the Rule title in the feature file.
+- Layer 3 tests in a new file, `apps/backend/src/routes/drafts-resolution.test.ts`, one test per rubric row group, so that the slice 2, 4 and 5 suites stay unedited (S6c-B1). Decision-log entry in `spec-decision-log.md`.
+
+**Calls made, each recipe-checked in `soupnet-oss` and closed with a feedback row:**
+
+- `outcome` fails closed and is a plain string judged by the service, not a schema enum (check `3f0e1bc1`; the corpus returned `d21d3894` and `10e3d7e1`, the ratings precedent for a described string). The refusal names a bad outcome and any structural evidence problem together; whether a quote is new needs the draft, so that part waits for the lookup.
+- A covering recipe is an ordinary evidence entry, and the cited id is never looked up (check `994b1f88`; the corpus returned `12591bef`, ruling 46 in the operator's words, and `507d3c9c`, the anti-oracle rule).
+- The blank-line fix is in the one shared parser (check `41e51b60`; the corpus returned `508f71c8`, the operator's May choice of a tolerant parser, which this extends). After verification (defect 2) the join is narrower: a quote continues the open entry only while that entry's quote is still unclosed, so a complete quote waiting for its citation keeps a later, separately cited quote apart, as before 6c (check `3123c1e1`; the verifier's check `1dbea5ed` states the rule: every stored quote stays verbatim under the citation it is filed under).
+- "A person", not "the person", wherever the new copy names whose answer settles a draft, since in a shared book the call may be a colleague's (Andy's note of 2026-10-24, checked as recipe `5d3ddfc7`). The rejected and not-chosen replies say "it stays private, leaves the review queue" without naming whose.
+- Evidence on a rejected or not-chosen draft is attached with stance `for`, the only stance ingest writes; the interpretation carries why the claim does not hold. The audit row keeps slice 2's shape, so its `verifiedByDepositingKey` key, like the REST field of that name, means "resolved by the depositing key" for the other two outcomes. Renaming either would break the queue's audit shape and slice 2's wire shape for no reader's gain.
+
+**Cross-stream notes** (the plan's rule: a call that changes another stream's surface is written here):
+
+- For C (C1 and C2): the parameter is `outcome` on `verify_draft` and `POST /recipes/:id/verify`, values `verified` (default) | `rejected` | `not_chosen`; a superseded draft is `rejected` quoting the covering recipe and citing `-- recipe <id>`. The briefing scenario for resolving drafts belongs in `checking-behavior.feature` (C's file) and lands with C1, which merges after A1; the A1 decision-log entry says so.
+- For D (8a): agreed in session that D does not edit `verify_draft`'s schema, descriptions or service; the "every failing field at once" rule for `verify_draft` is met here (S6c-B6). D's unknown-parameter guard reads the registered schemas, so it picks up `outcome` without a list.
+- For B and D, the shared budget: A1 takes remote `tools/list` from 16,986 to 17,297 bytes (cap 18,200), stdio from 13,196 to 13,507 (cap 14,700), and the shared descriptions from 6,051 to 6,316 characters (cap 6,600), leaving 284 characters for B's `intent:` term and D's enumerations.
+- For B: 6c never writes `intent_id`; `resolveDraft`'s UPDATE is unchanged.
+
+**Environment note for every stream:** the worktrees were moved from `C:\github\SoupNet-wt\` to `C:\github\SoupNet\SoupNet-wt\`, and the `@soupnet/*` links under each worktree's `node_modules` still pointed at the old path, so vitest silently resolved the main checkout's stale packages (size tests failed on a clean branch). Re-pointing the nine links as junctions fixed it; streams B, C and D confirmed the same fix.
+
+**Questions for the operator:**
+
+56. **Rejection evidence on a draft about someone else, seen by its depositor.** When Pat's agent rejects a draft Dana deposited about Pat, the new evidence is attached to the draft, and Dana, who can still read the draft (it stays hers), now sees that evidence card on her detail page; `GET /traces/:id` also returns the entry's `createdAt`. Before 6c a rejection added no evidence, so S4-M3 ("Resolution details (who, when, which key) stay the subject's alone") was never tested by it. The card names no key, but it shows that an agent resolved the draft and roughly when. **Recommendation: keep it, and narrow S4-M3 to the resolution columns and the resolving key.** A rejected on-behalf draft remains Dana's own recipe (recipe `b89db1f0`), the evidence is the record of why her hypothesis did not hold, which is what she would want, and hiding entries on her own recipe from her would be odd. **The alternative is right** if the subject's activity on a colleague's draft should stay private beyond its outcome: then the read paths (the detail page, `GET /recipes`, `get_recipes`) would leave out, for the depositor, the evidence entries added by the resolving key, through a fragment in the authz module. My recommendation is deposited as draft `1063b420` under this stream's intent; your yes or no settles it, and I will build the alternative on this branch if you choose it. **Ruled 2026-10-24: yes, as recommended** ("Yes to all three, confirm the drafts", in the claimNet planning session; draft `1063b420` verified with those words). No code change: the S4-M3 row above now says what it covers, S6c-A2 pins that Dana sees the rejecting agent's evidence and no resolution columns, and the comments in `trace-access.ts` and `draft-status-label.ts` say the same.
+
+### Slice 6c verification record
+
+Written 2026-10-24 by an independent verifier (agent `v-drafts-6c-2026-10-24`, Soup.net intent `int_3THN35Tz6JCa33aQ3yh9S5hR`), who did not build the slice and changed no product code or tests. Verified in the stream A worktree at `9c96fdd` (the slice is `32ffa5c..9c96fdd`; `9c96fdd` changes copy only, "a person" for "the person", and the byte figures).
+
+**Verdict: accept once defect 1 is fixed or ruled acceptable.** Of the 23 rubric rows, 22 pass and 1 is partial (S6c-C1). All four security properties hold. One defect sits outside the rows' wording (the list rows' state label, defect 1), and the parser fix has a side effect worth a ruling (defect 2).
+
+**How it was verified.**
+
+- **Gate:** the run relied on is `TESTCI_PGPORT=5554 npm run test:ci` at `9c96fdd`, **exit code 0**: build, typecheck, lint, data-model check and authz seam check passed; 133 test files passed and 2 skipped; 1,899 tests passed and 6 skipped; the golden-set ranking eval ran and the script printed "CI tests passed!". Three earlier runs on 5554 exited 1 and are not relied on: runs 1 and 2 (at `f273fb2`) failed 22 and 14 tests on "sorry, too many clients already", and run 3 (`--maxWorkers=8`, at `9c96fdd`) passed every test but ended on a vitest worker that exited unexpectedly. Stream B was running its gate on the same port and compose project at the time, so two backends and two suites shared one database; no failure in those runs was in a slice 6c test or about slice 6c behaviour.
+- **Slice tests, verbose:** `TESTCI_PGPORT=5554 node scripts/test-ci-local.mjs -- apps/backend/src/routes/drafts-resolution.test.ts <probe> --reporter verbose`, exit 0: all 13 `drafts-resolution.test.ts` tests passed, with the verifier's 6 probe tests below. Unit files (`drafts.test.ts`, `evidence-parser.test.ts`, `draft-status-label.test.ts`, `apps/mcp-server/src/server.test.ts`, `mcp-tools-list-size.test.ts`, `mcp-tool-descriptions.test.ts`) via `npx vitest run`: 144 passed, exit 0.
+- **Probe:** a throwaway Layer 3 file (deleted afterwards) against the gate's backend. P1, non-string and near-miss outcomes over REST (`true`, `false`, `0`, `1`, `{}`, `[]`, `["rejected"]`, `"  "`, `"Rejected"`, `"rejected"` plus a zero-width space, `"not-chosen"`): each 400 `refused`, row and counts unchanged; `null` verifies. P2, an 8-character prefix with each outcome: 200, full id echoed, `draft_resolved_by_key_id` equal to the depositing key, one audit row. P3, 60 entries in one rejection: `evidenceAdded` 60 in the reply and the audit row; 25 uncited entries give a refusal that lists the first 10 and ends "…". P4, uniform answers: the headless key over REST and MCP gives one body for Pat's draft, a published recipe, Sam's draft and a random UUID for each outcome; K on Sam's draft equals K on a random id, with good evidence, with empty evidence, and by 8-character prefix; an unknown outcome gives one body for all four targets on K, H and Sam's key. P5, stdio against the real backend: the success reply and five refusals (unknown outcome, random id, already resolved, no citation, re-quote) are byte-identical to the remote tool's, and so is the headless refusal. P6, eight concurrent calls mixing all three outcomes on one draft: one 200, seven 409, one audit row, one evidence entry added.
+- **Bytes** (slice 1 method: `createMcpServer` with a stub principal and `createStdioServer`, each over the SDK in-memory transport, `initialize` then `tools/list`, the `result` as minified UTF-8 JSON): remote 17,259 bytes for an ordinary and a headless principal, byte-identical; stdio 13,469; shared descriptions 6,278 characters; `verify_draft` as served 1,047 bytes on both servers, identical. These match the decision log and build notes at `9c96fdd`.
+- **Mutations** (reverted): letting `parseDraftOutcome` fall through to `verified` fails 2 tests in `drafts.test.ts`; restoring the old fold condition (`!prev.quote && !prev.source`) fails the 3 new tests in `evidence-parser.test.ts`.
+- **Parser comparison:** the parser at `32ffa5c` and at `9c96fdd` run over 11 evidence shapes (results under defect 2).
+- **Code review** of `git diff 32ffa5c..9c96fdd`.
+
+| Row | Result | Evidence |
+|---|---|---|
+| S6c-M1 | pass | One service, `verifyDraft`, takes `outcome`; remote `verify_draft`, `POST /recipes/:id/verify` and stdio (via REST) reach it. `resolveDraft` is called with `resolution: outcome`. `git diff 32ffa5c..9c96fdd -- apps/backend/src/authz/` is empty. No new tool, route or audit action. |
+| S6c-M2 | pass | `DRAFT_OUTCOMES` and `parseDraftOutcome` in `packages/domain/src/drafts.ts`; the service parses with it and stdio reads `DRAFT_OUTCOMES`. The `draftOutcome` description is a hand-written string beside it, not derived. `drafts.test.ts` "parseDraftOutcome" covers absent, `null`, `""`, each value, and `"reject"`, `"REJECTED"`, `true`, `1`. |
+| S6c-B1 | pass | `drafts-slice2`, `drafts-on-behalf` and `drafts-headless` test files are unchanged in the diff and pass in the gate; `drafts-resolution.test.ts` "S6c-B1" passes. Two non-verify assertions were edited because the slice requires it: the S2-B10 schema-shape test now lists `outcome`, and the slice 4 label tests take the new wording (S6c-C2, S6c-C3). |
+| S6c-B2 | pass | `drafts-resolution.test.ts` "S6c-B2 / DT-VER-10" reads state, resolver, `user_id`/`subject_user_id`, audit action and metadata, reaction count, evidence and queue count. The test only checks the resolving key is not null; probe P2 shows it equals the depositing key. Absence from Pat's agents' results rests on `authz/draft-sql.ts` (unchanged), which admits only `unverified` own drafts. |
+| S6c-B3 | pass | "S6c-B3 / S6c-B5 / DT-VER-11" over REST: `not_chosen` and `recipe.draft_not_chosen`. |
+| S6c-B4 | pass | `describeResolution` in domain; `drafts.test.ts` "describeResolution"; stdio unit test "S6c-B4"; probe P5 shows stdio and remote byte-identical for success and refusals. |
+| S6c-B5 | pass | 200 with `{ recipeId, draftState, evidenceAdded, verifiedByDepositingKey }` in the B3 test and probe P2 for all three outcomes. |
+| S6c-B6 | pass | "S6c-B6 / DT-VER-14" (MCP bytes vs a random id, REST 400, counts unchanged); probe P1 (non-strings) and P4 (REST bytes identical across four targets and three keys). |
+| S6c-B7 | pass | "S6c-B7 / DT-VER-03" (409 after resolution, concurrent verify/reject pair); probe P6 (eight-way burst, one winner, one audit row). |
+| S6c-E1 | pass | "S6c-E1 / DT-VER-06" for `rejected`; probe P5 "requote" for `not_chosen` on both servers; unit test in `drafts.test.ts`. |
+| S6c-E2 | pass | "S6c-E2 / DT-VER-12" cites a nonexistent id. Code review: the service looks up only `recipeId`; the evidence is parsed and checked structurally, never resolved. |
+| S6c-E3 | pass | `drafts.test.ts` "says how many entries the text was read as"; Layer 3 "S6c-E3"; probe P3 for 25 entries. |
+| S6c-E4 | pass | Three new parser unit tests; existing parser tests unedited; "S6c-E4 / DT-VER-13" (check_recipe stores one entry, MCP and REST accept). The REST leg checks the status only. See defect 2 for a side effect. |
+| S6c-A1 | pass | "S6c-A1" compares Pat's draft with a random id on MCP; probe P4 adds a published recipe and Sam's draft on both REST and MCP, one body per outcome. |
+| S6c-A2 | pass | "S6c-A2" in `drafts-resolution.test.ts` (the rubric named `drafts-on-behalf.test.ts`, which stays unedited for S6c-B1). "Nothing stored" is checked by `draft_state` only. |
+| S6c-A3 | pass | "S6c-A3 / DT-VER-07" byte comparison on MCP and REST per outcome; probe P4 adds empty evidence and prefixes. |
+| S6c-A4 | pass | "S6c-A4 / [F78]": 403 `needs_write_access` for `rejected` and `not_chosen`; checked by `draft_state` only. |
+| S6c-C1 | partial | The tool description is the 7b text exactly. `draftOutcome` (118 characters) names the values and the default and says when to reject, but not what `not_chosen` means. `mcp-tool-descriptions.test.ts` checks budgets only, not the text. No other description changed (diff of `recipe-guide-content.ts`). |
+| S6c-C2 | pass (detail page) | `draft-status-label.test.ts` "who resolved a rejected or not-chosen draft"; the verifier's run of `draftStatusLabel` over every resolver and outcome gives the right detail-page line in each case, starting "Rejected draft" / "Draft not chosen". The same function now mislabels list rows (defect 1). |
+| S6c-C3 | pass | `draftLabel` gives "[rejected draft: its evidence says why]" (unit test; probe P6 via `get_recipes`). |
+| S6c-C4 | pass | DT-VER-10 to DT-VER-14 tagged `@slice-6c`; the Rule title reads "resolved by its person, or by their agent with new evidence that settles it". |
+| S6c-Z1 | pass | 17,259 / 13,469 / 6,278 against caps 18,200 / 14,700 / 6,600; cap constants unchanged in the diff. |
+| S6c-Z2 | pass | Remote `tools/list` byte-identical for the ordinary and headless principals (17,259). |
+
+**Security properties.** Closing a draft takes the same authority as publishing it (A1 to A4, P4). No new oracle: the outcome and headless refusals are decided before lookup and are identical across four target kinds; unreadable ids, prefixes included, read like random ones; the cited id is never looked up (P4, code review). Agent resolutions record the resolving key, `via: "agent"` and the evidence count (B2, P2, P3). A mistyped outcome never publishes (B6, P1, mutation).
+
+**Surfaces that must not change.** `git diff 32ffa5c..9c96fdd` is empty for `apps/backend/src/authz/`, `apps/backend/src/routes/traces.ts`, the ranking files and `ranking-regression.test.ts`; the cap constants, the idempotency key and `check_feedback` are untouched; the only description changes are `verifyDraft`, `verificationEvidence` and the new `draftOutcome`.
+
+**Defects, ranked**
+
+1. **List rows now say "(by the person it is about)" for every rejected or not-chosen draft.** `draftStatusLabel` also renders the bracketed label on the dashboard (`DashboardPage.tsx`) and the book page (`GroupTracesPage.tsx`), whose rows come from `GET /traces` and carry `draftState` but no resolver fields. With no `draftResolvedByKeyId` and no `draftResolvedByViewer`, `resolvedBy` falls to "by the person it is about". Scenario: Pat's agent rejects his draft with `verify_draft`; on his dashboard the row reads "[Rejected draft (by the person it is about)]", which names Pat in the third person and is false (his agent did it). Before 6c it read "[Rejected draft]". Dana, who deposited a draft about Pat, sees the same words on the book page, a claim about who resolved it that S4-M3 says the depositor is not told (a constant string, so nothing leaks, but it can be false). The verified line has had the same fault in lists since slice 2. Fix: add the resolver clause only when the row carries the resolver, and say nothing otherwise.
+2. **The parser fix can put one quote under another block's citation.** An entry now stays open until it has a citation, so a quote-and-citation block with no interpretation joins an earlier entry that has a quote but no citation. Scenario: `check_recipe` evidence `Interp A.` / `> "Quote A."` / blank / `> "Quote B."` / `-- Source B` used to store Quote A uncited and Quote B under Source B; it now stores one reference whose quote is `Quote A." "Quote B.` under Source B. A reader sees Quote A attributed to Source B, and the stored quote is no longer a verbatim passage of either source. The same join produces `Para one." "Para two.` when each paragraph of one answer is quoted separately, and `q0" "q1` for two quote-only blocks. The build notes name the merge but not these two effects. The common shapes are unaffected (canonical entries, interpretation-only entries, an orphan after a cited entry). Rare and low in harm; checked as recipe `1dbea5ed` and left for a ruling: either accept, or join only when the earlier entry has no quote.
+3. **`draftOutcome` does not say what `not_chosen` means** (S6c-C1). Agents get "Reject when it does not hold or a verified recipe covers it", and nothing for the third value; 42 characters remain under the row's 160.
+
+**Observations**
+
+- The unknown-outcome refusal appends the evidence problem worded for verifying ("Verifying a draft needs new evidence…") even when the caller plainly meant to reject. The `needs_write_access`, headless and `only_subject_reviews` refusals also still say "verify" or "confirm" on a rejection call.
+- The outcome is judged before the headless check, so a headless key with a typo gets the outcome refusal and learns it cannot verify only on retry. Both are id-independent.
+- `" rejected "` is accepted (trimmed); a zero-width space is not.
+- Splitting one of the draft's own quotes over two blank-line blocks ("Q", blank, "Q", citation) now yields a stored quote "Q Q" that passes the "adds nothing new" rule. The rule was always structural and any edit to a quote passes it, so this is not a new exposure.
+- Version skew: a pre-6c backend ignores `outcome`, so a new stdio server (or any client) sending `outcome: rejected` to an older self-hosted backend publishes the draft, and the stdio reply then honestly says "verified". Deploy the backend before shipping a `.mcpb` that sends `outcome`.
+- Layer 3 gaps closed by the probe rather than the suite: the resolving key is checked as not null rather than equal to K; "nothing stored" in S6c-A2 and S6c-A4 is checked by state only; S6c-B6's REST byte comparison and S6c-A1's published and Sam's-draft targets are not in the suite. Worth adding when the file is next touched.
+- The build notes do not record a gate run.
+
+**Out of scope**
+
+- The verified line's "(by the person it is about)" in list rows predates 6c (slice 2); defect 1's fix covers it.
+- The review queue, reaction and not-chosen routes, and option sets (6b), are unchanged here and were not re-verified.
+
+### Slice 6c after verification (stream A, 2026-10-24)
+
+What was done with each finding of the verification record above:
+
+- **Defect 1, list rows misattribute the resolver:** fixed in `42ecc9d`. The resolver clause appears only on a row that says who resolved it (the detail page sends `draftResolvedByViewer` and the resolving key; `GET /traces` rows send neither), so the dashboard and book page read "Rejected draft", "Draft not chosen" or "Verified draft". This also fixes the verified line's list fault from slice 2.
+- **Defect 2, a later cited quote joined an earlier uncited one:** fixed in `3afcec6`. A quote continues the open entry only while that entry has no quote or its quote is still unclosed; otherwise it stays its own entry, as before 6c (check `3123c1e1`).
+- **Defect 3, S6c-C1 partial:** the `outcome` description now ends "; not_chosen when a viable option lost." (156 characters, under the row's 160).
+- **Refusals that said "verify" on a rejection call:** the write-access refusal now says "resolving it needs write access … Resolve it with a key that can write <book>, or hand the review link to the person it is about". The headless refusal keeps slice 5's wording ("cannot verify drafts"), which is still true of every outcome.
+- **Headless key with a mistyped outcome gets the outcome refusal first:** left as is. Both refusals are decided before any lookup and neither depends on the id, so the order reveals nothing; the outcome refusal is input validation and comes first on every key.
+- **Version skew:** a backend from before 6c ignores `outcome`, so a stdio `.mcpb` built from this branch and pointed at an older backend would publish a draft it meant to reject. The remote MCP tool is served by the backend itself and cannot skew. Deploy the backend before releasing a `.mcpb` that sends `outcome`; the PR says so.
+- **Gate runs:** `TESTCI_PGPORT=5544 npm run test:ci` exit 0 at `f273fb2` (133 files and 1,899 tests passed; 2 files and 6 tests skipped); scoped verbose run `drafts-resolution.test.ts` 13/13 with `drafts.test.ts` 45/45; the verifier's run at `9c96fdd` exit 0. After these fixes, `TESTCI_PGPORT=5544 npm run test:ci` exit 0 at `bfd6ba4` (133 files and 1,902 tests passed; 2 files and 6 tests skipped).
+
+### Slice 6c browser verification (2026-10-24)
+
+Run by the browser-verify skill at `5b11a7b` on an isolated stack (the worktree's backend on 127.0.0.1:3144 against a throwaway database, Vite on 127.0.0.1:5294; the shared dev stack untouched). Expectations and results are in the private repo's `docs/working/browser-verification/2026-10-24-drafts-6c/`. Spec: kept as `tests/e2e/drafts-slice6c.spec.ts` (the drafts specs are named by slice), with the verifier's seeding workaround removed (the dev stack disables the rate limit) and E7 corrected: the depositor's line has no date (S4-M3), and she sees the rejecting agent's evidence (ruling 56). 11 passed on desktop and mobile against the isolated stack.
+
+- E1 to E6 and E8 to E10 met. The detail page reads "Rejected draft (by your agent on …)", "(by the agent that deposited it on …)", "Draft not chosen (by your agent on …)" and, after the Wrong reaction or the queue, "(by you on …)"; the dashboard and book page rows read "[Rejected draft]", "[Draft not chosen]" and "[Verified draft]" with no "by"; at 412 px the longest line fits with no horizontal scroll; axe finds nothing beyond the known colour-contrast list.
+- E7 not met on one clause, an error in the expectation, not in the app: the depositor's line reads "Rejected draft" without a date, because S4-M3 withholds the resolution date from the depositor.
+- Found, not listed: the depositor sees the rejecting agent's evidence (question 56); a person's own resolved draft still offers Still true, Stale and Wrong under "Is this recipe still right?" (pre-existing since slice 2, backlog); the title for a draft rejected by its depositing agent is the same as for another agent's (only the line tells them apart; left as is).
+- Harness: the isolated backend ran without `DISABLE_RATE_LIMIT=true`, so seeding hit the auth rate limit; the spec worked around it per actor. Recorded in the run's `handback.md`.
 
 ### Slice 6a rubric: the intent link (stream B)
 
