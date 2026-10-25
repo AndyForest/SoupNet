@@ -168,6 +168,38 @@ The operator's direction on 2026-10-24: a read path for intents and feedback wou
 
 Why a slice and not the backlog: the steward session spent three weeks counting from book totals and still could not see checks; the field's measurements on the Join page (behaviour change on 4 to 6 percent of checks) date from July because nothing newer could be computed; and every "what did the fleet do" question in the hand-over was answered by walking session transcripts.
 
+## Additions ruled on 2026-10-25
+
+Three surgical additions the operator accepted after a reflection on the first two days of field use of slices 6 to 9. None is a new feature outside the drafts and briefing work already under way; the first is a doc change, the second is briefing copy for C2, the third is a slice after 9.
+
+### A new user archetype
+
+[../design-thinking.md](../design-thinking.md) gains archetype 8, the domain-expert builder: a practitioner close to the end users who ships real features with a coding agent and holds the user-need judgment the engineers lack, while the engineers hold the judgment they lack. The briefing's developer-only examples, the recipient-role pattern (7d item 4), and the two-way shared book are what this archetype tests.
+
+### 7f. C2 copy: what Soup.net is, and what evidence rests on
+
+Two paragraphs for PR C2, under the dated thin-cap raise already ruled (question 7-57). Both are guidance in the briefing's useful-not-prescribed voice; neither is a rule.
+
+**The opening, reframed.** Soup.net is the log of calls people and their agents made, with the reasons and the evidence. Agents read it as context for the next call: when nothing new is on the table a past call usually stands; when something is, the agent decides and logs the new call beside the old one, with its own reason. It is also how sessions reach each other: a draft asks a question another agent or the person can answer, an intent groups a task's checks, feedback says what happened afterwards. It is not a source of truth and not a rulebook. (The corpus already says this: recipes `672a5db2`, `c3bd45f5`, `431a0c2c`, `b7e90f25`; the briefing's Reading results line carries the first half; the coordination half is new to the briefing.)
+
+**Evidence standards.** Evidence says what the claim rests on, so a reader who was not there can check it: the person's words where they gave them, quoted, with where; a recipe that quotes them, cited by id; a document they approved; their code or artifacts; or the agent's inference from the situation, named as inference. A check is a hypothesis the agent stands behind. An inference the agent would act on is a check, and saying it is inferred keeps the record honest. A draft is a hypothesis the agent would not act on without the answer. The seam is the agent's confidence to act, not the kind of evidence and not whether the person has spoken; a claim with no words of the person's is not thereby a draft, and a draft with no evidence is a question that did not do its work. (The operator rejected the stronger form, "when nothing ties the claim to the person it is a draft", on 2026-10-25 as a rule that would make agents over-cautious or deposit bare questions.) A display consequence, no schema: a recipe whose evidence cites the person reads differently from one whose evidence cites only artifacts, and slice 9's lineage can count the share.
+
+### A proposed slice 10, "drafts as a bus"
+
+Ruled 2026-10-25 from three framings: expiry plus dispatch, with headless keys exempt, and the operator's addition that a draft's life is tied to whether the agent that deposited it is still active.
+
+- **Liveness, computed, not stored.** A draft is live while the intent it was deposited under has been used in the last 24 hours. Intents already record `last_used_at` on every join (check, search, feedback), so liveness is a read-time condition: unverified, intent idle for more than 24 hours, key not headless. No sweep, no new column, and a draft un-expires by itself the moment its intent is used again. In the operator's words: "if we see no further recipes from that session in a set time, the draft is expired automatically. If we see more, then it's unexpired automatically. It could be short, 24 hours. Feels like after that, the work has moved on." The intent is the session identity that survives context compaction and names the task, so "drafts require that we know the session" becomes: carry your intent, and your drafts live while your task does.
+- **Drafts with no intent** stay possible; their liveness falls back to a fixed seven days from deposit, or to the depositing key's last activity if the schema records one (the rubric author checks). The briefing says drafts under an intent live with the task.
+- **Expired drafts** leave the review queue and the default `is:draft` listing (an `is:expired` qualifier lists them), stay readable by id, remain resolvable by id (resolving un-expires by construction), and are counted in the intent lineage (slice 9) and in `list_my_recipe_books` ("N open questions live; M expired unanswered in the last 7 days"). Expiry is never deletion.
+- **Dispatch in results.** When a check or search's neighbourhood holds a live draft the caller may read (its own, or one about its user), the response adds one line after the exemplars: "Open question near this call: <id> (<intent story, first line>, asked <when>). If your context settles it, resolve it; otherwise leave it." This replaces slice 8b item 8's warning line and carries both meanings: your own draft is not evidence, and a question nearby may be yours to answer by your own sense of your area (recipe `163bae77`).
+- **Headless keys** are exempt from expiry; the person's queue is their listener by design (slice 5).
+- **On-behalf drafts** follow the depositor's intent for liveness; the subject's agents see the dispatch line. Drafts for people who have not joined a book cannot exist today, so nothing changes there; the field's queue files remain the holding pen, and expiry makes the "backfill a colleague" promise honest: a draft nobody can answer does not wait forever.
+- **Briefing line (C2 or with this slice):** a draft is a question on a bus, live while your task is; if nobody answers while you are active it expires; settle what you can, and ask only what another agent or the person might answer.
+- **Rubric sketch:** liveness computed at read time and never written; un-expire on any intent use; expired drafts excluded from queue and default listings, readable and resolvable by id; the dispatch line only for drafts the caller may read, uniform silence otherwise; the headless exemption; lineage and book counts; size budgets measured for the added line.
+- **Open question 10-1:** the 24-hour window is the operator's number. The alternative is a per-intent or per-key setting. Recommendation: fixed 24 hours first, measured by slice 9 (expired unanswered versus answered) before any knob.
+
+Sequencing: after 8a and 9 merge, before F (8b), since it redefines 8b's own-drafts line.
+
 ## Considered and set aside
 
 Each with the reason, and what would reopen it.
