@@ -10,7 +10,7 @@ Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-
 
 ### Edits
 
-1. **`MCP_PARAM_DESCRIPTIONS.searchQuery`** (served on remote and stdio `search_recipes`): adds `intent:int_… (your intent's recipes)` and names it among the qualifiers that lift the exclude-own default. To stay inside the 420-character per-description limit (`mcp-tool-descriptions.test.ts`, not one of A0's raised caps) the text drops "and" before "citations", "for PR review" after "quote filenames" (the briefing's Search vs check paragraph keeps the PR-review example), and "ISO" before "judgment date" (the date error message spells out the format), says "open drafts" for "unresolved drafts", and shortens "author: or is:draft lifts the exclude-own default" to "author:/is:draft/intent: lift exclude-own". 415 → 417 characters.
+1. **`MCP_PARAM_DESCRIPTIONS.searchQuery`** (served on remote and stdio `search_recipes`): adds `intent:int_… (your intent's recipes)`. To stay inside the 420-character per-description limit (`mcp-tool-descriptions.test.ts`, not one of A0's raised caps) the text drops "and" before "citations", "for PR review" after "quote filenames" (the briefing's Search vs check paragraph keeps the PR-review example), and "ISO" before "judgment date" (the date error message spells out the format), and says "open drafts" for "unresolved drafts". The last clause is slice 8a's "-author:me leaves out your own." (recipe `885143c2`), kept as 8a wrote it: an earlier form of this entry also shortened the exclude-own clause, which 8a's flip of that default replaced. 396 → 406 characters, measured on the rebase onto `f6b85f4` (2026-10-25).
 2. **Not-recognized note (new):** a search whose `intent:` id names none of the caller's intents answers "No matches among the N recipes in scope: the intent: id was not recognized (unknown or not yours, deliberately indistinguishable), so it matched nothing." on the JSON notice, the markdown report, and (without the scope count) the HTML page; the review queue says the same after "No drafts listed:". It replaces the thin-corpus pointer for that case only, since the corpus is not thin. One constant, `INTENT_QUALIFIER_NOT_RECOGNIZED`, with `searchZeroResultLine` shared by the JSON and markdown builders.
 3. **Grammar error (new):** "intent: takes an intent id (int_ and 24 letters or digits) — got "…". A task story goes in the intent parameter, not the query.", plus the one-id and no-negation errors; the unknown-qualifier help lists `intent:`.
 4. **`/check` search help (HTML):** one line naming `intent:int_…`.
@@ -29,10 +29,12 @@ Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-
 
 | Measure | Before | After | Cap |
 |---|---|---|---|
-| Remote `tools/list` | 16,986 bytes | 16,990 | 18,200 |
-| Stdio `tools/list` | 13,196 bytes | 13,200 | 14,700 |
-| Shared descriptions | 6,051 characters | 6,053 | 6,600 |
-| `searchQuery` | 415 characters | 417 | 420 per description |
+| Remote `tools/list` | 17,630 bytes | 17,642 | 18,200 |
+| Stdio `tools/list` | 14,133 bytes | 14,145 | 14,700 |
+| Shared descriptions | 6,376 characters | 6,386 | 6,600 |
+| `searchQuery` | 396 characters | 406 | 420 per description |
+
+Before is main at `f6b85f4` (slices 6c and 8a merged), after is this branch rebased onto it. The first measure, at `32ffa5c` before either merged, was 16,986 → 16,990 remote, 13,196 → 13,200 stdio, 6,051 → 6,053 shared, and 415 → 417 for `searchQuery`.
 
 ## 2026-10-24 — Drafts-and-triage slice 6c (PR A1): `outcome` on verify_draft, its 7b description, and the per-outcome replies and refusals
 
