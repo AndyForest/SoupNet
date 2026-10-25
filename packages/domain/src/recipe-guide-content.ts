@@ -317,6 +317,10 @@ export interface BriefingBookStats {
    *  one is set only for the person's own agents, on its own line
    *  (DT-VIS-09). */
   ownDraftsAwaitingReview?: number;
+  /** Slice 10 (S10-K1): the same population, expired (its task went quiet)
+   *  within the last 7 days and still unanswered. `ownDraftsAwaitingReview`
+   *  counts live drafts only. */
+  ownDraftsExpiredRecently?: number;
 }
 
 export interface BriefingGroup {
@@ -362,12 +366,19 @@ function renderBookStatsLine(s: BriefingBookStats): string {
   // A book holding only the person's drafts has no published recipe to index.
   if (s.recipeCount > 0) lines.push(`    Index: ${parts.join(" · ")}`);
   const drafts = s.ownDraftsAwaitingReview ?? 0;
+  const expired = s.ownDraftsExpiredRecently ?? 0;
+  // Slice 10: expired drafts left the review queue, so the line says how many
+  // went unanswered and how to list them (S10-K1); silent when there are none.
+  const expiredClause = expired > 0
+    ? `${expired} expired unanswered in the last 7 days (search is:expired)`
+    : "";
   if (drafts > 0) {
-    lines.push(
-      drafts === 1
-        ? "    Drafts: 1 unverified draft about your user awaits their review (only they and their agents see it)"
-        : `    Drafts: ${drafts} unverified drafts about your user await their review (only they and their agents see them)`,
-    );
+    const live = drafts === 1
+      ? "    Drafts: 1 unverified draft about your user awaits their review (only they and their agents see it)"
+      : `    Drafts: ${drafts} unverified drafts about your user await their review (only they and their agents see them)`;
+    lines.push(expiredClause ? `${live}; ${expiredClause}` : live);
+  } else if (expiredClause) {
+    lines.push(`    Drafts: none awaiting review; ${expiredClause}`);
   }
   return lines.join("\n");
 }

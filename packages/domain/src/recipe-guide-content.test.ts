@@ -317,6 +317,20 @@ describe("BRIEFING.build — surface profiles (cold-start v2 Phase B)", () => {
     expect(text).not.toContain("    Index: ");
     expect(text).toContain("    Drafts: 1 unverified draft about your user awaits their review");
   });
+
+  it("S10-K1: expired drafts add a clause, or a line of their own when none are live", () => {
+    const line = (stats: Partial<BriefingGroup["stats"]>) =>
+      BRIEFING.build(thinInput({ groups: [{ ...groups[0]!, stats: { recipeCount: 1, authorCount: 1, ...stats } }] }))
+        .split("\n").find((l) => l.startsWith("    Drafts: "));
+    expect(line({ ownDraftsAwaitingReview: 2, ownDraftsExpiredRecently: 3 })).toBe(
+      "    Drafts: 2 unverified drafts about your user await their review (only they and their agents see them); 3 expired unanswered in the last 7 days (search is:expired)",
+    );
+    expect(line({ ownDraftsExpiredRecently: 1 })).toBe("    Drafts: none awaiting review; 1 expired unanswered in the last 7 days (search is:expired)");
+    expect(line({ ownDraftsAwaitingReview: 1, ownDraftsExpiredRecently: 0 })).toBe(
+      "    Drafts: 1 unverified draft about your user awaits their review (only they and their agents see it)",
+    );
+    expect(line({})).toBeUndefined();
+  });
 });
 
 describe("buildCorpusContextSection", () => {
