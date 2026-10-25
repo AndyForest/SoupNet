@@ -218,6 +218,40 @@ describe("describeResolution (S6c-B4)", () => {
   });
 });
 
+// ── Slice 7 C2 ───────────────────────────────────────────────────────────────
+
+describe("the self-draft deposit notice resolves rather than asks (slice 7 C2, 7b, S7-B2, S7-B4)", () => {
+  const url = "https://soup.net/app/drafts?ids=11111111-1111-4111-8111-111111111111";
+
+  it("names verify_draft for whichever of the person's agents can settle it, then the queue link", () => {
+    for (const existing of [false, true]) {
+      const n = draftDepositNotice({ storedState: "unverified", requestedDraft: !existing, existing, queueUrl: url })!;
+      expect(n).toContain("Resolve it with verify_draft when you or another agent acting for the person can settle it, ");
+      expect(n).toContain(`or hand them their review queue: ${url}.`);
+    }
+  });
+
+  it("without a queue URL, the recipe's page stands", () => {
+    const n = draftDepositNotice({ storedState: "unverified", requestedDraft: true, existing: false })!;
+    expect(n).toContain("or they confirm it with still true on the recipe's page.");
+  });
+
+  it("no notice says the person is to be asked, or could not be", () => {
+    const base = { storedState: "unverified" as const, requestedDraft: true };
+    const notices = [
+      draftDepositNotice({ ...base, existing: false }),
+      draftDepositNotice({ ...base, existing: true }),
+      draftDepositNotice({ ...base, existing: false, queueUrl: url }),
+      draftDepositNotice({ ...base, existing: false, headless: true, queueUrl: url }),
+      draftDepositNotice({ ...base, existing: false, onBehalfOf: "pat@test.local", queueUrl: url }),
+    ];
+    for (const n of notices) {
+      expect(n).toBeDefined();
+      expect(n).not.toMatch(/ask the person|can(?:'|no)t be asked|couldn't be asked|could not be asked|cannot ask|could not ask/);
+    }
+  });
+});
+
 // ── Slice 3 ──────────────────────────────────────────────────────────────────
 
 describe("draftDepositNotice with the queue link (S3-L6, S3-Z3)", () => {

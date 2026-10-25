@@ -1122,10 +1122,13 @@ export const MCP_PARAM_DESCRIPTIONS = {
     "it if you have no view.",
 
   /** The draft flag on check_recipe (drafts-and-triage slice 2). The full
-   *  when-to-draft guidance belongs to the briefing body (slice 7). */
+   *  when-to-draft guidance belongs to the briefing body (slice 7). Slice 7
+   *  C2 (7b, S7-B1): "the person can't be asked about now" read as the
+   *  reason to draft; the seam is the agent's confidence to act (7f). */
   draft:
-    "True: a draft, for a high-impact, uncertain call the person can't be asked about now; say why " +
-    "in the first evidence entry. Private to them and their agents until verified.",
+    "True: a draft, for a high-impact, uncertain call you can't settle yet from the context you " +
+    "hold; say in the first evidence entry why it's a draft and what would settle it. Private to " +
+    "them and their agents until verified.",
 
   /** on_behalf_of on check_recipe (drafts-and-triage slice 4, S4-Z1: one
    *  line of at most 90 characters, since the remote tools/list had 147

@@ -35,17 +35,19 @@ export function parseDraftFlag(raw: unknown): { draft: boolean; notice?: string 
 }
 
 /**
- * How a draft gets published. With the queue link (slice 3, rubric S3-L6),
+ * How a draft gets resolved. With the queue link (slice 3, rubric S3-L6),
  * the agent learns the one URL it can hand its person, in place of "on the
- * recipe's page"; without one (a caller that has no frontend URL), the old
- * wording stands.
+ * recipe's page"; without one (a caller that has no frontend URL), the
+ * recipe's page stands. Slice 7 C2 (7b, S7-B2): "ask the person and call
+ * verify_draft" read as a rule that the person must be asked; any of the
+ * person's agents that can settle the draft resolves it.
  */
 function verifyHow(queueUrl: string | undefined): string {
   return (
-    "To publish it, ask the person and call verify_draft with their answer quoted and cited "
+    "Resolve it with verify_draft when you or another agent acting for the person can settle it, "
     + (queueUrl
-      ? `(or they confirm it in their review queue: ${queueUrl}).`
-      : "(or they confirm it with still true on the recipe's page).")
+      ? `or hand them their review queue: ${queueUrl}.`
+      : "or they confirm it with still true on the recipe's page.")
   );
 }
 

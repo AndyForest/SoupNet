@@ -15,9 +15,7 @@ import {
   partyText,
   linkHeading,
   queueIntro,
-  intentRuns,
-  intentHeadingText,
-  intentFilterQuery,
+  DRAFTS_CARD_TEXT,
   QUEUE_ACTIONS,
 } from "./draft-queue.js";
 import type { QueueItem } from "./draft-queue.js";
@@ -168,6 +166,23 @@ describe("the id-list heading is true for whoever opens the link (slice 4 fix pa
     expect(linkHeading([{ depositedBy: null, about: "pat@test.local" }])).toBe("Linked drafts");
     expect(linkHeading([{ depositedBy: "dana@test.local", about: null }])).toBe("Linked drafts");
     expect(linkHeading([])).toBe("Drafts your agent linked");
+  });
+});
+
+describe("the queue intro and the dashboard card say what a draft is (slice 7 C2, 7b, S7-B3, S7-B4)", () => {
+  const variants = [queueIntro([]), queueIntro([{ about: "pat@test.local" }]), DRAFTS_CARD_TEXT];
+
+  it("a draft is a call the agents couldn't yet settle, in both intros and the card", () => {
+    for (const text of variants) expect(text).toContain("calls they couldn't yet settle from the context they held");
+  });
+
+  it("nothing says the agents parked drafts because they could not ask", () => {
+    for (const text of variants) expect(text).not.toMatch(/could not ask|couldn't ask|can(?:'|no)t be asked|couldn't be asked/);
+  });
+
+  it("every other sentence of both intros is kept", () => {
+    expect(queueIntro([])).toContain("Confirming publishes a draft to its recipe book, where collaborators can find it; rejecting it or marking it not chosen keeps it private to you and your agents. Each choice is final.");
+    expect(queueIntro([{ about: "pat@test.local" }])).toContain("Only the person a draft is about can confirm or reject it: confirming publishes it to its recipe book, where collaborators can find it; rejecting it or marking it not chosen keeps it private. Each choice is final.");
   });
 });
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { BRIEFING, BRIEFING_KEY_PLACEHOLDER, HEADLESS_KEY_SECTION, buildCorpusContextSection, buildExemplarsSection } from "./recipe-guide-content";
+import { BRIEFING, BRIEFING_KEY_PLACEHOLDER, HEADLESS_KEY_SECTION, MCP_PARAM_DESCRIPTIONS, MCP_TOOL_DESCRIPTIONS, buildCorpusContextSection, buildExemplarsSection } from "./recipe-guide-content";
 import type { BriefingBuildInput, BriefingExemplar, BriefingGroup } from "./recipe-guide-content";
 
 /**
@@ -445,6 +445,21 @@ describe("BRIEFING.build — slice 7: when to draft (7a)", () => {
       expect(text).not.toMatch(/can(?:'|no)t be asked|couldn't be asked|could not be asked|cannot ask/);
     });
   }
+});
+
+describe("tool copy — slice 7 C2: drafting is not for when the person can't be asked (7b)", () => {
+  it("S7-B1: the draft parameter names a call you can't settle yet, and asks why it's a draft and what would settle it", () => {
+    expect(MCP_PARAM_DESCRIPTIONS.draft).toContain("a high-impact, uncertain call you can't settle yet from the context you hold");
+    expect(MCP_PARAM_DESCRIPTIONS.draft).toContain("say in the first evidence entry why it's a draft and what would settle it");
+    expect(MCP_PARAM_DESCRIPTIONS.draft).toContain("Private to them and their agents until verified.");
+  });
+
+  it("S7-B4: no tool or parameter description says or implies the person can't be asked", () => {
+    for (const text of [...Object.values(MCP_TOOL_DESCRIPTIONS), ...Object.values(MCP_PARAM_DESCRIPTIONS)]) {
+      if (typeof text !== "string") continue;
+      expect(text).not.toMatch(/can(?:'|no)t be asked|couldn't be asked|could not be asked|cannot ask|could not ask|once they confirm it/);
+    }
+  });
 });
 
 describe("BRIEFING.build — slice 7: the planned content (7c)", () => {
