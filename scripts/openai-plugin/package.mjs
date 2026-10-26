@@ -20,6 +20,40 @@ const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp", ".svg"];
 const FORBIDDEN_NAMES = ["test_credentials", "reviewer_instructions"];
 const REQUIRED_URLS = ["websiteURL", "supportURL", "privacyPolicyURL", "termsOfServiceURL"];
 
+// Only these files may ship, so a stray note or credential file can't ride
+// along: the manifest, the server config, images under assets/, and skills.
+const ALLOWED_FILES = [
+  /^plugin\.json$/,
+  /^mcp\.json$/,
+  /^assets\/[a-z0-9-]+\.(png|jpe?g|webp|svg)$/,
+  /^skills\/[a-z0-9-]+\/SKILL\.md$/,
+];
+
+// Credential-shaped strings refused in any text file of the package. The
+// public support address is the one email allowed.
+const PUBLIC_EMAILS = ["admin@soup.net"];
+const SECRET_PATTERNS = [
+  { name: "a Soup.net API key", pattern: /\bcn_[a-z]_[A-Za-z0-9]{16,}/ },
+  { name: "an OpenAI-style secret key", pattern: /\bsk-[A-Za-z0-9_-]{16,}/ },
+  { name: "an AWS access key", pattern: /\b(AKIA|ASIA)[0-9A-Z]{16}\b/ },
+  { name: "a JSON web token", pattern: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\./ },
+  { name: "a bearer token", pattern: /\bBearer\s+(?!YOUR_|<)[A-Za-z0-9._~+/-]{16,}/ },
+  { name: "a private key", pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----/ },
+  { name: "a password assignment", pattern: /\bpass(word)?\s*[:=]\s*\S+/i },
+];
+
+/** Problems with credential-shaped content in one text file. */
+export function scanForSecrets(name, text) {
+  const problems = [];
+  for (const { name: what, pattern } of SECRET_PATTERNS) {
+    if (pattern.test(text)) problems.push(`${name} contains ${what}`);
+  }
+  for (const email of text.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g) ?? []) {
+    if (!PUBLIC_EMAILS.includes(email.toLowerCase())) problems.push(`${name} contains an email address other than the public support address: ${email}`);
+  }
+  return problems;
+}
+
 /** WCAG relative luminance of a #RRGGBB colour. */
 function luminance(hex) {
   const channels = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
@@ -194,6 +228,8 @@ export function validatePackage(dir = PACKAGE_DIR) {
 
   // Files: nothing the public submission rejects.
   for (const file of files) {
+    if (!ALLOWED_FILES.some((allowed) => allowed.test(file))) errors.push(`not on the package's file allowlist: ${file}`);
+    if (/\.(json|md|svg)$/.test(file)) errors.push(...scanForSecrets(file, readFileSync(join(dir, file), "utf-8")));
     const parts = file.split("/");
     if (parts.some((p) => FORBIDDEN_NAMES.some((name) => p.toLowerCase().startsWith(name)))) errors.push(`forbidden file name: ${file}`);
     if (parts[0] === "hooks" || parts.at(-1) === ".app.json") errors.push(`not allowed in a public submission: ${file}`);

@@ -5,7 +5,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { PACKAGE_DIR, buildPackage, contrastRatio, pngSize, validatePackage, zipFiles } from "./package.mjs";
+import { PACKAGE_DIR, buildPackage, contrastRatio, pngSize, scanForSecrets, validatePackage, zipFiles } from "./package.mjs";
 
 const manifest = JSON.parse(readFileSync(join(PACKAGE_DIR, "plugin.json"), "utf-8"));
 const ui = manifest.extensions["com.openai"].interface;
@@ -51,6 +51,15 @@ describe("the OpenAI plugin package", () => {
   it("refuses a package that breaks a limit", () => {
     expect(contrastRatio("#ffffff", "#ffffff")).toBe(1);
     expect(pngSize(Buffer.from("not a png"))).toBeNull();
+  });
+
+  it("refuses credential-shaped strings and private email addresses", () => {
+    const fakeKey = ["cn", "d", "Ab3dEf6hIj9kLm2nOp5qRs8t"].join("_");
+    expect(scanForSecrets("x.md", `key: ${fakeKey}`)).toEqual(["x.md contains a Soup.net API key"]);
+    expect(scanForSecrets("x.md", "Authorization: Bearer abcdefghijklmnopqrstuvwx")).toHaveLength(1);
+    expect(scanForSecrets("x.md", "reviewer password: hunter2")).toHaveLength(1);
+    expect(scanForSecrets("x.md", "write to reviewer@example.com")).toHaveLength(1);
+    expect(scanForSecrets("x.md", "Questions: admin@soup.net. Use Authorization: Bearer YOUR_API_KEY.")).toEqual([]);
   });
 });
 

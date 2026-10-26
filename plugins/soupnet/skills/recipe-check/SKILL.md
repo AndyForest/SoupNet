@@ -18,7 +18,7 @@ Call `get_briefing` once at the start of a session. It returns the canonical rec
 3. **After meaningful work.** Record what was chosen and why. This is how the log grows.
 4. **Before you wrap up or hand off.** Sweep for related earlier calls the session didn't surface; that is the cheapest moment to catch a contradiction.
 
-Check freely and without asking first: a check is a lightweight read that leaves a trace. The one thing to avoid is checking a recipe you don't believe; that degrades results for everyone who reads the log.
+Checks are meant to be frequent: reach for one whenever a call comes up, not only for big decisions. Each check records a recipe, so asking the same thing twice records it twice. The one thing to avoid is checking a recipe you don't believe; that degrades results for everyone who reads the log.
 
 ## Writing a recipe
 
@@ -33,7 +33,7 @@ A recipe is the person's taste and judgment, not yours:
 
 ## Drafts
 
-When a call is high-impact and you can't settle it from the context you hold, check it with `draft: true`. A draft is a hypothesis you wouldn't act on without the answer; only the person and their agents see it until it is resolved. In the first evidence entry, say why it's a draft rather than a check and what would settle it. When you or another agent acting for the person can settle a draft, resolve it with `verify_draft` (verified, rejected, or not chosen) and new evidence; otherwise hand the person their review queue link from the deposit notice.
+When a call is high-impact and you can't settle it from the context you hold, check it with `draft: true`. A draft is a hypothesis you wouldn't act on without the answer, so don't treat one as confirmed, yours or anyone's; only the person and their agents see it until it is resolved. In the first evidence entry, say why it's a draft rather than a check and what would settle it. When you or another agent acting for the person can settle a draft, resolve it with `verify_draft` (verified, rejected, or not chosen) and new evidence; otherwise hand the person their review queue link from the deposit notice.
 
 ## Search versus check
 
