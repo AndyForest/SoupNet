@@ -5,8 +5,15 @@
  * A member is CHECKED when their organization has a directory connection on
  * a domain whose claim is current (stream Domains' freshness), and their
  * address, or their linked Google identity's `hd`, is on exactly that domain
- * (recipe 88b1b328; Domains' exact-domain rule, OD-J8). For a checked member:
- *   - INACTIVE: the directory said suspended, archived, or unknown (deleted);
+ * (recipe 88b1b328; Domains' exact-domain rule, OD-J8). This SQL is the one
+ * statement of the rule.
+ *   - INACTIVE: the directory said suspended, archived, or unknown (deleted).
+ *     A recorded refusal holds while the organization has a connection,
+ *     whatever state the domain claim is in (audit F113): a failed DNS
+ *     re-check, a removed TXT record or a stalled re-check job stops new
+ *     checks, never brings a switched-off member back. Reconnecting or
+ *     disconnecting clears the recorded statuses.
+ * For a checked member:
  *   - UNCONFIRMED: no successful check for DIRECTORY_STALE_HOURS (a
  *     never-checked member counts from when the directory was connected);
  *   - DUE: no successful check for DIRECTORY_CHECK_INTERVAL_MINUTES, and no
@@ -51,9 +58,11 @@ function whenChecked(condition: SQL): SQL {
   )`;
 }
 
-/** The directory said this member isn't active. */
+/** The directory said this member isn't active (F113: not gated on the claim). */
 export function directoryInactive(): SQL {
-  return whenChecked(sql`om.directory_status IN ('suspended', 'archived', 'deleted')`);
+  return sql`(om.directory_status IN ('suspended', 'archived', 'deleted') AND EXISTS (
+    SELECT 1 FROM claimnet.organization_directory_connections dc WHERE dc.organization_id = om.organization_id
+  ))`;
 }
 
 /** No successful check for a day: fail closed until one succeeds. */

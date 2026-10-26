@@ -17,8 +17,9 @@ import type { FakeIdClaims } from "../test-google-issuer";
  * API) and DIRECTORY_CREDENTIALS_KEY.
  *
  * Organizations, domains, members, keys and connections are made through the
- * real HTTP surface. Direct SQL only moves a member's last check back in time
- * (to make a check due or stale) or reads state back.
+ * real HTTP surface. Direct SQL only moves time back (a member's last check,
+ * a connection's last success, a domain claim's last DNS check), changes the
+ * DNS answer, or reads state back.
  *
  * Cast, as in the rubric: Olive (Acme's owner, a Workspace admin), Max (an
  * Acme member on the domain), Rae (a member on another address), Mal (on the
@@ -170,6 +171,18 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
   async function requestsFor(userKey: string): Promise<number> {
     return (await google.stats()).directoryRequests[userKey] ?? 0;
   }
+
+  /** Put the organization's domain claim in a state: current, or one of the ways it stops being current. */
+  async function setClaim(orgId: string, state: "current" | "failing" | "stale" | "lapsed"): Promise<void> {
+    await getDb().execute(sql`
+      UPDATE claimnet.organization_domains SET
+        verified_at = ${state === "lapsed" ? sql`NULL` : sql`COALESCE(verified_at, NOW())`},
+        failing_since = ${state === "failing" ? sql`NOW()` : sql`NULL`},
+        last_checked_at = ${state === "stale" ? sql`NOW() - interval '49 hours'` : sql`NOW()`}
+      WHERE organization_id = ${orgId}::uuid
+    `);
+  }
+
 
   // ── Connecting ────────────────────────────────────────────────────────────
 
@@ -392,6 +405,39 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     expect(await requestsFor(rae.email)).toBe(0);
     const mal = await member(org, "mal");
     expect((await useKey(mal.key)).status).toBe(401);
+  });
+
+  it("F113: a recorded refusal holds whatever state the domain claim is in", async () => {
+    const org = await acme();
+    const max = await member(org, "held");
+    await google.setDirectoryUser(max.email, { suspended: true });
+    expect((await useKey(max.key)).status).toBe(401);
+    expect((await memberRow(max.userId)).directory_status).toBe("suspended");
+    const refused = async (label: string) => {
+      expect((await useKey(max.key)).status, label).toBe(401);
+      const me = await call(max.token, "GET", "/auth/me");
+      expect(me.status, label).toBe(403);
+      expect(((await me.json()) as { error: string }).error, label).toBe("directory_inactive");
+      expect((await call(null, "POST", "/auth/login", { email: max.email, password: PASSWORD })).status, label).toBe(403);
+    };
+    // A failed DNS re-check, a re-check job stalled past the freshness window, a claim lapsed after its grace.
+    for (const state of ["failing", "stale", "lapsed"] as const) {
+      await setClaim(org.orgId, state);
+      await makeDue(max.userId, 25);
+      await refused(state);
+    }
+    // The TXT record removed (by anyone with DNS access, a departed admin included), found by a re-check.
+    // The test resolver answers a dns-ok name from the claims themselves, so the claim and its connection
+    // move to a name it answers "doesn't exist" for: the re-check then finds no record.
+    await setClaim(org.orgId, "current");
+    const gone = `gone-${org.domain}`;
+    await getDb().execute(sql`UPDATE claimnet.organization_domains SET domain = ${gone} WHERE organization_id = ${org.orgId}::uuid`);
+    await getDb().execute(sql`UPDATE claimnet.organization_directory_connections SET domain = ${gone}, domain_unicode = ${gone} WHERE organization_id = ${org.orgId}::uuid`);
+    const claimId = ((await getDb().execute(sql`SELECT id FROM claimnet.organization_domains WHERE organization_id = ${org.orgId}::uuid`)) as unknown as Array<{ id: string }>)[0]!.id;
+    expect((await call(org.olive.token, "POST", `/organizations/${org.orgId}/domains/${claimId}/check`)).status).toBe(200);
+    const claim = (await getDb().execute(sql`SELECT failing_since FROM claimnet.organization_domains WHERE id = ${claimId}::uuid`)) as unknown as Array<{ failing_since: string | null }>;
+    expect(claim[0]!.failing_since).not.toBeNull();
+    await refused("txt removed");
   });
 
   it("OB-M2: two similar addresses are each checked under their own key", async () => {

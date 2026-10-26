@@ -39,7 +39,7 @@ describe("the hooks' answers before their streams fill them", () => {
   it("ssoRequired holds for an active member of an organization requiring SSO (stream SSO, filled)", () => {
     const text = dialect.sqlToQuery(ssoRequired()).sql.replace(/\s+/g, " ");
     expect(text).toContain("FROM claimnet.organization_members om JOIN claimnet.organizations o ON o.id = om.organization_id");
-    expect(text).toContain("om.user_id = u.id AND o.require_sso AND NOT ((om.disabled_at IS NOT NULL OR EXISTS (");
+    expect(text).toContain("om.user_id = u.id AND o.require_sso AND NOT ((om.disabled_at IS NOT NULL OR (");
   });
 
   it("sharingPolicyAllows is true (stream Console)", async () => {
@@ -49,11 +49,13 @@ describe("the hooks' answers before their streams fill them", () => {
 
   it("orgMembershipDisabled is the org admin's switch or the Workspace directory's (stream Offboarding, filled)", () => {
     const text = dialect.sqlToQuery(orgMembershipDisabled()).sql.replace(/\s+/g, " ");
-    expect(text.startsWith("(om.disabled_at IS NOT NULL OR EXISTS (")).toBe(true);
-    expect(text).toContain("om.directory_status IN ('suspended', 'archived', 'deleted')");
-    expect(text).toContain("COALESCE(om.directory_checked_at, dc.connected_at) < NOW() - make_interval(hours => $");
-    // Checks run only while the connection's domain claim is current.
+    // A recorded refusal needs only a connection, never a current domain claim (F113).
+    expect(text.startsWith(
+      "(om.disabled_at IS NOT NULL OR (om.directory_status IN ('suspended', 'archived', 'deleted') AND EXISTS ( SELECT 1 FROM claimnet.organization_directory_connections dc WHERE dc.organization_id = om.organization_id )) OR EXISTS (",
+    )).toBe(true);
+    // The stale rule runs only while the connection's domain claim is current.
     expect(text).toContain("FROM claimnet.organization_domains d");
+    expect(text).toContain("COALESCE(om.directory_checked_at, dc.connected_at) < NOW() - make_interval(hours => $");
   });
 
   it("accountIsManaged is an EXISTS over the caller's column, binding nothing", () => {
