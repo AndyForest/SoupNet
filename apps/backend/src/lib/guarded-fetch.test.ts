@@ -13,6 +13,8 @@ describe("isPublicAddress", () => {
     "192.0.0.8", "192.0.2.1", "192.168.1.1", "198.18.0.1", "198.51.100.7", "203.0.113.9", "224.0.0.1", "255.255.255.255",
     "::", "::1", "::ffff:127.0.0.1", "::ffff:10.0.0.1", "::FFFF:169.254.169.254", "64:ff9b::a00:1", "2001:db8::1",
     "2002:a00:1::", "fc00::1", "fd12:3456::1", "fe80::1", "ff02::1", "not-an-ip", "",
+    // F125: IPv4-compatible, IPv4-translated, site-local.
+    "::7f00:1", "::808:808", "::ffff:0:7f00:1", "::ffff:0:a9fe:a9fe", "fec0::1", "feff::1",
   ])("refuses %s", (address) => {
     expect(isPublicAddress(address)).toBe(false);
   });
@@ -180,6 +182,9 @@ describe("checkFileUrl", () => {
     ["http://[0:0:0:0:0:0:0:1]/a.png", "non-public address"],
     ["http://[::ffff:127.0.0.1]/a.png", "non-public address"],
     ["http://[::ffff:a9fe:a9fe]/latest/meta-data", "non-public address"],
+    ["http://[::127.0.0.1]/a.png", "non-public address"],
+    ["http://[::ffff:0:7f00:1]/a.png", "non-public address"],
+    ["http://[fec0::1]/a.png", "non-public address"],
     ["http://169.254.169.254/latest/meta-data", "non-public address"],
     ["http://10.0.0.5:3101/health", "non-public address"],
     ["http://localhost/a.png", "non-public address"],
