@@ -28,7 +28,7 @@ import { sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import { TRIAGE_WEIGHTS, UNRATED_TRIAGE_WEIGHT } from "@soupnet/domain";
 import type { ParsedSearchQuery, RatingSelector } from "@soupnet/domain";
-import { draftAwaitingReviewBy } from "../authz";
+import { draftLiveAwaitingReviewBy, draftExpiredAwaitingReviewBy } from "../authz";
 import type { TraceSelection } from "./vector-search.service";
 
 type Alias = "t" | "tr";
@@ -61,15 +61,20 @@ export function ratingSelection(column: RatingColumn, selector: RatingSelector):
 }
 
 /**
- * `is:draft`: the viewer's own unresolved drafts, through the module's one
- * expression of that set (authz/draft-sql.ts). `-is:draft`: everything else;
- * `IS NOT TRUE` keeps rows whose draft state is null (the fragment is NULL,
- * not FALSE, for them).
+ * `is:draft`: the viewer's own unresolved drafts that are still live, through
+ * the module's one expression of that set (authz/draft-sql.ts; slice 10 left
+ * expired ones out). `-is:draft`: everything else; `IS NOT TRUE` keeps rows
+ * whose draft state is null (the fragment is NULL, not FALSE, for them).
  */
 export function draftSelection(isDraft: boolean, viewerUserId: string): TraceSelection {
   return (alias) => (isDraft
-    ? draftAwaitingReviewBy(alias, viewerUserId)
-    : sql`(${draftAwaitingReviewBy(alias, viewerUserId)}) IS NOT TRUE`);
+    ? draftLiveAwaitingReviewBy(alias, viewerUserId)
+    : sql`(${draftLiveAwaitingReviewBy(alias, viewerUserId)}) IS NOT TRUE`);
+}
+
+/** `is:expired` (slice 10, S10-X3): the viewer's unresolved drafts whose task went quiet. */
+export function expiredSelection(viewerUserId: string): TraceSelection {
+  return (alias) => draftExpiredAwaitingReviewBy(alias, viewerUserId);
 }
 
 /**
@@ -90,7 +95,8 @@ export function intentSelection(ownIntentId: string | null): TraceSelection {
  */
 export function searchSelections(parsed: ParsedSearchQuery, viewerUserId: string, intentOwned = false): TraceSelection[] {
   const out: TraceSelection[] = [];
-  if (parsed.isDraft !== undefined) out.push(draftSelection(parsed.isDraft, viewerUserId));
+  if (parsed.isExpired) out.push(expiredSelection(viewerUserId));
+  else if (parsed.isDraft !== undefined) out.push(draftSelection(parsed.isDraft, viewerUserId));
   if (parsed.impact) out.push(ratingSelection("impact", parsed.impact));
   if (parsed.uncertainty) out.push(ratingSelection("uncertainty", parsed.uncertainty));
   if (parsed.intent !== undefined) out.push(intentSelection(intentOwned ? parsed.intent : null));

@@ -27,11 +27,105 @@ Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-
 
 | Measure | Before | After | Cap |
 |---|---|---|---|
-| Thin briefing, fixed fixture | 20,993 characters | 21,043 | 21,000 → 21,050 |
-| Thin headless briefing, same fixture | 21,393 characters | 21,443 | 21,500 |
+| Thin briefing, fixed fixture | 22,795 characters | 22,845 | 22,800 → 22,850 |
+| Thin headless briefing, same fixture | 23,195 characters | 23,245 | 23,200 → 23,250 |
 | Remote and stdio `tools/list` | unchanged | unchanged | |
 
-The fixture was updated to the shape the loader now produces: the caller in each roster, and a pending count on the book it owns. Before is `main` with C1 (#138) merged; this slice merged after it. On its own branch, before C1, the same lines measured 18,183 → 18,233. The thin cap moves by the measured growth, with a dated comment at the assertion, rather than trimming copy (plan: "the cap raise is coordination, not permission").
+The fixture was updated to the shape the loader now produces: the caller in each roster, and a pending count on the book it owns. Before is `main` with C1 (#138), C2 (#146) and slice 10 (#144) merged; this slice merges after them. Earlier measures of the same lines: 18,183 → 18,233 before C1, and 20,993 → 21,043 after it (when this branch had moved the thin cap 21,000 → 21,050, a move C2's raise replaced). Both caps move by the measured growth, with a dated comment at each assertion, rather than trimming copy (plan: "the cap raise is coordination, not permission").
+
+## 2026-10-25 — Drafts-and-triage slice 10: drafts as a bus (the dispatch line, expired drafts, and how a resolved draft was resolved)
+
+Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-and-triage-slices-6-7-revision.md) §A proposed slice 10 (ruled 2026-10-25, recipe `053c9b97`). Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 10 rubric.
+
+### Edits
+
+1. **The dispatch line, new, in check and search responses** (`openQuestionLine`, rendered after the exemplars on both MCP servers and the web check page): "Open question near this call: <id> (<story>, asked <date>). If your context settles it, resolve it; otherwise leave it." The wording is the ruling's. The story appears only when the draft's intent is the caller's own, so before slice 6a it never does.
+2. **The books block's Drafts line** (`renderBookStatsLine`): it now counts live drafts only, with its wording unchanged. When drafts expired in the last 7 days it adds "; M expired unanswered in the last 7 days (search is:expired)", or reads "Drafts: none awaiting review; M expired unanswered in the last 7 days (search is:expired)".
+3. **Draft labels on agent surfaces** (`draftLabel`): an expired draft reads "[expired draft: its task has been quiet for over 24 hours, so it has left the review queue and results; it can still be verified or rejected by id]" (or "it was deposited with no intent over 7 days ago"); for the depositor of a draft about a colleague it ends "only they can still verify or reject it". For the draft's subject, a resolved draft's label says how and when: "[rejected draft: rejected by your user's agent "K2" on 2026-10-25; its evidence says why]", "[draft not chosen: marked not chosen by the agent that deposited it on …]", "[verified draft: verified by your user on …]". A verified draft had no label before; it now has one for its subject only.
+4. **The search grammar's refusals** (`parseSearchQuery`): the qualifier list names `is:expired`; an unknown `is:` value names both values ("is:expired the ones that expired unanswered"); `-is:expired` and `is:expired -is:draft` are refused with a sentence each.
+5. **`is:expired` in reference copy:** the web `/check` page's search help and the `filter` field's description in the published recipe schema (`packages/contracts/src/recipe.ts`) name it beside `is:draft`. Neither is a tool or parameter description.
+6. **`search_recipes` query description** (`MCP_PARAM_DESCRIPTIONS.searchQuery`, both MCP servers), after the rebase onto slice 6a: "is:draft (your open drafts)" becomes "is:draft (open drafts), is:expired" (406 → 413 characters of the 420 per-description limit). Dropping "your" pays for most of it; `is:expired` names what it lists.
+7. **The briefing's "## Drafts" section** (C2's text, after C2 merged): one sentence before "With sub-agents, work live:", "A draft is a question on a bus: it stays live while your intent is in use, and expires once your task goes quiet." Stream C handed it to this slice (2026-10-25), since it describes behaviour this slice ships. It keeps clear of the words C2's voice test refuses in that section. Thin briefing 22,681 → 22,795 characters (cap 22,800, C2's); headless 23,081 → 23,195 (cap 23,200). No cap moved; 5 characters remain on each, which stream D's Members lines (8b item 3) will need a dated raise for.
+
+### Scenarios intended to move
+
+- **Product spec** ([../product-specs/drafts-and-triage.feature](../product-specs/drafts-and-triage.feature)): DT-BUS-01 to DT-BUS-11 (`@slice-10`), added in this PR. DT-BUS-02 and 03 are `@unreleased` until slice 6a's intent link.
+- **Briefing spec** ([checking-behavior.feature](checking-behavior.feature)): new scenario "A draft lives while its task does, and an open question named near a call is answered when the agent's context settles it", for edit 7 and the dispatch line.
+
+### Scenarios watched, with rationale for holding
+
+- **DT-VIS-09 and the books-block tests:** the Drafts line keeps its exact wording when no draft has expired, so every existing fixture is byte-identical.
+- **Every other tool and parameter description:** unchanged. `searchQuery` (edit 6) is the only one this slice touches.
+- **C1 and C2's briefing scenarios:** the Drafts section grows by one sentence and nothing else in the briefing changes; C2's voice test over that section and the thin and headless size tests pass.
+- **Check and search responses with no live draft nearby:** byte-identical, since the line is added only when a draft qualifies.
+
+### Measured
+
+Before is `main` at `c21f421` (slices 6c, 8a and 6a merged; the figures slice 6a recorded as its after), after is this branch. Measured with the slice 1 method (initialize then tools/list over the SDK's in-memory transport, the reply's `result` as minified UTF-8 JSON).
+
+| Measure | Before | After | Cap |
+|---|---|---|---|
+| Remote `tools/list` | 17,642 bytes | 17,649 | 18,200 |
+| Stdio `tools/list` | 14,145 bytes | 14,152 | 14,700 |
+| Shared descriptions | 6,386 characters | 6,393 | 6,600 |
+| `searchQuery` | 406 characters | 413 | 420 per description |
+
+## 2026-10-25 — Drafts-and-triage slice 7, PR C2: what Soup.net is, evidence standards, the over-caution example, unknown parameter names, on-behalf drafts, and the 7b tool, notice and web copy
+
+Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-and-triage-slices-6-7-revision.md) §7f (ruled 2026-10-25, on `main` at `e77f657`) and build log question 57 (ruled 2026-10-24). Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 7 rubric, "C2: the briefing body". Agent `c-briefing-75-c2-2026-10-25`, intent `int_gxl5ZMTtpO9RG0cvgsKXw5lJ`; placement checked as recipe `80b2fbb5` (`soupnet-oss`).
+
+C2 has two parts. Edits 1 to 7 change only `BRIEFING.build`. Edits 8 to 12 are the 7b tool, notice, and web copy (S7-B1 to S7-B5). They were written after the rebase onto `main` with A1 (#137) and D (#139) merged; none of them names B's `intent:` term, so they don't wait for B. Stacked on C1, so C2 inherits C1's merge order (after B and E, then C1); S7-B7 depends on #139, which is merged.
+
+### Edits and the scenarios they move
+
+1. **The opening, reframed (7f, S7-B8), both profiles.** A new first paragraph: "Soup.net is the log of calls people and their agents made, with the reasons and the evidence. Read it as context for your next call: when nothing new is on the table, a past call usually stands; when something is, decide, and log your call beside the old one with its own reason. It's also how sessions reach each other: a draft asks a question another agent or a person can answer, an intent groups a task's checks, and feedback says what happened afterwards. It's not a source of truth and not a rulebook." 7f's text in the briefing's second person; "the person" became "a person". The existing opening paragraph follows unchanged, so persistence, the append-only side effect, check freely, no dry run, and search for lookups all stay.
+   → Moves: `briefing-surfaces.feature` new "A briefed agent reads the corpus as context for its next call, not as rules".
+2. **Evidence standards, in Recipe format (7f, S7-B9), both profiles.** After the structure sentence: what evidence rests on, so a reader who wasn't there can check it (a person's words, quoted, with where; a recipe that quotes them, by id; a document they approved; their code or artifacts; your inference, named as inference); an inference you'd act on is a check; a draft is a hypothesis you wouldn't act on without the answer; "The seam is your confidence to act, not the kind of evidence and not whether a person has spoken". 7f's paragraph verbatim apart from voice and "a person"; its closing display-consequence sentence and the parenthetical about the rejected stronger form are design notes, not briefing copy, and stay in the revision doc. Placed in Recipe format beside the existing evidence sentence, rather than in Drafts, because its subject is evidence for every recipe and only its last two sentences are about drafts (recipe `80b2fbb5`).
+   → Moves: `evidence-integrity.feature` new "An inference the agent would act on is checked, and named as inferred" and "A draft carries what its claim rests on, not a bare question".
+3. **The over-caution example, in Drafts (S7-B6, carried from C1).** "An orchestrator once refused to verify drafts its own context settled, because the tool copy spoke of a person confirming. The goal is that a person's agent resolves what it can stand behind, and a person sees only what no agent could." The text kept in `expanded/slice-7.md` chunk `slice7.over-caution-example`, verbatim.
+   → Moves: `checking-behavior.feature` new "An orchestrator resolves the drafts its own context settles".
+4. **On-behalf drafts, in Drafts (S7-B10; the C1 delta verifier's note 5).** "In a shared book the call may be a colleague's; a draft on their behalf is resolved by their agents." The shared-book sentence from chunk `slice7.drafts`, without its closing "not by you". It corrects "you included", which was untrue for a draft deposited on a colleague's behalf; the server already refused that case (`only_subject_reviews`).
+   → Watched: `checking-behavior.feature` "A briefed agent records a colleague's judgment as a draft on their behalf…" holds: it hands over the colleague's review link and does not call the draft verified, which this sentence now says in the body too.
+5. **Unknown parameter names, in How to check (S7-B7, stream D's audit).** "An MCP tool refuses a parameter name it doesn't take, and the refusal names the ones it does." Describes 8a's refusal (#139), so an unattended reader does not take its first refusal for an outage. It says "MCP tool" because 8a's guard wraps the two MCP transports only; the web `/check` page doesn't refuse an unknown name, and the full profile serves this sentence too (changed on review, 2026-10-25, +5 characters).
+   → Moves: `checking-behavior.feature` new "A refused parameter name is corrected, not read as an outage".
+6. **Why it's a draft, in Drafts (S7-B11; the operator's 7f addition, his local revision commit `3960743`).** "otherwise draft it, say in the first evidence entry what would settle it" becomes "…say in the first evidence entry why it's a draft rather than a check and what would settle it". The record wants to know how much access to the person's attention the depositing agent had; that reasoning and the key's capability level already carry it, so no marker. It pairs with edit 2's "your inference …, named as inference". `HEADLESS_KEY_SECTION` is unchanged (398 of 400 characters; it points at Drafts).
+   → Moves: `checking-behavior.feature` "An agent drafts only a call it cannot stand behind…": its first-entry Then now reads "says why it is a draft rather than a check, and what would settle it". Its "does not give a person's absence as the reason" Then holds: the reason asked for is the agent's confidence to act, per edit 2's seam.
+7. **Caps (S7-Z3).** Thin 21,000 → 22,800 and thin headless 21,500 → 23,200, dated in the assertions. Question 57's ruled figures (21,400 and 21,900) were sized to edits 3 and 5 alone; 7f, ruled the day after, came under "the dated thin-cap raise already ruled", and this commit sizes both into it. Headless section (400), `tools/list`, and shared-description caps are unchanged.
+
+8. **The `draft` parameter (7b, S7-B1), both MCP servers.** "True: a draft, for a high-impact, uncertain call the person can't be asked about now; say why in the first evidence entry. Private to them and their agents until verified." becomes "True: a draft, for a high-impact, uncertain call you can't settle yet from the context you hold; say in the first evidence entry why it's a draft and what would settle it. Private to them and their agents until verified." 7b's clause, plus edit 6's first-entry ask so the parameter and the body agree. 171 → 220 characters.
+   → Watched: `checking-behavior.feature` "An agent drafts only a call it cannot stand behind…" (C1's rewrite) holds and is now matched by the schema.
+9. **The self-draft deposit notice (7b, S7-B2), `verifyHow` in `drafts.ts`.** "To publish it, ask the person and call verify_draft with their answer quoted and cited (or they confirm it in their review queue: <url>)." becomes "Resolve it with verify_draft when you or another agent acting for the person can settle it, or hand them their review queue: <url>." The variant without a link ends "…or they confirm it with still true on the recipe's page." It says "the person" because a self draft is about exactly one person, the caller's (recipe `5d3ddfc7`'s "a person" is for copy that names whose answer settles a call in a shared book). "Quoted and cited" leaves the notice: `verify_draft`'s description and refusal carry the evidence rule. The on-behalf and headless notices are unchanged; they never named `verify_draft`. With the fixture URL, 200 → 194 characters; without a link, 145 → 148. The S3-Z3 and S5-Z4 bounds hold.
+   → Watched: `checking-behavior.feature` "An agent that deposited drafts hands its person the queue link rather than listing ids" holds: the link is still the notice's last clause.
+10. **The queue intro and the dashboard card (7b, S7-B3).** "…because they could not ask you" (and "…them") becomes ": calls they couldn't yet settle from the context they held" in both intro variants and the dashboard card, whose line moves into `draft-queue.ts` as `DRAFTS_CARD_TEXT` so a unit test covers it. Every other sentence is kept. The card says "Hypotheses agents parked…", not "your agents": browser verification found the card said "your agents" when Pat's only draft came from Dana's agent on his behalf, while the queue's intro for the same draft correctly said "Agents". The card has only a count, so it can't switch the way the intro does. That mismatch predates C2, because the card was a fixed string before too.
+    → Moves: `drafts-and-triage.feature` DT-QUE-05, "The queue shows why the agent couldn't ask", becomes "The queue shows why each draft is a draft and what would settle it"; its Given now reads "says why it is a draft rather than a check and what would settle it".
+11. **The `/check` page's draft box (S7-B4, found in browser verification).** "Deposit as a draft — the person could not be asked; only they and their agents see it until they verify it" becomes "Deposit as a draft — a high-impact, uncertain call you can't settle yet from the context you hold; only they and their agents see it until it's verified", which matches edit 8. The headless key's forced box is unchanged.
+12. **No surface says drafting is for when the person can't be asked (S7-B4).** C1's S7-A5 test now also covers every MCP tool and parameter description (with "once they confirm it", the old `verify_draft` wording that A1 replaced), every deposit-notice variant (self, repeat, with a link, headless, on-behalf), both web strings, and the `/check` form.
+
+Nothing was trimmed to fit, so `expanded/` gains no entry.
+
+### Scenarios watched, with rationale for holding
+
+- **`checking-behavior.feature` "Checks happen autonomously, without permission-seeking"**: the evidence paragraph moves the check/draft seam toward checking ("a claim with none of their words isn't thereby a draft"), and the opening adds no cost to checking.
+- **`checking-behavior.feature` "An agent drafts only a call it cannot stand behind…"**: the evidence paragraph's seam (confidence to act) is the same as the Drafts section's ("a hypothesis you can't yet stand behind from the context you hold"), and its order of moves is unchanged.
+- **`checking-behavior.feature` "A returned recipe is weighed as a call made in its own context…"**: the opening states the same point at the top; Reading results is unchanged.
+- **`evidence-integrity.feature` existing scenarios**: verbatim quotes, specific citations, and "no supportable evidence means no check" all hold; the new paragraph lists kinds of evidence and changes no quoting rule.
+- **`briefing-surfaces.feature` profile scenarios**: every addition is in the shared body; the thin profile still drops exactly the sections it dropped.
+- Suite re-run: the agent-run harness is not yet wired; the `.feature` files remain the manual checklist.
+
+### Measured
+
+Fixture from `recipe-guide-content.test.ts`.
+
+| Measure | Before (C1, `35b0d03`) | After | Cap |
+|---|---|---|---|
+| Thin briefing fixture | 20,993 characters (21,106 bytes) | 22,681 (22,794 bytes), +1,688 | 21,000 → 22,800 |
+| Thin headless fixture | 21,393 | 23,081 | 21,500 → 23,200 |
+| Headless section | 398 | 398 | 400 (unchanged) |
+| Full briefing fixture | 27,271 | 28,959, +1,688 | none |
+| Remote `tools/list` (bytes) | 17,642 (`main` at `68b14c2`, with 6a) | 17,691, +49 | 18,200 (unchanged) |
+| Stdio `tools/list` (bytes) | 14,145 | 14,194, +49 | 14,700 (unchanged) |
+| Shared descriptions (characters) | 6,386 | 6,435, +49 | 6,600 (unchanged) |
+| Self-draft notice, new draft, fixture URL | the `verifyHow` clause 200 | 194, −6 | S3-Z3, S5-Z4 bounds |
 
 ## 2026-10-24 — Drafts-and-triage slice 7, PR C1: the Drafts section, the planned slice 7 copy, eight field additions, and the exemplar slimming lever
 

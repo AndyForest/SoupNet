@@ -279,7 +279,7 @@ describe("parseSearchQuery — unknown qualifiers (loud rejection)", () => {
   it("rejects unknown qualifier-shaped tokens naming the valid set", () => {
     const e = errorOf("athor:jane@x.com");
     expect(e).toMatch(/unknown qualifier "athor:"/);
-    expect(e).toMatch(/author:, after:, before:, is:draft, intent: \(an int_… id\), impact: and uncertainty:/);
+    expect(e).toMatch(/author:, after:, before:, is:draft, is:expired, intent: \(an int_… id\), impact: and uncertainty:/);
   });
 
   it("suggests quoting for colon-bearing text", () => {
@@ -362,6 +362,40 @@ describe("parseSearchQuery — is:draft (S3-G1, S3-G2)", () => {
 
   it("words that merely start with is stay semantic text", () => {
     expect(parsed("issue isolation -isolate").semanticText).toBe("issue isolation -isolate");
+  });
+});
+
+// Slice 10 (S10-X3): is:expired, the drafts whose task went quiet.
+describe("parseSearchQuery — is:expired (S10-X3)", () => {
+  it("selects the viewer's expired drafts, case-insensitively, with or without text", () => {
+    expect(parsed("is:expired").isExpired).toBe(true);
+    expect(parsed("IS:Expired").isExpired).toBe(true);
+    expect(parsed("is:expired cache").semanticText).toBe("cache");
+    expect(parsed("is:expired impact:high").impact).toEqual({ equals: "high", excluded: [] });
+  });
+
+  it("is:draft is:expired reads as is:expired, in either order", () => {
+    for (const q of ["is:draft is:expired", "is:expired is:draft"]) {
+      const r = parsed(q);
+      expect(r.isExpired, q).toBe(true);
+      expect(r.isDraft, q).toBeUndefined();
+    }
+  });
+
+  it("-is:expired, and is:expired with -is:draft, are refused", () => {
+    expect(errorOf("-is:expired")).toMatch(/no effect/);
+    expect(errorOf("is:expired -is:draft")).toMatch(/contradict/);
+    expect(errorOf("-is:draft is:expired")).toMatch(/contradict/);
+  });
+
+  it("an unknown is: value names both values", () => {
+    const e = errorOf("is:stale");
+    expect(e).toMatch(/is:draft/);
+    expect(e).toMatch(/is:expired/);
+  });
+
+  it("is:draft alone carries no isExpired", () => {
+    expect(parsed("is:draft").isExpired).toBeUndefined();
   });
 });
 

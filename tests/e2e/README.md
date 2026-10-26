@@ -16,6 +16,8 @@ Watch a run: `E2E_SLOWMO=500 npx playwright test smoke --headed --project=deskto
 
 Other hosts: `E2E_FRONTEND_URL` and `E2E_BACKEND_URL`. For example, `E2E_FRONTEND_URL=http://localhost:5274` verifies a frontend served from another worktree.
 
+A worktree stack (its own backend port and a throwaway database) needs `DISABLE_RATE_LIMIT=true` and `ALLOW_AUTO_SETUP=true` on the backend, as the dev compose stack sets them: `seedUser` registers and logs in several accounts per test, and the auth rate limit allows five per address per 15 minutes. Start its frontend from `apps/frontend` with `VITE_API_BASE=<backend URL> npx vite --port <n> --strictPort --host 127.0.0.1`; `npm run dev:frontend -- --port <n>` does not pass the port through to Vite.
+
 Passing `--reporter=list` (or any `--reporter`) replaces the configured reporters, so no HTML report is written. To keep it, use `--reporter=list,html`.
 
 Every run empties its output folder and rewrites its report. When two verifiers share the stack, give each run its own with `E2E_RUN=<name>`: it writes `test-results/<name>` and `playwright-report-<name>`. Open one with `npx playwright show-report playwright-report-<name>`.
@@ -24,7 +26,7 @@ If a run fails oddly, run `npx playwright test smoke` first. It proves a seeded 
 
 ## Conventions
 
-- One spec per pull request, `pr-<n>.spec.ts`, with one `test` per expectation ID from the expectations file and a `test.step` per user step.
+- One spec per pull request, `pr-<n>.spec.ts`, with one `test` per expectation ID from the expectations file and a `test.step` per user step. A spec kept as a regression test takes its feature family's name instead (`drafts-slice10.spec.ts`), so the kept specs of one feature sit together.
 - Every assertion message states the expected behaviour in words: `expect(link, "the error should link to Recipe Books").toBeVisible()`.
 - Screenshots go through `shot(page, testInfo, "<fixed name>")` from `helpers/evidence.ts`, using the names the expectations file fixed, so the report and the results file refer to the same image.
 - Accounts come from `seedUser(request, "<label>")` in `helpers/accounts.ts`, fresh per test. Sign in with `signIn(page, user, path)`. The real login form is only for specs about login itself.

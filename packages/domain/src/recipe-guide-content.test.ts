@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { BRIEFING, BRIEFING_KEY_PLACEHOLDER, HEADLESS_KEY_SECTION, buildCorpusContextSection, buildExemplarsSection, renderRecipeBooks } from "./recipe-guide-content";
+import { BRIEFING, BRIEFING_KEY_PLACEHOLDER, HEADLESS_KEY_SECTION, MCP_PARAM_DESCRIPTIONS, MCP_TOOL_DESCRIPTIONS, buildCorpusContextSection, buildExemplarsSection, renderRecipeBooks } from "./recipe-guide-content";
 import type { BriefingBuildInput, BriefingExemplar, BriefingGroup } from "./recipe-guide-content";
 
 /**
@@ -263,12 +263,19 @@ describe("BRIEFING.build — surface profiles (cold-start v2 Phase B)", () => {
     // a search, thin results) land with one slimming lever (recipe aae000d2)
     // in the same PR, so the net growth is well under this ceiling; measured
     // 18,183 before. Re-tightened to the measured figure after slice 7 ships.
-    // 21,000 → 21,050 (2026-10-25, drafts-and-triage slice 8b item 3): every
+    // 21,000 → 22,800 (2026-10-25, drafts-and-triage slice 7, PR C2): the
+    // over-caution example and the unknown-parameter clause carried from C1
+    // (build log question 57, ruled 2026-10-24), the operator's 7f opening
+    // (what Soup.net is) and evidence-standards paragraph (ruled 2026-10-25),
+    // and the on-behalf sentence the C1 verifier asked back; measured 20,993
+    // before and 22,681 after. Re-tightened with the others after 8b and 6b.
+    // 22,800 → 22,850 (2026-10-25, drafts-and-triage slice 8b item 3): every
     // book's roster now names the caller, a solo book included, and an owned
-    // book carries its pending invites (recipe 173384b3). The fixture grew by
-    // the 50 characters those lines cost, after C1 had left 7 under the cap;
-    // measured 21,043. Raised by the measured growth, not trimmed copy.
-    expect(mcpText.length).toBeLessThanOrEqual(21_050);
+    // book carries its pending invites (recipe 173384b3). Merged after C2 and
+    // slice 10 left 5 under the cap; the fixture grew by the 50
+    // characters those lines cost, measured 22,845. Raised by the
+    // measured growth, not trimmed copy.
+    expect(mcpText.length).toBeLessThanOrEqual(22_850);
     expect(mcpText.length).toBeLessThan(fullText.length);
   });
 
@@ -327,6 +334,20 @@ describe("BRIEFING.build — surface profiles (cold-start v2 Phase B)", () => {
     const text = BRIEFING.build(thinInput({ groups: statGroups }));
     expect(text).not.toContain("    Index: ");
     expect(text).toContain("    Drafts: 1 unverified draft about your user awaits their review");
+  });
+
+  it("S10-K1: expired drafts add a clause, or a line of their own when none are live", () => {
+    const line = (stats: Partial<BriefingGroup["stats"]>) =>
+      BRIEFING.build(thinInput({ groups: [{ ...groups[0]!, stats: { recipeCount: 1, authorCount: 1, ...stats } }] }))
+        .split("\n").find((l) => l.startsWith("    Drafts: "));
+    expect(line({ ownDraftsAwaitingReview: 2, ownDraftsExpiredRecently: 3 })).toBe(
+      "    Drafts: 2 unverified drafts about your user await their review (only they and their agents see them); 3 expired unanswered in the last 7 days (search is:expired)",
+    );
+    expect(line({ ownDraftsExpiredRecently: 1 })).toBe("    Drafts: none awaiting review; 1 expired unanswered in the last 7 days (search is:expired)");
+    expect(line({ ownDraftsAwaitingReview: 1, ownDraftsExpiredRecently: 0 })).toBe(
+      "    Drafts: 1 unverified draft about your user awaits their review (only they and their agents see it)",
+    );
+    expect(line({})).toBeUndefined();
   });
 });
 
@@ -440,7 +461,11 @@ describe("BRIEFING.build — the headless key section (drafts-and-triage slice 5
 
   it("holds the thin headless briefing at most 21,500 characters (fixed fixture)", () => {
     // 18,600 → 21,500 (2026-10-24, PR A0): moves with the thin ceiling above.
-    expect(BRIEFING.build({ ...thinInput(), headless: true }).length).toBeLessThanOrEqual(21_500);
+    // 21,500 → 23,200 (2026-10-25, slice 7 PR C2): moves with it again;
+    // measured 21,393 before and 23,081 after.
+    // 23,200 → 23,250 (2026-10-25, slice 8b item 3): moves with it again for
+    // the membership lines; measured 23,195 before and 23,245 after.
+    expect(BRIEFING.build({ ...thinInput(), headless: true }).length).toBeLessThanOrEqual(23_250);
   });
 });
 
@@ -477,7 +502,7 @@ describe("BRIEFING.build — slice 7: when to draft (7a)", () => {
       expect(drafts).toContain("if you'll act on it, check it as an ordinary recipe and own it");
       expect(drafts).toContain("if it's a person's call and they're reachable, ask plainly with your recommendation and its reasoning, and if you keep working meanwhile");
       expect(drafts).toContain("draft that recommendation under your intent so their answer reaches you wherever it's given");
-      expect(drafts).toContain("say in the first evidence entry what would settle it, rate it, and return when that lands");
+      expect(drafts).toContain("say in the first evidence entry why it's a draft rather than a check and what would settle it, rate it, and return when that lands");
       // S7-A3: a draft is yours to resolve; whoever holds the settling context
       // resolves under the confidence rule; a click only for what no agent settles.
       expect(drafts).toContain("A draft is yours to resolve");
@@ -494,6 +519,21 @@ describe("BRIEFING.build — slice 7: when to draft (7a)", () => {
       expect(text).not.toMatch(/can(?:'|no)t be asked|couldn't be asked|could not be asked|cannot ask/);
     });
   }
+});
+
+describe("tool copy — slice 7 C2: drafting is not for when the person can't be asked (7b)", () => {
+  it("S7-B1: the draft parameter names a call you can't settle yet, and asks why it's a draft and what would settle it", () => {
+    expect(MCP_PARAM_DESCRIPTIONS.draft).toContain("a high-impact, uncertain call you can't settle yet from the context you hold");
+    expect(MCP_PARAM_DESCRIPTIONS.draft).toContain("say in the first evidence entry why it's a draft and what would settle it");
+    expect(MCP_PARAM_DESCRIPTIONS.draft).toContain("Private to them and their agents until verified.");
+  });
+
+  it("S7-B4: no tool or parameter description says or implies the person can't be asked", () => {
+    for (const text of [...Object.values(MCP_TOOL_DESCRIPTIONS), ...Object.values(MCP_PARAM_DESCRIPTIONS)]) {
+      if (typeof text !== "string") continue;
+      expect(text).not.toMatch(/can(?:'|no)t be asked|couldn't be asked|could not be asked|cannot ask|could not ask|once they confirm it/);
+    }
+  });
 });
 
 describe("BRIEFING.build — slice 7: the planned content (7c)", () => {
@@ -564,6 +604,59 @@ describe("BRIEFING.build — slice 7: the field additions (7d)", () => {
       section(thinHeadless, "## Reading results"),
       when.slice(when.indexOf("- Extending")),
       HEADLESS_KEY_SECTION,
+    ];
+    for (const text of added) {
+      expect(text.length).toBeGreaterThan(0);
+      expect(text).not.toMatch(/\b(must|never|always|do not|don't)\b/i);
+    }
+  });
+});
+
+describe("BRIEFING.build — slice 7 C2: the briefing body (7f, and the rows carried from C1)", () => {
+  const opening = (text: string) => text.slice(text.indexOf("# Soup.net Agent Briefing"), text.indexOf("## Principles"));
+  const reframe = "Soup.net is the log of calls people and their agents made, with the reasons and the evidence.";
+
+  for (const [name, text] of allCompositions()) {
+    it(`${name}: opens with what Soup.net is, ahead of the existing opening (S7-B8)`, () => {
+      const head = opening(text);
+      expect(head).toContain(reframe);
+      expect(head).toContain("when nothing new is on the table, a past call usually stands; when something is, decide, and log your call beside the old one with its own reason");
+      expect(head).toContain("a draft asks a question another agent or a person can answer, an intent groups a task's checks, and feedback says what happened afterwards");
+      expect(head).toContain("It's not a source of truth and not a rulebook.");
+      expect(head.indexOf(reframe)).toBeLessThan(head.indexOf("You already work to understand your user's taste and judgment"));
+      expect(head).toContain("There are no destructive operations. Check freely and often.");
+    });
+
+    it(`${name}: Recipe format says what evidence rests on, and the seam is confidence to act (S7-B9)`, () => {
+      const format = section(text, "## Recipe format");
+      expect(format).toContain("Evidence says what the claim rests on, so a reader who wasn't there can check it");
+      expect(format).toContain("or your inference from the situation, named as inference");
+      expect(format).toContain("an inference you'd act on is a check, and saying it's inferred keeps the record honest");
+      expect(format).toContain("A draft is a hypothesis you wouldn't act on without the answer.");
+      expect(format).toContain("The seam is your confidence to act, not the kind of evidence and not whether a person has spoken");
+      expect(format).toContain("a draft with no evidence is a question that didn't do its work");
+    });
+
+    it(`${name}: Drafts names the over-caution case and who resolves an on-behalf draft (S7-B6, S7-B10)`, () => {
+      const drafts = section(text, "## Drafts");
+      expect(drafts).toContain("An orchestrator once refused to verify drafts its own context settled, because the tool copy spoke of a person confirming.");
+      expect(drafts).toContain("The goal is that a person's agent resolves what it can stand behind, and a person sees only what no agent could.");
+      expect(drafts).toContain("In a shared book the call may be a colleague's; a draft on their behalf is resolved by their agents.");
+    });
+
+    it(`${name}: How to check says an unknown parameter name is refused with the known ones named (S7-B7)`, () => {
+      expect(section(text, "## How to check")).toContain("An MCP tool refuses a parameter name it doesn't take, and the refusal names the ones it does.");
+    });
+  }
+
+  it("the added guidance reads as what is useful, not as rules (S7-V1 over C2's additions)", () => {
+    const thin = BRIEFING.build(thinInput());
+    const format = section(thin, "## Recipe format");
+    const drafts = section(thin, "## Drafts");
+    const added = [
+      opening(thin).slice(0, opening(thin).indexOf("You already work")),
+      format.slice(format.indexOf("Evidence says what"), format.indexOf("**Example")),
+      drafts.slice(drafts.indexOf("In a shared book"), drafts.indexOf("With sub-agents")),
     ];
     for (const text of added) {
       expect(text.length).toBeGreaterThan(0);

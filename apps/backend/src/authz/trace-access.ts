@@ -23,7 +23,7 @@ import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { mayReadTrace, isPublishedDraftState } from "./roles";
 import type { BookRole } from "./roles";
 import { membershipOf } from "./membership-sql";
-import { subjectOf, depositorOf, onBehalfSubjectOf, traceReadableByPerson } from "./draft-sql";
+import { subjectOf, depositorOf, onBehalfSubjectOf, traceReadableByPerson, draftExpiryReason } from "./draft-sql";
 import { bookIdsFor } from "./book-access";
 
 /** The facts about one viewer and one trace. */
@@ -85,6 +85,9 @@ export interface TraceDetail {
    *  subject's email for its depositor. Null everywhere else. */
   draftDepositedBy: string | null;
   draftAbout: string | null;
+  /** Slice 10 (S10-C1): why an unverified draft expired, for the two people
+   *  who see its state; null when it is live, resolved, or not a draft. */
+  draftExpiry: "intent_idle" | "age" | null;
 }
 
 export interface ReadableTrace {
@@ -120,6 +123,7 @@ const DETAIL_COLUMNS: SQL = sql`,
       t.draft_resolved_by_key_id AS "draftResolvedByKeyId",
       ru.email AS "draftResolvedByEmail",
       t.draft_resolved_by_user_id AS "draftResolvedByUserId",
+      ${draftExpiryReason("t")} AS "draftExpiry",
       ${onBehalfSubjectOf("t")} AS "subjectUserId",
       su.email AS "subjectEmail"`;
 
@@ -297,6 +301,11 @@ export async function readableTraceFor(
           draftResolvedByViewer: false,
         }),
       ...onBehalfParties(access, row),
+      // Liveness is the same for both parties (S10-L5), and only they see
+      // an unverified draft's state at all.
+      draftExpiry: (access.isDraftSubject || access.isDraftDepositor) && access.draftState === "unverified"
+        ? (row.draftExpiry ?? null)
+        : null,
     },
   };
 }

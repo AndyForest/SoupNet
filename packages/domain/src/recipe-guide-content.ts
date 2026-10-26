@@ -326,6 +326,10 @@ export interface BriefingBookStats {
    *  one is set only for the person's own agents, on its own line
    *  (DT-VIS-09). */
   ownDraftsAwaitingReview?: number;
+  /** Slice 10 (S10-K1): the same population, expired (its task went quiet)
+   *  within the last 7 days and still unanswered. `ownDraftsAwaitingReview`
+   *  counts live drafts only. */
+  ownDraftsExpiredRecently?: number;
 }
 
 export interface BriefingGroup {
@@ -376,12 +380,19 @@ function renderBookStatsLine(s: BriefingBookStats): string {
   // A book holding only the person's drafts has no published recipe to index.
   if (s.recipeCount > 0) lines.push(`    Index: ${parts.join(" · ")}`);
   const drafts = s.ownDraftsAwaitingReview ?? 0;
+  const expired = s.ownDraftsExpiredRecently ?? 0;
+  // Slice 10: expired drafts left the review queue, so the line says how many
+  // went unanswered and how to list them (S10-K1); silent when there are none.
+  const expiredClause = expired > 0
+    ? `${expired} expired unanswered in the last ${DRAFT_EXPIRED_REPORT_DAYS} days (search is:expired)`
+    : "";
   if (drafts > 0) {
-    lines.push(
-      drafts === 1
-        ? "    Drafts: 1 unverified draft about your user awaits their review (only they and their agents see it)"
-        : `    Drafts: ${drafts} unverified drafts about your user await their review (only they and their agents see them)`,
-    );
+    const live = drafts === 1
+      ? "    Drafts: 1 unverified draft about your user awaits their review (only they and their agents see it)"
+      : `    Drafts: ${drafts} unverified drafts about your user await their review (only they and their agents see them)`;
+    lines.push(expiredClause ? `${live}; ${expiredClause}` : live);
+  } else if (expiredClause) {
+    lines.push(`    Drafts: none awaiting review; ${expiredClause}`);
   }
   return lines.join("\n");
 }
@@ -663,6 +674,8 @@ You may not know your UI's capabilities, but you do know your system identity. U
 The deciding factor is technical URL support, not a presentational choice. This principle ("agents don't know their UI capabilities but do know their system identity, so use identity as a proxy") applies beyond links.`;
 
     const body = `# Soup.net Agent Briefing
+Soup.net is the log of calls people and their agents made, with the reasons and the evidence. Read it as context for your next call: when nothing new is on the table, a past call usually stands; when something is, decide, and log your call beside the old one with its own reason. It's also how sessions reach each other: a draft asks a question another agent or a person can answer, an intent groups a task's checks, and feedback says what happened afterwards. It's not a source of truth and not a rulebook.
+
 You already work to understand your user's taste and judgment — and you lose that understanding every time the session ends. Soup.net makes it persistent: recipe checks are read-only semantic searches with an append-only side effect — your recipe is compared against the corpus, and the trace you leave makes future checks smarter for every agent this user works with. There are no destructive operations. Check freely and often. One honest mechanic: every check submission logs a real trace (there is no dry run), so explore the system itself on the docs pages, and when you only want a lookup, use the read-only search — the \`search_recipes\` tool if you have MCP tools, else the check page's \`filter\` (alias \`f\`) parameter — it returns matches without logging a recipe.${purposeLine}${intentLine}
 
 ## Principles
@@ -673,6 +686,8 @@ ${WORKFLOW_WHEN}
 
 ## Recipe format
 The structure: "As a [role] working on [goal], I [prefer/chose] so that [reason]." Evidence supports the claim — your interpretation of why a source backs the recipe, then a verbatim quote and citation. Inspired by Toulmin (claim, warrant, data) and Design Thinking user stories.
+
+Evidence says what the claim rests on, so a reader who wasn't there can check it: a person's words where they gave them, quoted, with where; a recipe that quotes them, cited by id; a document they approved; their code or artifacts; or your inference from the situation, named as inference. A check is a hypothesis you stand behind: an inference you'd act on is a check, and saying it's inferred keeps the record honest. A draft is a hypothesis you wouldn't act on without the answer. The seam is your confidence to act, not the kind of evidence and not whether a person has spoken: a claim with none of their words isn't thereby a draft, and a draft with no evidence is a question that didn't do its work.
 
 ${FORMAT_EXAMPLE_SURFACING_ASSUMPTION}
 
@@ -691,7 +706,7 @@ ${webSetupSection}
 `}## How to check
 \`check_recipe\` accepts: \`recipe\` (the claim), \`supporting_evidence\` (warrant + data), and \`recipe_book\` (slug). Optional: \`axes\` (concept projection), \`verbosity\` (response detail: low | medium | high, omit for automatic), and reference file attachments (images, PDF, audio, video) — see your tool schema for the exact file-input params. HTTP MCP also accepts an optional \`region.image_box\` with normalized \`{x0, y0, x1, y1}\` coordinates (0-1) to mark a specific area of an attached image — the embedding pipeline crops to that region plus padding, blurs the padding, and weights the marked area heavily; the original image is stored unmodified, so the region treatment can be redone later.
 
-Further optional params live in your tool schema, each doing what its one-line description says: \`session_id\` (returned on every check — pass it back and recipes you've already been shown collapse to id-stubs while results walk to unseen ones), \`known_recipes\` (client-declared ids you still hold — same id-stub rendering, never ranking), \`decided_at\` (backfill the original date of a historical decision), \`response_format\` (markdown report or structured JSON), \`agent_id\` (mint your own id so your checks form a joinable lineage), \`impact\` and \`uncertainty\` (triage ratings, low | medium | high; leave out one you have no view on), and \`feedback\` (close the loop on earlier checks or searches while making this one; each row takes the same fields as \`log_feedback\`).
+Further optional params live in your tool schema, each doing what its one-line description says: \`session_id\` (returned on every check — pass it back and recipes you've already been shown collapse to id-stubs while results walk to unseen ones), \`known_recipes\` (client-declared ids you still hold — same id-stub rendering, never ranking), \`decided_at\` (backfill the original date of a historical decision), \`response_format\` (markdown report or structured JSON), \`agent_id\` (mint your own id so your checks form a joinable lineage), \`impact\` and \`uncertainty\` (triage ratings, low | medium | high; leave out one you have no view on), and \`feedback\` (close the loop on earlier checks or searches while making this one; each row takes the same fields as \`log_feedback\`). An MCP tool refuses a parameter name it doesn't take, and the refusal names the ones it does.
 
 \`intent\` takes your task story or an \`int_…\` id, and each response says how to carry the id. Recipes already delivered to an intent render as id-stubs: rendering only, never ranking. Story text always registers a new intent (identical wording never merges sessions), so if you lose the id, for example to context compaction, re-send the story: the fresh intent starts with no stubs, and recipes render in full again.
 
@@ -739,9 +754,9 @@ ${mcpProfile ? "" : `Web-only agents: present the options as 2-4 divergent click
 If none of your framings fit, ask the user to clarify and form new hypotheses rather than picking the closest miss.
 
 ## Drafts
-A draft (\`draft: true\`) is a hypothesis you can't yet stand behind from the context you hold, private to the person it's about and their agents until resolved. At such a call: if you'll act on it, check it as an ordinary recipe and own it; if it's a person's call and they're reachable, ask plainly with your recommendation and its reasoning, and if you keep working meanwhile, draft that recommendation under your intent so their answer reaches you wherever it's given; otherwise draft it, say in the first evidence entry what would settle it, rate it, and return when that lands.
+A draft (\`draft: true\`) is a hypothesis you can't yet stand behind from the context you hold, private to the person it's about and their agents until resolved. At such a call: if you'll act on it, check it as an ordinary recipe and own it; if it's a person's call and they're reachable, ask plainly with your recommendation and its reasoning, and if you keep working meanwhile, draft that recommendation under your intent so their answer reaches you wherever it's given; otherwise draft it, say in the first evidence entry why it's a draft rather than a check and what would settle it, rate it, and return when that lands.
 
-A draft is yours to resolve: whichever of a person's agents holds the settling context, you included once the work or a reply settles it, resolves it with \`verify_draft\` (verified, rejected, or not chosen) under the same confidence rule as any check, quoting their words wherever they gave them. A draft waits for a person's click only while nothing any agent holds settles it. With sub-agents, work live: they decide as they go and raise only high impact × uncertainty calls; poll \`is:draft intent:<id>\`, correct mid-run, and resolve what you can before finishing.${mcpProfile ? "" : `
+A draft is yours to resolve: whichever of a person's agents holds the settling context, you included once the work or a reply settles it, resolves it with \`verify_draft\` (verified, rejected, or not chosen) under the same confidence rule as any check, quoting their words wherever they gave them. In a shared book the call may be a colleague's; a draft on their behalf is resolved by their agents. A draft waits for a person's click only while nothing any agent holds settles it. An orchestrator once refused to verify drafts its own context settled, because the tool copy spoke of a person confirming. The goal is that a person's agent resolves what it can stand behind, and a person sees only what no agent could. A draft is a question on a bus: it stays live while your intent is in use, and expires once your task goes quiet. With sub-agents, work live: they decide as they go and raise only high impact × uncertainty calls; poll \`is:draft intent:<id>\`, correct mid-run, and resolve what you can before finishing.${mcpProfile ? "" : `
 
 ${linkFormattingSection}
 
@@ -983,6 +998,7 @@ export const MCP_TOOL_DESCRIPTIONS = {
 // asserts each short form still shares its canonical source's load-bearing
 // phrases — an edit to either side that breaks the derivation is a red test,
 // not silent drift.
+import { DRAFT_EXPIRED_REPORT_DAYS } from "./drafts";
 import {
   RECIPE_TEXT_DEFINITION,
   KNOWN_DEFINITION,
@@ -1028,11 +1044,13 @@ export const MCP_PARAM_DESCRIPTIONS = {
    *  (2026-10-24) adds the one term intent: inside the 420-character
    *  per-description limit by trimming words the error messages and the
    *  briefing already carry ("ISO" is in the date error; the PR-review
-   *  filename example is in the briefing's Search vs check). */
+   *  filename example is in the briefing's Search vs check). Slice 10
+   *  (2026-10-26) adds is:expired, a name that says what it lists, inside the
+   *  same limit by dropping "your" before "open drafts". */
   searchQuery:
     "Bare text is one semantic phrase. \"Quoted terms\" match exact substrings of recipe, evidence, " +
     "citations (quote filenames); group with (\"a\" OR \"b\"); -\"term\" excludes. Qualifiers: " +
-    "author: (email, me, anyone), after:/before: (judgment date), is:draft (your open drafts), " +
+    "author: (email, me, anyone), after:/before: (judgment date), is:draft (open drafts), is:expired, " +
     "intent:int_… (your intent's recipes), impact:/uncertainty: (low|medium|high). " +
     "-author:me leaves out your own. Qualifier-only: newest first.",
 
@@ -1129,10 +1147,13 @@ export const MCP_PARAM_DESCRIPTIONS = {
     "it if you have no view.",
 
   /** The draft flag on check_recipe (drafts-and-triage slice 2). The full
-   *  when-to-draft guidance belongs to the briefing body (slice 7). */
+   *  when-to-draft guidance belongs to the briefing body (slice 7). Slice 7
+   *  C2 (7b, S7-B1): "the person can't be asked about now" read as the
+   *  reason to draft; the seam is the agent's confidence to act (7f). */
   draft:
-    "True: a draft, for a high-impact, uncertain call the person can't be asked about now; say why " +
-    "in the first evidence entry. Private to them and their agents until verified.",
+    "True: a draft, for a high-impact, uncertain call you can't settle yet from the context you " +
+    "hold; say in the first evidence entry why it's a draft and what would settle it. Private to " +
+    "them and their agents until verified.",
 
   /** on_behalf_of on check_recipe (drafts-and-triage slice 4, S4-Z1: one
    *  line of at most 90 characters, since the remote tools/list had 147

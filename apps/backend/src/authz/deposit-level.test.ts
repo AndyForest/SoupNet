@@ -25,9 +25,17 @@ function walk(dir: string): string[] {
 const files = walk(backendSrc).map((f) => ({ path: relative(backendSrc, f).split(sep).join("/"), text: readFileSync(f, "utf8") }));
 
 describe("deposit_level is written once, at mint (S5-S2)", () => {
-  it("only authentication and the key service mention the column", () => {
+  it("only authentication, the key service, and the draft liveness rule mention the column", () => {
     const mentioning = files.filter((f) => f.text.includes("deposit_level")).map((f) => f.path).sort();
-    expect(mentioning).toEqual(["authz/key-auth.ts", "services/api-key.service.ts"]);
+    expect(mentioning).toEqual(["authz/draft-sql.ts", "authz/key-auth.ts", "services/api-key.service.ts"]);
+  });
+
+  it("the liveness rule only reads it, fail-closed: anything but 'full' is headless (slice 10, S10-L4)", () => {
+    const rule = files.find((f) => f.path === "authz/draft-sql.ts")!.text;
+    const mentions = rule.match(/[^\n]*deposit_level[^\n]*/g) ?? [];
+    const sqlMentions = mentions.filter((l) => l.includes("lk."));
+    expect(sqlMentions).toHaveLength(1);
+    expect(sqlMentions[0]).toContain("lk.deposit_level IS DISTINCT FROM 'full'");
   });
 
   it("no statement assigns it (no UPDATE … SET deposit_level)", () => {

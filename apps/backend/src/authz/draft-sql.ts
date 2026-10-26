@@ -43,6 +43,7 @@
 
 import { sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
+import { DRAFT_INTENT_IDLE_HOURS, DRAFT_NO_INTENT_LIVE_DAYS, DRAFT_EXPIRED_REPORT_DAYS } from "@soupnet/domain";
 import { inBooks } from "./scope-sql";
 
 /**
@@ -65,8 +66,12 @@ function aliasSql(alias: TraceAlias): SQL {
   return ALIASES[alias];
 }
 
-/** Who a result set is for. */
-export type DraftAudience = { viewerUserId: string } | typeof SHARED_AUDIENCE;
+/**
+ * Who a result set is for. A viewer's result sets hold their own live drafts
+ * (slice 10); `includeExpired` admits their expired ones too, for the one
+ * statement that asks for them by name (`is:expired`, S10-X3).
+ */
+export type DraftAudience = { viewerUserId: string; includeExpired?: boolean | undefined } | typeof SHARED_AUDIENCE;
 
 /** Shared surfaces: published recipes only, for every viewer. */
 export const SHARED_AUDIENCE = Object.freeze({ shared: true as const });
@@ -124,11 +129,17 @@ export function publishedTrace(alias: TraceAlias): SQL {
   return sql`(${a}.draft_state IS NULL OR ${a}.draft_state = 'verified')`;
 }
 
-/** The row belongs in this audience's result sets (see the header). */
+/**
+ * The row belongs in this audience's result sets (see the header). A viewer's
+ * own draft takes part while it is live; once its task goes quiet it leaves
+ * their results the way a resolved draft does (slice 10, recipe f1c99ec8),
+ * unless the statement asked for expired drafts.
+ */
 export function traceVisibleTo(alias: TraceAlias, audience: DraftAudience): SQL {
   if (isShared(audience)) return publishedTrace(alias);
   const a = aliasSql(alias);
-  return sql`(${publishedTrace(alias)} OR (${a}.draft_state = 'unverified' AND ${ownDraft(alias, audience.viewerUserId)}))`;
+  const draftArm = audience.includeExpired ? sql`${a}.draft_state = 'unverified'` : draftLive(alias);
+  return sql`(${publishedTrace(alias)} OR (${draftArm} AND ${ownDraft(alias, audience.viewerUserId)}))`;
 }
 
 /** The row may be read by id by this viewer (see the header). */
@@ -169,6 +180,16 @@ export function draftStateShownTo(alias: TraceAlias, viewerUserId: string): SQL 
 }
 
 /**
+ * The viewer is the person the draft is about. Resolution details (who, when,
+ * which key) are theirs alone (S4-M3, narrowed by ruling 56), so a by-id read
+ * names them only when this holds (slice 10, S10-R1).
+ */
+export function viewerIsDraftSubject(alias: TraceAlias, viewerUserId: string): SQL {
+  const a = aliasSql(alias);
+  return sql`(${a}.draft_state IS NOT NULL AND ${subjectOf(alias)} = ${viewerUserId}::uuid)`;
+}
+
+/**
  * The other party of an unpublished on-behalf draft, as this viewer sees it
  * (slice 4, S4-L1): the depositor's user id when the viewer is its subject,
  * the subject's when the viewer is its depositor, NULL otherwise (a self
@@ -200,6 +221,104 @@ export function onBehalfSideFor(alias: TraceAlias, viewerUserId: string): SQL {
 export function draftAwaitingReviewBy(alias: TraceAlias, personUserId: string): SQL {
   const a = aliasSql(alias);
   return sql`(${a}.draft_state = 'unverified' AND ${subjectOf(alias)} = ${personUserId}::uuid)`;
+}
+
+// ── Liveness (slice 10, "drafts as a bus") ──────────────────────────────────
+
+/**
+ * When the intent a draft was deposited under was last used (slice 6a's link;
+ * any check, search or feedback row carrying the intent touches it), or NULL
+ * when the draft has no intent or its intent row is gone. Joined on the id
+ * alone, for the timestamp: the story never leaves this expression, so
+ * another person's intent is never shown (stream B's contract, 2026-10-25).
+ */
+function intentLastUsed(alias: TraceAlias): SQL {
+  const a = aliasSql(alias);
+  return sql`(SELECT li.last_used_at FROM claimnet.intents li WHERE li.id = ${a}.intent_id)`;
+}
+
+/**
+ * Whether a draft's window is still open, by the database's clock in the
+ * calling statement: under an intent, while that intent was used within the
+ * last day; with no intent, or one whose row is gone, for a week from its
+ * deposit (recipe fd614c86). Using the intent again reopens the window, so a
+ * draft revives with nothing written to it (S10-L1 to S10-L3).
+ */
+function draftWindowOpen(alias: TraceAlias): SQL {
+  const a = aliasSql(alias);
+  return sql`(COALESCE(${intentLastUsed(alias)} > NOW() - make_interval(hours => ${DRAFT_INTENT_IDLE_HOURS}),
+    ${a}.created_at > NOW() - make_interval(days => ${DRAFT_NO_INTENT_LIVE_DAYS})))`;
+}
+
+/** When a draft's window closes: its intent's last use plus a day, or its deposit plus the week. */
+function draftWindowClosesAt(alias: TraceAlias): SQL {
+  const a = aliasSql(alias);
+  return sql`COALESCE(${intentLastUsed(alias)} + make_interval(hours => ${DRAFT_INTENT_IDLE_HOURS}),
+    ${a}.created_at + make_interval(days => ${DRAFT_NO_INTENT_LIVE_DAYS}))`;
+}
+
+/**
+ * The draft was deposited by a headless key (slice 5): its person's queue is
+ * the listener, so it never expires (S10-L4). Read from the key's stored
+ * level, fail-closed the way roles.ts reads it (anything but 'full' is
+ * headless). Keys are hard-deleted, so a draft whose key row is gone is
+ * judged by its window like any other.
+ */
+function depositedHeadless(alias: TraceAlias): SQL {
+  const a = aliasSql(alias);
+  return sql`EXISTS (SELECT 1 FROM claimnet.api_keys lk WHERE lk.id = ${a}.api_key_id AND lk.deposit_level IS DISTINCT FROM 'full')`;
+}
+
+/**
+ * An unverified draft that is still live (slice 10, ruled 2026-10-25, recipe
+ * 053c9b97): deposited by a headless key, or within its window. Computed at
+ * read time and never stored or swept, so a draft revives when its intent is
+ * used again (after 6a). Viewer-independent: both parties of an on-behalf
+ * draft see the same liveness, the depositor's (S10-L5).
+ */
+export function draftLive(alias: TraceAlias): SQL {
+  const a = aliasSql(alias);
+  return sql`(${a}.draft_state = 'unverified' AND (${depositedHeadless(alias)} OR ${draftWindowOpen(alias)}))`;
+}
+
+/**
+ * An unverified draft whose task went quiet: out of the review queue, the
+ * default `is:draft` listing and every result set, listed by `is:expired`,
+ * and still readable and resolvable by id. Expiry deletes nothing (S10-X5).
+ */
+export function draftExpired(alias: TraceAlias): SQL {
+  const a = aliasSql(alias);
+  return sql`(${a}.draft_state = 'unverified' AND NOT (${depositedHeadless(alias)} OR ${draftWindowOpen(alias)}))`;
+}
+
+/** Why an expired draft expired, for its label: its intent went quiet, or its week is up; NULL otherwise. */
+export function draftExpiryReason(alias: TraceAlias): SQL {
+  return sql`(CASE WHEN ${draftExpired(alias)} THEN (CASE WHEN ${intentLastUsed(alias)} IS NOT NULL THEN 'intent_idle' ELSE 'age' END) ELSE NULL END)`;
+}
+
+/**
+ * Why a draft expired, for a viewer who sees its state at all
+ * (`draftStateShownTo`): the dashboard and book list rows (slice 10, after
+ * the browser run). NULL for everyone else, and for live or resolved drafts.
+ */
+export function draftExpiryShownTo(alias: TraceAlias, viewerUserId: string): SQL {
+  return sql`(CASE WHEN ${draftStateShownTo(alias, viewerUserId)} IS NOT NULL THEN ${draftExpiryReason(alias)} ELSE NULL END)`;
+}
+
+/** `draftAwaitingReviewBy`, live: the review queue, its count, and `is:draft` (S10-X1). */
+export function draftLiveAwaitingReviewBy(alias: TraceAlias, personUserId: string): SQL {
+  return sql`(${draftAwaitingReviewBy(alias, personUserId)} AND ${draftLive(alias)})`;
+}
+
+/** `draftAwaitingReviewBy`, expired: `is:expired` and the queue's expired count (S10-X3, S10-K2). */
+export function draftExpiredAwaitingReviewBy(alias: TraceAlias, personUserId: string): SQL {
+  return sql`(${draftAwaitingReviewBy(alias, personUserId)} AND ${draftExpired(alias)})`;
+}
+
+/** Expired, with its window closed within the report span: the books block's "expired unanswered in the last 7 days" (S10-K1). */
+export function draftRecentlyExpiredAwaitingReviewBy(alias: TraceAlias, personUserId: string): SQL {
+  return sql`(${draftExpiredAwaitingReviewBy(alias, personUserId)}
+    AND ${draftWindowClosesAt(alias)} > NOW() - make_interval(days => ${DRAFT_EXPIRED_REPORT_DAYS}))`;
 }
 
 /**

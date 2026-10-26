@@ -456,8 +456,9 @@ Feature: Drafts, triage ratings, and deciding by building both
       Then drafts a and b are listed and nothing indicates that c exists
 
     @DT-QUE-05 @slice-3
-    Scenario: The queue shows why the agent couldn't ask
-      Given a draft whose first evidence interpretation says why Pat couldn't be asked and what would settle it
+    Scenario: The queue shows why each draft is a draft and what would settle it
+      # Reworded in slice 7 C2 (7b, S7-B3) from "why the agent couldn't ask".
+      Given a draft whose first evidence interpretation says why it is a draft rather than a check and what would settle it
       When Pat views the draft in the queue
       Then that interpretation is shown without opening the detail page
 
@@ -736,6 +737,87 @@ Feature: Drafts, triage ratings, and deciding by building both
       And "is:draft intent:<id>" returns exactly those two drafts to Pat's agents
       And Pat's queue lists them together under the intent's story
       And Sam, given the same intent id, finds nothing and cannot tell it from a made-up id
+
+  # ─────────────────────────────────────────────────────────────────────────
+  Rule: A draft is a question on a bus: live while its task is, and named to agents working nearby
+    # Guards: drafts-and-triage-slices-6-7-revision.md §A proposed slice 10
+    # (ruled 2026-10-25, recipe 053c9b97); recipes fd614c86 (the no-intent
+    # window), f1c99ec8 (expired drafts leave results), bff6f47b (the dispatch
+    # lookup). Rubric: build log §Slice 10 rubric (ids S10-*). The 24-hour
+    # intent rule reads slice 6a's intent link (DT-OPT-01's rule above).
+
+    @DT-BUS-01 @slice-10
+    Scenario: A week-old draft with no intent leaves the queue and is:draft, and is:expired lists it
+      Given Pat's agent deposited a draft with no intent eight days ago, and another six days ago
+      Then Pat's review queue and its count list the six-day-old draft and not the other
+      And is:draft lists the six-day-old draft, and is:expired lists the eight-day-old one
+      And the queue says how many more drafts expired unanswered, with a link that lists them
+
+    @DT-BUS-02 @slice-10
+    Scenario: A draft under an intent is live while that intent was used within the last day
+      Given Pat's agent deposited a draft under an intent that was last used 25 hours ago
+      Then the draft is expired, though it is a day old
+      And a draft under an intent used 23 hours ago is live
+      And a draft whose intent no longer exists is judged by its week
+
+    @DT-BUS-03 @slice-10
+    Scenario: Using the intent again revives its drafts
+      Given an expired draft under an intent
+      When an agent searches carrying that intent
+      Then the draft is back in Pat's queue, and nothing was written to it
+
+    @DT-BUS-04 @slice-10
+    Scenario: A headless key's drafts never expire
+      Given Pat's headless key deposited a draft thirty days ago
+      Then the draft is still in Pat's queue
+      And once that key is deleted, the draft is judged by its age and leaves the queue
+
+    @DT-BUS-05 @slice-10
+    Scenario: An on-behalf draft lives on its depositor's clock
+      Given Dana's agent deposited a draft about Pat eight days ago, with no intent
+      Then the draft has left Pat's queue and is listed by is:expired
+      And Pat's and Dana's detail pages both say it is expired
+
+    @DT-BUS-06 @slice-10
+    Scenario: An expired draft leaves its person's results
+      Given Pat's agent deposited a draft
+      Then Pat's agents find it, labelled, in their search results
+      And once it has expired they no longer do, unless they ask with is:expired
+
+    @DT-BUS-07 @slice-10
+    Scenario: is:expired is a qualifier like is:draft
+      When an agent searches is:expired with text or other qualifiers
+      Then only its user's expired drafts are listed, each labelled with why it expired
+      And -is:expired is refused, and an unknown is: value names draft and expired
+
+    @DT-BUS-08 @slice-10
+    Scenario: An expired draft can still be answered by id
+      Given Pat's agent's draft has expired
+      Then it reads by id as before, its label saying it expired and why
+      And it can be rejected by an agent, verified over REST, or rejected with the Wrong reaction, each recorded once
+      And nothing about it was deleted
+
+    @DT-BUS-09 @slice-10
+    Scenario: A check or search near a live draft names it
+      Given Pat's agent deposited a draft
+      When another of Pat's agents checks or searches nearby
+      Then the response adds one line after the exemplars: "Open question near this call: <id> (asked <date>). If your context settles it, resolve it; otherwise leave it."
+      And the same line is on the web check page and in the structured data
+      And a check never names the draft it just deposited
+
+    @DT-BUS-10 @slice-10
+    Scenario: The line is silent where it should be
+      Given Pat's agent deposited a draft
+      Then Sam's search near it carries no line and no trace of it
+      And a headless key's search carries no line, since it cannot resolve a draft
+      And once the draft has expired, no search names it
+
+    @DT-BUS-11 @slice-10
+    Scenario: Reading a resolved draft by id says how and when
+      Given one of Pat's drafts was rejected by his agent "K2", one marked not chosen by the agent that deposited it, and one verified by Pat
+      When Pat's agent reads them by id
+      Then each label says who resolved it and on which date, the verified one included
+      And Dana, reading one she deposited about Pat, sees its state but not who resolved it or when
 
   # ─────────────────────────────────────────────────────────────────────────
   @unreleased

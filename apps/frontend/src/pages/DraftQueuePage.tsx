@@ -20,6 +20,7 @@ import {
   queueIntro,
   queueRatingsText,
   queueTotalText,
+  queueExpiredText,
   stateLabel,
   whyLabel,
 } from "../lib/draft-queue.js";
@@ -28,7 +29,7 @@ import styles from "./DraftQueuePage.module.css";
 
 /**
  * The review queue (drafts-and-triage slice 3): drafts your agents parked
- * about your taste and judgment because they could not ask you, sorted for
+ * about your taste and judgment, calls they couldn't yet settle, sorted for
  * triage, with confirm, reject, and not chosen. `?ids=a,b` (the link an
  * agent hands you) shows exactly those recipes instead. Drafts deposited
  * under one of your declared intents sit together under the intent's story
@@ -37,7 +38,7 @@ import styles from "./DraftQueuePage.module.css";
  * only renders and acts.
  */
 
-interface QueueData { mode: "queue"; items: QueueItem[]; total: number; page: number; perPage: number; totalPages: number; order: string; notice?: string }
+interface QueueData { mode: "queue"; items: QueueItem[]; total: number; page: number; perPage: number; totalPages: number; order: string; notice?: string; expiredTotal?: number; expired?: boolean }
 interface LinkData { mode: "ids"; items: QueueItem[]; notShown: number; truncated: boolean }
 
 class QueryError extends Error {}
@@ -158,7 +159,9 @@ export function DraftQueuePage() {
     }
   }
 
-  const heading = linkMode ? linkHeading(linkQuery.data?.items ?? []) : "Drafts awaiting your review";
+  const heading = linkMode
+    ? linkHeading(linkQuery.data?.items ?? [])
+    : queueQuery.data?.expired ? "Drafts that expired unanswered" : "Drafts awaiting your review";
 
   return (
     <div data-testid="drafts-queue">
@@ -191,7 +194,8 @@ export function DraftQueuePage() {
         <p id="draft-search-hint" className={styles["hint"]}>
           Same syntax as agent search: words search by meaning, <code>"quoted terms"</code> match exactly,
           and <code>impact:</code> / <code>uncertainty:</code> (low, medium, high), <code>after:</code>, or <code>intent:</code> (an
-          intent id) narrow the list. Only your drafts are listed.
+          intent id) narrow the list;{" "}
+          <code>is:expired</code> lists the drafts that expired unanswered. Only your drafts are listed.
         </p>
       )}
       <div role="alert" className={styles["error"]}>{queryError ?? actionError ?? ""}</div>
@@ -211,6 +215,12 @@ export function DraftQueuePage() {
             <p className={styles["hint"]} data-testid="queue-total">
               {q ? `${queueQuery.data.total} matching ${queueQuery.data.total === 1 ? "draft" : "drafts"}.` : queueTotalText(queueQuery.data.total)}
               {queueQuery.data.order === "triage" && queueQuery.data.total > 1 ? " Highest stakes and least certain first." : ""}
+            </p>
+          )}
+          {!linkMode && queueQuery.data && queueExpiredText(queueQuery.data.expiredTotal, queueQuery.data.expired) && (
+            <p className={styles["hint"]} data-testid="queue-expired">
+              {queueExpiredText(queueQuery.data.expiredTotal, queueQuery.data.expired)}{" "}
+              <Link to="/app/drafts" search={{ q: "is:expired" } as never}>Show expired drafts</Link>
             </p>
           )}
 
@@ -289,6 +299,7 @@ export function DraftQueuePage() {
         >
           <p id={`draft-${item.id}`} className={styles["recipe"]}>{item.recipe}</p>
           {stateLabel(item.state) && <p className={styles["state"]}>{stateLabel(item.state)}</p>}
+          {item.expired && <p className={styles["state"]} data-testid="queue-expired-item">Expired unanswered: it has left the queue. You can still answer it.</p>}
           {partyText(item) && <p className={styles["state"]} data-testid="queue-party">{partyText(item)}</p>}
           <p className={styles["meta"]}>
             <span>Recipe book: {item.recipeBook.name}</span>

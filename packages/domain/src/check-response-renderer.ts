@@ -29,7 +29,8 @@
 
 import type { TriageRating } from "@soupnet/contracts";
 import { renderRatingsMarkdown } from "./triage-ratings";
-import { draftLabel } from "./drafts";
+import { draftLabel, openQuestionLine } from "./drafts";
+import type { DraftExpiry, OpenQuestion } from "./drafts";
 
 // ── Response shape (tolerant — both builders' outputs satisfy it) ───────────
 
@@ -82,6 +83,9 @@ export interface CheckResultItem {
    *  named inside the label. */
   draftDepositedBy?: string;
   draftAbout?: string;
+  /** Slice 10 (S10-R3): set on an expired draft, which only an
+   *  `is:expired` search returns; the label says why it expired. */
+  draftExpired?: DraftExpiry;
 }
 
 /** A related-evidence entry IS a Recipe fill (canonical schema): the parent
@@ -169,6 +173,9 @@ export interface CheckResponseData {
   /** The session token in effect for this check (freshly minted when none was
    *  presented). Rendered as a one-line hint so agents adopt it. */
   sessionId?: string;
+  /** Slice 10 (S10-D1): a live draft near this call that the caller may
+   *  read, rendered as one line after the exemplars. Absent otherwise. */
+  openQuestion?: OpenQuestion;
 }
 
 export interface CheckResponseJson {
@@ -247,7 +254,7 @@ function renderResultItem(r: CheckResultItem, index: number, known: boolean): st
   const head = `#${index + 1}${score ? ` (${score})` : ""} ${r.recipeId ?? "?"}`;
   // Drafts (slice 2): the viewer's own unpublished draft, labelled in every
   // appearance; the label is a fact about the recipe, not a judgment.
-  const label = draftLabel(r.draftState, r);
+  const label = draftLabel(r.draftState, { ...r, expired: r.draftExpired });
   const draftTag = label ? ` ${label}` : "";
 
   if (known) {
@@ -367,6 +374,11 @@ export function renderCheckResponseMarkdown(
   results.forEach((r, i) => {
     text += `\n${renderResultItem(r, i, r.known === true || (r.recipeId !== undefined && known.has(r.recipeId)))}`;
   });
+
+  // Slice 10: the dispatch line, after the exemplars and never in their place.
+  if (data.openQuestion) {
+    text += `\n${openQuestionLine(data.openQuestion)}\n`;
+  }
 
   const related = data.relatedEvidence ?? [];
   const relatedKnown = data.relatedEvidenceKnown ?? [];

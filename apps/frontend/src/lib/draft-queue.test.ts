@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  queueExpiredText,
   queueRatingsText,
   actionLabel,
   actionAccessibleName,
@@ -15,6 +16,7 @@ import {
   partyText,
   linkHeading,
   queueIntro,
+  DRAFTS_CARD_TEXT,
   intentRuns,
   intentHeadingText,
   intentFilterQuery,
@@ -171,6 +173,28 @@ describe("the id-list heading is true for whoever opens the link (slice 4 fix pa
   });
 });
 
+describe("the queue intro and the dashboard card say what a draft is (slice 7 C2, 7b, S7-B3, S7-B4)", () => {
+  const variants = [queueIntro([]), queueIntro([{ about: "pat@test.local" }]), DRAFTS_CARD_TEXT];
+
+  it("a draft is a call the agents couldn't yet settle, in both intros and the card", () => {
+    for (const text of variants) expect(text).toContain("calls they couldn't yet settle from the context they held");
+  });
+
+  it("nothing says the agents parked drafts because they could not ask", () => {
+    for (const text of variants) expect(text).not.toMatch(/could not ask|couldn't ask|can(?:'|no)t be asked|couldn't be asked/);
+  });
+
+  it("the card says \"agents\", since it counts drafts another person's agent deposited on your behalf too", () => {
+    expect(DRAFTS_CARD_TEXT).toMatch(/^Hypotheses agents parked about your taste and judgment/);
+    expect(DRAFTS_CARD_TEXT).not.toContain("your agents");
+  });
+
+  it("every other sentence of both intros is kept", () => {
+    expect(queueIntro([])).toContain("Confirming publishes a draft to its recipe book, where collaborators can find it; rejecting it or marking it not chosen keeps it private to you and your agents. Each choice is final.");
+    expect(queueIntro([{ about: "pat@test.local" }])).toContain("Only the person a draft is about can confirm or reject it: confirming publishes it to its recipe book, where collaborators can find it; rejecting it or marking it not chosen keeps it private. Each choice is final.");
+  });
+});
+
 describe("the intro is true for whoever reads it (post-merge findings, 2026-09-29)", () => {
   it("speaks of 'your agents' only when every listed draft is about the viewer and by their own agents", () => {
     expect(queueIntro([])).toMatch(/^Your agents parked these hypotheses about your taste and judgment/);
@@ -217,5 +241,18 @@ describe("drafts under one of your intents are listed together (slice 6a, S6a-G5
 
   it("filters the queue to one intent with the search grammar", () => {
     expect(intentFilterQuery(I1.id)).toBe("intent:int_AAAAAAAAAAAAAAAAAAAAAAAA");
+  });
+});
+
+describe("queueExpiredText (slice 10, S10-K2)", () => {
+  it("names the expired drafts that left the list, and says they can still be answered", () => {
+    expect(queueExpiredText(1, false)).toBe("1 more draft expired unanswered and left this list. You can still answer it.");
+    expect(queueExpiredText(3, false)).toBe("3 more drafts expired unanswered and left this list. You can still answer them.");
+  });
+
+  it("is silent with none, and while the expired drafts are what is listed", () => {
+    expect(queueExpiredText(0, false)).toBeNull();
+    expect(queueExpiredText(undefined, undefined)).toBeNull();
+    expect(queueExpiredText(4, true)).toBeNull();
   });
 });

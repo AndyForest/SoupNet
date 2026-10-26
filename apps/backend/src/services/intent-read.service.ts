@@ -35,7 +35,7 @@
 import { sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { feedbackOwnedBy, intentOwnedBy, traceReadableByViewer, viewerBookIds, inBooks, draftStateShownTo } from "../authz";
+import { feedbackOwnedBy, intentOwnedBy, traceReadableByViewer, viewerBookIds, inBooks, draftStateShownTo, draftLive, draftExpired } from "../authz";
 import type { ReportViewer } from "../authz";
 import { INTENT_ID_RE } from "./intent.service";
 import type { FeedbackFilters, ReportPaging } from "./report-params";
@@ -45,6 +45,10 @@ export interface IntentCounts {
   shown: number;
   deposits: number;
   feedback: number;
+  /** Slice 10 (S10-K3): the deposits that are drafts, as this viewer sees
+   *  their state (`draftStateShownTo`, so a depositor never learns that a
+   *  colleague verified one): still live, expired unanswered, or resolved. */
+  drafts: { live: number; expired: number; resolved: number };
 }
 
 export interface IntentSummary {
@@ -255,6 +259,13 @@ function intentSummarySelect(viewer: ReportViewer): SQL {
       i.last_used_at AS "lastUsedAt",
       (SELECT COUNT(*) ${shownFrom(sql`i.id`, viewer)})::int AS "shownCount",
       (SELECT COUNT(*) ${depositsFrom(sql`i.id`, viewer)})::int AS "depositCount",
+      (SELECT COUNT(*) ${depositsFrom(sql`i.id`, viewer)}
+         AND ${draftStateShownTo("t", viewer.userId)} IS NOT NULL AND ${draftLive("t")})::int AS "draftsLive",
+      (SELECT COUNT(*) ${depositsFrom(sql`i.id`, viewer)}
+         AND ${draftStateShownTo("t", viewer.userId)} IS NOT NULL AND ${draftExpired("t")})::int AS "draftsExpired",
+      (SELECT COUNT(*) ${depositsFrom(sql`i.id`, viewer)}
+         AND ${draftStateShownTo("t", viewer.userId)} IS NOT NULL
+         AND NOT ${draftLive("t")} AND NOT ${draftExpired("t")})::int AS "draftsResolved",
       (SELECT COUNT(*) FROM claimnet.check_feedback cf
          LEFT JOIN claimnet.traces t ON t.id = cf.trace_id
          WHERE cf.intent_id = i.id AND ${feedbackVisible(viewer)})::int AS "feedbackCount"
@@ -272,6 +283,9 @@ interface RawIntent {
   shownCount: number;
   depositCount: number;
   feedbackCount: number;
+  draftsLive: number;
+  draftsExpired: number;
+  draftsResolved: number;
 }
 
 function toSummary(r: RawIntent): IntentSummary {
@@ -282,7 +296,12 @@ function toSummary(r: RawIntent): IntentSummary {
     apiKeyLabel: r.apiKeyLabel,
     createdAt: toIso(r.createdAt),
     lastUsedAt: toIso(r.lastUsedAt),
-    counts: { shown: Number(r.shownCount), deposits: Number(r.depositCount), feedback: Number(r.feedbackCount) },
+    counts: {
+      shown: Number(r.shownCount),
+      deposits: Number(r.depositCount),
+      feedback: Number(r.feedbackCount),
+      drafts: { live: Number(r.draftsLive), expired: Number(r.draftsExpired), resolved: Number(r.draftsResolved) },
+    },
   };
 }
 

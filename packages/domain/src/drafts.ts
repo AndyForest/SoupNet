@@ -35,17 +35,19 @@ export function parseDraftFlag(raw: unknown): { draft: boolean; notice?: string 
 }
 
 /**
- * How a draft gets published. With the queue link (slice 3, rubric S3-L6),
+ * How a draft gets resolved. With the queue link (slice 3, rubric S3-L6),
  * the agent learns the one URL it can hand its person, in place of "on the
- * recipe's page"; without one (a caller that has no frontend URL), the old
- * wording stands.
+ * recipe's page"; without one (a caller that has no frontend URL), the
+ * recipe's page stands. Slice 7 C2 (7b, S7-B2): "ask the person and call
+ * verify_draft" read as a rule that the person must be asked; any of the
+ * person's agents that can settle the draft resolves it.
  */
 function verifyHow(queueUrl: string | undefined): string {
   return (
-    "To publish it, ask the person and call verify_draft with their answer quoted and cited "
+    "Resolve it with verify_draft when you or another agent acting for the person can settle it, "
     + (queueUrl
-      ? `(or they confirm it in their review queue: ${queueUrl}).`
-      : "(or they confirm it with still true on the recipe's page).")
+      ? `or hand them their review queue: ${queueUrl}.`
+      : "or they confirm it with still true on the recipe's page.")
   );
 }
 
@@ -212,6 +214,82 @@ export function onlySubjectReviewsReason(subjectEmail: string | null, queueUrl?:
   );
 }
 
+// ── Drafts as a bus (slice 10) ──────────────────────────────────────────────
+
+/**
+ * How long a draft stays live (slice 10, ruled 2026-10-25, recipe 053c9b97):
+ * while the intent it was deposited under was used within the last day, or,
+ * with no intent, for a week from its deposit (recipe fd614c86). A headless
+ * key's drafts never expire: the person's queue is their listener. Liveness
+ * is computed at read time from these (authz/draft-sql.ts `draftLive`) and
+ * never stored, so a draft revives when its intent is used again.
+ */
+export const DRAFT_INTENT_IDLE_HOURS = 24;
+export const DRAFT_NO_INTENT_LIVE_DAYS = 7;
+/** The span the books block reports expired drafts over ("M expired
+ *  unanswered in the last 7 days", S10-K1). */
+export const DRAFT_EXPIRED_REPORT_DAYS = 7;
+
+/** Why an unverified draft is expired: its intent went quiet, or it has no
+ *  intent and its week is up. */
+export type DraftExpiry = "intent_idle" | "age";
+
+const EXPIRY_REASON: Record<DraftExpiry, string> = {
+  intent_idle: `its task has been quiet for over ${DRAFT_INTENT_IDLE_HOURS} hours`,
+  age: `it was deposited with no intent over ${DRAFT_NO_INTENT_LIVE_DAYS} days ago`,
+};
+
+/** Who resolved a draft, as its subject's agents are told (S10-R1). */
+export interface DraftResolutionNote {
+  /** `person`: a reaction or the queue; `agent`: one of the subject's keys
+   *  other than the depositing one; `depositing_agent`: the key that
+   *  deposited it. */
+  by: "person" | "agent" | "depositing_agent";
+  /** The resolving key's label, when it has one (the subject's own key). */
+  keyLabel?: string | null | undefined;
+  /** When it was resolved (ISO); rendered as the date. */
+  at: string | Date;
+}
+
+function describeResolver(r: DraftResolutionNote): string {
+  const who = r.by === "person"
+    ? "by your user"
+    : r.by === "depositing_agent"
+      ? "by the agent that deposited it"
+      : r.keyLabel ? `by your user's agent "${r.keyLabel}"` : "by one of your user's agents";
+  return `${who} on ${isoDay(r.at)}`;
+}
+
+function isoDay(at: string | Date): string {
+  const d = at instanceof Date ? at : new Date(at);
+  return Number.isNaN(d.getTime()) ? String(at) : d.toISOString().slice(0, 10);
+}
+
+/** The nearby open question a check or search names (S10-D1). */
+export interface OpenQuestion {
+  recipeId: string;
+  /** The first line of the draft's intent story, only when that intent is
+   *  the caller's own (S10-D3). */
+  story?: string | undefined;
+  /** When the draft was deposited (ISO). */
+  askedAt: string;
+}
+
+/** Longest intent-story excerpt the dispatch line carries. */
+export const OPEN_QUESTION_STORY_MAX = 120;
+
+/**
+ * The dispatch line (slice 10): one line after the exemplars naming a live
+ * draft near this call that the caller may read, inviting it to resolve the
+ * draft when its own context settles it. The wording is the ruling's.
+ */
+export function openQuestionLine(q: OpenQuestion): string {
+  const first = (q.story ?? "").split(/\r?\n/)[0]!.trim();
+  const story = first.length > OPEN_QUESTION_STORY_MAX ? `${first.slice(0, OPEN_QUESTION_STORY_MAX - 1).trimEnd()}…` : first;
+  const asked = `asked ${isoDay(q.askedAt)}`;
+  return `Open question near this call: ${q.recipeId} (${story ? `${story}, ` : ""}${asked}). If your context settles it, resolve it; otherwise leave it.`;
+}
+
 /**
  * The one-line markdown label for a recipe in a draft state the viewer may
  * see. Empty for a published recipe (no state, or verified).
@@ -232,6 +310,11 @@ export function draftLabel(
     /** Slice 4: on a draft the viewer's agent deposited about someone
      *  else, that person's email. */
     draftAbout?: string | null | undefined;
+    /** Slice 10 (S10-R3): why an unverified draft is expired, when it is. */
+    expired?: DraftExpiry | null | undefined;
+    /** Slice 10 (S10-R1): how and when a resolved draft was resolved, for
+     *  its subject only (S4-M3); with it, a verified draft is labelled too. */
+    resolution?: DraftResolutionNote | null | undefined;
   },
 ): string {
   // The other party, when there is one, follows the state's name (at most
@@ -239,19 +322,32 @@ export function draftLabel(
   const party = ratings?.draftDepositedBy
     ? `, deposited by ${ratings.draftDepositedBy}`
     : ratings?.draftAbout ? ` about ${ratings.draftAbout}` : "";
+  const resolved = ratings?.resolution ? describeResolver(ratings.resolution) : "";
   let base: string;
   switch (state) {
     case "unverified":
-      base = `[unverified draft${party}: a hypothesis the person has not confirmed; visible only to them and their agents]`;
+      // The depositor of a draft about someone else reads it but cannot
+      // resolve it (S4-R2), so its label says who still can.
+      base = ratings?.expired
+        ? `[expired draft${party}: ${EXPIRY_REASON[ratings.expired]}, so it has left the review queue and results; ${ratings.draftAbout ? "only they can still verify or reject it" : "it can still be verified or rejected by id"}]`
+        : `[unverified draft${party}: a hypothesis the person has not confirmed; visible only to them and their agents]`;
+      break;
+    case "verified":
+      // A verified draft reads as an ordinary recipe, except to its subject's
+      // agents, who can tell from this that their question was answered.
+      if (!resolved) return "";
+      base = `[verified draft${party}: verified ${resolved}]`;
       break;
     case "rejected":
       // Slice 6c: an agent may reject a draft on the settling context (a
       // covering recipe cited by id), so the label no longer says the
       // person said it was wrong; the rejection's evidence carries why.
-      base = `[rejected draft${party}: its evidence says why]`;
+      base = resolved
+        ? `[rejected draft${party}: rejected ${resolved}; its evidence says why]`
+        : `[rejected draft${party}: its evidence says why]`;
       break;
     case "not_chosen":
-      base = `[draft not chosen${party}]`;
+      base = resolved ? `[draft not chosen${party}: marked not chosen ${resolved}]` : `[draft not chosen${party}]`;
       break;
     default:
       return "";

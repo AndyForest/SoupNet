@@ -46,6 +46,7 @@ import {
   resolutionForReaction,
   hasWriteAuthority,
   draftStateShownTo,
+  draftExpiryShownTo,
   SHARED_AUDIENCE,
   inBooks,
   feedbackOwnedBy,
@@ -401,7 +402,8 @@ traces.get("/", async (c) => {
         -- [F93]): a verified on-behalf recipe's depositing key is not its author's.
         (CASE WHEN ak.user_id = t.user_id THEN ak.label ELSE NULL END) AS "apiKeyLabel",
         u.email AS "userEmail",
-        ${draftStateShownTo("t", user.id)} AS "draftState"
+        ${draftStateShownTo("t", user.id)} AS "draftState",
+        ${draftExpiryShownTo("t", user.id)} AS "draftExpiry"
       FROM claimnet.traces t
       LEFT JOIN claimnet.groups g ON g.id = t.group_id
       LEFT JOIN claimnet.api_keys ak ON ak.id = t.api_key_id
@@ -447,7 +449,8 @@ traces.get("/", async (c) => {
       g.name AS "groupName",
       -- A key's label only under its owner's authorship ([F93]).
       (CASE WHEN ak.user_id = t.user_id THEN ak.label ELSE NULL END) AS "apiKeyLabel",
-      ${draftStateShownTo("t", user.id)} AS "draftState"
+      ${draftStateShownTo("t", user.id)} AS "draftState",
+      ${draftExpiryShownTo("t", user.id)} AS "draftExpiry"
     FROM claimnet.traces t
     LEFT JOIN claimnet.groups g ON g.id = t.group_id
     LEFT JOIN claimnet.api_keys ak ON ak.id = t.api_key_id

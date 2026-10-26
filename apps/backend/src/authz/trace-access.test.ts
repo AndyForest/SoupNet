@@ -189,6 +189,7 @@ describe("the read rule is applied in one place", () => {
       draftResolvedByViewer: false,
       draftDepositedBy: null,
       draftAbout: null,
+      draftExpiry: null,
     });
     // The viewer's role drives the route's flags; it is not part of the payload.
     expect("role" in (found?.trace ?? {})).toBe(false);

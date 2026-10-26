@@ -2108,13 +2108,24 @@ One fact the budget turns on: the thin briefing renders no exemplars at its defa
 
 | # | Criterion | Scenario moved | Evidence |
 |---|---|---|---|
-| S7-B1 | `MCP_PARAM_DESCRIPTIONS.draft` no longer says "the person can't be asked about now"; it reads as 7b's "a high-impact, uncertain call you cannot settle yet from the context you hold", and asks for what would settle it in the first evidence entry rather than why. Served on both MCP servers. | `checking-behavior.feature` drafting scenario (C1's rewrite) watched | `mcp-tool-descriptions` drift test; served bytes in the log, within the A0 caps (shared descriptions 6,600, remote 18,200, stdio 14,700). |
+| S7-B1 | `MCP_PARAM_DESCRIPTIONS.draft` no longer says "the person can't be asked about now"; it reads as 7b's "a high-impact, uncertain call you cannot settle yet from the context you hold", and asks for what would settle it in the first evidence entry rather than why. (Amended 2026-10-25: after 7f and S7-B11 it asks for both, "why it's a draft and what would settle it", so the parameter matches the Drafts section; the reason asked for is the agent's confidence to act, not the person's absence.) Served on both MCP servers. | `checking-behavior.feature` drafting scenario (C1's rewrite) watched | `mcp-tool-descriptions` drift test; served bytes in the log, within the A0 caps (shared descriptions 6,600, remote 18,200, stdio 14,700). |
 | S7-B2 | The self-draft deposit notice (`verifyHow` in `packages/domain/src/drafts.ts`) no longer says "ask the person and call verify_draft"; it reads as 7b's "Resolve it with verify_draft when you or another agent acting for the person can settle it, or hand them the queue link", with the link. The on-behalf and headless notices are unchanged (they never mention `verify_draft`). The S3 and S5 length bounds still hold. | `checking-behavior.feature` "hands its person the queue link" watched | Layer 1 notice tests; S3-L6 and S5-Z4 length assertions. |
 | S7-B3 | The queue intro (`queueIntro` in `apps/frontend/src/lib/draft-queue.ts`, both variants) and the dashboard drafts card (`DashboardPage.tsx`) no longer say the agents parked drafts "because they could not ask you"; they say what a draft is (a hypothesis an agent could not yet stand behind) and keep every other sentence. | `drafts-and-triage.feature` DT-QUE-05 reworded from "why the agent couldn't ask" to "what would settle it" | Frontend unit tests on both strings; the browser-verify skill on `/app/drafts` and the dashboard (axe, 412 px). |
 | S7-B4 | No surface on any profile, key, page, notice, or tool says or implies drafting is for when the person can't be asked: S7-A5's test widened to the tool roster, the notices, and the two web strings. | | Domain and frontend tests over every string. |
-| S7-B6 | Carried from C1 for headroom (operator's 7a and 7d addition, revision commit `a7f4d20`): one example-and-goal line naming the over-caution case: an orchestrator once refused to verify drafts its own context settled because the tool copy spoke of a person confirming; the goal is that a person's agent resolves what it can stand behind, and a person sees only what no agent could. In the briefing body, within the thin ceiling; a measured trim of C1's own copy pays for it if needed. | new `checking-behavior.feature` scenario | Domain test; bytes in the log. |
-| S7-B7 | Candidate, from stream D's audit (rated "can wait"): one clause setting the expectation that a tool refuses a parameter name it does not take and the refusal names the ones it does (8a refuses unknown names, operator ruling 2026-10-24), so an unattended reader does not take its first refusal for an outage. Not in C1 (7 characters of headroom; the refusal text explains itself at the moment it happens). In C2 only if question 57's raise is granted, sized into it; otherwise it stays in D's build notes. | | Domain test; bytes in the log. |
 | S7-B5 | One C2 entry in `spec-decision-log.md` with the bytes before and after for `tools/list` (remote, stdio), the shared descriptions, and the notices. | | The entry. |
+
+**C2: the briefing body (7f, and the rows carried from C1), before A1 and B merge.** Written 2026-10-25 by stream C (agent `c-briefing-75-c2-2026-10-25`, intent `int_gxl5ZMTtpO9RG0cvgsKXw5lJ`) before implementation, from the revision doc's §7f (ruled 2026-10-25, on `main` at `e77f657`) and question 57's ruling. C2 lands in two commits on `drafts/7-briefing-c2`, stacked on C1: this table now, since it touches only `BRIEFING.build` and depends on nothing C1 does not already depend on; the 7b table above after A1 and B merge. Placement follows each paragraph's subject, and the new copy is tightened rather than any existing text cut (recipes `c9867351`, `80b2fbb5`). "A person", not "the person", wherever the subject could be a colleague.
+
+| # | Criterion | Scenario moved | Evidence |
+|---|---|---|---|
+| S7-B8 | The briefing opens with what Soup.net is (7f, "The opening, reframed"): the log of calls people and their agents made, with the reasons and the evidence; read as context for the next call (when nothing new is on the table a past call usually stands; when something is, the agent decides and logs the new call beside the old one with its own reason); also how sessions reach each other (a draft asks a question another agent or a person can answer, an intent groups a task's checks, feedback says what happened afterwards); not a source of truth and not a rulebook. The existing opening paragraph (persistence, read-only with an append-only side effect, no destructive operations, check freely, no dry run, search for lookups) follows unchanged. Both profiles. | `briefing-surfaces.feature`, new scenario | Domain test: the new paragraph precedes the existing one in thin and full. |
+| S7-B9 | Recipe format carries the evidence-standards paragraph (7f): evidence says what the claim rests on, so a reader who was not there can check it, and names the kinds (a person's words, quoted, with where; a recipe that quotes them, cited by id; a document they approved; their code or artifacts; the agent's inference, named as inference); a check is a hypothesis the agent stands behind, and an inference it would act on is a check; a draft is one it would not act on without the answer; the seam is confidence to act, not the kind of evidence and not whether a person has spoken; a claim with none of their words is not thereby a draft, and a draft with no evidence is a question that did not do its work. Guidance, not a rule (S7-V1's voice test covers it). | `evidence-integrity.feature`, new scenario; `checking-behavior.feature` drafting scenario watched | Domain test in both profiles. |
+| S7-B6 | Carried from C1 for headroom (operator's 7a and 7d addition, revision commit `a7f4d20`): the over-caution example-and-goal line in the Drafts section, as kept in `expanded/slice-7.md` chunk `slice7.over-caution-example`: an orchestrator once refused to verify drafts its own context settled because the tool copy spoke of a person confirming; the goal is that a person's agent resolves what it can stand behind, and a person sees only what no agent could. Under question 57's raise (ruled 2026-10-24). | new `checking-behavior.feature` scenario | Domain test; bytes in the log. |
+| S7-B7 | From stream D's audit, now in scope under question 57's ruling: one clause in How to check setting the expectation that a tool refuses a parameter name it does not take and the refusal names the ones it does (8a, PR #139), so an unattended reader does not take its first refusal for an outage. Depends on #139 merging first, as C1 already does for D's intent-only row. | new `checking-behavior.feature` scenario | Domain test; bytes in the log. |
+| S7-B10 | The C1 delta verifier's note 5: the Drafts section's "you included" is untrue for a draft deposited on a colleague's behalf. The shared-book sentence kept in `expanded/slice-7.md` chunk `slice7.drafts` returns in the served text: in a shared book the call may be a colleague's, and a draft on their behalf is resolved by their agents. | `checking-behavior.feature` "records a colleague's judgment as a draft on their behalf" watched | Domain test. |
+| S7-B11 | Added 2026-10-25 (the operator's 7f addition, in his local revision commit `3960743`, relayed by the coordinating session): the Drafts section's first-evidence-entry clause asks why it is a draft rather than a check, as well as what would settle it. The record wants to know how much access to the person's attention the depositing agent had; that reasoning plus the key's capability level carry it, so no display marker. Pairs with S7-B9's "named as inference". The headless section keeps "what would settle it" (398 of its 400 characters) and points at Drafts. | `checking-behavior.feature` "An agent drafts only a call it cannot stand behind…", its first-entry Then extended | Domain test (S7-A2's phrase updated). |
+| S7-Z3 | The thin and thin-headless caps move on this branch, dated and reasoned in the style of their earlier raises (plan wording after `d980f8a`), to the measured C2 body figure plus the usual slack; the headless section's 400 and every `tools/list` and shared-description cap are unchanged by this commit. Question 57's ruled figures (21,400 and 21,900) were sized to S7-B6 and S7-B7 alone; 7f came after and is sized into the same raise. | | `recipe-guide-content.test.ts`; the raise named in the PR body. |
+| S7-Z4 | Parity and specs as C1: every briefing surface composes from `BRIEFING.build` with no route change (S7-P1), each edit lands with its scenario (S7-S1), and one C2 entry in `spec-decision-log.md` records the edits, watched scenarios, and bytes before and after; the C2 entry grows with the 7b commit (S7-B5). Any copy trimmed to fit keeps its untrimmed text in `expanded/` (recipe `a798b93d`). | | The entry; the `.feature` diffs. |
 
 ### Slice 7 build notes, PR C1 (stream C, 2026-10-24)
 
@@ -2227,6 +2238,20 @@ Written 2026-10-24 by a second verifier (agent `a-drafts-7-verify2-2026-10-24`, 
 7. **Note: S7-B6 will not fit as-is.** The carried example-and-goal line is over 200 characters against 22 of thin headroom, so C2 needs the "measured trim of C1's own copy" the row allows, or a dated raise. Naming it now so the trim is planned, not discovered.
 
 **Recipe checks by this verifier** (`soupnet-oss`, each closed with feedback): `246803ee`, re-grading rows a delta silently breaks even when the implementer did not amend them, "not met as written", non-blocking (neighbours `50c5b20e` and `8f55a8d7` agreed); `2fef6572`, passing an amended row on its new wording while recording a recipe-anchored clause the amendment dropped as a separate finding (neighbours `e0880609` and `861310a6` agreed). **Proceeded on:** both gradings, and on not re-running test:ci. **Left open for the operator:** findings 1 to 4 (amend or restore in each case), and whether C2 trims C1 copy or raises the cap for S7-B6 (finding 7).
+
+### Slice 7 build notes, PR C2, briefing body (stream C, 2026-10-25)
+
+Agent `c-briefing-75-c2-2026-10-25`, intent `int_gxl5ZMTtpO9RG0cvgsKXw5lJ`, branch `drafts/7-briefing-c2` stacked on C1. Everything is in the C2 entry of [../briefing-specs/spec-decision-log.md](../briefing-specs/spec-decision-log.md). In short: the 7f opening and evidence-standards paragraph, the over-caution line (S7-B6), the unknown-parameter clause (S7-B7), and the on-behalf sentence (S7-B10, the C1 delta verifier's note 5); thin briefing 20,993 → 22,681 characters, thin headless 21,393 → 23,081, caps moved on this branch to 22,800 and 23,200 (S7-Z3; question 57's figures predate 7f). Nothing trimmed, so `expanded/` is unchanged.
+
+Stream C took the branch over at `2a206f8` (the C2 brief had reached another session, which wrote `55ee953`, `1c52bf2` and `2a206f8` and made placement check `80b2fbb5` under its own intent `int_gxl5ZMTtpO9RG0cvgsKXw5lJ`; that intent and agent id are its, and the work is stream C's from here). Review against revision §7f and question 57: the opening and evidence-standards paragraphs match 7f in substance and voice; the over-caution line is S7-B6 verbatim; the on-behalf sentence closes C1's "you included" gap. One fix (`142492f`): the unknown-parameter clause now says "An MCP tool refuses", since 8a's guard wraps only the two MCP transports and the full profile serves the sentence to web agents too; figures re-measured (thin 22,681, thin headless 23,081, full 28,959). Gate: `test:ci` on C2 merged with main (#137 in, the decision-log top conflict resolved by keeping both entries) passed on the second run, 133 files and 1,942 tests; the first run's only failure was a vitest worker exiting while another stream's gate ran, with every reported test passing. The slice 10 bus line stays with stream A's `drafts/10-bus`, since expiry only becomes true there; A also carries the books-block Drafts count line.
+
+The 7b commit (S7-B1 to S7-B5) came after the rebase onto `main` (#137 and #139 merged; backup branch `backup/c2-pre-rebase-f9eab1e`), since none of its copy names B's `intent:` term. Changes: the `draft` parameter, the self-draft notice, both queue intros, and the dashboard card (moved to `DRAFTS_CARD_TEXT`). DT-QUE-05 is reworded, and the can't-be-asked test now covers tools, notices, and web strings. Bytes are in the C2 log entry: remote `tools/list` 17,642 → 17,691, stdio 14,145 → 14,194, shared descriptions 6,386 → 6,435 (measured on `main` with 6a, after the second rebase), all under unchanged caps. Wording check `5ee7ba5f`; its neighbour `5d3ddfc7` ("a person" in shared-book copy) was weighed, and the self-draft notice keeps "the person" because a self draft has exactly one person. `test:ci` passed (136 files, 2,015 tests). Browser verification of the queue intros and the dashboard card met every expectation (8 of 8, axe clean on the changed text, 412 px). It also found two loose ends, both fixed in this PR: the card said "your agents" for a draft another person's agent made on your behalf (it now says "agents"; the mismatch predates C2), and the `/check` page's draft box still said "the person could not be asked". The draft parameter's wording replaces that label.
+
+After B (6a, #142) merged, `main` was merged into C1 (`drafts/7-briefing`; the decision log was the only conflict, both entries kept) and C2 was rebased onto that merge. The rebase also dropped three of 6a's names from an import in `draft-queue.test.ts`; that line is restored, and every line the C2 diff removes from `main` is one of slice 7's intended copy changes.
+
+- **Placement** (recipe `80b2fbb5`): each paragraph where its subject already lives, the existing opening kept whole after the new one. Evidence standards sit in Recipe format, not Drafts, because only their last two sentences are about drafts.
+- **Not added: the "drafts as a bus" briefing line** (revision §"A proposed slice 10", "C2 or with this slice"). It describes expiry, which does not exist until slice 10; it ships with that slice.
+- **"Why it's a draft rather than a check" (S7-B11):** the coordinating session's brief asked for it, and 7f on `origin/main` did not have it. Asked; the coordinating session confirmed it is the operator's addition of 2026-10-25, in his local revision commit `3960743` (not yet pushed; read in this repository). The Drafts section's first-entry clause now asks for both the why and what would settle it. When the 7b commit rewrites the `draft` parameter (S7-B1), it should carry the same pair if the shared-description budget allows.
 
 ### Slice 8a rubric: tool shapes (stream D)
 
@@ -2794,4 +2819,301 @@ After the verification record (`bf7ea02`, accept with follow-ups). No applicatio
 
 **After C1 (#138) and slice 9 (#140) merged:** `main` was merged in. The conflicts were the domain test's import list and the spec-decision log's newest entries, and both sides were kept. As planned, the thin fixture then measured 21,043 against the 21,000 cap, so this slice, merging second, raised the cap to 21,050 with a dated comment at the assertion. The headless fixture is 21,443 of 21,500.
 
+**After C2 (#146) and slice 10 (#144) merged:** `main` was merged in again. The same two files conflicted, and again both sides were kept. C2's raise to 22,800 replaced this branch's 21,050. With main at 22,795 thin and 23,195 headless, the lines measured 22,845 and 23,245, so both caps move by 50: thin 22,800 → 22,850 and headless 23,200 → 23,250, each dated at its assertion and in the spec-decision log.
+
 ### Slice 6b rubric: option sets (stream G, after 6c and 6a merge)
+
+### Slice 10 rubric: drafts as a bus (stream A)
+
+Written 2026-10-25 by stream A (agent `a-drafts-10-2026-10-25`, intent `int_B5rF0m1PZBmMmZCfzepGWEXV`) before implementation, from the revision doc's "A proposed slice 10" (ruled 2026-10-25, recipe `053c9b97`), the plan's "After the first PRs" row for stream A, and the code at `381bf26` (#137 merged). Consumer: agent (check and search results on remote MCP, stdio MCP and the web `/check` page; `get_recipes` and `GET /recipes`; `list_my_recipe_books` and the briefing's books block) and human (the review queue, its count, and the detail page's state line). Security-relevant: yes. The slice adds a read of the intents table to draft visibility, and a new line in results that names a draft, so every uniform-response row of slices 2 to 5 is re-run against it. The combined audit after A1, B, D and E does not cover it; slice 10's own read-only audit follows its PR, with findings in the private repo.
+
+Settled before this rubric (not reopened): liveness is computed at read time from `intents.last_used_at`, never stored or swept, and un-expires on any use of the intent; 24 hours, fixed (open question 10-1 recommends measuring before any knob); headless keys are exempt; expiry is never deletion; expired drafts leave the queue and the default `is:draft` listing, an `is:expired` qualifier lists them, and they stay readable and resolvable by id; on-behalf drafts follow the depositor's intent; the dispatch line's wording; slice 8b items 8 and 9 are superseded by the dispatch line (plan, stream D's row).
+
+**Dependencies, and what this branch builds first.** The intent arm of liveness needs `traces.intent_id`, which is stream B's slice 6a and not yet on `main`. B confirmed the contract on 2026-10-25: `text`, nullable, no foreign key, partial index `traces_intent_id_idx`, migration `0042`, written once in the deposit's INSERT from the intent the check resolved or registered for the depositing key's user, never updated; on-behalf deposits carry the depositor's intent; import keeps it only when the importer owns the intent. The planning session's merge order is D, B, E, C. This branch builds everything that does not need the column on `main` now, with liveness written once behind one function, and adds the intent arm, its rows (S10-L2, S10-L3) and its tests when it rebases after B merges. Every row below marked "after 6a" waits for that rebase. The intent-lineage counts (revision doc) need slice 9's `GET /intents` (#140) and are added after E merges (S10-K3).
+
+**Calls made here** (each recipe-checked in `soupnet-oss` under this intent and recorded in the build notes):
+
+- A draft with no intent, or whose intent row is gone, is live for a fixed 7 days from its deposit (`fd614c86`). The ruling left the choice between that and the depositing key's last activity to this rubric, and the schema does record key activity (`api_keys.last_used_at`). Keys don't track the task, though: a daily key rotates away mid-task, and a scoped key is shared by every session that holds it, so key activity would expire a daily key's drafts on rotation and keep a shared key's alive while any unrelated task runs.
+- Expired drafts leave every result set the person's agents see, not only the queue and the default listing (`f1c99ec8`). The ruling's reason for expiry ("the work has moved on") applies to check and search results as much as to the queue, and a resolved draft already leaves results while staying readable by id, so expiry takes the same shape. `is:expired` brings them back.
+- The dispatch line comes from its own small lookup over the live drafts the caller may read, not from the displayed exemplars (`bff6f47b`). Search excluded the caller's own recipes by default until 8a, so a line built from results would miss the main bus case: a question from another of the same person's sessions. The lookup takes the drafts nearest to the call's query vector, no less similar than the least similar result shown. It never takes an exemplar slot and never changes ranking.
+- Own live drafts keep appearing in their person's results under their label, as today (slice 2, and recipe `7d034cb2` for search after 8a). Taking them out of exemplar slots, as 8b item 8 had planned, would change display selection inside a ranking file. The dispatch line adds the invitation beside the label instead.
+- The headless exemption reads the depositing key's current `deposit_level`. A draft whose key row is gone (keys are hard-deleted) is judged like an ordinary key's. A stored marker would be a new column, which the ruling ruled out for liveness.
+
+Terms and cast, as in the feature file: Pat (whose agents deposit, resolve, and search), Sam (a member of Pat's shared book), Dana (a member who deposits on Pat's behalf). K1 and K2 are ordinary keys of Pat's; H is a headless key of Pat's; DK is Dana's key. "Live" means: unverified, and either deposited by a headless key, or within its window (S10-L1 to S10-L3). "Expired" means unverified and not live. Verified, rejected and not-chosen drafts are resolved, and neither live nor expired.
+
+**Baselines** at `381bf26`, measured with the slice 1 method before any code change (recorded in the build notes): remote `tools/list`, stdio `tools/list`, the shared-description total, and one check response and one search response over a fixed fixture with no draft nearby (bytes).
+
+**Where it lives**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| S10-M1 | Liveness is one SQL expression in the authz module (`authz/draft-sql.ts`), `draftLive(alias)`, with `draftExpired(alias)` as unverified and not live. Every statement that excludes or counts expired drafts composes them, and no other backend file writes a liveness condition by hand. The window lengths are constants in `@soupnet/domain` (24 hours, 7 days), named once. | `draft-sql.test.ts`: the fragment over every combination of facts (state, deposit age, an unknown key; after 6a intent present, missing, recent, idle); two static guards (amended after verification, which found the third guard named here unbuilt): no backend file but `draft-sql.ts` imports the window constants, and no file but the module compares `draft_state`, which any liveness condition must. A regex over `interval` comparisons was judged too broad: other features compare times against intervals legitimately. |
+| S10-M2 | Nothing is stored or swept: no migration, no column, no job, no write to `traces` or `intents` on any read path. A read never touches `intents.last_used_at` (only the existing joins on check, search and feedback do). | Diff review: no file under `packages/db/migrations/`; no `UPDATE` added; a Layer 3 test reads a draft by id, lists the queue and searches, then reads `last_used_at` back unchanged. |
+| S10-M3 | The five ranking files are not edited, and `ranking-regression.test.ts` passes unedited. The search service computes the query vector before the pipeline and passes it in through the pipeline's existing `queryVectorStr` input, so the dispatch lookup can use it. | Diff review; the ranking-isolation test. |
+
+**Liveness**
+
+| # | Criterion | Scenarios | Evidence |
+|---|---|---|---|
+| S10-L1 | A draft deposited with no intent is live for 7 days from `created_at` and expired after, by the database's clock in the same statement. It un-expires only by resolution (it has no intent to revive). | DT-BUS-01 (new) | Layer 3: two drafts with `created_at` set 6 and 8 days back by the test's own fixture SQL; the first is in the queue and `is:draft`, the second only in `is:expired`. |
+| S10-L2 (after 6a) | A draft with an intent is live while that intent's `last_used_at` is within 24 hours, and expired when it is older, even inside 7 days. An intent id whose row is gone falls back to S10-L1. | DT-BUS-02 (new) | Layer 3 with `last_used_at` set 23 and 25 hours back, and a link to a deleted intent. |
+| S10-L3 (after 6a) | Using the intent again (a check, a search or a feedback row carrying it) revives every draft deposited under it, with nothing written to the draft. | DT-BUS-03 (new) | Layer 3: an expired draft, then a search carrying its intent, then the queue lists it. |
+| S10-L4 | A draft deposited by a headless key (`deposit_level` not `full`, read fail-closed the way roles.ts reads it) is live whatever its age or intent. A draft whose key row is gone is judged by S10-L1 to S10-L3. | DT-BUS-04 (new) | Layer 3 with H, an 8-day-old draft; and the same after H is deleted. |
+| S10-L5 | An on-behalf draft's liveness is the depositor's: its intent, or its age when it has none. Pat's agents and Dana's see the same state. | DT-BUS-05 (new) | Layer 3: DK deposits about Pat, aged 8 days; it is expired for both. After 6a: Dana's intent recent, it is live for both. |
+
+**Where expired drafts go**
+
+| # | Criterion | Scenarios | Evidence |
+|---|---|---|---|
+| S10-X1 | An expired draft leaves its person's review queue (`GET /traces/drafts`), the queue count (`GET /traces/drafts/count`) and the dashboard figure, and the default `is:draft` listing on every agent surface. | DT-BUS-01 | Layer 3 on the queue routes, MCP `search_recipes` and web `/check?filter=`. |
+| S10-X2 | An expired draft leaves every result set its person's agents see: check and search results, their totals and clusters. It is never shown to anyone else, as before. | DT-BUS-06 (new) | Layer 3: a check whose nearest recipe is Pat's expired draft does not return it; the same draft live is returned with its label. |
+| S10-X3 | `is:expired` lists the viewer's expired drafts about them (the `is:draft` population, expired), in the same order `is:draft` uses, and lifts the exclude-own default the way `is:draft` does. It combines with `impact:`, `uncertainty:`, `after:`, `before:` and semantic text. `is:draft is:expired` means the same as `is:expired`; `-is:expired` is refused as meaningless. Any other `is:` value is refused with the valid list, which now names both. | DT-BUS-07 (new) | Layer 1 in `search-query.test.ts`; Layer 3 on MCP and web. |
+| S10-X4 | By id, an expired draft reads exactly as a live one did (`get_recipes`, `GET /recipes`, the detail page), with its label saying it expired and why, and it is resolvable by id through `verify_draft` and its REST twin, by reaction and from the queue's id-list link, with the slice 2 to 6c rules unchanged. A resolved draft is neither live nor expired. | DT-BUS-08 (new) | Layer 3: reject an expired draft over MCP, verify one over REST, and react Wrong to one on the web; each resolves with one audit row. |
+| S10-X5 | Expiry deletes nothing: the row, its evidence and its audit rows are untouched, and the account export carries expired drafts as unverified drafts, as today. | | Layer 3: row and evidence counts before and after expiry; export test unchanged. |
+
+**Dispatch in results**
+
+| # | Criterion | Scenarios | Evidence |
+|---|---|---|---|
+| S10-D1 | When a check or search returns at least one result and a live draft about the caller's user (in the call's book scope; amended after verification: not a draft the caller deposited about a colleague, which only its subject's agents can resolve, recipe `c21da2d1`) has a similarity to the query at least that of the least similar result shown and within 0.15 of the best match (amended after verification: the shown results are diverse, so the least similar alone let an unrelated draft count as near), the response adds one line after the exemplars and before related evidence: `Open question near this call: <id> (<story>, asked <date>). If your context settles it, resolve it; otherwise leave it.` The nearest such draft is named, and only one. | DT-BUS-09 (new) | Layer 3 on remote `check_recipe` and `search_recipes`. |
+| S10-D2 | The draft this call just deposited is never named. A draft that is also one of the displayed exemplars may be named: the line is what tells the agent that the labelled exemplar is an open question it may settle, not evidence. | | Layer 3: a check with `draft: true` gets no line naming itself; a search whose top exemplar is a live draft names it. |
+| S10-D3 | `<story>` is the first line of the intent's story only when the intent belongs to the caller's user; otherwise the parenthesis carries only `asked <date>`. A colleague's intent story never reaches anyone else (recipe `f2ae39b8`). Before 6a no draft has an intent, so the story never shows. | | Layer 1 on the line; Layer 3 after 6a with Dana's on-behalf draft named to Pat's agent without Dana's story. |
+| S10-D4 | No line otherwise: no live readable draft nearby, a draft Sam's key cannot read, an expired draft, a resolved draft, a headless caller (which cannot resolve), and a zero-result call. The response is byte-identical to the same call with no drafts in the corpus, so the line's absence tells nothing. | DT-BUS-10 (new) | Layer 3: Sam's search near Pat's live draft is byte-identical (after ids and timestamps are normalized) to the same search with that draft deleted. |
+| S10-D5 | Parity across surfaces: the same line in the remote MCP markdown, the stdio MCP markdown (relayed from REST), the web `/check` HTML and JSON, and a structured field (`openQuestion: { recipeId, story?, askedAt }`) in the structured response. | | Layer 1 renderer tests; Layer 3 on each surface. |
+| S10-D6 | The lookup is bounded: at most the caller's 200 most recent live drafts in scope are compared, by the vectors the pipeline already fetches (`fetchTraceVectors`). It costs one bounded statement per call that has results and a query vector, and a vector fetch only when that statement finds a draft (amended after verification: as written the row promised no cost at all for a caller with no drafts, which no lookup can deliver without the statement that finds out). | | Code review; Layer 3: a caller with no live drafts gets no line. |
+
+**Reading a resolved draft by id**
+
+| # | Criterion | Scenarios | Evidence |
+|---|---|---|---|
+| S10-R1 | For the draft's subject (and so their agents), `get_recipes` and `GET /recipes` say how and when a resolved draft was resolved, for all three states: verified, rejected, not chosen. "How" is by the person (a reaction or the queue), by their agent (with the key's label when it has one), or by the agent that deposited it. "When" is the date. It appears as a structured field and in the label: for example `[rejected draft: rejected by your user's agent "K2" on 2026-10-25; its evidence says why]` (amended after verification: "your agent" would name the reading agent itself; the label speaks to an agent about "your user", so a key of theirs is "your user's agent", recipe `041d4bee`). A verified draft, which reads today as an ordinary recipe with no state, gains this for its subject only, so a polling agent can tell its question was answered. | DT-BUS-11 (new) | Layer 1 on the label; Layer 3 on MCP and REST per state and per resolver. |
+| S10-R2 | For the depositor of an on-behalf draft, nothing changes (S4-M3 as narrowed by ruling 56): the unpublished states with no resolver and no date, and a verified one as an ordinary recipe. For anyone else, the uniform answer. | | Layer 3: Dana's `get_recipes` before and after Pat's agent resolves; Sam's equals a random id's. |
+| S10-R3 | An expired draft's label says it expired and why: no activity on its task for over 24 hours (or 7 days since deposit with no intent), still answerable by id. | | Layer 1. |
+
+**Counts**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| S10-K1 | The briefing's books block and `list_my_recipe_books` Drafts line counts live drafts about the user, and adds the ones that expired when there are any: "…await their review (only they and their agents see them); M expired unanswered in the last 7 days (search is:expired)", or "Drafts: none awaiting review; M expired …" when none are live. "Expired in the last 7 days" means the draft's window closed within the last 7 days. With none expired the line is today's, word for word (amended at build: keeping the wording keeps every existing fixture byte-identical). Shared figures still count published recipes only. | Layer 1 on the line; Layer 3 on `list_my_recipe_books`. |
+| S10-K2 | The web queue shows the expired count under its list when it is not zero, with the `is:expired` query as a link that lists them in the queue (the queue accepts `is:expired` in place of its always-applied `is:draft`). | Layer 1 on the queue's query parsing; Layer 3 on `GET /traces/drafts?q=is:expired`; the browser run. |
+| S10-K3 (after 9) | The intent lineage (`GET /intents/:id`) counts the intent's drafts that are live, expired, and resolved. | Layer 3 after E merges. |
+
+**Copy and the web**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| S10-C1 | The detail page's state line for an expired draft reads "Unverified draft, expired" with a title saying its task has been quiet for over a day (or a week, with no intent), so it has left the queue, and that the person can still verify or reject it here. The reactions stay offered. A live draft's line is unchanged. | `draft-status-label.test.ts`; the browser run. |
+| S10-C2 | The `is:expired` qualifier is named wherever `is:draft` is listed in agent-facing copy: the parser's refusal, and the `search_recipes` query description (stream B's line, edited after B merges and measured). | `mcp-tool-descriptions.test.ts`; size tests. |
+| S10-C3 | The feature file gains DT-BUS-01 to DT-BUS-11 tagged `@slice-10` (02 and 03 `@unreleased` until 6a). The briefing line about drafts as questions on a bus lands with this slice, in the "## Drafts" section stream C's C1 and C2 add, just before "With sub-agents, work live:", with its `checking-behavior.feature` scenario, when this branch rebases after C (stream C, 2026-10-25: a line describing expiry should not ship before expiry does). Its voice keeps clear of "must", "never", "always", "do not" and "don't", which C2's voice test refuses in that section. | Diff review; C2's voice test. |
+
+**Budgets**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| S10-Z1 | Remote and stdio `tools/list` and the shared-description total stay under the caps in force when this PR opens, with bytes before and after recorded here and in `spec-decision-log.md`. | Size tests; the figures. |
+| S10-Z2 | A check or search with no live draft nearby is byte-identical to the baseline response. With one, the response grows by exactly the dispatch line (measured and recorded). | Layer 3 byte comparison against the baseline fixture. |
+
+**Surfaces that must change:** `authz/draft-sql.ts` (the two fragments, composed into the viewer audience and the review set), `authz/trace-access.ts` (expiry on the detail read), `services/draft-queue.service.ts` (live only, the `is:expired` form, the count), `services/search-selection.ts` (the `is:` selections), `packages/domain/src/search-query.ts` (the qualifier), `services/book-stats.service.ts` and the Drafts line in `recipe-guide-content.ts`, `services/recipe-lookup.service.ts` and `draftLabel` in `packages/domain/src/drafts.ts` (resolution and expiry in the label), a new `services/draft-dispatch.service.ts` and the response renderers (`check-response-renderer.ts`, the web `/check` page in `routes/check.ts`), the search service (passing the query vector in), `apps/frontend/src/lib/draft-status-label.ts` and the queue page, the drafts tests, the feature file, `spec-decision-log.md`.
+
+**Surfaces that must not change:** the five ranking files and `ranking-regression.test.ts`; `authz/draft-resolution.ts` (resolution is untouched); the `intents` table and every write to it; `packages/db/migrations/`; `traceVisibleTo(…, SHARED_AUDIENCE)` (shared surfaces never saw drafts); the tool roster and every tool's schema.
+
+**Security properties the verifier must see proven**
+
+- No new oracle. Liveness, expiry and the dispatch line are computed only over drafts the viewer could already read. A collaborator's response near someone else's draft, live or expired, is byte-identical to one with the draft absent (S10-D4, S10-R2).
+- Nobody's intent story reaches anyone else (S10-D3). Liveness reads another person's intent timestamp only for a draft about the viewer that the other person deposited. That tells the subject, as an expired state, that the depositor's task has been quiet for a day; the ruling accepts this (on-behalf drafts follow the depositor's intent).
+- Expiry never widens access, deletes, or blocks resolution (S10-X4, S10-X5).
+- The headless exemption cannot be claimed by an ordinary key: it reads the depositing key's stored level, fail-closed (S10-L4).
+
+**Briefing-copy declaration.** The dispatch line, the Drafts line, the labels, the qualifier's refusal and the `search_recipes` description are agent-facing copy under [../briefing-specs/README.md](../briefing-specs/README.md) §The regression rule. The PR appends one `spec-decision-log.md` entry with the bytes before and after, and every copy change lands with the scenario it moves.
+
+**Questions for the operator** (numbered 10-n; 10-1 is the revision doc's window question)
+
+None open at the time of writing. The calls above were made under the confidence rule and checked; any that a reviewer would reverse is cheap to reverse before merge.
+
+### Slice 10 build notes (stream A, 2026-10-25)
+
+Built on `drafts/10-bus` from `main` at `381bf26`, rebased onto `f6b85f4` (#139, 8a) without conflict. Commits: the rubric; the domain vocabulary (windows, `is:expired`, the dispatch line, labels, the Drafts line); liveness on the read paths; the dispatch line; the web; the Layer 3 suite and docs.
+
+**Calls made, each recipe-checked in `soupnet-oss` under intent `int_B5rF0m1PZBmMmZCfzepGWEXV` and closed with feedback**
+
+- The no-intent window is 7 days from deposit, not the depositing key's activity (`fd614c86`).
+- Expired drafts leave every result set the person's agents see, not only the queue and `is:draft` (`f1c99ec8`).
+- The dispatch line comes from its own lookup over the caller's live drafts, not the exemplars; no ranking file changes; a headless caller gets none; an intent's story only when it is the caller's (`bff6f47b`).
+
+**Found while building**
+
+- The floor comparison needs a tolerance. A draft identical to the call scores a hair under 1 in the lookup's cosine (the pipeline scores from a halfvec copy), so "no less similar than the least similar result shown" is measured to half a percent, the precision results are shown at (`SIMILARITY_TOLERANCE` in `draft-dispatch.service.ts`).
+- The mint response carries no key id, so the Layer 3 test finds a key to delete by its label in `GET /keys`.
+- The search grammar reads a parenthesis as an OR group, so a recipe text with a parenthetical cannot be searched by its own text. Stream B's branch fixes this for prose (`f50a1c0`). The suite's recipes avoid parentheses.
+- Under stub embeddings only identical text is reliably near, so the dispatch tests check from a second key with the draft's own text (dedupe is per key). Result-set tests select by a unique quoted token, which runs without vectors.
+- S10-D2 was amended before building: a draft that is also a displayed exemplar may be named, since the line is what tells the agent that the labelled exemplar is an open question.
+
+**Waiting on other streams** (each a row marked in the rubric)
+
+- 6a (stream B, next to merge): the intent arm of `draftWindowOpen` and `draftWindowClosesAt` in `authz/draft-sql.ts`, the `intent_idle` reason, the story in the dispatch line (owner-only), DT-BUS-02 and 03, and `is:expired` in the `search_recipes` description. B confirmed the column contract on 2026-10-25 and names this slice in its PR notes.
+- 9 (stream E, #140): the lineage counts (S10-K3).
+- C1 and C2 (stream C): the bus line in the briefing's "## Drafts" section with its scenario (S10-C3).
+
+**Environment note.** The shared dev backend on 3101 was built on 2026-09-29, before 6c, so Layer 3 suites run against it test old code. This slice's Layer 3 suite ran against the worktree's own backend on 127.0.0.1:3144 over a throwaway database, `soupnet_e2e_10`.
+
+**Gate.** `TESTCI_PGPORT=5544 npm run test:ci`: the first run failed two tests. `draft-queue.test.ts` S3-A6 asserted the subject's by-id label `[draft not chosen]`, which S10-R1 extends with who and when; the assertion now names the new form. `auth-delete-shared-books.test.ts` "succession skips accounts that cannot act" failed once and passed three times out of three alone; it touches nothing this slice changed and is in the backlog as a flake. The second run passed: 2,005 tests, 6 skipped, exit 0. The slice's own suite, `drafts-bus.test.ts`, has 12 tests over S10-L1, L4, L5, X1 to X5, D1, D2, D4, D5, R1 to R3, K1 and M2.
+
+### Slice 10 verification record
+
+Written 2026-10-25 by the verifier (agent `a-drafts-verify-10-2026-10-25`, Soup.net intent `int_PEBOdcUaDV5YyRRUeu6KZYDl`), who did not build the slice and changed no application code, test or rubric. Verified at `589e0ba` in the `a-resolution` worktree, against the branch's backend on `127.0.0.1:3144` over the throwaway database `soupnet_e2e_10` (stub embeddings, rate limiting off). Rows are graded pass, fail, or not built yet; a row whose behaviour was proven but whose rubric-named evidence is missing passes with the gap stated, and the gap is listed below as a finding to close (recipe `21d39214`).
+
+**Verdict: 25 pass, 2 fail, 3 not built yet (deferred, per rubric).** Neither failure is a security property. Every security property the rubric lists held under probe: a collaborator's search near Pat's live draft was byte-identical to the same search after the draft was deleted, on MCP markdown, MCP structured and web JSON; nobody but the subject saw a resolver or date; no key can claim the headless exemption; expiry deleted nothing and blocked no resolution path.
+
+**How it was verified.**
+
+- **Unit and Layer 1:** `draft-sql.test.ts`, `deposit-level.test.ts`, `trace-access.test.ts`, `drafts.test.ts`, `search-query.test.ts`, `check-response-renderer.test.ts`, `recipe-guide-content.test.ts`, frontend `draft-queue.test.ts` and `draft-status-label.test.ts`, `ranking-isolation.test.ts`, `mcp-tool-descriptions.test.ts`, `mcp-tools-list-size.test.ts` and the `apps/mcp-server` suite: all passed. `npm run check:authz-seam` passed.
+- **Layer 3 against 3144** (with the gate's test env: stub embeddings, empty `GEMINI_API_KEY`, `DISABLE_RATE_LIMIT`): `drafts-bus.test.ts` 12 of 12 and `ranking-regression.test.ts` passed. `draft-queue.test.ts` passed except S3-A3 (401 for 404) and S3-L6 (the queue link's host is `127.0.0.1:5294`, the test expects `localhost:5273`), both from this backend's `JWT_SECRET` and `FRONTEND_URL` differing from the test process's `.env`; the builder's gate passed them.
+- **Probes:** two suites of the verifier's own, kept outside the repo (scratchpad `verify-10/bus.probe.ts` and `bus2.probe.ts`), seeding Pat, Sam and Dana the way `drafts-bus.test.ts` does, plus Pat keys K1, K2, an unlabelled key, a personal-book-only key and a headless key. The only database write was moving `created_at` back.
+- **Diff review** of `f6b85f4..589e0ba`: the five ranking files, `ranking-regression.test.ts`, `authz/draft-resolution.ts`, `packages/db/` (migrations included), `packages/contracts/` and `apps/mcp-server/` are untouched; `routes/mcp.ts` changes in one hunk, `buildMcpJsonResponse`, so no tool or parameter description changed; no `INSERT`, `UPDATE` or `DELETE` is added outside tests.
+
+**Where it lives**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S10-M1 | pass (gap: the static guard) | `draftLive` and `draftExpired` live in `authz/draft-sql.ts` and every expiring statement composes them; a grep finds no hand-written window on `traces` outside the module, and the windows are named once in `packages/domain/src/drafts.ts`. Gap: the guard the row names was not built. `draft-sql.test.ts` only checks that no other file imports the window constants, so a hand-written `created_at > NOW() - interval '7 days'` on `traces` would pass, and the seam's `DRAFT_FRAGMENT` list was not extended to the new names. The facts table also leaves out the headless key, which only Layer 3 S10-L4 covers. |
+| S10-M2 | pass | No file under `packages/db/migrations/`, and no write added. S10-M2 Layer 3 test: `intents.last_used_at` and the draft row are unchanged after a queue listing, `is:expired`, `get_recipes` and the detail read. |
+| S10-M3 | pass | The ranking files are unedited; `ranking-isolation` and `ranking-regression` pass. `searchWithoutLogging` now embeds with the same `embedQuery(…, "SEMANTIC_SIMILARITY")` call the pipeline makes, and passes the vector in through `queryVectorStr`. |
+
+**Liveness**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S10-L1 | pass | Layer 3 "S10-L1 / S10-X1 …": drafts aged 6 and 8 days split between the queue and `is:expired`. `draftWindowOpen` compares against the database's `NOW()` in the calling statement. Layer 1 DB test: ages 0, 6.9, 7.1 and 30 days in every state. |
+| S10-L2 | not built yet (deferred, per rubric: after 6a) | `draftExpiryReason` returns only `'age'`; DT-BUS-02 is tagged `@unreleased`; the build notes list it as waiting. The `intent_idle` label text is present but cannot be reached. |
+| S10-L3 | not built yet (deferred, per rubric: after 6a) | No intent arm exists; DT-BUS-03 is tagged `@unreleased`. |
+| S10-L4 | pass | Layer 3 "S10-L4 / DT-BUS-04": a 30-day-old headless draft stays in the queue, then moves to `is:expired` once its key is deleted. The fragment reads `lk.deposit_level IS DISTINCT FROM 'full'` (the column is `NOT NULL DEFAULT 'full'`). `traces.api_key_id` is written only by the deposit `INSERT`, from the authenticated key, and `deposit_level` is never updated (S5-S2 test), so an ordinary key cannot claim the exemption. |
+| S10-L5 | pass | Layer 3 "S10-L5 / DT-BUS-05": Dana's on-behalf draft aged 8 days leaves Pat's queue, is listed by `is:expired`, and reads `draftExpiry: "age"` on both parties' detail reads. The intent half of the row is after 6a. |
+
+**Where expired drafts go**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S10-X1 | pass | Layer 3: the queue, `/traces/drafts/count` (which the dashboard reads) and MCP `is:draft` drop the expired draft. Probe: web `/check?filter=is:draft <tag>` leaves it out and `is:expired <tag>` returns it. |
+| S10-X2 | pass | Layer 3 (search) and a probe on a check: K2's check with the same text returned Pat's live draft (total 5), and after the draft aged 8 days it returned neither the draft nor a count for it (total 4, although one more recipe now existed). Sam, Dana and a personal-book-only key never saw it, live or expired (probes P1 and P2). |
+| S10-X3 | pass | `search-query.test.ts` "parseSearchQuery — is:expired". Probe on MCP: `impact:high` and `uncertainty:low` match, `impact:low` does not, `after:2020-01-01` matches, `before:2020-01-01` does not, `is:draft is:expired` equals `is:expired`, and semantic text with `is:expired` returns only the expired twin, on the queue and on agent search. The refusals for `-is:expired`, `is:bogus` and `is:expired -is:draft` reach MCP and web JSON with the valid list naming both. |
+| S10-X4 | pass | Layer 3 "S10-X4 / S10-X5 / S10-R3 / DT-BUS-08": MCP reject, REST verify and a web Wrong reaction each resolve an expired draft with one audit row. Probe: `GET /traces/drafts?ids=<expired>` lists it with `expired: true` and `canResolve: true`, and `POST /traces/:id/not-chosen` on it returns 200. A resolved draft is in neither set. |
+| S10-X5 | pass | Layer 3: evidence, audit and row counts are unchanged by ageing. Probe: `GET /auth/me/export` carries the expired draft with `draft_state` `unverified`. |
+
+**Dispatch in results**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S10-D1 | pass | Layer 3 "S10-D1 / S10-D5 / DT-BUS-09" on remote `search_recipes`, `check_recipe` and the web page. The wording is the rubric's, character for character (`openQuestionLine`). Probe: on a check the line sits after exemplar #1 and before related evidence. |
+| S10-D2 | pass | Layer 3 "S10-D2": a `draft: true` check does not name itself (`excludeTraceId`). Probe P4: K1's `author:me` search, whose top result was its own live draft, named that draft. |
+| S10-D3 | pass | Layer 1 "without a story … the parenthesis carries only the date" and the excerpt test. `findOpenQuestion` never sets `story`, so before 6a no story can reach anyone. The Layer 3 half is after 6a. |
+| S10-D4 | pass (gap: the named byte test) | Probe P1: Sam's search near Pat's live draft, in MCP markdown, MCP structured, web JSON and `is:expired`, was byte-identical after normalising ids and timestamps to the same search after Pat deleted the draft. Median by-id read time was 4 ms for the draft id and for a random id. No line for a headless caller's check or search, a zero-result call, a resolved draft (probe Z2), an expired draft (Layer 3), or a draft outside the key's scope (P2). Gap: the Layer 3 suite asserts only that no line appears, not the byte identity the row names. |
+| S10-D5 | pass | Layer 3 on MCP markdown, structured and web HTML. Probe: web JSON carries `data.openQuestion`, and `renderCheckResponseMarkdown`, the stdio server's renderer, prints the line from that JSON. |
+| S10-D6 | fail | Capped at 200 drafts, newest first, and compared through `fetchTraceVectors`: as the row says. But a caller with no live drafts still pays the candidate `SELECT` on every call that has results and a query vector; only the vector fetch is skipped. The row says none, and the zero-draft test it names does not exist (defect 1). |
+
+**Reading a resolved draft by id**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S10-R1 | pass | Layer 3 "S10-R1 / DT-BUS-11" on MCP and REST, plus probes: a queue not-chosen reads "by your user"; an unlabelled key reads "by one of their agents"; a resolution whose key was later deleted reads "by one of their agents" (no label leaks, and it is not misattributed to the person); a verified on-behalf draft gives Pat `draftState: "verified"` and `draftResolution`. The wording differs from the row's example ("by their agent" for "by your agent"): see Found, item 1. |
+| S10-R2 | pass | Layer 3 "S10-R2". Probe P6: after Pat's K2 verified Dana's on-behalf draft, Dana's `GET /recipes` and detail read carry no `draftState`, `draftResolution` or resolver fields, and Sam's carry no state either. |
+| S10-R3 | pass | `drafts.test.ts` "an expired draft says it expired, why, and that it can still be resolved by id". Layer 3 `get_recipes` shows `Draft: [expired draft: it was deposited with no intent over 7 days ago…`. |
+
+**Counts**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S10-K1 | pass | `recipe-guide-content.test.ts` "S10-K1"; Layer 3: the 9-day draft counts, and a 30-day draft (window closed 23 days ago) does not. Probe: `get_briefing` shows "Drafts: 3 unverified drafts about your user await their review (only they and their agents see them); 3 expired unanswered in the last 7 days (search is:expired)". Sam's books block has no Drafts line. |
+| S10-K2 | pass (gap: browser run, Layer 1 queue parsing) | Layer 3: `GET /traces/drafts?q=is:expired` lists only the expired drafts, `expiredTotal` is set, and `queueExpiredText` has Layer 1 tests. Gaps: there is no Layer 1 test of `parseQueueQuery` or `forceDraft` with `is:expired`, and no browser run of `/app/drafts`, since no frontend runs against this backend and the build notes record none. |
+| S10-K3 | not built yet (deferred, per rubric: after 9) | No lineage change in the diff; the build notes list it as waiting on stream E. |
+
+**Copy and the web**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S10-C1 | pass (gap: browser run) | `draft-status-label.test.ts`: "Unverified draft, expired", the week and day reasons, the depositor's variant, the reactions still offered, and a live draft unchanged. `GET /traces/:id` carries `draftExpiry` to `TraceDetailPage`, which reads it through `draftStatusLabel`. No browser run. |
+| S10-C2 | fail | The parser's refusal and its valid list name `is:expired` (Layer 1, probe). The `search_recipes` description is deferred to after B, as the row says. But the web `/check` page's search help (`routes/check.ts:1066`), agent-facing copy that lists `is:draft`, does not name `is:expired` (defect 2). |
+| S10-C3 | pass | DT-BUS-01 to 11 are tagged `@slice-10`, with 02 and 03 `@unreleased`. The briefing's bus line waits for C1 and C2, as the row says, and nothing in the diff adds it early. |
+
+**Budgets**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S10-Z1 | pass (gap: figures not recorded) | No tool or parameter description is in the diff, and the size tests pass. The verifier's probe measured remote `tools/list` `result` at 17,630 bytes across 8 tools. Gap: the row asks for before and after bytes "here and in `spec-decision-log.md`", and neither records a figure. The rubric's "Baselines" paragraph also promised baselines in the build notes, and none are there. |
+| S10-Z2 | pass | Probe Z2, in a fresh book with only Dana's published neighbours and Pat's draft, searching with `-author:me` so the draft is not among the results: the markdown was 1,462 bytes with the line and 1,314 after the draft was resolved, a difference of exactly the 148-byte line with its two newlines. With the line removed the two were byte-identical, and the structured responses differed only in `openQuestion`. The comparison is with-line against without-line on this branch; the pre-slice baseline was never recorded (S10-Z1 gap). |
+
+**Defects**
+
+1. **S10-D6: the dispatch lookup costs a statement when the caller has no live drafts.** Scenario: any check or search by a caller with no live drafts, at least one result and a query vector. What happens: `findOpenQuestion` runs `SELECT t.id … FROM claimnet.traces t WHERE inBooks … AND traceVisibleTo … AND draftLive … LIMIT 200` and returns only after it comes back empty. The row says no cost in that case, with a zero-draft test to show it. Responsible, my reading: `apps/backend/src/services/draft-dispatch.service.ts` `findOpenQuestion`, whose early returns cover a headless caller, no vector, no books and no shown results, but not a caller with no drafts. Either the bound is met (for example by folding the candidate check into a statement the call already makes) or the rubric is amended to "one statement, plus one vector fetch when there are candidates". It is not an oracle: the statement reads only the caller's own drafts.
+2. **S10-C2: the web check page's search help does not name `is:expired`.** Scenario: an agent opens `/check` with a key and expands "Search syntax & tips". What happens: the list says "`is:draft` lists your own drafts awaiting review" and stops there, while the row asks for `is:expired` wherever `is:draft` is listed in agent-facing copy. Responsible, my reading: `apps/backend/src/routes/check.ts`, `renderPage`, the `search-help` list item.
+
+**Evidence gaps to close** (rows that pass on behaviour): the S10-M1 static guard against a hand-written window, plus the headless key in its facts table; S10-D4's byte-identity test (the verifier's probe shows the property); the S10-Z1 byte figures and the rubric's baselines; the browser run for S10-C1 and S10-K2; a Layer 1 test of the queue's `is:expired` parsing (S10-K2); and S10-X2's named check case, which the suite proves on search only (the verifier's probe covers the check).
+
+**Found, not in the rubric**
+
+1. **The resolver wording in by-id labels (a question for the operator).** The row's example reads `rejected by your agent "K2"`; the build ships `rejected by their agent "K2"` next to `verified by your user`, so one label set mixes "your user" with a "their" that has no antecedent in the label. The build notes record no deviation, and the Layer 3 suite asserts the shipped words. Deposited as draft `041d4bee` for the operator's ruling.
+2. **The dispatch floor can name an unrelated draft.** The floor is the least similar result shown, and clustered exemplars can sit far from the query: in probe P5 the third exemplar was at -1%, so any live draft in scope qualified, and the line named a headless draft on another topic. Stub embeddings exaggerate this, but MMR-diverse exemplars can be distant under real embeddings too. A minimum similarity for the line, or the nearest result's similarity, would keep "near this call" true.
+3. **Headless drafts never expire, so they stay dispatch candidates for good.** A headless key's check deposits a forced draft (probe P4), and with item 2 that draft can be named in every later check or search by the person's ordinary agents in its books. This follows the ruling (headless drafts are exempt); it is worth watching once slice 9 measures dispatch.
+4. **The depositor is invited to resolve what it cannot.** Dana's agent searching near her on-behalf draft about Pat gets the dispatch line, "If your context settles it, resolve it" (probe P4), but `verify_draft` refuses the depositor. The rubric's D1 includes depositors ("subject or depositor"); the ruling's on-behalf bullet says "the subject's agents see the dispatch line". The agent-facing expired label likewise tells the depositor "it can still be verified or rejected by id", while the web title for the same case says only the subject can.
+5. **The expiry reason in queue and grammar copy describes the deferred arm.** The queue's line and item text ("the task that asked it went quiet") and the parser refusal ("is:expired the ones whose task went quiet") give the intent reason, but before 6a every expiry is the 7-day no-intent window. The detail page title gets this right ("deposited over a week ago with no task attached").
+6. **The published schema's `filter` description** (`packages/contracts/src/recipe.ts`, `/schemas/check-response.json`) lists `is:draft` without `is:expired`. It is a field description, not a tool parameter, so it falls outside the row's "every tool or parameter description is untouched".
+7. **Environment note for later verifiers.** `ranking-regression.test.ts` and the other Layer 3 suites read `BACKEND_URL` and `EMBEDDINGS_PROVIDER` from `.env` (3101, gemini) unless they are overridden. The verifier's first run of `ranking-regression.test.ts` passed only the database variables, so it seeded users in `soupnet_e2e_10` and then sent login requests to the shared dev backend on 3101, which failed, because those users don't exist there. Pass the gate's full test env (`BACKEND_URL`, `EMBEDDINGS_PROVIDER=stub`, `GEMINI_API_KEY=`, `DISABLE_RATE_LIMIT=true`) when running suites against a worktree backend.
+
+**Recipe checks made** (book `soupnet-oss`, intent `int_PEBOdcUaDV5YyRRUeu6KZYDl`): a search for how to grade a row whose named evidence is missing (it surfaced `21d39214`, which this record follows); `0a51069c`, grading S10-D6 as a fail because its cost bound is behaviour rather than evidence (proceeded); and draft `041d4bee`, the resolver wording, left for the operator. Each was closed with feedback.
+
+### Slice 10 after verification (stream A, 2026-10-26)
+
+The verifier's record is above. Each finding, and what was done:
+
+- **S10-D6, fail.** The row promised no cost for a caller with no drafts; the lookup's one statement is what finds that out. The row is amended to the cost the code has, the statement now uses the review set (`draftLiveAwaitingReviewBy`), and a Layer 3 test pins that such a caller gets no line.
+- **S10-C2, fail.** The web `/check` page's search help now names `is:expired` beside `is:draft`, and so does the `filter` field's description in `packages/contracts/src/recipe.ts` (Found 6).
+- **S10-M1, gap.** The row named a third static guard that was not built; the row now records the two that are, and why a regex over interval comparisons was not added.
+- **S10-D4, gap.** The verifier's byte-identity probe is now a test in the suite: Sam's search near Pat's live draft (MCP markdown, structured, and web JSON) equals the same search after the draft is deleted.
+- **S10-K2, gap.** A Layer 1 test of the queue's parsing of `is:expired` (`draft-queue-query.test.ts`).
+- **S10-Z1, gap.** No tool or parameter description changed; the verifier measured remote `tools/list` at 17,630 bytes at `589e0ba`, which is `main`'s figure since the schema is untouched.
+- **S10-C1, S10-K2, no browser run.** The browser run follows.
+- **Found 1, resolver wording.** Adopted the verifier's proposal, "by your user's agent "K2"" and "by one of your user's agents", in the voice the rest of the label uses ("your user"). Draft `041d4bee` is closed with that.
+- **Found 2, the floor.** A draft must also be within 0.15 of the best match, the ranking's own band (recipe `c21da2d1`); `pickOpenQuestion` is pure and unit-tested, including the verifier's -1% case.
+- **Found 3, headless drafts as standing candidates.** By the ruling: a headless key's drafts are exempt from expiry because the person's queue is their listener, and naming them to the person's agents nearby is the bus working. Unchanged.
+- **Found 4, the depositor.** The line now names only drafts about the caller's user, and an expired draft's label for its depositor says only its subject can still verify or reject it.
+- **Found 5, "task went quiet" copy.** The queue's count line, its item note, its search hint and the parser's refusal now say "expired unanswered"; the detail page and the agent labels already give the reason per draft.
+- **Found 7, the test environment.** Recorded in the build notes' environment note; the gate supplies the full environment.
+
+Layer 3 after the fixes: `drafts-bus.test.ts` 15 passed against the worktree backend.
+
+
+Gate after the fixes, at `7cba461`: the first run stopped at the seam check (the dispatch service's fingerprint, refreshed in `7cba461`); the next had every test pass but hit the tracked vitest worker crash ("Worker exited unexpectedly", backlog); the rerun passed, 2,015 tests, 6 skipped, exit 0.
+
+### Slice 10 browser verification (2026-10-26)
+
+Run by the browser-verify skill at `7cba461` on the worktree stack (backend 127.0.0.1:3144 over `soupnet_e2e_10`, Vite 127.0.0.1:5294). Expectations, results and the harness handback are in the private repo's `docs/working/browser-verification/2026-10-26-drafts-10/`. 14 passed (13 desktop, 1 mobile): E1 to E12 met, E13 open as framed.
+
+- E13 (the web check page's open-question line): shown after the results, naming a draft that was also the only result. That is the S10-D2 amendment working. The "asked" date is the UTC day, as every agent-facing date is ("Logged", the labels). Both stand.
+- Fixed from "Found, not listed": the queue's search hint lacked a space before `is:expired`; the expired listing kept the heading "Drafts awaiting your review" and now reads "Drafts that expired unanswered"; the dashboard and book list rows showed an expired draft as "[Unverified draft]", since `GET /traces` rows carried no expiry. They now carry `draftExpiry` through a new module fragment, `draftExpiryShownTo` (only where the viewer sees the draft's state), and read "[Unverified draft, expired]"; Layer 3 pins Dana's row and Sam's absence.
+- Left as is: the expiry explanation is a tooltip on the status line, as every draft status line's is; Pat sees the same expiry as the depositor on an on-behalf draft (S10-L5); a `/check` filter with parentheses errors (pre-existing, stream B's prose-parenthesis fix).
+- The spec is kept as `tests/e2e/drafts-slice10.spec.ts` (the standing answer: recipes `840d65ab`, `dfb89586`), with the database it ages drafts in taken from `E2E_PGDATABASE` or the `.env`, not hard-coded. 14 passed again after the fixes, and `drafts-bus.test.ts` 15 passed.
+
+### Slice 10 after the rebase onto 6a (stream A, 2026-10-26)
+
+Slice 6a merged (#142) while this branch waited, so the branch is rebased onto `c21f421` and the deferred rows are built. The rebase's conflicts were each two additions side by side: the parser's qualifier help and its `is:` and `intent:` branches; the queue's result type, its empty-scope return and its row type (B's `notice` and intent grouping beside the expired total); the exclude-own lift (`is:expired` beside `intent:`); the web `/check` help (`is:expired` beside B's `intent:` line); the queue page's hint and item, now rendered by B's `renderItem` with the expired note in it; the feature file and the decision log (B's rule and entry beside this slice's). Seam fingerprints were refreshed for the files both slices touched.
+
+- **S10-L2, S10-L3 (built).** `draftWindowOpen` and `draftWindowClosesAt` read the depositing intent's `last_used_at` through one subquery, `intentLastUsed`, joined on the id alone: a draft whose intent row exists is live while that intent was used within 24 hours, and one with no intent, or whose intent row is gone, keeps the week. `draftExpiryReason` now says `intent_idle` or `age`. Layer 3: an intent idle 25 hours expires a day-old draft, 23 hours keeps it, a deleted intent falls back to the week, a search carrying the intent revives the draft with nothing written to it, and an on-behalf draft follows its depositor's intent (DT-BUS-02 and 03 lose `@unreleased`).
+- **S10-D3 (built).** The dispatch lookup joins the intent's story only when the intent is the caller's user's own (`oi.user_id = viewer`, the queue's join). Layer 3: Pat's agent sees its own intent's story on the line, and a line naming Dana's on-behalf draft carries only the date.
+- **S10-C2 (built).** `is:expired` in the `search_recipes` query description, 413 of 420 characters; remote `tools/list` 17,642 → 17,649 bytes, stdio 14,145 → 14,152, shared descriptions 6,386 → 6,393 (decision log).
+- **Registers.** `authz/intent-link.test.ts` registers the two new readers of `intent_id`, `authz/draft-sql.ts` (the last-use timestamp, never the story) and `services/draft-dispatch.service.ts` (the owner-only story). The `traces.intent_id` schema comment names them.
+- **Still waiting:** S10-K3 (the lineage counts) on slice 9 (#140), and the briefing's bus line on stream C's C1 and C2.
+
+Layer 3 after the rebase: `drafts-bus.test.ts` 19 passed against the worktree backend (`soupnet_e2e_10`, migrated to 6a's `0042` at startup).
+
+
+Gate at `a52c79d`: one run failed one test, `draft-queue.test.ts` S3-A1, whose audit query took the newest row by `occurred_at` and got the deposit's `recipe.checked` instead of the not-chosen row; it passed three times out of three alone. Both rows take the database's `NOW()` and the deposit's is awaited first, so a backward clock step in the database VM is the explanation that fits (recipe `2f40fb9f`). The query now selects the resolution's own row by action. The rerun passed: 2,070 tests, 6 skipped, exit 0. The browser specs `drafts-slice10` and `drafts-slice6c` passed on the rebased stack (25 on both projects).
+
+### Slice 10 after slice 9 merged (stream A, 2026-10-26)
+
+`main` (with slice 9, #140, and C1, #138) is merged into the branch rather than rebased, since the branch is on origin (the planning session's direction: a rebase would need a force-push). The merge's conflicts were each two additions side by side: the intent-link register (this slice's `authz/draft-sql.ts` beside slice 9's second `routes/auth.ts` mention), the `traces.intent_id` schema comment (each slice's readers, now listed together), the decision log (this entry above C1's), and a refreshed seam fingerprint.
+
+- **S10-K3 (built).** `GET /intents` and `GET /intents/:id` count an intent's draft deposits under `counts.drafts`: `live`, `expired` and `resolved`, each as the viewer sees the draft's state (`draftStateShownTo` composed with `draftLive` and `draftExpired`), so the depositor of an on-behalf draft never learns from a count that its subject verified it. Slice 9's three exact assertions on `counts` gain the field. Layer 3: one live and one rejected draft under an intent count `{ live: 1, expired: 0, resolved: 1 }`, and with the intent idle 25 hours, `{ live: 0, expired: 1, resolved: 1 }`. `drafts-bus.test.ts`: 20 passed.
+- **Still waiting:** the briefing's bus line on C2 (#146), settled at 114 characters against C2's Drafts section ("A draft is a question on a bus: it stays live while your intent is in use, and expires once your task goes quiet.").
+
+### Slice 10 after C2 merged (stream A, 2026-10-26)
+
+`main` with C2 (#146) is merged in (a merge commit; only the decision log conflicted, this entry kept above C2's). The bus line is in C2's "## Drafts" section, just before "With sub-agents, work live:": "A draft is a question on a bus: it stays live while your intent is in use, and expires once your task goes quiet." Thin briefing 22,681 → 22,795 of 22,800, headless 23,081 → 23,195 of 23,200; no cap moved. Its scenario is in `checking-behavior.feature`. S10-C3 is built, and every slice 10 row is now built.

@@ -235,7 +235,7 @@ describe.skipIf(!BASE || !canConnect())("read paths for reports (drafts-and-tria
     const mine = page.items.find((i) => i.id === intent)!;
     expect(mine.apiKeyLabel).toBe("k2-a-and-b");
     // shown: rA, rB (Sam's draft is not Pat's to read); feedback: fA, fB, fS (fRel carries no intent; Olive's row is not Pat's).
-    expect(mine.counts).toEqual({ shown: 2, deposits: 0, feedback: 3 });
+    expect(mine.counts).toEqual({ shown: 2, deposits: 0, feedback: 3, drafts: { live: 0, expired: 0, resolved: 0 } });
     const created = page.items.map((i) => (i as unknown as { createdAt: string }).createdAt);
     expect([...created].sort().reverse()).toEqual(created);
   });
@@ -243,7 +243,7 @@ describe.skipIf(!BASE || !canConnect())("read paths for reports (drafts-and-tria
   it("S9-I1/S9-S2: an intent is listed for every key of the user; recipe-naming counts follow the key's books", async () => {
     const mine = (await intentList(K1)).items.find((i) => i.id === intent)!;
     // K1 reads A only: shown rA; feedback fA and fS (a search names no recipe).
-    expect(mine.counts).toEqual({ shown: 1, deposits: 0, feedback: 2 });
+    expect(mine.counts).toEqual({ shown: 1, deposits: 0, feedback: 2, drafts: { live: 0, expired: 0, resolved: 0 } });
   });
 
   it("S9-I2: the lineage is oldest first; recipes deposited without the intent are not its deposits", async () => {
@@ -436,7 +436,7 @@ describe.skipIf(!BASE || !canConnect())("read paths for reports (drafts-and-tria
     const res = await call(pat, "GET", `/me/intents/${intent}`);
     expect(res.status).toBe(200);
     const d = ((await res.json()) as { data: { intent: IntentSummary; lineage: Lineage[] } }).data;
-    expect(d.intent.counts).toEqual({ shown: 2, deposits: 0, feedback: 3 });
+    expect(d.intent.counts).toEqual({ shown: 2, deposits: 0, feedback: 3, drafts: { live: 0, expired: 0, resolved: 0 } });
     const answers = await Promise.all([oliveIntent, RANDOM_INTENT, "nope"].map(async (id) => {
       const r = await call(pat, "GET", `/me/intents/${id}`);
       return { status: r.status, body: await r.text() };

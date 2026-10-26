@@ -15,7 +15,7 @@ import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { authenticateKey, keyForcesDrafts } from "../authz";
 import type { Principal } from "../authz";
-import { HTML_ACCEPT_TYPES, renderCheckResponseMarkdown, fenceCheckResponseMarkdown, parseVerbosity, renderRatingsMarkdown, isShownDraftState, parseDraftFlag, draftLabel, INTENT_QUALIFIER_NOT_RECOGNIZED } from "@soupnet/domain";
+import { HTML_ACCEPT_TYPES, renderCheckResponseMarkdown, fenceCheckResponseMarkdown, parseVerbosity, renderRatingsMarkdown, isShownDraftState, parseDraftFlag, draftLabel, INTENT_QUALIFIER_NOT_RECOGNIZED, openQuestionLine } from "@soupnet/domain";
 import type { CheckResponseJson } from "@soupnet/domain";
 import type { Recipe } from "@soupnet/contracts";
 import { TRIAGE_RATING_VALUES } from "@soupnet/contracts";
@@ -403,6 +403,10 @@ function buildJsonResponse(
       result.relatedEvidenceKnown.map(
         (p): Recipe => ({ recipeId: p.recipeId, similarity: p.similarity }),
       );
+  }
+  // Slice 10 (S10-D5): the nearby open question, as structured data.
+  if (result.openQuestion) {
+    (response["data"] as Record<string, unknown>)["openQuestion"] = result.openQuestion;
   }
 
   // Concept-axis positions (TCAV-style projection)
@@ -810,7 +814,7 @@ export function renderPage(
         if (knownIdsForHtml.has(r.id) || r.known) {
           return `
     <article class="result">
-      <p><small><code>${esc(r.id)}</code> [known to you]${draftLabel(r.draftState, r) ? ` ${esc(draftLabel(r.draftState, r))}` : ""}${scoreDetail ? ` ${esc(scoreDetail)}` : ""}${r.clusterSize ? ` &mdash; represents ${r.clusterSize} similar recipes` : ""}</small></p>
+      <p><small><code>${esc(r.id)}</code> [known to you]${draftLabel(r.draftState, { ...r, expired: r.draftExpired }) ? ` ${esc(draftLabel(r.draftState, { ...r, expired: r.draftExpired }))}` : ""}${scoreDetail ? ` ${esc(scoreDetail)}` : ""}${r.clusterSize ? ` &mdash; represents ${r.clusterSize} similar recipes` : ""}</small></p>
     </article>`;
         }
 
@@ -852,7 +856,7 @@ export function renderPage(
         const groupHtml = r.recipeBook ? `<span class="group">[${esc(r.recipeBook.name)}]</span> ` : "";
         // The viewer's own unpublished draft, labelled on the page too
         // (slice 2; nobody else's reaches a result set).
-        const draftHtml = draftLabel(r.draftState, r) ? `<span class="draft">${esc(draftLabel(r.draftState, r))}</span> ` : "";
+        const draftHtml = draftLabel(r.draftState, { ...r, expired: r.draftExpired }) ? `<span class="draft">${esc(draftLabel(r.draftState, { ...r, expired: r.draftExpired }))}</span> ` : "";
 
         // Known cluster-mates (seam 2, "stub, stub, full recipe"): members of
         // this cluster the caller already holds, listed as id-stubs beside
@@ -923,6 +927,14 @@ export function renderPage(
     ${result.results.length > 0 ? resultItems : emptyLine}
     ${paginationHtml}
   </section>`;
+
+    // Slice 10: the nearby open question, after the results (S10-D1, S10-D5).
+    if (result.openQuestion) {
+      resultsHtml += `
+  <section id="open-question">
+    <p>${esc(openQuestionLine(result.openQuestion))}</p>
+  </section>`;
+    }
 
     // Related evidence from other recipes (evidence discovery pipeline).
     // Known parents render as ONE compact line of ids, not per-row stubs
@@ -1054,7 +1066,7 @@ export function renderPage(
     <ul>
       <li>Bare words search by meaning. <code>"quoted terms"</code> match exactly (filenames, identifiers) &mdash; including inside evidence and its citations. Group with <code>("a" OR "b")</code>; exclude with <code>-"term"</code>.</li>
       <li><code>author:jane@example.com</code>, <code>author:me</code> &mdash; filter by who made the call. <code>after:2026-06-01</code> / <code>before:2026-06-14</code> bound the judgment date.</li>
-      <li><code>is:draft</code> lists your own drafts awaiting review; <code>impact:high</code> / <code>uncertainty:low</code> (low, medium, or high) filter by the depositing agent's ratings.</li>
+      <li><code>is:draft</code> lists your own drafts awaiting review, and <code>is:expired</code> the ones that expired unanswered; <code>impact:high</code> / <code>uncertainty:low</code> (low, medium, or high) filter by the depositing agent's ratings.</li>
       <li><code>intent:int_&hellip;</code> lists the recipes deposited under one of your declared intents (the id a response returned); with <code>is:draft</code>, that intent's open drafts.</li>
       <li>Clustered results show one exemplar per group of similar recipes &mdash; &ldquo;Show all&rdquo; flattens them.</li>
       <li>Searching is read-only; checking a recipe (below) is what adds to the corpus. <code>?format=json</code> returns structured data.</li>
@@ -1157,7 +1169,7 @@ export function renderPage(
 
       ${headless
         ? ""
-        : `<label for="draft"><input type="checkbox" id="draft" name="draft" value="true"${parseDraftFlag(params.draft).draft ? " checked" : ""}> Deposit as a draft &mdash; the person could not be asked; only they and their agents see it until they verify it</label>`}
+        : `<label for="draft"><input type="checkbox" id="draft" name="draft" value="true"${parseDraftFlag(params.draft).draft ? " checked" : ""}> Deposit as a draft &mdash; a high-impact, uncertain call you can't settle yet from the context you hold; only they and their agents see it until it's verified</label>`}
 
       <label for="on_behalf_of">On behalf of &mdash; the email of the person this recipe is about, if not you (optional; always a draft only they can verify)</label>
       <input type="email" id="on_behalf_of" name="on_behalf_of" value="${esc(params.onBehalfOf ?? "")}" autocomplete="off">
