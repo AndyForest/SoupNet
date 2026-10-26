@@ -4,6 +4,34 @@ Every PR that touches briefing copy (`packages/domain/src/recipe-guide-content.t
 
 (Renamed from declared-intent-log.md on 2026-08-23: "intent" now names the runtime intent-registration mechanism — cold-start v2 Phase C — so the discipline's log takes an unambiguous name. The discipline itself is unchanged.)
 
+## 2026-10-25 — Drafts-and-triage slice 8b item 3 (stream D): a Members line on every book, and pending invites for the books you manage
+
+Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-and-triage-slices-6-7-revision.md) §Slice 8 item 3. Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 8b item 3 rubric. Design checked as recipe `173384b3`.
+
+### Edits
+
+1. **`renderRecipeBooks`** (served wherever the corpus-context block is: `get_briefing` remote and stdio, `GET /briefing`, `list_my_recipe_books`, the web copy-briefing): the Members line is printed on every book with a roster, a solo book included ("Members (1): you"), where it used to be omitted unless a book had two or more members. The caller is listed first as "you", identified by user id. The others keep their labels and order.
+2. **"Pending invites (n)" (new):** a line under the Members line on books where the caller is an owner or admin, `(0)` included, counting the invitations the web's pending list shows. A plain member's book has no such line.
+
+### Scenarios intended to move
+
+- `briefing-surfaces.feature`: the new scenario "Every book says who is in it, and a book's managers see its pending invites".
+
+### Scenarios watched, with rationale for holding
+
+- **"Web copy-paste briefing keeps the full artifact"** and **"Mid-session corpus refresh returns the index, not a sample"**: the sections they name are unchanged. The recipe-books block gains one or two sub-lines per book, the same on every surface.
+- **Every scenario that names collaborators** (cross-pollination copy): the names still appear, now with the caller marked, which is what lets an agent tell the person's own account from a colleague's.
+
+### Measured
+
+| Measure | Before | After | Cap |
+|---|---|---|---|
+| Thin briefing, fixed fixture | 18,183 characters | 18,233 | 21,000 |
+| Thin headless briefing, same fixture | 18,536 characters | 18,586 | 21,500 |
+| Remote and stdio `tools/list` | unchanged | unchanged | |
+
+The fixture was updated to the shape the loader now produces (the caller in each roster, a pending count on the book it owns). With stream C's PR #138, which takes the thin fixture to within 7 characters of its cap, the second of the two to merge measures again and raises the cap by the measured figure, dated.
+
 ## 2026-10-24 — Drafts-and-triage slice 6a: one grammar term in `search_recipes`, and the intent qualifier's not-recognized note
 
 Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-and-triage-slices-6-7-revision.md) §6a, §6f. Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 6a rubric (S6a-Z1).

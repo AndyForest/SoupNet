@@ -28,7 +28,7 @@ import type {
 } from "@soupnet/domain";
 import { fetchBriefingExemplars } from "./briefing-exemplars";
 import { fetchBookStats } from "./book-stats.service";
-import { listMembersOfBooks, keyForcesDrafts } from "../authz";
+import { listMembersOfBooks, pendingInviteCounts, keyForcesDrafts } from "../authz";
 import type { Principal } from "../authz";
 import { auditLog } from "@soupnet/db";
 import {
@@ -264,6 +264,7 @@ interface UserRow {
 
 interface MemberRow {
   group_id: string;
+  user_id: string;
   display_name: string | null;
   email: string;
 }
@@ -305,12 +306,17 @@ async function resolveScope(input: BriefingComposeInput): Promise<ResolvedScope>
   // Fetch members for all in-scope recipe books in one query; bucket per group.
   // Surface members so the briefing flags collaboration: when a shared book
   // appears, the receiving LLM can name collaborators in synthesis.
-  const memberRowList: MemberRow[] = await listMembersOfBooks(db, allIds);
+  // The caller is flagged by user id, not email, so a person with two
+  // accounts in one book can tell which one is reading (slice 8b item 3).
+  const [memberRowList, pendingByGroup]: [MemberRow[], Map<string, number>] = await Promise.all([
+    listMembersOfBooks(db, allIds),
+    pendingInviteCounts(db, keyRow.user_id, allIds),
+  ]);
 
   const membersByGroup = new Map<string, BriefingMember[]>();
   for (const row of memberRowList) {
     const list = membersByGroup.get(row.group_id) ?? [];
-    list.push({ email: row.email, displayName: row.display_name });
+    list.push({ email: row.email, displayName: row.display_name, ...(row.user_id === keyRow.user_id ? { isCaller: true } : {}) });
     membersByGroup.set(row.group_id, list);
   }
 
@@ -334,9 +340,11 @@ async function resolveScope(input: BriefingComposeInput): Promise<ResolvedScope>
       canWrite: keyRow.write_group_ids.includes(g.id),
       isDefault: g.id === keyRow.default_write_group_id,
     };
-    // Only attach members when there's more than one (the user themselves) —
-    // solo books skip the Members line entirely in renderRecipeBooks.
-    if (members.length > 1) base.members = members;
+    // Every book carries its roster, a solo one included ("Members (1): you"),
+    // and books the caller manages carry their pending invites, 0 included.
+    if (members.length > 0) base.members = members;
+    const pending = pendingByGroup.get(g.id);
+    if (pending !== undefined) base.pendingInvites = pending;
     const stats = statsByGroup.get(g.id);
     if (stats) base.stats = stats;
     return base;

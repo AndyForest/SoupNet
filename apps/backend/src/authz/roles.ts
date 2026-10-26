@@ -17,7 +17,7 @@
 export type BookRole = string | null;
 
 const OWNER_ROLES: readonly string[] = ["owner"];
-const OWNER_OR_ADMIN_ROLES: readonly string[] = ["owner", "admin"];
+export const OWNER_OR_ADMIN_ROLES: readonly string[] = ["owner", "admin"];
 
 /** Holds the `owner` role: may edit book details and remove members. */
 export function isOwner(role: string | null | undefined): boolean {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { BRIEFING, BRIEFING_KEY_PLACEHOLDER, HEADLESS_KEY_SECTION, buildCorpusContextSection } from "./recipe-guide-content";
+import { BRIEFING, BRIEFING_KEY_PLACEHOLDER, HEADLESS_KEY_SECTION, buildCorpusContextSection, renderRecipeBooks } from "./recipe-guide-content";
 import type { BriefingBuildInput, BriefingGroup } from "./recipe-guide-content";
 
 /**
@@ -21,6 +21,9 @@ import type { BriefingBuildInput, BriefingGroup } from "./recipe-guide-content";
 const BACKEND = "https://mcp.example.test";
 const FRONTEND = "https://www.example.test";
 
+// The shape the loader produces since slice 8b item 3: every roster includes
+// the caller, flagged, and a book the caller owns carries its pending count.
+const caller = { email: "user@example.test", displayName: "Test User", isCaller: true };
 const groups: BriefingGroup[] = [
   {
     slug: "personal",
@@ -28,6 +31,8 @@ const groups: BriefingGroup[] = [
     description: "Catch-all personal book",
     canWrite: true,
     isDefault: true,
+    members: [caller],
+    pendingInvites: 0,
   },
   {
     slug: "project-x",
@@ -38,6 +43,7 @@ const groups: BriefingGroup[] = [
     members: [
       { email: "a@example.test", displayName: "A" },
       { email: "b@example.test", displayName: null },
+      caller,
     ],
   },
 ];
@@ -350,6 +356,52 @@ describe("buildCorpusContextSection", () => {
     expect(text).toContain("Default write recipe book: none right now");
     expect(text).toContain("recipe_book");
     expect(text).not.toContain("Default write recipe book: personal");
+  });
+});
+
+describe("renderRecipeBooks — membership lines (drafts-and-triage slice 8b item 3)", () => {
+  const book = (extra: Partial<BriefingGroup>): BriefingGroup => ({
+    slug: "b",
+    name: "B",
+    canWrite: true,
+    isDefault: false,
+    ...extra,
+  });
+  const you = { email: "me@example.test", displayName: "Me", isCaller: true };
+  const lines = (g: BriefingGroup) => renderRecipeBooks([g]).split("\n");
+
+  it("S8b3-M1: a solo book says so, rather than omitting the line", () => {
+    expect(lines(book({ members: [you] }))).toContain("    Members (1): you");
+  });
+
+  it("S8b3-M1/M2: the caller is listed first as you and counted; the others keep their labels and order", () => {
+    const members = [
+      { email: "a@example.test", displayName: "A" },
+      you,
+      { email: "z@example.test", displayName: null },
+    ];
+    expect(lines(book({ members }))).toContain("    Members (3): you, A <a@example.test>, z@example.test");
+  });
+
+  it("S8b3-M2: the caller is told apart by the flag, not by a matching name or email", () => {
+    const members = [{ email: "me@example.test", displayName: "Me" }, you];
+    expect(lines(book({ members }))).toContain("    Members (2): you, Me <me@example.test>");
+  });
+
+  it("S8b3-P1: a book the caller manages carries its pending invites under the Members line, zero included", () => {
+    expect(lines(book({ members: [you], pendingInvites: 0 }))).toEqual(
+      expect.arrayContaining(["    Members (1): you", "    Pending invites (0)"]),
+    );
+    const two = lines(book({ members: [you], pendingInvites: 2 }));
+    expect(two.indexOf("    Pending invites (2)")).toBe(two.indexOf("    Members (1): you") + 1);
+  });
+
+  it("S8b3-P1: no count is given for a book the caller does not manage", () => {
+    expect(renderRecipeBooks([book({ members: [you] })])).not.toContain("Pending invites");
+  });
+
+  it("a caller that loads no roster gets no Members line (the shape before rosters were loaded)", () => {
+    expect(renderRecipeBooks([book({})])).not.toContain("Members");
   });
 });
 
