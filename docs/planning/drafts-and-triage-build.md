@@ -2834,10 +2834,10 @@ Settled before this rubric and not reopened here:
 **Decisions this rubric makes.** Each is reversible, and each is recorded in the build notes with its reasoning.
 
 1. **When the flat list applies.** On the read-only search surfaces (`search_recipes` on both MCP servers, and `/check` with `filter` and no recipe), whenever the parsed query has no semantic text. Under the prose-parenthetical rule (`8481d9bc`), a parenthetical counts as semantic text. `check_recipe` always carries text, so it is unchanged.
-2. **Row shape.** Rows ride in the existing `results` field, so a script that reads `results[].recipeId` keeps working. `searchMode` is `"list"`. Each row carries:
+2. **Row shape.** Rows ride in the existing `results` field, so a script that reads `results[].recipeId` keeps working. ~~`searchMode` is `"list"`.~~ `searchMode` stays `"lexical"`, as for every search with no bare text, and the response gains `listOrder` and `perPage` (amended during the build: renaming the mode would break readers of it, and "lexical" still says the matches are exact with no similarity). Each row carries:
    - `recipeId` and the book;
-   - the judgment date (`decidedAt`, or the deposit time when unset), the deposit time, and the changed time;
-   - the depositing agent's ratings;
+   - the judgment date (`createdAt`, which is `decided_at` or the deposit time when unset), the deposit time (`loggedAt`, the name `get_recipes` already uses for it), and the changed time (`changedAt`);
+   - ~~the depositing agent's ratings;~~ the ratings where every result carries them, beside the viewer's own draft label (amended during the build: slice 3's security property "Ratings reach no result row but the viewer's own drafts", S3-AG2, holds; an `is:draft` sweep still gets them);
    - the state (the viewer's own draft label, as on every result, or none for a published recipe);
    - the claim.
 
@@ -2867,7 +2867,7 @@ Cast: Pat (the key's owner), Sam (a member of Pat's shared book).
 
 | # | Criterion | Evidence |
 |---|---|---|
-| S8b-L1 | A qualifier-only search (`author:me`) returns the flat list: `searchMode: "list"`, no clusters, no "represents N similar" lines, no related-evidence section, and one row per match with decision 2's fields, in decision 3's order. | Layer 3 on MCP structured and markdown, and on `/check` JSON and HTML. |
+| S8b-L1 | A qualifier-only search (`author:me`) returns the flat list: `listOrder` set, no clusters, no "represents N similar" lines, no related-evidence section, and one row per match with decision 2's fields, in decision 3's order. | Layer 3 on MCP structured and markdown, and on `/check` JSON and HTML. |
 | S8b-L2 | Paging is total. Over 120 visible recipes, pages 1 to 3 hold 50, 50 and 20 distinct ids whose union is the full set, in order. Page 4 is empty with the end line. `totalResults` is 120 on every page. | Layer 3. |
 | S8b-L3 | `is:draft` lists in the queue's triage order: the same ids in the same sequence as `GET /traces/drafts` for drafts with no intent. | Layer 3 comparing the two. |
 | S8b-L4 | Visibility is unchanged. Pat's flat list never holds Sam's unresolved draft, a rejected draft, or a recipe in a book outside the key's read scope. Rows and totals use the same draft condition (RP-03). The new statement is registered in `scripts/check-authz-seam.mjs` with its reason. | Layer 3; the gate's seam check. |
@@ -2879,7 +2879,7 @@ Cast: Pat (the key's owner), Sam (a member of Pat's shared book).
 | # | Criterion | Evidence |
 |---|---|---|
 | S8b-C1 | `created-after:<t>` selects exactly the recipes deposited at or after t, for a date and for a full ISO datetime, on the flat path and the ranked path. | Layer 3. |
-| S8b-C2 | `changed-after:<t>` selects a recipe deposited before t when, after t, it was verified, rejected (when still visible to the viewer), moved, given a feedback row, or given a reaction. Each of the five is its own case. A recipe untouched since t is not selected. The order is latest change first. | Layer 3. |
+| S8b-C2 | `changed-after:<t>` selects a recipe deposited before t when, after t, it was verified, moved, given a feedback row, or given a reaction. A draft rejected after t is not listed, because a rejected draft leaves every result set (slice 2). A recipe untouched since t is not selected. The order is latest change first. | Layer 3. |
 | S8b-C3 | Grammar: each qualifier takes one date. A malformed value, a second value, a group and a negation are loud errors naming the form. | Layer 1 in `search-query.test.ts`. |
 | S8b-C4 | Neither qualifier reaches ranking: both terms are in the ranking-isolation guard, and a mutation check shows the guard fails when one is added to a ranking file. | The guard test; mutation recorded in the build notes. |
 
@@ -2891,7 +2891,41 @@ Cast: Pat (the key's owner), Sam (a member of Pat's shared book).
 | S8b-B1 | Sizes: both `tools/list` payloads within their caps, shared descriptions within 6,600, and `searchQuery` within 420, each measured before and after in `spec-decision-log.md`. | Size tests; the figures. |
 | S8b-D1 | Docs: the `recipe-search-design.md` rows for both qualifiers and the flat list, `CLAUDE.md`'s qualifier list, `drafts-and-triage-read-paths.md` if it names the session walk, and a sweep scenario in the feature file. | Review. |
 
-Open, to settle by check during the build, not for the operator: whether 50 rows of markdown stay inside a typical tool-result budget (measure a full page's bytes first), and whether a `changed-after:` row should name what changed (resolved, moved, feedback, reaction), which a sweep would use but which costs a join per row.
+Open, to settle by check during the build, not for the operator: whether 50 rows of markdown stay inside a typical tool-result budget (measure a full page's bytes first), and whether a `changed-after:` row should name what changed (resolved, moved, feedback, reaction), which a sweep would use but which costs a join per row. (Both settled in the build notes below.)
+
+#### Slice 8b items 1 and 2 build notes (stream B, 2026-10-26)
+
+Written by the builder for the verifier; the verification record is the verifier's to write. Built on `5b81097` (PR #147). Branch `drafts/8b-flat-list`.
+
+**What was built.**
+- **Grammar** (`packages/domain/src/search-query.ts`): `created-after:` and `changed-after:` join the qualifier allowlist and the unknown-qualifier help. Each takes one strict ISO date or datetime, cannot be negated, and refuses a second value and a group, by the `after:` rules. A parenthetical that names one keeps the strict group reading, as `(author:me)` does. The IR gains `createdAfter` and `changedAfter`.
+- **Selections** (`services/search-selection.ts`): `createdAfterSelection`, `changedAfterSelection`, and `changedAtSql`, the latest of `created_at`, `updated_at`, the newest `check_feedback.created_at` and the newest `trace_reactions.updated_at`. `GREATEST` skips the NULLs, and both subqueries use their table's `trace_id` index. Like every selection, they reach the ranked path as opaque predicates.
+- **The flat list** (`services/recipe-list.service.ts`, new): one count and one paged select over `inBooks` and `traceVisibleTo` with the search's structured predicates, so rows and the total share one condition. The page size is fixed at 50 and the page is clamped to 1..100,000, the queue's bound. The three orders each end in the id. `searchWithoutLogging` takes this path whenever the parsed query has no semantic text, in place of the corpus-mode pipeline call, and writes no `session_shown` or `intent_shown` rows on it. The `check.searched` row (its `searchId`) is written as before.
+- **Wire** (`lib/flat-list-fields.ts`, new): one builder for the flat rows and page fields, used by the `/check` JSON builder and the remote MCP tool (the stdio server reads the `/check` JSON). `enrichResults` takes `{ evidence: false }` for these rows, so they get the book, the draft label and the on-behalf party without the evidence queries. The shared markdown renderer gains the flat branch and `flatListPageLine`, which the `/check` page reuses. The HTML page lists each row with its id and time, and names the order where the sort toggle was.
+- **Contracts:** `Recipe.changedAt` (new), `loggedAt`'s definition widened to the flat list, and `listOrder` and `perPage` on the check response.
+- **Copy:** `searchQuery` and the new `searchPage`, both trimmed under question 56's rule (`docs/briefing-specs/expanded/slice8b.md`). `page` is on both servers' `search_recipes` as `z.number().int().min(1)`.
+- **Guards:** the ranking-isolation guard gains the since terms (S8b-C4). Mutation check: appending `// mutation: changedAfter` to `search-pipeline.ts` failed exactly that file's new case, and the file was restored. The seam registers `recipe-list.service.ts` (composes) and `search-selection.ts` (the correlated subqueries, not composing). `trace.service.ts`'s fingerprint moved only because its multi-line `@soupnet/db` import counts as a Drizzle mention whose 40-line window now reaches the two new import lines; no SQL changed.
+
+**Decisions made in the build** (each recorded in the rubric as an amendment):
+- `searchMode` stays `"lexical"`, and `listOrder` marks the flat list. Renaming the mode would break its readers.
+- The deposit time is `loggedAt`, the name `get_recipes` already uses.
+- Ratings stay where S3-AG2 puts them: on the viewer's own drafts.
+- A rejected draft leaves every result set, so `changed-after:` cannot list it. Row S8b-C2 says so instead of "when still visible".
+- **The two open items.** A full markdown page of 50 rows measures 11,964 bytes, with claims cut to 160 characters, so the page size stays 50. A row does not name what changed. A sweep that needs to know reads the recipe (`get_recipes` gives its draft state) or its feedback rows (`GET /feedback/rows?trace_id=`), and a `changedBy` field would be a new noun for a question the existing reads answer.
+- `S3-A7` in `draft-queue.test.ts` pins `search_recipes`' parameter set; it now includes `page`, with the reason at the assertion.
+
+**Rows to check closely.**
+- S8b-L3 compares `is:draft` with `GET /traces/drafts` for drafts with no intent. The queue groups by intent and the agent list does not, so a fixture with intents would differ by design.
+- S8b-C2's order: the moved recipe also gets the move's correction feedback row, so its changed time is the later of the two.
+- S8b-P1: the SDK refuses a bad `page` before the handler runs. The test accepts either a JSON-RPC error or an `isError` result naming `page`.
+
+**Soup.net checks** (`soupnet-oss`, intent `int_Xls5LzHUWH5boPEY7MIPn2Or`, agent `a-drafts-6a-2026-10-24`; no drafts):
+- `4a517f5b`: the design, before the rubric. Nothing contradicted it. Its feedback row records the two corrections the build made (ratings, `searchMode`).
+- `3fec44d3`: the build decisions. It surfaced `8dd573b4` (2026-07-17), which prefers a dated cap raise to fitting a new description into headroom. Ruling 48 (2026-10-24) supersedes it for this round: one dated raise of the shared total (6,080 → 6,600) covers slices 6 to 9, so the `page` description was trimmed to stay under it. Its feedback row records this. A second row corrects a lineage id the first row wrote wrong.
+
+**Layer 3:** `apps/backend/src/routes/flat-list.test.ts`, 9 tests, one or more per rubric row, passed on its first run on an isolated stack (`TESTCI_PGPORT=5611 node scripts/test-ci-local.mjs -- apps/backend/src/routes/flat-list.test.ts`). Layer 1: 7 new cases in `search-query.test.ts`, 8 for the renderer's flat branch and `flatListPageLine` in `check-response-renderer.test.ts`, the order and page helpers in `recipe-list.service.test.ts`, and the stdio proxy's `page` forwarding and refusals in `apps/mcp-server/src/server.test.ts`.
+
+**Gate:** `TESTCI_PGPORT=5611 npm run test:ci` passed on the final tree: 2,232 tests passed and 6 skipped (148 files, 2 skipped), the authz seam held, and the golden-set ranking eval's 9 thresholds were green. Of two earlier runs on earlier trees, the first failed only S3-A7 (the parameter pin, updated above). The second passed every test that reported (2,217) and then failed on the known Windows worker crash (backlog, "Worker exited unexpectedly").
 
 ### Slice 6b rubric: option sets (stream G, after 6c and 6a merge)
 
