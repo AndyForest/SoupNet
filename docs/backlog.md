@@ -571,9 +571,17 @@ Observed 2026-07-21 (feat/feedback-web-surface gate run; the failing assert is `
 
 Second race, observed 2026-08-19 (chore/deps-security gate run; failing assert is `workspaces.test.ts:308`, `expect(after).not.toContain(slug)`): expire-now stamps `expires_at` from the Node host clock (`new Date()`, `routes/workspaces.ts`), but the briefing-scope filter compares against Postgres `NOW()` (`services/briefing.ts`) — the DB container's clock. Any skew between host and Docker/WSL2 VM clocks larger than the ~10ms between the two HTTP calls leaves the book "live" in DB terms while the tombstone response (host-clock comparison) already says `tombstoned: true`. **Fixed 2026-08-19** (rode on `chore/deps-security-2026-08-19` after blocking 2 of 3 gate runs; host-vs-VM skew measured at ~300-600ms that day): single-clock discipline — "now" is stamped as `NOW()` inside the UPDATE and `tombstoned` computed in the same RETURNING clause, so expiry, verdict, and every filter read the DB clock; host-supplied ISO timestamps for future expiries are unaffected. The reaper race at `:318` (first paragraph) remains open.
 
-### `[IMPL]` CI flake: authz.test.ts "listMembers … in join order" saw the member before the owner
+### `[IMPL]` CI flake: tests that assert time order fail when the database clock steps (listMembers join order, S9-I4, S8b-C2)
 
 Observed once, 2026-10-25, on `drafts/6a-intent-link` rebased onto `f6b85f4` (local gate on port 5611; the same tree passed on its third run, and main's CI passed at that commit): `apps/backend/src/authz/authz.test.ts:168` got `[member, owner]` from `listMembers`, which orders by `gm.joined_at ASC`. Both rows take `joined_at` from the database's `now()`: the owner's at book creation in `beforeAll` (`addCreatorAsOwner`), the member's seconds later in an earlier test (`addMember`). So the order can only invert if the database clock stepped backwards between the two inserts, or if `now()` came from a transaction that started earlier. Nothing else writes `group_members` on that path. Unproven: a Docker/WSL2 VM clock step, the same class as the `workspaces.test.ts` skew above. The cheap fix is to tie-break the assertion on order of insertion, or to assert the set and check the order only where the timestamps differ by more than a second. The run's next gate attempt also lost its backend mid-run (`ECONNREFUSED ::1:3175`, two "Worker exited unexpectedly", 145 failures, nothing in the backend log), so the machine may have been unsettled at the time. See the vitest worker entry below.
+
+**Recurred 2026-10-26** on `fix/audit-log-retention` (local gate, `TESTCI_PGPORT=5644`): three full runs of the same tree each failed exactly one test, a different one each time, and each passes alone on a fresh stack. All three assert an order taken from database timestamps written close together:
+
+- `authz/authz.test.ts:166` "listMembers returns every member with email and role, in join order" (the case above);
+- `routes/report-read-paths.test.ts:260` S9-I4, the intent lineage's deposits in deposit order;
+- `routes/flat-list.test.ts:348` S8b-C2, `changed-after:` latest change first, with changes 20 ms apart (`sleep(20)`).
+
+None of the three touches the branch's change (account deletion and the audit log). Docker Desktop's VM clock steps of 20–30 ms would invert any of them. The fix is the one above, applied to each: separate the writes by more than a clock step (a second, or a sequence the test controls), or assert the set and check order only where the timestamps differ by more than a step.
 
 ### `[IMPL]` CI flake: sync-embed-path.test.ts races the worker strategy sweep
 
