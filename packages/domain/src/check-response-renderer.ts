@@ -33,6 +33,7 @@ import type { TriageRating } from "@soupnet/contracts";
 import { renderRatingsMarkdown } from "./triage-ratings";
 import { draftLabel, openQuestionLine } from "./drafts";
 import type { DraftExpiry, OpenQuestion } from "./drafts";
+import { LISTING_DEPTH_MAX, lastReachablePage, FLAT_LIST_NARROWING } from "./listing-depth";
 
 // ── Response shape (tolerant — both builders' outputs satisfy it) ───────────
 
@@ -464,6 +465,9 @@ export const FLAT_LIST_CLAIM_CHARS = 160;
  * The flat list's page line, shared by the markdown renderer and the /check
  * page: where this page sits, and the next page to ask for, so a sweep's loop
  * ends on "last page" or on an empty page past the end, never on an error.
+ * On the last page within the listing depth (F110) with more matches beyond
+ * it, the line says so and how to narrow, instead of naming a page the server
+ * would refuse.
  */
 export function flatListPageLine(p: { page: number; totalPages: number; totalResults: number; perPage: number }): string {
   if (p.totalResults === 0) return "";
@@ -471,7 +475,11 @@ export function flatListPageLine(p: { page: number; totalPages: number; totalRes
     return `Page ${p.page} is past the end: ${p.totalResults} match(es) on ${p.totalPages} page(s) of ${p.perPage}.`;
   }
   const where = `Page ${p.page} of ${p.totalPages}, ${p.perPage} per page.`;
-  return p.page < p.totalPages ? `${where} Next: page=${p.page + 1}.` : `${where} This is the last page.`;
+  if (p.page >= p.totalPages) return `${where} This is the last page.`;
+  if (p.page >= lastReachablePage(p.perPage)) {
+    return `${where} This is the last page the list reaches (its first ${LISTING_DEPTH_MAX.toLocaleString("en-US")} matches). ${FLAT_LIST_NARROWING}`;
+  }
+  return `${where} Next: page=${p.page + 1}.`;
 }
 
 function flatRowTime(r: CheckResultItem, order: FlatListOrder): CheckResultItem["createdAt"] {

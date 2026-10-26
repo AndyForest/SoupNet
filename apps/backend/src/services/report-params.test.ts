@@ -103,6 +103,44 @@ describe("parseReportQuery", () => {
   });
 });
 
+describe("parseReportQuery: the listing depth (F105)", () => {
+  it("serves the last page that starts within the first 10,000 rows, at either per_page extreme", () => {
+    expect(parseReportQuery(q({ page: "50", per_page: "200" }), ALL).ok).toBe(true);
+    expect(parseReportQuery(q({ page: "200" }), ALL).ok).toBe(true);
+    expect(parseReportQuery(q({ page: "10000", per_page: "1" }), []).ok).toBe(true);
+  });
+
+  it("refuses the next page with the strict 400's shape, naming page and the reachable bound", () => {
+    const r = parseReportQuery(q({ page: "51", per_page: "200" }), ALL);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.fields).toEqual(["page"]);
+    expect(r.error).toContain("page (at most 50 at per_page=200: a report pages through its first 10,000 rows; narrow with since or another filter to reach older rows)");
+    const byDefault = parseReportQuery(q({ page: "201" }), ALL);
+    expect(!byDefault.ok && byDefault.error).toContain("at most 200 at per_page=50");
+    expect(parseReportQuery(q({ page: "10001", per_page: "1" }), []).ok).toBe(false);
+  });
+
+  it("refuses the audit's probe shape (page=100000&per_page=200)", () => {
+    const r = parseReportQuery(q({ page: "100000", per_page: "200" }), ALL);
+    expect(!r.ok && r.fields).toEqual(["page"]);
+  });
+
+  it("says how to narrow only where the path takes filters", () => {
+    const r = parseReportQuery(q({ page: "201" }), []);
+    expect(!r.ok && r.error).toContain("a report pages through its first 10,000 rows).");
+    expect(!r.ok && r.error).not.toContain("narrow");
+  });
+
+  it("is named with the other failures in one message, and not twice for an unparseable page", () => {
+    const r = parseReportQuery(q({ page: "201", since: "yesterday" }), ALL);
+    expect(!r.ok && r.fields.sort()).toEqual(["page", "since"]);
+    const bad = parseReportQuery(q({ page: "0" }), ALL);
+    expect(!bad.ok && bad.fields).toEqual(["page"]);
+    expect(!bad.ok && bad.error).not.toContain("10,000");
+  });
+});
+
 describe("pageInfo", () => {
   it("rounds total pages up and gives zero pages for zero rows", () => {
     expect(pageInfo(101, { page: 2, perPage: 50, offset: 50 })).toEqual({ total: 101, page: 2, perPage: 50, totalPages: 3 });

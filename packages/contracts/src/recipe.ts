@@ -376,7 +376,8 @@ export const CheckResponseDataSchema = z
         + "and perPage to a page, ordered by \"judgment\" (newest judgment date first), \"triage\" "
         + "(is:draft and is:expired: impact times uncertainty, then newest logged), or \"changed\" "
         + "(with changed-after:, latest changedAt first). Every order ends in the id, so pages never "
-        + "overlap; ask for the next page until page equals totalPages.",
+        + "overlap; ask for the next page until page equals totalPages. The list reaches its first "
+        + "10,000 matches (page 200); past them, narrow with changed-after: or created-after:.",
       ),
     perPage: z.number().int().optional().describe("Flat list only: rows per page (fixed)."),
     clustered: z.boolean().optional().describe("Whether results are clustered exemplars."),
