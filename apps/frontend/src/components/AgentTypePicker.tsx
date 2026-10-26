@@ -68,7 +68,7 @@ const ARCHETYPES: Archetype[] = [
     id: "web-mcp",
     icon: "external-link",
     title: "Web chatbots with connectors",
-    examples: "claude.ai, ChatGPT (Developer Mode), Le Chat, Perplexity",
+    examples: "claude.ai, ChatGPT (Business, Enterprise, Edu), Le Chat, Perplexity",
     blurb: "Chat AIs that accept custom connectors — you sign in through Soup.net, no keys to paste.",
     steps: [
       <>In your AI's settings, add a custom connector with this URL: {mcpUrl}</>,
@@ -81,7 +81,7 @@ const ARCHETYPES: Archetype[] = [
     id: "web-url",
     icon: "copy",
     title: "Web chatbots without MCP",
-    examples: "ChatGPT (free), Stitch, Grok, DeepSeek",
+    examples: "ChatGPT (other plans), Stitch, Grok, DeepSeek",
     blurb: "Any AI that can read and build URLs can check recipes — no connector needed.",
     steps: [
       <>Copy the agent briefing — it carries a 24-hour key, the check-page URL, and full instructions.</>,

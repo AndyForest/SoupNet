@@ -287,7 +287,9 @@ describe.skipIf(!BASE)("/check routes integration", () => {
     expect(body.data?.checked?.recipeId).toBeDefined();
     expect(body.data?.synthesis).toBeUndefined();
     expect(body.data?.synthesisNotice).toBeDefined();
-    expect(body.data?.synthesisNotice).toMatch(/premium/i);
+    // Neutral, with no plan wording (OpenAI plugin directory stream T, T-P1).
+    expect(body.data?.synthesisNotice).toMatch(/off for this account/);
+    expect(body.data?.synthesisNotice).not.toMatch(/premium|upgrade|plan\b/i);
   });
 
   it("premium user with the flag OFF → notice, no synthesis", async () => {

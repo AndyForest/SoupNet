@@ -277,7 +277,7 @@ const TRACE_READS = {
     why: "the reaper: deletes an expired workspace's recipes (RP-38)",
   },
   "apps/backend/src/services/feedback.service.ts": {
-    n: 26, fp: "c7490c2928a4", composes: true,
+    n: 26, fp: "e1e7da957b6a", composes: true,
     why: "feedback target ACL: prefix scan and readable set use traceReadableById (RP-11, RP-18); check_feedback inserts and the per-key budget count are writes and the caller's own rows; search, briefing, and intent-only rows (slice 8a) attach only to the caller's user's own audit rows or intents, with dedup lookups on the caller's key",
   },
   "apps/backend/src/services/import.service.ts": {

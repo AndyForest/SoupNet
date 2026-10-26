@@ -383,7 +383,9 @@ describe("summarizeFeedbackResults", () => {
     const text = summarizeFeedbackResults(results);
     expect(text).toContain("Feedback: 1/1 row(s) recorded");
     expect(text).toContain("already recorded");
-    expect(text).toContain("f1");
+    // The stored row's id is not shown: no tool takes it back (output
+    // minimisation, OpenAI plugin directory stream T).
+    expect(text).not.toContain("f1");
   });
 });
 
