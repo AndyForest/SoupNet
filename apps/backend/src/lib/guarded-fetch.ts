@@ -14,10 +14,17 @@
  *   - no redirects (a 3xx is a refusal, never followed);
  *   - a status of 200, a JSON content type, a byte cap and a deadline.
  *
- * It never throws: every refusal is `{ ok: false, reason }`, and callers map
- * them all to one uniform client error. The transport is a parameter so tests
- * can exercise the response handling without a network.
+ * `guardedFetchFile` is the variant for evidence files an agent names
+ * (`check_recipe`'s `file_url`, F37): http or https on any port, binary
+ * bodies of any type, and up to a few redirects, each hop's URL checked again
+ * and its connection made through the same public-address lookup, with no
+ * https-to-http downgrade. Recipe 78731e77.
+ *
+ * Neither throws: every refusal is `{ ok: false, reason }`, and callers map
+ * them to a client error. The transport is a parameter so tests can exercise
+ * the response handling without a network.
  */
+import http from "node:http";
 import https from "node:https";
 import dns from "node:dns";
 import net from "node:net";
@@ -113,8 +120,20 @@ export function guardedLookup(resolve: DnsLookupAll = dns.lookup as unknown as D
   };
 }
 
+type UrlCheck = { ok: true; url: URL } | { ok: false; reason: string };
+
+/** The host checks every URL gets: a non-public IP literal (in any spelling
+ *  the URL parser normalizes) or a localhost name is refused before any
+ *  request, since a literal skips the lookup guard. */
+function checkHost(url: URL): UrlCheck {
+  const host = url.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase();
+  if (net.isIP(host) !== 0 && !isPublicAddress(host)) return { ok: false, reason: "non-public address" };
+  if (host === "localhost" || host.endsWith(".localhost")) return { ok: false, reason: "non-public address" };
+  return { ok: true, url };
+}
+
 /** The URL checks that need no network. Returns the parsed URL or a reason. */
-export function checkFetchableUrl(raw: string): { ok: true; url: URL } | { ok: false; reason: string } {
+export function checkFetchableUrl(raw: string): UrlCheck {
   let url: URL;
   try {
     url = new URL(raw);
@@ -125,92 +144,178 @@ export function checkFetchableUrl(raw: string): { ok: true; url: URL } | { ok: f
   if (url.username !== "" || url.password !== "") return { ok: false, reason: "credentials in URL" };
   if (url.hash !== "" || raw.includes("#")) return { ok: false, reason: "fragment in URL" };
   if (url.port !== "") return { ok: false, reason: "non-default port" };
-  const host = url.hostname.replace(/^\[|\]$/g, "");
-  if (net.isIP(host) !== 0 && !isPublicAddress(host)) return { ok: false, reason: "non-public address" };
-  if (host === "localhost" || host.endsWith(".localhost")) return { ok: false, reason: "non-public address" };
-  return { ok: true, url };
+  return checkHost(url);
 }
 
-export function guardedFetch(
-  raw: string,
-  opts: GuardedFetchOptions,
-  deps: { request?: RequestFn; lookup?: ReturnType<typeof guardedLookup> } = {},
-): Promise<GuardedFetchResult> {
-  const checked = checkFetchableUrl(raw);
-  if (!checked.ok) return Promise.resolve(checked);
-  const url = checked.url;
-  const request = deps.request ?? (https.request as unknown as RequestFn);
+/** The static checks for an evidence file URL: http or https on any port,
+ *  no credentials; the fragment is never sent. */
+export function checkFileUrl(raw: string | URL): UrlCheck {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return { ok: false, reason: "not an absolute URL" };
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return { ok: false, reason: "not http or https" };
+  if (url.username !== "" || url.password !== "") return { ok: false, reason: "credentials in URL" };
+  return checkHost(url);
+}
+
+type Hop =
+  | { kind: "body"; body: Buffer; contentType: string }
+  | { kind: "redirect"; location: string | undefined }
+  | { kind: "refused"; reason: string };
+
+interface HopOptions {
+  maxBytes: number;
+  /** Epoch milliseconds by which the whole fetch must be done. */
+  deadlineAt: number;
+  accept: string;
+  userAgent: string;
+  /** Refuses the response before its body is read when it returns a reason. */
+  checkType?: (contentType: string) => string | undefined;
+}
+
+type FetchDeps = { request?: RequestFn; lookup?: ReturnType<typeof guardedLookup> };
+
+/** One GET through the public-address lookup. A 3xx comes back as a redirect
+ *  for the caller to judge; it is never followed here. */
+function getOnce(url: URL, opts: HopOptions, deps: FetchDeps): Promise<Hop> {
+  const secure = url.protocol === "https:";
+  const request = deps.request ?? ((secure ? https.request : http.request) as unknown as RequestFn);
 
   return new Promise((resolve) => {
     let settled = false;
-    const finish = (result: GuardedFetchResult): void => {
+    const finish = (hop: Hop): void => {
       if (settled) return;
       settled = true;
       clearTimeout(deadline);
-      resolve(result);
+      resolve(hop);
     };
 
     let req: ClientRequest;
     const deadline = setTimeout(() => {
-      finish({ ok: false, reason: "timed out" });
+      finish({ kind: "refused", reason: "timed out" });
       req?.destroy();
-    }, opts.timeoutMs);
+    }, Math.max(0, opts.deadlineAt - Date.now()));
 
     try {
       req = request(
         {
-          protocol: "https:",
+          protocol: url.protocol,
           hostname: url.hostname.replace(/^\[|\]$/g, ""),
-          port: 443,
+          port: url.port !== "" ? Number(url.port) : secure ? 443 : 80,
           path: `${url.pathname}${url.search}`,
           method: "GET",
-          headers: { accept: "application/json", "user-agent": "Soup.net OAuth metadata fetcher" },
+          headers: { accept: opts.accept, "user-agent": opts.userAgent },
           lookup: (deps.lookup ?? guardedLookup()) as unknown as RequestOptions["lookup"],
           agent: false,
         },
         (res) => {
           const status = res.statusCode ?? 0;
+          if (status >= 300 && status < 400) {
+            res.resume();
+            const location = res.headers.location;
+            finish({ kind: "redirect", location: typeof location === "string" ? location : undefined });
+            req.destroy();
+            return;
+          }
           if (status !== 200) {
             res.resume();
-            finish({ ok: false, reason: status >= 300 && status < 400 ? "redirect refused" : `status ${status}` });
+            finish({ kind: "refused", reason: `status ${status}` });
             req.destroy();
             return;
           }
           const type = String(res.headers["content-type"] ?? "").toLowerCase();
-          if (!/^application\/([a-z0-9.+-]*\+)?json\b/.test(type)) {
+          const typeRefusal = opts.checkType?.(type);
+          if (typeRefusal) {
             res.resume();
-            finish({ ok: false, reason: "not JSON" });
+            finish({ kind: "refused", reason: typeRefusal });
             req.destroy();
             return;
           }
           const declared = Number(res.headers["content-length"] ?? "0");
           if (declared > opts.maxBytes) {
-            finish({ ok: false, reason: "too large" });
+            finish({ kind: "refused", reason: "too large" });
             req.destroy();
             return;
           }
           const chunks: Buffer[] = [];
           let size = 0;
-          res.on("data", (chunk: Buffer) => {
-            size += chunk.length;
+          res.on("data", (chunk: Buffer | string) => {
+            const bytes = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+            size += bytes.length;
             if (size > opts.maxBytes) {
-              finish({ ok: false, reason: "too large" });
+              finish({ kind: "refused", reason: "too large" });
               req.destroy();
               return;
             }
-            chunks.push(chunk);
+            chunks.push(bytes);
           });
-          res.on("end", () => finish({ ok: true, body: Buffer.concat(chunks).toString("utf8") }));
-          res.on("error", () => finish({ ok: false, reason: "read failed" }));
+          res.on("end", () => finish({ kind: "body", body: Buffer.concat(chunks), contentType: type }));
+          res.on("error", () => finish({ kind: "refused", reason: "read failed" }));
         },
       );
     } catch {
-      finish({ ok: false, reason: "request failed" });
+      finish({ kind: "refused", reason: "request failed" });
       return;
     }
     req.on("error", (err: NodeJS.ErrnoException) => {
-      finish({ ok: false, reason: err.code === "EADDRNOTPUBLIC" ? "non-public address" : "request failed" });
+      finish({ kind: "refused", reason: err.code === "EADDRNOTPUBLIC" ? "non-public address" : "request failed" });
     });
     req.end();
   });
+}
+
+export async function guardedFetch(raw: string, opts: GuardedFetchOptions, deps: FetchDeps = {}): Promise<GuardedFetchResult> {
+  const checked = checkFetchableUrl(raw);
+  if (!checked.ok) return checked;
+  const hop = await getOnce(
+    checked.url,
+    {
+      maxBytes: opts.maxBytes,
+      deadlineAt: Date.now() + opts.timeoutMs,
+      accept: "application/json",
+      userAgent: "Soup.net OAuth metadata fetcher",
+      checkType: (type) => (/^application\/([a-z0-9.+-]*\+)?json\b/.test(type) ? undefined : "not JSON"),
+    },
+    deps,
+  );
+  if (hop.kind === "redirect") return { ok: false, reason: "redirect refused" };
+  if (hop.kind === "refused") return { ok: false, reason: hop.reason };
+  return { ok: true, body: hop.body.toString("utf8") };
+}
+
+export interface GuardedFileOptions extends GuardedFetchOptions {
+  maxRedirects: number;
+}
+
+export type GuardedFileResult =
+  | { ok: true; body: Buffer; contentType: string; finalUrl: URL }
+  | { ok: false; reason: string };
+
+/** GET an evidence file an agent names, following at most `maxRedirects`
+ *  redirects with every hop checked again. `timeoutMs` covers the chain. */
+export async function guardedFetchFile(raw: string, opts: GuardedFileOptions, deps: FetchDeps = {}): Promise<GuardedFileResult> {
+  const first = checkFileUrl(raw);
+  if (!first.ok) return first;
+  const deadlineAt = Date.now() + opts.timeoutMs;
+  let url = first.url;
+  for (let redirects = 0; ; redirects++) {
+    const hop = await getOnce(url, { maxBytes: opts.maxBytes, deadlineAt, accept: "*/*", userAgent: "Soup.net evidence fetcher" }, deps);
+    if (hop.kind === "refused") return { ok: false, reason: hop.reason };
+    if (hop.kind === "body") return { ok: true, body: hop.body, contentType: hop.contentType, finalUrl: url };
+    if (redirects >= opts.maxRedirects) return { ok: false, reason: "too many redirects" };
+    if (hop.location === undefined) return { ok: false, reason: "redirect without a location" };
+    let next: URL;
+    try {
+      next = new URL(hop.location, url);
+    } catch {
+      return { ok: false, reason: "invalid redirect location" };
+    }
+    if (url.protocol === "https:" && next.protocol === "http:") return { ok: false, reason: "redirect from https to http refused" };
+    const checked = checkFileUrl(next);
+    if (!checked.ok) return { ok: false, reason: `redirect refused: ${checked.reason}` };
+    url = checked.url;
+  }
 }
