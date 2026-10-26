@@ -71,9 +71,12 @@ export const apiKeys = claimnetSchema.table(
     // The audience an 'oauth' key was minted for (RFC 8707 `resource`, the
     // OpenAI plugin directory round, migration 0043): the server's canonical
     // resource identifier at mint, carried forward by refresh. Authentication
-    // accepts an 'oauth' key only when this equals the canonical resource
-    // now, so a row with none (minted before 0043) is refused and its client
-    // refreshes onto the canonical value. NULL for 'daily' and 'scoped'.
+    // refuses an 'oauth' key bound to any other value. NULL (only code from
+    // before 0043 mints it: keys held at the deploy, and keys old tasks mint
+    // during the rolling deploy) is accepted so connected clients see no wave
+    // of 401s (recipe 8b5a7baa); such an access token dies with its hour and
+    // a refresh binds its successor. F109: a follow-up bounds that acceptance
+    // once the deploy is past. NULL for 'daily' and 'scoped'.
     oauthResource: text("oauth_resource"),
     // The OpenID scopes granted on the connection ('openid', 'email'), read
     // only by GET /oauth/userinfo. Empty when none were asked for; NULL for
