@@ -421,6 +421,20 @@ describe.skipIf(!BASE || !canConnect())("read paths for reports (drafts-and-tria
     expect((await get(K2, `/intents/${intent}?page=1&page=2`)).status).toBe(400);
   });
 
+  it("D-1 (F105): a page past the first 10,000 rows is the strict 400 on every report path; the last reachable page is served", async () => {
+    for (const path of ["/feedback/rows?page=51&per_page=200", "/intents?page=201", `/intents/${intent}?page=100000&per_page=200`]) {
+      const res = await get(K2, path);
+      expect(res.status, path).toBe(400);
+      const body = (await res.json()) as { error: string; fields: string[] };
+      expect(body.fields, path).toEqual(["page"]);
+      expect(body.error, path).toContain("a report pages through its first 10,000 rows");
+    }
+    expect((await get(K2, "/feedback/rows?page=50&per_page=200")).status).toBe(200);
+    expect((await get(K2, "/intents?page=200")).status).toBe(200);
+    // The web intent page reads the same parser.
+    expect((await call(pat, "GET", `/me/intents/${intent}?page=201`)).status).toBe(400);
+  });
+
   it("S9-F4: the URL-built write form still records a row", async () => {
     const qs = new URLSearchParams({
       key: K2, trace_id: rA, kind: "check-feedback", impact: "none", disposition: "proceeded", story_fulfilled: "unknown",
