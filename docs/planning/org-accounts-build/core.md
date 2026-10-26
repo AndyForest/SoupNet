@@ -92,7 +92,7 @@ Security-relevant: yes. The stream changes the account-state predicate every cre
 | OC-A1 | When Ada disables Max: every key of his (daily, scoped, OAuth access) is refused on its next request, his OAuth refresh is refused and not consumed, his sessions get 403 `account_disabled` on every JWT route and on `GET /auth/me`, and login refuses him with the same error after the password checks. No key row changes. | ORG-OFF-01 | Layer 3 `org-core.test.ts`: one key of each type, then the disable, then each surface; key rows compared before and after. |
 | OC-A2 | Re-enabling restores the same keys, sessions and refresh token, with nothing re-minted. | ORG-OFF-02 | Same test, after the re-enable. |
 | OC-A3 | A site suspension (`users.suspended_at`) refuses the same surfaces with its own copy, and an org admin's re-enable does not lift it. Sys suspends and unsuspends through `POST /admin/users/:id/suspend` and `/unsuspend`. | ORG-OFF-03 | Layer 3: Sys suspends Max, Ada re-enables his org membership, Max is still refused; Sys unsuspends and he works. |
-| OC-A4 | A disabled or suspended account is never preferred by book succession and is never named as eligible (it is already in the shared predicate). | — | `book-succession` and `naming` unit tests, extended by one row each. |
+| OC-A4 | A disabled or suspended account is never preferred by book succession and is never named as eligible (it is already in the shared predicate). | — | Amended at build: both consumers embed `activeUserPredicate` unchanged, so the property is the predicate's, carried by OC-A1 and OC-A3 through `authenticateKey` (the same fragment, by import). A per-consumer row would test the import, not the rule. |
 | OC-A5 | A session issued before `sessions_valid_after` gets 401 `session_expired` on JWT routes and `GET /auth/me`, and a session issued after it works. `invalidateSessions(db, userId)` sets it. | ORG-OFF-04 | Layer 3 with a session signed one second before the stamp. |
 | OC-A6 | Refusal copy names the cause and the next step, in plain words: "Your organization has disabled this account. Ask one of its admins to turn it back on." and "This account is suspended. Contact Soup.net support." Agent surfaces keep the uniform dead-key response. | ORG-OFF-01, 03 | Layer 1 on the copy; Layer 3 that a disabled user's key gets exactly the unknown-key response. |
 
@@ -102,7 +102,7 @@ Security-relevant: yes. The stream changes the account-state predicate every cre
 |---|---|---|---|
 | OC-B1 | Sys creates Acme with `POST /admin/organizations` (`name`, `slug`, `ownerEmail`, optional `seatLimit`). In one transaction this creates Acme, then its default book (named after Acme, org-wide, default, with Olive as owner and opted into daily links), then joins Olive (`created`). | ORG-SETUP-01 | Layer 3. |
 | OC-B2 | A managed account's new book lands in its company organization: `POST /recipe-books` resolves the organization through `homeOrganizationOf` when the body names none, and accepts a named organization only when the caller may create there (owns it, or is an active member). The same applies to import's destination book and to agent workspaces. The SPA stops choosing an organization. | ORG-BOOK-01 | Layer 3: Max creates a book with no `organizationId`, and it is in Acme; Gus's lands in his personal organization; Max naming Gus's organization is refused, and so is a guest who belongs to one of Acme's books but not to Acme. |
-| OC-B3 | `orgWide: true` on create, or on `PATCH /recipe-books/:id` by a book owner or admin, writes `via = 'org'` rows for every Acme member (members as `member`, owners and admins as `admin`), leaving any existing row as it is. `orgWide: false` deletes the `org` rows and keeps `direct` ones. The default book can't be made private, and a book in a personal organization can't be org-wide (400 each). | ORG-BOOK-02, 03 | Layer 3: Gus invited directly to an org-wide book keeps access after it goes private; Max loses his. |
+| OC-B3 | `orgWide: true` on create, or `PUT /recipe-books/:id/org-wide` by a book owner or admin (amended at build: the existing `PUT /recipe-books/:id` is owner-only for name and description, and org admins hold an org-wide book's admin role, so the toggle is its own owner-or-admin route), writes `via = 'org'` rows for every Acme member (members as `member`, owners and admins as `admin`), leaving any existing row as it is. `orgWide: false` deletes the `org` rows and keeps `direct` ones. The default book can't be made private, and a book in a personal organization can't be org-wide (400 each). | ORG-BOOK-02, 03 | Layer 3: Gus invited directly to an org-wide book keeps access after it goes private; Max loses his. |
 | OC-B4 | Changing a member's org role rewrites the role on their `org` rows only. A book role granted directly is untouched. | ORG-ROLE-01 | Layer 3. |
 | OC-B5 | Daily links: the default book's `org` row has `daily_read` and `daily_write` true, and other org-wide books false. | ORG-SETUP-01 | Layer 3: a new member's daily key reads the default book. |
 
@@ -125,6 +125,7 @@ Security-relevant: yes. The stream changes the account-state predicate every cre
 | OC-R2 | The rules (domain, Layer 1): nobody acts on themselves; an admin can't act on an owner or make an owner; an owner can do anything else. Every action writes an audit row naming actor, target and action. | ORG-ROLE-02 | `organizations.test.ts`; Layer 3 one refusal per rule. |
 | OC-R3 | `GET /auth/me` adds `organization: { id, name, role } \| null` for the signed-in account, so the SPA and the other streams can tell a managed account. | — | Layer 3. |
 | OC-R4 | `DELETE /auth/me` for a managed account is refused with 409 `managed_account` ("Your organization manages this account. Ask one of its admins.") (draft `1c7621d2`). | ORG-DEL-01 | Layer 3. |
+| OC-R6 | A managed account can't change its email away from its organization's domain (program §3.4; the verification coordinator found it in neither Core's rubric nor SSO's, added 2026-10-26). No route changes an account's email today, since an address is only inserted at registration. So the rule is `emailChangeAllowed(managed, current, next)` in `@soupnet/domain`, with its copy `MANAGED_EMAIL_CHANGE_MESSAGE` pointing at the admins, and a static guard that fails the day any file changes `users.email` until it is registered and asks the rule. | — | `organizations.test.ts` (the rule); `authz/managed-email.test.ts` (the guard, with a plant). |
 | OC-R5 | Sys's `PATCH /admin/organizations/:id` sets `seatLimit`; `GET /admin/organizations` adds members, active members and seat limit. | — | Layer 3. |
 
 ### Keys
@@ -150,3 +151,42 @@ These belong to other streams:
 - the directory check (Offboarding, through OC-M2's extension point);
 - every console page and the "what your admins can see" page (Console);
 - sharing policy (Console).
+
+## Build notes
+
+Built 2026-10-26 on `org/core` by the same agent and intent. The calls made during the build, each recipe-checked:
+
+- **Account deletion of a company organization's owner (`a42479b6`).** `organization_members.user_id` has no cascade, so the deletion cascade removes the account's row before the user row (`removeOrganizationMembershipOf`). A company organization the departing account owns passes first to its longest-standing remaining owner, then admin, then member, who is promoted to owner. Only after that does book succession run, so the company's books are never handed into one member's personal organization. A company organization with nobody else in it is deleted with the account's own books. Self-service deletion never gets here for a managed account (OC-R4); test-data cleanup does.
+- **The session cut-off is stamped from the app's clock (`d3f3f158`).** The first Layer 3 run failed ORG-OFF-04: the database host's clock ran ahead of the backend's, so a session signed just after a `NOW()` cut-off read as issued before it. `invalidateSessions` now writes `to_timestamp` of the process clock, the clock that signs `iat`, and the comparison is in whole seconds.
+- **The join notice is sent without blocking the request.** `services/organization.service.ts` runs the join, then sends after commit through the logged sender, like every other email the backend sends from a request. The planning session confirmed OC-J4 as designed: the notice doesn't block the join.
+- **A mid-session refusal ends the SPA session.** `authFetch` treats a 403 `account_disabled` or `account_suspended` as a 401: every request would fail the same way, and signing in again shows the person which kind of disable it is. The login page shows the refusal's message instead of its code.
+
+Where each module landed:
+- `authz/account-state.ts`: `accountDisabled`, `accountDisabledReason`, and the extension point `orgMembershipDisabled`.
+- `authz/session-state.ts`: `sessionState`, `accountRefusal`, `invalidateSessions`.
+- `authz/organizations.ts`:
+  - the fragments `orgMembersOf`, `orgMemberCount` and `homeOrganizationIdOf`;
+  - the lookups `managedOrganizationOf`, `homeOrganizationOf` and `mayCreateBookIn`;
+  - `joinOrganization` and `createOrganization`;
+  - `setBookOrgWide` and `actOnMember`;
+  - the cascade's two steps.
+- `authz/domain-authority.ts`: `domainVerifiedFor`, which is `FALSE` until Domains fills it.
+- `services/organization.service.ts`: the join with its notice.
+- `routes/organizations.ts`: the org admin's actions.
+- `routes/admin.ts`: the site operator's create, seats, add-member, suspend and unsuspend routes, and the list counts.
+- `@soupnet/domain` `organizations.ts`: the rules and copy.
+- The seam guard's fourth register, `ORG_MEMBERSHIP_MENTIONS` (whole-word match, so a function named for the table isn't a mention), with three plant tests.
+
+Tests:
+- **Layer 1:** `packages/domain/src/organizations.test.ts`, 17 tests.
+- **Layer 3:** `apps/backend/src/routes/org-core.test.ts`, 16 tests, one per scenario group in `docs/product-specs/organizations.feature`, plus the deletion cascade. All passed against a worktree stack: backend 127.0.0.1:3145, throwaway database `soupnet_e2e_core`.
+- **Seam guard:** 25 tests.
+
+**Seam hooks for the other streams, added 2026-10-26.** Each is one function or fragment in its own file, so a stream fills one body and touches nothing else in the module, the pattern `domainVerifiedFor` set:
+- `authz/sso-policy.ts` `ssoRequired()`, `FALSE` until SSO fills it. `sessionState` takes the session's `idp` (`JwtPayload.idp`, passed through `requireAuth`) and refuses `sso_required`, which the middleware answers with 403 and `SSO_REQUIRED_MESSAGE`, a placeholder SSO rewords.
+- `authz/sharing-policy.ts` `sharingPolicyAllows(db, { bookId, userId })`, `TRUE` until Console fills it. It is asked by `addMember` (the route answers 403 `sharing_blocked`) and by the invitation accept (which refuses and leaves the invitation pending).
+- `orgMemberBookCounts(orgId)`, a derived table of each member's private and org-wide book counts in the organization, for the console's member list.
+
+Resend-verification runs the account-state check after its Turnstile check, which the route has always run before touching the database (`auth-turnstile.test.ts` pins that order).
+
+**Not built here, by design:** the console pages, the SPA's private or org-wide choice when creating a book, and the member list (Console), and the verified-domain check (Domains).

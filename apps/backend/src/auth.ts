@@ -5,6 +5,9 @@ import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import type { Context, Next } from "hono";
 import { users, organizations, groups, groupMembers } from "@soupnet/db";
 import { normalizeEmail } from "./lib/normalize-email";
+import { ACCOUNT_DISABLED_MESSAGE, ACCOUNT_SUSPENDED_MESSAGE, SESSION_EXPIRED_MESSAGE, SSO_REQUIRED_MESSAGE } from "@soupnet/domain";
+import type { AccountDisabledReason } from "./authz/account-state";
+import { accountRefusal, sessionState } from "./authz/session-state";
 
 const JWT_SECRET = () => {
   const secret = process.env["JWT_SECRET"];
@@ -24,12 +27,22 @@ export interface JwtPayload {
   sub: string;       // user id
   email: string;
   role: string;       // 'system' | 'tenant'
+  /** Issued-at, seconds; jsonwebtoken sets it on every token it signs. */
+  iat?: number;
+  /** The identity provider that signed the person in ("google"); absent for
+   *  a password sign-in. Read by an organization's require-SSO policy. */
+  idp?: string;
 }
 
 export interface AuthUser {
   id: string;
   email: string;
   role: string;
+  /** The session's issued-at, seconds: compared with the account's
+   *  sessions_valid_after on every request (authz/session-state.ts). */
+  issuedAt?: number | undefined;
+  /** The session's identity provider (JwtPayload.idp). */
+  identityProvider?: string | undefined;
 }
 
 // ── Password helpers ────────────────────────────────────────────────────
@@ -76,7 +89,7 @@ export async function requireAuth(c: Context, next: Next): Promise<Response | vo
   // but a JWT signed before migration 0027 can still carry the as-typed
   // casing for its remaining lifetime. Normalizing here closes that window
   // for every downstream email comparison (e.g. /invitations/pending).
-  c.set("user", { id: payload.sub, email: normalizeEmail(payload.email), role: payload.role } as AuthUser);
+  c.set("user", { id: payload.sub, email: normalizeEmail(payload.email), role: payload.role, issuedAt: payload.iat, identityProvider: payload.idp } as AuthUser);
   return next();
 }
 
@@ -90,6 +103,59 @@ export async function requireSystem(c: Context, next: Next): Promise<Response | 
     return c.json({ ok: false, error: "System role required" }, 403);
   }
   return next();
+}
+
+/**
+ * The per-request session judgment (authz/session-state.ts): the account's
+ * state and the session cut-off, read by the same fragment that judges API
+ * keys. Returns a refusal Response, or the state for the caller to go on.
+ *
+ *   - 401 session_expired: issued before the account's sessions_valid_after
+ *     (or the account is gone). The SPA treats a 401 as signed out.
+ *   - 403 account_suspended / account_disabled: switched off by the site
+ *     operator or by the person's organization, with copy saying which.
+ *   - 403 sso_required: the person's organization requires its identity
+ *     provider and this session wasn't signed in through it (sso-policy.ts).
+ */
+async function judgeSession(c: Context): Promise<Response | { emailVerified: boolean }> {
+  const user = c.get("user") as AuthUser;
+  // Lazy import avoids a circular dep with db.ts at module load time.
+  const { getDb } = await import("./db");
+  const state = await sessionState(getDb(), user.id, user.issuedAt, user.identityProvider);
+  switch (state.refusal) {
+    case null:
+      return { emailVerified: state.emailVerified };
+    case "unknown_account":
+    case "session_expired":
+      return c.json({ ok: false, error: "session_expired", message: SESSION_EXPIRED_MESSAGE }, 401);
+    case "suspended":
+      return c.json({ ok: false, error: "account_suspended", message: ACCOUNT_SUSPENDED_MESSAGE }, 403);
+    case "org_disabled":
+      return c.json({ ok: false, error: "account_disabled", message: ACCOUNT_DISABLED_MESSAGE }, 403);
+    case "sso_required":
+      return c.json({ ok: false, error: "sso_required", message: SSO_REQUIRED_MESSAGE }, 403);
+  }
+}
+
+/**
+ * The account-state half of `requireVerifiedEmail`, for the few routes that
+ * must stay reachable before verification (GET /auth/me, resend-verification,
+ * DELETE /auth/me). Must be used AFTER requireAuth. A disabled, suspended or
+ * cut-off session is refused here exactly as on every other router.
+ */
+export async function requireActiveSession(c: Context, next: Next): Promise<Response | void> {
+  const refusal = await activeSessionRefusal(c);
+  return refusal ?? next();
+}
+
+/**
+ * `requireActiveSession` as a call, for a route that must run another check
+ * first (resend-verification checks Turnstile before touching the database).
+ * Returns the refusal, or null to go on.
+ */
+export async function activeSessionRefusal(c: Context): Promise<Response | null> {
+  const state = await judgeSession(c);
+  return state instanceof Response ? state : null;
 }
 
 /**
@@ -108,18 +174,14 @@ export async function requireSystem(c: Context, next: Next): Promise<Response | 
  * reachable pre-verification: GET /auth/me (so the verify-pending page can
  * read user state) and POST /auth/resend-verification (so the verify-pending
  * page can request a new email). Keep that list short — adding a new opt-out
- * means a new pre-verification attack surface.
+ * means a new pre-verification attack surface. Those routes, and DELETE
+ * /auth/me, still mount `requireActiveSession`: skipping the verification
+ * test never skips the account-state one.
  */
 export async function requireVerifiedEmail(c: Context, next: Next): Promise<Response | void> {
-  const user = c.get("user") as AuthUser;
-  // Lazy import avoids a circular dep with db.ts at module load time.
-  const { getDb } = await import("./db");
-  const db = getDb();
-  const rows = await db.execute(sql`
-    SELECT email_verified_at FROM claimnet.users WHERE id = ${user.id}::uuid
-  `);
-  const verifiedAt = (rows as unknown as Array<{ email_verified_at: string | null }>)[0]?.email_verified_at;
-  if (!verifiedAt) {
+  const state = await judgeSession(c);
+  if (state instanceof Response) return state;
+  if (!state.emailVerified) {
     return c.json({
       ok: false,
       error: "email_not_verified",
@@ -223,8 +285,9 @@ export async function loginUser(
   email: string,
   password: string,
 ): Promise<
-  | { user: { id: string; email: string; role: string }; token: string; waitlistedAt: null }
-  | { user: { id: string; email: string; role: string }; token: null; waitlistedAt: Date }
+  | { user: { id: string; email: string; role: string }; token: string; waitlistedAt: null; disabled: null }
+  | { user: { id: string; email: string; role: string }; token: null; waitlistedAt: Date; disabled: null }
+  | { user: { id: string; email: string; role: string }; token: null; waitlistedAt: null; disabled: AccountDisabledReason }
   | null
 > {
   const rows = await db.select().from(users).where(sql`${users.email} = ${normalizeEmail(email)}`).limit(1);
@@ -239,11 +302,19 @@ export async function loginUser(
       user: { id: user.id, email: user.email, role: user.role },
       token: null,
       waitlistedAt: user.waitlistedAt,
+      disabled: null,
     };
   }
 
+  // A switched-off account gets no session, after the password checks (only
+  // the password holder learns the account's state, as with the waitlist).
+  const disabled = await accountRefusal(db, user.id);
+  if (disabled) {
+    return { user: { id: user.id, email: user.email, role: user.role }, token: null, waitlistedAt: null, disabled };
+  }
+
   const token = signToken({ sub: user.id, email: user.email, role: user.role });
-  return { user: { id: user.id, email: user.email, role: user.role }, token, waitlistedAt: null };
+  return { user: { id: user.id, email: user.email, role: user.role }, token, waitlistedAt: null, disabled: null };
 }
 
 /**
