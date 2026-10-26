@@ -188,6 +188,16 @@ Feature: Verified domains, automatic joining, and existing accounts on a claimed
       Then her address is verified
       And she is a member of Globex, not Acme
 
+    @ORG-JOIN-D06 @unreleased
+    Scenario: A claim covers its exact domain, never its subdomains
+      # Guards: research §2.3 (scope must be explicit; most products don't
+      # inherit); audit and verification coordinators, rubric stage.
+      Given acme.example is captured and mail.acme.example is not claimed
+      When nia@mail.acme.example registers and clicks her verification link
+      Then she is in no company organization
+      And a Google sign-in for nia@mail.acme.example with hd "acme.example" returns "none"
+      And the next migration of acme.example leaves her account as it is
+
   # ─────────────────────────────────────────────────────────────────────────
   Rule: Existing accounts on a captured domain are moved in and told
     # Requirement: C01-R12
