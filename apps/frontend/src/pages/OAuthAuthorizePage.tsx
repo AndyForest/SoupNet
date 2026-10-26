@@ -319,7 +319,7 @@ export function OAuthAuthorizePage() {
       )}
 
       {submitError ? (
-        <p style={{ color: "var(--color-error, #c0392b)" }}>{submitError}</p>
+        <p role="alert" style={{ color: "var(--color-error, #c0392b)" }}>{submitError}</p>
       ) : null}
 
       <div style={{ marginTop: "var(--space-xl)", display: "flex", gap: "var(--space-md)" }}>
