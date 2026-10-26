@@ -49,6 +49,7 @@ import type { DraftState } from "@soupnet/contracts";
 import type { StructuredTraceFilters } from "./vector-search.service";
 import { resolveIntent, fetchIntentShownIds, recordIntentShown, ownedIntentIds } from "./intent.service";
 import type { IntentResolution } from "./intent.service";
+import { maybeCleanupDisplayHistory } from "./display-history.service";
 
 /** Session tokens are opaque and validation-free (they only compress the
  *  holder's own responses — zero security weight), but bounded so arbitrary
@@ -1012,6 +1013,7 @@ export async function submitAndSearch(
     } catch (err) {
       console.error("[trace.service] session_shown record failed (non-fatal):", err);
     }
+    maybeCleanupDisplayHistory(db);
   }
   // Intent delivery ledger (Phase C) — same awaited/idempotent posture.
   if (intent.intentId && shownIds.length > 0) {
@@ -1456,6 +1458,7 @@ export async function searchWithoutLogging(
     } catch (err) {
       console.error("[trace.service] session_shown record failed (non-fatal):", err);
     }
+    maybeCleanupDisplayHistory(db);
   }
   // Intent delivery ledger (Phase C) — same awaited/idempotent posture.
   if (intent.intentId && searchShownIds.length > 0) {
