@@ -188,6 +188,34 @@ describe.skipIf(!BASE)("/mcp stateless behavior", () => {
     expect(callText.toLowerCase()).toContain("not found in your key's write recipe books");
   });
 
+  // F37 (rubric F1, F9 in docs/planning/openai-plugin-build/file-url-guard.md):
+  // check_recipe's file_url never reaches a non-public address, whatever the
+  // spelling, and the refusal comes back as a file input error, not a deposit.
+  it.each([
+    "http://169.254.169.254/latest/meta-data/",
+    "http://2130706433/",
+    "http://[::ffff:127.0.0.1]:3101/health",
+    "http://localhost./health",
+  ])("check_recipe refuses a file_url at %s before fetching it", async (fileUrl) => {
+    const res = await fetch(`${BASE}/mcp`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: ACCEPT_BOTH, Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "tools/call",
+        params: {
+          name: "check_recipe",
+          arguments: { recipe: "As a tester, I chose a private file_url so that it is refused.", supporting_evidence: "x", file_url: fileUrl },
+        },
+        id: 3,
+      }),
+    });
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toContain(`File input error: Could not fetch ${fileUrl}: not reachable at a public address`);
+    expect(text).not.toContain("Recipe checked as");
+  });
+
   // Origin-header validation (MCP transport spec §Security): when an Origin
   // is present, the server checks an allowlist. Absent Origin (typical for
   // server-to-server calls from claude.ai's cloud) passes through.

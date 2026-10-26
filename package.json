@@ -25,6 +25,7 @@
     "lint": "npm run lint --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "test:ci": "node scripts/test-ci-local.mjs",
+    "build:openai-plugin": "node scripts/openai-plugin/build.mjs",
     "eval:ranking": "node scripts/ranking-eval.mjs",
     "generate:openapi": "npm run generate --workspace=packages/contracts",
     "generate:api-client": "npm run generate --workspace=packages/api-client",
