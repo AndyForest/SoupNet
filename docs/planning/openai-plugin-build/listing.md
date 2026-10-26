@@ -38,7 +38,7 @@ Each timeline in the privacy policy's §8, beside what it comes from. Code paths
 | OAuth access and refresh tokens | 1 hour, renewed for up to 30 days; rows deleted 30 days after expiry | `services/oauth.service.ts`: `ACCESS_TOKEN_TTL_SECONDS = 60 * 60`, `REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60`, `OAUTH_KEY_SWEEP_DAYS = 30` |
 | OAuth sign-in codes | deleted 1 day after expiry | `OAUTH_CODE_SWEEP_DAYS = 1`, `AUTH_CODE_TTL_SECONDS = 5 * 60` |
 | Unused app registrations | 30 days | `OAUTH_CLIENT_SWEEP_DAYS = 30` ("only never-authenticated registrations … are swept") |
-| Display history | 30 days | new on this branch: `services/display-history.service.ts`, `DISPLAY_HISTORY_RETENTION_DAYS = 30`; every reader looks back 7 days (`trace.service.ts`, `intent.service.ts`: "shown_at > now() - interval '7 days'") |
+| Display history | intent history with the intent or account; session history not deleted | `intent_shown.intent_id` cascades from `intents`, which cascade from `users` (`packages/db/src/schema/intents.ts`); nothing deletes `session_shown` rows, and account deletion doesn't touch them (`user-delete.service.ts`); question 3 below |
 | Audit log, including the check log | unchanged wording, no timeline yet | nothing deletes `audit_log` rows, and account deletion keeps them ("append-only trail outlives the actor", `user-delete.service.ts:99`); question 1 below |
 | Email records | 60 days | `services/email.service.ts`: `EMAIL_LOG_RETENTION_DAYS = 60` |
 | Waitlist accounts | 30 days unverified | unchanged from the existing policy (`services/waitlist.service.ts`) |
@@ -52,6 +52,7 @@ Asked as draft recipes under this stream's intent; numbered here from 1.
 
 1. **How long the audit log keeps what** (draft `2d85dbc2`). Nothing deletes `audit_log` rows today, account deletion keeps them on purpose, and the same table is the check log at `/app/checks`. Recommendation: the check log (recipe checks, searches, briefings) is kept while the account exists and deleted with it; security events (sign-ins, password and key changes, deletions, with IP addresses) are kept 12 months, matching the monthly backups and the CloudTrail bucket, and anonymized on account deletion as the backlog's audit-log item already decided (null the actor, redact free text). Building it is a throttled sweep plus one deletion step, reviewed by the audit coordinator. Until the ruling, the policy keeps its current audit-log line.
 2. **The listing's 30-character subtitle** (draft `3ca50187`). Recommendation: "Taste and judgment, shared" (26). It carries the pair and both pillars; alternatives in the draft.
+3. **Whether session display history gets a retention limit** (draft `c293df54`). `session_shown` rows are never deleted, not even with the account. Recommendation: no sweep in this round; the policy says so plainly, and a limit on `session_shown` alone (never `intent_shown`, which the intent lineage reads in full) is weighed later against what the reports and evals need.
 
 ## Build notes
 
@@ -66,7 +67,7 @@ Calls made on the way, each with its source or recipe:
 - **Test cases** are written against a reviewer account with a "Directory Review" book. Search isn't one of them: `search_recipes` leaves out the caller's own recipes by default, so on a one-person reviewer account it would return nothing unless the model adds `author:me`, which makes the case depend on wording rather than shape.
 - **Skill.** The briefing's core for a host with no briefing hook: the four when-to-check moments, the recipe sentence and evidence shape, drafts, search versus check, feedback, and passing the instructions on. It points to `get_briefing` as the source of truth. Per the security coordinator: it doesn't tell an agent to check "without asking first" (a host could read that as skipping its confirmation prompt), and it says a draft is never treated as confirmed.
 - **Briefing output** (stream T's audit, recipe-guide-content.ts is L's): the exemplars' "Selection parameters" block is gone on every surface, and an OAuth briefing leaves out the `/uploads` example that needs a Bearer token. Spec-decision log entry of 2026-10-26.
-- **Display history retention** (`session_shown`, `intent_shown`): deleted after 30 days. Every reader looks back 7 days, so no check renders differently; settled here rather than asked, as the obvious default once the policy needed a timeline.
+- **Display history retention** (`session_shown`, `intent_shown`): a 30-day sweep was built and then reverted (`8fc9303`). I had checked only the stub readers, which look back 7 days; the coordinating session pointed out that slice 9's intent lineage (`intent-read.service.ts`) reads `intent_shown` with no window, and the reports and evals read it as what a task's checks were shown, so a sweep would truncate every intent older than a month. The policy states what is true today, and the sweep is question 3.
 
 Sample recipes for the reviewer account's "Directory Review" book (operator step 5), so every test case has something to find:
 

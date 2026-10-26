@@ -138,7 +138,7 @@ Deleting something in the app removes it from the live service immediately. Copi
 - **Uploaded files:** kept until you delete the recipe they support or your account.
 - **API keys:** stored as hashes until you delete your account. A daily key stops working at midnight UTC, and a revoked key stops working at once.
 - **Connections from AI apps:** an access token works for one hour, and the app renews it with a refresh token that lasts up to 30 days. Expired tokens are deleted 30 days after they expire, and sign-in codes one day after they expire. An app registration that never completes a sign-in is deleted after 30 days.
-- **Display history:** deleted 30 days after it was recorded.
+- **Display history:** what an intent has been shown is deleted with the intent or your account. What a check session has been shown is stored under an opaque session token rather than your account, and isn't deleted today.
 - **Audit log entries:** retained for security and operational purposes (e.g., abuse investigation, rate limiting).
 - **Email records:** we keep a metadata-only log of each email we send (recipient, type, subject, delivery status — never the message body) for 60 days, then delete it.
 - **Waitlist accounts:** an account created while we're at capacity waits on the waitlist. If it never verifies its email address, we delete the account after 30 days. Verified waitlist accounts are kept until they're let in (or you ask us to delete them).
