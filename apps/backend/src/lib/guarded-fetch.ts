@@ -69,7 +69,12 @@ for (const [prefix, bits] of [
 for (const [prefix, bits] of [
   ["::", 128], // unspecified
   ["::1", 128], // loopback
-  ["::ffff:0:0", 96], // IPv4-mapped (judged by the IPv4 rules below)
+  ["::", 96], // IPv4-compatible (deprecated), which embeds an IPv4 address (F125)
+  // IPv4-mapped. Only the dotted form dns.lookup returns is judged by the
+  // IPv4 rules (isPublicAddress); the hex form the URL parser produces is
+  // refused here outright, mapped public addresses included.
+  ["::ffff:0:0", 96],
+  ["::ffff:0:0:0", 96], // IPv4-translated (SIIT), which embeds an IPv4 address (F125)
   ["64:ff9b::", 96], // NAT64, which can reach private IPv4
   ["64:ff9b:1::", 48], // local-use NAT64
   ["100::", 64], // discard
@@ -78,6 +83,7 @@ for (const [prefix, bits] of [
   ["2002::", 16], // 6to4, which embeds an IPv4 address
   ["fc00::", 7], // unique local
   ["fe80::", 10], // link-local
+  ["fec0::", 10], // site-local (deprecated, still routed internally by some networks) (F125)
   ["ff00::", 8], // multicast
 ] as const) {
   BLOCKED_V6.addSubnet(prefix, bits, "ipv6");
