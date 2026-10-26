@@ -48,6 +48,17 @@ Feature: Surface-profiled briefings — thin index for tool-connected agents, fu
     Then the response carries identity, books with descriptions and Index lines
     And no clustered exemplar sample
 
+  # Drafts-and-triage slice 8b item 3 (build log §Slice 8b item 3 rubric): an
+  # unattended reader must tell "nobody has joined yet" from a hidden line.
+  Scenario: Every book says who is in it, and a book's managers see its pending invites
+    Given a person who is alone in their personal book and is the owner of a shared book with three members and two pending invitations
+    When their agent calls list_my_recipe_books or get_briefing
+    Then the personal book reads "Members (1): you"
+    And the shared book lists its four members with "you" first, and "Pending invites (2)" below them
+    And a book they own with no pending invitations reads "Pending invites (0)"
+    And an admin's agent sees the same pending-invites line as the owner's
+    And a plain member's agent sees the shared book's Members line with no pending-invites line
+
   # Drafts-and-triage slice 5 (build log §Slice 5 rubric, S5-B1): the profile
   # also depends on the key. Out of @unreleased with drafts-and-triage slice 7 (build log §Slice 7 rubric; spec-decision-log.md 2026-10-24, C1): the body's
   # Drafts section and the revised headless section teach drafting.
