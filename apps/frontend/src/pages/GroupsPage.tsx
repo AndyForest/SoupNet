@@ -67,6 +67,19 @@ export function GroupsPage() {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newGroupName, setNewGroupName] = useState("");
   const [newGroupDesc, setNewGroupDesc] = useState("");
+  const [newGroupOrgWide, setNewGroupOrgWide] = useState(false);
+  // A managed account chooses private or org-wide for a new book (CN-B2);
+  // a personal account's books are always its own.
+  const meQuery = useQuery({
+    queryKey: ["auth", "me"],
+    queryFn: async () => {
+      const res = await authFetch("/auth/me");
+      const json = (await res.json()) as { ok: boolean; data?: { user: { organization?: { name: string } | null } } };
+      if (!json.ok || !json.data) throw new Error("Failed");
+      return json.data.user;
+    },
+  });
+  const organizationName = meQuery.data?.organization?.name ?? null;
 
   const groupsQuery = useQuery({
     queryKey: ["groups"],
@@ -131,7 +144,7 @@ export function GroupsPage() {
   }, [search.justJoined, groupsQuery.data]);
 
   const createGroupMutation = useMutation({
-    mutationFn: async ({ name, description }: { name: string; description: string }) => {
+    mutationFn: async ({ name, description, orgWide }: { name: string; description: string; orgWide: boolean }) => {
       // No organization in the body: the backend files the book in the
       // account's home organization (its company organization when the
       // account is managed, else its personal one). Choosing from the book
@@ -140,7 +153,7 @@ export function GroupsPage() {
       const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
       const res = await authFetch("/recipe-books", {
         method: "POST",
-        body: JSON.stringify({ name, slug, description: description || undefined }),
+        body: JSON.stringify({ name, slug, description: description || undefined, ...(orgWide ? { orgWide: true } : {}) }),
       });
       const json = (await res.json()) as { ok: boolean; error?: string };
       if (!json.ok) throw new Error(json.error ?? "Failed to create recipe book");
@@ -151,6 +164,7 @@ export function GroupsPage() {
       setShowCreateForm(false);
       setNewGroupName("");
       setNewGroupDesc("");
+      setNewGroupOrgWide(false);
     },
   });
 
@@ -190,7 +204,7 @@ export function GroupsPage() {
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              createGroupMutation.mutate({ name: newGroupName, description: newGroupDesc });
+              createGroupMutation.mutate({ name: newGroupName, description: newGroupDesc, orgWide: organizationName !== null && newGroupOrgWide });
             }}
             style={{ display: "flex", flexDirection: "column", gap: "var(--space-sm)" }}
           >
@@ -214,6 +228,19 @@ export function GroupsPage() {
               human and agent collaborator. Example: <em>A volunteer team planning our
               community spring fundraiser.</em>
             </p>
+            {organizationName !== null && (
+              <fieldset style={{ border: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: "var(--space-xs)" }}>
+                <legend className="text-sm" style={{ marginBottom: "var(--space-xs)" }}>Who can see it</legend>
+                <label className="text-sm">
+                  <input type="radio" name="book-scope" checked={!newGroupOrgWide} onChange={() => setNewGroupOrgWide(false)} />{" "}
+                  Private: only you, and anyone you invite. {organizationName}'s admins see that it exists, never its name or contents.
+                </label>
+                <label className="text-sm">
+                  <input type="radio" name="book-scope" checked={newGroupOrgWide} onChange={() => setNewGroupOrgWide(true)} />{" "}
+                  Org-wide: everyone in {organizationName} can read and add to it, including people who join later.
+                </label>
+              </fieldset>
+            )}
             <button className="btn" type="submit" disabled={createGroupMutation.isPending || !newGroupName}>
               {createGroupMutation.isPending ? "Creating..." : "Create Recipe Book"}
             </button>

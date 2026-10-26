@@ -31,7 +31,6 @@ const NAV: Record<AdminScope, NavItem[]> = {
   org: [
     { label: "Members", href: "/org", icon: "users" },
     { label: "Books", href: "/org/books", icon: "book-open" },
-    { label: "Domains", href: "/org/domains", icon: "shield" },
     { label: "Activity", href: "/org/activity", icon: "clock" },
   ],
 };
