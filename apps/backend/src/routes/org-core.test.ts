@@ -333,6 +333,24 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Core", ()
       WHERE u.id IN (${olive.userId}::uuid, ${max.userId}::uuid)
     `)) as unknown as Array<{ id: string; managed: boolean }>;
     expect(Object.fromEntries(managed.map((r) => [r.id, r.managed]))).toEqual({ [olive.userId]: true, [max.userId]: false });
+
+    // A caller's column under the same short aliases the fragments could have
+    // used (u, o, om) is never shadowed by the fragment's own tables.
+    const home = (await db.execute(sql`
+      SELECT u.id, ${authz.homeOrganizationIdOf(sql`u.id`)} AS home FROM claimnet.users u
+      WHERE u.id IN (${olive.userId}::uuid, ${max.userId}::uuid)
+    `)) as unknown as Array<{ id: string; home: string }>;
+    expect(Object.fromEntries(home.map((r) => [r.id, r.home]))).toEqual({ [olive.userId]: orgId, [max.userId]: max.personalOrgId });
+    const viaOm = (await db.execute(sql`
+      SELECT ${authz.accountIsManaged(sql`om.user_id`)} AS managed,
+             ${authz.orgMemberCount(sql`om.organization_id`, { activeOnly: true })} AS active
+      FROM claimnet.organization_members om WHERE om.user_id = ${ada.userId}::uuid
+    `)) as unknown as Array<{ managed: boolean; active: number }>;
+    expect(viaOm[0]).toEqual({ managed: true, active: 2 });
+    const viaO = (await db.execute(sql`
+      SELECT ${authz.homeOrganizationIdOf(sql`o.owner_id`)} AS home FROM claimnet.organizations o WHERE o.id = ${max.personalOrgId}::uuid
+    `)) as unknown as Array<{ home: string }>;
+    expect(viaO[0]?.home).toBe(max.personalOrgId);
   });
 
   // ── Disable, re-enable, suspension ────────────────────────────────────────

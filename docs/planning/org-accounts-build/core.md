@@ -193,6 +193,8 @@ Resend-verification runs the account-state check after its Turnstile check, whic
 - An operator join requires the account's email domain to be verified for that organization.
 - This needs a verified-domain fragment without the auto-join switch, since `domainVerifiedFor` as Domains fills it includes `auto_join = true`, and an operator add shouldn't depend on that switch. It would be a second fragment Domains adds beside it.
 - The unbounded form stays only behind the existing system-role check, for the concierge first customer, and is always audit-logged with the operator as the actor (the join's audit row already names the actor and `authority`).
-- Tests: an operator add of an off-domain account is refused unless the unbounded form is asked for explicitly.
+- Domains supplies the sibling as `domainClaimCurrentFor(orgId, domain)`: the same claim test without `auto_join`, pinned in seam-hooks.test.ts as differing from `domainVerifiedFor` by exactly that clause.
+- The same change swaps `authorityHolds`'s email-domain comparison for Domains' `isAddressOnDomain`, which normalizes an address the way a claim is stored (ASCII/punycode, Domains' OD-V1). Today's `lastIndexOf("@")` slice fails closed on an internationalized address on a verified IDN domain. That's safe, but it disagrees with the claim.
+- Tests: an operator add of an off-domain account is refused unless the unbounded form is asked for explicitly, and an IDN address on its verified domain joins.
 
 **Not built here, by design:** the console pages, the SPA's private or org-wide choice when creating a book, and the member list (Console), and the verified-domain check (Domains).

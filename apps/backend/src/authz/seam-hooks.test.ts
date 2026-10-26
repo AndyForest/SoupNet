@@ -42,7 +42,7 @@ describe("the hooks' answers before their streams fill them", () => {
 
   it("accountIsManaged is an EXISTS over the caller's column, binding nothing", () => {
     const q = dialect.sqlToQuery(accountIsManaged(sql`u.id`));
-    expect(q.sql).toBe("EXISTS (SELECT 1 FROM claimnet.organization_members om WHERE om.user_id = u.id)");
+    expect(q.sql).toBe("EXISTS (SELECT 1 FROM claimnet.organization_members managed_om WHERE managed_om.user_id = u.id)");
     expect(q.params).toEqual([]);
   });
 });
