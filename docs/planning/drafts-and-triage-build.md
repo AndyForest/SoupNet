@@ -2545,3 +2545,15 @@ Run by the browser-verify skill at `7cba461` on the worktree stack (backend 127.
 - Left as is: the expiry explanation is a tooltip on the status line, as every draft status line's is; Pat sees the same expiry as the depositor on an on-behalf draft (S10-L5); a `/check` filter with parentheses errors (pre-existing, stream B's prose-parenthesis fix).
 - The spec is kept as `tests/e2e/drafts-slice10.spec.ts` (the standing answer: recipes `840d65ab`, `dfb89586`), with the database it ages drafts in taken from `E2E_PGDATABASE` or the `.env`, not hard-coded. 14 passed again after the fixes, and `drafts-bus.test.ts` 15 passed.
 
+### Slice 10 after the rebase onto 6a (stream A, 2026-10-26)
+
+Slice 6a merged (#142) while this branch waited, so the branch is rebased onto `c21f421` and the deferred rows are built. The rebase's conflicts were each two additions side by side: the parser's qualifier help and its `is:` and `intent:` branches; the queue's result type, its empty-scope return and its row type (B's `notice` and intent grouping beside the expired total); the exclude-own lift (`is:expired` beside `intent:`); the web `/check` help (`is:expired` beside B's `intent:` line); the queue page's hint and item, now rendered by B's `renderItem` with the expired note in it; the feature file and the decision log (B's rule and entry beside this slice's). Seam fingerprints were refreshed for the files both slices touched.
+
+- **S10-L2, S10-L3 (built).** `draftWindowOpen` and `draftWindowClosesAt` read the depositing intent's `last_used_at` through one subquery, `intentLastUsed`, joined on the id alone: a draft whose intent row exists is live while that intent was used within 24 hours, and one with no intent, or whose intent row is gone, keeps the week. `draftExpiryReason` now says `intent_idle` or `age`. Layer 3: an intent idle 25 hours expires a day-old draft, 23 hours keeps it, a deleted intent falls back to the week, a search carrying the intent revives the draft with nothing written to it, and an on-behalf draft follows its depositor's intent (DT-BUS-02 and 03 lose `@unreleased`).
+- **S10-D3 (built).** The dispatch lookup joins the intent's story only when the intent is the caller's user's own (`oi.user_id = viewer`, the queue's join). Layer 3: Pat's agent sees its own intent's story on the line, and a line naming Dana's on-behalf draft carries only the date.
+- **S10-C2 (built).** `is:expired` in the `search_recipes` query description, 413 of 420 characters; remote `tools/list` 17,642 → 17,649 bytes, stdio 14,145 → 14,152, shared descriptions 6,386 → 6,393 (decision log).
+- **Registers.** `authz/intent-link.test.ts` registers the two new readers of `intent_id`, `authz/draft-sql.ts` (the last-use timestamp, never the story) and `services/draft-dispatch.service.ts` (the owner-only story). The `traces.intent_id` schema comment names them.
+- **Still waiting:** S10-K3 (the lineage counts) on slice 9 (#140), and the briefing's bus line on stream C's C1 and C2.
+
+Layer 3 after the rebase: `drafts-bus.test.ts` 19 passed against the worktree backend (`soupnet_e2e_10`, migrated to 6a's `0042` at startup).
+

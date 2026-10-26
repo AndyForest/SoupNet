@@ -1006,11 +1006,13 @@ export const MCP_PARAM_DESCRIPTIONS = {
    *  (2026-10-24) adds the one term intent: inside the 420-character
    *  per-description limit by trimming words the error messages and the
    *  briefing already carry ("ISO" is in the date error; the PR-review
-   *  filename example is in the briefing's Search vs check). */
+   *  filename example is in the briefing's Search vs check). Slice 10
+   *  (2026-10-26) adds is:expired, a name that says what it lists, inside the
+   *  same limit by dropping "your" before "open drafts". */
   searchQuery:
     "Bare text is one semantic phrase. \"Quoted terms\" match exact substrings of recipe, evidence, " +
     "citations (quote filenames); group with (\"a\" OR \"b\"); -\"term\" excludes. Qualifiers: " +
-    "author: (email, me, anyone), after:/before: (judgment date), is:draft (your open drafts), " +
+    "author: (email, me, anyone), after:/before: (judgment date), is:draft (open drafts), is:expired, " +
     "intent:int_… (your intent's recipes), impact:/uncertainty: (low|medium|high). " +
     "-author:me leaves out your own. Qualifier-only: newest first.",
 

@@ -43,7 +43,7 @@
 
 import { sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
-import { DRAFT_NO_INTENT_LIVE_DAYS, DRAFT_EXPIRED_REPORT_DAYS } from "@soupnet/domain";
+import { DRAFT_INTENT_IDLE_HOURS, DRAFT_NO_INTENT_LIVE_DAYS, DRAFT_EXPIRED_REPORT_DAYS } from "@soupnet/domain";
 import { inBooks } from "./scope-sql";
 
 /**
@@ -226,25 +226,35 @@ export function draftAwaitingReviewBy(alias: TraceAlias, personUserId: string): 
 // ── Liveness (slice 10, "drafts as a bus") ──────────────────────────────────
 
 /**
- * Whether a draft's window is still open, by the database's clock in the
- * calling statement. Today every draft takes the no-intent window, a week
- * from its deposit (recipe fd614c86). Slice 6a's `traces.intent_id` plugs in
- * here and nowhere else: a draft whose intent row exists is live while that
- * intent was used within the last day, and one whose intent is gone falls
- * back to the week (S10-L1 to S10-L3).
+ * When the intent a draft was deposited under was last used (slice 6a's link;
+ * any check, search or feedback row carrying the intent touches it), or NULL
+ * when the draft has no intent or its intent row is gone. Joined on the id
+ * alone, for the timestamp: the story never leaves this expression, so
+ * another person's intent is never shown (stream B's contract, 2026-10-25).
  */
-function draftWindowOpen(alias: TraceAlias): SQL {
+function intentLastUsed(alias: TraceAlias): SQL {
   const a = aliasSql(alias);
-  return sql`(${a}.created_at > NOW() - make_interval(days => ${DRAFT_NO_INTENT_LIVE_DAYS}))`;
+  return sql`(SELECT li.last_used_at FROM claimnet.intents li WHERE li.id = ${a}.intent_id)`;
 }
 
 /**
- * When a draft's window closes: its deposit plus the week today; after 6a,
- * its intent's last use plus a day.
+ * Whether a draft's window is still open, by the database's clock in the
+ * calling statement: under an intent, while that intent was used within the
+ * last day; with no intent, or one whose row is gone, for a week from its
+ * deposit (recipe fd614c86). Using the intent again reopens the window, so a
+ * draft revives with nothing written to it (S10-L1 to S10-L3).
  */
+function draftWindowOpen(alias: TraceAlias): SQL {
+  const a = aliasSql(alias);
+  return sql`(COALESCE(${intentLastUsed(alias)} > NOW() - make_interval(hours => ${DRAFT_INTENT_IDLE_HOURS}),
+    ${a}.created_at > NOW() - make_interval(days => ${DRAFT_NO_INTENT_LIVE_DAYS})))`;
+}
+
+/** When a draft's window closes: its intent's last use plus a day, or its deposit plus the week. */
 function draftWindowClosesAt(alias: TraceAlias): SQL {
   const a = aliasSql(alias);
-  return sql`(${a}.created_at + make_interval(days => ${DRAFT_NO_INTENT_LIVE_DAYS}))`;
+  return sql`COALESCE(${intentLastUsed(alias)} + make_interval(hours => ${DRAFT_INTENT_IDLE_HOURS}),
+    ${a}.created_at + make_interval(days => ${DRAFT_NO_INTENT_LIVE_DAYS}))`;
 }
 
 /**
@@ -281,9 +291,9 @@ export function draftExpired(alias: TraceAlias): SQL {
   return sql`(${a}.draft_state = 'unverified' AND NOT (${depositedHeadless(alias)} OR ${draftWindowOpen(alias)}))`;
 }
 
-/** Why an expired draft expired, for its label ('age' until 6a adds 'intent_idle'); NULL otherwise. */
+/** Why an expired draft expired, for its label: its intent went quiet, or its week is up; NULL otherwise. */
 export function draftExpiryReason(alias: TraceAlias): SQL {
-  return sql`(CASE WHEN ${draftExpired(alias)} THEN 'age' ELSE NULL END)`;
+  return sql`(CASE WHEN ${draftExpired(alias)} THEN (CASE WHEN ${intentLastUsed(alias)} IS NOT NULL THEN 'intent_idle' ELSE 'age' END) ELSE NULL END)`;
 }
 
 /**

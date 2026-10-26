@@ -94,9 +94,13 @@ export async function findOpenQuestion(db: PostgresJsDatabase, p: OpenQuestionPa
   // The live drafts about the caller's user, in scope: one bounded statement
   // per call (the review set's partial index), and a vector fetch only when
   // it finds any (S10-D6).
+  // The intent's story only when the intent is the caller's user's own
+  // (S10-D3): an on-behalf draft carries its depositor's intent, whose story
+  // is theirs (recipe f2ae39b8; the queue's join, slice 6a).
   const rows = await db.execute(sql`
-    SELECT t.id::text AS id, t.created_at AS "createdAt"
+    SELECT t.id::text AS id, t.created_at AS "createdAt", oi.story AS story
     FROM claimnet.traces t
+    LEFT JOIN claimnet.intents oi ON oi.id = t.intent_id AND oi.user_id = ${p.viewerUserId}::uuid
     WHERE ${inBooks(sql`t.group_id`, [...p.groupIds])}
       AND ${traceVisibleTo("t", { viewerUserId: p.viewerUserId })}
       AND ${draftLiveAwaitingReviewBy("t", p.viewerUserId)}
@@ -104,7 +108,7 @@ export async function findOpenQuestion(db: PostgresJsDatabase, p: OpenQuestionPa
     ORDER BY t.created_at DESC, t.id
     LIMIT ${OPEN_QUESTION_CANDIDATES}
   `);
-  const candidates = rows as unknown as Array<{ id: string; createdAt: string | Date }>;
+  const candidates = rows as unknown as Array<{ id: string; createdAt: string | Date; story: string | null }>;
   if (candidates.length === 0) return undefined;
 
   const query = parseVector(p.queryVectorStr);
@@ -115,7 +119,5 @@ export async function findOpenQuestion(db: PostgresJsDatabase, p: OpenQuestionPa
   });
   const best = pickOpenQuestion(scored, p.shownSimilarities);
   if (!best) return undefined;
-  // The intent's story joins here once slice 6a links a draft to its intent,
-  // and only when that intent is the caller's own (S10-D3).
-  return { recipeId: best.id, askedAt: new Date(best.createdAt).toISOString() };
+  return { recipeId: best.id, askedAt: new Date(best.createdAt).toISOString(), ...(best.story ? { story: best.story } : {}) };
 }

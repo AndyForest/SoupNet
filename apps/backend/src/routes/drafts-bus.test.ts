@@ -300,6 +300,87 @@ describe.skipIf(!BASE || !canConnect())("drafts as a bus (drafts-and-triage slic
     expect((await searchIds(K1, `is:expired ${tag(aText)}`)).ids).toEqual([]);
   });
 
+  // ── The intent rule (slice 6a's link) ────────────────────────────────────
+
+  /** A draft deposited under a fresh intent of `key`'s user; returns both ids. */
+  async function draftUnderIntent(key: string, text: string, extra: Json = {}): Promise<{ id: string; intentId: string }> {
+    const r = await mcp(key, "check_recipe", {
+      recipe: text, supporting_evidence: evidence(`draft ${text.slice(-40)}`), response_format: "structured", draft: true,
+      intent: `As a backend maintainer working on draft liveness (${tokenFor(++n)}), I want my question to live while my task does.`,
+      ...extra,
+    });
+    const id = (r.structured?.["checked"] as { recipeId?: string } | undefined)?.recipeId ?? "";
+    const intentId = /int_[A-Za-z0-9]{24}/.exec(JSON.stringify(r.structured) + r.text)?.[0] ?? "";
+    if (!id || !intentId) throw new Error(`deposit under an intent failed for ${text}`);
+    return { id, intentId };
+  }
+
+  async function idleIntent(intentId: string, hours: number): Promise<void> {
+    await sql`UPDATE claimnet.intents SET last_used_at = NOW() - make_interval(secs => ${Math.round(hours * 3600)}) WHERE id = ${intentId}`;
+  }
+
+  it("S10-L2 / DT-BUS-02: a draft under an intent lives while the intent was used within a day, even when it is new", async () => {
+    const quietText = recipe("intent quiet");
+    const busyText = recipe("intent busy");
+    const quiet = await draftUnderIntent(K1, quietText);
+    const busy = await draftUnderIntent(K1, busyText);
+    await idleIntent(quiet.intentId, 25);
+    await idleIntent(busy.intentId, 23);
+    expect((await queue(pat, tag(quietText))).ids).toEqual([]);
+    expect((await queue(pat, `is:expired ${tag(quietText)}`)).ids).toEqual([quiet.id]);
+    expect((await queue(pat, tag(busyText))).ids).toEqual([busy.id]);
+    const read = (await mcp(K1, "get_recipes", { recipe_ids: quiet.id })).text;
+    expect(read).toContain("[expired draft: its task has been quiet for over 24 hours");
+    // A link to an intent that no longer exists falls back to the week.
+    await sql`DELETE FROM claimnet.intents WHERE id = ${quiet.intentId}`;
+    expect((await queue(pat, tag(quietText))).ids).toEqual([quiet.id]);
+  });
+
+  it("S10-L3 / DT-BUS-03: using the intent again revives its drafts, and nothing is written to them", async () => {
+    const text = recipe("intent revives");
+    const { id, intentId } = await draftUnderIntent(K1, text);
+    await idleIntent(intentId, 30);
+    expect((await queue(pat, tag(text))).ids).toEqual([]);
+    const [before] = await sql`SELECT updated_at, created_at, draft_state FROM claimnet.traces WHERE id = ${id}::uuid`;
+    await mcp(K2, "search_recipes", { query: "is:draft", intent: intentId });
+    expect((await queue(pat, tag(text))).ids).toEqual([id]);
+    const [after] = await sql`SELECT updated_at, created_at, draft_state FROM claimnet.traces WHERE id = ${id}::uuid`;
+    expect(after).toEqual(before);
+  });
+
+  it("S10-L5: an on-behalf draft lives on its depositor's intent", async () => {
+    const text = recipe("obo intent");
+    const { id, intentId } = await draftUnderIntent(danaKey, text, { on_behalf_of: pat.email });
+    expect((await queue(pat, tag(text))).ids).toEqual([id]);
+    await idleIntent(intentId, 25);
+    expect((await queue(pat, tag(text))).ids).toEqual([]);
+    const danaView = ((await (await call(dana, "GET", `/traces/${id}`)).json()) as { data: Json }).data;
+    expect(danaView).toMatchObject({ draftState: "unverified", draftExpiry: "intent_idle" });
+  });
+
+  it("S10-D3: the dispatch line carries the intent's story only for the caller's own intent", async () => {
+    const ownText = recipe("story own");
+    const own = await draftUnderIntent(K1, ownText);
+    const ownLine = await eventually(async () => {
+      const r = await mcp(K2, "search_recipes", { query: ownText, response_format: "structured" });
+      const oq = r.structured?.["openQuestion"] as { recipeId?: string; story?: string } | undefined;
+      return oq?.recipeId === own.id ? oq : undefined;
+    });
+    expect(ownLine?.story).toContain("I want my question to live while my task does.");
+    expect((await mcp(K2, "search_recipes", { query: ownText })).text).toMatch(/Open question near this call: [0-9a-f-]{36} \(As a backend maintainer working on draft liveness/);
+
+    const oboText = recipe("story obo");
+    const obo = await draftUnderIntent(danaKey, oboText, { on_behalf_of: pat.email });
+    const oboLine = await eventually(async () => {
+      const r = await mcp(K2, "search_recipes", { query: oboText, response_format: "structured" });
+      const oq = r.structured?.["openQuestion"] as { recipeId?: string; story?: string } | undefined;
+      return oq?.recipeId === obo.id ? oq : undefined;
+    });
+    expect(oboLine).toBeDefined();
+    expect(oboLine?.story).toBeUndefined();
+    expect((await mcp(K2, "search_recipes", { query: oboText })).text).toContain(`Open question near this call: ${obo.id} (asked `);
+  }, 60_000);
+
   // ── Dispatch ─────────────────────────────────────────────────────────────
 
   it("S10-D1 / S10-D5 / DT-BUS-09: a check near a live draft names it, on MCP markdown, the structured data and the web page", async () => {

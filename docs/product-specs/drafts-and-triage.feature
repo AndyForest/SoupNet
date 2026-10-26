@@ -743,7 +743,7 @@ Feature: Drafts, triage ratings, and deciding by building both
     # (ruled 2026-10-25, recipe 053c9b97); recipes fd614c86 (the no-intent
     # window), f1c99ec8 (expired drafts leave results), bff6f47b (the dispatch
     # lookup). Rubric: build log §Slice 10 rubric (ids S10-*). The 24-hour
-    # intent arm (S10-L2, S10-L3) lands with slice 6a's intent link.
+    # intent rule reads slice 6a's intent link (DT-OPT-01's rule above).
 
     @DT-BUS-01 @slice-10
     Scenario: A week-old draft with no intent leaves the queue and is:draft, and is:expired lists it
@@ -752,18 +752,18 @@ Feature: Drafts, triage ratings, and deciding by building both
       And is:draft lists the six-day-old draft, and is:expired lists the eight-day-old one
       And the queue says how many more drafts expired unanswered, with a link that lists them
 
-    @DT-BUS-02 @slice-10 @unreleased
+    @DT-BUS-02 @slice-10
     Scenario: A draft under an intent is live while that intent was used within the last day
       Given Pat's agent deposited a draft under an intent that was last used 25 hours ago
       Then the draft is expired, though it is a day old
-      # Lands with slice 6a's traces.intent_id.
+      And a draft under an intent used 23 hours ago is live
+      And a draft whose intent no longer exists is judged by its week
 
-    @DT-BUS-03 @slice-10 @unreleased
+    @DT-BUS-03 @slice-10
     Scenario: Using the intent again revives its drafts
       Given an expired draft under an intent
       When an agent searches carrying that intent
       Then the draft is back in Pat's queue, and nothing was written to it
-      # Lands with slice 6a's traces.intent_id.
 
     @DT-BUS-04 @slice-10
     Scenario: A headless key's drafts never expire

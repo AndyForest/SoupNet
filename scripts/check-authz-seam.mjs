@@ -257,11 +257,11 @@ const TRACE_READS = {
     why: "loads author, evidence, and references by id for exemplars the pipeline chose under SHARED_AUDIENCE (RP-10, RP-42)",
   },
   "apps/backend/src/services/draft-dispatch.service.ts": {
-    n: 1, fp: "67568a7c1145", composes: true,
+    n: 1, fp: "6c5a91cf8fbe", composes: true,
     why: "the dispatch line (slice 10): the live drafts about the caller's user in the call's scope, through traceVisibleTo and draftLiveAwaitingReviewBy, for one line naming the nearest; ranking never reads it",
   },
   "apps/backend/src/services/draft-queue.service.ts": {
-    n: 6, fp: "01032ec260f8", composes: true,
+    n: 6, fp: "df7636816f00", composes: true,
     why: "the review queue (slice 3): listing and count compose draftLiveAwaitingReviewBy (or draftExpiredAwaitingReviewBy for is:expired, slice 10) and traceVisibleTo over the person's live books; item details use traceReadableById for ids already resolved through the module, and name an on-behalf draft's other party through onBehalfSideFor and onBehalfPartyFor (slice 4); the listing groups by, and items show, only the viewer's own intents (a join to intents on user_id, slice 6a)",
   },
   "apps/backend/src/services/ephemeral-workspace.service.ts": {
@@ -293,7 +293,7 @@ const TRACE_READS = {
     why: "corpus mode rows and honest total use traceVisibleTo (RP-41); vector loads are by id for filtered results (RP-42)",
   },
   "apps/backend/src/services/trace.service.ts": {
-    n: 10, fp: "5725e3d83e82", composes: true,
+    n: 10, fp: "729d8ed70563", composes: true,
     why: "deposit INSERT (the on-behalf subject from the module's naming rule, S4-M1; the draft state forced for a headless key by keyForcesDrafts, S5-M3; the intent link from the intent the check resolved to the depositor, S6a-S2), the depositing key's own idempotency row with its subject through onBehalfSubjectOf (RP-04, S4-L4), session ledger ids (RP-05), and zero-result scope counts that use traceVisibleTo (RP-03)",
   },
   "apps/backend/src/services/trace-delete.service.ts": {

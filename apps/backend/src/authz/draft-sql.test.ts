@@ -52,7 +52,7 @@ describe("draft SQL fragments (Layer 1)", () => {
     expect(q.sql).toMatch(/tr\.user_id = \$\d::uuid/);
     // The viewer, and the liveness window (slice 10), are the only bindings.
     expect(q.params.filter((p) => typeof p === "string").every((p) => p === VIEWER)).toBe(true);
-    expect(q.params.filter((p) => typeof p !== "string")).toEqual([7]);
+    expect(q.params.filter((p) => typeof p !== "string")).toEqual([24, 7]);
   });
 
   it("by-id reads add the viewer's own drafts in any state", () => {
@@ -245,8 +245,8 @@ describe.skipIf(!canConnect)("the SQL fragments and mayReadTrace agree on every 
         const rows = await db.execute(sql`
           SELECT ${traceVisibleTo("t", { viewerUserId: VIEWER })} AS viewer,
                  ${traceVisibleTo("t", SHARED_AUDIENCE)} AS shared
-          FROM (VALUES (${p.author}::uuid, ${p.subject}::uuid, ${draftState}::text, NOW(), NULL::uuid))
-            AS t(user_id, subject_user_id, draft_state, created_at, api_key_id)
+          FROM (VALUES (${p.author}::uuid, ${p.subject}::uuid, ${draftState}::text, NOW(), NULL::uuid, NULL::text))
+            AS t(user_id, subject_user_id, draft_state, created_at, api_key_id, intent_id)
         `);
         const row = (rows as unknown as Array<{ viewer: boolean; shared: boolean }>)[0]!;
         const f = factsFor(p);
@@ -371,8 +371,8 @@ describe.skipIf(!canConnect)("liveness over the facts (S10-L1, S10-L4)", () => {
         // An api_key_id with no key row: judged by the window (keys are hard-deleted).
         const rows = await db.execute(sql`
           SELECT ${draftLive("t")} AS live, ${draftExpired("t")} AS expired
-          FROM (VALUES (${draftState}::text, NOW() - make_interval(secs => ${Math.round(days * 86400)}), ${OTHER}::uuid))
-            AS t(draft_state, created_at, api_key_id)
+          FROM (VALUES (${draftState}::text, NOW() - make_interval(secs => ${Math.round(days * 86400)}), ${OTHER}::uuid, NULL::text))
+            AS t(draft_state, created_at, api_key_id, intent_id)
         `);
         const row = (rows as unknown as Array<{ live: boolean | null; expired: boolean | null }>)[0]!;
         const unverified = draftState === "unverified";

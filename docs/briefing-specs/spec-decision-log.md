@@ -15,6 +15,7 @@ Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-
 3. **Draft labels on agent surfaces** (`draftLabel`): an expired draft reads "[expired draft: its task has been quiet for over 24 hours, so it has left the review queue and results; it can still be verified or rejected by id]" (or "it was deposited with no intent over 7 days ago"); for the depositor of a draft about a colleague it ends "only they can still verify or reject it". For the draft's subject, a resolved draft's label says how and when: "[rejected draft: rejected by your user's agent "K2" on 2026-10-25; its evidence says why]", "[draft not chosen: marked not chosen by the agent that deposited it on …]", "[verified draft: verified by your user on …]". A verified draft had no label before; it now has one for its subject only.
 4. **The search grammar's refusals** (`parseSearchQuery`): the qualifier list names `is:expired`; an unknown `is:` value names both values ("is:expired the ones that expired unanswered"); `-is:expired` and `is:expired -is:draft` are refused with a sentence each.
 5. **`is:expired` in reference copy:** the web `/check` page's search help and the `filter` field's description in the published recipe schema (`packages/contracts/src/recipe.ts`) name it beside `is:draft`. Neither is a tool or parameter description.
+6. **`search_recipes` query description** (`MCP_PARAM_DESCRIPTIONS.searchQuery`, both MCP servers), after the rebase onto slice 6a: "is:draft (your open drafts)" becomes "is:draft (open drafts), is:expired" (406 → 413 characters of the 420 per-description limit). Dropping "your" pays for most of it; `is:expired` names what it lists.
 
 ### Scenarios intended to move
 
@@ -24,12 +25,19 @@ Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-
 ### Scenarios watched, with rationale for holding
 
 - **DT-VIS-09 and the books-block tests:** the Drafts line keeps its exact wording when no draft has expired, so every existing fixture is byte-identical.
-- **Every tool and parameter description:** unchanged. The `search_recipes` description's qualifier list belongs to stream B and is edited, and measured, when this branch rebases after B.
+- **Every other tool and parameter description:** unchanged. `searchQuery` (edit 6) is the only one this slice touches.
 - **Check and search responses with no live draft nearby:** byte-identical, since the line is added only when a draft qualifies.
 
 ### Measured
 
-No tool or parameter description changed (diff review of `recipe-guide-content.ts`: only the Drafts line in `renderBookStatsLine` and one import), so remote and stdio `tools/list` and the shared-description total are as on `main`.
+Before is `main` at `c21f421` (slices 6c, 8a and 6a merged; the figures slice 6a recorded as its after), after is this branch. Measured with the slice 1 method (initialize then tools/list over the SDK's in-memory transport, the reply's `result` as minified UTF-8 JSON).
+
+| Measure | Before | After | Cap |
+|---|---|---|---|
+| Remote `tools/list` | 17,642 bytes | 17,649 | 18,200 |
+| Stdio `tools/list` | 14,145 bytes | 14,152 | 14,700 |
+| Shared descriptions | 6,386 characters | 6,393 | 6,600 |
+| `searchQuery` | 406 characters | 413 | 420 per description |
 
 ## 2026-10-24 — Drafts-and-triage slice 6a: one grammar term in `search_recipes`, and the intent qualifier's not-recognized note
 
