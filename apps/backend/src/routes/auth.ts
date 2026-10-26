@@ -12,8 +12,9 @@ import { sendVerificationEmail, sendPasswordResetEmail } from "../services/email
 import { rateLimit } from "../middleware/rate-limit";
 import { normalizeEmail } from "../lib/normalize-email";
 import { onBehalfSubjectOf, feedbackOwnedBy, intentOwnedBy, managedOrganizationOf } from "../authz";
-import { ACCOUNT_DISABLED_MESSAGE, ACCOUNT_SUSPENDED_MESSAGE, MANAGED_ACCOUNT_DELETE_MESSAGE } from "@soupnet/domain";
+import { ACCOUNT_DISABLED_MESSAGE, ACCOUNT_SUSPENDED_MESSAGE, MANAGED_ACCOUNT_DELETE_MESSAGE, ORGANIZATION_FULL_MESSAGE } from "@soupnet/domain";
 import { verifyTurnstile } from "../lib/turnstile";
+import { capturingOrganizationName, joinOnVerification } from "../services/org-domains.service";
 import type { AppEnv } from "../types";
 
 const loginSchema = z.object({
@@ -212,7 +213,7 @@ auth.post("/register", authRateLimit, async (c) => {
     // Fire-and-forget the email send so the response timing on the
     // genuinely-new branch is dominated by DB ops (which both branches do)
     // rather than SMTP latency (which only the new branch does).
-    void sendVerificationEmail(email, verificationToken, { waitlisted }).catch((err) => {
+    void sendVerification(email, verificationToken, waitlisted).catch((err) => {
       console.error("[auth/register] Failed to send verification email:", err);
     });
     // Operator alerting: "[signup-cap] reached/near" lines. Fire-and-forget,
@@ -364,7 +365,7 @@ auth.post("/login", authRateLimit, async (c) => {
             email_verification_token_created_at = now()
         WHERE id = ${result.user.id}::uuid
       `);
-      void sendVerificationEmail(result.user.email, freshToken, { waitlisted: true }).catch((err) => {
+      void sendVerification(result.user.email, freshToken, true).catch((err) => {
         console.error("[auth/login] Failed to resend waitlist verification email:", err);
       });
       resent = true;
@@ -765,6 +766,21 @@ auth.delete("/me", authRateLimit, requireAuth, requireActiveSession, async (c) =
 // preserve the original verified_at, and we deliberately do NOT clear the
 // token in this UPDATE — it expires naturally after 24h. A "used" token
 // can't do anything except re-confirm existing verified state.
+/**
+ * Send the verification email. For an address on a domain an organization
+ * has captured, the email says the click will add the account to that
+ * organization (stream Domains, recipe 43b6aac9): the notice reaches only the
+ * mailbox, so the register form stays identical for every address (F30). The
+ * join takes the account off the waitlist, so its waitlist copy is dropped.
+ */
+async function sendVerification(email: string, token: string, waitlisted: boolean): Promise<void> {
+  const joiningOrganization = await capturingOrganizationName(getDb(), email).catch(() => null);
+  await sendVerificationEmail(email, token, { waitlisted: waitlisted && !joiningOrganization, joiningOrganization });
+}
+
+/** Thrown inside the verify transaction to roll the verification back at the seat limit. */
+class OrganizationFull extends Error {}
+
 auth.post("/verify", verifyRateLimit, async (c) => {
   const body = await c.req.json();
   const token = (body as { token?: string }).token;
@@ -773,15 +789,35 @@ auth.post("/verify", verifyRateLimit, async (c) => {
   }
 
   const db = getDb();
-  const result = await db.execute(sql`
-    UPDATE claimnet.users
-    SET email_verified_at = COALESCE(email_verified_at, now())
-    WHERE email_verification_token = ${token}
-      AND email_verification_token_created_at > now() - interval '24 hours'
-    RETURNING id, email, (waitlisted_at IS NOT NULL) AS "waitlisted"
-  `);
+  // The verification and an organization join on a captured domain commit
+  // together (stream Domains, OD-J1). At the seat limit both roll back, so
+  // the address stays unverified and the same link works once a seat frees
+  // (OD-C1).
+  const outcome: { updated?: { id: string; email: string; waitlisted: boolean }; joined?: string } = {};
+  try {
+    await db.transaction(async (tx) => {
+      const result = await tx.execute(sql`
+        UPDATE claimnet.users
+        SET email_verified_at = COALESCE(email_verified_at, now())
+        WHERE email_verification_token = ${token}
+          AND email_verification_token_created_at > now() - interval '24 hours'
+        RETURNING id, email, (waitlisted_at IS NOT NULL) AS "waitlisted"
+      `);
+      const row = (result as unknown as Array<{ id: string; email: string; waitlisted: boolean }>)[0];
+      if (!row) return;
+      outcome.updated = row;
+      const join = await joinOnVerification(tx, { userId: row.id, email: row.email });
+      if (join.kind === "full") throw new OrganizationFull();
+      if (join.kind === "joined") outcome.joined = join.organizationName;
+    });
+  } catch (err) {
+    if (err instanceof OrganizationFull) {
+      return c.json({ ok: false, error: "organization_full", message: ORGANIZATION_FULL_MESSAGE }, 409);
+    }
+    throw err;
+  }
 
-  const updated = (result as unknown as Array<{ id: string; email: string; waitlisted: boolean }>)[0];
+  const updated = outcome.updated ? { ...outcome.updated, waitlisted: outcome.joined ? false : outcome.updated.waitlisted } : undefined;
   if (!updated) {
     return c.json({ ok: false, error: "Invalid or expired verification token" }, 400);
   }
@@ -817,6 +853,8 @@ auth.post("/verify", verifyRateLimit, async (c) => {
       // Waitlisted accounts get "your place is held" copy instead of
       // "sign in and start" — signing in won't work until promotion.
       waitlisted: updated.waitlisted,
+      // The organization this click joined, for the verify page (OD-J1).
+      organization: outcome.joined ? { name: outcome.joined } : null,
     },
   });
 });
@@ -858,7 +896,7 @@ auth.post("/resend-verification", resendRateLimit, requireAuth, async (c) => {
   `);
 
   try {
-    await sendVerificationEmail(user.email, token);
+    await sendVerification(user.email, token, false);
     return c.json({ ok: true, data: { message: "Verification email sent" } });
   } catch {
     return c.json({ ok: false, error: "Failed to send email" }, 500);
