@@ -281,7 +281,7 @@ const TRACE_READS = {
     why: "report read paths (slice 9): every recipe a feedback row, shown id, deposit, or related id names passes traceReadableByViewer before it is listed or counted",
   },
   "apps/backend/src/services/users-list.service.ts": {
-    n: 2, fp: "c6387738508d", composes: false,
+    n: 2, fp: "5809521f01dc", composes: false,
     why: "users list for both consoles (stream Console): an organization's member counts compose publishedTrace over that organization's books (CN-U2); the site operator's all-accounts count is every recipe, drafts included, as GET /admin/users always counted (RP-31)",
   },
   "apps/backend/src/routes/organization-console.ts": {

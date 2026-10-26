@@ -101,11 +101,7 @@ function columnExpression(key: string, orgId: string | undefined): SQL | null {
     case "role":
       return sql`u.role`;
     case "organization":
-      // The fragment aliases claimnet.users as u inside it, so it is handed
-      // the account through an alias of its own rather than u.id.
-      return sql`(SELECT o.name FROM (SELECT u.id AS listed_user_id) lu
-        JOIN claimnet.organizations o ON o.id = ${homeOrganizationIdOf(sql`lu.listed_user_id`)}
-        WHERE NOT o.is_personal)`;
+      return sql`(SELECT o.name FROM claimnet.organizations o WHERE o.id = ${homeOrganizationIdOf(sql`u.id`)} AND NOT o.is_personal)`;
     case "emailVerifiedAt":
       return sql`u.email_verified_at`;
     case "suspendedAt":
