@@ -38,7 +38,7 @@ Checked against `apps/backend/src/routes/oauth.ts`, `services/oauth.service.ts` 
 
 ## Who builds what
 
-Three streams, each in a session that already holds the context, each on a branch it creates and pushes itself (draft PR; `main` moves only by the operator's merge and deploy approval; no force-push over a pushed branch; bring `main` in with a merge commit). Rubric first, under one heading per stream in `docs/planning/openai-plugin-build.md`. Recipe-check the calls; questions for the operator go in as drafts under the stream's intent; verifier and audit coordinators run concurrently as in the drafts round.
+Three streams, each in a session that already holds the context, each on a branch it creates and pushes itself (draft PR; `main` moves only by the operator's merge and deploy approval; no force-push over a pushed branch; bring `main` in with a merge commit). Rubric first, in a file per stream under `docs/planning/openai-plugin-build/` (`oauth.md`, `tool-contract.md`, `listing.md`), so the streams never append to one file. Recipe-check the calls; questions for the operator go in as drafts under the stream's intent; verifier and audit coordinators run concurrently as in the drafts round.
 
 | Stream | Session | Scope | Branch |
 |---|---|---|---|
@@ -46,7 +46,7 @@ Three streams, each in a session that already holds the context, each on a branc
 | **T** Tool contract | `d-tool-shapes` (8a tool shapes, descriptions, size caps) | Items 3, 4, 5, 6, 7, 13. The justification document is a deliverable beside the code. | `plugin/tool-contract` |
 | **L** Listing and copy | `c-briefing` (briefing and connect-page copy) | Items 9, 15, 16; the ZIP package (`plugin.json`, `mcp.json`, square logo, `composerIcon`, `brandColor` with contrast checks); listing copy (30-character name and subtitle, 4,000-character description, three starter prompts under 128 characters, no `@` mentions); the five positive and three negative test cases; the connect page's ChatGPT and Codex sections with the plan list corrected ("Team" is now Business; Pro is read-only for custom servers; Free and Plus are not named for custom servers). | `plugin/listing-package` |
 
-Shared files: `routes/mcp.ts` (O touches the 401 challenge and `securitySchemes`; T touches descriptions and annotations; coordinate by hunk, T merges first), `recipe-guide-content.ts` (L only), the size-cap tests (T moves caps if needed, dated), `docs/connectors/index.md` (L only). No migrations expected; if one is needed, claim the number when the branch is first pushed.
+Shared files: `routes/mcp.ts` (O touches the 401 challenge and `securitySchemes`; T touches descriptions and annotations; coordinate by hunk, T merges first); `packages/domain/src/recipe-guide-content.ts` (T owns the `MCP_TOOL_DESCRIPTIONS` and `MCP_PARAM_DESCRIPTIONS` blocks and adds a server-instructions constant in its own file; L owns the rest and asks T for any description change); the size-cap tests (T moves caps as measured, dated; stream B's 8b branch leaves the shared-descriptions cap 7 characters of headroom, so expect a move); `docs/connectors/index.md` (L only). No migrations expected; if one is needed, claim the number when the branch is first pushed.
 
 Merge order: T, then O, then L. One deploy approval after the three. Then the operator's portal steps.
 
