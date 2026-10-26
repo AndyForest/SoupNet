@@ -54,6 +54,16 @@
  *      evidence text. What it does not see: SQL built from strings assembled
  *      in another file, and identifiers computed at runtime.
  *
+ *   4. ORGANIZATION MEMBERSHIP — `claimnet.organization_members` (organization
+ *      accounts round 1). Who belongs to a company organization, in what
+ *      role, and whether an org admin has disabled them: the table every
+ *      credential's account-state check reads (authz/account-state.ts) and
+ *      the join writes (authz/organizations.ts). Any other source file that
+ *      names it — `organization_members` or the Drizzle export
+ *      `organizationMembers` — has to be registered in
+ *      ORG_MEMBERSHIP_MENTIONS with its reason. Other code composes the
+ *      module's `orgMembersOf` and `orgMemberCount` fragments instead.
+ *
  * HOW A FILE IS REGISTERED. Each entry records `n`, the number of lines in the
  * file that mention the table, and `fp`, a fingerprint of exactly those lines
  * (whitespace-normalized, in order). The check fails when:
@@ -139,6 +149,16 @@ const NOT_YET_MIGRATED = {
 const MEMBERSHIP_MENTIONS = {
   "packages/contracts/src/groups.ts": { n: 1, fp: "455fd5eff999", why: "a doc comment on the legacy contract" },
   "packages/domain/src/trace-move.ts": { n: 3, fp: "a479b69c8a35", why: "doc comments on the pure role allowlist; no I/O in this package" },
+};
+
+/**
+ * Files outside the seam that name the organization membership table without
+ * reading or writing it. Permanent, each with its reason. Every statement on
+ * the table (the join, the account-state check, the member actions, the
+ * deletion cascade's step) lives in the module.
+ */
+const ORG_MEMBERSHIP_MENTIONS = {
+  "packages/domain/src/organizations.ts": { n: 1, fp: "5b374a6a8242", why: "a doc comment naming the joined_via column the pure type mirrors; no I/O in this package" },
 };
 
 /**
@@ -281,7 +301,7 @@ const TRACE_READS = {
     why: "feedback target ACL: prefix scan and readable set use traceReadableById (RP-11, RP-18); check_feedback inserts and the per-key budget count are writes and the caller's own rows; search, briefing, and intent-only rows (slice 8a) attach only to the caller's user's own audit rows or intents, with dedup lookups on the caller's key",
   },
   "apps/backend/src/services/import.service.ts": {
-    n: 14, fp: "b4a8f2ab1a85", composes: false,
+    n: 14, fp: "05c440dce865", composes: false,
     why: "import only creates rows: it reads rows by id to decide skip / conflict / fresh id (RP-35), keeps a trace only when it is the importer's own and not a draft about someone else (onBehalfSubjectOf, [F92] [F97]), writes links only between rows it created (recipe 5d541d2c), and an on-behalf row's subject goes through the module's naming rule (S4-E2); a row's intent link is restored only onto the importer's own intents (slice 6a, S6a-E2)",
   },
   "apps/backend/src/services/integrity-repair.service.ts": {
@@ -442,6 +462,21 @@ const RULES = [
       "add a function there (with a test) if the question you are asking is new.",
     ],
     newFileHint: "move the query into apps/backend/src/authz/ and call it from here.",
+  },
+  {
+    table: "the organization membership table (organization_members / organizationMembers)",
+    // Whole words, so a function named for the table (removeOrganizationMembershipOf) isn't a mention.
+    pattern: /\borganization_members\b|\borganizationMembers\b/,
+    lists: { ORG_MEMBERSHIP_MENTIONS },
+    failure: [
+      "company organization membership is being read or written outside apps/backend/src/authz/.",
+      "",
+      "Membership of a company organization decides whether an account is managed and whether it may act",
+      "at all, so its SQL lives in the authz module. Import what you need from it — managedOrganizationOf,",
+      "homeOrganizationOf, mayCreateBookIn, joinOrganization, actOnMember — or compose orgMembersOf /",
+      "orgMemberCount, or add a function there (with a test) if the question you are asking is new.",
+    ],
+    newFileHint: "move the query into apps/backend/src/authz/organizations.ts and call it from here.",
   },
   {
     table: "claimnet.api_keys",
@@ -683,6 +718,7 @@ if (failed) process.exit(1);
 console.log(
   `authz seam holds: outside ${SEAM_DIR}/, the membership table is referenced only by the ` +
     `${Object.keys(NOT_YET_MIGRATED).length} not-yet-migrated files (+${Object.keys(MEMBERSHIP_MENTIONS).length} registered mentions), ` +
+    `organization_members only by ${Object.keys(ORG_MEMBERSHIP_MENTIONS).length} registered mention(s), ` +
     `claimnet.api_keys only by the ${Object.keys(NON_AUTHORIZING_KEY_SQL).length} registered non-authorizing files, ` +
     `and recipes are read only by the ${Object.keys(TRACE_READS).length} registered files (${Object.values(TRACE_READS).filter((e) => e.composes).length} composing the draft condition) — ` +
     "every matching line fingerprinted.",

@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { requireAuth, requireVerifiedEmail } from "../auth";
 import type { AppEnv } from "../types";
+import { sharingPolicyAllows } from "../authz";
 
 const invitationsRouter = new Hono<AppEnv>();
 // Secure-by-default: every route requires both auth and verified email.
@@ -65,6 +66,17 @@ invitationsRouter.post("/:id/accept", async (c) => {
   const invite = (rows as unknown as Array<{ id: string; groupId: string; email: string }>)[0];
   if (!invite) {
     return c.json({ ok: false, error: "Invitation not found, expired, or not for this account" }, 404);
+  }
+
+  // An organization's sharing policy can refuse a grant that crosses its
+  // boundary; the invitation stays pending (authz/sharing-policy.ts, which
+  // stream Console fills).
+  if (!(await sharingPolicyAllows(db, { bookId: invite.groupId, userId: user.id }))) {
+    return c.json({
+      ok: false,
+      error: "sharing_blocked",
+      message: "An organization's sharing policy doesn't allow you in this recipe book. Ask one of its admins.",
+    }, 403);
   }
 
   await db.execute(sql`

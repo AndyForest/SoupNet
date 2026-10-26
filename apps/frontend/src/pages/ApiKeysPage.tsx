@@ -46,7 +46,13 @@ interface KeyResponse {
   ok: boolean;
   data?: { key: string; searchUrl: string; expiresAt: string };
   error?: string;
+  message?: string;
 }
+
+/** A scoped key's longest lifetime, in days: an organization's accounts are
+ *  capped at 90 (the backend's MANAGED_KEY_MAX_DAYS), others at a year. */
+const MANAGED_KEY_MAX_DAYS = 90;
+const SCOPED_KEY_MAX_DAYS = 365;
 
 export function ApiKeysPage() {
   const queryClient = useQueryClient();
@@ -57,6 +63,20 @@ export function ApiKeysPage() {
   const [showForm, setShowForm] = useState(false);
   const [scopedLabel, setScopedLabel] = useState("");
   const [scopedDays, setScopedDays] = useState("30");
+
+  // The same /auth/me query the app shell runs: a managed account (one that
+  // belongs to a company organization) gets the shorter key ceiling.
+  const meQuery = useQuery({
+    queryKey: ["auth", "me"],
+    queryFn: async () => {
+      const res = await authFetch("/auth/me");
+      const json = (await res.json()) as { ok: boolean; data?: { user: { id: string; email: string; role: string; organization?: { id: string; name: string } | null } } };
+      if (!json.ok || !json.data) throw new Error("Failed");
+      return json.data.user;
+    },
+    retry: false,
+  });
+  const maxKeyDays = meQuery.data?.organization ? MANAGED_KEY_MAX_DAYS : SCOPED_KEY_MAX_DAYS;
   const [readGroupIds, setReadGroupIds] = useState<string[]>([]);
   const [writeGroupIds, setWriteGroupIds] = useState<string[]>([]);
   const [defaultWriteGroupId, setDefaultWriteGroupId] = useState<string>("");
@@ -120,7 +140,7 @@ export function ApiKeysPage() {
         })),
       });
       const json = (await res.json()) as KeyResponse;
-      if (!json.ok) throw new Error(json.error ?? "Failed to generate key");
+      if (!json.ok) throw new Error(json.message ?? json.error ?? "Failed to generate key");
       return json.data!;
     },
     onSuccess: (data) => {
@@ -270,7 +290,7 @@ export function ApiKeysPage() {
                   id="scopedDays"
                   type="number"
                   min="1"
-                  max="365"
+                  max={maxKeyDays}
                   value={scopedDays}
                   onChange={(e) => setScopedDays(e.target.value)}
                 />
