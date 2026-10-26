@@ -10,8 +10,9 @@
  * non-ranking reason belongs outside this list; moving code into one of
  * these files and reading a rating there is exactly what this test stops.
  *
- * Slice 2 extends the same list to the draft and verification columns, and
- * slice 6a to the recipe-to-intent link.
+ * Slice 2 extends the same list to the draft and verification columns,
+ * slice 6a to the recipe-to-intent link, and slice 8b to the since
+ * qualifiers and the changed time.
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
@@ -79,6 +80,22 @@ describe("ranking code never reads triage ratings (S1-B8 b, DT-RAT-07)", () => {
         .map((line, i) => ({ line: i + 1, text: line }))
         .filter(({ text }) => INTENT_TERMS.test(text));
       expect(hits, `${file} mentions the intent link: ${JSON.stringify(hits)}`).toEqual([]);
+    });
+  }
+
+  // Slice 8b (S8b-C4): created-after: and changed-after: are selections
+  // built in search-selection.ts; ranking never reads when a recipe was
+  // deposited for that reason, or when it last changed (its feedback,
+  // reactions, resolution or move).
+  const SINCE_TERMS = /\b(created-after|changed-after|createdAfter\w*|changedAfter\w*|changedAt\w*|check_feedback|trace_reactions)\b/i;
+  for (const file of RANKING_FILES) {
+    it(`${file} does not reference the since qualifiers or the changed time (slice 8b)`, () => {
+      const source = readFileSync(join(repo, file), "utf-8");
+      const hits = source
+        .split("\n")
+        .map((line, i) => ({ line: i + 1, text: line }))
+        .filter(({ text }) => SINCE_TERMS.test(text));
+      expect(hits, `${file} mentions a since qualifier: ${JSON.stringify(hits)}`).toEqual([]);
     });
   }
 
