@@ -136,7 +136,7 @@ Added here:
 |---|---|---|
 | CN-X1 | `docs/product-specs/organizations.feature` gains the ORG-CON and ORG-SHARE scenarios named above, with `# Requirement:` comments and `# Guards:` lines to archetypes 6 and 7. | The file. |
 | CN-X2 | `docs/architecture/admin-dashboards.md` gains the org console and the documented exception to engineering-principles §12's "no hiding fields": the org view shows only what its viewer is entitled to. `ea5a5dca`'s rule gets its doc home there. The doc's promise of a `/admin/workers` landing page is corrected. `CLAUDE.md` (routes) and the backlog say what landed. | Diff review. |
-| CN-X4 | `docs/legal/privacy-policy.md` §8 names the sign-in record: what it stores, how long it is kept (the audit log's retention), who reads it, and that account deletion keeps it like every audit row. Stream L owns the policy and adds the line from Console's description (sent 2026-10-26); Console checks the merged text against CN-T2. | The policy on `main` when Console merges. |
+| CN-X4 | `docs/legal/privacy-policy.md` §2.1 names the sign-in record in its list of account events, in stream L's words: "each successful sign-in, with its time and whether it was by password or Google". Retention follows the audit log's (L's draft `30c5a224`). L's #151 merges before Console, so Console's PR carries the line, agreed with L on 2026-10-26. | The policy diff in this PR. |
 | CN-X3 | Not in this stream: the two hand-rolled admin pages (`AdminQueuesPage`, `AdminEmbeddingsPage`) move onto the kit only if the shared table touches them. Otherwise they stay as a backlog item. | Backlog entry. |
 
 ### Out of this stream
