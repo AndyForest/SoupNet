@@ -68,6 +68,21 @@ export const apiKeys = claimnetSchema.table(
     // Always NULL for 'daily' and 'scoped' keys.
     consumedAt: timestamp("consumed_at", { withTimezone: true }),
 
+    // The audience an 'oauth' key was minted for (RFC 8707 `resource`, the
+    // OpenAI plugin directory round, migration 0043): the server's canonical
+    // resource identifier at mint, carried forward by refresh. Authentication
+    // refuses an 'oauth' key bound to any other value. NULL (only code from
+    // before 0043 mints it: keys held at the deploy, and keys old tasks mint
+    // during the rolling deploy) is accepted so connected clients see no wave
+    // of 401s (recipe 8b5a7baa); such an access token dies with its hour and
+    // a refresh binds its successor. F109: a follow-up bounds that acceptance
+    // once the deploy is past. NULL for 'daily' and 'scoped'.
+    oauthResource: text("oauth_resource"),
+    // The OpenID scopes granted on the connection ('openid', 'email'), read
+    // only by GET /oauth/userinfo. Empty when none were asked for; NULL for
+    // 'daily' and 'scoped'. Recipe-book reach is the scope arrays above.
+    oauthOidcScopes: text("oauth_oidc_scopes").array(),
+
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
 
