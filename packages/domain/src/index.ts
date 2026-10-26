@@ -17,3 +17,4 @@ export * from "./drafts";
 export * from "./search-query";
 export * from "./unknown-params";
 export * from "./organizations";
+export * from "./mcp-server-instructions";

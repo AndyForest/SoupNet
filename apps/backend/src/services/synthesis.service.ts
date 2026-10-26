@@ -27,9 +27,11 @@ import type { EvidenceSearchResult } from "./vector-search.service";
 import { synthesizeProfile } from "../lib/synthesis/provider";
 
 /** Shown when a non-premium (or flag-off) caller passes synthesize. Renders
- *  verbatim to the agent — one line, factual, no error semantics. */
+ *  verbatim to the agent — one line, factual, no error semantics, and no plan
+ *  or upgrade wording (plugin directory item 7: plugins "must not display
+ *  subscription plans, initiate new subscriptions, or promote upgrades"). */
 export const SYNTHESIS_INELIGIBLE_NOTICE =
-  "Synthesis is a premium feature — not enabled for this account.";
+  "Synthesis is off for this account; the results below are not synthesised.";
 
 /** Shown when the caller IS eligible but the provider returned null (missing
  *  key, API error, timeout). Soft degradation — the check still succeeded. */

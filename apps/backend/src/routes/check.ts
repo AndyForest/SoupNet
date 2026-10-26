@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { ownDraftFields } from "../lib/own-draft-fields";
+import { flatListFields } from "../lib/flat-list-fields";
 import type { Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { Next } from "hono";
@@ -15,7 +16,7 @@ import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { authenticateKey, keyForcesDrafts } from "../authz";
 import type { Principal } from "../authz";
-import { HTML_ACCEPT_TYPES, renderCheckResponseMarkdown, fenceCheckResponseMarkdown, parseVerbosity, renderRatingsMarkdown, isShownDraftState, parseDraftFlag, draftLabel, INTENT_QUALIFIER_NOT_RECOGNIZED, openQuestionLine } from "@soupnet/domain";
+import { HTML_ACCEPT_TYPES, renderCheckResponseMarkdown, fenceCheckResponseMarkdown, parseVerbosity, renderRatingsMarkdown, isShownDraftState, parseDraftFlag, draftLabel, INTENT_QUALIFIER_NOT_RECOGNIZED, openQuestionLine, FLAT_LIST_ORDER_LABELS, flatListPageLine } from "@soupnet/domain";
 import type { CheckResponseJson } from "@soupnet/domain";
 import type { Recipe } from "@soupnet/contracts";
 import { TRIAGE_RATING_VALUES } from "@soupnet/contracts";
@@ -466,6 +467,8 @@ function buildSearchOnlyJsonResponse(
     ...(result.searchedOwnExcluded !== undefined ? { searchedOwnExcluded: result.searchedOwnExcluded } : {}),
     ...(result.intentNotRecognized ? { intentNotRecognized: true } : {}),
     ...data,
+    // No bare text: the flat list's rows and page (slice 8b).
+    ...(result.listing ? flatListFields({ ...result, listing: result.listing }, enriched) : {}),
   };
   return response;
 }
@@ -807,6 +810,22 @@ export function renderPage(
             ? `${Math.round(r.semanticScore * 100)}% similar`
             : "";
 
+        // The flat list (slice 8b): one entry per match with its id and the
+        // time its order reads, never a stub (a sweep needs every id), and no
+        // evidence (get_recipes fetches it).
+        if (result.listing) {
+          const times = result.listing.times[r.id];
+          const shownTime = result.listing.order === "changed"
+            ? times?.changedAt
+            : result.listing.order === "triage" ? times?.depositedAt : r.createdAt;
+          const flatLabel = draftLabel(r.draftState, { ...r, expired: r.draftExpired });
+          return `
+    <article class="result">
+      <p><small><code>${esc(r.id)}</code>${shownTime ? ` ${esc(shownTime)}` : ""}</small></p>
+      <p>${r.recipeBook ? `<span class="group">[${esc(r.recipeBook.name)}]</span> ` : ""}${flatLabel ? `<span class="draft">${esc(flatLabel)}</span> ` : ""}${esc(r.claimText)}</p>
+    </article>`;
+        }
+
         // Known-set stub — one line: id + similarity, no recipe text (id-only
         // ruling; the caller already holds the body). Rendering only; the
         // result still occupies its cluster slot. Triggered by declared
@@ -898,9 +917,13 @@ export function renderPage(
     // comprehensibility pass): no mode taxonomy, cluster/sort/expand controls
     // merged into a single row. "Similar recipes" is the CHECK framing
     // (similar to *your* recipe); a search just has results.
-    const toolbarParts = [
-      `Sort: ${currentSort === "relevance" ? "<strong>relevance</strong>" : `<a href="/check${sortRelevanceQs}">relevance</a>`} | ${currentSort === "recent" ? "<strong>recent</strong>" : `<a href="/check${sortRecentQs}">recent</a>`}`,
-    ];
+    // The flat list has one fixed order (slice 8b), so it names it instead
+    // of offering a sort.
+    const toolbarParts = result.listing
+      ? [esc(`Listed ${FLAT_LIST_ORDER_LABELS[result.listing.order]}, ${result.listing.perPage} per page.`)]
+      : [
+        `Sort: ${currentSort === "relevance" ? "<strong>relevance</strong>" : `<a href="/check${sortRelevanceQs}">relevance</a>`} | ${currentSort === "recent" ? "<strong>recent</strong>" : `<a href="/check${sortRecentQs}">recent</a>`}`,
+      ];
     if (result.clustered) {
       toolbarParts.push(`<a href="/check${buildQs(params, { expand: "true" })}" title="One entry per recipe instead of clustered exemplars">Show all ${result.totalResults}</a>`);
       if (!(params.verbosity || params.clusters || params.maxChars)) {
@@ -915,6 +938,8 @@ export function renderPage(
       : `Similar recipes (${result.totalResults} found${result.clustered ? `, ${result.results.length} exemplars shown` : ""})`;
     const emptyLine = isSearchOnly && result.intentNotRecognized
       ? `<p>No matches: ${esc(INTENT_QUALIFIER_NOT_RECOGNIZED)}.</p>`
+      : result.listing && result.totalResults > 0
+        ? `<p>${esc(flatListPageLine({ page: result.currentPage, totalPages: result.totalPages, totalResults: result.totalResults, perPage: result.listing.perPage }))}</p>`
       : isSearchOnly && result.searchedCorpusSize !== undefined
         ? `<p>No matches among the ${result.searchedCorpusSize} recipes in scope.</p>`
         : "<p>No matching recipes found.</p>";
@@ -1407,8 +1432,9 @@ async function handleCheck(
       return c.json(withFeedbackField({ ok: false, error: result.error }, feedbackResults), 400);
     }
     const db = getDb();
-    let enriched = await enrichResults(db, result.results, principal?.userId);
-    enriched = await clusterEvidenceInResults(db, enriched);
+    // The flat list's rows are index entries (slice 8b): no evidence.
+    let enriched = await enrichResults(db, result.results, principal?.userId, { evidence: !result.listing });
+    if (!result.listing) enriched = await clusterEvidenceInResults(db, enriched);
     const page = params.page ? parseInt(params.page, 10) : 1;
     const synthesis = await resolveSynthesis(db, params, principal, result, enriched, searchOnly);
     return c.json(withFeedbackField(searchOnly
@@ -1423,8 +1449,8 @@ async function handleCheck(
   let enriched: EnrichedResult[] | undefined;
   if (result && !result.error && result.results.length > 0) {
     const db = getDb();
-    enriched = await enrichResults(db, result.results, principal?.userId);
-    enriched = await clusterEvidenceInResults(db, enriched);
+    enriched = await enrichResults(db, result.results, principal?.userId, { evidence: !result.listing });
+    if (!result.listing) enriched = await clusterEvidenceInResults(db, enriched);
   } else if (result && !result.error && searchOnly) {
     enriched = [];
   }
