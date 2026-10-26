@@ -16,6 +16,8 @@ Watch a run: `E2E_SLOWMO=500 npx playwright test smoke --headed --project=deskto
 
 Other hosts: `E2E_FRONTEND_URL` and `E2E_BACKEND_URL`. For example, `E2E_FRONTEND_URL=http://localhost:5274` verifies a frontend served from another worktree.
 
+A worktree stack (its own backend port and a throwaway database) needs `DISABLE_RATE_LIMIT=true` and `ALLOW_AUTO_SETUP=true` on the backend, as the dev compose stack sets them: `seedUser` registers and logs in several accounts per test, and the auth rate limit allows five per address per 15 minutes. Start its frontend from `apps/frontend` with `VITE_API_BASE=<backend URL> npx vite --port <n> --strictPort --host 127.0.0.1`; `npm run dev:frontend -- --port <n>` does not pass the port through to Vite.
+
 Passing `--reporter=list` (or any `--reporter`) replaces the configured reporters, so no HTML report is written. To keep it, use `--reporter=list,html`.
 
 Every run empties its output folder and rewrites its report. When two verifiers share the stack, give each run its own with `E2E_RUN=<name>`: it writes `test-results/<name>` and `playwright-report-<name>`. Open one with `npx playwright show-report playwright-report-<name>`.

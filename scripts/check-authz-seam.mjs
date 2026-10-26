@@ -257,8 +257,8 @@ const TRACE_READS = {
     why: "loads author, evidence, and references by id for exemplars the pipeline chose under SHARED_AUDIENCE (RP-10, RP-42)",
   },
   "apps/backend/src/services/draft-dispatch.service.ts": {
-    n: 1, fp: "027a256672ca", composes: true,
-    why: "the dispatch line (slice 10): the caller's own live drafts in the call's scope, through traceVisibleTo and draftLive, for one line naming the nearest; ranking never reads it",
+    n: 1, fp: "67568a7c1145", composes: true,
+    why: "the dispatch line (slice 10): the live drafts about the caller's user in the call's scope, through traceVisibleTo and draftLiveAwaitingReviewBy, for one line naming the nearest; ranking never reads it",
   },
   "apps/backend/src/services/draft-queue.service.ts": {
     n: 6, fp: "01032ec260f8", composes: true,
