@@ -1,16 +1,16 @@
 # ClaimNet Data Model — Generated Reference
 
-> **Auto-generated** from Drizzle migration snapshot `0042_snapshot.json`.
+> **Auto-generated** from Drizzle migration snapshot `0043_snapshot.json`.
 > Do not edit by hand. Regenerate with: `npx tsx scripts/generate-data-model-docs.ts`
 >
-> Schema as of migration `0042_traces_intent_link` (2026-10-25).
-> Tables: 31 | Schema: `claimnet`
+> Schema as of migration `0043_organization_members` (2026-10-26).
+> Tables: 32 | Schema: `claimnet`
 
 For design rationale, conventions, and context, see [data-model.md](data-model.md).
 
 ## Tables
 
-**Identity & Access:** [`users`](#claimnetusers) · [`organizations`](#claimnetorganizations) · [`groups`](#claimnetgroups) · [`group_members`](#claimnetgroup_members) · [`ephemeral_books`](#claimnetephemeral_books)
+**Identity & Access:** [`users`](#claimnetusers) · [`organizations`](#claimnetorganizations) · [`organization_members`](#claimnetorganization_members) · [`groups`](#claimnetgroups) · [`group_members`](#claimnetgroup_members) · [`ephemeral_books`](#claimnetephemeral_books)
 **Core Content:** [`traces`](#claimnettraces) · [`evidence`](#claimnetevidence) · [`references`](#claimnetreferences) · [`uploads`](#claimnetuploads)
 **Linking:** [`trace_evidence`](#claimnettrace_evidence) · [`trace_references`](#claimnettrace_references) · [`evidence_references`](#claimnetevidence_references)
 **Feedback & Reactions:** [`check_feedback`](#claimnetcheck_feedback) · [`check_feedback_stars`](#claimnetcheck_feedback_stars) · [`trace_reactions`](#claimnettrace_reactions) · [`session_shown`](#claimnetsession_shown) · [`intents`](#claimnetintents) · [`intent_shown`](#claimnetintent_shown)
@@ -175,6 +175,7 @@ erDiagram
         text role
         boolean daily_read
         boolean daily_write
+        text via
         timestamptz joined_at
     }
 
@@ -184,6 +185,8 @@ erDiagram
         text slug
         uuid organization_id FK
         text description
+        boolean org_wide
+        boolean org_default
         timestamptz created_at
         timestamptz updated_at
     }
@@ -244,12 +247,24 @@ erDiagram
         timestamptz last_used_at
     }
 
+    organization_members {
+        uuid id PK
+        uuid organization_id FK
+        uuid user_id FK
+        text role
+        text joined_via
+        timestamptz disabled_at
+        uuid disabled_by
+        timestamptz joined_at
+    }
+
     organizations {
         uuid id PK
         text name
         text slug
         uuid owner_id FK
         boolean is_personal
+        integer seat_limit
         timestamptz created_at
         timestamptz updated_at
     }
@@ -367,6 +382,7 @@ erDiagram
         timestamptz last_login_at
         timestamptz suspended_at
         text suspended_reason
+        timestamptz sessions_valid_after
         timestamptz waitlisted_at
         text signup_reason
         timestamptz premium_at
@@ -403,6 +419,8 @@ erDiagram
     intents }o--|| users : "user_id"
     invitations }o--|| users : "inviter_id"
     invitations }o--|| groups : "group_id"
+    organization_members }o--|| organizations : "organization_id"
+    organization_members ||--|| users : "user_id"
     organizations }o--|| users : "owner_id"
     reference_source_cache }o--|| references : "reference_id"
     trace_evidence }o--|| traces : "trace_id"
@@ -454,6 +472,7 @@ These are created by raw SQL in migration files and are not captured in the snap
 | `last_login_at` | `timestamptz` | YES |  |  |
 | `suspended_at` | `timestamptz` | YES |  |  |
 | `suspended_reason` | `text` | YES |  |  |
+| `sessions_valid_after` | `timestamptz` | YES |  |  |
 | `waitlisted_at` | `timestamptz` | YES |  |  |
 | `signup_reason` | `text` | YES |  |  |
 | `premium_at` | `timestamptz` | YES |  |  |
@@ -479,6 +498,7 @@ These are created by raw SQL in migration files and are not captured in the snap
 | `slug` | `text` | NO |  |  |
 | `owner_id` | `uuid` | NO |  |  |
 | `is_personal` | `boolean` | NO |  |  |
+| `seat_limit` | `integer` | YES |  |  |
 | `created_at` | `timestamptz` | NO | `now()` |  |
 | `updated_at` | `timestamptz` | NO | `now()` |  |
 
@@ -493,6 +513,31 @@ These are created by raw SQL in migration files and are not captured in the snap
 
 ---
 
+### `claimnet.organization_members`
+
+| Column | Type | Nullable | Default | PK |
+|---|---|---|---|---|
+| `id` | `uuid` | NO | `gen_random_uuid()` | PK |
+| `organization_id` | `uuid` | NO |  |  |
+| `user_id` | `uuid` | NO |  |  |
+| `role` | `text` | NO | `'member'` |  |
+| `joined_via` | `text` | NO |  |  |
+| `disabled_at` | `timestamptz` | YES |  |  |
+| `disabled_by` | `uuid` | YES |  |  |
+| `joined_at` | `timestamptz` | NO | `now()` |  |
+
+**Foreign keys:**
+- `organization_id` → `organizations.id`
+- `user_id` → `users.id`
+
+**Unique constraints:**
+- `organization_members_user_unique`: `(user_id)`
+
+**Indexes:**
+- `organization_members_organization_id_idx`: `(organization_id)`
+
+---
+
 ### `claimnet.groups`
 
 | Column | Type | Nullable | Default | PK |
@@ -502,6 +547,8 @@ These are created by raw SQL in migration files and are not captured in the snap
 | `slug` | `text` | NO |  |  |
 | `organization_id` | `uuid` | NO |  |  |
 | `description` | `text` | YES |  |  |
+| `org_wide` | `boolean` | NO |  |  |
+| `org_default` | `boolean` | NO |  |  |
 | `created_at` | `timestamptz` | NO | `now()` |  |
 | `updated_at` | `timestamptz` | NO | `now()` |  |
 
@@ -513,6 +560,7 @@ These are created by raw SQL in migration files and are not captured in the snap
 
 **Indexes:**
 - `groups_organization_id_idx`: `(organization_id)`
+- `groups_one_org_default_idx`: `(organization_id)` (unique)
 
 ---
 
@@ -526,6 +574,7 @@ These are created by raw SQL in migration files and are not captured in the snap
 | `role` | `text` | NO | `'member'` |  |
 | `daily_read` | `boolean` | NO |  |  |
 | `daily_write` | `boolean` | NO |  |  |
+| `via` | `text` | NO | `'direct'` |  |
 | `joined_at` | `timestamptz` | NO | `now()` |  |
 
 **Foreign keys:**
