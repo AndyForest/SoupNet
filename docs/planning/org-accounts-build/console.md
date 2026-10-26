@@ -88,6 +88,12 @@ Added here:
 | CN-U3 | Filters (email search, status, role) and sorts (joined, last active, email) go through the service's whitelists, and an unknown sort key falls back to the default. Paging uses the kit's limits (default 50, max 200). | — | Layer 3. |
 | CN-U4 | Row actions call Core's member routes and show Core's refusal copy as returned. The UI offers only actions the domain role rules allow the caller: no action on oneself, and an admin can't act on an owner or make one. The table refreshes after an action. | ORG-OFF-01, ORG-ROLE-02 | Layer 3b (browser): Ada disables Max, Max's status changes, and the self row has no actions. |
 | CN-U5 | The last-directory-check column is added last, after Offboarding merges. It reads Offboarding's stored check time for members of an organization with a directory connection, and is empty otherwise. | ORG-CON-03 | Layer 3 once Offboarding's schema is on `main`. |
+| CN-U6 | The directory connection, after Offboarding merges (agreed with that stream, 2026-10-26; Offboarding's PR #160):
+  - a Directory section on `/org` (anchor `#directory`, which Offboarding's completion page links to) reads `GET /organizations/:id/directory` and drives its start, service-account and disconnect writes;
+  - the member status adds Offboarding's `directory_inactive` and `directory_unconfirmed` with labels of their own ("Suspended in Google Workspace", "Archived in Google Workspace", "Not in the directory", "Directory check failed"), never "Disabled by the organization";
+  - Activity adds `organization.member_directory_status` (both views, with the `to` value checked against Offboarding's five values) and the three connection actions (org view only, kind and domain at most, never free text).
+
+  Read through `orgMembersOf`'s added `directory_status` and `directory_checked_at`. | ORG-CON-03 | Layer 1 on the allowlist and labels; Layer 3 that a directory status change appears in Activity; Layer 3b on the section. |
 
 ### Books and sharing
 
