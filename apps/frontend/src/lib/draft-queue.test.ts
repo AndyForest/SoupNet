@@ -16,6 +16,9 @@ import {
   linkHeading,
   queueIntro,
   DRAFTS_CARD_TEXT,
+  intentRuns,
+  intentHeadingText,
+  intentFilterQuery,
   QUEUE_ACTIONS,
 } from "./draft-queue.js";
 import type { QueueItem } from "./draft-queue.js";
@@ -178,6 +181,11 @@ describe("the queue intro and the dashboard card say what a draft is (slice 7 C2
 
   it("nothing says the agents parked drafts because they could not ask", () => {
     for (const text of variants) expect(text).not.toMatch(/could not ask|couldn't ask|can(?:'|no)t be asked|couldn't be asked/);
+  });
+
+  it("the card says \"agents\", since it counts drafts another person's agent deposited on your behalf too", () => {
+    expect(DRAFTS_CARD_TEXT).toMatch(/^Hypotheses agents parked about your taste and judgment/);
+    expect(DRAFTS_CARD_TEXT).not.toContain("your agents");
   });
 
   it("every other sentence of both intros is kept", () => {

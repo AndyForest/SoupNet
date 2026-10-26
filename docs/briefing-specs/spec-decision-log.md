@@ -8,7 +8,7 @@ Every PR that touches briefing copy (`packages/domain/src/recipe-guide-content.t
 
 Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-and-triage-slices-6-7-revision.md) §7f (ruled 2026-10-25, on `main` at `e77f657`) and build log question 57 (ruled 2026-10-24). Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 7 rubric, "C2: the briefing body". Agent `c-briefing-75-c2-2026-10-25`, intent `int_gxl5ZMTtpO9RG0cvgsKXw5lJ`; placement checked as recipe `80b2fbb5` (`soupnet-oss`).
 
-C2 has two parts. Edits 1 to 7 change only `BRIEFING.build`. Edits 8 to 11 are the 7b tool, notice, and web copy (S7-B1 to S7-B5). They were written after the rebase onto `main` with A1 (#137) and D (#139) merged; none of them names B's `intent:` term, so they don't wait for B. Stacked on C1, so C2 inherits C1's merge order (after B and E, then C1); S7-B7 depends on #139, which is merged.
+C2 has two parts. Edits 1 to 7 change only `BRIEFING.build`. Edits 8 to 12 are the 7b tool, notice, and web copy (S7-B1 to S7-B5). They were written after the rebase onto `main` with A1 (#137) and D (#139) merged; none of them names B's `intent:` term, so they don't wait for B. Stacked on C1, so C2 inherits C1's merge order (after B and E, then C1); S7-B7 depends on #139, which is merged.
 
 ### Edits and the scenarios they move
 
@@ -30,9 +30,10 @@ C2 has two parts. Edits 1 to 7 change only `BRIEFING.build`. Edits 8 to 11 are t
    → Watched: `checking-behavior.feature` "An agent drafts only a call it cannot stand behind…" (C1's rewrite) holds and is now matched by the schema.
 9. **The self-draft deposit notice (7b, S7-B2), `verifyHow` in `drafts.ts`.** "To publish it, ask the person and call verify_draft with their answer quoted and cited (or they confirm it in their review queue: <url>)." becomes "Resolve it with verify_draft when you or another agent acting for the person can settle it, or hand them their review queue: <url>." The variant without a link ends "…or they confirm it with still true on the recipe's page." It says "the person" because a self draft is about exactly one person, the caller's (recipe `5d3ddfc7`'s "a person" is for copy that names whose answer settles a call in a shared book). "Quoted and cited" leaves the notice: `verify_draft`'s description and refusal carry the evidence rule. The on-behalf and headless notices are unchanged; they never named `verify_draft`. With the fixture URL, 200 → 194 characters; without a link, 145 → 148. The S3-Z3 and S5-Z4 bounds hold.
    → Watched: `checking-behavior.feature` "An agent that deposited drafts hands its person the queue link rather than listing ids" holds: the link is still the notice's last clause.
-10. **The queue intro and the dashboard card (7b, S7-B3).** "…because they could not ask you" (and "…them") becomes ": calls they couldn't yet settle from the context they held" in both intro variants and the dashboard card, whose line moves into `draft-queue.ts` as `DRAFTS_CARD_TEXT` so a unit test covers it. Every other sentence is kept.
+10. **The queue intro and the dashboard card (7b, S7-B3).** "…because they could not ask you" (and "…them") becomes ": calls they couldn't yet settle from the context they held" in both intro variants and the dashboard card, whose line moves into `draft-queue.ts` as `DRAFTS_CARD_TEXT` so a unit test covers it. Every other sentence is kept. The card says "Hypotheses agents parked…", not "your agents": browser verification found the card said "your agents" when Pat's only draft came from Dana's agent on his behalf, while the queue's intro for the same draft correctly said "Agents". The card has only a count, so it can't switch the way the intro does. That mismatch predates C2, because the card was a fixed string before too.
     → Moves: `drafts-and-triage.feature` DT-QUE-05, "The queue shows why the agent couldn't ask", becomes "The queue shows why each draft is a draft and what would settle it"; its Given now reads "says why it is a draft rather than a check and what would settle it".
-11. **No surface says drafting is for when the person can't be asked (S7-B4).** C1's S7-A5 test now also covers every MCP tool and parameter description (with "once they confirm it", the old `verify_draft` wording that A1 replaced), every deposit-notice variant (self, repeat, with a link, headless, on-behalf), and both web strings.
+11. **The `/check` page's draft box (S7-B4, found in browser verification).** "Deposit as a draft — the person could not be asked; only they and their agents see it until they verify it" becomes "Deposit as a draft — a high-impact, uncertain call you can't settle yet from the context you hold; only they and their agents see it until it's verified", which matches edit 8. The headless key's forced box is unchanged.
+12. **No surface says drafting is for when the person can't be asked (S7-B4).** C1's S7-A5 test now also covers every MCP tool and parameter description (with "once they confirm it", the old `verify_draft` wording that A1 replaced), every deposit-notice variant (self, repeat, with a link, headless, on-behalf), both web strings, and the `/check` form.
 
 Nothing was trimmed to fit, so `expanded/` gains no entry.
 
@@ -55,9 +56,9 @@ Fixture from `recipe-guide-content.test.ts`.
 | Thin headless fixture | 21,393 | 23,081 | 21,500 → 23,200 |
 | Headless section | 398 | 398 | 400 (unchanged) |
 | Full briefing fixture | 27,271 | 28,959, +1,688 | none |
-| Remote `tools/list` (bytes) | 17,630 (`main` at `f6b85f4`) | 17,679, +49 | 18,200 (unchanged) |
-| Stdio `tools/list` (bytes) | 14,133 | 14,182, +49 | 14,700 (unchanged) |
-| Shared descriptions (characters) | 6,376 | 6,425, +49 | 6,600 (unchanged) |
+| Remote `tools/list` (bytes) | 17,642 (`main` at `68b14c2`, with 6a) | 17,691, +49 | 18,200 (unchanged) |
+| Stdio `tools/list` (bytes) | 14,145 | 14,194, +49 | 14,700 (unchanged) |
+| Shared descriptions (characters) | 6,386 | 6,435, +49 | 6,600 (unchanged) |
 | Self-draft notice, new draft, fixture URL | the `verifyHow` clause 200 | 194, −6 | S3-Z3, S5-Z4 bounds |
 
 ## 2026-10-24 — Drafts-and-triage slice 7, PR C1: the Drafts section, the planned slice 7 copy, eight field additions, and the exemplar slimming lever
@@ -121,6 +122,38 @@ Fixture from `recipe-guide-content.test.ts`; the five-exemplar section is built 
 | Five-exemplar section | 4,990 | 3,732, −1,258 | none |
 | Full briefing with that section | 29,059 | 30,953, +1,894 | none |
 | Remote `tools/list` / stdio / shared descriptions | 16,986 bytes / 13,196 / 6,051 characters | unchanged | 18,200 / 14,700 / 6,600 |
+
+## 2026-10-24 — Drafts-and-triage slice 6a: one grammar term in `search_recipes`, and the intent qualifier's not-recognized note
+
+Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-and-triage-slices-6-7-revision.md) §6a, §6f. Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 6a rubric (S6a-Z1).
+
+### Edits
+
+1. **`MCP_PARAM_DESCRIPTIONS.searchQuery`** (served on remote and stdio `search_recipes`): adds `intent:int_… (your intent's recipes)`. To stay inside the 420-character per-description limit (`mcp-tool-descriptions.test.ts`, not one of A0's raised caps) the text drops "and" before "citations", "for PR review" after "quote filenames" (the briefing's Search vs check paragraph keeps the PR-review example), and "ISO" before "judgment date" (the date error message spells out the format), and says "open drafts" for "unresolved drafts". The last clause is slice 8a's "-author:me leaves out your own." (recipe `885143c2`), kept as 8a wrote it: an earlier form of this entry also shortened the exclude-own clause, which 8a's flip of that default replaced. 396 → 406 characters, measured on the rebase onto `f6b85f4` (2026-10-25).
+2. **Not-recognized note (new):** a search whose `intent:` id names none of the caller's intents answers "No matches among the N recipes in scope: the intent: id was not recognized (unknown or not yours, deliberately indistinguishable), so it matched nothing." on the JSON notice, the markdown report, and (without the scope count) the HTML page; the review queue says the same after "No drafts listed:". It replaces the thin-corpus pointer for that case only, since the corpus is not thin. One constant, `INTENT_QUALIFIER_NOT_RECOGNIZED`, with `searchZeroResultLine` shared by the JSON and markdown builders.
+3. **Grammar error (new):** "intent: takes an intent id (int_ and 24 letters or digits) — got "…". A task story goes in the intent parameter, not the query.", plus the one-id and no-negation errors; the unknown-qualifier help lists `intent:`.
+4. **`/check` search help (HTML):** one line naming `intent:int_…`.
+
+### Scenarios intended to move
+
+- `drafts-and-triage.feature` **DT-OPT-01**, reworded to what ships (found by `is:draft intent:<id>`, listed together under the story, and not an oracle for another person's id) and moved out of the `@unreleased` option-set rule into a released rule of its own.
+
+### Scenarios watched, with rationale for holding
+
+- **Search scenarios that name the grammar** (`checking-behavior.feature` search-vs-check, `known-recipes-dedup.feature`): every existing qualifier keeps its meaning and its wording in the error help; the description's trims remove words that are restated where an agent meets them (the date error, the briefing's PR-review example).
+- **Zero-result thinness scenarios** (`feedback-loop.feature` null results): the line is byte-identical for every query without `intent:` (one builder now produces it for both JSON and markdown).
+- **Every briefing scenario:** no briefing text changed.
+
+### Measured
+
+| Measure | Before | After | Cap |
+|---|---|---|---|
+| Remote `tools/list` | 17,630 bytes | 17,642 | 18,200 |
+| Stdio `tools/list` | 14,133 bytes | 14,145 | 14,700 |
+| Shared descriptions | 6,376 characters | 6,386 | 6,600 |
+| `searchQuery` | 396 characters | 406 | 420 per description |
+
+Before is main at `f6b85f4` (slices 6c and 8a merged), after is this branch rebased onto it. The first measure, at `32ffa5c` before either merged, was 16,986 → 16,990 remote, 13,196 → 13,200 stdio, 6,051 → 6,053 shared, and 415 → 417 for `searchQuery`.
 
 ## 2026-10-24 — Drafts-and-triage slice 6c (PR A1): `outcome` on verify_draft, its 7b description, and the per-outcome replies and refusals
 

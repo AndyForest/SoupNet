@@ -121,9 +121,12 @@ export function queueIntro(items: ReadonlyArray<Pick<Partial<QueueItem>, "deposi
 }
 
 /** The dashboard drafts card's line (slice 7 C2, S7-B3: what a draft is, not
- *  "because they could not ask you"). */
+ *  "because they could not ask you"). "Agents", not "your agents": the card
+ *  has only a count, and a draft another person's agent deposited on your
+ *  behalf is counted too (the queue's intro, which sees the items, says
+ *  "your agents" only when it can). */
 export const DRAFTS_CARD_TEXT =
-  "Hypotheses your agents parked about your taste and judgment: calls they couldn't yet settle from the context they held.";
+  "Hypotheses agents parked about your taste and judgment: calls they couldn't yet settle from the context they held.";
 
 /** Slice 4 (S4-Q2, S4-Q5): the line naming the other party of an on-behalf draft, as text. */
 export function partyText(item: Pick<Partial<QueueItem>, "depositedBy" | "about">): string | null {
