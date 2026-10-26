@@ -20,7 +20,7 @@ Send your API key as `Authorization: Bearer <key>`. A `?key=` parameter is refus
 
 ## Parameters
 
-Every path takes `page` (from 1, default 1) and `per_page` (1 to 200, default 50). `GET /feedback/rows` also takes these filters, combined with AND:
+Every path takes `page` (from 1, default 1) and `per_page` (1 to 200, default 50). A report pages through its first 10,000 rows: a page that would start past them is the strict 400 below, naming `page` and the last page you can reach at your `per_page` (50 at 200 a page, 200 at the default). `total` and `totalPages` still count every row. To read further back, narrow with `since` or another filter. `GET /feedback/rows` also takes these filters, combined with AND:
 
 | Filter | Value |
 |---|---|

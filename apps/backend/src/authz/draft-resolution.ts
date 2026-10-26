@@ -46,8 +46,9 @@ import { inBooks } from "./scope-sql";
 import { membershipOf } from "./membership-sql";
 import { WRITE_ROLES } from "./roles";
 import type { ResolveAuthority } from "./roles";
+import type { AuditAction } from "../services/audit-actions";
 
-const RESOLUTION_ACTIONS: Record<DraftResolution, string> = {
+const RESOLUTION_ACTIONS: Record<DraftResolution, AuditAction> = {
   verified: "recipe.draft_verified",
   rejected: "recipe.draft_rejected",
   not_chosen: "recipe.draft_not_chosen",

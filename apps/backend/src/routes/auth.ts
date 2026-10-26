@@ -635,8 +635,9 @@ auth.get("/me/export", requireAuth, requireVerifiedEmail, async (c) => {
 // to a remaining member with everyone else's recipes intact [F70].
 //
 // Deliberately retained (documented):
-//   - audit_log entries with actor_user_id=this user are left in place so the
-//     audit trail survives the deletion (per §5 retention).
+//   - audit_log entries with actor_user_id=this user stay: the check log
+//     anonymised, account events kept less any recipe text
+//     (anonymiseAuditLogOf; recipe 1d1531da, F116).
 //   - vector_cache rows: content-hash keyed, no source text, no FK back to
 //     any entity — genuinely PII-free (see enqueue.ts). NOTE: an earlier
 //     version of this comment claimed the same of embedding_sources; that
@@ -708,7 +709,7 @@ auth.delete("/me", authRateLimit, requireAuth, async (c) => {
   }
 
   // Capture the audit entry BEFORE the cascade, so actor_user_id is still
-  // valid. The entry itself survives the deletion per §5 retention. Written
+  // valid. The entry itself is an account event the deletion keeps. Written
   // outside the cascade's transactions (the cascade batches per trace —
   // see user-delete.service.ts): if the cascade fails partway, the audit
   // row records the attempt and the account remains, visibly retryable.

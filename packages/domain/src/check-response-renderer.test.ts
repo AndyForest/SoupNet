@@ -590,6 +590,16 @@ describe("the flat list (slice 8b, S8b-L1, S8b-L2)", () => {
     expect(text).toContain("Page 1 of 1, 1 per page. This is the last page.");
   });
 
+  it("flatListPageLine at the listing depth (F110): the last reachable page says so instead of naming the next", () => {
+    expect(flatListPageLine({ page: 199, totalPages: 300, totalResults: 15_000, perPage: 50 })).toBe("Page 199 of 300, 50 per page. Next: page=200.");
+    expect(flatListPageLine({ page: 200, totalPages: 300, totalResults: 15_000, perPage: 50 })).toBe(
+      "Page 200 of 300, 50 per page. This is the last page the list reaches (its first 10,000 matches). "
+      + "Narrow the query with changed-after:, created-after: or read_recipe_books to reach the rest.",
+    );
+    // Exactly at the reach with nothing beyond it: an ordinary last page.
+    expect(flatListPageLine({ page: 200, totalPages: 200, totalResults: 10_000, perPage: 50 })).toBe("Page 200 of 200, 50 per page. This is the last page.");
+  });
+
   it("flatListPageLine: middle, last, past the end, and nothing for no matches", () => {
     expect(flatListPageLine({ page: 2, totalPages: 3, totalResults: 120, perPage: 50 })).toBe("Page 2 of 3, 50 per page. Next: page=3.");
     expect(flatListPageLine({ page: 3, totalPages: 3, totalResults: 120, perPage: 50 })).toBe("Page 3 of 3, 50 per page. This is the last page.");
