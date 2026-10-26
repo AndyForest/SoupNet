@@ -29,7 +29,7 @@ Soup.net is run by whoever the "Operated by" line at the top of this policy name
 - **Email address** — for authentication and required notifications (verification, password reset, security alerts).
 - **Password** — stored as a bcrypt hash. We never store or log your plaintext password.
 - **Email verification status and timestamps** — to know when you have confirmed your email.
-- **Account creation timestamp**, last login, and a small audit log of authentication events (login success/failure, password reset, key creation/revocation). These are kept for security incident investigation.
+- **Account creation timestamp**, the time of your last sign-in, and an audit log of account events such as account deletion and changes to your recipe books' names, descriptions, members and ownership. These are kept for security incident investigation.
 - **Terms of Service / Privacy Policy acceptance timestamp** — recorded when you register.
 
 ### 2.2 Content you create
@@ -64,7 +64,7 @@ When you delete your account, the recipe-keyed embeddings are deleted along with
 
 ### 2.5 Technical data
 
-- **IP address and user agent** — used for rate limiting and abuse detection. Stored in audit log entries, which we retain for security and operational purposes.
+- **IP address and user agent** — used for rate limiting and abuse detection. Rate limiting holds them in memory only. The load balancer's access logs record your IP address and user agent, and our application logs record the user agent of the app calling the MCP server; both expire on the timelines in Section 8. Neither is stored in the database.
 - **localStorage** — we store your authentication token in your browser's localStorage. This storage is strictly necessary to keep you signed in to the service you requested. We do not use cookies for tracking, third-party analytics, or tag managers.
 
 ### 2.6 Connected AI apps
