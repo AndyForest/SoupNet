@@ -78,3 +78,4 @@ export * from "./account-state";
 export * from "./session-state";
 export * from "./organizations";
 export * from "./sharing-policy";
+export * from "./domain-authority";
