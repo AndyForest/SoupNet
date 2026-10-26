@@ -291,6 +291,9 @@ export interface BriefingUser {
 export interface BriefingMember {
   displayName?: string | null;
   email: string;
+  /** The person the briefing is for, matched by user id where the roster is
+   *  loaded; rendered as "you", first (slice 8b item 3). */
+  isCaller?: boolean;
 }
 
 /** Deterministic per-book aggregates for the briefing's index line (cold-start
@@ -335,8 +338,13 @@ export interface BriefingGroup {
   description?: string | null;
   canWrite: boolean;
   isDefault: boolean;
-  /** Other members of this recipe book; omitted for solo books. */
+  /** Every member of this recipe book, the caller included and flagged, so a
+   *  solo book reads "Members (1): you" (slice 8b item 3). Omitted → no Members
+   *  line. */
   members?: BriefingMember[];
+  /** Live invitations to this book, present only when the caller is an owner
+   *  or admin of it (who sees the same list on the web); 0 is printed. */
+  pendingInvites?: number;
   /** Per-book index stats (cold-start v2 Phase B). Rendered as a compact
    *  sub-line under the book's bullet; omitted → no stats line (the web/paste
    *  briefing stays byte-identical to its pre-index shape). */
@@ -408,12 +416,15 @@ export function renderRecipeBooks(groups: BriefingGroup[]): string {
       const statsLines = renderBookStatsLine(g.stats);
       if (statsLines) lines.push(statsLines);
     }
-    // Members line: omit when there's no roster, or when the user is the
-    // only member (solo book — no collaborator context to surface).
-    if (g.members && g.members.length > 1) {
-      const labels = g.members.map(identityLabel).join(", ");
+    // Members line on every book with a roster, a solo one included, so an
+    // unattended reader can tell "nobody joined yet" from a hidden line
+    // (slice 8b item 3). The caller comes first, as "you".
+    if (g.members && g.members.length > 0) {
+      const ordered = [...g.members.filter((m) => m.isCaller), ...g.members.filter((m) => !m.isCaller)];
+      const labels = ordered.map((m) => (m.isCaller ? "you" : identityLabel(m))).join(", ");
       lines.push(`    Members (${g.members.length}): ${labels}`);
     }
+    if (g.pendingInvites !== undefined) lines.push(`    Pending invites (${g.pendingInvites})`);
     return lines.join("\n");
   }).join("\n");
 

@@ -2483,6 +2483,7 @@ The operator reversed the MCP search's exclude-own default (recipe `885143c2`, s
 - **One consequence the ruling didn't name.** The old default kept a person's own unverified drafts out of a default search, because it kept all of their own recipes out. With the flip they appear under their draft label ("unverified draft … a hypothesis the person has not confirmed"), exactly as check results already show them. I chose that over a new rule hiding own drafts from search (recipe `7d034cb2`): search and check then agree, and slice 8b's "own open drafts set apart" (revision doc, slice 8 item 8) serves both with one display change. The tests that asserted the old behaviour now assert this (S2-B4, S4-V1, S3-G1, S3-G3), each with `-author:me` as the way to leave own recipes out.
 - **Bytes:** +1 on each surface for the reworded descriptions. Remote 17,319, stdio 13,822, shared descriptions 6,111. `searchRecipes` is 419 characters (cap 420), `searchQuery` 396.
 - **Gate, final branch** (`2293f26`, with `main` merged): `TESTCI_PGPORT=5644 TESTCI_BACKEND_PORT=3288 npm run test:ci` exited 0 on a fresh database, with 1,934 tests passed and 6 skipped (135 files, 2 skipped). The data-model check, the authz seam, typecheck and lint passed (0 errors). Four earlier runs of the same tree ended red with only "Worker exited unexpectedly" and every reported test passing. That is the known native worker crash (backlog item, `docs/testing-plan.md` "Reading a red gate"): the JSON reporter showed `drafts-on-behalf.test.ts`'s account-deletion block as pending, and the file passes 40 of 40 alone. Streams B and E saw the same today while several gates ran at once. The green run was the first with nothing else running.
+- **After #137 (6c) merged** (`09ed2c8`, `main` merged in): the stdio server and its test conflicted only in their `@soupnet/domain` import lists. Both sides were kept, so A's `outcome` on the stdio `verify_draft` and 8a's matching stdio `log_feedback` both stand. Combined bytes, A's growth plus 8a's: remote 17,630 of 18,200, stdio 14,133 of 14,700 (567 left for B), shared descriptions 6,376 of 6,600. `TESTCI_PGPORT=5644 TESTCI_BACKEND_PORT=3288 npm run test:ci` exited 0 on the first run with 1,967 passed and 6 skipped (136 files, 2 skipped). The data-model check and the authz seam passed with the fingerprints unchanged.
 - **Seam against `main`:** `scripts/check-authz-seam.mjs` differs from `main` only in the `feedback.service.ts` entry (19 to 26 lines, refreshed). `trace.service.ts` is byte-identical to `main`, so whoever merges after D refreshes only their own entries.
 - **Backlog:** the "`POST /feedback` validates one error per request" bullet is struck through as done.
 
@@ -2666,6 +2667,159 @@ For the rebase onto 6a and 8a: stream D's `GET /feedback` change (recipe `1bbc63
 Rebased onto `main` with 6c and 8a merged (2026-10-25); the rebase applied without conflicts. The 8a half is done: the row shape and the export carry `briefingId`; the intent page names a feedback row's subject as a recipe, a search, a briefing, or "this task" for an outcome row; `docs/api/reports.md` says a row names at most one target and an outcome row names none; and a Layer 3 case lists a briefing row and an outcome row for a key of one book. The service's register entry was refreshed for the added column (`594cdcfa578c`); every other entry held. The 6a half is done too, after rebasing onto `main` with 6a merged (B's #142, migration `0042`): the deposits commit `8920565` applied as is, so `GET /intents`, `GET /intents/:id` and the web intent page count and list deposits through `traceReadableByViewer`, with the draft state the viewer may see (S9-I4's Layer 3 case: K2 sees 3 deposits, K1 2). Deposits are read only for an intent that already resolved as the viewer's own, which is the rule `traces.intent_id`'s schema comment states; the comment now names the report paths. This slice's files are in stream B's `intent_id` register (all reads), the review queue's intent group links to the intent page, and browser case E10 covers that link. The service's seam entry is `n: 11`, `873abdc58403`.
 
 ### Slice 8b rubric: unattended readers (stream F, after 6c, 6a and 8a merge)
+
+#### Slice 8b item 3 rubric: membership an agent can act on (stream D)
+
+Written 2026-10-25 by stream D (agent `a-drafts-8b-members-2026-10-25`, Soup.net intent `int_hyLjJWkSmzo3TmIq8VBPyCrC`), before implementation, from the revision doc's slice 8 item 3 and its field item 6, and from the code at `68b14c2` (`main` with 6c, 8a and 6a merged). Branch `drafts/8b-book-members`. Items 1 and 2 are stream B's, written under this heading separately; items 8 and 9 are superseded by slice 10's dispatch line and are not built. Consumer: agents, on every surface that renders the corpus-context block. No web page change. Security-relevant: yes, in one place: an invitation count is a fact about a book that a plain member's page does not show.
+
+**The design**, checked as recipe `173384b3`:
+- Every book is "shared-capable": any book takes invitations from its owners and admins, and nothing in the schema marks a book personal-only. So every listed book gets a Members line, a solo book included ("Members (1): you").
+- "Books the caller owns" is read as owner or admin. Those are the roles that may invite, and the ones that `GET /recipe-books/:id/invitations` shows the pending list to. The count shows an agent nothing its person cannot already see on the web.
+- Zero is printed. The item exists because an omitted line is ambiguous.
+- The caller is listed first as "you". The production briefing shows one person's two accounts in one book with nothing saying which one is the caller.
+
+**Baselines** at `68b14c2`:
+
+| Measure | Value | Cap |
+|---|---|---|
+| Thin briefing, fixed fixture (`thinInput()`) | 18,183 characters | 21,000 |
+| Thin headless briefing, same fixture | 18,536 characters | 21,500 |
+| Remote `tools/list` | 17,642 bytes (corrected after verification: 17,630 was the figure before 6a merged) | 18,200 |
+
+Stream C's PR #138 (open) brings the thin fixture to within 7 characters of its cap, so the second of the two to merge measures again and moves the cap on its own branch, with a date and a reason (plan, "the cap raise is coordination, not permission").
+
+**Members line**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| S8b3-M1 | Every book in the corpus-context block has a Members line, solo books included: `    Members (n): you, <others>`. n counts every member, the caller included. | Layer 1 renderer test (solo, two members, five members); Layer 3 on `list_my_recipe_books` for a solo book. |
+| S8b3-M2 | The caller is identified by user id, not by email or display name, is listed first as "you", and appears once. The others keep today's label (`Name <email>`, or the email alone) and today's order (by email). | Layer 1; Layer 3 with two accounts that share a display name in one book, each seeing itself as "you". |
+| S8b3-M3 | The roster is the book's live membership at call time. A member removed since the last call is gone, and one who accepted an invitation since then appears. | Layer 3: accept an invitation between two calls. |
+
+**Pending invites line**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| S8b3-P1 | A book on which the caller's live role is owner or admin carries `    Pending invites (n)` under its Members line, `(0)` included. A book on which the caller is a plain member carries no such line. | Layer 1; Layer 3 with an owner, an admin and a member of one book, the same invitations, three calls. |
+| S8b3-P2 | n counts the book's live invitations only: not accepted, not declined, and `expires_at > NOW()`. A revoked invitation, an expired one and a re-sent one each count as `GET /recipe-books/:id/invitations` lists them (a re-send expires the earlier one, so the count is 1). | Layer 3: accept one, decline one, revoke one, re-send one, and let one lapse (the expiry set in the past), then compare the count with the web route's list length. |
+| S8b3-P3 | Invitations to another book never count, including another book the caller owns. An invitation with no book (the admin's invite-by-email) counts nowhere. | Layer 3 with two owned books. |
+| S8b3-P4 | The role is read live. An admin demoted to member loses the line on the next call, and a member promoted to admin gains it. | Layer 3. |
+
+**Surfaces and access**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| S8b3-S1 | One loader and one renderer serve every surface: `get_briefing` (remote MCP), the stdio `get_briefing` (through `GET /briefing`), `GET /briefing`, `list_my_recipe_books` (remote MCP) and `POST /keys/briefing` (the web copy-briefing). For the same person and the same book scope, every book's Members and Pending invites lines are identical across them. (Amended after verification: the rest of the block differs by an earlier design, since the `Index:` line is MCP-only.) | Layer 3 comparing those lines on all five surfaces, with a book that holds a recipe. |
+| S8b3-S2 | The books listed are unchanged: the key's scope as today. A key scoped to one book shows no member and no count for any other book, even one the caller owns. | Layer 3 with a scoped key. |
+| S8b3-S3 | The role and invitation reads live in `apps/backend/src/authz/` (a `group_members` reference anywhere else fails the seam check). `npm run check:authz-seam` passes, and no `claimnet.traces` read is added or re-fingerprinted. | The gate; code review. |
+| S8b3-S4 | Nothing is written: no audit row, no feedback row, and no change to any response other than the recipe-books block and the `groups` echo in the JSON of `GET /briefing` and `POST /keys/briefing`, which mirrors it (members on solo books, `isCaller`, `pendingInvites`; it shows nothing the text does not). | Layer 3 counting audit rows before and after a call. |
+
+**Bytes, specs, copy**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| S8b3-Z1 | `tools/list` is unchanged on both servers (no schema or description edit). The thin and headless fixtures are updated to the real shape (the caller in each roster, a pending count on owned books), their growth is recorded here and in `spec-decision-log.md`, and a cap moves only if the measured figure needs it, with a dated reason. | Size tests; the figures. |
+| S8b3-F1 | `briefing-surfaces.feature` gains a scenario for the solo book's line, the owner's and admin's count, and the member's missing count. | The feature file. |
+| S8b3-F2 | The comments that describe the old rule (`BriefingGroup.members` "omitted for solo books", the renderer's "omit when … the user is the only member", the loader's "solo books skip the Members line") are corrected in the same commit. | Code review. |
+
+#### Slice 8b item 3 build notes (stream D, 2026-10-25)
+
+Written by the builder for the verifier; the verification record is the verifier's to write. Built on `68b14c2`.
+
+**Gate:** `TESTCI_PGPORT=5644 TESTCI_BACKEND_PORT=3288 npm run test:ci` exited 0 on the first run, with 2,032 passed and 6 skipped (140 files, 2 skipped), while another stream's gate ran on 5654. Typecheck, lint (0 errors), the data-model check and the authz seam passed. Slice suites: `routes/book-membership-lines.test.ts` (Layer 3, 9 tests, one per rubric row group) and the renderer block in `domain/recipe-guide-content.test.ts` (6 tests).
+
+**What was built.**
+- `authz/memberships.ts`: `listMembersOfBooks` returns each member's `user_id`, and now composes `countsAsMembership` like `listMembers` does. The new `pendingInviteCounts(db, userId, bookIds)` counts each managed book's live invitations in one statement. It joins the caller's own membership with an owner-or-admin role (`OWNER_OR_ADMIN_ROLES`, now exported from `roles.ts`) and repeats the liveness condition of `GET /recipe-books/:id/invitations`.
+- `services/briefing.ts` `resolveScope`, the one loader behind `composeBriefing` and `composeCorpusContext`, attaches every roster with the caller flagged by user id, and the pending count where there is one. Both reads run in parallel.
+- `renderRecipeBooks` prints the lines; `BriefingMember.isCaller` and `BriefingGroup.pendingInvites` carry them.
+- The three comments S8b3-F2 names are corrected.
+
+**Rows to check closely.**
+- S8b3-P2: the test compares the count with the web route's own list, so if that route's liveness rule changes, the row fails loudly rather than drifting.
+- S8b3-P4 sets roles with SQL, because no route changes a member's role.
+- S8b3-S1 compares `list_my_recipe_books`, MCP `get_briefing` and `GET /briefing`. The web copy-briefing (`POST /keys/briefing`) is by code review: it calls `composeBriefing`, which uses the same `resolveScope`.
+
+**Bytes (S8b3-Z1):** thin fixture 18,183 → 18,233 characters, headless 18,536 → 18,586; `tools/list` unchanged. With stream C's #138 the thin fixture would be about 21,043 against the 21,000 cap, so whichever merges second raises it by the measured figure, dated.
+
+#### Slice 8b item 3 verification record
+
+Written 2026-10-25 by the verifier (agent `a-drafts-8b3-verify-2026-10-25`, Soup.net intent `int_qNJn2cBmdPQxdc49zr1o9grM`), who did not build the slice and changed no application code or committed test. Verified at `478d936` in the `d-tool-shapes` worktree, on isolated stacks (compose project `soupnet-ci-5674`, backend on port 3299), with the package `dist` rebuilt from the worktree.
+
+**Verdict: accept with follow-ups.** Of the 14 rows, 12 pass and 2 are partial as written (S8b3-S1, S8b3-F1). Two of the passes (S8b3-M3, S8b3-P3) pass on behaviour that the verifier's probes proved, with a case the row names missing from the committed test. Under the operator's current ruling (recipe `21d39214`), that gap is a finding to close before merge (finding 2). The other findings are not blocking. No security property failed. The count is shown only on books where the caller's live role is owner or admin, and it equals the web's pending list in every case tried. A plain member, an outsider, and a key scoped to other books learn nothing about a book's invitations or members that they could not see before.
+
+**How it was verified.**
+
+- **Gate:** `TESTCI_PGPORT=5674 TESTCI_BACKEND_PORT=3299 npm run test:ci` exited 0 on the first run: 2,032 tests passed and 6 skipped (140 files passed, 2 skipped), the same figures as the build notes. Build, typecheck, lint (0 errors, the 5 existing warnings), the data-model check, the authz seam check ("authz seam holds") and the golden-set ranking eval (9 thresholds green) all passed. The Windows worker crash did not occur.
+- **Probes:** a temporary suite of the verifier's own under `apps/backend/src/routes/`, deleted afterwards, run with the committed `book-membership-lines.test.ts` on a fresh stack (`node scripts/test-ci-local.mjs -- <both files>`): 17 tests passed. The cast: an owner, an admin, a plain member, an outsider, two members with the same display name whose stored emails differ only by case, and a member who is removed mid-run. Each has scoped keys (the book plus their personal book, or the personal book only).
+- **Bytes:** the thin and headless fixtures were measured by `BRIEFING.build(thinInput())` from a copy of the domain test, at `478d936` and again with `68b14c2`'s `recipe-guide-content.ts` and its test. The served `tools/list` was measured with the slice 1 method (`createMcpServer` with a stub principal over the in-memory transport). This was done at `478d936`, and again after swapping in `68b14c2`'s versions of the five changed source files and rebuilding the packages. The tree was restored with `git checkout HEAD --` and rebuilt.
+- **Code review** of `68b14c2..478d936`.
+
+**Members line**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S8b3-M1 | pass | Layer 1: "a solo book says so" and the three-member case. Layer 3: the owner's personal book reads `    Members (1): you`. Probe: every personal book seen (owner, member, outsider, removed member) reads `Members (1): you`. n counts the caller: `Members (6)` for a six-member book on every member's key. |
+| S8b3-M2 | pass | Layer 1: "told apart by the flag, not by a matching name or email". Layer 3: two accounts sharing a display name each see themselves as `you` and the other as `Olga <run> <email>`. Probe, beyond the row: one member's stored email was set by SQL to the upper-case form of another's (the `users_email_unique` index is case-sensitive). Each account's line reads `Members (6): you, …` with `you` once, and shows the other as `Same Name <…>` in its own case. The others stay in `ORDER BY u.email` order. Code: the flag is `row.user_id === keyRow.user_id`. |
+| S8b3-M3 | pass, evidence gap | Layer 3 covers acceptance: the accepted invitee moves from the count to the roster (`Members (5)`, `Pending invites (2)`). Probe, for the removal half the row names: after `DELETE /recipe-books/:id/members/:userId`, the removed member's key no longer lists the book at all, and the owner's next call reads `Members (5)` without them. The committed test has no removal case (finding 2). |
+
+**Pending invites line**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S8b3-P1 | pass | Layer 3: the owner and the admin each read `Pending invites (n)`, with n equal to the length of the web list. The member has a Members line and no pending line. Probe: the plain member gets no pending line on `list_my_recipe_books`, or on `get_briefing` with `recipe_book` set to the book. Their `GET /recipe-books/:id/invitations` is 403. Every personal book shows `Pending invites (0)`. An invitation sent by the admin counts on the owner's line too. |
+| S8b3-P2 | pass | Layer 3: accepted, declined, revoked, re-sent and lapsed invitations against the web route's own list. Probe at the boundary, in one transaction (so `NOW()` is fixed): with an invitation's `expires_at` set to exactly `NOW()`, `pendingInviteCounts` and the web route's `WHERE` clause both gave 2, down from 3. At `NOW() + 1 second`, both gave 3 (rolled back afterwards). An invitation to an address that is already a member counts, and the web list holds it too (finding 6). Code: the liveness condition is the web route's, word for word. The web route's inner join on the inviter cannot drop a row the count keeps, because `invitations.inviter_id` is `NOT NULL … ON DELETE CASCADE`. |
+| S8b3-P3 | pass, evidence gap | Layer 3: an invitation to the owner's personal book counts only there (`Pending invites (1)`), and not on the shared book. Probe, for the groupless case the row names: a direct insert with `group_id NULL` (the admin invite-by-email shape) and the owner as inviter left the owner's counts unchanged (shared book 2, equal to the web list; personal book 0). Code: `i.group_id = gm.group_id` never matches NULL. The committed test has no groupless case (finding 2). |
+| S8b3-P4 | pass | Layer 3: the admin demoted by SQL loses the line, and the member promoted to admin gains `Pending invites (2)`, on the next call. Code: the role is read inside the counting statement on every call (`gm.role IN ('owner', 'admin')` with `membershipOf`), and nothing is cached. |
+
+**Surfaces and access**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S8b3-S1 | partial (not met as written) | The membership lines are identical on all five surfaces. Probe, with one recipe deposited in the shared book: `list_my_recipe_books`, MCP `get_briefing`, `GET /briefing`, `GET /briefing` with `X-SoupNet-Surface: mcp-stdio` (the stdio proxy's call), and `POST /keys/briefing` (JWT, the web copy-briefing) all gave the same Members and Pending invites lines. The whole recipe-books block is identical only on the three MCP-profile surfaces. On `GET /briefing` (surface `rest`) and `POST /keys/briefing` (surface `web`), the book has no `Index:` line, which is MCP-only by an earlier design (`resolveScope`: "Per-book index stats — MCP surfaces only"). The committed test passes because its books hold no recipes. It also covers neither the stdio header nor the web route (finding 1). |
+| S8b3-S2 | pass | Layer 3: Olga's key scoped to the shared book shows nothing of her personal book. Probe: the outsider's key, the owner's personal-only key and the admin's personal-only key each list only their personal book. On `list_my_recipe_books`, on `get_briefing` with `recipe_book=<shared slug>`, and on `GET /briefing?recipe_book=<shared slug>`, none of them contains the shared book's slug or name, and the outsider's output never names the owner. Code: `allIds` is the Principal's read and write scope, already intersected with live memberships, and both reads are bounded by `inBooks(allIds)`. |
+| S8b3-S3 | pass | Both new statements are in `apps/backend/src/authz/memberships.ts`, and both compose `countsAsMembership` and `membershipOf`. `routes/` and `services/` gain no `group_members` reference. `OWNER_OR_ADMIN_ROLES` is exported from `roles.ts`, the one list `isOwnerOrAdmin` uses. The gate's seam check holds with its registers unchanged, and there is no `claimnet.traces` read in the diff. |
+| S8b3-S4 | pass | Layer 3: `list_my_recipe_books` adds no audit row. Probe: `list_my_recipe_books` added no audit row and no `check_feedback` row (8 → 8, 0 → 0). `get_briefing` added the single `briefing.issued` row it already wrote before the slice (8 → 9). The JSON `groups` echo on `GET /briefing` and `POST /keys/briefing` changed with the block, which the row does not mention (finding 4). |
+
+**Bytes, specs, copy**
+
+| # | Verdict | Evidence |
+|---|---|---|
+| S8b3-Z1 | pass | Fixtures re-measured: thin 18,183 → **18,233**, headless 18,536 → **18,586** (+50 each, as recorded here and in `spec-decision-log.md`). The block diff is exactly `Members (1): you` and `Pending invites (0)` on the personal book, plus `you, ` on project-x. Caps are unchanged (21,000 and 21,500). Served `tools/list`: remote **17,642** bytes at both `68b14c2` and `478d936`, with the JSON byte-identical (`cmp`); stdio **14,145**; no file under `apps/mcp-server` or `routes/mcp.ts` is in the diff. The rubric's baseline of 17,630 is stale (finding 5). |
+| S8b3-F1 | partial (not met as written) | `briefing-surfaces.feature` has the scenario "Every book says who is in it, and a book's managers see its pending invites". It has the solo line, the owner's count, `(0)` on an owned book with none, and the plain member's missing line. It has no admin step, though the row names "the owner's and admin's count" (finding 3). |
+| S8b3-F2 | pass | All three comments are corrected in `d53abb8`: `BriefingGroup.members`, the renderer's Members comment, and the loader's "solo books skip" comment. A search for "solo" and "more than one member" finds nothing else stale about the rule. Two comments still say the web briefing "stays byte-identical": the `BriefingGroup.stats` JSDoc and the loader's stats comment. Both are about the stats line only, so they still read true. |
+
+**Findings, by severity**
+
+1. **Low: S8b3-S1 claims more than holds.** The membership lines match on every surface, but on a book holding recipes the REST and web blocks lack the MCP-only `Index:` line. That difference predates the slice and is intended. The committed test cannot see it, because its books are empty, and it does not exercise the stdio header path or `POST /keys/briefing`. Recommendation: amend the row to "the Members and Pending invites lines are identical across them". Extend the S1 test to deposit one recipe, call `GET /briefing` with `X-SoupNet-Surface: mcp-stdio`, and call `POST /keys/briefing`, comparing the membership lines.
+2. **Low, to close before merge (recipe `21d39214`): two cases the rows name have no committed test.** S8b3-P3's groupless invitation (a direct insert with `group_id NULL`; the count must not move), and S8b3-M3's removal half (remove a member between two calls; their key loses the book and the roster drops them). Both held under the verifier's probes. Recommendation: add both to `book-membership-lines.test.ts`.
+3. **Low: the feature scenario omits the admin (S8b3-F1).** Recommendation: add "And an admin of the shared book sees the same Pending invites line" to the scenario.
+4. **Low: the JSON `groups` echo changed shape, and nothing records it.** `GET /briefing` and `POST /keys/briefing` return `data.groups` beside the text. That echo now carries `members` on solo books, the caller inside each roster with `isCaller: true`, and `pendingInvites` on managed books. It shows the caller nothing beyond the text block for the same key, and no consumer reads it: the stdio proxy and the web copy button read `text`. But S8b3-S4 promises no change outside the recipe-books block, and the spec-decision-log entry describes only the text. Recommendation: one line in the spec log and the rubric naming the echo as the block's structured twin.
+5. **Info: the `tools/list` baseline is stale.** The rubric gives 17,630 bytes at `68b14c2`, but the served payload measures 17,642 there (and at `478d936`), with stdio at 14,145. The 17,630 figure is the slice 8a combined figure after 6c merged, taken before 6a merged. Recommendation: correct the baseline row. Z1 is unaffected, since the payload is byte-identical.
+6. **Info: an invitation to someone already in the book counts as pending.** The web list shows it too, because the invite route does not check membership. So the count is correct by the row's definition. For the field item 6 sweep ("has the colleague joined?"), the Members line is the authority. Nothing to change in this slice. A later web-route change could refuse to invite a current member, since its owners and admins can already see the roster.
+7. **Info: the liveness condition is written twice.** It appears in `routes/groups.ts` (the web list) and in `authz/memberships.ts` (the count). The S8b3-P2 test pins the two together, so drift fails loudly. If a third reader appears, a shared `invitationIsLive` fragment would make it one edit.
+
+**Soup.net checks** (`soupnet-oss`, intent `int_qNJn2cBmdPQxdc49zr1o9grM`, agent `a-drafts-8b3-verify-2026-10-25`; no drafts):
+
+- `147690ff`: S1 graded pass on a probe of the added lines, with the overclaim as a finding. Corrected by its feedback row: the results `50c5b20e` ("not met as written") and `8f55a8d7` (pass only when every case the row names holds) point to partial.
+- `78eefe42`: the corrected call, S1 partial as written, with a non-blocking amendment. It applies to F1 too.
+- `fadd3bb6`: P3 graded partial under `feaee11a`. Corrected by feedback row `f8c07582`: the results surfaced `21d39214`, the operator-confirmed current ruling (pass on behaviour, with the gap named and closed before merge), which is the grading used above for P3 and M3.
+
+#### Slice 8b item 3 fix pass (stream D, 2026-10-25)
+
+After the verification record (`bf7ea02`, accept with follow-ups). No application code changed. Each finding's disposition:
+
+1. **S8b3-S1 (partial).** Fixed. The row now claims what holds: the Members and Pending invites lines are identical on every surface. The `Index:` line is MCP-only by an earlier design. The test compares those lines on all five surfaces: `list_my_recipe_books`, MCP `get_briefing`, `GET /briefing`, `GET /briefing` with the stdio surface header, and `POST /keys/briefing`. It deposits a recipe into the shared book first, so the books are not empty.
+2. **P3 and M3 cases missing from the committed test.** Fixed. Setup adds an invitation with no book, and the P3 test shows it counts nowhere. The M3 test removes a member after the acceptance and checks that the roster drops them.
+3. **F1, the admin's count.** Fixed: one step in the scenario.
+4. **The JSON `groups` echo.** Recorded in S8b3-S4 and in the spec-decision log as edit 3.
+5. **The stale `tools/list` baseline.** Corrected to 17,642.
+6. and 7. Information only; nothing to change in this slice.
+
+**Gate:** `node scripts/test-ci-local.mjs -- apps/backend/src/routes/book-membership-lines.test.ts` (fresh stack, with build, typecheck and lint) passed 9 of 9. The full gate at `478d936` (2,032 passed) covers the unchanged application code.
+
+**After C1 (#138) and slice 9 (#140) merged:** `main` was merged in. The conflicts were the domain test's import list and the spec-decision log's newest entries, and both sides were kept. As planned, the thin fixture then measured 21,043 against the 21,000 cap, so this slice, merging second, raised the cap to 21,050 with a dated comment at the assertion. The headless fixture is 21,443 of 21,500.
+
+**After C2 (#146) and slice 10 (#144) merged:** `main` was merged in again. The same two files conflicted, and again both sides were kept. C2's raise to 22,800 replaced this branch's 21,050. With main at 22,795 thin and 23,195 headless, the lines measured 22,845 and 23,245, so both caps move by 50: thin 22,800 → 22,850 and headless 23,200 → 23,250, each dated at its assertion and in the spec-decision log.
 
 ### Slice 6b rubric: option sets (stream G, after 6c and 6a merge)
 

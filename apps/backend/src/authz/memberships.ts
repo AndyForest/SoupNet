@@ -14,6 +14,7 @@ import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { groupMembers } from "@soupnet/db";
 import { countsAsMembership, membershipOf } from "./membership-sql";
 import { inBooks } from "./scope-sql";
+import { OWNER_OR_ADMIN_ROLES } from "./roles";
 
 export interface BookMember {
   user_id: string;
@@ -41,6 +42,7 @@ export async function listMembers(db: PostgresJsDatabase, bookId: string): Promi
 
 export interface BookMemberIdentity {
   group_id: string;
+  user_id: string;
   display_name: string | null;
   email: string;
 }
@@ -57,13 +59,44 @@ export async function listMembersOfBooks(
 ): Promise<BookMemberIdentity[]> {
   if (bookIds.length === 0) return [];
   const rows = await db.execute(sql`
-    SELECT gm.group_id, u.display_name, u.email
+    SELECT gm.group_id, gm.user_id, u.display_name, u.email
     FROM claimnet.group_members gm
     JOIN claimnet.users u ON u.id = gm.user_id
-    WHERE ${inBooks(sql`gm.group_id`, bookIds)}
+    WHERE ${inBooks(sql`gm.group_id`, bookIds)} AND ${countsAsMembership("gm")}
     ORDER BY gm.group_id, u.email
   `);
   return rows as unknown as BookMemberIdentity[];
+}
+
+/**
+ * Live invitations to each of these books on which `userId` is an owner or
+ * admin, 0 included, for the agent briefing's "Pending invites (n)" line
+ * (drafts-and-triage slice 8b item 3). Owners and admins are who may invite
+ * and who see the pending list on the web (GET /recipe-books/:id/invitations,
+ * whose liveness condition this repeats), so the count tells an agent nothing
+ * its person cannot see. A book where the caller is a plain member has no
+ * entry. The caller passes books it is already entitled to see.
+ */
+export async function pendingInviteCounts(
+  db: PostgresJsDatabase,
+  userId: string,
+  bookIds: string[],
+): Promise<Map<string, number>> {
+  if (bookIds.length === 0) return new Map();
+  const rows = await db.execute(sql`
+    SELECT gm.group_id, COUNT(i.id)::int AS pending
+    FROM claimnet.group_members gm
+    LEFT JOIN claimnet.invitations i
+      ON i.group_id = gm.group_id
+      AND i.accepted_at IS NULL
+      AND i.declined_at IS NULL
+      AND i.expires_at > NOW()
+    WHERE ${membershipOf("gm", userId)}
+      AND ${inBooks(sql`gm.group_id`, bookIds)}
+      AND gm.role IN (${sql.join(OWNER_OR_ADMIN_ROLES.map((r) => sql`${r}`), sql`, `)})
+    GROUP BY gm.group_id
+  `);
+  return new Map((rows as unknown as Array<{ group_id: string; pending: number }>).map((r) => [r.group_id, r.pending]));
 }
 
 /**

@@ -4,6 +4,35 @@ Every PR that touches briefing copy (`packages/domain/src/recipe-guide-content.t
 
 (Renamed from declared-intent-log.md on 2026-08-23: "intent" now names the runtime intent-registration mechanism — cold-start v2 Phase C — so the discipline's log takes an unambiguous name. The discipline itself is unchanged.)
 
+## 2026-10-25 — Drafts-and-triage slice 8b item 3 (stream D): a Members line on every book, and pending invites for the books you manage
+
+Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-and-triage-slices-6-7-revision.md) §Slice 8 item 3. Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 8b item 3 rubric. Design checked as recipe `173384b3`.
+
+### Edits
+
+1. **`renderRecipeBooks`** (served wherever the corpus-context block is: `get_briefing` remote and stdio, `GET /briefing`, `list_my_recipe_books`, the web copy-briefing): the Members line is printed on every book with a roster, a solo book included ("Members (1): you"), where it used to be omitted unless a book had two or more members. The caller is listed first as "you", identified by user id. The others keep their labels and order.
+2. **"Pending invites (n)" (new):** a line under the Members line on books where the caller is an owner or admin, `(0)` included, counting the invitations the web's pending list shows. A plain member's book has no such line.
+3. **The `groups` echo** in the JSON of `GET /briefing` and `POST /keys/briefing` mirrors the text: solo books now carry `members`, the caller's entry carries `isCaller: true`, and managed books carry `pendingInvites`. No client reads the echo today; it shows nothing the text does not.
+
+### Scenarios intended to move
+
+- `briefing-surfaces.feature`: the new scenario "Every book says who is in it, and a book's managers see its pending invites".
+
+### Scenarios watched, with rationale for holding
+
+- **"Web copy-paste briefing keeps the full artifact"** and **"Mid-session corpus refresh returns the index, not a sample"**: the sections they name are unchanged. The recipe-books block gains one or two sub-lines per book, the same on every surface.
+- **Every scenario that names collaborators** (cross-pollination copy): the names still appear, now with the caller marked, which is what lets an agent tell the person's own account from a colleague's.
+
+### Measured
+
+| Measure | Before | After | Cap |
+|---|---|---|---|
+| Thin briefing, fixed fixture | 22,795 characters | 22,845 | 22,800 → 22,850 |
+| Thin headless briefing, same fixture | 23,195 characters | 23,245 | 23,200 → 23,250 |
+| Remote and stdio `tools/list` | unchanged | unchanged | |
+
+The fixture was updated to the shape the loader now produces: the caller in each roster, and a pending count on the book it owns. Before is `main` with C1 (#138), C2 (#146) and slice 10 (#144) merged; this slice merges after them. Earlier measures of the same lines: 18,183 → 18,233 before C1, and 20,993 → 21,043 after it (when this branch had moved the thin cap 21,000 → 21,050, a move C2's raise replaced). Both caps move by the measured growth, with a dated comment at each assertion, rather than trimming copy (plan: "the cap raise is coordination, not permission").
+
 ## 2026-10-25 — Drafts-and-triage slice 10: drafts as a bus (the dispatch line, expired drafts, and how a resolved draft was resolved)
 
 Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-and-triage-slices-6-7-revision.md) §A proposed slice 10 (ruled 2026-10-25, recipe `053c9b97`). Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 10 rubric.
