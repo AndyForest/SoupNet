@@ -70,6 +70,7 @@ import type { AppEnv } from "../types";
 import { writeAudit } from "../services/audit-log.service";
 import { ClientSafeError, publicErrorMessage } from "../lib/client-safe-error";
 import { invalidKeyMessage } from "../lib/key-remediation";
+import { applyToolSecuritySchemes, toolCallAuthErrorBody, toolCallId } from "../lib/mcp-auth-meta";
 import type { FeedbackRowResult, RawFeedbackRow } from "../services/feedback.service";
 import { verifyDraft, describeVerifyResult } from "../services/draft-verify.service";
 import { feedbackTargetLabel, ingestFeedback, isFeedbackRowObject, summarizeFeedbackResults, withCheckDefaults } from "../services/feedback.service";
@@ -169,6 +170,8 @@ mcpRouter.use(
 //
 // Allowlist:
 //   - Anthropic's web origins (claude.ai, claude.com) for the connector flow
+//   - OpenAI's ChatGPT web origin (chatgpt.com) for the plugin directory
+//     connector (stream O); exact origin match, scheme included
 //   - The frontend origin for any browser-based MCP testing from the SPA
 //   - localhost variants for development
 //
@@ -179,6 +182,7 @@ function getAllowedOrigins(): Set<string> {
   const fixed = [
     "https://claude.ai",
     "https://claude.com",
+    "https://chatgpt.com",
     process.env["FRONTEND_URL"] ?? "http://localhost:5273",
     process.env["BACKEND_URL"] ?? "http://localhost:3101",
   ];
@@ -415,6 +419,9 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
     // characters carry the cross-tool moves (plugin directory item 5).
     { instructions: MCP_SERVER_INSTRUCTIONS },
   );
+  // Every tool leaves registration with _meta.securitySchemes (stream O,
+  // item 12; lib/mcp-auth-meta.ts).
+  applyToolSecuritySchemes(server);
 
   // MCP_TOOL_PROFILE=lean — diagnostic bisect instrument (2026-07-06,
   // claude.ai conversation-runtime tool-registry investigation, see
@@ -1577,10 +1584,12 @@ mcpRouter.all("/", mcpBodyLimit, mcpRateLimit, mcpPerBearerBackstop, mcpPerKeyRa
       "WWW-Authenticate",
       `Bearer resource_metadata="${base}/.well-known/oauth-protected-resource"`,
     );
-    return c.json(
-      { jsonrpc: "2.0", error: { code: -32001, message: "Missing or invalid Authorization header. Use: Bearer <api-key>" } },
-      401,
-    );
+    const message = "Missing or invalid Authorization header. Use: Bearer <api-key>";
+    // A tools/call keeps the 401 and carries the tool-level challenge in its
+    // body (recipe 3350158d); every other method keeps today's body.
+    const callId = await toolCallId(c.req.raw);
+    if (callId !== undefined) return c.json(toolCallAuthErrorBody(callId, "missing", message), 401);
+    return c.json({ jsonrpc: "2.0", error: { code: -32001, message } }, 401);
   }
   const apiKey = authHeader.slice(7);
 
@@ -1602,6 +1611,8 @@ mcpRouter.all("/", mcpBodyLimit, mcpRateLimit, mcpPerBearerBackstop, mcpPerKeyRa
       "WWW-Authenticate",
       `Bearer error="invalid_token", resource_metadata="${base}/.well-known/oauth-protected-resource"`,
     );
+    const callId = await toolCallId(c.req.raw);
+    if (callId !== undefined) return c.json(toolCallAuthErrorBody(callId, "invalid", invalidKeyMessage()), 401);
     return c.json(
       { jsonrpc: "2.0", error: { code: -32001, message: invalidKeyMessage() }, id: null },
       401,

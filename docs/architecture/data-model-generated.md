@@ -1,9 +1,9 @@
 # ClaimNet Data Model — Generated Reference
 
-> **Auto-generated** from Drizzle migration snapshot `0042_snapshot.json`.
+> **Auto-generated** from Drizzle migration snapshot `0043_snapshot.json`.
 > Do not edit by hand. Regenerate with: `npx tsx scripts/generate-data-model-docs.ts`
 >
-> Schema as of migration `0042_traces_intent_link` (2026-10-25).
+> Schema as of migration `0043_oauth_audience_and_oidc_scopes` (2026-10-26).
 > Tables: 31 | Schema: `claimnet`
 
 For design rationale, conventions, and context, see [data-model.md](data-model.md).
@@ -42,6 +42,8 @@ erDiagram
         timestamptz refresh_token_expires_at
         text oauth_client_id
         timestamptz consumed_at
+        text oauth_resource
+        text[] oauth_oidc_scopes
         timestamptz expires_at
         timestamptz last_used_at
         timestamptz created_at
@@ -229,6 +231,8 @@ erDiagram
         uuid[] scope_read_group_ids
         uuid[] scope_write_group_ids
         uuid scope_default_write_group_id
+        text resource
+        text[] oidc_scopes
         timestamptz consumed_at
         timestamptz expires_at
         timestamptz created_at
@@ -878,6 +882,8 @@ These are created by raw SQL in migration files and are not captured in the snap
 | `refresh_token_expires_at` | `timestamptz` | YES |  |  |
 | `oauth_client_id` | `text` | YES |  |  |
 | `consumed_at` | `timestamptz` | YES |  |  |
+| `oauth_resource` | `text` | YES |  |  |
+| `oauth_oidc_scopes` | `text[]` | YES |  |  |
 | `expires_at` | `timestamptz` | NO |  |  |
 | `last_used_at` | `timestamptz` | YES |  |  |
 | `created_at` | `timestamptz` | NO | `now()` |  |
@@ -923,6 +929,8 @@ These are created by raw SQL in migration files and are not captured in the snap
 | `scope_read_group_ids` | `uuid[]` | NO |  |  |
 | `scope_write_group_ids` | `uuid[]` | NO |  |  |
 | `scope_default_write_group_id` | `uuid` | NO |  |  |
+| `resource` | `text` | YES |  |  |
+| `oidc_scopes` | `text[]` | YES |  |  |
 | `consumed_at` | `timestamptz` | YES |  |  |
 | `expires_at` | `timestamptz` | NO |  |  |
 | `created_at` | `timestamptz` | NO | `now()` |  |

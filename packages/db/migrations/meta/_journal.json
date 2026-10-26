@@ -302,6 +302,13 @@
       "when": 1792971707776,
       "tag": "0042_traces_intent_link",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1792985001967,
+      "tag": "0043_oauth_audience_and_oidc_scopes",
+      "breakpoints": true
     }
   ]
 }
