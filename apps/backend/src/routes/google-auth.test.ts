@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll } from "vitest";
 import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
 import { seedVerifiedUser } from "../test-users";
-import { startFakeGoogleIssuer } from "../test-google-issuer";
-import type { FakeGoogleIssuer, FakeIdClaims } from "../test-google-issuer";
+import { fakeGoogle } from "../test-google-issuer";
+import type { FakeIdClaims } from "../test-google-issuer";
 import { readFileSync, readdirSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,6 +14,8 @@ import {
   ACCOUNT_DISABLED_MESSAGE,
   ACCOUNT_SUSPENDED_MESSAGE,
   SSO_REQUIRED_MESSAGE,
+  DIRECTORY_INACTIVE_MESSAGE,
+  DIRECTORY_UNCONFIRMED_MESSAGE,
 } from "@soupnet/domain";
 import { googleAuthRoutes } from "./google-auth";
 
@@ -22,7 +24,8 @@ import { googleAuthRoutes } from "./google-auth";
  * SSO; rubric docs/planning/org-accounts-build/sso.md; scenarios
  * docs/product-specs/google-sign-in.feature). Requires the running backend
  * and postgres, started with GOOGLE_OIDC_TEST_ISSUER pointing at the fake
- * Google this file starts (ci.yml and scripts/test-ci-local.mjs set it).
+ * Google that vitest's global setup starts (ci.yml and
+ * scripts/test-ci-local.mjs set it); this file drives it over HTTP.
  *
  * The flow is driven the way the SPA drives it: start with the SHA-256 of a
  * tab secret, read state, nonce and the PKCE challenge off Google's URL,
@@ -45,7 +48,6 @@ let sql: typeof import("drizzle-orm").sql;
 const BASE = process.env["BACKEND_URL"] ?? "";
 const ISSUER = process.env["GOOGLE_OIDC_TEST_ISSUER"] ?? "";
 const CLIENT_ID = process.env["GOOGLE_OAUTH_CLIENT_ID"] ?? "";
-const CLIENT_SECRET = process.env["GOOGLE_OAUTH_CLIENT_SECRET"] ?? "";
 const FRONTEND = (process.env["FRONTEND_URL"] ?? "http://localhost:5273").replace(/\/+$/, "");
 const run = `${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
 const DOMAIN = `acme-${run}.example`;
@@ -121,13 +123,13 @@ interface SignedIn {
   returnTo: string;
 }
 
-let google: FakeGoogleIssuer;
+const google = fakeGoogle(ISSUER);
 
 /** The whole round trip; returns the session, or the callback's error code. */
 async function signIn(claims: FakeIdClaims, returnTarget?: unknown): Promise<SignedIn | { error: string }> {
   const { started } = await start(returnTarget);
   if (!started) throw new Error("start failed");
-  const code = google.issue(claims, { nonce: started.nonce, codeChallenge: started.codeChallenge });
+  const code = await google.issue(claims, { nonce: started.nonce, codeChallenge: started.codeChallenge });
   const cb = await callback({ state: started.state, code });
   const error = cb.fragment.get("error");
   if (error) return { error };
@@ -197,6 +199,8 @@ describe("the SPA's signed-out notices (SSO-U4)", () => {
       account_disabled: ACCOUNT_DISABLED_MESSAGE,
       account_suspended: ACCOUNT_SUSPENDED_MESSAGE,
       sso_required: SSO_REQUIRED_MESSAGE,
+      directory_inactive: DIRECTORY_INACTIVE_MESSAGE,
+      directory_unconfirmed: DIRECTORY_UNCONFIRMED_MESSAGE,
     })) {
       expect(spa, code).toContain(`${code}: ${JSON.stringify(message)}`);
     }
@@ -223,15 +227,10 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
   beforeAll(async () => {
     getDb = (await import("../db")).getDb;
     sql = (await import("drizzle-orm")).sql;
-    google = await startFakeGoogleIssuer({ issuer: ISSUER, clientId: CLIENT_ID, clientSecret: CLIENT_SECRET });
     const s = await seeded("sys", "test.local");
     await getDb().execute(sql`UPDATE claimnet.users SET role = 'system' WHERE id = ${s.userId}::uuid`);
     sysToken = (((await (await passwordLogin(s.email)).json()) as { data: { token: string } }).data.token);
   }, 60_000);
-
-  afterAll(async () => {
-    await google?.close();
-  });
 
   async function createOrg(ownerEmail: string): Promise<string> {
     const res = await call(sysToken, "POST", "/admin/organizations", { name: `Acme ${n}`, slug: `acme-sso-${run}-${++n}`, ownerEmail });
@@ -279,15 +278,15 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
   it("GSI-CB-03 / SSO-G3b: a replayed callback ends exactly like an unknown state, without reaching Google", async () => {
     const email = address("replay", "gmail.com");
     const { started } = await start();
-    const code = google.issue(consumer(email), { nonce: started!.nonce, codeChallenge: started!.codeChallenge });
+    const code = await google.issue(consumer(email), { nonce: started!.nonce, codeChallenge: started!.codeChallenge });
     const first = await callback({ state: started!.state, code });
     expect(first.fragment.get("handoff")).toBeTruthy();
-    const before = google.tokenRequests();
+    const before = (await google.stats()).tokenRequests;
     const replay = await callback({ state: started!.state, code });
     const unknown = await callback({ state: secret(), code });
     expect(replay.location).toBe(`${FRONTEND}/auth/google/complete#error=expired`);
     expect(unknown.location).toBe(replay.location);
-    expect(google.tokenRequests()).toBe(before);
+    expect((await google.stats()).tokenRequests).toBe(before);
   });
 
   it("GSI-CB-02 / SSO-G4: the callback reflects nothing from the request", async () => {
@@ -305,7 +304,7 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
   it("GSI-CSRF-01 / SSO-G5: a handoff works once, only with the starting tab's secret, and every refusal is the same", async () => {
     const email = address("csrf", "gmail.com");
     const { started } = await start();
-    const code = google.issue(consumer(email), { nonce: started!.nonce, codeChallenge: started!.codeChallenge });
+    const code = await google.issue(consumer(email), { nonce: started!.nonce, codeChallenge: started!.codeChallenge });
     const handoff = (await callback({ state: started!.state, code })).fragment.get("handoff") ?? "";
 
     const wrongSecret = await exchange(handoff, secret());

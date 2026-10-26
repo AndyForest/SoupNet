@@ -38,6 +38,8 @@ import { accountRefusal, invalidateSessions, ssoRequiredFor } from "../authz";
 import { mayRegister, logSignupCapState } from "./system-settings.service";
 import { sendVerificationEmail } from "./email.service";
 import { getClientPublic } from "./oauth.service";
+import { completeDirectoryConnect } from "./directory-connection.service";
+import { onGoogleSignIn } from "./org-domains.service";
 import {
   buildGoogleAuthorizationUrl,
   exchangeGoogleCode,
@@ -170,10 +172,10 @@ export type JoinHookResult = "joined" | "full" | "none";
  * with `organization_full`; for an existing account it changes nothing.
  */
 export async function afterGoogleSignIn(
-  _tx: SqlExecutor,
-  _input: { userId: string; email: string; hd: string | null; created: boolean },
+  tx: SqlExecutor,
+  input: { userId: string; email: string; hd: string | null; created: boolean },
 ): Promise<JoinHookResult> {
-  return "none";
+  return onGoogleSignIn(tx, input);
 }
 
 class Rollback extends Error {
@@ -333,7 +335,11 @@ export async function createGoogleAccount(tx: Tx, claims: GoogleIdClaims, email:
   return { userId: user.id, created: true, waitlisted, verificationToken, email };
 }
 
-export type CallbackOutcome = { ok: true; handoff: string } | { ok: false; error: GoogleSignInError };
+export type CallbackOutcome =
+  | { ok: true; handoff: string }
+  /** A directory connection completed (stream Offboarding); no session. */
+  | { ok: true; directoryConnected: true }
+  | { ok: false; error: GoogleSignInError };
 
 /**
  * Google's redirect back (SSO-G3 to SSO-G5, SSO-A7, SSO-R4). Every failure is
@@ -351,12 +357,23 @@ export async function completeGoogleSignIn(
   const consumed = await db.execute(sql`
     UPDATE claimnet.sso_login_requests SET consumed_at = now()
     WHERE state_hash = ${hashToken(input.state)} AND consumed_at IS NULL AND expires_at > now()
-    RETURNING id, nonce, code_verifier
+    RETURNING id, nonce, code_verifier, return_kind, return_params
   `);
-  const request = (consumed as unknown as Array<{ id: string; nonce: string; code_verifier: string }>)[0];
+  const request = (consumed as unknown as Array<{ id: string; nonce: string; code_verifier: string; return_kind: string; return_params: unknown }>)[0];
   if (!request) return { ok: false, error: "expired" };
   if (input.googleError) return { ok: false, error: input.googleError === "access_denied" ? "cancelled" : "failed" };
   if (!input.code) return { ok: false, error: "failed" };
+
+  // A directory consent (stream Offboarding) branches here, before any
+  // account resolution: it never issues a session or links an identity.
+  if (request.return_kind === "directory_connect") {
+    const done = await completeDirectoryConnect(
+      db, config, keys,
+      { nonce: request.nonce, codeVerifier: request.code_verifier, params: (request.return_params ?? {}) as Record<string, unknown> },
+      input.code, fetchImpl,
+    );
+    return done.ok ? { ok: true, directoryConnected: true } : done;
+  }
 
   let claims: GoogleIdClaims;
   try {
@@ -400,6 +417,7 @@ async function sessionRefusal(db: SqlExecutor, userId: string, idp: GoogleSessio
   const disabled = await accountRefusal(db as PostgresJsDatabase, userId);
   if (disabled === "suspended") return "account_suspended";
   if (disabled === "org_disabled") return "account_disabled";
+  if (disabled === "directory_inactive" || disabled === "directory_unconfirmed") return disabled;
   if (idp !== "google" && (await ssoRequiredFor(db, userId))) return "sso_required_workspace";
   return null;
 }

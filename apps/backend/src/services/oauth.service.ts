@@ -14,7 +14,7 @@
 import crypto from "node:crypto";
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { activeUserPredicate, consumeRefreshToken } from "../authz";
+import { activeUserPredicate, consumeRefreshToken, checkDirectoryIfDue, userIdForRefreshToken } from "../authz";
 
 // ── Base62 encoding ──────────────────────────────────────────────────────────
 
@@ -522,6 +522,12 @@ export async function refreshOAuthTokenBundle(
   params: { refreshToken: string; clientId: string },
 ): Promise<OAuthTokenBundle> {
   const refreshTokenHash = hashOpaque(params.refreshToken);
+
+  // A Workspace directory check that is due runs before rotation, outside
+  // the rotation transaction (stream Offboarding); the consumption statement
+  // below then reads the recorded status through the user-state predicate.
+  const owner = await userIdForRefreshToken(db, refreshTokenHash);
+  if (owner) await checkDirectoryIfDue(db, owner);
 
   return db.transaction(async (tx) => {
     // The consumption statement — the compare-and-swap on consumed_at, the

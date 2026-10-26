@@ -12,7 +12,8 @@ import {
   getPendingInvitationCount,
 } from "../services/system-settings.service";
 import { QUEUE_DESCRIPTIONS, getQueueDescription, ORGANIZATION_FULL_MESSAGE } from "@soupnet/domain";
-import { orgMemberCount } from "../authz";
+import { orgMemberCount, deleteDirectoryConnection } from "../authz";
+import { forgetDirectoryTokens } from "../services/google-directory.service";
 import type { JoinRefusal } from "../authz";
 import { createOrganizationAndNotify, joinOrganizationAndNotify } from "../services/organization.service";
 import { approveWaitlistedUser, promoteTopWaitlisted } from "../services/waitlist.service";
@@ -145,6 +146,22 @@ admin.patch("/organizations/:id", async (c) => {
     });
   }
   return c.json({ ok: true });
+});
+
+// DELETE /admin/organizations/:id/directory — the site operator removes an
+// organization's Workspace directory connection by hand, the recovery when a
+// broken connection has locked out every owner and admin (stream
+// Offboarding, draft 47f9620f). Everyone the directory switched off works
+// again; the company reconnects after.
+admin.delete("/organizations/:id/directory", async (c) => {
+  const id = c.req.param("id");
+  if (!z.string().uuid().safeParse(id).success) return c.json({ ok: false, error: "Invalid input" }, 400);
+  const { removed, cleared } = await deleteDirectoryConnection(getDb(), id);
+  forgetDirectoryTokens(id);
+  if (removed) {
+    await writeAudit(getDb(), { actorUserId: c.get("user").id, action: "organization.directory_disconnected", targetType: "organization", targetId: id, metadata: { by: "operator", cleared } });
+  }
+  return c.json({ ok: true, data: { removed } });
 });
 
 const addOrganizationMemberSchema = z.object({

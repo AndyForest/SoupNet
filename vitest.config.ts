@@ -41,6 +41,9 @@ export default defineConfig({
       "scripts/**/*.test.mts",
     ],
     env: loadDotEnv(),
+    // A fake Google for the Google sign-in and directory suites, started once
+    // when GOOGLE_OIDC_TEST_ISSUER is set (apps/backend/src/test-google-issuer.ts).
+    globalSetup: ["apps/backend/src/test-google-global-setup.ts"],
     // Set 2026-06-11 when integration beforeAll hooks signed users up over
     // HTTP (register → verify → login), each costing the backend a 12-round
     // bcryptjs hash on its single thread; the 10s default hook timeout was

@@ -35,6 +35,10 @@ export const QUEUES = {
   /** Hourly: delete Google sign-in request rows older than a day (stream SSO, SSO-S2). */
   SSO_REQUEST_SWEEP: "sso.request-sweep",
 
+  // Organization domains — daily DNS re-check of verified claims, then the
+  // migration of captured claims' accounts (stream Domains).
+  ORG_DOMAINS_RECHECK: "org-domains.recheck",
+
   // Payload fulfillment (indexed + air-gapped modes)
   PAYLOAD_FULFILLMENT: "payload.fulfillment",
   CLIENT_FULFILLMENT_RETRY: "client.fulfillment.retry",

@@ -49,12 +49,15 @@ type SqlExecutor = Pick<PostgresJsDatabase, "execute">;
 
 /**
  * An organization's members as a derived table: (user_id, role, joined_via,
- * disabled_at, joined_at). For the console's member list, which joins its
- * aggregates onto it by user id rather than naming the table.
+ * disabled_at, joined_at, directory_status, directory_checked_at). For the
+ * console's member list, which joins its aggregates onto it by user id rather
+ * than naming the table. The directory columns are stream Offboarding's (the
+ * Workspace directory's word on the member, and when it was last confirmed).
  */
 export function orgMembersOf(organizationId: string): SQL {
   return sql`(
-    SELECT om.user_id, om.role, om.joined_via, om.disabled_at, om.joined_at
+    SELECT om.user_id, om.role, om.joined_via, om.disabled_at, om.joined_at,
+           om.directory_status, om.directory_checked_at
     FROM claimnet.organization_members om
     WHERE om.organization_id = ${organizationId}::uuid
   )`;

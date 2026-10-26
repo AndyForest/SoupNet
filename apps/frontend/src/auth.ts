@@ -126,7 +126,10 @@ export async function authFetch(
     }
   } else if (res.status === 403 && token && getToken() === token) {
     const body = (await res.clone().json().catch(() => null)) as { error?: unknown } | null;
-    if (body?.error === "account_disabled" || body?.error === "account_suspended" || body?.error === "sso_required") {
+    if (
+      body?.error === "account_disabled" || body?.error === "account_suspended" || body?.error === "sso_required" ||
+      body?.error === "directory_inactive" || body?.error === "directory_unconfirmed"
+    ) {
       clearToken();
       if (typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent(AUTH_INVALIDATED_EVENT, { detail: { reason: body.error } }));
