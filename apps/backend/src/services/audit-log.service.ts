@@ -59,8 +59,9 @@ export async function writeAudit(
  * Account events are kept, except that a recipe-text event
  * (RECIPE_TEXT_ACTIONS) the person wrote, or one about a recipe of theirs,
  * loses `claimText`, and a book-text event (BOOK_TEXT_ACTIONS) the person
- * wrote loses the names and descriptions it recorded (F116). Their action,
- * ids, book slug and counts stay.
+ * wrote loses the names and descriptions it recorded (F116). A deletion's
+ * typed `reason` and an import's original book names go from the rows the
+ * person wrote (F121, F122). Their action, ids, book slugs and counts stay.
  */
 export async function anonymiseAuditLogOf(db: PostgresJsDatabase, userId: string): Promise<void> {
   const checkLog = sql.join(CHECK_LOG_ACTIONS.map((a) => sql`${a}`), sql`, `);
@@ -94,5 +95,22 @@ export async function anonymiseAuditLogOf(db: PostgresJsDatabase, userId: string
     WHERE action IN (${bookText})
       AND actor_user_id = ${userId}::uuid
       AND metadata ?| array['previousDescription', 'newDescription', 'previousName', 'newName', 'groupName']
+  `);
+  await db.execute(sql`
+    UPDATE claimnet.audit_log
+    SET metadata = metadata - 'reason'
+    WHERE action = ${"trace.deleted" satisfies AuditAction}
+      AND actor_user_id = ${userId}::uuid
+      AND metadata ? 'reason'
+  `);
+  await db.execute(sql`
+    UPDATE claimnet.audit_log
+    SET metadata = jsonb_set(metadata, '{originalBooks}', (
+      SELECT COALESCE(jsonb_agg(book - 'name' ORDER BY n), '[]'::jsonb)
+      FROM jsonb_array_elements(metadata->'originalBooks') WITH ORDINALITY AS b(book, n)
+    ))
+    WHERE action = ${"corpus.imported" satisfies AuditAction}
+      AND actor_user_id = ${userId}::uuid
+      AND jsonb_typeof(metadata->'originalBooks') = 'array'
   `);
 }

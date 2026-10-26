@@ -18,7 +18,7 @@ type Row = { id: string; actor_user_id: string | null; api_key_id: string | null
 
 const isRecipeText = (action: string) => (RECIPE_TEXT_ACTIONS as readonly string[]).includes(action);
 const isText = (action: string) => isRecipeText(action) || (BOOK_TEXT_ACTIONS as readonly string[]).includes(action);
-const TEXT_KEYS = ["claimText", "previousDescription", "newDescription", "previousName", "newName", "groupName"];
+const TEXT_KEYS = ["claimText", "previousDescription", "newDescription", "previousName", "newName", "groupName", "reason"];
 
 describe.skipIf(!BASE)("account deletion anonymises the check log (R-A1 to R-A6)", () => {
   let sql: ReturnType<typeof postgres>;
@@ -33,7 +33,8 @@ describe.skipIf(!BASE)("account deletion anonymises the check log (R-A1 to R-A6)
   let patEventIds: string[] = [];
   let boIds: string[] = [];
   let onBehalfRowId = "";
-  let patTextIds: string[] = []; // Pat deleting a recipe of Pat's, and changing a book's description and name
+  let patTextIds: string[] = []; // Pat deleting a recipe of Pat's with a reason, and changing a book's description and name
+  let patImportId = ""; // Pat importing a file whose book has a name
   let boMovedPatsId = ""; // Bo moving a recipe of Pat's
   let boDeletedOwnId = ""; // Bo deleting a recipe of Bo's: keeps its text
 
@@ -110,7 +111,16 @@ describe.skipIf(!BASE)("account deletion anonymises the check log (R-A1 to R-A6)
     await tool(boKey, "check_recipe", { recipe: texts.boOwn, supporting_evidence: evidence("kept"), recipe_book: shared.slug });
     const traceId = async (text: string) => ((await sql`SELECT id FROM claimnet.traces WHERE claim_text = ${text}`) as unknown as Array<{ id: string }>)[0]?.id ?? "";
     const [patDeletes, boMoves, boOwn] = await Promise.all([traceId(texts.patDeletes), traceId(texts.boMoves), traceId(texts.boOwn)]);
-    expect((await call(pat.jwt, "DELETE", `/traces/${patDeletes}`)).status).toBe(200);
+    expect((await call(pat.jwt, "DELETE", `/traces/${patDeletes}`, { reason: `Pat's typed reason ${run}` })).status).toBe(200);
+    // An import whose file names its original book (F122).
+    const oldBook = crypto.randomUUID();
+    const imported = await call(pat.jwt, "POST", "/import", {
+      schemaVersion: 1,
+      traces: [{ id: crypto.randomUUID(), groupId: oldBook, apiKeyId: crypto.randomUUID(), claimText: `As a person leaving a service, I prefer my imported book's name gone with me ${run}.`, claimTextHash: null, formatAdherenceScore: 0.8, decidedAt: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
+      evidence: [], references: [], traceEvidence: [], traceReferences: [], evidenceReferences: [],
+      groupMemberships: [{ groupId: oldBook, name: `Pat's private old book ${run}`, slug: `old-${run}`, description: null, role: "owner", joinedAt: new Date().toISOString() }],
+    });
+    expect(imported.status).toBe(200);
     expect((await call(bo.jwt, "PATCH", `/traces/${boMoves}`, { groupId: bo.personal })).status).toBe(200);
     expect((await call(bo.jwt, "DELETE", `/traces/${boOwn}`)).status).toBe(200);
 
@@ -118,6 +128,9 @@ describe.skipIf(!BASE)("account deletion anonymises the check log (R-A1 to R-A6)
     patCheckLogIds = patRows.filter((r) => (CHECK_LOG_ACTIONS as readonly string[]).includes(r.action)).map((r) => r.id);
     patEventIds = patRows.filter((r) => !(CHECK_LOG_ACTIONS as readonly string[]).includes(r.action) && !isText(r.action)).map((r) => r.id);
     patTextIds = patRows.filter((r) => isText(r.action)).map((r) => r.id);
+    patEventIds = patEventIds.filter((id) => patRows.find((r) => r.id === id)?.action !== "corpus.imported");
+    patImportId = patRows.find((r) => r.action === "corpus.imported")?.id ?? "";
+    expect(patImportId).not.toBe("");
     const boRows = (await sql`SELECT id, action, target_id FROM claimnet.audit_log WHERE actor_user_id = ${bo.userId}::uuid`) as unknown as Array<{ id: string; action: string; target_id: string }>;
     boIds = boRows.map((r) => r.id);
     boMovedPatsId = boRows.find((r) => r.action === "trace.moved" && r.target_id === boMoves)?.id ?? "";
@@ -127,7 +140,7 @@ describe.skipIf(!BASE)("account deletion anonymises the check log (R-A1 to R-A6)
     onBehalfRowId = ((await sql`SELECT id FROM claimnet.audit_log WHERE actor_user_id = ${bo.userId}::uuid AND metadata->>'subjectUserId' = ${pat.userId}`) as unknown as Array<{ id: string }>)[0]?.id ?? "";
     expect(new Set(patRows.filter((r) => patCheckLogIds.includes(r.id)).map((r) => r.action))).toEqual(new Set(["recipe.checked", "check.searched", "briefing.issued"]));
     expect(onBehalfRowId).not.toBe("");
-    for (const r of await rows([...patCheckLogIds, ...patEventIds, ...patTextIds, ...boIds])) before.set(r.id, r);
+    for (const r of await rows([...patCheckLogIds, ...patEventIds, ...patTextIds, patImportId, ...boIds])) before.set(r.id, r);
     const countsBefore = await counts(patCheckLogIds);
 
     const del = await call(pat.jwt, "DELETE", "/auth/me", { password: PASSWORD });
@@ -194,6 +207,20 @@ describe.skipIf(!BASE)("account deletion anonymises the check log (R-A1 to R-A6)
     }
     expect(after.find((r) => r.id === boMovedPatsId)?.actor_user_id).toBe(bo.userId);
     expect(after.find((r) => r.action === "group.name_updated")?.metadata).toHaveProperty("groupSlug");
+    // F121: the reason Pat typed when deleting went with the recipe's text.
+    expect(before.get(after.find((r) => r.action === "trace.deleted")!.id)!.metadata).toHaveProperty("reason", `Pat's typed reason ${run}`);
+    expect(after.find((r) => r.action === "trace.deleted")?.metadata).not.toHaveProperty("reason");
+  });
+
+  it("R-A6 (F122): an import's original book names go; their count, ids and the rest of the row stay", async () => {
+    const [r] = await rows([patImportId]);
+    const was = before.get(patImportId)!;
+    type Book = Record<string, unknown>;
+    const wasBooks = was.metadata?.["originalBooks"] as Book[];
+    expect(wasBooks.map((b) => b["name"])).toEqual([`Pat's private old book ${run}`]);
+    expect(r!.metadata?.["originalBooks"]).toEqual(wasBooks.map(({ name: _n, ...rest }) => rest));
+    expect({ ...r!.metadata, originalBooks: null }).toEqual({ ...was.metadata, originalBooks: null });
+    expect(r!.actor_user_id).toBe(pat.userId);
   });
 
   it("R-A5: counts survive, in total and by month and intent", async () => {
