@@ -6,9 +6,9 @@ import {
   useTraceDetail,
   useTraceFeedback,
   useSetTraceReaction,
-  useSetFeedbackStar,
 } from "../hooks/useTraces.js";
-import type { GroupedReference, TraceFeedbackRow } from "../hooks/useTraces.js";
+import type { GroupedReference } from "../hooks/useTraces.js";
+import { FeedbackCard } from "../components/FeedbackCard.js";
 import { Icon } from "../components/Icon.js";
 import { UserBadge } from "../components/UserBadge.js";
 import { ApiKeyBadge } from "../components/ApiKeyBadge.js";
@@ -268,102 +268,6 @@ export function TraceDetailPage() {
           error={deleteTrace.error instanceof Error ? deleteTrace.error.message : null}
         />
       )}
-    </div>
-  );
-}
-
-/** Small labeled chip for feedback enum values. Impact gets a color accent —
- *  it's the value the human scans for. */
-function FeedbackChip({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
-  return (
-    <span
-      className="text-xs"
-      style={{
-        display: "inline-flex",
-        gap: "4px",
-        padding: "2px 8px",
-        borderRadius: "var(--radius-sm)",
-        background: "var(--color-surface-container)",
-        color: accent ? "var(--color-primary)" : "var(--color-on-surface-variant)",
-        border: accent ? "1px solid var(--color-primary)" : "1px solid transparent",
-      }}
-    >
-      <span style={{ color: "var(--color-outline-variant)" }}>{label}</span>
-      {value}
-    </span>
-  );
-}
-
-function FeedbackCard({ row, traceId }: { row: TraceFeedbackRow; traceId: string }) {
-  const setStar = useSetFeedbackStar(traceId);
-  const createdAt = new Date(row.createdAt);
-  // Human-origin rows (a re-filing correction) carry actorUserId and no api key.
-  const byHuman = !!row.actorUserId;
-  const agentBits = [row.agentId, row.model, row.harness && `${row.harness}${row.harnessVersion ? ` ${row.harnessVersion}` : ""}`]
-    .filter(Boolean)
-    .join(" · ");
-
-  return (
-    <div style={{
-      background: "var(--color-surface-container-lowest)",
-      borderRadius: "var(--radius-lg)",
-      padding: "var(--space-lg)",
-      borderLeft: `3px solid ${byHuman ? "var(--color-success)" : "var(--color-primary)"}`,
-    }}>
-      <div style={{ display: "flex", gap: "var(--space-xs)", flexWrap: "wrap", alignItems: "center" }}>
-        {byHuman && <FeedbackChip label="by" value="human" accent />}
-        <FeedbackChip label="impact" value={row.impact} accent={row.impact === "big" || row.impact === "new"} />
-        <FeedbackChip label="disposition" value={row.disposition} />
-        <FeedbackChip label="kind" value={row.kind} />
-        <FeedbackChip label="fulfilled" value={row.storyFulfilled} />
-        {row.topSimilarity !== null && (
-          <FeedbackChip label="top match" value={`${Math.round(row.topSimilarity * 100)}%`} />
-        )}
-        <button
-          className="btn-ghost"
-          onClick={() => setStar.mutate({ feedbackId: row.id, starred: !row.starredByMe })}
-          disabled={setStar.isPending}
-          aria-pressed={row.starredByMe}
-          title={row.starredByMe ? "Unstar — remove 'this one mattered'" : "Star — this one mattered"}
-          style={{
-            marginLeft: "auto",
-            fontSize: "0.85rem",
-            padding: "2px 8px",
-            cursor: "pointer",
-            color: row.starredByMe ? "var(--color-primary)" : "var(--color-outline-variant)",
-          }}
-        >
-          {row.starredByMe ? "★" : "☆"}{row.starCount > 0 ? ` ${row.starCount}` : ""}
-        </button>
-      </div>
-
-      <p style={{ marginTop: "var(--space-sm)" }}>{row.story}</p>
-      {row.note && (
-        <p className="text-xs" style={{ color: "var(--color-on-surface-variant)", marginTop: "var(--space-xs)" }}>
-          {row.note}
-        </p>
-      )}
-
-      {row.relatedTraceIds && row.relatedTraceIds.length > 0 && (
-        <p className="text-xs" style={{ marginTop: "var(--space-xs)" }}>
-          Related recipes:{" "}
-          {row.relatedTraceIds.map((id, i) => (
-            <span key={id}>
-              {i > 0 && ", "}
-              <a href={`/app/traces/${id}`} style={{ color: "var(--color-primary)", textDecoration: "none", fontFamily: "var(--font-mono, monospace)" }}>
-                {id.slice(0, 8)}…
-              </a>
-            </span>
-          ))}
-        </p>
-      )}
-
-      <p className="text-xs" style={{ color: "var(--color-outline-variant)", marginTop: "var(--space-sm)" }}>
-        {byHuman && row.actorEmail ? `${row.actorEmail} · ` : ""}
-        {agentBits ? `${agentBits} · ` : ""}
-        {row.apiKeyLabel ? `key: ${row.apiKeyLabel} · ` : ""}
-        {createdAt.toLocaleString()}
-      </p>
     </div>
   );
 }

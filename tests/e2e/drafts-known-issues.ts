@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import type { Page, TestInfo } from "@playwright/test";
 import { axeFindings } from "./helpers/evidence";
 
-// Known failures for the drafts regression specs (drafts-slice3/4/5 and
+// Known failures for the drafts regression specs (drafts-slice3/4/5/9 and
 // drafts-post-merge). A failure counts as known only if the SoupNet backlog
 // item named below lists it. Each known finding is recorded as a "known-issue"
 // annotation, and it stops failing the test. Anything else still fails.
@@ -44,6 +44,16 @@ export const KNOWN_AXE: KnownAxe[] = [
     rule: "color-contrast",
     what: 'book traces list row "via <key>" / "N evidence" in --color-outline-variant (GroupTracesPage TraceRow)',
     html: new RegExp(String.raw`^<span style="${OUTLINE_VARIANT}">(via .+|\d+ evidence)</span>$`),
+  },
+  {
+    rule: "color-contrast",
+    what: 'feedback card chip captions ("impact", "disposition", "kind", "fulfilled") in --color-outline-variant (1.52:1; FeedbackCard, on the detail and intent pages)',
+    html: new RegExp(String.raw`^<span style="${OUTLINE_VARIANT}">(impact|disposition|kind|fulfilled|top match|by)</span>$`),
+  },
+  {
+    rule: "color-contrast",
+    what: "feedback card footer line (agent · key · date) in --color-outline-variant (1.76:1; FeedbackCard)",
+    html: new RegExp(String.raw`^<p class="text-xs" style="${OUTLINE_VARIANT} margin-top: var\(--space-sm\);">`),
   },
   {
     rule: "label",

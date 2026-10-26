@@ -11,7 +11,7 @@ import { deleteUserCascade } from "../services/user-delete.service";
 import { sendVerificationEmail, sendPasswordResetEmail } from "../services/email.service";
 import { rateLimit } from "../middleware/rate-limit";
 import { normalizeEmail } from "../lib/normalize-email";
-import { onBehalfSubjectOf } from "../authz";
+import { onBehalfSubjectOf, feedbackOwnedBy, intentOwnedBy } from "../authz";
 import { verifyTurnstile } from "../lib/turnstile";
 import type { AppEnv } from "../types";
 
@@ -428,7 +428,8 @@ auth.get("/me", requireAuth, async (c) => {
 
 // GET /auth/me/export — download all user-authored data as JSON.
 // Covers recipes (traces), evidence, references, the N:N links between them,
-// group memberships, and API key metadata. Excludes system-generated data
+// group memberships, API key metadata, declared intents, and feedback rows
+// written by the user's agents (or by them). Excludes system-generated data
 // (vectors, embedding chunks, audit log, multimodal file bytes) — per the
 // data-ownership promise on the landing page, the user gets back what they
 // contributed, not what the system derived. References' file_url/mime/hash
@@ -563,6 +564,32 @@ auth.get("/me/export", requireAuth, requireVerifiedEmail, async (c) => {
     ORDER BY r.created_at
   `);
 
+  // Declared intents and feedback rows (drafts-and-triage slice 9), so a
+  // self-hoster's report is complete. Intents are the user's by intentOwnedBy;
+  // feedback rows by the one ownership rule the report paths use
+  // (authz/report-scope.ts). content_hash is a dedup key, not content. The
+  // delivery ledger (intent_shown) is system-derived and stays out, by this
+  // export's own rule. Import ignores both arrays for now.
+  const intents = await db.execute(sql`
+    SELECT id, story, agent_id AS "agentId", api_key_id AS "apiKeyId",
+           created_at AS "createdAt", last_used_at AS "lastUsedAt"
+    FROM claimnet.intents i WHERE ${intentOwnedBy(user.id)}
+    ORDER BY created_at
+  `);
+
+  const checkFeedback = await db.execute(sql`
+    SELECT cf.id, cf.trace_id AS "traceId", cf.search_audit_id AS "searchId",
+           cf.briefing_audit_id AS "briefingId", cf.api_key_id AS "apiKeyId", cf.actor_user_id AS "actorUserId",
+           cf.agent_id AS "agentId", cf.session_id AS "sessionId", cf.intent_id AS "intentId",
+           cf.kind, cf.impact, cf.disposition, cf.story_fulfilled AS "storyFulfilled",
+           cf.story, cf.note, cf.top_similarity AS "topSimilarity",
+           cf.model, cf.harness, cf.harness_version AS "harnessVersion",
+           cf.related_trace_ids AS "relatedTraceIds", cf.created_at AS "createdAt"
+    FROM claimnet.check_feedback cf
+    WHERE ${feedbackOwnedBy(user.id)}
+    ORDER BY cf.created_at
+  `);
+
   const payload = {
     exportedAt: new Date().toISOString(),
     // schemaVersion stays 1 across purely additive, nullable field additions
@@ -583,6 +610,8 @@ auth.get("/me/export", requireAuth, requireVerifiedEmail, async (c) => {
     traceEvidence,
     traceReferences,
     evidenceReferences,
+    intents,
+    checkFeedback,
   };
 
   const emailSlug = (profile?.email ?? "user").replace(/[^a-zA-Z0-9._-]/g, "_");

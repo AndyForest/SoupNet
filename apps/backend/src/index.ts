@@ -27,6 +27,7 @@ import { mcpRoutes } from "./routes/mcp";
 import { uploadsRoutes } from "./routes/uploads";
 import { oauthRoutes, oauthWellKnownRoutes } from "./routes/oauth";
 import { feedbackRoutes } from "./routes/feedback";
+import { intentRoutes } from "./routes/intents";
 import { startEmbeddingWorker } from "./embedding-worker";
 import { isLoopbackOrigin } from "./lib/local-origin";
 import type { AppEnv } from "./types";
@@ -152,6 +153,9 @@ app.route("/import", importRoutes);
 app.route("/mcp", mcpRoutes);
 app.route("/uploads", uploadsRoutes);
 app.route("/feedback", feedbackRoutes);
+// Read paths for reports (drafts-and-triage slice 9): the caller's user's
+// intents and their lineage, API-key Bearer. See routes/intents.ts.
+app.route("/intents", intentRoutes);
 app.route("/oauth", oauthRoutes);
 app.route("/.well-known", oauthWellKnownRoutes);
 
