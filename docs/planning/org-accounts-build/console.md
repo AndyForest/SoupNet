@@ -93,6 +93,10 @@ Added here:
   - the member status adds Offboarding's `directory_inactive` and `directory_unconfirmed` with labels of their own ("Suspended in Google Workspace", "Archived in Google Workspace", "Not in the directory", "Directory check failed"), never "Disabled by the organization";
   - Activity adds `organization.member_directory_status` (both views, with the `to` value checked against Offboarding's five values) and the three connection actions (org view only, kind and domain at most). A failed admin-consent connection also shows its reason, a closed set labelled in the domain (`directory_wrong_account`, `directory_wrong_domain`, `directory_no_refresh_token`, `directory_not_admin`). A failed service-account connection shows none, because its reason is derived from Google's answer and is not a closed set.
 
+  In the Directory section itself, which only the organization's owners and admins see:
+  - the connect button says that it opens Google, where a Workspace admin's account is asked once for read-only access to the directory;
+  - the connection's last error shows as its code and time only, labelled where the code is one of the closed set, never a token or a Google response body. This follows the planning session, 2026-10-26.
+
   Read through `orgMembersOf`'s added `directory_status` and `directory_checked_at`. | ORG-CON-03 | Layer 1 on the allowlist and labels; Layer 3 that a directory status change appears in Activity; Layer 3b on the section. |
 
 ### Books and sharing
