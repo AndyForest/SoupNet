@@ -16,3 +16,5 @@ export * from "./triage-ratings";
 export * from "./drafts";
 export * from "./search-query";
 export * from "./unknown-params";
+export * from "./sharing-policy";
+export * from "./admin-columns";
