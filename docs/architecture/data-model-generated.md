@@ -42,6 +42,8 @@ erDiagram
         timestamptz refresh_token_expires_at
         text oauth_client_id
         timestamptz consumed_at
+        text oauth_resource
+        text[] oauth_oidc_scopes
         timestamptz expires_at
         timestamptz last_used_at
         timestamptz created_at
@@ -232,6 +234,8 @@ erDiagram
         uuid[] scope_read_group_ids
         uuid[] scope_write_group_ids
         uuid scope_default_write_group_id
+        text resource
+        text[] oidc_scopes
         timestamptz consumed_at
         timestamptz expires_at
         timestamptz created_at
@@ -1020,6 +1024,8 @@ These are created by raw SQL in migration files and are not captured in the snap
 | `refresh_token_expires_at` | `timestamptz` | YES |  |  |
 | `oauth_client_id` | `text` | YES |  |  |
 | `consumed_at` | `timestamptz` | YES |  |  |
+| `oauth_resource` | `text` | YES |  |  |
+| `oauth_oidc_scopes` | `text[]` | YES |  |  |
 | `expires_at` | `timestamptz` | NO |  |  |
 | `last_used_at` | `timestamptz` | YES |  |  |
 | `created_at` | `timestamptz` | NO | `now()` |  |
@@ -1065,6 +1071,8 @@ These are created by raw SQL in migration files and are not captured in the snap
 | `scope_read_group_ids` | `uuid[]` | NO |  |  |
 | `scope_write_group_ids` | `uuid[]` | NO |  |  |
 | `scope_default_write_group_id` | `uuid` | NO |  |  |
+| `resource` | `text` | YES |  |  |
+| `oidc_scopes` | `text[]` | YES |  |  |
 | `consumed_at` | `timestamptz` | YES |  |  |
 | `expires_at` | `timestamptz` | NO |  |  |
 | `created_at` | `timestamptz` | NO | `now()` |  |
