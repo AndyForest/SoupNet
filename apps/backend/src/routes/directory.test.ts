@@ -172,6 +172,11 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     return (await google.stats()).directoryRequests[userKey] ?? 0;
   }
 
+  /** Thirty seconds on: a failed check holds its claim that long (F114). */
+  async function releaseClaim(userId: string): Promise<void> {
+    await getDb().execute(sql`UPDATE claimnet.organization_members SET directory_check_claimed_at = NULL WHERE user_id = ${userId}::uuid`);
+  }
+
   /** Put the organization's domain claim in a state: current, or one of the ways it stops being current. */
   async function setClaim(orgId: string, state: "current" | "failing" | "stale" | "lapsed"): Promise<void> {
     await getDb().execute(sql`
@@ -333,7 +338,7 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     expect(await requestsFor(max.email)).toBe(beforeStale + 1);
   });
 
-  it("OFF-DIR-06 / OB-C6: slow or failing Google leaves the last status, and releases the claim", async () => {
+  it("OFF-DIR-06 / OB-C6: slow or failing Google leaves the last status, and holds the claim before the next try (F114)", async () => {
     const org = await acme();
     const max = await member(org, "slow");
     await google.setDirectoryUser(max.email, {});
@@ -343,9 +348,14 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     const started = Date.now();
     expect((await useKey(max.key)).status).toBe(200);
     expect(Date.now() - started).toBeLessThan(4_000);
-    expect((await memberRow(max.userId)).directory_check_claimed_at).toBeNull();
+    expect((await memberRow(max.userId)).directory_check_claimed_at).not.toBeNull();
+    const afterFailure = await requestsFor(max.email);
+    for (let i = 0; i < 5; i++) expect((await useKey(max.key)).status).toBe(200);
+    expect(await requestsFor(max.email)).toBe(afterFailure);
     await google.setDirectoryUser(max.email, { httpStatus: 503 });
+    await makeDue(max.userId);
     expect((await useKey(max.key)).status).toBe(200);
+    expect(await requestsFor(max.email)).toBe(afterFailure + 1);
     expect((await memberRow(max.userId)).directory_status).toBe("active");
   });
 
@@ -360,6 +370,7 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     const me = await call(max.token, "GET", "/auth/me");
     expect(((await me.json()) as { error: string }).error).toBe("directory_unconfirmed");
     await google.setDirectoryUser(max.email, {});
+    await releaseClaim(max.userId);
     expect((await useKey(max.key)).status).toBe(200);
   });
 

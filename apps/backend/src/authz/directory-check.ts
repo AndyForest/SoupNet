@@ -163,14 +163,15 @@ async function runCheck(db: PostgresJsDatabase, userId: string): Promise<boolean
 }
 
 /**
- * Google couldn't say: release the claim so the next request tries again, and
- * record the connection's error for the admin and the operator (organization
+ * Google couldn't say: hold the claim, restamped now, so this member's next
+ * check waits DIRECTORY_CLAIM_SECONDS instead of every request calling Google
+ * again through an outage or a revoked credential (audit F114), and record the connection's error for the admin and the operator (organization
  * id and code only, never a credential). Warn the organization once when the
  * connection has had no success for DIRECTORY_WARNING_HOURS.
  */
 async function recordConnectionTrouble(db: PostgresJsDatabase, row: ClaimedRow, code: string): Promise<void> {
   await db.execute(sql`
-    UPDATE claimnet.organization_members SET directory_check_claimed_at = NULL WHERE id = ${row.member_id}::uuid
+    UPDATE claimnet.organization_members SET directory_check_claimed_at = NOW() WHERE id = ${row.member_id}::uuid
   `);
   if (code === "unreachable") {
     console.warn(`[directory] org ${row.organization_id}: Google unreachable`);
