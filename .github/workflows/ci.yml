@@ -57,6 +57,13 @@ jobs:
       EMBEDDINGS_PROVIDER: stub  # deterministic fake vectors; no API quota, no flakiness
       SYNTHESIS_PROVIDER: stub  # deterministic premium synthesis; no LLM call, no flakiness
       DISABLE_RATE_LIMIT: "true"  # tests make many rapid requests
+      # Sign in with Google against a fake issuer the Layer 3 suite starts
+      # (routes/google-auth.test.ts, apps/backend/src/test-google-issuer.ts).
+      # The backend honours a test issuer only outside production. Mirrors
+      # scripts/test-ci-local.mjs.
+      GOOGLE_OAUTH_CLIENT_ID: ci-google-client.apps.googleusercontent.com
+      GOOGLE_OAUTH_CLIENT_SECRET: ci-google-secret
+      GOOGLE_OIDC_TEST_ISSUER: http://127.0.0.1:3998
 
     steps:
       # Actions pinned to commit SHAs (not tags) so the actions' own GitHub

@@ -161,8 +161,8 @@ Feature: Verified domains, automatic joining, and existing accounts on a claimed
       And she is in no company organization
 
     @ORG-JOIN-D03
-    # Realized through onGoogleSignIn directly; the run through SSO's
-    # afterGoogleSignIn hook is added when that hook lands (rubric OD-J3).
+    # Realized through onGoogleSignIn and through SSO's afterGoogleSignIn
+    # hook; the callback's rollback on "full" is SSO's own test (rubric OD-J3).
     Scenario Outline: A Google sign-in joins only on a matching hd claim
       Given acme.example is captured
       When a Google sign-in creates Nia's account with email "<email>" and hd "<hd>"

@@ -8,6 +8,7 @@ import { runMigrations } from "./db";
 import { autoSetup } from "./auth";
 import { getDb } from "./db";
 import { authRoutes } from "./routes/auth";
+import { googleAuthRoutes } from "./routes/google-auth";
 import { keyRoutes } from "./routes/keys";
 import { meRoutes } from "./routes/me";
 import { briefingRoutes } from "./routes/briefing";
@@ -122,6 +123,7 @@ app.route("/health/version", versionRoutes);
 app.route("/health/integrity", integrityRoutes);
 
 // Routes
+app.route("/auth/google", googleAuthRoutes);
 app.route("/auth", authRoutes);
 app.route("/keys", keyRoutes);
 app.route("/me", meRoutes);

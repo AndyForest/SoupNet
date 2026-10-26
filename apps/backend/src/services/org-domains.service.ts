@@ -41,9 +41,7 @@ import {
   DOMAIN_CHALLENGE_TTL_DAYS,
 } from "@soupnet/domain";
 import type { DomainClaimState, DomainClaimStatus, DomainCheckEvent, DomainRefusal } from "@soupnet/domain";
-import { accountIsManaged, joinOrganizationInTx, orgMembersOf } from "../authz";
-// Not re-exported from the authz index (Core's file); imported directly, as auth.ts does for session-state.
-import { domainVerifiedFor } from "../authz/domain-authority";
+import { accountIsManaged, domainVerifiedFor, joinOrganizationInTx, orgMembersOf } from "../authz";
 import type { JoinResult } from "../authz";
 import { checkDomainRecord, type TxtLookup } from "../lib/dns-txt";
 import { sendJoinNotice } from "./organization.service";
@@ -498,10 +496,13 @@ export type DomainJoinOutcome =
 
 /**
  * Join at the proof step, inside the caller's transaction: the verification
- * click (OD-J1) or a Google sign-in (OD-J3). Via 'domain', so Core owes no
- * notice. On "full" the caller rolls its transaction back (OD-C1, OD-C2).
+ * click (OD-J1) or a Google sign-in (OD-J3). A new account joins via
+ * 'domain', and its proof step was its notice; an account that already
+ * existed (a Google sign-in linking one the migration couldn't seat) joins
+ * via 'migrated', and Core's notice is sent. On "full" the caller rolls its
+ * transaction back (OD-C1, OD-C2).
  */
-async function joinAtProofStep(tx: SqlExecutor, userId: string, email: string): Promise<DomainJoinOutcome> {
+async function joinAtProofStep(tx: SqlExecutor, userId: string, email: string, via: "domain" | "migrated" = "domain"): Promise<DomainJoinOutcome> {
   const domain = addressDomain(email);
   if (!domain) return { kind: "none" };
   const candidates = (await tx.execute(sql`
@@ -520,11 +521,16 @@ async function joinAtProofStep(tx: SqlExecutor, userId: string, email: string): 
     organizationId: claim.organization_id,
     userId,
     role: "member",
-    via: "domain",
+    via,
     authority: { kind: "domain", domain: claim.domain },
   });
   if (join.ok) {
     await tx.execute(sql`UPDATE claimnet.users SET waitlisted_at = NULL WHERE id = ${userId}::uuid`);
+    // Core's notice for an existing account. Sent from inside the caller's
+    // transaction, since the hook has no after-commit step; the only
+    // rollback after a successful join is SSO's for a new account, which
+    // owes no notice.
+    if (via === "migrated") sendJoinNotice(join);
     return { kind: "joined", organizationName: join.organizationName, join };
   }
   if (join.refusal === "organization_full") return { kind: "full" };
@@ -541,10 +547,10 @@ export function joinOnVerification(tx: SqlExecutor, input: { userId: string; ema
  * claimed domain and the address's domain. With no hd it does nothing; SSO
  * sends such an account our verification email instead.
  */
-export async function onGoogleSignIn(tx: SqlExecutor, input: { userId: string; email: string; hd: string | null | undefined }): Promise<"joined" | "full" | "none"> {
+export async function onGoogleSignIn(tx: SqlExecutor, input: { userId: string; email: string; hd: string | null | undefined; created?: boolean }): Promise<"joined" | "full" | "none"> {
   const domain = addressDomain(input.email);
   if (!googleHdMatches(input.hd, input.email, domain)) return "none";
-  const outcome = await joinAtProofStep(tx, input.userId, input.email);
+  const outcome = await joinAtProofStep(tx, input.userId, input.email, input.created === false ? "migrated" : "domain");
   return outcome.kind;
 }
 

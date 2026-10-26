@@ -537,6 +537,32 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
     expect(await hook(`test-orgdom-e-${run}-${++n}@${domain}`, domain)).toBe("full");
   });
 
+  it("ORG-JOIN-D03 / OD-J3, OD-J4: SSO's afterGoogleSignIn hook joins a new account via domain and an existing one via migrated, with Core's notice", async () => {
+    const google = await import("../services/google-sign-in.service");
+    const olive = await actor("olive");
+    const { orgId } = await createOrg(olive);
+    const { domain } = await capture(olive, orgId);
+
+    const fresh = await actor("g", `test-orgdom-new-${run}-${++n}@${domain}`);
+    expect(await getDb().transaction((tx) => google.afterGoogleSignIn(tx, { userId: fresh.userId, email: fresh.email, hd: domain, created: true }))).toBe("joined");
+    expect(await orgOf(fresh.userId)).toMatchObject({ organization_id: orgId, joined_via: "domain" });
+
+    const existing = await actor("g", `test-orgdom-old-${run}-${++n}@${domain}`);
+    expect(await getDb().transaction((tx) => google.afterGoogleSignIn(tx, { userId: existing.userId, email: existing.email, hd: domain, created: false }))).toBe("joined");
+    expect(await orgOf(existing.userId)).toMatchObject({ organization_id: orgId, joined_via: "migrated" });
+    let notices: unknown[] = [];
+    for (let i = 0; i < 40 && notices.length === 0; i++) {
+      notices = (await getDb().execute(sql`SELECT 1 FROM claimnet.email_log WHERE kind = 'organization_joined' AND to_email = ${existing.email}`)) as unknown as unknown[];
+      if (notices.length === 0) await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(notices).toHaveLength(1);
+
+    // No hd: the hook does nothing.
+    const consumer = await actor("g", `test-orgdom-consumer-${run}-${++n}@${domain}`);
+    expect(await getDb().transaction((tx) => google.afterGoogleSignIn(tx, { userId: consumer.userId, email: consumer.email, hd: null, created: true }))).toBe("none");
+    expect(await orgOf(consumer.userId)).toBeUndefined();
+  });
+
   it("ORG-JOIN-D04, ORG-JOIN-D05 / OD-J5, OD-J6: never the site operator's account; an account in another organization stays there", async () => {
     const olive = await actor("olive");
     const { orgId } = await createOrg(olive);
