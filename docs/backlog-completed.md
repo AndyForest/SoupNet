@@ -4,6 +4,14 @@ Items moved here from `backlog.md` when finished. Date-stamped so we can see wha
 
 ---
 
+## 2026-10-26 — OpenAI plugin round: a stale OAuth item
+
+Moved by the OpenAI plugin round's backlog fold (stream O's note in [planning/openai-plugin-build/oauth.md](planning/openai-plugin-build/oauth.md)): F39 wired `tokenRateLimit` and `grantRateLimit` in `routes/oauth.ts`, and the companion repo's backlog verified it 2026-07-02.
+
+### `[IMPL]` Rate-limit `/oauth/token` and `/oauth/authorize/grant`
+
+`POST /oauth/register` is rate-limited (30/hour per IP via `registerRateLimit`). `/oauth/token` and `/oauth/authorize/grant` are not. The downstream guards already require a valid `client_secret` or JWT respectively, so the practical exposure is small, but consistent rate limits across the OAuth surface make the surface easier to reason about and harden in case any of the upstream guards weaken.
+
 ## 2026-10-26 — the F75 succession flake
 
 ### `[IMPL]` test:ci flake: account-deletion succession picks the wrong heir under full-suite load
