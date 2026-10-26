@@ -108,7 +108,8 @@ export const traces = claimnetSchema.table(
     // import only when the intent is the importer's own; nothing updates it,
     // so verification, a move, and the on-behalf author flip leave it as
     // deposited (static test: authz/intent-link.test.ts). Read only through
-    // the `intent:` search qualifier and the review queue's grouping, both
+    // the `intent:` search qualifier, the review queue's grouping, and the
+    // report read paths' deposits (slice 9, intent-read.service.ts), all
     // of which resolve the id against the viewer's own intents, so another
     // person's intent is never an oracle and its story is never shown. No
     // foreign key, like user_id and check_feedback.intent_id: a link whose

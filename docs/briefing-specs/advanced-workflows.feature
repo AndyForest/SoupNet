@@ -34,3 +34,13 @@ Feature: Advanced workflows — archaeology, fleets, interface fluidity
     When the agent makes its next check
     Then it reaches /check?format=json with the new key and continues working
     And it does not ask the user to restart the session
+
+  Scenario: An orchestrator watches its run's drafts live and resolves them before finishing
+    # Guards: the briefing's "## Drafts" section, orchestration sentence; recipe 97f7c34e; drafts-and-triage slice 7 (build log §Slice 7 rubric; spec-decision-log.md 2026-10-24, C1). Depends on stream B's intent: qualifier, which merges before this text.
+    Given a fresh MCP-capable agent orchestrating sub-agents that check and draft under its intent
+    When the run is in progress
+    Then the orchestrator searches is:draft intent:<its intent id> during the run, not only at the end
+    And it corrects a sub-agent mid-run when a draft shows a wrong call
+    When the run ends
+    Then it resolves with verify_draft every draft from the run that the run's outcome settles
+    And each draft it leaves open says in its first evidence entry what would settle it

@@ -47,3 +47,17 @@ Feature: Recipe voice — the user's perspective in a transferable role
     When the session surfaces two distinct decisions (e.g. a library choice and a deployment target)
     Then the agent checks two separate recipes
     And each recipe names its choice concretely rather than as "this approach" or "that style"
+
+  Scenario: The claim is stated generally and the specifics move to the evidence
+    # Guards: PRINCIPLES "Authoring for retrieval", the two-axes paragraph; docs/planning/drafts-and-triage-slices-6-7-revision.md §7d item 3; drafts-and-triage slice 7 (build log §Slice 7 rubric; spec-decision-log.md 2026-10-24, C1).
+    When the agent logs a judgment made about one particular case (a named file, a single bug, one meeting)
+    Then the recipe's claim is the most general statement that is still true of the person's judgment
+    And the case's particulars (names, numbers, the specific instance) appear in the evidence rather than the claim
+    And the claim is written as a choice ("I chose", "I prefer"), not with "must" or "never"
+
+  Scenario: A judgment about what the person receives uses the recipient role
+    # Guards: ROLE_PATTERNS, the fourth pattern ("For what the user receives"); docs/planning/drafts-and-triage-slices-6-7-revision.md §7d item 4; drafts-and-triage slice 7 (build log §Slice 7 rubric; spec-decision-log.md 2026-10-24, C1).
+    When the agent logs the person's preference about a report they read
+    Then the recipe's role names the person as the recipient of that kind of thing (e.g. "As a reader of weekly status reports")
+    And the goal is a separate clause
+    And the claim uses "prefer" or "chose", not "want"

@@ -60,13 +60,12 @@ Feature: Surface-profiled briefings — thin index for tool-connected agents, fu
     And a plain member's agent sees the shared book's Members line with no pending-invites line
 
   # Drafts-and-triage slice 5 (build log §Slice 5 rubric, S5-B1): the profile
-  # also depends on the key. Stays @unreleased until slice 7 teaches drafting
-  # in the briefing body and the harness can run it.
-  @unreleased
+  # also depends on the key. Out of @unreleased with drafts-and-triage slice 7 (build log §Slice 7 rubric; spec-decision-log.md 2026-10-24, C1): the body's
+  # Drafts section and the revised headless section teach drafting.
   Scenario: A briefed agent on a headless key drafts with what would settle each draft, and closes with the open ids
     Given an agent whose only context is the briefing for a headless key
     When it records its person's judgment calls during an unattended session
-    Then each recipe it checks is stored as a draft, and its evidence says why the person couldn't be asked and what would settle it
+    Then each recipe it checks is stored as a draft, and its evidence says what would settle it
     And it rates each draft's impact and uncertainty
     And it does not call verify_draft
     And it ends the session with one outcome feedback row listing the draft ids it left open
