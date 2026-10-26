@@ -54,3 +54,26 @@ Asked as draft recipes under this stream's intent; numbered here from 1.
 2. **The listing's 30-character subtitle** (draft `3ca50187`). Recommendation: "Taste and judgment, shared" (26). It carries the pair and both pillars; alternatives in the draft.
 
 ## Build notes
+
+Calls made on the way, each with its source or recipe:
+
+- **One package source.** `plugins/soupnet/` serves both the ZIP and the Codex marketplace, because OpenAI's portable layout puts `plugin.json`, `mcp.json`, `skills/` and `assets/` at the plugin root and a repository marketplace points at that directory ("Codex resolves `source.path` from the marketplace root", build page). Test cases, demo URL and release notes live under `extensions["com.openai"]` in `plugin.json` ("put these objects directly under `extensions.com.openai`", submission page).
+- **Icon.** The "S." mark (`apps/frontend/src/assets/favicon-192x192.png`, 192 px, square) is both `logo` and `composerIcon`. The wordmark is weak at directory sizes (the companion repo's 2026-07-06 submission note: "the backlog flags the wordmark as weak at directory sizes (~64–128px)"), and the mark is the brand's existing small-size form. Its source file is also 192 px; a larger master is a design task, not a blocker (the limit is "at least 48×48").
+- **Brand colours.** `brandColor` `#051a0f` (primary) and `brandColorDark` `#c8d9cf` (inverse-primary), the design system's own light and dark pair (`DESIGN.md`). The test computes both contrasts with the WCAG formula.
+- **developerName "Soup.net".** It has to match the identity the operator verifies: individual verification publishes under his name, business verification under "Soup.net" (plan, operator step 1). If he verifies as an individual, change `developerName` and `author.name` before uploading.
+- **Cross-vendor wording** (recipe `5eb8df32`): the listing names the host's own products (ChatGPT, Codex) and "any other AI tool you connect through the open MCP standard", so the portability pillar stays concrete (`a820ec6e`) without naming a rival (OpenAI's no-comparison rule). The test refuses rival names and pricing words in the copy.
+- **Listing copy** follows `bb2d12e3` (the gain first, both pillars), `249d7dae` (the part that travels, not forgetting), `3eb59c29` (agents do the work, the person makes the calls and oversees) and `611a1fa5` (claims only as far as tested). "Free hosted service" from the claude.ai listing was dropped: OpenAI's guidelines bar pricing language.
+- **Test cases** are written against a reviewer account with a "Directory Review" book. Search isn't one of them: `search_recipes` leaves out the caller's own recipes by default, so on a one-person reviewer account it would return nothing unless the model adds `author:me`, which makes the case depend on wording rather than shape.
+- **Skill.** The briefing's core for a host with no briefing hook: the four when-to-check moments, the recipe sentence and evidence shape, drafts, search versus check, feedback, and passing the instructions on. It points to `get_briefing` as the source of truth. Per the security coordinator: it doesn't tell an agent to check "without asking first" (a host could read that as skipping its confirmation prompt), and it says a draft is never treated as confirmed.
+- **Briefing output** (stream T's audit, recipe-guide-content.ts is L's): the exemplars' "Selection parameters" block is gone on every surface, and an OAuth briefing leaves out the `/uploads` example that needs a Bearer token. Spec-decision log entry of 2026-10-26.
+- **Display history retention** (`session_shown`, `intent_shown`): deleted after 30 days. Every reader looks back 7 days, so no check renders differently; settled here rather than asked, as the obvious default once the policy needed a timeline.
+
+Sample recipes for the reviewer account's "Directory Review" book (operator step 5), so every test case has something to find:
+
+1. As a writer of family announcements, I prefer short, warm wording with one personal detail so that a note reads like me and not like a template.
+2. As a product manager naming internal projects, I prefer short concrete nouns over acronyms so that people remember the name without a glossary.
+3. As an analyst writing reports, I chose headings that state the finding so that readers who skim still get the point.
+4. As a wedding photographer choosing editing tools, I prefer software that works offline on location so that a weak venue connection never stops an edit.
+5. As a home gardener with clay soil, I chose raised beds for tomatoes so that the roots don't sit in water.
+
+For the operator before upload: the demo recording URL (`review.demo_recording_url`) goes in the dashboard or the manifest once recorded; reviewer credentials go only in Review details, never in the package (the validator refuses credential-shaped strings and any email but `admin@soup.net`).
