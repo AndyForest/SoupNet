@@ -2291,7 +2291,7 @@ Written 2026-10-25 by stream D (agent `a-drafts-8b-members-2026-10-25`, Soup.net
 |---|---|---|
 | Thin briefing, fixed fixture (`thinInput()`) | 18,183 characters | 21,000 |
 | Thin headless briefing, same fixture | 18,536 characters | 21,500 |
-| Remote `tools/list` | 17,630 bytes | 18,200 |
+| Remote `tools/list` | 17,642 bytes (corrected after verification: 17,630 was the figure before 6a merged) | 18,200 |
 
 Stream C's PR #138 (open) brings the thin fixture to within 7 characters of its cap, so the second of the two to merge measures again and moves the cap on its own branch, with a date and a reason (plan, "the cap raise is coordination, not permission").
 
@@ -2316,10 +2316,10 @@ Stream C's PR #138 (open) brings the thin fixture to within 7 characters of its 
 
 | # | Criterion | Evidence |
 |---|---|---|
-| S8b3-S1 | One loader and one renderer serve every surface: `get_briefing` (remote MCP), the stdio `get_briefing` (through `GET /briefing`), `GET /briefing`, `list_my_recipe_books` (remote MCP) and `POST /keys/briefing` (the web copy-briefing). For the same person and the same book scope, the recipe-books block is identical across them. | Layer 3 comparing the block between `list_my_recipe_books`, `get_briefing` and `GET /briefing`; code review for the copy-briefing path, which calls the same composer. |
+| S8b3-S1 | One loader and one renderer serve every surface: `get_briefing` (remote MCP), the stdio `get_briefing` (through `GET /briefing`), `GET /briefing`, `list_my_recipe_books` (remote MCP) and `POST /keys/briefing` (the web copy-briefing). For the same person and the same book scope, every book's Members and Pending invites lines are identical across them. (Amended after verification: the rest of the block differs by an earlier design, since the `Index:` line is MCP-only.) | Layer 3 comparing those lines on all five surfaces, with a book that holds a recipe. |
 | S8b3-S2 | The books listed are unchanged: the key's scope as today. A key scoped to one book shows no member and no count for any other book, even one the caller owns. | Layer 3 with a scoped key. |
 | S8b3-S3 | The role and invitation reads live in `apps/backend/src/authz/` (a `group_members` reference anywhere else fails the seam check). `npm run check:authz-seam` passes, and no `claimnet.traces` read is added or re-fingerprinted. | The gate; code review. |
-| S8b3-S4 | Nothing is written: no audit row, no feedback row, and no change to any response other than the recipe-books block. | Layer 3 counting audit rows before and after a call. |
+| S8b3-S4 | Nothing is written: no audit row, no feedback row, and no change to any response other than the recipe-books block and the `groups` echo in the JSON of `GET /briefing` and `POST /keys/briefing`, which mirrors it (members on solo books, `isCaller`, `pendingInvites`; it shows nothing the text does not). | Layer 3 counting audit rows before and after a call. |
 
 **Bytes, specs, copy**
 
@@ -2410,5 +2410,18 @@ Written 2026-10-25 by the verifier (agent `a-drafts-8b3-verify-2026-10-25`, Soup
 - `147690ff`: S1 graded pass on a probe of the added lines, with the overclaim as a finding. Corrected by its feedback row: the results `50c5b20e` ("not met as written") and `8f55a8d7` (pass only when every case the row names holds) point to partial.
 - `78eefe42`: the corrected call, S1 partial as written, with a non-blocking amendment. It applies to F1 too.
 - `fadd3bb6`: P3 graded partial under `feaee11a`. Corrected by feedback row `f8c07582`: the results surfaced `21d39214`, the operator-confirmed current ruling (pass on behaviour, with the gap named and closed before merge), which is the grading used above for P3 and M3.
+
+#### Slice 8b item 3 fix pass (stream D, 2026-10-25)
+
+After the verification record (`bf7ea02`, accept with follow-ups). No application code changed. Each finding's disposition:
+
+1. **S8b3-S1 (partial).** Fixed. The row now claims what holds: the Members and Pending invites lines are identical on every surface. The `Index:` line is MCP-only by an earlier design. The test compares those lines on all five surfaces: `list_my_recipe_books`, MCP `get_briefing`, `GET /briefing`, `GET /briefing` with the stdio surface header, and `POST /keys/briefing`. It deposits a recipe into the shared book first, so the books are not empty.
+2. **P3 and M3 cases missing from the committed test.** Fixed. Setup adds an invitation with no book, and the P3 test shows it counts nowhere. The M3 test removes a member after the acceptance and checks that the roster drops them.
+3. **F1, the admin's count.** Fixed: one step in the scenario.
+4. **The JSON `groups` echo.** Recorded in S8b3-S4 and in the spec-decision log as edit 3.
+5. **The stale `tools/list` baseline.** Corrected to 17,642.
+6. and 7. Information only; nothing to change in this slice.
+
+**Gate:** `node scripts/test-ci-local.mjs -- apps/backend/src/routes/book-membership-lines.test.ts` (fresh stack, with build, typecheck and lint) passed 9 of 9. The full gate at `478d936` (2,032 passed) covers the unchanged application code.
 
 ### Slice 6b rubric: option sets (stream G, after 6c and 6a merge)

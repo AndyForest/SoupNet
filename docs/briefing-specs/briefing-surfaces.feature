@@ -56,6 +56,7 @@ Feature: Surface-profiled briefings — thin index for tool-connected agents, fu
     Then the personal book reads "Members (1): you"
     And the shared book lists its four members with "you" first, and "Pending invites (2)" below them
     And a book they own with no pending invitations reads "Pending invites (0)"
+    And an admin's agent sees the same pending-invites line as the owner's
     And a plain member's agent sees the shared book's Members line with no pending-invites line
 
   # Drafts-and-triage slice 5 (build log §Slice 5 rubric, S5-B1): the profile

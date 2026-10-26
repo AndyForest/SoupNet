@@ -106,6 +106,15 @@ describe.skipIf(!BASE)("book membership lines (slice 8b item 3)", () => {
     }
     return out;
   }
+  /** Every book's Members and Pending invites lines, keyed by its bullet:
+   *  what this slice owns (the Index line is MCP-only by an earlier design). */
+  function membershipLines(text: string): string {
+    return booksBlock(text)
+      .split("\n")
+      .filter((l) => l.startsWith("  - ") || l.startsWith("    Members (") || l.startsWith("    Pending invites ("))
+      .map((l) => (l.startsWith("  - ") ? l.slice(0, l.indexOf(" (")) : l))
+      .join("\n");
+  }
   const membersLine = (text: string, slug: string) => bookLines(text, slug).find((l) => l.startsWith("    Members ("));
   const pendingLine = (text: string, slug: string) => bookLines(text, slug).find((l) => l.startsWith("    Pending invites ("));
   async function personalSlug(actor: Actor): Promise<string> {
@@ -148,8 +157,13 @@ describe.skipIf(!BASE)("book membership lines (slice 8b item 3)", () => {
     expect((await call(dee, "POST", `/invitations/${inviteIds["dee"]}/decline`)).status).toBe(200);
     expect((await call(olga, "DELETE", `/recipe-books/${shared.id}/invitations/${inviteIds["gone"]}`)).status).toBe(200);
     await sql`UPDATE claimnet.invitations SET expires_at = NOW() - interval '1 hour' WHERE id = ${inviteIds["late"]}::uuid`;
-    // One to Olga's personal book, which must never count toward the shared one.
+    // One to Olga's personal book, which must never count toward the shared one,
+    // and one with no book at all (the admin's invite-by-email shape).
     await invite(olga.personalBookId, `personal-${run}@test.local`);
+    await sql`
+      INSERT INTO claimnet.invitations (inviter_id, group_id, email, token, bypass_cap, expires_at)
+      VALUES (${olga.userId}::uuid, NULL, ${`bookless-${run}@test.local`}, ${`bml-bookless-${run}`}, true, NOW() + interval '7 days')
+    `;
 
     [olgaKey, olgaSharedOnlyKey, adaKey, moKey, twinKey] = await Promise.all([
       mintKey(olga, [olga.personalBookId, shared.id]),
@@ -191,7 +205,7 @@ describe.skipIf(!BASE)("book membership lines (slice 8b item 3)", () => {
     expect(pendingLine(moText, shared.slug)).toBeUndefined();
   });
 
-  it("S8b3-P3: another book's invitations never count, and the personal book shows its own", async () => {
+  it("S8b3-P3: another book's invitations and a bookless one never count; the personal book shows its own", async () => {
     const text = await listBooks(olgaKey);
     expect(pendingLine(text, await personalSlug(olga))).toBe("    Pending invites (1)");
   });
@@ -204,13 +218,23 @@ describe.skipIf(!BASE)("book membership lines (slice 8b item 3)", () => {
     expect(membersLine(text, shared.slug)).toMatch(/^ {4}Members \(4\): you, /);
   });
 
-  it("S8b3-S1: list_my_recipe_books, get_briefing and GET /briefing print the same recipe-books block", async () => {
-    const listed = booksBlock(await listBooks(olgaKey));
-    const briefed = booksBlock(await mcpText(olgaKey, "get_briefing"));
-    const rest = (await (await fetch(`${BASE}/briefing`, { headers: { Authorization: `Bearer ${olgaKey}` } })).json()) as { data?: { text?: string } };
-    expect(briefed).toBe(listed);
-    expect(booksBlock(rest.data?.text ?? "")).toBe(listed);
+  it("S8b3-S1: every surface prints the same Members and Pending invites lines, a book holding recipes included", async () => {
+    const deposited = await mcpText(olgaKey, "check_recipe", {
+      recipe: `As a book owner checking membership lines ${run}, I prefer every surface to agree so that an agent reads one roster.`,
+      supporting_evidence: `The rubric asks for it.\n> "the recipe-books block is identical"\n-- build log ${run}`,
+      recipe_book: shared.slug,
+    });
+    expect(deposited).toContain("Recipe checked as");
+    const briefingRest = async (headers: Record<string, string>) =>
+      ((await (await fetch(`${BASE}/briefing`, { headers: { Authorization: `Bearer ${olgaKey}`, ...headers } })).json()) as { data?: { text?: string } }).data?.text ?? "";
+    const copied = (await (await call(olga, "POST", "/keys/briefing", { key: olgaKey })).json()) as { data?: { text?: string } };
+    const listed = membershipLines(await listBooks(olgaKey));
     expect(listed).toContain("    Pending invites (");
+    expect(listed).toContain("    Members (1): you");
+    expect(membershipLines(await mcpText(olgaKey, "get_briefing"))).toBe(listed);
+    expect(membershipLines(await briefingRest({}))).toBe(listed);
+    expect(membershipLines(await briefingRest({ "X-SoupNet-Surface": "mcp-stdio" }))).toBe(listed);
+    expect(membershipLines(copied.data?.text ?? "")).toBe(listed);
   });
 
   it("S8b3-S4: listing writes nothing", async () => {
@@ -220,7 +244,7 @@ describe.skipIf(!BASE)("book membership lines (slice 8b item 3)", () => {
     expect(await count()).toBe(before);
   });
 
-  it("S8b3-M3: an accepted invitation moves from the count to the roster on the next call", async () => {
+  it("S8b3-M3: the roster is read at call time: an accepted invitation joins it, a removed member leaves it", async () => {
     const before = await listBooks(olgaKey);
     expect(membersLine(before, shared.slug)).not.toContain(ivy.email);
     expect((await call(ivy, "POST", `/invitations/${ivyInvite}/accept`)).status).toBe(200);
@@ -228,6 +252,10 @@ describe.skipIf(!BASE)("book membership lines (slice 8b item 3)", () => {
     expect(membersLine(after, shared.slug)).toMatch(/^ {4}Members \(5\): you, /);
     expect(membersLine(after, shared.slug)).toContain(ivy.email);
     expect(pendingLine(after, shared.slug)).toBe("    Pending invites (2)");
+    expect((await call(olga, "DELETE", `/recipe-books/${shared.id}/members/${twin.userId}`)).status).toBe(200);
+    const removed = membersLine(await listBooks(olgaKey), shared.slug);
+    expect(removed).toMatch(/^ {4}Members \(4\): you, /);
+    expect(removed).not.toContain(twin.email);
   });
 
   it("S8b3-P4: the role is read at call time: a demoted admin loses the count, a promoted member gains it", async () => {

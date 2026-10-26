@@ -12,6 +12,7 @@ Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-
 
 1. **`renderRecipeBooks`** (served wherever the corpus-context block is: `get_briefing` remote and stdio, `GET /briefing`, `list_my_recipe_books`, the web copy-briefing): the Members line is printed on every book with a roster, a solo book included ("Members (1): you"), where it used to be omitted unless a book had two or more members. The caller is listed first as "you", identified by user id. The others keep their labels and order.
 2. **"Pending invites (n)" (new):** a line under the Members line on books where the caller is an owner or admin, `(0)` included, counting the invitations the web's pending list shows. A plain member's book has no such line.
+3. **The `groups` echo** in the JSON of `GET /briefing` and `POST /keys/briefing` mirrors the text: solo books now carry `members`, the caller's entry carries `isCaller: true`, and managed books carry `pendingInvites`. No client reads the echo today; it shows nothing the text does not.
 
 ### Scenarios intended to move
 
