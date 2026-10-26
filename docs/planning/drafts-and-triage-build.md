@@ -2533,3 +2533,15 @@ The verifier's record is above. Each finding, and what was done:
 
 Layer 3 after the fixes: `drafts-bus.test.ts` 15 passed against the worktree backend.
 
+
+Gate after the fixes, at `7cba461`: the first run stopped at the seam check (the dispatch service's fingerprint, refreshed in `7cba461`); the next had every test pass but hit the tracked vitest worker crash ("Worker exited unexpectedly", backlog); the rerun passed, 2,015 tests, 6 skipped, exit 0.
+
+### Slice 10 browser verification (2026-10-26)
+
+Run by the browser-verify skill at `7cba461` on the worktree stack (backend 127.0.0.1:3144 over `soupnet_e2e_10`, Vite 127.0.0.1:5294). Expectations, results and the harness handback are in the private repo's `docs/working/browser-verification/2026-10-26-drafts-10/`. 14 passed (13 desktop, 1 mobile): E1 to E12 met, E13 open as framed.
+
+- E13 (the web check page's open-question line): shown after the results, naming a draft that was also the only result. That is the S10-D2 amendment working. The "asked" date is the UTC day, as every agent-facing date is ("Logged", the labels). Both stand.
+- Fixed from "Found, not listed": the queue's search hint lacked a space before `is:expired`; the expired listing kept the heading "Drafts awaiting your review" and now reads "Drafts that expired unanswered"; the dashboard and book list rows showed an expired draft as "[Unverified draft]", since `GET /traces` rows carried no expiry. They now carry `draftExpiry` through a new module fragment, `draftExpiryShownTo` (only where the viewer sees the draft's state), and read "[Unverified draft, expired]"; Layer 3 pins Dana's row and Sam's absence.
+- Left as is: the expiry explanation is a tooltip on the status line, as every draft status line's is; Pat sees the same expiry as the depositor on an on-behalf draft (S10-L5); a `/check` filter with parentheses errors (pre-existing, stream B's prose-parenthesis fix).
+- The spec is kept as `tests/e2e/drafts-slice10.spec.ts` (the standing answer: recipes `840d65ab`, `dfb89586`), with the database it ages drafts in taken from `E2E_PGDATABASE` or the `.env`, not hard-coded. 14 passed again after the fixes, and `drafts-bus.test.ts` 15 passed.
+

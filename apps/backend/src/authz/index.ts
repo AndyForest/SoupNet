@@ -43,6 +43,7 @@ export {
   draftLive,
   draftExpired,
   draftExpiryReason,
+  draftExpiryShownTo,
   draftRecentlyExpiredAwaitingReviewBy,
   draftLiveAwaitingReviewBy,
   draftExpiredAwaitingReviewBy,

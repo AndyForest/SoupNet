@@ -159,7 +159,9 @@ export function DraftQueuePage() {
     }
   }
 
-  const heading = linkMode ? linkHeading(linkQuery.data?.items ?? []) : "Drafts awaiting your review";
+  const heading = linkMode
+    ? linkHeading(linkQuery.data?.items ?? [])
+    : queueQuery.data?.expired ? "Drafts that expired unanswered" : "Drafts awaiting your review";
 
   return (
     <div data-testid="drafts-queue">

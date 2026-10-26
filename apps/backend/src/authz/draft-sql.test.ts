@@ -17,6 +17,7 @@ import {
   SHARED_AUDIENCE,
   draftLive,
   draftExpired,
+  draftExpiryShownTo,
 } from "./draft-sql";
 import { mayReadTrace, isPublishedDraftState, mayResolveDraft, hasWriteAuthority } from "./roles";
 import { writeAuthoritySql } from "./draft-resolution";
@@ -379,5 +380,14 @@ describe.skipIf(!canConnect)("liveness over the facts (S10-L1, S10-L4)", () => {
         expect(row.expired === true, `expired state=${String(draftState)} age=${days}d`).toBe(unverified && !live);
       }
     }
+  });
+});
+
+describe("draftExpiryShownTo (slice 10, list rows)", () => {
+  it("gives the expiry reason only where the viewer sees the draft's state", () => {
+    const q = dialect.sqlToQuery(draftExpiryShownTo("t", VIEWER)).sql;
+    expect(q).toMatch(/^\(CASE WHEN \(CASE WHEN/);
+    expect(q).toContain("IS NOT NULL THEN");
+    expect(q).toContain("ELSE NULL END)");
   });
 });

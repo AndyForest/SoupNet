@@ -263,6 +263,11 @@ describe.skipIf(!BASE || !canConnect())("drafts as a bus (drafts-and-triage slic
     expect(danaView).toMatchObject({ draftState: "unverified", draftExpiry: "age", draftAbout: pat.email });
     const patView = ((await (await call(pat, "GET", `/traces/${id}`)).json()) as { data: Json }).data;
     expect(patView).toMatchObject({ draftState: "unverified", draftExpiry: "age" });
+    // The book list's rows say so too (after the browser run); Sam's never hold the draft.
+    const rows = async (actor: Actor): Promise<Json[]> =>
+      ((await (await call(actor, "GET", `/traces?groupId=${shared.id}&limit=100`)).json()) as { data: Json[] }).data;
+    expect((await rows(dana)).find((r) => r["id"] === id)).toMatchObject({ draftState: "unverified", draftExpiry: "age" });
+    expect((await rows(sam)).some((r) => r["id"] === id)).toBe(false);
   });
 
   it("S10-X4 / S10-X5 / S10-R3 / DT-BUS-08: an expired draft reads by id with its reason and is resolvable on MCP, REST and the web; nothing is deleted", async () => {

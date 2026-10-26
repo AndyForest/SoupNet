@@ -26,7 +26,7 @@ If a run fails oddly, run `npx playwright test smoke` first. It proves a seeded 
 
 ## Conventions
 
-- One spec per pull request, `pr-<n>.spec.ts`, with one `test` per expectation ID from the expectations file and a `test.step` per user step.
+- One spec per pull request, `pr-<n>.spec.ts`, with one `test` per expectation ID from the expectations file and a `test.step` per user step. A spec kept as a regression test takes its feature family's name instead (`drafts-slice10.spec.ts`), so the kept specs of one feature sit together.
 - Every assertion message states the expected behaviour in words: `expect(link, "the error should link to Recipe Books").toBeVisible()`.
 - Screenshots go through `shot(page, testInfo, "<fixed name>")` from `helpers/evidence.ts`, using the names the expectations file fixed, so the report and the results file refer to the same image.
 - Accounts come from `seedUser(request, "<label>")` in `helpers/accounts.ts`, fresh per test. Sign in with `signIn(page, user, path)`. The real login form is only for specs about login itself.

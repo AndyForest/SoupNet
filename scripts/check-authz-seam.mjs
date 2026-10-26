@@ -245,7 +245,7 @@ const TRACE_READS = {
     why: "reports embedding sources whose recipe no longer exists; a live draft is never an orphan, and no recipe content or count leaves (RP-12)",
   },
   "apps/backend/src/routes/traces.ts": {
-    n: 17, fp: "a8851b1aa871", composes: true,
+    n: 17, fp: "4a35430f1b44", composes: true,
     why: "map version counts and the book list compose the fragments (RP-24, RP-25); own list, own count, and own check log are the caller's rows (RP-27 to RP-29); feedback, reaction, and evidence reads for one recipe run after the module's read gate (RP-19 to RP-22), with lineage ids filtered through it",
   },
   "apps/backend/src/services/book-stats.service.ts": {

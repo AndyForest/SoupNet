@@ -286,6 +286,15 @@ export function draftExpiryReason(alias: TraceAlias): SQL {
   return sql`(CASE WHEN ${draftExpired(alias)} THEN 'age' ELSE NULL END)`;
 }
 
+/**
+ * Why a draft expired, for a viewer who sees its state at all
+ * (`draftStateShownTo`): the dashboard and book list rows (slice 10, after
+ * the browser run). NULL for everyone else, and for live or resolved drafts.
+ */
+export function draftExpiryShownTo(alias: TraceAlias, viewerUserId: string): SQL {
+  return sql`(CASE WHEN ${draftStateShownTo(alias, viewerUserId)} IS NOT NULL THEN ${draftExpiryReason(alias)} ELSE NULL END)`;
+}
+
 /** `draftAwaitingReviewBy`, live: the review queue, its count, and `is:draft` (S10-X1). */
 export function draftLiveAwaitingReviewBy(alias: TraceAlias, personUserId: string): SQL {
   return sql`(${draftAwaitingReviewBy(alias, personUserId)} AND ${draftLive(alias)})`;
