@@ -2,11 +2,11 @@ import { describe, it, expect } from "vitest";
 import {
   classifyDirectoryAnswer,
   directoryStatusRefuses,
-  memberIsChecked,
   directoryDisabledMessage,
   DIRECTORY_INACTIVE_MESSAGE,
   DIRECTORY_UNCONFIRMED_MESSAGE,
   parseServiceAccountKey,
+  directoryWarningEmail,
 } from "./directory";
 
 describe("classifyDirectoryAnswer (OB-M3)", () => {
@@ -44,25 +44,6 @@ describe("directoryStatusRefuses", () => {
   });
 });
 
-describe("memberIsChecked (OD-J8's exact-domain rule)", () => {
-  it("checks an address on exactly the domain", () => {
-    expect(memberIsChecked("max@acme.example", null, "acme.example")).toBe(true);
-    expect(memberIsChecked("Max@ACME.example", null, "acme.example")).toBe(true);
-  });
-
-  it("doesn't check a subdomain or another domain", () => {
-    expect(memberIsChecked("max@eu.acme.example", null, "acme.example")).toBe(false);
-    expect(memberIsChecked("rae@consultancy.example", null, "acme.example")).toBe(false);
-    expect(memberIsChecked("max@notacme.example", null, "acme.example")).toBe(false);
-  });
-
-  it("checks a member whose linked identity's hd is the domain", () => {
-    expect(memberIsChecked("rae@consultancy.example", "ACME.example", "acme.example")).toBe(true);
-    expect(memberIsChecked("rae@consultancy.example", "eu.acme.example", "acme.example")).toBe(false);
-    expect(memberIsChecked("rae@consultancy.example", "not a domain", "acme.example")).toBe(false);
-  });
-});
-
 describe("the copy (recipe efa4bbca)", () => {
   it("names each directory cause", () => {
     expect(directoryDisabledMessage("directory_inactive")).toBe(DIRECTORY_INACTIVE_MESSAGE);
@@ -84,5 +65,16 @@ describe("parseServiceAccountKey (OB-K3)", () => {
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.message).not.toContain("BEGIN");
     }
+  });
+});
+
+describe("directoryWarningEmail (OB-C8; verification O1, O2)", () => {
+  it("names the last success and the hour everyone is signed out by, a day later, without claiming hours of failure", () => {
+    const mail = directoryWarningEmail("Acme", new Date("2026-10-26T09:15:00Z"));
+    expect(mail.subject).toBe("Soup.net can't reach Acme's Google Workspace directory");
+    expect(mail.text).toContain("its last successful check was at 2026-10-26 09:15 UTC");
+    expect(mail.text).toContain("everyone on your domain will be by 2026-10-27 09:15 UTC");
+    expect(mail.text).toContain("may be signed out already");
+    expect(mail.text).not.toContain("For the last");
   });
 });

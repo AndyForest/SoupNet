@@ -18,7 +18,6 @@ import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { domainToUnicode } from "node:url";
 import {
   DIRECTORY_SCOPE,
-  DIRECTORY_STALE_HOURS,
   DIRECTORY_WARNING_HOURS,
   directoryWarningEmail,
   normalizeDomain,
@@ -78,9 +77,8 @@ async function warnOrganization(organizationId: string): Promise<void> {
     WHERE organization_id = ${organizationId}::uuid
   `)) as unknown as Array<{ since: string }>;
   if (!rows[0]) return;
-  const failsClosedAt = new Date(new Date(rows[0].since).getTime() + DIRECTORY_STALE_HOURS * 3600_000);
   const managers = await directoryManagersOf(db, organizationId);
-  const mail = directoryWarningEmail(managers.name || "your organization", failsClosedAt);
+  const mail = directoryWarningEmail(managers.name || "your organization", new Date(rows[0].since));
   for (const email of managers.emails) {
     await sendOrganizationDirectoryEmail(email, mail).catch(() => undefined);
   }

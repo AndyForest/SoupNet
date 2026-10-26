@@ -52,7 +52,7 @@ Feature: Offboarding through the company's Google Workspace directory
 
     @OFF-DIR-01
     Scenario: Suspended in Google
-      # Requirement: C01-R03
+      # Requirement: C01-R03, C01-R09
       Given Acme's admin suspends Max in Google
       When Max's agent uses his key and Max is due a check
       Then the key is refused, and so is his session, with "Your organization's Google Workspace doesn't list this account as active."
@@ -84,6 +84,7 @@ Feature: Offboarding through the company's Google Workspace directory
     @OFF-DIR-06
     Scenario: Google slow or down
       Then Max is answered from his last status
+      And Google isn't asked about him again for thirty seconds
 
     @OFF-DIR-07
     Scenario: No successful check for a day
@@ -94,12 +95,22 @@ Feature: Offboarding through the company's Google Workspace directory
     @OFF-DIR-08
     Scenario: Google refuses the connection
       Given the connection's credential stops working
-      Then Acme's admins see the error, and six hours in they get one email naming when members will be switched off
+      Then Acme's admins see the error, and six hours after the last success they get one email naming when it was and the hour everyone will be switched off by
+      And a successful check means the next outage warns again
 
     @OFF-DIR-09
     Scenario: Only people on the domain are checked
-      Then Rae is never checked
+      Then Rae is never checked, and nor is someone on a subdomain of acme.example
       And Mal is switched off
+
+    @OFF-DIR-11
+    Scenario: The domain claim stops being current
+      # Requirement: C01-R03, C01-R09
+      # Guards: audit F113.
+      Given Max was switched off by the directory
+      When acme.example's DNS check fails, its TXT record is removed, or its re-check stalls
+      Then Google is asked about nobody and nobody goes stale
+      And Max stays switched off
 
     @OFF-DIR-10
     Scenario: Disconnecting

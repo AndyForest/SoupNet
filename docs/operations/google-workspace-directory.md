@@ -28,7 +28,9 @@ Google may show an "unverified app" screen to the consenting admin, since Soup.n
 
 ## What happens when the connection breaks
 
-If Soup.net can't read your directory (Google refuses the credential, or can't be reached), it keeps using the last status it has. After six hours, your organization's owners and admins get one email naming the time it gives up. After a day without a successful check, members on your domain are signed out and their agents' keys stop working until a check succeeds, because Soup.net can no longer confirm they still work for you.
+If Soup.net can't read your directory (Google refuses the credential, or can't be reached), it keeps using the last status it has. When a check fails more than six hours after the last successful one, your organization's owners and admins get one email saying when that was and the hour everyone will be signed out by. A member with no successful check for a day is signed out and their agents' keys stop working until a check succeeds, because Soup.net can no longer confirm they still work for you.
+
+The checks need your domain's verification in Soup.net to stay current. If its DNS check fails or the TXT record is removed, Soup.net stops checking and stops signing people out for want of a check, but anyone the directory already showed as suspended, archived or removed stays signed out.
 
 To fix it, reconnect (either way) from the console. If that's no longer possible because every owner and admin is locked out too, contact Soup.net support: the site operator can remove the connection by hand, which lets everyone back in, and you can reconnect after.
 

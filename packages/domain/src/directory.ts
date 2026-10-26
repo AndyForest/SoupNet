@@ -5,11 +5,10 @@
  *
  * The backend asks the Directory API about one member at a time, lazily, at
  * most hourly, at the moment their credential is used (recipe 3650aed9).
- * These functions decide what an answer means, who is checked, and the copy
- * a switched-off person reads.
+ * These functions decide what an answer means, when a check is due or
+ * stale, and the copy a switched-off person reads. Who is checked is one SQL
+ * fragment, `checkedUnder` in the backend's authz/directory-sql.ts.
  */
-
-import { isAddressOnDomain, normalizeDomain } from "./org-domains";
 
 /** A member's directory status is checked again after this long. */
 export const DIRECTORY_CHECK_INTERVAL_MINUTES = 60;
@@ -58,19 +57,6 @@ export function directoryStatusRefuses(status: DirectoryStatus | null): boolean 
   return status === "suspended" || status === "archived" || status === "deleted";
 }
 
-/**
- * Is this member checked against a connection for `domain` (ASCII, as a
- * claim is stored)? Their address is on exactly that domain, or their linked
- * Google identity's `hd` is, by stream Domains' exact-domain rule (OD-J8): no
- * subdomains, the domain part normalised as a claim is (recipe 88b1b328).
- */
-export function memberIsChecked(email: string, identityHd: string | null, domain: string): boolean {
-  if (isAddressOnDomain(email, domain)) return true;
-  if (!identityHd) return false;
-  const hd = normalizeDomain(identityHd);
-  return hd.ok && hd.domain === domain;
-}
-
 export type DirectoryDisabledReason = "directory_inactive" | "directory_unconfirmed";
 
 export const DIRECTORY_INACTIVE_MESSAGE =
@@ -109,17 +95,25 @@ export function parseServiceAccountKey(raw: unknown): { ok: true; key: ServiceAc
 }
 
 /**
- * The one warning an organization's owners and admins get when its directory
- * connection has failed for DIRECTORY_WARNING_HOURS (draft 47f9620f): when it
- * fails closed, and the fix. Names no credential.
+ * The one warning an organization's owners and admins get when a check fails
+ * and the connection's last success is over DIRECTORY_WARNING_HOURS old
+ * (draft 47f9620f): when the last check succeeded, the stale rule, the hour
+ * everyone on the domain is signed out by, and the fix. Names no credential.
+ *
+ * The copy says only what the timestamps show. A quiet spell also ages the
+ * last success, so it doesn't claim hours of failure; and each member goes
+ * stale a day after their own last check, so the hour named is the latest
+ * anyone keeps access, not the first (verification O1, O2).
  */
-export function directoryWarningEmail(organizationName: string, failsClosedAt: Date): { subject: string; text: string } {
-  const when = failsClosedAt.toISOString().replace("T", " ").slice(0, 16) + " UTC";
+export function directoryWarningEmail(organizationName: string, lastSuccessAt: Date): { subject: string; text: string } {
+  const utc = (d: Date) => d.toISOString().replace("T", " ").slice(0, 16) + " UTC";
+  const everyoneBy = new Date(lastSuccessAt.getTime() + DIRECTORY_STALE_HOURS * 3600_000);
   return {
     subject: `Soup.net can't reach ${organizationName}'s Google Workspace directory`,
     text:
-      `For the last ${DIRECTORY_WARNING_HOURS} hours, Soup.net hasn't been able to check ${organizationName}'s members against your Google Workspace directory. ` +
-      `If it still can't by ${when}, members on your domain will be signed out of Soup.net and their agents' keys will stop working until a check succeeds. ` +
+      `Soup.net just failed to check one of ${organizationName}'s members against your Google Workspace directory, and its last successful check was at ${utc(lastSuccessAt)}. ` +
+      `A member whose status hasn't been confirmed for ${DIRECTORY_STALE_HOURS} hours is signed out of Soup.net, and their agents' keys stop working until a check succeeds. ` +
+      `Members who haven't used Soup.net recently may be signed out already, and unless a check succeeds, everyone on your domain will be by ${utc(everyoneBy)}. ` +
       `To fix it, an owner or admin can reconnect the directory from your organization's console in Soup.net (or switch to a service account). ` +
       `If nobody in your organization can sign in any more, contact Soup.net support.`,
   };
