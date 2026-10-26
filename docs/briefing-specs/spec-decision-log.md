@@ -4,6 +4,37 @@ Every PR that touches briefing copy (`packages/domain/src/recipe-guide-content.t
 
 (Renamed from declared-intent-log.md on 2026-08-23: "intent" now names the runtime intent-registration mechanism — cold-start v2 Phase C — so the discipline's log takes an unambiguous name. The discipline itself is unchanged.)
 
+## 2026-10-26 — OpenAI plugin directory, stream T: tool descriptions in the reviewed shape, server instructions, annotations by one rule, and a profile tool
+
+Plan: [../planning/openai-plugin-directory.md](../planning/openai-plugin-directory.md) items 3 to 7 and 13. Rubric: [../planning/openai-plugin-build/tool-contract.md](../planning/openai-plugin-build/tool-contract.md). Justifications, claim by claim: [../connectors/openai-plugin.md](../connectors/openai-plugin.md). The annotation rule is recipe `3b166817`.
+
+### Edits
+
+1. **Every tool description** (`MCP_TOOL_DESCRIPTIONS`, served on both servers) now says what the tool does, when to use it, and when not to, naming the tool to use instead, as plain statements. Wording that claimed more than the server does was corrected:
+   - `check_recipe` says the same recipe text, book **and key** return the same id (the dedup is per key);
+   - `update_recipe_book_description` says the response shows the earlier text once (an audit row keeps it, so "not kept" would have been untrue);
+   - `check_recipe`'s file attachment says a `file_url` is fetched from the public internet.
+2. **Dropped:** `log_feedback`'s "Null results earn a row.", to fit its not-for clause under the 420-character limit. The briefing keeps the teaching ("results that didn't help are worth a row too"). `check_recipe`'s "Check freely … so future checks get smarter (stigmergy)" gave way to the use and not-for clauses. The briefing's opening and When to check carry that teaching.
+3. **`update_recipe_book_description`'s description** moved into the shared block, and **`get_profile`** (new) has its own.
+4. **`synthesize`:** the description no longer begins "Premium opt-in", and the refusal reads "Synthesis is off for this account; the results below are not synthesised." (it said "a premium feature").
+5. **Server instructions (new)**, 871 characters, the same on both servers, with the cross-tool moves in the first 512.
+6. **Output:** the structured `ranking` block and the stored feedback row's id left the MCP responses; REST keeps both.
+
+### Scenarios watched, with rationale for holding
+
+- **Search vs check** (`checking-behavior.feature`) and **feedback-loop** scenarios: each tool still sends the reader to the same sibling, now in a not-for clause. The search, check and feedback mechanics are unchanged.
+- **Every briefing scenario:** no briefing text changed on this branch. Stream L's two briefing edits from this round's audit are logged under L's entry.
+
+### Measured
+
+| Measure | Before (`main` at `cf6e13e`, with slice 8b's `page`) | After | Cap |
+|---|---|---|---|
+| Remote `tools/list` | 17,904 bytes | 18,930 | 18,200 → 18,950 |
+| Stdio `tools/list` | 14,407 bytes | 14,738 | 14,700 → 14,750 |
+| Shared descriptions | 6,593 characters | 7,434 | 6,600 → 7,450 |
+
+The growth is the same as when this was first measured, before slice 8b merged (+1,026, +331, +841). Stream O's `securitySchemes` move the remote cap again after this, by their own bytes.
+
 ## 2026-10-26 — Drafts-and-triage slice 8b items 1 and 2 (stream B): the flat list, and created-after: / changed-after:
 
 Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-and-triage-slices-6-7-revision.md) §Slice 8 items 1 and 2; ruling 51. Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 8b items 1 and 2 rubric. Design checked as recipe `4a517f5b`; qualifier names as recipe `dc8e7d09`.

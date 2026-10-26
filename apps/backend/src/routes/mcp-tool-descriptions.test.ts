@@ -211,8 +211,13 @@ describe("MCP tool description budget", () => {
     // `intent:` term (6a), and the enumerations log_feedback and get_recipes
     // now spell out (8a). Prior total 6,051; each PR records its total in
     // spec-decision-log.md; re-tightened to the measured figure after 8b/6b.
+    // 6,600 → 7,450 (2026-10-26), UP: OpenAI plugin directory stream T. Every
+    // tool description says when to use it and when not to, as the directory
+    // review requires, and two descriptions joined the shared block
+    // (update_recipe_book_description, get_profile). Prior total 6,593 on
+    // main (with slice 8b's page parameter), new total 7,434.
     const total = Object.values(all).reduce((n, s) => n + s.length, 0);
-    expect(total).toBeLessThanOrEqual(6600);
+    expect(total).toBeLessThanOrEqual(7450);
   });
 
   it("keeps the shared params that repeat across tools to one line (≤ 120 chars) — S1-Z5", () => {
