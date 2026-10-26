@@ -101,12 +101,14 @@ EXPOSE 3001
 # already cached here. Override at build with --build-arg HF_MODEL=<repo id>;
 # users who swap EMBEDDINGS_MODEL without rebuilding should instead mount an
 # HF_HOME volume and unset the offline flags (see .env.example / docker-compose).
+# transformers.js ignores HF_HOME itself, so the bake sets env.cacheDir from it
+# and local-client.ts does the same at runtime (F124).
 ENV HF_HOME=/app/apps/backend/.hf-cache
 ARG EMBEDDINGS_LOCAL=false
 ARG HF_MODEL=Xenova/bge-small-en-v1.5
 RUN if [ "$EMBEDDINGS_LOCAL" = "true" ]; then \
       mkdir -p "$HF_HOME" \
-      && HF_MODEL="$HF_MODEL" node -e "import('@huggingface/transformers').then(({ pipeline }) => pipeline('feature-extraction', process.env.HF_MODEL)).then(() => console.log('baked local embedding model:', process.env.HF_MODEL)).catch((err) => { console.error(err); process.exit(1); })" \
+      && HF_MODEL="$HF_MODEL" node -e "import('@huggingface/transformers').then(({ env, pipeline }) => { env.cacheDir = process.env.HF_HOME; return pipeline('feature-extraction', process.env.HF_MODEL); }).then(() => console.log('baked local embedding model:', process.env.HF_MODEL)).catch((err) => { console.error(err); process.exit(1); })" \
       && chown -R node:node "$HF_HOME"; \
     else \
       echo "Lean image (EMBEDDINGS_LOCAL=false): skipping local-model bake"; \
