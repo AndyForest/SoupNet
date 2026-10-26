@@ -37,9 +37,18 @@ import type { AppEnv } from "../types";
 
 export const googleAuthRoutes = new Hono<AppEnv>();
 
-const startRateLimit = rateLimit({ max: 10, windowMs: 15 * 60 * 1000 });
-const callbackRateLimit = rateLimit({ max: 10, windowMs: 15 * 60 * 1000 });
-const exchangeRateLimit = rateLimit({ max: 10, windowMs: 15 * 60 * 1000 });
+// Limits (audit F111): a company signs in from behind one office address,
+// so the per-IP limits sit far above an office's morning rate and serve only
+// as a flood backstop. The callback is also limited per pending request (by
+// its state): a state is good once, so a few tries is plenty, and a flood of
+// distinct states still meets the per-IP backstop. The exchange needs no
+// per-code limit: a wrong secret consumes nothing and the secret is 256
+// random bits. Every start writes a row, so it keeps its per-IP limit.
+const WINDOW_MS = 15 * 60 * 1000;
+const startRateLimit = rateLimit({ max: 300, windowMs: WINDOW_MS });
+const callbackIpRateLimit = rateLimit({ max: 600, windowMs: WINDOW_MS });
+const callbackStateRateLimit = rateLimit({ max: 3, windowMs: WINDOW_MS, keyFn: (c) => `state:${c.req.query("state") ?? ""}` });
+const exchangeIpRateLimit = rateLimit({ max: 600, windowMs: WINDOW_MS });
 
 /** base64url of 32 bytes, or of a SHA-256: 43 characters. */
 const TOKEN_SHAPE = /^[A-Za-z0-9_-]{43}$/;
@@ -82,7 +91,7 @@ googleAuthRoutes.post("/start", startRateLimit, async (c) => {
   return c.json({ ok: true, data: { url } });
 });
 
-googleAuthRoutes.get("/callback", callbackRateLimit, async (c) => {
+googleAuthRoutes.get("/callback", callbackIpRateLimit, callbackStateRateLimit, async (c) => {
   const config = googleOidcConfig();
   if (!config) return notConfigured(c);
   const outcome = await completeGoogleSignIn(getDb(), config, keySourceFor(config.jwksUri), {
@@ -96,7 +105,7 @@ googleAuthRoutes.get("/callback", callbackRateLimit, async (c) => {
   return c.redirect(`${frontendUrl()}/auth/google/complete#${fragment}`, 302);
 });
 
-googleAuthRoutes.post("/exchange", exchangeRateLimit, async (c) => {
+googleAuthRoutes.post("/exchange", exchangeIpRateLimit, async (c) => {
   const config = googleOidcConfig();
   if (!config) return notConfigured(c);
   const body = await jsonBody(c);

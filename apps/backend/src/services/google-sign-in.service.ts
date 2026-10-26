@@ -182,7 +182,7 @@ class Rollback extends Error {
   }
 }
 
-interface ResolvedAccount {
+export interface ResolvedAccount {
   userId: string;
   created: boolean;
   /** The sign-up landed on the waitlist (the cap was full). */
@@ -196,7 +196,13 @@ interface ResolvedAccount {
  * Find, link or create the account for a verified Google sign-in, in one
  * transaction (SSO-A1 to SSO-A6, SSO-A10).
  */
-async function resolveAccount(db: PostgresJsDatabase, claims: GoogleIdClaims): Promise<ResolvedAccount | GoogleSignInError> {
+export async function resolveAccount(
+  db: PostgresJsDatabase,
+  claims: GoogleIdClaims,
+  // The hook is a parameter only so the Layer 3 suite can stand in for
+  // Domains' answer; the callback always passes the real one.
+  joinHook: typeof afterGoogleSignIn = afterGoogleSignIn,
+): Promise<ResolvedAccount | GoogleSignInError> {
   const authoritative = googleIsAuthoritative(claims);
   const email = normalizeEmail(claims.email);
   try {
@@ -268,7 +274,7 @@ async function resolveAccount(db: PostgresJsDatabase, claims: GoogleIdClaims): P
         }
       }
 
-      const joined = await afterGoogleSignIn(tx, { userId: resolved.userId, email, hd: claims.hostedDomain, created: resolved.created });
+      const joined = await joinHook(tx, { userId: resolved.userId, email, hd: claims.hostedDomain, created: resolved.created });
       if (joined === "full" && resolved.created) throw new Rollback("organization_full");
       return resolved;
     });
@@ -296,7 +302,7 @@ async function insertIdentity(tx: SqlExecutor, userId: string, claims: GoogleIdC
  * the mailbox here; a non-authoritative sign-up proves nothing yet and gets
  * our verification email (SSO-A4).
  */
-async function createGoogleAccount(tx: Tx, claims: GoogleIdClaims, email: string, verified: boolean): Promise<ResolvedAccount> {
+export async function createGoogleAccount(tx: Tx, claims: GoogleIdClaims, email: string, verified: boolean): Promise<ResolvedAccount> {
   let invitation: { id: string; groupId: string | null; bypassCap: boolean } | null = null;
   if (verified) {
     const rows = await tx.execute(sql`
