@@ -96,6 +96,14 @@ jobs:
       - name: Build backend
         run: npm run build -w apps/backend
 
+      # The SPA build (tsc --noEmit && vite build) ran only in the deploy job
+      # until 2026-10-26, when a branch that imported a Node-only module into
+      # the frontend was green here and would have failed at deploy. Building
+      # it in the test job catches that before merge; the local gate mirrors
+      # this step (scripts/test-ci-local.mjs).
+      - name: Build frontend
+        run: npm run build -w apps/frontend
+
       - name: Typecheck
         run: npm run typecheck --workspaces --if-present
 

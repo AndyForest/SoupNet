@@ -37,7 +37,9 @@ import { normalizeEmail } from "../lib/normalize-email";
 import { accountRefusal, invalidateSessions, ssoRequiredFor } from "../authz";
 import { mayRegister, logSignupCapState } from "./system-settings.service";
 import { sendVerificationEmail } from "./email.service";
-import { getClientPublic } from "./oauth.service";
+import { resolveOAuthClient } from "./oauth-cimd.service";
+import type { CimdDeps } from "./oauth-cimd.service";
+import { normalizeResource } from "../lib/oauth-resource";
 import { onGoogleSignIn } from "./org-domains.service";
 import {
   buildGoogleAuthorizationUrl,
@@ -83,13 +85,17 @@ export type ReturnTarget =
 const DEFAULT_RETURN: ReturnTarget = { kind: "app", path: "/app/dashboard" };
 
 /**
- * Is this redirect URI registered for this client, exactly, as the grant
- * checks it? Today: a dynamically registered client. After stream O merges,
- * this calls O's resolver for metadata-document clients too.
+ * Would the consent page's grant accept this client, redirect URI and
+ * resource? The client through stream O's resolver, as the grant resolves
+ * it: a dynamically registered client, or a client ID metadata document
+ * fetched under the requester's per-IP cap (ChatGPT's). The redirect URI
+ * exactly as registered (F44), and the resource one the grant would bind a
+ * token to (RFC 8707; SSO-G8).
  */
-async function authorizeTargetAllowed(db: SqlExecutor, clientId: string, redirectUri: string, _ip: string): Promise<boolean> {
-  const client = await getClientPublic(db as PostgresJsDatabase, clientId);
-  return !!client && client.redirectUris.includes(redirectUri);
+async function authorizeTargetAllowed(db: SqlExecutor, params: AuthorizeParams, deps: CimdDeps): Promise<boolean> {
+  if (!normalizeResource(params.resource).ok) return false;
+  const client = await resolveOAuthClient(db as PostgresJsDatabase, params.client_id, deps);
+  return !!client && client.redirectUris.includes(params.redirect_uri);
 }
 
 /**
@@ -97,7 +103,7 @@ async function authorizeTargetAllowed(db: SqlExecutor, clientId: string, redirec
  * anything the server would not send a person to: an off-app path, or
  * authorize parameters the consent page's grant would refuse.
  */
-export async function validateReturnTarget(db: SqlExecutor, raw: unknown, ip: string): Promise<ReturnTarget | null> {
+export async function validateReturnTarget(db: SqlExecutor, raw: unknown, ip: string, cimd: Omit<CimdDeps, "ip"> = {}): Promise<ReturnTarget | null> {
   if (raw === undefined || raw === null) return DEFAULT_RETURN;
   if (typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
@@ -117,7 +123,7 @@ export async function validateReturnTarget(db: SqlExecutor, raw: unknown, ip: st
   if (params.response_type !== "code" || params.code_challenge_method !== "S256") return null;
   if (!/^[A-Za-z0-9._~-]{43,128}$/.test(params.code_challenge)) return null;
   if (!params.client_id || !params.redirect_uri) return null;
-  if (!(await authorizeTargetAllowed(db, params.client_id, params.redirect_uri, ip))) return null;
+  if (!(await authorizeTargetAllowed(db, params, { ...cimd, ip }))) return null;
   return { kind: "oauth_authorize", params };
 }
 
@@ -183,7 +189,7 @@ class Rollback extends Error {
   }
 }
 
-interface ResolvedAccount {
+export interface ResolvedAccount {
   userId: string;
   created: boolean;
   /** The sign-up landed on the waitlist (the cap was full). */
@@ -197,7 +203,13 @@ interface ResolvedAccount {
  * Find, link or create the account for a verified Google sign-in, in one
  * transaction (SSO-A1 to SSO-A6, SSO-A10).
  */
-async function resolveAccount(db: PostgresJsDatabase, claims: GoogleIdClaims): Promise<ResolvedAccount | GoogleSignInError> {
+export async function resolveAccount(
+  db: PostgresJsDatabase,
+  claims: GoogleIdClaims,
+  // The hook is a parameter only so the Layer 3 suite can stand in for
+  // Domains' answer; the callback always passes the real one.
+  joinHook: typeof afterGoogleSignIn = afterGoogleSignIn,
+): Promise<ResolvedAccount | GoogleSignInError> {
   const authoritative = googleIsAuthoritative(claims);
   const email = normalizeEmail(claims.email);
   try {
@@ -269,7 +281,7 @@ async function resolveAccount(db: PostgresJsDatabase, claims: GoogleIdClaims): P
         }
       }
 
-      const joined = await afterGoogleSignIn(tx, { userId: resolved.userId, email, hd: claims.hostedDomain, created: resolved.created });
+      const joined = await joinHook(tx, { userId: resolved.userId, email, hd: claims.hostedDomain, created: resolved.created });
       if (joined === "full" && resolved.created) throw new Rollback("organization_full");
       return resolved;
     });
@@ -297,7 +309,7 @@ async function insertIdentity(tx: SqlExecutor, userId: string, claims: GoogleIdC
  * the mailbox here; a non-authoritative sign-up proves nothing yet and gets
  * our verification email (SSO-A4).
  */
-async function createGoogleAccount(tx: Tx, claims: GoogleIdClaims, email: string, verified: boolean): Promise<ResolvedAccount> {
+export async function createGoogleAccount(tx: Tx, claims: GoogleIdClaims, email: string, verified: boolean): Promise<ResolvedAccount> {
   let invitation: { id: string; groupId: string | null; bypassCap: boolean } | null = null;
   if (verified) {
     const rows = await tx.execute(sql`

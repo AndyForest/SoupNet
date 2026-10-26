@@ -4,9 +4,17 @@ import jwt from "jsonwebtoken";
 import { seedVerifiedUser } from "../test-users";
 import { startFakeGoogleIssuer } from "../test-google-issuer";
 import type { FakeGoogleIssuer, FakeIdClaims } from "../test-google-issuer";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
+import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { GOOGLE_SIGN_IN_ERRORS, googleSignInErrorMessage } from "@soupnet/domain";
+import {
+  GOOGLE_SIGN_IN_ERRORS,
+  googleSignInErrorMessage,
+  SESSION_EXPIRED_MESSAGE,
+  ACCOUNT_DISABLED_MESSAGE,
+  ACCOUNT_SUSPENDED_MESSAGE,
+  SSO_REQUIRED_MESSAGE,
+} from "@soupnet/domain";
 import { googleAuthRoutes } from "./google-auth";
 
 /**
@@ -181,6 +189,20 @@ describe("the SPA's outcome copy (SSO-U3)", () => {
   });
 });
 
+describe("the SPA's signed-out notices (SSO-U4)", () => {
+  it("carry every refusal sentence word for word", () => {
+    const spa = readFileSync(fileURLToPath(new URL("../../../frontend/src/lib/login-notice.ts", import.meta.url)), "utf8");
+    for (const [code, message] of Object.entries({
+      session_expired: SESSION_EXPIRED_MESSAGE,
+      account_disabled: ACCOUNT_DISABLED_MESSAGE,
+      account_suspended: ACCOUNT_SUSPENDED_MESSAGE,
+      sso_required: SSO_REQUIRED_MESSAGE,
+    })) {
+      expect(spa, code).toContain(`${code}: ${JSON.stringify(message)}`);
+    }
+  });
+});
+
 describe("Google sign-in, unconfigured (SSO-G7, in process)", () => {
   it("answers 404 on every route when no client id is set", async () => {
     const saved = process.env["GOOGLE_OAUTH_CLIENT_ID"];
@@ -248,6 +270,8 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
       { kind: "url", path: "/app/x" },
       { kind: "oauth_authorize", params: { response_type: "code", client_id: "unknown-client", redirect_uri: "https://evil.example/cb", code_challenge: "a".repeat(43), code_challenge_method: "S256", state: "s" } },
       { kind: "oauth_authorize", params: { response_type: "token", client_id: "x", redirect_uri: "https://x.example", code_challenge: "a".repeat(43), code_challenge_method: "S256" } },
+      // SSO-G8: a metadata-document client that doesn't resolve, as the grant would refuse it.
+      { kind: "oauth_authorize", params: { response_type: "code", client_id: "https://cimd-unresolvable.invalid/oauth/client.json", redirect_uri: "https://cimd-unresolvable.invalid/cb", code_challenge: "a".repeat(43), code_challenge_method: "S256", state: "s" } },
     ]) {
       const { res } = await start(target);
       expect(res.status, JSON.stringify(target)).toBe(400);
@@ -298,6 +322,74 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
     const again = await exchange(handoff, started!.secret);
     expect(again.status).toBe(400);
     expect(await again.text()).toBe(wrongBody);
+  });
+
+  it("F111 / SSO-G6: eleven sign-ins from one office address are not rate limited; one state is", async () => {
+    const saved = process.env["DISABLE_RATE_LIMIT"];
+    delete process.env["DISABLE_RATE_LIMIT"];
+    try {
+      const office = { "x-forwarded-for": `203.0.113.${(n % 200) + 1}` };
+      for (let i = 0; i < 11; i++) {
+        const res = await googleAuthRoutes.request(`/callback?state=${secret()}`, { headers: office });
+        expect(res.status, `callback ${i + 1}`).toBe(302);
+        const start = await googleAuthRoutes.request("/start", {
+          method: "POST",
+          headers: { ...office, "content-type": "application/json" },
+          body: JSON.stringify({ binding: sha256(secret()) }),
+        });
+        expect(start.status, `start ${i + 1}`).toBe(200);
+      }
+      const one = secret();
+      const statuses: number[] = [];
+      for (let i = 0; i < 4; i++) statuses.push((await googleAuthRoutes.request(`/callback?state=${one}`, { headers: office })).status);
+      expect(statuses).toEqual([302, 302, 302, 429]);
+    } finally {
+      if (saved !== undefined) process.env["DISABLE_RATE_LIMIT"] = saved;
+    }
+  });
+
+  it("GSI-CAP-01 / SSO-A6: with the signup cap full, a Google sign-up lands on the waitlist (in a rolled-back transaction)", async () => {
+    const { createGoogleAccount } = await import("../services/google-sign-in.service");
+    const email = address("capped", "gmail.com");
+    const claims = { issuer: "https://accounts.google.com", subject: sub(), email, emailVerified: true, hostedDomain: null, name: null };
+    let waitlisted: boolean | null = null;
+    let waitlistedAt: string | null = null;
+    await getDb().transaction(async (tx) => {
+      // The cap set to 0 is seen only inside this transaction, so parallel
+      // files keep registering normally.
+      await tx.execute(sql`
+        INSERT INTO claimnet.system_settings (key, value) VALUES ('signupCap', '0')
+        ON CONFLICT (key) DO UPDATE SET value = '0'
+      `);
+      const created = await createGoogleAccount(tx, claims, email, true);
+      waitlisted = created.waitlisted;
+      const rows = (await tx.execute(sql`SELECT waitlisted_at FROM claimnet.users WHERE id = ${created.userId}::uuid`)) as unknown as Array<{ waitlisted_at: string | null }>;
+      waitlistedAt = rows[0]?.waitlisted_at ?? null;
+      tx.rollback();
+    }).catch((err: unknown) => {
+      if (!(err instanceof Error) || !/rollback/i.test(err.message)) throw err;
+    });
+    expect(waitlisted).toBe(true);
+    expect(waitlistedAt).not.toBeNull();
+    expect(await userIdByEmail(email)).toBeUndefined();
+  });
+
+  it("GSI-DOM-01 / SSO-A10: Domains' hook answering full rolls a new sign-up back, and leaves an existing account signed in", async () => {
+    const { resolveAccount } = await import("../services/google-sign-in.service");
+    const full = async () => "full" as const;
+    const email = address("full", "gmail.com");
+    const claims = { issuer: "https://accounts.google.com", subject: sub(), email, emailVerified: true, hostedDomain: null, name: null };
+    expect(await resolveAccount(getDb(), claims, full)).toBe("organization_full");
+    expect(await userIdByEmail(email)).toBeUndefined();
+    const max = await seeded("max-full");
+    const linked = await resolveAccount(getDb(), { ...claims, subject: sub(), email: max.email, hostedDomain: DOMAIN }, full);
+    expect(linked).toMatchObject({ userId: max.userId, created: false });
+    const seen: unknown[] = [];
+    await resolveAccount(getDb(), { ...claims, subject: sub(), email: address("hook", "gmail.com") }, async (_tx, input) => {
+      seen.push(input);
+      return "none";
+    });
+    expect(seen).toEqual([expect.objectContaining({ created: true, hd: null })]);
   });
 
   // ── Accounts ──────────────────────────────────────────────────────────────
@@ -407,6 +499,50 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
     expect(await signIn(consumer(pat.email))).toEqual({ error: "account_suspended" });
   });
 
+  it("GSI-STATE-01 / SSO-A7: a waitlisted account and an org-disabled account get no session either", async () => {
+    const waiting = await seeded("waiting", "gmail.com");
+    const waitingSub = sub();
+    signedIn(await signIn(consumer(waiting.email, waitingSub)));
+    await getDb().execute(sql`UPDATE claimnet.users SET waitlisted_at = now() WHERE id = ${waiting.userId}::uuid`);
+    const waitlisted = await signIn(consumer(waiting.email, waitingSub));
+    // waitlist.service.test.ts promotes verified waitlisted accounts across
+    // the whole table, so put the row back before asserting nothing else.
+    await getDb().execute(sql`UPDATE claimnet.users SET waitlisted_at = NULL WHERE id = ${waiting.userId}::uuid`);
+    expect(waitlisted).toEqual({ error: "waitlisted" });
+
+    const olive = await seeded("olive-dis");
+    const member = await seeded("member-dis");
+    const orgId = await createOrg(olive.email);
+    await addToOrg(orgId, member.email);
+    expect((await call(olive.token, "POST", `/organizations/${orgId}/members/${member.userId}/disable`)).status).toBe(200);
+    expect(await signIn(workspace(member.email))).toEqual({ error: "account_disabled" });
+  });
+
+  it("GSI-PWD-03 / SSO-A9b: every reader of password_hash is a reviewed one", () => {
+    // A new reader of the column must handle a null hash (a Google-only
+    // account). Adding one fails this test until it is reviewed and listed.
+    const reviewed = new Set([
+      "auth.ts", // verifyPassword (dummy hash for null), createAccount (writes)
+      "routes/auth.ts", // DELETE /auth/me confirmation, reset-password (writes)
+      "routes/google-auth.test.ts",
+      "services/google-sign-in.service.ts", // takeover sets it null
+      "test-users.ts", // writes a cheap hash for seeded test users
+    ]);
+    const root = fileURLToPath(new URL("..", import.meta.url));
+    const found: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (/\.tsx?$/.test(entry.name) && /password_hash|passwordHash/.test(readFileSync(full, "utf8"))) {
+          found.push(relative(root, full).split(sep).join("/"));
+        }
+      }
+    };
+    walk(root);
+    expect(found.filter((f) => !reviewed.has(f) && !f.endsWith(".test.ts"))).toEqual([]);
+  });
+
   it("GSI-PWD-01 / SSO-A9: a password login to a Google-only account answers like a wrong password", async () => {
     const email = address("nopw", "gmail.com");
     signedIn(await signIn(consumer(email)));
@@ -447,6 +583,10 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
     const back = new URL(s.returnTo, "https://spa.invalid");
     expect(back.pathname).toBe("/oauth/authorize");
     for (const [k, v] of Object.entries(params)) expect(back.searchParams.get(k), k).toBe(v);
+    // SSO-G8: a resource the grant would answer invalid_target is refused at start, as is the client's unregistered redirect.
+    expect((await start({ kind: "oauth_authorize", params: { ...params, resource: "https://elsewhere.example.com" } })).res.status).toBe(400);
+    expect((await start({ kind: "oauth_authorize", params: { ...params, resource: `${BASE}/mcp` } })).res.status).toBe(200);
+    expect((await start({ kind: "oauth_authorize", params: { ...params, redirect_uri: "https://client.example/other" } })).res.status).toBe(400);
   });
 
   // ── require_sso ───────────────────────────────────────────────────────────

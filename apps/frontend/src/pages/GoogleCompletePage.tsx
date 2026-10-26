@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { API_BASE, setToken, setEmailVerified } from "../auth.js";
 import { readCompleteFragment, takeTabSecret, googleSignInMessage } from "../lib/google-sign-in.js";
@@ -8,12 +8,17 @@ import { safeReturnTarget } from "../lib/return-target.js";
 /**
  * /auth/google/complete — where the backend's Google callback lands (stream
  * SSO, SSO-U3). The fragment carries a single-use handoff code or a code from
- * the closed list of outcomes. The page takes the fragment out of the address
- * bar first, exchanges the handoff together with this tab's secret, forgets
- * the secret, stores the session, and goes where the sign-in started.
+ * the closed list of outcomes. The page exchanges the handoff together with
+ * this tab's secret, forgets the secret, stores the session, and goes where
+ * the sign-in started with `location.replace`, so the fragment's history
+ * entry is gone and the app starts fresh with the stored session. A router
+ * navigation from here lost the return path's query whenever this entry had
+ * been replaced first (a raw history.replaceState, or the router's own
+ * replace), so a consent page or an /app/drafts?ids= link came back bare
+ * (browser verification, 2026-10-26). A failure stays on this page, so there
+ * clearing the fragment with history.replaceState is safe.
  */
 export function GoogleCompletePage() {
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [message, setMessage] = useState<string | null>(null);
   const ran = useRef(false);
@@ -22,19 +27,22 @@ export function GoogleCompletePage() {
     if (ran.current) return;
     ran.current = true;
     const fragment = readCompleteFragment(window.location.hash);
-    window.history.replaceState(null, "", window.location.pathname);
     const secret = takeTabSecret();
+    const clearFragment = () => window.history.replaceState(window.history.state, "", window.location.pathname);
 
     if (!fragment) {
       setMessage(googleSignInMessage("expired"));
+      clearFragment();
       return;
     }
     if ("error" in fragment) {
       setMessage(googleSignInMessage(fragment.error));
+      clearFragment();
       return;
     }
     if (!secret) {
       setMessage(googleSignInMessage("expired"));
+      clearFragment();
       return;
     }
 
@@ -53,6 +61,7 @@ export function GoogleCompletePage() {
         };
         if (!body.ok || !body.data) {
           setMessage(body.message ?? googleSignInMessage(body.error ?? "failed"));
+          clearFragment();
           return;
         }
         // A new person may be signing in on this browser: clear the cache
@@ -61,17 +70,16 @@ export function GoogleCompletePage() {
         setToken(body.data.token);
         setEmailVerified(body.data.emailVerified);
         if (!body.data.emailVerified) {
-          void navigate({ to: "/auth/verify-pending" });
+          window.location.replace("/auth/verify-pending");
           return;
         }
-        const next = safeReturnTarget(body.data.returnTo);
-        if (next) void navigate({ href: next });
-        else void navigate({ to: "/app/dashboard" });
+        window.location.replace(safeReturnTarget(body.data.returnTo) ?? "/app/dashboard");
       } catch {
         setMessage(googleSignInMessage("failed"));
+        clearFragment();
       }
     })();
-  }, [navigate, queryClient]);
+  }, [queryClient]);
 
   return (
     <div style={{ maxWidth: 420, margin: "var(--space-2xl, 4rem) auto", padding: "0 var(--space-md)" }}>

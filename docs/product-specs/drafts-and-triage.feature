@@ -739,6 +739,31 @@ Feature: Drafts, triage ratings, and deciding by building both
       And Sam, given the same intent id, finds nothing and cannot tell it from a made-up id
 
   # ─────────────────────────────────────────────────────────────────────────
+  Rule: An unattended sweep reads every id that arrived or moved since it last looked
+    # Guards: drafts-and-triage-slices-6-7-revision.md §Slice 8 items 1 and 2;
+    # ruling 51 (changed-since, with creation time as the fallback); build log
+    # §Slice 8b items 1 and 2 rubric (ids S8b-L*, S8b-C*). Layer 3:
+    # apps/backend/src/routes/flat-list.test.ts.
+
+    @DT-SWP-01 @slice-8b
+    Scenario: A search with no bare text lists every match, paged, and names the next page
+      Given Pat's book holds 120 recipes Pat's agents can read
+      When a steward's agent searches "author:me" with no page, then page 2, then page 3
+      Then it receives 50, 50 and 20 rows, each id once, newest judgment date first
+      And each response says which page it is and the next page to ask for
+      And page 4 is empty and says it is past the end, which ends the loop without an error
+      And the same search repeated in the same session lists the same rows, none of them stubbed
+
+    @DT-SWP-02 @slice-8b
+    Scenario: changed-after lists what moved since the last tick, latest first
+      Given the steward noted the time of its last sweep
+      And since then Pat verified one draft, rejected another, moved a recipe, an agent left feedback on one, and Sam reacted to one
+      When the steward searches "changed-after:<that time>"
+      Then it lists the reacted, the commented, the moved and the verified recipe, latest change first
+      And the rejected draft is not listed, because it has left every result set
+      And a recipe untouched since that time is not listed
+
+  # ─────────────────────────────────────────────────────────────────────────
   Rule: A draft is a question on a bus: live while its task is, and named to agents working nearby
     # Guards: drafts-and-triage-slices-6-7-revision.md §A proposed slice 10
     # (ruled 2026-10-25, recipe 053c9b97); recipes fd614c86 (the no-intent
