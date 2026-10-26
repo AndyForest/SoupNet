@@ -1,0 +1,138 @@
+# Organization accounts round 1: stream SSO
+
+Build log for stream SSO of [org-accounts-round-1.md](../org-accounts-round-1.md): Sign in with Google, account linking, `require_sso`, and Google sign-in inside the MCP OAuth authorize flow, with ADR-0022. Branch `org/google-sso`, worktree `SoupNet-wt/org-sso`, session `org-sso`. The same session builds Offboarding afterwards, with its own rubric in `offboarding.md`.
+
+## Rubric
+
+Written 2026-10-26 by stream SSO (agent `a-org-sso-2026-10-26`, intent `int_qr1i3GMBOcmEK2v8iXfCTMfa`) before implementation. It draws on the round plan's SSO row, the program's §0 settled simplifications, §3.4 and §3.11, the research in [google-sso-oidc.md](../org-accounts-research/google-sso-oidc.md) (where the settled simplifications override it), stream Core's rubric ([core.md](core.md), branch `org/core` at `861dbb2`), stream O's rubric (`docs/planning/openai-plugin-build/oauth.md`, branch `plugin/oauth-hardening` at `b9c28a2`), and the code at `main` `f6d4bbb`. The security record was read first: the closing audit of slices 6 to 10 (companion repo, `audit-2026-10-24-drafts-slices-6-9/closing-2026-10-26.md`, no open finding of P3 or above, none on sign-in) and this round's coordinator state (`audit-2026-10-26-plugin-and-org-rounds/STATE.md`), whose SSO focus list this rubric answers row by row.
+
+Consumers:
+- **Human:** the sign-in and register pages, the MCP consent page when signed out, and the account page's sign-in methods.
+- **Agent:** none directly. OAuth-connected clients see the same consent flow with one more way to sign in.
+- **The other streams:**
+  - Domains: the `hd` claim on every Google identity, and one named hook after a Google sign-in where auto-join runs;
+  - Offboarding: the Google identity (`subject`, `hosted_domain`) the directory check looks up, and the Google client configuration;
+  - Console: `require_sso` on the organization and its setter.
+
+Security-relevant: yes. The stream adds a credential (a Google identity), a second way to get a session, an account-linking rule, a session refusal, and a change to the consent page's sign-in. Every auth change gets a test, and the audit is a separate role.
+
+**Settled before this rubric (not reopened):**
+- Identities keyed on issuer and `sub`, never email (research §5.1, Google's own guidance).
+- Google sign-in proves the email and a match links silently; an unverified account's password is discarded at link time (`061a7926`, settled simplifications).
+- `email_verified` is trusted only for `@gmail.com` or with `hd` set; otherwise our own verification email (round plan).
+- Scopes `openid email profile`, no offline access (round plan).
+- `require_sso` per organization, no break-glass; the site operator helps by hand (settled simplifications).
+- A server-side pending-request record keyed by an opaque `state`, PKCE and nonce on the Google leg, a single-use handoff code to the SPA (round plan).
+- Google sign-in is offered to every account, not only organization members: the planning session's draft `860d8ef4`, on which the round proceeds until the operator says otherwise.
+- The session cut-off (`users.sessions_valid_after`, `invalidateSessions`) and the managed-account lookup are Core's (`a8003678`, `42044de1`).
+
+**Calls made here** (each checked in `soupnet-oss` under this intent):
+
+- **The round trip is bound to the browser tab by a secret the SPA holds (`49937af3`).** The SPA generates a random secret, keeps it in `sessionStorage`, and sends only its SHA-256 when it starts the flow. The backend's pending record is keyed by the hash of an opaque `state` and holds the nonce, the Google PKCE verifier, the secret's hash and a return target. The callback mints a single-use, 60-second handoff code into the fragment of one fixed SPA page, and the SPA exchanges it for a session only together with the secret. A login-CSRF attacker who completes Google with their own account and sends the victim the callback or handoff URL gets nothing, because the victim's tab doesn't hold the attacker's secret. No cookie and no credentialed cross-origin request is needed, which matters because the SPA (`soup.net`) and the API (`mcp.soup.net`) are different origins and the session lives in `localStorage`.
+- **Which account a Google sign-in resolves to (`5219c09d`).** In order:
+  1. an identity already linked by issuer and `sub` wins;
+  2. otherwise an account with the same email is linked, but only when Google is authoritative for the address (`@gmail.com`, or `email_verified` with `hd` set). Linking an unverified account discards its password, marks it verified, and cuts its sessions;
+  3. an address Google isn't authoritative for links nothing. A new account is created unverified and gets our verification email; an existing account is refused with copy that says to sign in with the password;
+  4. an email whose account already holds a different Google `sub` is refused, never relinked (the lapsed-domain case).
+- **`require_sso` is enforced on the session, not by a sweep (`8b68ea10`).** Each session token records how it was issued (`idp: "google"`, absent for a password session). For an active member of an organization with `require_sso`, the per-request session lookup refuses a password-issued session, password login and password reset are refused, and a Google sign-in counts only when it carries `hd`. Turning the policy on therefore ends every password session at once, and a member who joins later can't carry one past it. An owner or admin can turn it on only from a Google-issued session of their own, so nobody turns it on from an account it would lock out.
+- **A Google sign-up follows the cap, the waitlist and invitations exactly as registration does (`16899267`).** The terms are accepted by a line beside the button ("By continuing with Google, you accept the Terms and the Privacy Policy") and recorded at creation. Google is a second way to prove who you are, not a way past the cap.
+- **The consent page returns a signed-out person to itself after either sign-in (`607dc974`).** Google sign-in does it through the pending record, which stores the validated authorize parameters, never a URL. Password sign-in does it by adding exactly `/oauth/authorize` to the audited same-origin return rule (`lib/return-target.ts`). The grant's exact-match checks still decide everything.
+
+**Terms and cast.**
+- **Acme:** a company organization, with `require_sso` off unless a row says so.
+- **Olive:** Acme's owner. Her Google Workspace account carries `hd = acme.example`.
+- **Max:** an Acme member with a password account on `max@acme.example`, verified.
+- **Pat:** a personal account on `pat@gmail.com`.
+- **Eve:** an attacker. Eve registered `victim@acme.example` with a password and never verified it; she holds that account's session.
+- **Vic:** the real owner of `victim@acme.example`, signing in with Google (`hd = acme.example`).
+- **Cy:** a consumer Google account (no `hd`) on `cy@outside.example`, a third-party address.
+- **Sys:** the site operator.
+
+"Authoritative" means the ID token's `email` ends in `@gmail.com`, or `email_verified` is true and `hd` is set. "Google session" means a session token carrying `idp: "google"`.
+
+### Where it lives
+
+| # | Criterion | Evidence |
+|---|---|---|
+| SSO-M1 | Google protocol code lives in `apps/backend/src/services/google-oidc.service.ts`: building the authorization URL, the code exchange, ID-token verification, and Google's key set. The account rules live in `apps/backend/src/services/google-sign-in.service.ts`: resolving, linking and creating accounts. Routes are in `apps/backend/src/routes/google-auth.ts`, mounted at `/auth/google`. `routes/oauth.ts` is not edited: the consent flow changes on the SPA side and in the shared return rule. | Diff review. |
+| SSO-M2 | The `require_sso` rule is one fragment in the authz module (`authz/sso-policy.ts`, `ssoRequired(u)` against a users row). The session lookup, login and password reset read it there and nowhere else. `organization_members` stays a guarded name, so the fragment is the only new reader outside Core's files. | `check:authz-seam`; a static test that no file outside `authz/` reads `require_sso` in a decision. |
+| SSO-M3 | Pure rules live in `@soupnet/domain` (`google-sign-in.ts`): the authoritative test, the resolution decision table (inputs: identity found, email account found and verified, authoritative, different `sub` linked) and the refusal copy. Layer 1 covers every branch. | `google-sign-in.test.ts`, 100% branches. |
+
+### Schema (migration `0045`)
+
+| # | Criterion | Evidence |
+|---|---|---|
+| SSO-S1 | `user_identities`: `id`, `user_id` (FK, cascade on delete), `provider` (`google`; check constraint), `issuer` (normalized to `https://accounts.google.com`), `subject` (byte-exact, no case folding), `email` and `email_verified` as last asserted, `hosted_domain` (nullable; null means a consumer account), `linked_via` (`signup`, `email_match`; check constraint), `linked_at`, `last_sign_in_at`. `UNIQUE (issuer, subject)` and `UNIQUE (user_id, provider)`. The email is never a lookup key for an existing identity. | Migration review; `check:data-model`; Layer 3: a second identity for one account is refused. |
+| SSO-S2 | `sso_login_requests`: `id`, `state_hash` (unique), `nonce`, `code_verifier`, `binding_hash`, `return_kind` (`app`, `oauth_authorize`; check constraint), `return_params` (jsonb), `created_at`, `expires_at` (10 minutes), `consumed_at`, `user_id` (set at the callback), `handoff_hash` (unique, nullable), `handoff_expires_at`, `handoff_consumed_at`. Rows are swept opportunistically after a day, as OAuth artifacts are. | Migration review. |
+| SSO-S3 | `users.password_hash` becomes nullable. A Google-only account has none. | Migration review. |
+| SSO-S4 | `organizations.require_sso` (boolean, default false). | Migration review. |
+| SSO-S5 | The migration is `0045` in the cross-round sequence (O `0043`, Core `0044`, SSO `0045`, Domains `0046`, Offboarding `0047`). The branch is generated on top of Core's, after Core regenerates onto O's; the journal is never edited by hand. | `packages/db/migrations/meta/_journal.json`. |
+| SSO-S6 | `users.provider` and `users.external_id` stay as they are and unused; dropping them is a backlog item, not this migration. | Diff review. |
+
+### The Google leg
+
+| # | Criterion | Scenarios | Evidence |
+|---|---|---|---|
+| SSO-G1 | `POST /auth/google/start` takes `{ binding, return }`. `binding` is the base64url SHA-256 of the SPA's secret, 43 characters. `return` is `{ kind: "app", path }` (the same rule as `safeReturnTarget`, enforced on the server too) or `{ kind: "oauth_authorize", params }`, where `params` must pass the same checks the consent page's grant runs: the client resolves, the redirect URI is registered exactly, PKCE S256 is present. A request that fails returns 400 and stores nothing. On success it stores the record and returns `{ url }`: Google's authorization endpoint with `response_type=code`, `scope=openid email profile`, `state`, `nonce`, `code_challenge` (S256), `prompt=select_account`, and no `access_type=offline`. | GSI-START-01, 02 | Layer 3 (URL parameters, stored record); Layer 3 for each refused `return`. |
+| SSO-G2 | The redirect URI registered with Google is `${BACKEND_URL}/auth/google/callback`, and Google's endpoints are constants. A test issuer is honoured only when `GOOGLE_OIDC_TEST_ISSUER` is set together with `NODE_ENV !== "production"`, and startup logs it; the production task definition never sets it. | — | Layer 1 on the config resolver; diff review of the companion repo's Terraform. |
+| SSO-G3 | `GET /auth/google/callback` consumes the record by the hash of `state` in one statement (unconsumed and unexpired), so a replayed or unknown `state` fails. It exchanges the code with the client secret and the PKCE verifier, and verifies the ID token: RS256 only, a key from Google's key set (refetched once on an unknown `kid`), `iss` in Google's two forms, `aud` equal to our client id, `exp` in the future, and `nonce` equal to the record's. Nothing from the token is used until every check passes. | GSI-CB-01 | Layer 1 on the verifier with generated keys (wrong `aud`, `iss`, `alg`, expired, wrong `nonce`, unknown `kid`, `alg: none`); Layer 3 against the test issuer. |
+| SSO-G4 | Every outcome of the callback redirects to one fixed SPA page, `${FRONTEND_URL}/auth/google/complete`. Success carries `#handoff=<code>`. Failure carries `#error=<code>`, where the code comes from a closed list (`expired`, `cancelled`, `not_authoritative`, `different_google_account`, `sso_required_workspace`, `waitlisted`, `account_disabled`, `account_suspended`, `failed`). Nothing from the request is reflected, and Google's `error` parameter is mapped to `cancelled` or `failed`. | GSI-CB-02 | Layer 3: marker strings in `state`, `error` and `error_description` never appear in the Location header. |
+| SSO-G5 | `POST /auth/google/exchange` takes `{ handoff, secret }`. It succeeds once, within 60 seconds, and only when SHA-256 of `secret` equals the record's `binding_hash`; a wrong secret burns nothing, and the same 400 answers a wrong secret, an unknown code, an expired code and a used one. On success it returns what `/auth/login` returns (`user`, `token`, `emailVerified`) plus the return target, rebuilt from the stored, validated parameters. | GSI-CSRF-01 | Layer 3: the attacker's handoff with the victim's secret fails; byte-identical refusals; a second exchange fails. |
+| SSO-G6 | `/auth/google/start` and `/exchange` sit behind the auth rate limit, and the callback behind the verify limit. | — | Diff review. |
+| SSO-G7 | With `GOOGLE_OAUTH_CLIENT_ID` unset, the three routes answer 404, `GET /auth/signup-status` reports `google: false`, and the SPA shows no button, so a self-hosted stack without Google is unchanged. | GSI-CFG-01 | Layer 3 in process; Layer 1 on the page's rendering. |
+
+### Accounts
+
+| # | Criterion | Scenarios | Evidence |
+|---|---|---|---|
+| SSO-A1 | A known identity (issuer and `sub`) signs in to its account, whatever email the token now carries. The identity row's `email`, `email_verified`, `hosted_domain` and `last_sign_in_at` are refreshed; `users.email` is not changed. | GSI-ID-01 | Layer 3: a token with a new email reaches the same account. |
+| SSO-A2 | Max, verified, signs in with an authoritative Google token for `max@acme.example`: the identity is linked (`email_match`), his password still works, and nothing else about the account changes. | GSI-LINK-01 | Layer 3. |
+| SSO-A3 | Vic signs in with an authoritative token for `victim@acme.example`, the address Eve pre-registered. In one transaction the identity is linked, `password_hash` becomes null, the verification and reset tokens are cleared, `email_verified_at` is set, and `invalidateSessions` runs. Eve's password no longer signs in and her session gets 401 `session_expired`. Vic's new session works. | GSI-LINK-02 | Layer 3, end to end, with Eve's session issued a second before. |
+| SSO-A4 | Cy's token isn't authoritative. For an existing account on `cy@outside.example`, nothing is linked and the callback ends in `not_authoritative` ("Google can't confirm this address for us. Sign in with your password."). With no account, one is created unverified, with the identity linked (`signup`), and it gets our verification email; its session reaches only the verify-pending page, as a password registration's does. | GSI-LINK-03, GSI-NEW-02 | Layer 3, both branches; Layer 1 on the authoritative test (`@gmail.com` in any case, `hd` with `email_verified` false, missing `email_verified`). |
+| SSO-A5 | An account whose Google identity has a different `sub` is not relinked by email: `different_google_account` ("This Soup.net account is linked to a different Google account."). | GSI-LINK-04 | Layer 3. |
+| SSO-A6 | With no account for the email, an authoritative token creates one through the same setup as registration (personal organization and book), verified, with no password, `tos_accepted_at` set, and the identity linked (`signup`). The signup cap, the waitlist and invitations apply exactly as they do to `/auth/register`: a full cap creates the account waitlisted, and the callback ends in `waitlisted`. | GSI-NEW-01, GSI-CAP-01 | Layer 3, cap open and cap full. |
+| SSO-A7 | After resolving, the account-state checks run as login's do: waitlisted gets no session, and Core's `accountRefusal` maps to `account_disabled` or `account_suspended`. `last_login_at` is stamped on success. | GSI-STATE-01 | Layer 3, one per state. |
+| SSO-A8 | The session token from a Google sign-in carries `idp: "google"`, and a password login's carries no `idp`. Every other claim is as today. | — | Layer 1 on `signToken`'s callers; Layer 3 decoding both. |
+| SSO-A9 | Password login with a null `password_hash` answers exactly as a wrong password does, after the same bcrypt work, so a Google-only account can't be told apart. Forgot-password for it sends the ordinary reset email, and a reset gives it a password, unless `require_sso` applies (SSO-R3). | GSI-PWD-01 | Layer 3; a timing assertion is not attempted, but the code path calls bcrypt on a fixed dummy hash. |
+| SSO-A10 | Domains' hook: after a Google sign-in resolves an account and before the session is issued, `afterGoogleSignIn(db, { userId, hostedDomain, email })` runs. It is a no-op here; Domains fills it with auto-join on `hd` and touches nothing else in the callback. | — | Diff review; the function's comment names Domains. |
+| SSO-A11 | `GET /auth/me` adds `signInMethods: { password: boolean, google: { email, hostedDomain } \| null }`, and the account page shows them. Unlinking Google is not in this round (backlog). | — | Layer 3; browser verification. |
+
+### `require_sso`
+
+| # | Criterion | Scenarios | Evidence |
+|---|---|---|---|
+| SSO-R1 | `PATCH /organizations/:id` with `requireSso` by an active owner or admin of Acme, only from a Google session whose account holds an identity with `hd` set; otherwise 403 `google_session_required` ("Sign in with Google before requiring it."). Anyone else gets Core's uniform 404. Sys can set it with `PATCH /admin/organizations/:id`. Every change writes an audit row. | GSI-SSO-01 | Layer 3: Olive from a password session refused, from a Google session accepted; a non-member gets the 404 byte for byte. |
+| SSO-R2 | With `require_sso` on, Max's password session gets 401 `sso_required` on every JWT route and on `GET /auth/me` ("Your organization signs in with Google. Sign in with Google to continue."), and his password login gets 403 `sso_required` after the password checks. His Google session works. Turning the policy off restores the password session, since nothing was swept. | GSI-SSO-02 | Layer 3. |
+| SSO-R3 | With `require_sso` on, `POST /auth/forgot-password` for Max answers its usual generic response and sends nothing, and `POST /auth/reset-password` with a valid token is refused with `sso_required`. | GSI-SSO-03 | Layer 3; `email_log` has no reset row. |
+| SSO-R4 | With `require_sso` on, a Google sign-in for a member must carry `hd`: a consumer Google account on the member's address ends in `sso_required_workspace` ("Your organization signs in with its Google Workspace account."). | GSI-SSO-04 | Layer 3. |
+| SSO-R5 | The policy reaches only active members of the organization. Guests on Acme's books, disabled members (already refused), and personal accounts are untouched. API keys are not touched by it; offboarding governs them. | GSI-SSO-05 | Layer 3: Pat, invited to an Acme book, keeps his password session. |
+
+### The consent page and the SPA
+
+| # | Criterion | Scenarios | Evidence |
+|---|---|---|---|
+| SSO-U1 | The sign-in and register pages show "Continue with Google" when `signup-status` says `google: true`, with the terms line under it on register. Clicking starts the flow from SSO-G1 with the page's own safe `next` as the return target. | GSI-UI-01 | Browser verification (Playwright, verifier agent). |
+| SSO-U2 | Signed out on `/oauth/authorize`, the consent page offers "Continue with Google" (return `oauth_authorize` with the page's parameters) and "Sign in with a password" (`/auth/login?next=/oauth/authorize?...`). After either, the person lands on the consent page with the same parameters and authorizes as usual. `safeReturnTarget` accepts `/oauth/authorize` exactly, plus its query, and nothing else beyond `/app/`; the stash in `sessionStorage` (`oauth_return_to`) is removed. | GSI-MCP-01 | `return-target.test.ts` extended (look-alike paths refused: `/oauth/authorize/../x`, `/oauth/authorizex`, `/oauth/authorize/grant`); browser verification of the full connector flow against the local stack with the test issuer. |
+| SSO-U3 | `/auth/google/complete` reads the fragment, removes it from the address bar first (`history.replaceState`), exchanges it with the secret from `sessionStorage`, deletes the secret, stores the session, and navigates to the returned target. A missing secret, a failed exchange, or an `#error` shows the closed list's copy with a link back to sign-in. | GSI-UI-02 | Browser verification; Layer 1 on the copy table. |
+| SSO-U4 | A `sso_required` or `session_expired` response anywhere in the SPA signs the person out and lands them on sign-in with the server's message, as the disabled states already do. | GSI-UI-03 | Browser verification. |
+
+### Docs and operations
+
+| # | Criterion | Evidence |
+|---|---|---|
+| SSO-D1 | ADR-0022, "OAuth connector flow and Google sign-in", records the consent flow as it stands after stream O (origin-form resource and audience, RFC 9207 `iss`, CIMD beside DCR, UserInfo without ID tokens), the Google round trip above, the resolution order, and `require_sso`. The `[DESIGN]` ADR-0022 backlog item moves to completed. | The file; backlog diff. |
+| SSO-D2 | `docs/product-specs/google-sign-in.feature` holds the scenarios named above, with `# Requirement:` comments (C01-R04, R11) and `# Guards:` lines to the design-thinking archetypes Core adds. | The file. |
+| SSO-D3 | `.env.example` gains `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` (empty by default, with the redirect URI to register). The companion repo's Terraform gains both, the secret through Secrets Manager, written here and applied by the operator. CI needs neither (the test issuer runs there), and if a gate needs a new variable, `ci.yml` gets it before `test-ci-local.mjs`. | Diff review; companion repo commit named in the build notes. |
+| SSO-D4 | `CLAUDE.md` (tables, the `/auth/google` routes), `engineering-principles.md` §7 (the `require_sso` fragment), the data-model doc (regenerated) and the backlog say what landed. New backlog items: unlinking Google, linking a non-authoritative Google account by an emailed link, dropping `users.provider` and `external_id`, and Google brand verification for the consent screen's name and logo. | Diff review. |
+| SSO-D5 | `npm run test:ci` green; a separate security audit of the branch before merge (the round's coordinator; findings go to the companion repo). | Gate output; the audit record. |
+
+### Out of this stream
+
+- Auto-join on `hd` and domain verification (Domains, through SSO-A10's hook).
+- The directory check and the directory connection (Offboarding, this session's next stream).
+- The console's `require_sso` switch (Console, calling SSO-R1).
+- Offline access and Google refresh tokens (ruled out for round 1).
+
+## Build notes
+
+(none yet)
