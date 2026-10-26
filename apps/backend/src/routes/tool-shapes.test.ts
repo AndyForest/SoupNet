@@ -196,16 +196,17 @@ describe.skipIf(!BASE)("slice 8a tool shapes", () => {
     const intentId = intentFrom(briefing.text);
 
     const first = await mcp(a.apiKey, "log_feedback", row({ intent_id: intentId }));
-    expect(first.text).toMatch(new RegExp(`^Feedback recorded for intent ${intentId} \\(feedback id [0-9a-f-]{36}\\)\\.$`));
+    // No stored-row id in the receipt (output minimisation, plugin stream T).
+    expect(first.text).toBe(`Feedback recorded for intent ${intentId}.`);
     const again = await mcp(a.apiKey, "log_feedback", row({ intent_id: intentId }));
     expect(again.text).toContain("already recorded");
 
-    const feedbackId = /feedback id ([0-9a-f-]{36})/.exec(first.text)![1]!;
+    // Found by its intent: the receipt no longer prints the stored row's id.
     const stored = (await getDb().execute(sql`
       SELECT trace_id, search_audit_id, briefing_audit_id, intent_id, kind
-      FROM claimnet.check_feedback WHERE id = ${feedbackId}::uuid
+      FROM claimnet.check_feedback WHERE intent_id = ${intentId}
     `)) as unknown as Array<Record<string, unknown>>;
-    expect(stored[0]).toEqual({ trace_id: null, search_audit_id: null, briefing_audit_id: null, intent_id: intentId, kind: "outcome" });
+    expect(stored).toEqual([{ trace_id: null, search_audit_id: null, briefing_audit_id: null, intent_id: intentId, kind: "outcome" }]);
 
     const rest = await postFeedback(a.apiKey, row({ intent_id: intentId, note: `rest ${RUN}` }));
     expect(rest.results[0]?.ok).toBe(true);
@@ -263,7 +264,7 @@ describe.skipIf(!BASE)("slice 8a tool shapes", () => {
   it("S8a-O5: a row attaches to the caller's own briefing; anyone else's, a search id, and a random id get one marker", async () => {
     const own = briefingIdFrom((await mcp(a.apiKey, "get_briefing", {})).text);
     const ok = await mcp(a.apiKey, "log_feedback", row({ kind: "operational", briefing_id: own }));
-    expect(ok.text).toMatch(new RegExp(`^Feedback recorded for briefing ${own} `));
+    expect(ok.text).toBe(`Feedback recorded for briefing ${own}.`);
 
     const search = await mcp(a.apiKey, "search_recipes", { query: "anything at all", response_format: "structured" });
     const searchId = String(search.structured?.["searchId"]);

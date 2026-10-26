@@ -18,3 +18,4 @@ export * from "./search-query";
 export * from "./unknown-params";
 export * from "./organizations";
 export * from "./google-sign-in";
+export * from "./mcp-server-instructions";

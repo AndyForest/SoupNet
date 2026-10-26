@@ -821,4 +821,256 @@ describe.skipIf(!BASE)("OAuth 2.1 end-to-end flow", () => {
     const res = await fetch(`${BASE}/oauth/client-info?client_id=oauth_does_not_exist`);
     expect(res.status).toBe(404);
   });
+
+  // ── OpenAI plugin directory round, stream O (docs/planning/openai-plugin-
+  // build/oauth.md). The canonical resource is the backend's origin.
+  describe("stream O: audience, iss, deny, UserInfo", () => {
+    const CANONICAL = BASE.replace(/\/+$/, "");
+
+    async function grantWith(opts: { codeChallenge: string; resource?: string; scope?: string; state?: string }): Promise<Response> {
+      return postJson(
+        "/oauth/authorize/grant",
+        {
+          response_type: "code",
+          client_id: client.client_id,
+          redirect_uri: REDIRECT_URI,
+          state: opts.state ?? "s-state",
+          code_challenge: opts.codeChallenge,
+          code_challenge_method: "S256",
+          scope_read_group_ids: [recipeBookId],
+          scope_write_group_ids: [recipeBookId],
+          scope_default_write_group_id: recipeBookId,
+          ...(opts.resource !== undefined ? { resource: opts.resource } : {}),
+          ...(opts.scope !== undefined ? { scope: opts.scope } : {}),
+        },
+        userToken,
+      );
+    }
+
+    function exchange(code: string, verifier: string, resource?: string): Promise<Response> {
+      return postForm("/oauth/token", {
+        grant_type: "authorization_code",
+        code,
+        code_verifier: verifier,
+        client_id: client.client_id,
+        client_secret: client.client_secret,
+        redirect_uri: REDIRECT_URI,
+        ...(resource !== undefined ? { resource } : {}),
+      });
+    }
+
+    function refresh(refreshToken: string, resource?: string): Promise<Response> {
+      return postForm("/oauth/token", {
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+        client_id: client.client_id,
+        client_secret: client.client_secret,
+        ...(resource !== undefined ? { resource } : {}),
+      });
+    }
+
+    async function bundleWith(opts: { resource?: string; scope?: string } = {}): Promise<{ access: string; refresh: string; scope: string }> {
+      const pkce = generatePkcePair();
+      const g = (await (await grantWith({ codeChallenge: pkce.challenge, ...opts })).json()) as GrantResponse;
+      const t = await exchange(extractCode(g.redirect_url!), pkce.verifier, opts.resource);
+      const body = (await t.json()) as TokenResponse;
+      if (!body.access_token || !body.refresh_token) throw new Error(`bundleWith: ${JSON.stringify(body)}`);
+      return { access: body.access_token, refresh: body.refresh_token, scope: body.scope ?? "" };
+    }
+
+    function mcpInitialize(token: string): Promise<Response> {
+      return fetch(`${BASE}/mcp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "stream-o", version: "0" } },
+        }),
+      });
+    }
+
+    async function audienceOf(access: string): Promise<string | null> {
+      const sql = dbConn();
+      try {
+        const rows = await sql<Array<{ oauth_resource: string | null }>>`
+          SELECT oauth_resource FROM claimnet.api_keys WHERE key = ${sha256hex(access)}`;
+        return rows[0]?.oauth_resource ?? null;
+      } finally {
+        await sql.end();
+      }
+    }
+
+    async function setColumn(access: string, value: string | null): Promise<void> {
+      const sql = dbConn();
+      try {
+        await sql`UPDATE claimnet.api_keys SET oauth_resource = ${value} WHERE key = ${sha256hex(access)}`;
+      } finally {
+        await sql.end();
+      }
+    }
+
+    // O3-1, O4-2: the sequence ChatGPT runs, idle included. The 2026-07
+    // "invalid_grant after an hour idle" report was fixed in a383fee
+    // (migration 0028, deployed 2026-07-06) before this round; this pins it
+    // on the reviewer's path.
+    it("O3-1: resource on authorize and token, idle past expiry, 401, refresh, the new token works with the same audience", async () => {
+      const pkce = generatePkcePair();
+      const g = await grantWith({ codeChallenge: pkce.challenge, resource: CANONICAL, scope: "openid email", state: "chatgpt-state" });
+      expect(g.status).toBe(200);
+      const redirect = new URL(((await g.json()) as GrantResponse).redirect_url!);
+      expect(redirect.searchParams.get("iss")).toBe(CANONICAL);
+      expect(redirect.searchParams.get("state")).toBe("chatgpt-state");
+
+      const t = await exchange(redirect.searchParams.get("code")!, pkce.verifier, CANONICAL);
+      expect(t.status).toBe(200);
+      const tokens = (await t.json()) as TokenResponse;
+      expect(tokens.scope).toBe("read write openid email");
+      expect(await audienceOf(tokens.access_token!)).toBe(CANONICAL);
+
+      const sql = dbConn();
+      try {
+        await sql`UPDATE claimnet.api_keys SET expires_at = NOW() - INTERVAL '2 hours' WHERE key = ${sha256hex(tokens.access_token!)}`;
+      } finally {
+        await sql.end();
+      }
+      const idle = await mcpInitialize(tokens.access_token!);
+      expect(idle.status).toBe(401);
+      expect(idle.headers.get("www-authenticate") ?? "").toContain('error="invalid_token"');
+
+      const r = await refresh(tokens.refresh_token!, CANONICAL);
+      expect(r.status).toBe(200);
+      const next = (await r.json()) as TokenResponse;
+      expect(next.scope).toBe("read write openid email");
+      expect((await mcpInitialize(next.access_token!)).status).toBe(200);
+      expect(await audienceOf(next.access_token!)).toBe(CANONICAL);
+    });
+
+    it("O1-2/O1-3: the MCP endpoint URL is an alias; an absent resource binds to the canonical one", async () => {
+      expect(await audienceOf((await bundleWith({ resource: `${CANONICAL}/mcp` })).access)).toBe(CANONICAL);
+      expect(await audienceOf((await bundleWith()).access)).toBe(CANONICAL);
+    });
+
+    it("O1-3: the grant refuses another resource with invalid_target", async () => {
+      const res = await grantWith({ codeChallenge: generatePkcePair().challenge, resource: "https://elsewhere.example.com" });
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as GrantResponse).error).toBe("invalid_target");
+    });
+
+    it("O1-4: the token endpoint refuses another resource before touching the code", async () => {
+      const pkce = generatePkcePair();
+      const g = (await (await grantWith({ codeChallenge: pkce.challenge })).json()) as GrantResponse;
+      const code = extractCode(g.redirect_url!);
+      const bad = await exchange(code, pkce.verifier, "https://elsewhere.example.com/mcp");
+      expect(bad.status).toBe(400);
+      expect(((await bad.json()) as TokenResponse).error).toBe("invalid_target");
+      expect((await exchange(code, pkce.verifier, CANONICAL)).status).toBe(200);
+    });
+
+    it("O1-4: a code granted for another resource does not redeem here (invalid_grant)", async () => {
+      const pkce = generatePkcePair();
+      const g = (await (await grantWith({ codeChallenge: pkce.challenge })).json()) as GrantResponse;
+      const code = extractCode(g.redirect_url!);
+      const sql = dbConn();
+      try {
+        await sql`UPDATE claimnet.oauth_authorization_codes SET resource = 'https://elsewhere.example.com' WHERE code_hash = ${sha256hex(code)}`;
+      } finally {
+        await sql.end();
+      }
+      const res = await exchange(code, pkce.verifier, CANONICAL);
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as TokenResponse).error).toBe("invalid_grant");
+    });
+
+    it("O1-6: refresh refuses another resource without consuming the token, and binds a pre-0043 row to the canonical one", async () => {
+      const b = await bundleWith();
+      const bad = await refresh(b.refresh, "https://elsewhere.example.com");
+      expect(bad.status).toBe(400);
+      expect(((await bad.json()) as TokenResponse).error).toBe("invalid_target");
+
+      await setColumn(b.access, null);
+      // No wave at deploy (recipe 8b5a7baa): a key without an audience still works.
+      expect((await mcpInitialize(b.access)).status).toBe(200);
+      const ok = await refresh(b.refresh);
+      expect(ok.status).toBe(200);
+      expect(await audienceOf(((await ok.json()) as TokenResponse).access_token!)).toBe(CANONICAL);
+    });
+
+    it("O1-5: a key bound to another resource is refused at /mcp exactly like a dead key", async () => {
+      const b = await bundleWith();
+      await setColumn(b.access, "https://elsewhere.example.com");
+      const wrong = await mcpInitialize(b.access);
+      const unknown = await mcpInitialize("cn_s_never-issued");
+      expect(wrong.status).toBe(401);
+      expect(wrong.headers.get("www-authenticate")).toBe(unknown.headers.get("www-authenticate"));
+      expect(await wrong.text()).toBe(await unknown.text());
+      expect((await fetch(`${BASE}/briefing`, { headers: { Authorization: `Bearer ${b.access}` } })).status).toBeGreaterThanOrEqual(400);
+    });
+
+    it("O4-3: deny redirects with access_denied, state and iss; only to a registered URI; only for a signed-in session", async () => {
+      const ok = await postJson("/oauth/authorize/deny", { client_id: client.client_id, redirect_uri: REDIRECT_URI, state: "deny-state" }, userToken);
+      expect(ok.status).toBe(200);
+      const url = new URL(((await ok.json()) as GrantResponse).redirect_url!);
+      expect(`${url.origin}${url.pathname}`).toBe(REDIRECT_URI);
+      expect(url.searchParams.get("error")).toBe("access_denied");
+      expect(url.searchParams.get("state")).toBe("deny-state");
+      expect(url.searchParams.get("iss")).toBe(CANONICAL);
+
+      const unregistered = await postJson("/oauth/authorize/deny", { client_id: client.client_id, redirect_uri: "https://attacker.example/cb" }, userToken);
+      expect(unregistered.status).toBe(400);
+      const anonymous = await postJson("/oauth/authorize/deny", { client_id: client.client_id, redirect_uri: REDIRECT_URI });
+      expect(anonymous.status).toBe(401);
+    });
+
+    it("O7-2/O7-3: UserInfo answers by the granted OpenID scopes", async () => {
+      const userinfo = (token?: string) =>
+        fetch(`${BASE}/oauth/userinfo`, token ? { headers: { Authorization: `Bearer ${token}` } } : {});
+
+      const both = await bundleWith({ scope: "openid email profile offline_access" });
+      expect(both.scope).toBe("read write openid email");
+      const full = await userinfo(both.access);
+      expect(full.status).toBe(200);
+      const claims = (await full.json()) as Record<string, unknown>;
+      expect(claims["email"]).toBe(userEmail);
+      expect(claims["email_verified"]).toBe(true);
+      expect(typeof claims["sub"]).toBe("string");
+
+      const openidOnly = await userinfo((await bundleWith({ scope: "openid" })).access);
+      expect(await openidOnly.json()).toEqual({ sub: claims["sub"] });
+
+      const none = await userinfo((await bundleWith()).access);
+      expect(none.status).toBe(403);
+      expect(none.headers.get("www-authenticate") ?? "").toContain('error="insufficient_scope"');
+
+      const missing = await userinfo();
+      expect(missing.status).toBe(401);
+      expect(missing.headers.get("www-authenticate") ?? "").toContain("resource_metadata=");
+
+      const daily = await fetch(`${BASE}/keys/daily`, { method: "POST", headers: { Authorization: `Bearer ${userToken}` } });
+      const dailyKey = ((await daily.json()) as { data?: { key?: string } }).data?.key ?? "";
+      expect((await userinfo(dailyKey)).status).toBe(401);
+    });
+
+    it("O5-4: a metadata-document client that cannot be fetched is an unknown client everywhere", async () => {
+      const cimd = "https://cimd-unresolvable.invalid/oauth/client.json";
+      expect((await fetch(`${BASE}/oauth/client-info?client_id=${encodeURIComponent(cimd)}`)).status).toBe(404);
+      const token = await postForm("/oauth/token", { grant_type: "authorization_code", code: "x", code_verifier: "y", redirect_uri: REDIRECT_URI, client_id: cimd });
+      expect(token.status).toBe(401);
+      expect(((await token.json()) as TokenResponse).error).toBe("invalid_client");
+      const withSecret = await postForm("/oauth/token", { grant_type: "authorization_code", code: "x", client_id: cimd, client_secret: "s" });
+      expect(withSecret.status).toBe(401);
+    });
+
+    it("O5-8: a DCR client presenting an assertion instead of its secret is refused", async () => {
+      const res = await postForm("/oauth/token", {
+        grant_type: "refresh_token",
+        refresh_token: "x",
+        client_id: client.client_id,
+        client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+        client_assertion: "a.b.c",
+      });
+      expect(res.status).toBe(401);
+    });
+  });
 });

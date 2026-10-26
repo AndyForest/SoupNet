@@ -27,6 +27,7 @@ import {
   describeResolution,
   renderBriefingIdLine,
   renderCheckResponseMarkdown,
+  MCP_SERVER_INSTRUCTIONS,
 } from "@soupnet/domain";
 import type { CheckResponseJson } from "@soupnet/domain";
 
@@ -130,13 +131,17 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
 
   // ── MCP Server ─────────────────────────────────────────────────────────────────
 
-  const server = new McpServer({
-    name: "soupnet",
-    version: "0.4.0",
-    description:
-      "Soup.net: check recipes — taste and judgment traces with evidence. " +
-      "Call get_briefing before your first check to learn the format and get a sample of the user's corpus.",
-  });
+  const server = new McpServer(
+    {
+      name: "soupnet",
+      version: "0.4.0",
+      description:
+        "Soup.net: check recipes — taste and judgment traces with evidence. " +
+        "Call get_briefing before your first check to learn the format and get a sample of the user's corpus.",
+    },
+    // The same instructions as the remote server (plugin directory item 5).
+    { instructions: MCP_SERVER_INSTRUCTIONS },
+  );
 
   // ── check_recipe tool ──────────────────────────────────────────────────────────
 
@@ -189,10 +194,13 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
     {
       title: "Recipe check",
       // Append-only trace as a side effect — not read-only, but not destructive either.
+      // The remote server's annotation rule (docs/connectors/openai-plugin.md).
+      // Closed-world here: stdio attaches a local file, never a URL. The
+      // backend dedups an identical recipe, so a re-fire is idempotent.
       readOnlyHint: false,
       destructiveHint: false,
-      idempotentHint: false,
-      openWorldHint: true,
+      idempotentHint: true,
+      openWorldHint: false,
     },
     async ({ recipe, supporting_evidence, verbosity, clusters, max_chars, decided_at, response_format, known_recipes, session_id, intent, agent_id, synthesize, impact, uncertainty, draft, on_behalf_of, feedback, file }) => {
       if (!apiKey) {
@@ -366,6 +374,8 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
     MCP_TOOL_DESCRIPTIONS.searchRecipes,
     {
       query: z.string().describe(MCP_PARAM_DESCRIPTIONS.searchQuery),
+      // Slice 8b: the flat list's page; an integer from 1, refused otherwise.
+      page: z.number().int().min(1).optional().describe(MCP_PARAM_DESCRIPTIONS.searchPage),
       verbosity: z.enum(VERBOSITY_LEVELS).optional().describe(MCP_PARAM_DESCRIPTIONS.verbosity),
       response_format: z.enum(["markdown", "structured"]).optional().describe(MCP_PARAM_DESCRIPTIONS.responseFormat),
       known_recipes: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.knownRecipes),
@@ -381,9 +391,9 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
-      openWorldHint: true,
+      openWorldHint: false,
     },
-    async ({ query, verbosity, response_format, known_recipes, session_id, intent, agent_id, read_recipe_books }) => {
+    async ({ query, page, verbosity, response_format, known_recipes, session_id, intent, agent_id, read_recipe_books }) => {
       if (!apiKey) {
         return {
           content: [{ type: "text" as const, text: "Error: SOUPNET_API_KEY not configured. Get a key from your Soup.net dashboard." }],
@@ -393,6 +403,7 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
         const params = new URLSearchParams();
         params.set("key", apiKey);
         params.set("filter", query);
+        if (page !== undefined) params.set("page", String(page));
         if (verbosity) params.set("verbosity", verbosity);
         if (agent_id) params.set("agent_id", agent_id);
         if (known_recipes) params.set("known_recipes", known_recipes);
@@ -479,9 +490,10 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
     },
     {
       title: "Log feedback",
+      // The backend dedups an identical row, as on the remote server.
       readOnlyHint: false,
       destructiveHint: false,
-      idempotentHint: false,
+      idempotentHint: true,
       openWorldHint: false,
     },
     async (args) => {
@@ -541,6 +553,7 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
     {
       title: "Get briefing",
       readOnlyHint: true,
+      destructiveHint: false,
       idempotentHint: true,
       openWorldHint: false,
     },
@@ -601,7 +614,7 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
     {
       title: "Resolve a draft",
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: false,
       openWorldHint: false,
     },
@@ -641,8 +654,9 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
     {
       title: "Get recipes by id",
       readOnlyHint: true,
+      destructiveHint: false,
       idempotentHint: true,
-      openWorldHint: true,
+      openWorldHint: false,
     },
     async ({ recipe_ids }) => {
       if (!apiKey) {
