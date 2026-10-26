@@ -2329,4 +2329,23 @@ Stream C's PR #138 (open) brings the thin fixture to within 7 characters of its 
 | S8b3-F1 | `briefing-surfaces.feature` gains a scenario for the solo book's line, the owner's and admin's count, and the member's missing count. | The feature file. |
 | S8b3-F2 | The comments that describe the old rule (`BriefingGroup.members` "omitted for solo books", the renderer's "omit when … the user is the only member", the loader's "solo books skip the Members line") are corrected in the same commit. | Code review. |
 
+#### Slice 8b item 3 build notes (stream D, 2026-10-25)
+
+Written by the builder for the verifier; the verification record is the verifier's to write. Built on `68b14c2`.
+
+**Gate:** `TESTCI_PGPORT=5644 TESTCI_BACKEND_PORT=3288 npm run test:ci` exited 0 on the first run, with 2,032 passed and 6 skipped (140 files, 2 skipped), while another stream's gate ran on 5654. Typecheck, lint (0 errors), the data-model check and the authz seam passed. Slice suites: `routes/book-membership-lines.test.ts` (Layer 3, 9 tests, one per rubric row group) and the renderer block in `domain/recipe-guide-content.test.ts` (6 tests).
+
+**What was built.**
+- `authz/memberships.ts`: `listMembersOfBooks` returns each member's `user_id`, and now composes `countsAsMembership` like `listMembers` does. The new `pendingInviteCounts(db, userId, bookIds)` counts each managed book's live invitations in one statement. It joins the caller's own membership with an owner-or-admin role (`OWNER_OR_ADMIN_ROLES`, now exported from `roles.ts`) and repeats the liveness condition of `GET /recipe-books/:id/invitations`.
+- `services/briefing.ts` `resolveScope`, the one loader behind `composeBriefing` and `composeCorpusContext`, attaches every roster with the caller flagged by user id, and the pending count where there is one. Both reads run in parallel.
+- `renderRecipeBooks` prints the lines; `BriefingMember.isCaller` and `BriefingGroup.pendingInvites` carry them.
+- The three comments S8b3-F2 names are corrected.
+
+**Rows to check closely.**
+- S8b3-P2: the test compares the count with the web route's own list, so if that route's liveness rule changes, the row fails loudly rather than drifting.
+- S8b3-P4 sets roles with SQL, because no route changes a member's role.
+- S8b3-S1 compares `list_my_recipe_books`, MCP `get_briefing` and `GET /briefing`. The web copy-briefing (`POST /keys/briefing`) is by code review: it calls `composeBriefing`, which uses the same `resolveScope`.
+
+**Bytes (S8b3-Z1):** thin fixture 18,183 → 18,233 characters, headless 18,536 → 18,586; `tools/list` unchanged. With stream C's #138 the thin fixture would be about 21,043 against the 21,000 cap, so whichever merges second raises it by the measured figure, dated.
+
 ### Slice 6b rubric: option sets (stream G, after 6c and 6a merge)
