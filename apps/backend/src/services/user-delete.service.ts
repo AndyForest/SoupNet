@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { deleteTraceCascade } from "./trace-delete.service";
+import { removeDomainsOfOrganizationsOwnedBy } from "./org-domains.service";
 import {
   sharedBooksOwnedBy,
   pickSuccessor,
@@ -11,6 +12,8 @@ import {
   removeMembershipsInOrgsOwnedBy,
   removeAllMembershipsOf,
   draftAwaitingReviewBy,
+  handOverOrganizationsOwnedBy,
+  removeOrganizationMembershipOf,
 } from "../authz";
 
 export interface UserDeleteResult {
@@ -211,6 +214,10 @@ export async function deleteUserCascade(
     // 11d5490e): drop the id from both arrays and point a dangling
     // default_write_group_id at the first remaining write id; if none
     // remains, COALESCE keeps the old value rather than inventing a target.
+    // The company membership row (its foreign key blocks the users delete,
+    // and an organization left with nobody else is deleted below).
+    await removeOrganizationMembershipOf(tx, userId);
+
     const doomedRows = await tx.execute(sql`
       SELECT g.id FROM claimnet.groups g
       WHERE g.organization_id IN (
@@ -246,6 +253,8 @@ export async function deleteUserCascade(
       )
       AND NOT EXISTS (SELECT 1 FROM claimnet.traces t WHERE t.group_id = g.id)
     `);
+    // An organization's domain claims go with it (their foreign key).
+    await removeDomainsOfOrganizationsOwnedBy(tx, userId);
     await tx.execute(sql`
       DELETE FROM claimnet.organizations WHERE owner_id = ${userId}::uuid
     `);
@@ -329,6 +338,9 @@ async function handOverSharedBooks(
   db: PostgresJsDatabase,
   userId: string,
 ): Promise<BookHandover[]> {
+  // A company organization the user owns passes to another of its members
+  // first, so its books are never "the user's organization's" books below.
+  await handOverOrganizationsOwnedBy(db, userId);
   const books = await sharedBooksOwnedBy(db, userId);
 
   const handovers: BookHandover[] = [];

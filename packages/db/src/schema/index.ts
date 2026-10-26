@@ -8,7 +8,9 @@
  * Table groups:
  *   traces.ts              — core trace object (stigmergic search-as-logging)
  *   users.ts               — user identity and authentication
+ *   user-identities.ts     — linked Google identities and pending Google sign-ins
  *   organizations.ts       — multi-tenant organization containers
+ *   organization-domains.ts — a company organization's verified email domains
  *   groups.ts              — groups and group membership
  *   ephemeral-books.ts     — born-ephemeral workspace birth records (TTL + reaper)
  *   evidence.ts            — evidence entries (interpretations)
@@ -24,6 +26,7 @@
 export * from "./traces";
 export * from "./users";
 export * from "./organizations";
+export * from "./organization-domains";
 export * from "./groups";
 export * from "./ephemeral-books";
 export * from "./evidence";
@@ -43,3 +46,4 @@ export * from "./oauth-authorization-codes";
 export * from "./check-feedback";
 export * from "./session-shown";
 export * from "./intents";
+export * from "./user-identities";

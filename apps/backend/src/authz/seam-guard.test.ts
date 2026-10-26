@@ -136,3 +136,29 @@ describe("[F80][F84] the recipe register catches each planted bypass", { timeout
     });
   }
 });
+
+describe("organization membership stays in the module (org round 1, OC-M1)", { timeout: 60_000 }, () => {
+  it("a new file that reads organization_members fails", () => {
+    const r = guardPasses({
+      [NEW_FILE]: 'import { sql } from "drizzle-orm";\nexport const q = sql`SELECT role FROM claimnet.organization_members WHERE user_id = ${"x"}`;\n',
+    });
+    expect(r.ok, r.output).toBe(false);
+    expect(r.output).toContain("organization membership");
+    expect(r.output).toContain(NEW_FILE);
+  });
+
+  it("a new file that uses the Drizzle table object fails", () => {
+    const r = guardPasses({
+      [NEW_FILE]: 'import { organizationMembers } from "@soupnet/db";\nexport const t = organizationMembers;\n',
+    });
+    expect(r.ok, r.output).toBe(false);
+    expect(r.output).toContain(NEW_FILE);
+  });
+
+  it("a function merely named for the table does not count", () => {
+    const r = guardPasses({
+      [NEW_FILE]: 'import { removeOrganizationMembershipOf } from "../authz";\nexport const f = removeOrganizationMembershipOf;\n',
+    });
+    expect(r.ok, r.output).toBe(true);
+  });
+});

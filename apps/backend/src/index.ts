@@ -8,6 +8,7 @@ import { runMigrations } from "./db";
 import { autoSetup } from "./auth";
 import { getDb } from "./db";
 import { authRoutes } from "./routes/auth";
+import { googleAuthRoutes } from "./routes/google-auth";
 import { keyRoutes } from "./routes/keys";
 import { meRoutes } from "./routes/me";
 import { briefingRoutes } from "./routes/briefing";
@@ -18,6 +19,8 @@ import { integrityRoutes } from "./routes/integrity";
 import { workspaceRoutes } from "./routes/workspaces";
 import { groupRoutes } from "./routes/groups";
 import { invitationRoutes } from "./routes/invitations";
+import organizationsRouter from "./routes/organizations";
+import organizationDomainsRouter from "./routes/organization-domains";
 import { adminRoutes } from "./routes/admin";
 import { docsRoutes } from "./routes/docs";
 import { schemas as schemaRoutes } from "./routes/schemas";
@@ -120,6 +123,7 @@ app.route("/health/version", versionRoutes);
 app.route("/health/integrity", integrityRoutes);
 
 // Routes
+app.route("/auth/google", googleAuthRoutes);
 app.route("/auth", authRoutes);
 app.route("/keys", keyRoutes);
 app.route("/me", meRoutes);
@@ -143,6 +147,8 @@ app.use("/groups/*", async (c) => {
 });
 app.use("/groups", async (c) => c.redirect(`/recipe-books${c.req.url.includes("?") ? c.req.url.slice(c.req.url.indexOf("?")) : ""}`, 308));
 app.route("/invitations", invitationRoutes);
+app.route("/organizations", organizationsRouter);
+app.route("/organizations", organizationDomainsRouter);
 app.route("/admin", adminRoutes);
 app.route("/docs", docsRoutes);
 // Published wire schemas — public like /docs (shapes, not data).

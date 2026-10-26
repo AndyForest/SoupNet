@@ -24,9 +24,14 @@ export const users = claimnetSchema.table(
     id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
 
     email: text("email").notNull(),
-    passwordHash: text("password_hash").notNull(),
+    // Null for an account that signs in only with Google (user_identities), or
+    // whose unverified password was discarded when Google sign-in linked it
+    // (organization accounts round 1, stream SSO). Every reader handles null.
+    passwordHash: text("password_hash"),
     displayName: text("display_name"),
 
+    // Unused since stream SSO's user_identities (organization accounts round
+    // 1); kept until a later migration drops them (backlog).
     // Auth provider — 'local' for our JWT auth, 'oidc' for future Zitadel/etc
     provider: text("provider").notNull().default("local"),
     // External ID from OIDC provider — null for local auth
@@ -57,9 +62,19 @@ export const users = claimnetSchema.table(
     // Last successful login — populated by /auth/login on success. Null = never logged in.
     lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
 
-    // Admin suspension — when set, user cannot log in and existing API keys return 403.
+    // Site suspension by the site operator. When set, sign-in and every
+    // credential are refused through the account-state predicate
+    // (apps/backend/src/authz/account-state.ts), reversibly. Separate from an
+    // org admin's disable (organization_members.disabled_at), so an org admin
+    // can't lift it.
     suspendedAt: timestamp("suspended_at", { withTimezone: true }),
     suspendedReason: text("suspended_reason"),
+
+    // Sessions (JWTs) issued before this moment are refused by the per-request
+    // session lookup (apps/backend/src/authz/session-state.ts). Set when an
+    // account's sign-in credentials change hands, e.g. account linking
+    // discarding an unverified password (recipe a8003678). Null: no cut-off.
+    sessionsValidAfter: timestamp("sessions_valid_after", { withTimezone: true }),
 
     // Waitlist — when set, the account exists (password + ToS captured at
     // registration, email verifiable) but sign-in is blocked with a

@@ -2,6 +2,8 @@ import { createTransport } from "nodemailer";
 import type { Transporter } from "nodemailer";
 import { sql } from "drizzle-orm";
 import { getDb } from "../db";
+import { organizationJoinNotice, domainJoinNotice } from "@soupnet/domain";
+import type { MovedBook } from "@soupnet/domain";
 
 let transporter: Transporter | null = null;
 
@@ -72,7 +74,9 @@ export type EmailKind =
   | "verification"
   | "password_reset"
   | "invitation"
-  | "waitlist_approved";
+  | "waitlist_approved"
+  | "organization_joined"
+  | "organization_domain";
 
 async function sendLoggedMail(
   kind: EmailKind,
@@ -120,7 +124,7 @@ async function sendLoggedMail(
 export async function sendVerificationEmail(
   email: string,
   token: string,
-  opts?: { waitlisted?: boolean },
+  opts?: { waitlisted?: boolean; joiningOrganization?: string | null },
 ): Promise<void> {
   const verifyUrl = `${APP_URL}/auth/verify?token=${encodeURIComponent(token)}`;
 
@@ -132,17 +136,23 @@ export async function sendVerificationEmail(
   const lead = waitlisted
     ? "Soup.net is at capacity, so you're on the waitlist. Confirm your email to hold your place — we'll email you when a spot opens. First come, first served."
     : "Please verify your email address to get started.";
+  // An address on a domain an organization has captured: the click joins it,
+  // so the notice comes before the click (stream Domains, recipe 43b6aac9).
+  const joining = opts?.joiningOrganization ? domainJoinNotice(opts.joiningOrganization) : null;
+  const joiningText = joining ? `\n\n${joining}` : "";
+  const joiningHtml = joining ? `<p>${escHtml(joining)}</p>` : "";
 
   await sendLoggedMail("verification", {
     to: email,
     subject: waitlisted
       ? "Confirm your email to hold your place on the Soup.net waitlist"
       : "Verify your Soup.net account",
-    text: `${heading}\n\n${lead}\n\nVerify your email by visiting:\n${verifyUrl}\n\nThis link expires in 24 hours.\n\nIf you didn't create an account, you can ignore this email.`,
+    text: `${heading}\n\n${lead}${joiningText}\n\nVerify your email by visiting:\n${verifyUrl}\n\nThis link expires in 24 hours.\n\nIf you didn't create an account, you can ignore this email.`,
     html: `
       <div style="font-family: Georgia, serif; max-width: 480px; margin: 0 auto; padding: 2rem;">
         <h1 style="color: #051a0f; font-size: 1.5rem;">${heading}</h1>
         <p>${lead}</p>
+        ${joiningHtml}
         <a href="${verifyUrl}" style="display: inline-block; background: #051a0f; color: #fff; padding: 0.75rem 1.5rem; border-radius: 0.5rem; text-decoration: none; font-family: sans-serif; font-size: 0.9rem;">Verify Email</a>
         <p style="color: #737973; font-size: 0.85rem; margin-top: 1.5rem;">This link expires in 24 hours. If you didn't create an account, you can ignore this email.</p>
       </div>
@@ -193,6 +203,47 @@ export async function sendWaitlistApprovedEmail(email: string): Promise<void> {
         <p style="color: #737973; font-size: 0.85rem; margin-top: 1.5rem;">Your account is the one you created when you joined the waitlist — same email, same password.</p>
       </div>
     `,
+  });
+}
+
+/**
+ * Tell an existing account it joined a company organization, and which of
+ * its books moved there (organization accounts round 1, OC-J4: "tell the
+ * user it happened"). The recipient already has an account, so this is not
+ * mail to a non-user. Throws on a failed send after the logged sender has
+ * written the email_log row; the caller logs it.
+ */
+export async function sendOrganizationJoinNotice(
+  email: string,
+  organizationName: string,
+  moved: readonly MovedBook[],
+): Promise<void> {
+  const notice = organizationJoinNotice(organizationName, moved);
+  const paragraphs = notice.text.split("\n\n").map((block) => {
+    const lines = block.split("\n");
+    const items = lines.filter((l) => l.startsWith("- "));
+    const prose = lines.filter((l) => !l.startsWith("- ")).join(" ");
+    return `${prose ? `<p>${escHtml(prose)}</p>` : ""}${items.length ? `<ul>${items.map((i) => `<li>${escHtml(i.slice(2))}</li>`).join("")}</ul>` : ""}`;
+  });
+  await sendLoggedMail("organization_joined", {
+    to: email,
+    subject: notice.subject,
+    text: notice.text,
+    html: `<div style="font-family: Georgia, serif; max-width: 480px; margin: 0 auto; padding: 2rem;">${paragraphs.join("")}</div>`,
+  });
+}
+
+/**
+ * To an organization's active owners and admins about one of its domain
+ * claims (stream Domains: the record went missing, or the claim lapsed). The
+ * copy is from @soupnet/domain and names the record, never a token.
+ */
+export async function sendOrganizationDomainEmail(email: string, mail: { subject: string; text: string }): Promise<void> {
+  await sendLoggedMail("organization_domain", {
+    to: email,
+    subject: mail.subject,
+    text: mail.text,
+    html: `<div style="font-family: Georgia, serif; max-width: 480px; margin: 0 auto; padding: 2rem;"><p>${escHtml(mail.text)}</p></div>`,
   });
 }
 
