@@ -75,6 +75,8 @@ type FeatureExtractionPipeline = (
 
 interface TransformersEnv {
   backends?: { onnx?: { wasm?: { numThreads?: number } } };
+  cacheDir?: string | null;
+  allowRemoteModels?: boolean;
 }
 
 interface TransformersModule {
@@ -105,6 +107,26 @@ function capThreads(mod: TransformersModule): void {
   if (wasm) wasm.numThreads = threads;
 }
 
+/** The values huggingface_hub reads as "on" for its boolean env flags. */
+const HUB_TRUE_VALUES = new Set(["1", "on", "yes", "true"]);
+
+/**
+ * F124: transformers.js reads none of the Hugging Face environment variables.
+ * It caches under its own package folder whatever HF_HOME says, and fetches any
+ * file missing from that cache from huggingface.co even with HF_HUB_OFFLINE or
+ * TRANSFORMERS_OFFLINE set. This applies them in code: HF_HOME becomes the cache
+ * directory, and either offline flag turns remote loading off, so a missing
+ * file fails the load instead of reaching the network. Unset, transformers.js
+ * keeps its defaults.
+ */
+export function applyHubEnv(env: TransformersEnv | undefined, vars: NodeJS.ProcessEnv): void {
+  if (!env) return;
+  const home = vars["HF_HOME"];
+  if (home) env.cacheDir = home;
+  const on = (name: string) => HUB_TRUE_VALUES.has((vars[name] ?? "").trim().toLowerCase());
+  if (on("HF_HUB_OFFLINE") || on("TRANSFORMERS_OFFLINE")) env.allowRemoteModels = false;
+}
+
 // --- Lazy singleton pipeline -------------------------------------------------
 
 let pipelinePromise: Promise<FeatureExtractionPipeline> | null = null;
@@ -112,6 +134,7 @@ let pipelinePromise: Promise<FeatureExtractionPipeline> | null = null;
 async function loadPipeline(): Promise<FeatureExtractionPipeline> {
   const mod = (await import("@huggingface/transformers")) as unknown as TransformersModule;
   capThreads(mod);
+  applyHubEnv(mod.env, process.env);
   // pooling:'mean' + normalize:true are applied at inference time (below), which is
   // where transformers.js v3 takes them — the pipeline() constructor's third arg is
   // model-load options (dtype/device/cache), not feature-extraction options.
