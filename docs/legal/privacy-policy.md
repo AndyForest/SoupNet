@@ -20,7 +20,7 @@
 
 ## 1. Who we are
 
-Soup.net is operated by the operator named at the top of this policy ("we"). For privacy questions or requests: **admin@soup.net**.
+Soup.net is run by whoever the "Operated by" line at the top of this policy names ("we"). For privacy questions or requests: **admin@soup.net**.
 
 ## 2. What we collect
 
