@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseDraftFlag, draftDepositNotice, draftLabel, validateVerificationEvidence, onBehalfRefusal, onlySubjectReviewsReason, headlessVerifyRefusal, parseDraftOutcome, DRAFT_OUTCOMES, describeResolution } from "./drafts";
+import { parseDraftFlag, draftDepositNotice, draftLabel, validateVerificationEvidence, onBehalfRefusal, onlySubjectReviewsReason, headlessVerifyRefusal, parseDraftOutcome, DRAFT_OUTCOMES, describeResolution, openQuestionLine, OPEN_QUESTION_STORY_MAX } from "./drafts";
 
 describe("parseDraftFlag", () => {
   it("DT-VIS-01: true and its usual wire spellings mean draft", () => {
@@ -475,5 +475,61 @@ describe("the headless verify refusal (slice 5, S5-R1, S5-Z4)", () => {
     const a = headlessVerifyRefusal("abc12345", "U/abc12345");
     const b = headlessVerifyRefusal("ffffffff-0000-4000-8000-000000000000", "U/ffffffff-0000-4000-8000-000000000000");
     expect(a.split("abc12345").join("<ID>")).toBe(b.split("ffffffff-0000-4000-8000-000000000000").join("<ID>"));
+  });
+});
+
+// Slice 10: drafts as a bus.
+describe("draftLabel: expiry and resolution (S10-R1, S10-R3)", () => {
+  const at = "2026-10-25T09:30:00Z";
+
+  it("an expired draft says it expired, why, and that it can still be resolved by id", () => {
+    const idle = draftLabel("unverified", { expired: "intent_idle" });
+    expect(idle).toBe("[expired draft: its task has been quiet for over 24 hours, so it has left the review queue and results; it can still be verified or rejected by id]");
+    expect(draftLabel("unverified", { expired: "age" })).toContain("deposited with no intent over 7 days ago");
+    expect(draftLabel("unverified", { expired: "age", draftAbout: "pat@test.local" })).toMatch(/^\[expired draft about pat@test\.local: .*; only they can still verify or reject it\]$/);
+    expect(draftLabel("unverified", { expired: null })).toMatch(/^\[unverified draft: /);
+  });
+
+  it("names how and when for each resolved state, verified included", () => {
+    expect(draftLabel("rejected", { resolution: { by: "agent", keyLabel: "K2", at } }))
+      .toBe(`[rejected draft: rejected by your user's agent "K2" on 2026-10-25; its evidence says why]`);
+    expect(draftLabel("not_chosen", { resolution: { by: "depositing_agent", at } }))
+      .toBe("[draft not chosen: marked not chosen by the agent that deposited it on 2026-10-25]");
+    expect(draftLabel("verified", { resolution: { by: "person", at: new Date(at) } }))
+      .toBe("[verified draft: verified by your user on 2026-10-25]");
+    expect(draftLabel("verified", { resolution: { by: "agent", keyLabel: null, at } })).toContain("by one of your user's agents");
+  });
+
+  it("without a resolution note, the labels are as before, and a verified draft has none", () => {
+    expect(draftLabel("verified")).toBe("");
+    expect(draftLabel("rejected")).toBe("[rejected draft: its evidence says why]");
+    expect(draftLabel("not_chosen")).toBe("[draft not chosen]");
+  });
+
+  it("ratings still close the label", () => {
+    expect(draftLabel("rejected", { impact: "high", resolution: { by: "person", at } }))
+      .toBe("[rejected draft: rejected by your user on 2026-10-25; its evidence says why; impact high, uncertainty not rated]");
+  });
+});
+
+describe("openQuestionLine (S10-D1, S10-D3)", () => {
+  const id = "0b9c2a1e-1111-4222-8333-444455556666";
+
+  it("names the draft, the story's first line, and when it was asked, in the ruling's words", () => {
+    expect(openQuestionLine({ recipeId: id, story: "As a backend maintainer working on X, I want Y\nmore", askedAt: "2026-10-24T22:00:00Z" }))
+      .toBe(`Open question near this call: ${id} (As a backend maintainer working on X, I want Y, asked 2026-10-24). If your context settles it, resolve it; otherwise leave it.`);
+  });
+
+  it("without a story (another person's intent, or none) the parenthesis carries only the date", () => {
+    expect(openQuestionLine({ recipeId: id, askedAt: "2026-10-24T22:00:00Z" }))
+      .toBe(`Open question near this call: ${id} (asked 2026-10-24). If your context settles it, resolve it; otherwise leave it.`);
+    expect(openQuestionLine({ recipeId: id, story: "   ", askedAt: "2026-10-24T22:00:00Z" })).toContain("(asked 2026-10-24)");
+  });
+
+  it("cuts a long story to the excerpt limit", () => {
+    const line = openQuestionLine({ recipeId: id, story: "x".repeat(300), askedAt: "2026-10-24T22:00:00Z" });
+    const story = line.split("(")[1]!.split(", asked")[0]!;
+    expect(story.length).toBe(OPEN_QUESTION_STORY_MAX);
+    expect(story.endsWith("…")).toBe(true);
   });
 });

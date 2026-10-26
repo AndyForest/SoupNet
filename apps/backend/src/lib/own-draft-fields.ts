@@ -23,12 +23,14 @@ export function ownDraftFields(r: {
   uncertainty?: string | null | undefined;
   draftDepositedBy?: string | undefined;
   draftAbout?: string | undefined;
+  draftExpired?: "intent_idle" | "age" | undefined;
 }): {
   draftState?: Exclude<DraftState, "verified">;
   impact?: TriageRating | null;
   uncertainty?: TriageRating | null;
   draftDepositedBy?: string;
   draftAbout?: string;
+  draftExpired?: "intent_idle" | "age";
 } {
   if (!isShownDraftState(r.draftState)) return {};
   return {
@@ -38,5 +40,7 @@ export function ownDraftFields(r: {
     // Slice 4 (S4-L1): only on an on-behalf draft, naming the other party.
     ...(r.draftDepositedBy ? { draftDepositedBy: r.draftDepositedBy } : {}),
     ...(r.draftAbout ? { draftAbout: r.draftAbout } : {}),
+    // Slice 10 (S10-R3): an expired draft, which only is:expired returns.
+    ...(r.draftState === "unverified" && r.draftExpired ? { draftExpired: r.draftExpired } : {}),
   };
 }

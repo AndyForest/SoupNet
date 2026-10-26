@@ -44,11 +44,13 @@ const COLUMN = /"?\bintent_id\b"?/g;
  * traces.intent_id anywhere but the deposit is exactly what this stops.
  */
 const REGISTER: Readonly<Record<string, { n: number; why: string }>> = {
+  "authz/draft-sql.ts": { n: 1, why: "slice 10 liveness: reads the depositing intent's last_used_at by traces.intent_id, never its story (S10-L2)" },
   "routes/auth.ts": { n: 2, why: "export: reads traces.intent_id, carried only when the exporter owns the intent (S6a-E1); slice 9: the exported check_feedback rows' intent_id" },
   "routes/check.ts": { n: 1, why: "the feedback_intent_id ride-along param mapped to a check_feedback row field" },
   "routes/feedback.ts": { n: 6, why: "GET /feedback query param for a check_feedback row; 8a: an outcome row may name only its intent (PR #139); slice 9: GET /feedback/rows' intent_id filter name and its comment" },
   "routes/mcp.ts": { n: 2, why: "log_feedback's intent_id parameter (check_feedback), and 8a's trace_id description naming it as the outcome-row alternative (PR #139)" },
   "routes/traces.ts": { n: 1, why: "reads check_feedback.intent_id for the per-recipe feedback list" },
+  "services/draft-dispatch.service.ts": { n: 1, why: "slice 10 dispatch line: the draft's intent story, joined only to the caller's own intents (S10-D3)" },
   "services/draft-queue.service.ts": { n: 2, why: "reads traces.intent_id joined to the viewer's own intents (S6a-G1, S6a-G2)" },
   "services/feedback.service.ts": { n: 7, why: "the check_feedback row's intent_id field; 8a: an outcome row may name only its intent, validated and ownership-checked against claimnet.intents (PR #139)" },
   "services/intent-read.service.ts": { n: 7, why: "slice 9 report reads, never writes: deposits read traces.intent_id only for an intent that resolved as the viewer's own (intentOwnedBy) and under traceReadableByViewer; the rest read intent_shown's and check_feedback's intent_id" },

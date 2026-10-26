@@ -38,11 +38,13 @@ import type { RegionMeta } from "../lib/image-roi";
 import type { EvidenceSearchResult } from "./vector-search.service";
 import { scoreFormatAdherence } from "./format-adherence";
 import { runSearchPipeline } from "./search-pipeline";
+import { findOpenQuestion } from "./draft-dispatch.service";
+import { embedQuery } from "../lib/embeddings/provider";
 import { StageTimer } from "../lib/stage-timer";
 import { searchSelections } from "./search-selection";
 import { draftQueueUrl } from "../lib/key-remediation";
 import { DEFAULT_RANKING, RANKING_ALGORITHM_VERSION, parseSearchQuery, AUTHOR_ME, searchZeroResultLine, parseTriageRating, parseTriageRatings, repeatRatingsNotice, parseDraftFlag, draftDepositNotice, isShownDraftState, onBehalfRefusal } from "@soupnet/domain";
-import type { CandidateSignals, VerbositySteer, ParsedSearchQuery, TriageRatings } from "@soupnet/domain";
+import type { CandidateSignals, VerbositySteer, ParsedSearchQuery, TriageRatings, OpenQuestion } from "@soupnet/domain";
 import type { DraftState } from "@soupnet/contracts";
 import type { StructuredTraceFilters } from "./vector-search.service";
 import { resolveIntent, fetchIntentShownIds, recordIntentShown, ownedIntentIds } from "./intent.service";
@@ -256,6 +258,9 @@ export interface SubmitAndSearchResult {
   /** Known parents whose evidence would have made the selection — id plus
    *  best evidence similarity, the token-lean stub form (seam 2). */
   relatedEvidenceKnown?: Array<{ recipeId: string; similarity: number }> | undefined;
+  /** Slice 10 (S10-D1): a live draft near this call that the caller may
+   *  read, named in one line after the exemplars. */
+  openQuestion?: OpenQuestion | undefined;
   totalResults: number;
   currentPage: number;
   totalPages: number;
@@ -921,6 +926,20 @@ export async function submitAndSearch(
     timer,
   });
 
+  // Slice 10: a live draft near this check that the caller may answer. Its
+  // own lookup over the caller's drafts; a failure costs the line only.
+  const openQuestion = await findOpenQuestion(db, {
+    viewerUserId: userId,
+    groupIds: effectiveReadGroupIds,
+    queryVectorStr: traceVectorStr ?? undefined,
+    shownSimilarities: pipelineResult.results.map((r) => r.semanticScore),
+    excludeTraceId: traceId,
+    headless,
+  }).catch((err: unknown) => {
+    console.error("[trace.service] open-question lookup failed (non-fatal):", err);
+    return undefined;
+  });
+
   // 7. Audit log — record what the agent saw for later analysis and "Map from here".
   //
   // F29: api_key_id is also written to its own column (in addition to the
@@ -1054,6 +1073,7 @@ export async function submitAndSearch(
     results: pipelineResult.results,
     relatedEvidence: pipelineResult.relatedEvidence,
     relatedEvidenceKnown: pipelineResult.relatedEvidenceKnown,
+    openQuestion,
     totalResults: pipelineResult.totalResults,
     currentPage: pipelineResult.page,
     totalPages: pipelineResult.totalPages,
@@ -1162,7 +1182,8 @@ export async function resolveStructuredFilters(
  * by them, so intent: lifts it for the same reason (slice 6a).
  */
 function excludesOwnByDefault(parsed: ParsedSearchQuery, surfaceExcludesOwn: boolean): boolean {
-  return surfaceExcludesOwn && parsed.authors.kind === "surface-default" && parsed.isDraft !== true && parsed.intent === undefined;
+  return surfaceExcludesOwn && parsed.authors.kind === "surface-default" && parsed.isDraft !== true
+    && parsed.isExpired !== true && parsed.intent === undefined;
 }
 
 export interface SearchOnlyParams {
@@ -1301,15 +1322,26 @@ export async function searchWithoutLogging(
   }
 
   const timer = new StageTimer();
+  // The query vector is resolved here rather than inside the pipeline so the
+  // open-question lookup can reuse it (slice 10, S10-M3); the pipeline takes
+  // it through its existing input and makes no embedding call of its own.
+  const semanticQuery = parsed.query.semanticText.length > 0 ? parsed.query.semanticText : undefined;
+  let queryVectorStr: string | undefined;
+  if (semanticQuery) {
+    const embedded = await timer.time("query_embed", () => embedQuery(semanticQuery, "SEMANTIC_SIMILARITY"));
+    if (embedded) queryVectorStr = `[${embedded.join(",")}]`;
+  }
   const pipelineResult = await runSearchPipeline({
     db,
     groupIds: effectiveReadGroupIds,
     // Own unverified drafts reach the caller's search only when an author
     // qualifier admits their own recipes (MCP search excludes them by default).
-    audience: { viewerUserId: keyResult.userId },
+    // Expired ones only when the query asks for them (slice 10, S10-X3).
+    audience: { viewerUserId: keyResult.userId, includeExpired: parsed.query.isExpired === true },
     // Qualifier-only queries have no semantic text: corpus mode, judgment-date
     // ordering, structured predicates applied in fetchCorpusTraces.
-    query: parsed.query.semanticText.length > 0 ? parsed.query.semanticText : undefined,
+    query: semanticQuery,
+    queryVectorStr,
     structured,
     corpusLimit: SEARCH_CORPUS_LIMIT,
     k: params.clusters,
@@ -1322,6 +1354,18 @@ export async function searchWithoutLogging(
     includeVectors: !!params.axes,
     knownIds: knownIds.size > 0 ? knownIds : undefined,
     timer,
+  });
+
+  // Slice 10: a live draft near this search that the caller may answer.
+  const openQuestion = await findOpenQuestion(db, {
+    viewerUserId: keyResult.userId,
+    groupIds: effectiveReadGroupIds,
+    queryVectorStr,
+    shownSimilarities: pipelineResult.results.map((r) => r.semanticScore),
+    headless: keyForcesDrafts(params.principal),
+  }).catch((err: unknown) => {
+    console.error("[trace.service] open-question lookup failed (non-fatal):", err);
+    return undefined;
   });
 
   // Zero results: report the scope size so the caller (and later analysis)
@@ -1428,6 +1472,7 @@ export async function searchWithoutLogging(
     results: pipelineResult.results,
     relatedEvidence: pipelineResult.relatedEvidence,
     relatedEvidenceKnown: pipelineResult.relatedEvidenceKnown,
+    openQuestion,
     totalResults: pipelineResult.totalResults,
     currentPage: pipelineResult.page,
     totalPages: pipelineResult.totalPages,

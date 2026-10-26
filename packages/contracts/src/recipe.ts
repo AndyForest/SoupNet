@@ -345,7 +345,7 @@ export const CheckResponseDataSchema = z
       .boolean()
       .optional()
       .describe("True for the read-only `filter` search path — no recipe was logged."),
-    filter: z.string().optional().describe("The structured query of a search-only response (bare text semantic, \"quoted\" lexical, author:/after:/before:/is:draft/impact:/uncertainty: qualifiers)."),
+    filter: z.string().optional().describe("The structured query of a search-only response (bare text semantic, \"quoted\" lexical, author:/after:/before:/is:draft/is:expired/impact:/uncertainty: qualifiers)."),
     searchId: z
       .string()
       .optional()

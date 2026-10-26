@@ -39,7 +39,9 @@ import {
   inBooks,
   traceVisibleTo,
   traceReadableById,
-  draftAwaitingReviewBy,
+  draftLiveAwaitingReviewBy,
+  draftExpiredAwaitingReviewBy,
+  draftExpired,
   draftStateShownTo,
   onBehalfSideFor,
   onBehalfPartyFor,
@@ -108,6 +110,9 @@ export interface DraftQueueItem {
   /** Why an unresolved draft's actions are unavailable: the book the person
    *  cannot write, or (for its depositor) who alone can review it. */
   blockedReason?: string;
+  /** Slice 10: an unverified draft whose task went quiet. It has left the
+   *  queue's default listing and can still be resolved (S10-X4). */
+  expired: boolean;
 }
 
 export type DraftQueueResult =
@@ -123,6 +128,11 @@ export type DraftQueueResult =
     /** Set when the query's intent: id is not one of the person's intents
      *  (the same sentence agent search gives, slice 6a). */
     notice?: string;
+    /** Slice 10 (S10-K2): this person's expired drafts in scope, which the
+     *  default listing leaves out and `is:expired` lists. */
+    expiredTotal: number;
+    /** The listing is the expired drafts (`is:expired`). */
+    expired: boolean;
   }
   | { ok: false; error: string };
 
@@ -142,8 +152,9 @@ async function scopeFor(db: PostgresJsDatabase, userId: string): Promise<{ bookI
 
 /**
  * Parse the queue's search box with the agents' grammar and pin `is:draft`
- * on. `-is:draft` contradicts the page, so it is an error rather than a
- * silent override.
+ * on, unless the person asked for `is:expired` (slice 10), which lists the
+ * drafts whose task went quiet instead. `-is:draft` contradicts the page, so
+ * it is an error rather than a silent override.
  */
 export function parseQueueQuery(q: string | undefined): { ok: true; query: ParsedSearchQuery } | { ok: false; error: string } {
   const text = (q ?? "").trim();
@@ -163,10 +174,10 @@ function parseOk(text: string): ParsedSearchQuery {
 }
 
 function forceDraft(query: ParsedSearchQuery): ParsedSearchQuery {
-  return { ...query, isDraft: true };
+  return query.isExpired ? query : { ...query, isDraft: true };
 }
 
-/** The unresolved drafts about this person, in their live books: the dashboard's figure (S3-Q3). */
+/** The live unresolved drafts about this person, in their live books: the dashboard's figure (S3-Q3, S10-X1). */
 export async function countDraftsAwaitingReview(db: PostgresJsDatabase, userId: string): Promise<number> {
   const { bookIds } = await scopeFor(db, userId);
   if (bookIds.length === 0) return 0;
@@ -174,7 +185,18 @@ export async function countDraftsAwaitingReview(db: PostgresJsDatabase, userId: 
     SELECT count(*)::int AS n FROM claimnet.traces t
     WHERE ${inBooks(sql`t.group_id`, bookIds)}
       AND ${traceVisibleTo("t", { viewerUserId: userId })}
-      AND ${draftAwaitingReviewBy("t", userId)}
+      AND ${draftLiveAwaitingReviewBy("t", userId)}
+  `);
+  return Number((rows as unknown as Array<{ n: number }>)[0]?.n ?? 0);
+}
+
+/** This person's expired drafts in these books (S10-K2). */
+async function countExpired(db: PostgresJsDatabase, userId: string, bookIds: string[]): Promise<number> {
+  if (bookIds.length === 0) return 0;
+  const rows = await db.execute(sql`
+    SELECT count(*)::int AS n FROM claimnet.traces t
+    WHERE ${inBooks(sql`t.group_id`, bookIds)}
+      AND ${draftExpiredAwaitingReviewBy("t", userId)}
   `);
   return Number((rows as unknown as Array<{ n: number }>)[0]?.n ?? 0);
 }
@@ -193,11 +215,15 @@ export async function listDraftQueue(
   const { bookIds, roleOf } = await scopeFor(db, userId);
   const { structured, intentNotRecognized } = await resolveStructuredFilters(db, parsed.query, { callerUserId: userId, excludeOwnDefault: false });
   const semantic = parsed.query.semanticText.length > 0;
+  const expired = parsed.query.isExpired === true;
+  // The listing's own set: live drafts, or the expired ones (slice 10).
+  const audience = { viewerUserId: userId, includeExpired: expired };
+  const reviewSet = expired ? draftExpiredAwaitingReviewBy("t", userId) : draftLiveAwaitingReviewBy("t", userId);
 
   const notice = intentNotRecognized ? { notice: `No drafts listed: ${INTENT_QUALIFIER_NOT_RECOGNIZED}.` } : {};
 
   if (bookIds.length === 0) {
-    return { ok: true, items: [], total: 0, page, perPage, totalPages: 0, order: semantic ? "similarity" : "triage", ...notice };
+    return { ok: true, items: [], total: 0, page, perPage, totalPages: 0, order: semantic ? "similarity" : "triage", expiredTotal: 0, expired, ...notice };
   }
 
   let ids: string[];
@@ -209,7 +235,7 @@ export async function listDraftQueue(
     const result = await runSearchPipeline({
       db,
       groupIds: bookIds,
-      audience: { viewerUserId: userId },
+      audience,
       query: parsed.query.semanticText,
       structured,
       page,
@@ -224,8 +250,8 @@ export async function listDraftQueue(
     // triage position, and a group's rows sort by their group's lowest pos.
     // A draft with no own intent is its own group, so it keeps its place.
     const where = sql`${inBooks(sql`t.group_id`, bookIds)}
-      AND ${traceVisibleTo("t", { viewerUserId: userId })}
-      AND ${draftAwaitingReviewBy("t", userId)}
+      AND ${traceVisibleTo("t", audience)}
+      AND ${reviewSet}
       ${buildStructuredTracePredicates(structured, "t")}`;
     const countRows = await db.execute(sql`
       SELECT count(*)::int AS n FROM claimnet.traces t WHERE ${where}
@@ -258,6 +284,8 @@ export async function listDraftQueue(
     perPage,
     totalPages: Math.ceil(total / perPage),
     order: semantic ? "similarity" : "triage",
+    expiredTotal: expired ? total : await countExpired(db, userId, bookIds),
+    expired,
     ...notice,
   };
 }
@@ -349,6 +377,7 @@ async function loadItems(
       t.decided_at AS "decidedAt",
       (CASE WHEN ak.user_id = t.user_id THEN ak.label ELSE NULL END) AS "keyLabel",
       ${draftStateShownTo("t", userId)} AS "draftState",
+      ${draftExpired("t")} AS "expired",
       ${onBehalfSideFor("t", userId)} AS "onBehalfSide",
       ou.email AS "onBehalfEmail",
       (SELECT e.content FROM claimnet.trace_evidence te
@@ -370,7 +399,7 @@ async function loadItems(
     id: string; recipe: string; bookId: string; bookName: string; bookSlug: string;
     impact: string | null; uncertainty: string | null; depositedAt: string | Date; decidedAt: string | Date | null;
     keyLabel: string | null; draftState: string | null; firstInterpretation: string | null;
-    onBehalfSide: string | null; onBehalfEmail: string | null;
+    onBehalfSide: string | null; onBehalfEmail: string | null; expired: boolean | null;
     intentId: string | null; intentStory: string | null;
   };
   const byId = new Map((rows as unknown as Row[]).map((r) => [r.id, r]));
@@ -406,6 +435,7 @@ async function loadItems(
       intent: r.intentId !== null && r.intentStory !== null ? { id: r.intentId, story: r.intentStory } : null,
       state,
       canResolve,
+      expired: state === "unverified" && r.expired === true,
       ...(state === "unverified" && isDepositorOnly
         ? { blockedReason: onlySubjectReviewsReason(about, draftQueueUrl([r.id])) }
         : state === "unverified" && !writable

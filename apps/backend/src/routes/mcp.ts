@@ -1410,6 +1410,10 @@ export function buildMcpJsonResponse(
       (p): Recipe => ({ recipeId: p.recipeId, similarity: p.similarity }),
     );
   }
+  // Slice 10 (S10-D5): the nearby open question; the renderer prints its line.
+  if (result.openQuestion) {
+    data["openQuestion"] = result.openQuestion;
+  }
 
   // Concept axes (semantic projection)
   if (result.conceptAxes) {

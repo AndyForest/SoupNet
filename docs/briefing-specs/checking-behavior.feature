@@ -94,6 +94,13 @@ Feature: Checking behavior — genuine hypotheses, autonomous timing
     Then it calls verify_draft with an outcome that matches the settling fact (verified, rejected, or not chosen), quoting the person's words or the fact and citing where they were given
     And it does not leave the draft for a person's click
 
+  Scenario: A draft lives while its task does, and an open question named near a call is answered when the agent's context settles it
+    # Guards: the briefing's "## Drafts" section ("A draft is a question on a bus: it stays live while your intent is in use, and expires once your task goes quiet."); the dispatch line in check and search responses ("Open question near this call: … If your context settles it, resolve it; otherwise leave it."); docs/planning/drafts-and-triage-slices-6-7-revision.md §A proposed slice 10 (ruled 2026-10-25, recipe 053c9b97); drafts-and-triage slice 10 (build log §Slice 10 rubric, S10-C3; spec-decision-log.md 2026-10-25, slice 10).
+    Given an agent that deposits a draft during a task
+    Then it carries the intent its briefing or first check returned on its later calls, so the draft stays live while the task runs
+    And when a check or search names an open question near its call that its own context settles, it resolves it with verify_draft, quoting what settles it
+    And when its context does not settle that question, it leaves it and does not deposit a duplicate
+
   Scenario: A returned recipe is weighed as a call made in its own context, not applied as a rule
     # Guards: the briefing's "## Reading results" section; docs/planning/drafts-and-triage-slices-6-7-revision.md §7d item 1 and field item 7; drafts-and-triage slice 7 (build log §Slice 7 rubric; spec-decision-log.md 2026-10-24, C1).
     Given a check returns a closely matching recipe recorded in a different context from the current task

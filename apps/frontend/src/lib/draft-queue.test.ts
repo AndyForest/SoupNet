@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  queueExpiredText,
   queueRatingsText,
   actionLabel,
   actionAccessibleName,
@@ -240,5 +241,18 @@ describe("drafts under one of your intents are listed together (slice 6a, S6a-G5
 
   it("filters the queue to one intent with the search grammar", () => {
     expect(intentFilterQuery(I1.id)).toBe("intent:int_AAAAAAAAAAAAAAAAAAAAAAAA");
+  });
+});
+
+describe("queueExpiredText (slice 10, S10-K2)", () => {
+  it("names the expired drafts that left the list, and says they can still be answered", () => {
+    expect(queueExpiredText(1, false)).toBe("1 more draft expired unanswered and left this list. You can still answer it.");
+    expect(queueExpiredText(3, false)).toBe("3 more drafts expired unanswered and left this list. You can still answer them.");
+  });
+
+  it("is silent with none, and while the expired drafts are what is listed", () => {
+    expect(queueExpiredText(0, false)).toBeNull();
+    expect(queueExpiredText(undefined, undefined)).toBeNull();
+    expect(queueExpiredText(4, true)).toBeNull();
   });
 });

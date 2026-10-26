@@ -4,6 +4,43 @@ Every PR that touches briefing copy (`packages/domain/src/recipe-guide-content.t
 
 (Renamed from declared-intent-log.md on 2026-08-23: "intent" now names the runtime intent-registration mechanism — cold-start v2 Phase C — so the discipline's log takes an unambiguous name. The discipline itself is unchanged.)
 
+## 2026-10-25 — Drafts-and-triage slice 10: drafts as a bus (the dispatch line, expired drafts, and how a resolved draft was resolved)
+
+Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-and-triage-slices-6-7-revision.md) §A proposed slice 10 (ruled 2026-10-25, recipe `053c9b97`). Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 10 rubric.
+
+### Edits
+
+1. **The dispatch line, new, in check and search responses** (`openQuestionLine`, rendered after the exemplars on both MCP servers and the web check page): "Open question near this call: <id> (<story>, asked <date>). If your context settles it, resolve it; otherwise leave it." The wording is the ruling's. The story appears only when the draft's intent is the caller's own, so before slice 6a it never does.
+2. **The books block's Drafts line** (`renderBookStatsLine`): it now counts live drafts only, with its wording unchanged. When drafts expired in the last 7 days it adds "; M expired unanswered in the last 7 days (search is:expired)", or reads "Drafts: none awaiting review; M expired unanswered in the last 7 days (search is:expired)".
+3. **Draft labels on agent surfaces** (`draftLabel`): an expired draft reads "[expired draft: its task has been quiet for over 24 hours, so it has left the review queue and results; it can still be verified or rejected by id]" (or "it was deposited with no intent over 7 days ago"); for the depositor of a draft about a colleague it ends "only they can still verify or reject it". For the draft's subject, a resolved draft's label says how and when: "[rejected draft: rejected by your user's agent "K2" on 2026-10-25; its evidence says why]", "[draft not chosen: marked not chosen by the agent that deposited it on …]", "[verified draft: verified by your user on …]". A verified draft had no label before; it now has one for its subject only.
+4. **The search grammar's refusals** (`parseSearchQuery`): the qualifier list names `is:expired`; an unknown `is:` value names both values ("is:expired the ones that expired unanswered"); `-is:expired` and `is:expired -is:draft` are refused with a sentence each.
+5. **`is:expired` in reference copy:** the web `/check` page's search help and the `filter` field's description in the published recipe schema (`packages/contracts/src/recipe.ts`) name it beside `is:draft`. Neither is a tool or parameter description.
+6. **`search_recipes` query description** (`MCP_PARAM_DESCRIPTIONS.searchQuery`, both MCP servers), after the rebase onto slice 6a: "is:draft (your open drafts)" becomes "is:draft (open drafts), is:expired" (406 → 413 characters of the 420 per-description limit). Dropping "your" pays for most of it; `is:expired` names what it lists.
+7. **The briefing's "## Drafts" section** (C2's text, after C2 merged): one sentence before "With sub-agents, work live:", "A draft is a question on a bus: it stays live while your intent is in use, and expires once your task goes quiet." Stream C handed it to this slice (2026-10-25), since it describes behaviour this slice ships. It keeps clear of the words C2's voice test refuses in that section. Thin briefing 22,681 → 22,795 characters (cap 22,800, C2's); headless 23,081 → 23,195 (cap 23,200). No cap moved; 5 characters remain on each, which stream D's Members lines (8b item 3) will need a dated raise for.
+
+### Scenarios intended to move
+
+- **Product spec** ([../product-specs/drafts-and-triage.feature](../product-specs/drafts-and-triage.feature)): DT-BUS-01 to DT-BUS-11 (`@slice-10`), added in this PR. DT-BUS-02 and 03 are `@unreleased` until slice 6a's intent link.
+- **Briefing spec** ([checking-behavior.feature](checking-behavior.feature)): new scenario "A draft lives while its task does, and an open question named near a call is answered when the agent's context settles it", for edit 7 and the dispatch line.
+
+### Scenarios watched, with rationale for holding
+
+- **DT-VIS-09 and the books-block tests:** the Drafts line keeps its exact wording when no draft has expired, so every existing fixture is byte-identical.
+- **Every other tool and parameter description:** unchanged. `searchQuery` (edit 6) is the only one this slice touches.
+- **C1 and C2's briefing scenarios:** the Drafts section grows by one sentence and nothing else in the briefing changes; C2's voice test over that section and the thin and headless size tests pass.
+- **Check and search responses with no live draft nearby:** byte-identical, since the line is added only when a draft qualifies.
+
+### Measured
+
+Before is `main` at `c21f421` (slices 6c, 8a and 6a merged; the figures slice 6a recorded as its after), after is this branch. Measured with the slice 1 method (initialize then tools/list over the SDK's in-memory transport, the reply's `result` as minified UTF-8 JSON).
+
+| Measure | Before | After | Cap |
+|---|---|---|---|
+| Remote `tools/list` | 17,642 bytes | 17,649 | 18,200 |
+| Stdio `tools/list` | 14,145 bytes | 14,152 | 14,700 |
+| Shared descriptions | 6,386 characters | 6,393 | 6,600 |
+| `searchQuery` | 406 characters | 413 | 420 per description |
+
 ## 2026-10-25 — Drafts-and-triage slice 7, PR C2: what Soup.net is, evidence standards, the over-caution example, unknown parameter names, on-behalf drafts, and the 7b tool, notice and web copy
 
 Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-and-triage-slices-6-7-revision.md) §7f (ruled 2026-10-25, on `main` at `e77f657`) and build log question 57 (ruled 2026-10-24). Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 7 rubric, "C2: the briefing body". Agent `c-briefing-75-c2-2026-10-25`, intent `int_gxl5ZMTtpO9RG0cvgsKXw5lJ`; placement checked as recipe `80b2fbb5` (`soupnet-oss`).

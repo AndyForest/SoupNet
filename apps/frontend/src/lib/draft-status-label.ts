@@ -21,7 +21,15 @@ export interface DraftStatusLike {
   /** Slice 4: on a draft the viewer's agent deposited about someone else,
    *  that person's email. */
   draftAbout?: string | null;
+  /** Slice 10: why an unverified draft expired (its task went quiet), when
+   *  it has. It has left the review queue and can still be resolved here. */
+  draftExpiry?: "intent_idle" | "age" | null;
 }
+
+const EXPIRY_WHY: Record<"intent_idle" | "age", string> = {
+  intent_idle: "The agent's task that deposited it has been quiet for over a day",
+  age: "It was deposited over a week ago with no task attached",
+};
 
 /**
  * Whether the detail page shows the agent (API key) badge ([F93], S4-L2):
@@ -112,6 +120,16 @@ export function draftStatusLabel(t: DraftStatusLike): { text: string; title: str
     case null:
       return null;
     case "unverified":
+      // Slice 10 (S10-C1): an expired draft says so, and that it can still
+      // be answered here; the reactions stay offered.
+      if (t.draftExpiry) {
+        return {
+          text: "Unverified draft, expired",
+          title: `${EXPIRY_WHY[t.draftExpiry]}, so it has left the review queue. ` + (t.draftAbout
+            ? `Only ${t.draftAbout} can still verify or reject it.`
+            : "You can still verify it with Still true or reject it with Wrong."),
+        };
+      }
       if (t.draftAbout) {
         return {
           text: "Unverified draft",

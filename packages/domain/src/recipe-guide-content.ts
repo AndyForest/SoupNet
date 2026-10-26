@@ -323,6 +323,10 @@ export interface BriefingBookStats {
    *  one is set only for the person's own agents, on its own line
    *  (DT-VIS-09). */
   ownDraftsAwaitingReview?: number;
+  /** Slice 10 (S10-K1): the same population, expired (its task went quiet)
+   *  within the last 7 days and still unanswered. `ownDraftsAwaitingReview`
+   *  counts live drafts only. */
+  ownDraftsExpiredRecently?: number;
 }
 
 export interface BriefingGroup {
@@ -368,12 +372,19 @@ function renderBookStatsLine(s: BriefingBookStats): string {
   // A book holding only the person's drafts has no published recipe to index.
   if (s.recipeCount > 0) lines.push(`    Index: ${parts.join(" · ")}`);
   const drafts = s.ownDraftsAwaitingReview ?? 0;
+  const expired = s.ownDraftsExpiredRecently ?? 0;
+  // Slice 10: expired drafts left the review queue, so the line says how many
+  // went unanswered and how to list them (S10-K1); silent when there are none.
+  const expiredClause = expired > 0
+    ? `${expired} expired unanswered in the last ${DRAFT_EXPIRED_REPORT_DAYS} days (search is:expired)`
+    : "";
   if (drafts > 0) {
-    lines.push(
-      drafts === 1
-        ? "    Drafts: 1 unverified draft about your user awaits their review (only they and their agents see it)"
-        : `    Drafts: ${drafts} unverified drafts about your user await their review (only they and their agents see them)`,
-    );
+    const live = drafts === 1
+      ? "    Drafts: 1 unverified draft about your user awaits their review (only they and their agents see it)"
+      : `    Drafts: ${drafts} unverified drafts about your user await their review (only they and their agents see them)`;
+    lines.push(expiredClause ? `${live}; ${expiredClause}` : live);
+  } else if (expiredClause) {
+    lines.push(`    Drafts: none awaiting review; ${expiredClause}`);
   }
   return lines.join("\n");
 }
@@ -734,7 +745,7 @@ If none of your framings fit, ask the user to clarify and form new hypotheses ra
 ## Drafts
 A draft (\`draft: true\`) is a hypothesis you can't yet stand behind from the context you hold, private to the person it's about and their agents until resolved. At such a call: if you'll act on it, check it as an ordinary recipe and own it; if it's a person's call and they're reachable, ask plainly with your recommendation and its reasoning, and if you keep working meanwhile, draft that recommendation under your intent so their answer reaches you wherever it's given; otherwise draft it, say in the first evidence entry why it's a draft rather than a check and what would settle it, rate it, and return when that lands.
 
-A draft is yours to resolve: whichever of a person's agents holds the settling context, you included once the work or a reply settles it, resolves it with \`verify_draft\` (verified, rejected, or not chosen) under the same confidence rule as any check, quoting their words wherever they gave them. In a shared book the call may be a colleague's; a draft on their behalf is resolved by their agents. A draft waits for a person's click only while nothing any agent holds settles it. An orchestrator once refused to verify drafts its own context settled, because the tool copy spoke of a person confirming. The goal is that a person's agent resolves what it can stand behind, and a person sees only what no agent could. With sub-agents, work live: they decide as they go and raise only high impact × uncertainty calls; poll \`is:draft intent:<id>\`, correct mid-run, and resolve what you can before finishing.${mcpProfile ? "" : `
+A draft is yours to resolve: whichever of a person's agents holds the settling context, you included once the work or a reply settles it, resolves it with \`verify_draft\` (verified, rejected, or not chosen) under the same confidence rule as any check, quoting their words wherever they gave them. In a shared book the call may be a colleague's; a draft on their behalf is resolved by their agents. A draft waits for a person's click only while nothing any agent holds settles it. An orchestrator once refused to verify drafts its own context settled, because the tool copy spoke of a person confirming. The goal is that a person's agent resolves what it can stand behind, and a person sees only what no agent could. A draft is a question on a bus: it stays live while your intent is in use, and expires once your task goes quiet. With sub-agents, work live: they decide as they go and raise only high impact × uncertainty calls; poll \`is:draft intent:<id>\`, correct mid-run, and resolve what you can before finishing.${mcpProfile ? "" : `
 
 ${linkFormattingSection}
 
@@ -976,6 +987,7 @@ export const MCP_TOOL_DESCRIPTIONS = {
 // asserts each short form still shares its canonical source's load-bearing
 // phrases — an edit to either side that breaks the derivation is a red test,
 // not silent drift.
+import { DRAFT_EXPIRED_REPORT_DAYS } from "./drafts";
 import {
   RECIPE_TEXT_DEFINITION,
   KNOWN_DEFINITION,
@@ -1021,11 +1033,13 @@ export const MCP_PARAM_DESCRIPTIONS = {
    *  (2026-10-24) adds the one term intent: inside the 420-character
    *  per-description limit by trimming words the error messages and the
    *  briefing already carry ("ISO" is in the date error; the PR-review
-   *  filename example is in the briefing's Search vs check). */
+   *  filename example is in the briefing's Search vs check). Slice 10
+   *  (2026-10-26) adds is:expired, a name that says what it lists, inside the
+   *  same limit by dropping "your" before "open drafts". */
   searchQuery:
     "Bare text is one semantic phrase. \"Quoted terms\" match exact substrings of recipe, evidence, " +
     "citations (quote filenames); group with (\"a\" OR \"b\"); -\"term\" excludes. Qualifiers: " +
-    "author: (email, me, anyone), after:/before: (judgment date), is:draft (your open drafts), " +
+    "author: (email, me, anyone), after:/before: (judgment date), is:draft (open drafts), is:expired, " +
     "intent:int_… (your intent's recipes), impact:/uncertainty: (low|medium|high). " +
     "-author:me leaves out your own. Qualifier-only: newest first.",
 

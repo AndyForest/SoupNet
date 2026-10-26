@@ -477,3 +477,35 @@ describe("renderCheckResponseMarkdown — ratings on own drafts (slice 3, S3-AG2
     expect(renderCheckResponseMarkdown(published)).toBe(renderCheckResponseMarkdown(baseResponse()));
   });
 });
+
+// Slice 10: the dispatch line and the expired label (S10-D1, S10-D5, S10-R3).
+describe("renderCheckResponseMarkdown — drafts as a bus", () => {
+  const base = { ok: true as const, data: { totalResults: 1, results: [{ recipeId: "r1", recipe: "As a dev, I prefer X so that Y.", similarity: 0.7 }] } };
+
+  it("puts the open question line after the exemplars, before related evidence", () => {
+    const text = renderCheckResponseMarkdown({
+      ...base,
+      data: {
+        ...base.data,
+        relatedEvidence: [{ recipeId: "r2", recipe: "As a dev, I prefer Z.", similarity: 0.6, evidence: [{ interpretation: "because" }] }],
+        openQuestion: { recipeId: "d1", askedAt: "2026-10-24T10:00:00Z" },
+      },
+    });
+    const line = "Open question near this call: d1 (asked 2026-10-24). If your context settles it, resolve it; otherwise leave it.";
+    expect(text).toContain(line);
+    expect(text.indexOf(line)).toBeGreaterThan(text.indexOf("#1 "));
+    expect(text.indexOf(line)).toBeLessThan(text.indexOf("Related evidence from other recipes"));
+  });
+
+  it("adds nothing when there is no open question", () => {
+    expect(renderCheckResponseMarkdown(base)).not.toContain("Open question");
+  });
+
+  it("labels an expired draft in results with why it expired", () => {
+    const text = renderCheckResponseMarkdown({
+      ...base,
+      data: { ...base.data, results: [{ ...base.data.results[0]!, draftState: "unverified", draftExpired: "age" }] },
+    });
+    expect(text).toContain("[expired draft: it was deposited with no intent over 7 days ago");
+  });
+});

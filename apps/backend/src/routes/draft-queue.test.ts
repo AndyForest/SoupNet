@@ -398,7 +398,11 @@ describe.skipIf(!BASE || !canConnect())("the review queue (drafts-and-triage sli
     expect(resolver[0]?.["u"]).toBe(pat.userId);
     expect(resolver[0]?.["k"]).toBeNull();
     expect(resolver[0]?.["draft_resolved_at"]).not.toBeNull();
-    const audit = await sql`SELECT action, metadata FROM claimnet.audit_log WHERE target_id = ${c} ORDER BY occurred_at DESC LIMIT 1`;
+    // The resolution's own row, not the newest by time: the deposit's
+    // recipe.checked row can sort after it when the database VM's clock
+    // steps back (recipe 2f40fb9f; seen in a slice 10 gate run).
+    const audit = await sql`SELECT action, metadata FROM claimnet.audit_log WHERE target_id = ${c} AND action LIKE 'recipe.draft_%'`;
+    expect(audit).toHaveLength(1);
     expect(audit[0]?.["action"]).toBe("recipe.draft_not_chosen");
     expect((audit[0]?.["metadata"] as { via?: string }).via).toBe("queue");
     // The items leave the queue.
@@ -494,7 +498,8 @@ describe.skipIf(!BASE || !canConnect())("the review queue (drafts-and-triage sli
     expect((await mcp(samKey, "get_recipes", { recipe_ids: d })).text).toContain("not_found_or_unreadable");
     const own = await mcp(patKeyA, "search_recipes", { query: `"not chosen visibility ${run}" author:me`, response_format: "structured" });
     expect(JSON.stringify(own.structured)).not.toContain(d);
-    expect((await mcp(patKeyA, "get_recipes", { recipe_ids: d })).text).toContain("[draft not chosen]");
+    // Slice 10 (S10-R1): the subject's by-id label also says who marked it and when.
+    expect((await mcp(patKeyA, "get_recipes", { recipe_ids: d })).text).toMatch(/\[draft not chosen: marked not chosen by your user on \d{4}-\d{2}-\d{2}\]/);
     expect((await call(sam, "GET", `/traces/${d}`)).status).toBe(404);
   });
 

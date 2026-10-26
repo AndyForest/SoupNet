@@ -36,6 +36,11 @@ export const AUTHOR_ANYONE = "anyone";
  *  unresolved drafts. GitHub's and Gmail's form for a state filter. */
 export const IS_DRAFT = "draft";
 
+/** `is:expired` (slice 10): the viewer's unresolved drafts whose task went
+ *  quiet (authz/draft-sql.ts `draftExpired`), which `is:draft` and every
+ *  result set leave out. */
+export const IS_EXPIRED = "expired";
+
 /** The rating vocabulary `impact:` and `uncertainty:` take (the check's
  *  triage ratings, slice 1). Matched case-insensitively. */
 export const SEARCH_RATING_VALUES = ["low", "medium", "high"] as const;
@@ -88,6 +93,10 @@ export interface ParsedSearchQuery {
    *  `-is:draft` ⇒ false: the viewer's unresolved drafts are left out.
    *  Undefined: no draft qualifier. */
   isDraft?: boolean | undefined;
+  /** `is:expired` ⇒ true: only the viewer's expired drafts (slice 10), with
+   *  the exclude-own default lifted as for `is:draft`. There is no negated
+   *  form: expired drafts are in no result set to leave out. */
+  isExpired?: true | undefined;
   /** `impact:` / `uncertainty:` selections over the stored triage ratings.
    *  A filter the viewer asked for, never a ranking input. */
   impact?: RatingSelector | undefined;
@@ -104,7 +113,7 @@ export type ParseSearchQueryResult =
   | { ok: false; error: string };
 
 const QUALIFIER_HELP =
-  "valid qualifiers are author:, after:, before:, is:draft, intent: (an int_… id), impact: and uncertainty: (low, medium, or high)";
+  "valid qualifiers are author:, after:, before:, is:draft, is:expired, intent: (an int_… id), impact: and uncertainty: (low, medium, or high)";
 
 /** `YYYY-MM-DD` or a full ISO datetime; Date.parse re-checks real dates. */
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/;
@@ -258,6 +267,7 @@ export function parseSearchQuery(input: string): ParseSearchQueryResult {
   let before: string | undefined;
   let isDraft: boolean | undefined;
   let intent: string | undefined;
+  let isExpired: true | undefined;
   const ratings: { impact?: RatingSelector; uncertainty?: RatingSelector } = {};
 
   const addLexicalGroup = (terms: string[]): string | null => {
@@ -371,15 +381,24 @@ export function parseSearchQuery(input: string): ParseSearchQueryResult {
             return { ok: false, error: `too many author values — the limit is ${SEARCH_QUERY_MAX_AUTHOR_VALUES}` };
           }
         } else if (name === "is") {
-          if (values.length !== 1) return { ok: false, error: "is: takes one value: is:draft" };
+          if (values.length !== 1) return { ok: false, error: "is: takes one value: is:draft or is:expired" };
           const v = values[0]!.trim().toLowerCase();
-          if (v !== IS_DRAFT) {
-            return { ok: false, error: `is: takes draft (is:draft lists your unresolved drafts) — got "${values[0]}"` };
+          if (v === IS_EXPIRED) {
+            if (negated) {
+              return { ok: false, error: "-is:expired has no effect (expired drafts are already left out of results) — remove it" };
+            }
+            isExpired = true;
+          } else if (v === IS_DRAFT) {
+            if (isDraft !== undefined && isDraft !== !negated) {
+              return { ok: false, error: "is:draft and -is:draft contradict each other — keep one" };
+            }
+            isDraft = !negated;
+          } else {
+            return { ok: false, error: `is: takes draft or expired (is:draft lists your open drafts, is:expired the ones that expired unanswered) — got "${values[0]}"` };
           }
-          if (isDraft !== undefined && isDraft !== !negated) {
-            return { ok: false, error: "is:draft and -is:draft contradict each other — keep one" };
+          if (isExpired && isDraft === false) {
+            return { ok: false, error: "is:expired and -is:draft contradict each other — keep one" };
           }
-          isDraft = !negated;
         } else if (name === "intent") {
           if (negated) return { ok: false, error: "-intent: is not supported — select one intent with intent:<id>" };
           if (values.length !== 1) return { ok: false, error: "intent: takes one intent id per query — give one intent:<id>" };
@@ -456,7 +475,9 @@ export function parseSearchQuery(input: string): ParseSearchQueryResult {
       authorsNegated,
       after,
       before,
-      ...(isDraft !== undefined ? { isDraft } : {}),
+      // `is:draft is:expired` reads as `is:expired`: the expired drafts are a
+      // part of the drafts set, so the narrower selection wins.
+      ...(isExpired ? { isExpired } : isDraft !== undefined ? { isDraft } : {}),
       ...(ratings.impact ? { impact: ratings.impact } : {}),
       ...(ratings.uncertainty ? { uncertainty: ratings.uncertainty } : {}),
       ...(intent !== undefined ? { intent } : {}),

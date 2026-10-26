@@ -177,6 +177,10 @@ const NON_AUTHORIZING_KEY_SQL = {
     n: 1, fp: "96bbb1f5b943",
     why: "display join: the depositing key's label on the signed-in person's review-queue items",
   },
+  "apps/backend/src/services/recipe-lookup.service.ts": {
+    n: 1, fp: "bd9a7beb976d",
+    why: "display join: the resolving key's label on a resolved draft, for its subject only and only when the key is theirs (slice 10, S10-R1)",
+  },
   "apps/backend/src/services/ephemeral-workspace.service.ts": {
     n: 1, fp: "de2edf423d7d",
     why: "the reaper: removes a deleted book's id from every key's grants",
@@ -245,11 +249,11 @@ const TRACE_READS = {
     why: "reports embedding sources whose recipe no longer exists; a live draft is never an orphan, and no recipe content or count leaves (RP-12)",
   },
   "apps/backend/src/routes/traces.ts": {
-    n: 17, fp: "2252da5c5a2d", composes: true,
+    n: 17, fp: "2ce5a40bc48d", composes: true,
     why: "map version counts and the book list compose the fragments (RP-24, RP-25); own list, own count, and own check log are the caller's rows (RP-27 to RP-29); feedback, reaction, and evidence reads for one recipe run after the module's read gate (RP-19 to RP-22), with lineage ids filtered through it",
   },
   "apps/backend/src/services/intent-read.service.ts": {
-    n: 11, fp: "873abdc58403", composes: true,
+    n: 11, fp: "08931b6f57a7", composes: true,
     why: "report read paths (slice 9): every recipe a feedback row, shown id, deposit, or related id names passes traceReadableByViewer before it is listed or counted",
   },
   "apps/backend/src/services/book-stats.service.ts": {
@@ -260,9 +264,13 @@ const TRACE_READS = {
     n: 4, fp: "8b803d685141", composes: false,
     why: "loads author, evidence, and references by id for exemplars the pipeline chose under SHARED_AUDIENCE (RP-10, RP-42)",
   },
+  "apps/backend/src/services/draft-dispatch.service.ts": {
+    n: 1, fp: "6c5a91cf8fbe", composes: true,
+    why: "the dispatch line (slice 10): the live drafts about the caller's user in the call's scope, through traceVisibleTo and draftLiveAwaitingReviewBy, for one line naming the nearest; ranking never reads it",
+  },
   "apps/backend/src/services/draft-queue.service.ts": {
-    n: 5, fp: "fd5b6989f61b", composes: true,
-    why: "the review queue (slice 3): listing and count compose draftAwaitingReviewBy and traceVisibleTo over the person's live books; item details use traceReadableById for ids already resolved through the module, and name an on-behalf draft's other party through onBehalfSideFor and onBehalfPartyFor (slice 4); the listing groups by, and items show, only the viewer's own intents (a join to intents on user_id, slice 6a)",
+    n: 6, fp: "df7636816f00", composes: true,
+    why: "the review queue (slice 3): listing and count compose draftLiveAwaitingReviewBy (or draftExpiredAwaitingReviewBy for is:expired, slice 10) and traceVisibleTo over the person's live books; item details use traceReadableById for ids already resolved through the module, and name an on-behalf draft's other party through onBehalfSideFor and onBehalfPartyFor (slice 4); the listing groups by, and items show, only the viewer's own intents (a join to intents on user_id, slice 6a)",
   },
   "apps/backend/src/services/ephemeral-workspace.service.ts": {
     n: 5, fp: "c8d8ebe28b99", composes: false,
@@ -281,8 +289,8 @@ const TRACE_READS = {
     why: "deletes orphaned embedding rows whose recipe no longer exists; operator-only",
   },
   "apps/backend/src/services/recipe-lookup.service.ts": {
-    n: 2, fp: "84de1157101c", composes: true,
-    why: "by-id lookup: prefix scan and main select use traceReadableById (RP-06, RP-08, RP-16); an on-behalf draft's other party is named through onBehalfSideFor and onBehalfPartyFor (S4-L1)",
+    n: 2, fp: "86870d6c04a8", composes: true,
+    why: "by-id lookup: prefix scan and main select use traceReadableById (RP-06, RP-08, RP-16); an on-behalf draft's other party is named through onBehalfSideFor and onBehalfPartyFor (S4-L1); the shown state, subject flag and expiry come from draftStateShownTo, viewerIsDraftSubject and draftExpiryReason (slice 10)",
   },
   "apps/backend/src/services/result-enricher.ts": {
     n: 4, fp: "1c4f660984be", composes: false,
@@ -293,7 +301,7 @@ const TRACE_READS = {
     why: "corpus mode rows and honest total use traceVisibleTo (RP-41); vector loads are by id for filtered results (RP-42)",
   },
   "apps/backend/src/services/trace.service.ts": {
-    n: 10, fp: "5725e3d83e82", composes: true,
+    n: 10, fp: "729d8ed70563", composes: true,
     why: "deposit INSERT (the on-behalf subject from the module's naming rule, S4-M1; the draft state forced for a headless key by keyForcesDrafts, S5-M3; the intent link from the intent the check resolved to the depositor, S6a-S2), the depositing key's own idempotency row with its subject through onBehalfSubjectOf (RP-04, S4-L4), session ledger ids (RP-05), and zero-result scope counts that use traceVisibleTo (RP-03)",
   },
   "apps/backend/src/services/trace-delete.service.ts": {
