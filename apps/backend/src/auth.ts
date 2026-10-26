@@ -51,7 +51,21 @@ export async function hashPassword(password: string): Promise<string> {
   return bcrypt.hash(password, SALT_ROUNDS);
 }
 
-export async function verifyPassword(password: string, hash: string): Promise<boolean> {
+let dummyHash: Promise<string> | null = null;
+
+/**
+ * Check a password against a stored hash. An account with no password (one
+ * that signs in only with Google, or whose unverified password was discarded
+ * at link time) has a null hash: it is compared against a fixed dummy hash and
+ * refused, so it costs the same bcrypt work as a wrong password and the two
+ * can't be told apart (organization accounts round 1, stream SSO, SSO-A9).
+ */
+export async function verifyPassword(password: string, hash: string | null): Promise<boolean> {
+  if (hash === null) {
+    dummyHash ??= bcrypt.hash("no password on this account", SALT_ROUNDS);
+    await bcrypt.compare(password, await dummyHash);
+    return false;
+  }
   return bcrypt.compare(password, hash);
 }
 
@@ -209,16 +223,44 @@ export async function registerUser(
     signupReason?: string | null;
   },
 ): Promise<{ user: { id: string; email: string; role: string }; token: string }> {
-  email = normalizeEmail(email);
-  const passwordHash = await hashPassword(password);
+  const user = await createAccount(db, {
+    email,
+    passwordHash: await hashPassword(password),
+    role,
+    waitlisted: opts?.waitlisted ?? false,
+    signupReason: opts?.signupReason ?? null,
+  });
+  const token = signToken({ sub: user.id, email: user.email, role: user.role });
+  return { user, token };
+}
+
+type AccountExecutor = Pick<PostgresJsDatabase, "insert" | "execute">;
+
+/**
+ * Create an account with its personal organization and default book: the
+ * setup every way in shares (password registration, a Google sign-up). The
+ * password hash is null for an account that signs in only with Google
+ * (stream SSO). Runs on the root connection or inside a transaction.
+ */
+export async function createAccount(
+  db: AccountExecutor,
+  input: {
+    email: string;
+    passwordHash: string | null;
+    role?: string;
+    waitlisted?: boolean;
+    signupReason?: string | null;
+  },
+): Promise<{ id: string; email: string; role: string }> {
+  const email = normalizeEmail(input.email);
 
   // Insert user
   const userRows = await db.insert(users).values({
     email,
-    passwordHash,
-    role,
-    waitlistedAt: opts?.waitlisted ? new Date() : null,
-    signupReason: opts?.signupReason ?? null,
+    passwordHash: input.passwordHash,
+    role: input.role ?? "tenant",
+    waitlistedAt: input.waitlisted ? new Date() : null,
+    signupReason: input.signupReason ?? null,
   }).returning({ id: users.id, email: users.email, role: users.role });
 
   const user = userRows[0];
@@ -265,9 +307,7 @@ export async function registerUser(
     });
   }
 
-  const token = signToken({ sub: user.id, email: user.email, role: user.role });
-
-  return { user: { id: user.id, email: user.email, role: user.role }, token };
+  return { id: user.id, email: user.email, role: user.role };
 }
 
 /**

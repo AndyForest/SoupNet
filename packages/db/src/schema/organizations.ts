@@ -36,6 +36,14 @@ export const organizations = claimnetSchema.table(
     // never by an org admin (program §3.1; recipe 61adb152).
     seatLimit: integer("seat_limit"),
 
+    // Company organizations only: members must sign in with their Google
+    // Workspace account. Password sign-in and reset are refused for active
+    // members, and a session not issued by a Workspace Google sign-in is
+    // refused per request (apps/backend/src/authz/sso-policy.ts). Set by an
+    // owner or admin from a Google session of their own, or by the site
+    // operator. No break-glass (program, settled simplifications).
+    requireSso: boolean("require_sso").notNull().default(false),
+
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
