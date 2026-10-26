@@ -135,7 +135,7 @@ We aim to respond to all requests within the time required by applicable law and
 We keep personal data only as long as we need it for the purposes in Section 3. How long that is depends on the kind of data:
 
 - **Account data, recipes, evidence, references, drafts, intents, feedback, uploaded files and recipe-book memberships:** kept until you delete the item or your account. Deleting something removes it from the live service immediately.
-- **The check log:** kept while your account is active. When an account is deleted, its entries are anonymized, so the link to the person is removed.
+- **The check log:** kept while your account is active, and after an account is deleted only as long as needed for security, legal and operational purposes.
 - **API keys and connections from AI apps:** stored as hashes. A key or connection stops working when it expires or when you revoke it, and expired credentials are deleted after a short period.
 - **Display history:** what an intent has been shown is deleted with the intent or your account. What a check session has been shown is stored under an opaque session token rather than your account, and kept as long as needed for operational purposes.
 - **Other account records** (account events such as sign-ins and changes to recipe books, metadata-only records of the emails we send, and waitlist accounts that never verify their email address): kept only as long as needed for security, legal and operational purposes, then deleted.
