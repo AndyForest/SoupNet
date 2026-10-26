@@ -132,19 +132,15 @@ export function GroupsPage() {
 
   const createGroupMutation = useMutation({
     mutationFn: async ({ name, description }: { name: string; description: string }) => {
-      // Pick the user's OWN organization — the one where they are a group
-      // owner — not just the first group in the list. Since accept-invite
-      // landed, `groupsQuery.data[0]` can point at another user's org when
-      // the invited group is the most recently created membership. Backend
-      // correctly rejects that with 403. The user can only create groups
-      // under organizations they own.
-      const orgId = groupsQuery.data?.find((g) => g.member_role === "owner")?.organization_id;
-      if (!orgId) throw new Error("No owned organization found — you need to own an org to create a recipe book.");
-
+      // No organization in the body: the backend files the book in the
+      // account's home organization (its company organization when the
+      // account is managed, else its personal one). Choosing from the book
+      // list picked the organization of a book the person owns, which for a
+      // managed account can be a company organization they don't own.
       const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
       const res = await authFetch("/recipe-books", {
         method: "POST",
-        body: JSON.stringify({ name, slug, organizationId: orgId, description: description || undefined }),
+        body: JSON.stringify({ name, slug, description: description || undefined }),
       });
       const json = (await res.json()) as { ok: boolean; error?: string };
       if (!json.ok) throw new Error(json.error ?? "Failed to create recipe book");

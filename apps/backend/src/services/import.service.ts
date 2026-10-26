@@ -68,7 +68,7 @@ import {
   embeddingVectors as embeddingVectorsTable,
 } from "@soupnet/db";
 import { getEmbeddingModelId } from "../lib/embeddings/provider";
-import { normalizeOnBehalfOf, resolveNameableSubject, onBehalfSubjectOf } from "../authz";
+import { normalizeOnBehalfOf, resolveNameableSubject, onBehalfSubjectOf, homeOrganizationOf } from "../authz";
 import { ownedIntentIds } from "./intent.service";
 import { onBehalfRefusal } from "@soupnet/domain";
 import type {
@@ -702,13 +702,10 @@ async function createImportBook(
   userId: string,
   name: string | undefined,
 ): Promise<{ id: string; name: string; slug: string; created: boolean }> {
-  const orgRows = await db.execute(sql`
-    SELECT id FROM claimnet.organizations
-    WHERE owner_id = ${userId}::uuid
-    ORDER BY created_at
-    LIMIT 1
-  `);
-  const org = (orgRows as unknown as Array<{ id: string }>)[0];
+  // The account's home organization: its company organization when it is
+  // managed, else its personal one (the resolver new books and workspaces use).
+  const homeId = await homeOrganizationOf(db, userId);
+  const org = homeId ? { id: homeId } : undefined;
   if (!org) {
     throw new ImportError(400, "No organization owned by this account — cannot create a destination recipe book.");
   }

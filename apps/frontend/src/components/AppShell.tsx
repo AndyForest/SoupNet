@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Outlet, Link, useMatchRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { authFetch, clearToken, isLoggedIn, AUTH_INVALIDATED_EVENT } from "../auth.js";
+import { loginPathAfterSignOut } from "../lib/login-notice.js";
 import { CookieNotice } from "./CookieNotice.js";
 import { SiteFooter } from "./SiteFooter.js";
 import { Icon } from "./Icon.js";
@@ -110,9 +111,10 @@ export function AppShell() {
   // one page. See auth.ts AUTH_INVALIDATED_EVENT for why this is decoupled
   // via an event rather than called inline.
   useEffect(() => {
-    function onAuthInvalidated() {
+    function onAuthInvalidated(event: Event) {
       queryClient.clear();
-      void navigate({ to: "/auth/login" });
+      const reason = (event as CustomEvent<{ reason?: unknown } | undefined>).detail?.reason;
+      void navigate({ href: loginPathAfterSignOut(typeof reason === "string" ? reason : null) });
     }
     window.addEventListener(AUTH_INVALIDATED_EVENT, onAuthInvalidated);
     return () => window.removeEventListener(AUTH_INVALIDATED_EVENT, onAuthInvalidated);

@@ -125,10 +125,11 @@ Quick reference:
 Single Postgres database on port **5633** (non-standard, intentional), single `claimnet` schema managed entirely by Drizzle.
 
 **Core tables:**
-- `users`, `organizations`, `groups`, `group_members`, `invitations` — identity, access, onboarding (the `groups` and `group_members` table names are the schema-level vocabulary; the user-facing concept is "recipe books" — schema-rename deferred)
+- `users`, `organizations`, `organization_members`, `groups`, `group_members`, `invitations` — identity, access, onboarding (the `groups` and `group_members` table names are the schema-level vocabulary; the user-facing concept is "recipe books" — schema-rename deferred). `organization_members` is membership of a company organization: holding a row makes an account managed, and its `disabled_at` is an org admin's reversible disable, read with `users.suspended_at` by the account-state check every credential passes (organization accounts round 1)
 - `traces` — taste/judgment claims (user story format, tsvector for search)
 - `evidence`, `references` — Toulmin-structured supporting data
 - `trace_evidence`, `trace_references`, `evidence_references` — N:N linking tables with `api_key_id` for coverage tracking
+- `user_identities`, `sso_login_requests` — linked Google accounts (keyed on issuer and `sub`, never email) and in-flight Google sign-ins (stream SSO); `users.password_hash` is null for a Google-only account, and `organizations.require_sso` makes members sign in with Google Workspace
 - `api_keys` — daily rotating and scoped keys for agent authentication; hashed at rest
 - `uploads` — multimodal evidence files, api-key-scoped capability tokens (design in `apps/backend/src/routes/uploads.ts`)
 - `embedding_sources`, `embedding_chunk_strategies`, `embedding_chunks`, `embedding_vectors` — 4-table vector pipeline
@@ -138,18 +139,19 @@ Single Postgres database on port **5633** (non-standard, intentional), single `c
 - `system_settings` — signup cap, feature flags, admin-managed config
 - `pgboss.*` — pg-boss queue schema (jobs, archive, schedules) in its own schema
 
-Auth is swappable: `users.provider` + `users.external_id` fields support future OIDC federation.
+Federated sign-in lives in `user_identities` (Google today; another IdP is a new `provider` value). The older `users.provider` + `users.external_id` columns are unused and due to be dropped.
 
 ## Backend Architecture (apps/backend)
 
 Hono HTTP server. JWT for humans, API keys (Bearer) for agents — strictly separate credential populations (engineering-principles.md §7). Route modules mounted in `src/index.ts`:
 
-- `/auth` — register, login, me, email verification, password reset, data export
+- `/auth` — register, login, me, email verification, password reset, data export. `/auth/google/start`, `/callback` and `/exchange` are Sign in with Google (organization accounts round 1, stream SSO; ADR-0022): a pending record keyed by the hash of an opaque state, PKCE and nonce toward Google, and a single-use handoff code the SPA exchanges together with a secret its tab holds. They answer 404 when `GOOGLE_OAUTH_CLIENT_ID` is unset.
 - `/keys` — daily + scoped API key CRUD (JWT-auth)
 - `/check` — recipe check page for agents. HTML by default, JSON with `format=json` or `Accept: application/json`. API-key auth. The primary agent surface.
-- `/recipe-books` — recipe-book CRUD, members, invites (JWT-auth; some agent-writable fields via API key). The legacy `/groups/*` paths 308-redirect to `/recipe-books/*` for backwards compatibility.
+- `/recipe-books` — recipe-book CRUD, members, invites (JWT-auth; some agent-writable fields via API key). The legacy `/groups/*` paths 308-redirect to `/recipe-books/*` for backwards compatibility. Creating a book without `organizationId` files it in the caller's home organization (the company organization for a managed account); `PUT /recipe-books/:id/org-wide` makes a company book org-wide or private again.
 - `/invitations` — accept/decline flow for recipe-book invites
-- `/admin` — system-role-only: organizations, settings (signup cap, embeddings toggle), invite (cap bypass), users list/detail, stats, audit-log, queues, workers/embeddings
+- `/organizations` — an org owner's or admin's member actions: `POST /organizations/:id/members/:userId/disable` and `/enable`, `PATCH /organizations/:id/members/:userId` (`role`), and `PATCH /organizations/:id` (`requireSso`, only from a Workspace Google session). JWT; a uniform 404 for anyone who isn't an active owner or admin of that organization. The console itself is a later stream.
+- `/admin` — system-role-only: organizations (list, create a company organization with its default book and owner, set seats, add an existing account through the one join), user suspension (`POST /admin/users/:id/suspend` and `/unsuspend`), settings (signup cap, embeddings toggle), invite (cap bypass), users list/detail, stats, audit-log, queues, workers/embeddings
 - `/docs` — agent-facing HTML guides: `recipe-check-guide`, `recipe-scenarios`, `mcp-setup`, `bootstrap`. Read-only; some pre-fill with `?key=` for copy-paste configs.
 - `/recipes` — recipe lookup by id (batch ≤20, API-key Bearer). Same read-scope ACL as `/check`; ids that don't resolve return uniform `not_found_or_unreadable` markers (anti-enumeration). REST twin of the MCP `get_recipes` tool. `POST /recipes/:id/verify` is the REST twin of `verify_draft`: the person's agent publishes their draft with new, quoted and cited evidence (drafts-and-triage slice 2).
 - `/traces` — list, map (k-means clustering + UMAP), traces-by-id (JWT). `PATCH /traces/:id` re-files a recipe into another recipe book, and `DELETE /traces/:id` hard-deletes a malformed one. Both are human-only by design: agent surfaces stay append-only and idempotent so an uncertain agent asks rather than proceeding on a thin assumption it means to correct later. `GET /traces/drafts` is the review queue behind `/app/drafts` (the person's unresolved drafts in every book they belong to, the search grammar with `is:draft` always applied, triage order with drafts under one of the person's own intents grouped beneath its story, and an `?ids=` link form), `GET /traces/drafts/count` the dashboard's figure, and `POST /traces/:id/not-chosen` the queue's third action beside the confirm and reject reactions.
@@ -188,7 +190,7 @@ The only anti-pattern is checking a recipe you don't genuinely believe — that 
 - **Tracer bullets** — Build complete thin slices end-to-end before adding breadth.
 - **Service layer** — Business logic lives in `services/` and `packages/domain/`, not in route handlers or components.
 - **Composable modules** — Rich internal functionality behind clean interfaces. The vector pipeline is the canonical example.
-- **Book access and key authentication go through the authz module** — Recipe-book membership and role checks for JWT routes live in `apps/backend/src/authz/` (`roleIn`, `isMember`, `booksFor`, `canReadTrace`, …), and so does API-key authentication: `authenticateKey` is the one place a presented key is judged, and it returns a `Principal` whose scope is already the key's grant intersected with its owner's current memberships. Handlers and services take the `Principal`; they never look a key up. `npm run check:authz-seam` (part of `test:ci`) fails on a new `group_members` reference, new `claimnet.api_keys` SQL, or an unregistered read of `claimnet.traces` / `embedding_sources` outside the module; see engineering-principles.md §7 for the registers. The draft visibility rule lives there too (`authz/draft-sql.ts`): statements that return, count, or aggregate recipes compose its fragments rather than writing a draft condition by hand.
+- **Book access and key authentication go through the authz module** — Recipe-book membership and role checks for JWT routes live in `apps/backend/src/authz/` (`roleIn`, `isMember`, `booksFor`, `canReadTrace`, …), and so does company organization membership (`authz/organizations.ts`: the join, org-wide books, member actions) and account state (`authz/account-state.ts`, `authz/session-state.ts`: suspension, org disable, the session cut-off), and so does API-key authentication: `authenticateKey` is the one place a presented key is judged, and it returns a `Principal` whose scope is already the key's grant intersected with its owner's current memberships. Handlers and services take the `Principal`; they never look a key up. `npm run check:authz-seam` (part of `test:ci`) fails on a new `group_members` reference, new `claimnet.api_keys` SQL, or an unregistered read of `claimnet.traces` / `embedding_sources` outside the module; see engineering-principles.md §7 for the registers. The draft visibility rule lives there too (`authz/draft-sql.ts`): statements that return, count, or aggregate recipes compose its fragments rather than writing a draft condition by hand.
 - **ACID writes, async side-effects** — Embeddings never block primary writes (pg-boss queues).
 - **Agents are first-class** — The web `/check` page is the primary agent interface (zero setup — any web-browsing agent can use it). Remote MCP at `POST /mcp` is the lower-friction path for MCP-capable clients. Stdio MCP (`apps/mcp-server`) for Claude Desktop via `.mcpb`.
 - **System doesn't make judgments** — Stance is whatever the LLM author asserted at write time. Vector-similarity surfaces (related evidence from other recipes, the recipe map) are presented neutrally — cosine over gemini-embedding-2-preview encodes topic, not stance (the negation problem; see ADR-0015). The LLM consumer interprets stance against current context.
@@ -220,6 +222,7 @@ Copy `.env.example` to `.env`. Key variables (see `.env.example` for the full li
 - `WORKER_CONCURRENCY` (default `5`) — pg-boss batch size.
 - `SMTP_*` — Mailpit locally (auto-wired by docker-compose); configure for any SMTP server in production (e.g., AWS SES, Postmark, SendGrid).
 - `BACKEND_URL` / `FRONTEND_URL` / `MCP_PORT` — app URLs.
+- `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` — Sign in with Google (a Google Cloud web client with redirect URI `${BACKEND_URL}/auth/google/callback`, scopes `openid email profile`). Unset turns it off. `GOOGLE_OIDC_TEST_ISSUER` points the backend at the Layer 3 suite's fake Google and is ignored when `NODE_ENV=production`.
 
 ## Infrastructure (Docker Compose)
 

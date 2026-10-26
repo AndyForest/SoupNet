@@ -3,6 +3,13 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { authFetch, clearToken } from "../auth.js";
 import { useNavigate } from "@tanstack/react-router";
 import { ACCOUNT_DELETED_SEARCH } from "../lib/login-notice.js";
+import { GoogleSignInButton } from "../components/GoogleSignInButton.js";
+
+/** How the account can sign in (GET /auth/me, stream SSO SSO-A11). */
+interface SignInMethods {
+  password: boolean;
+  google: { email: string | null; hostedDomain: string | null } | null;
+}
 
 /**
  * /app/settings/account — identity, sign-out, data export.
@@ -18,7 +25,7 @@ export function SettingsAccountPage() {
     queryKey: ["me"],
     queryFn: async () => {
       const res = await authFetch("/auth/me");
-      const json = (await res.json()) as { ok: boolean; data?: { user: { id: string; email: string; role: string; emailVerified?: boolean } } };
+      const json = (await res.json()) as { ok: boolean; data?: { user: { id: string; email: string; role: string; emailVerified?: boolean; signInMethods?: SignInMethods } } };
       if (!json.ok || !json.data) throw new Error("Failed");
       return json.data.user;
     },
@@ -64,6 +71,11 @@ export function SettingsAccountPage() {
               <p className="text-xs" style={{ color: "var(--color-on-surface-variant)", marginTop: "var(--space-xs)" }}>
                 Role: {meQuery.data.role}
               </p>
+              {meQuery.data.signInMethods && (
+                <p className="text-xs" style={{ color: "var(--color-on-surface-variant)", marginTop: "var(--space-xs)" }}>
+                  Signs in with: {signInMethodsLabel(meQuery.data.signInMethods)}
+                </p>
+              )}
             </div>
             <button className="btn-secondary" onClick={handleLogout} style={{ fontSize: "0.8rem" }}>
               Sign out
@@ -102,6 +114,7 @@ export function SettingsAccountPage() {
       </section>
 
       <DeleteAccountSection
+        hasPassword={meQuery.data?.signInMethods?.password ?? true}
         onDeleted={() => {
           clearToken();
           // The sign-in page confirms the deletion (lib/login-notice.ts).
@@ -112,22 +125,32 @@ export function SettingsAccountPage() {
   );
 }
 
-function DeleteAccountSection({ onDeleted }: { onDeleted: () => void }) {
+function signInMethodsLabel(m: SignInMethods): string {
+  const parts: string[] = [];
+  if (m.password) parts.push("password");
+  if (m.google) parts.push(m.google.hostedDomain ? `Google Workspace (${m.google.hostedDomain})` : "Google");
+  return parts.join(" and ") || "none";
+}
+
+function DeleteAccountSection({ onDeleted, hasPassword }: { onDeleted: () => void; hasPassword: boolean }) {
   const [confirming, setConfirming] = useState(false);
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // A password-less account confirms with a fresh Google sign-in (SSO-A9b).
+  const [needsGoogle, setNeedsGoogle] = useState(false);
 
   const deleteMutation = useMutation({
     mutationFn: async () => {
       setError(null);
       const res = await authFetch("/auth/me", {
         method: "DELETE",
-        body: JSON.stringify({ password }),
+        body: JSON.stringify(hasPassword ? { password } : {}),
       });
       const body = (await res.json()) as { ok: boolean; error?: string; message?: string };
       if (!res.ok || !body.ok) {
         // Coded errors (e.g. owned_shared_orgs_exist) carry a human sentence
         // in `message`; plain ones carry it in `error`.
+        if (body.error === "reauthenticate") setNeedsGoogle(true);
         throw new Error(body.message ?? body.error ?? "Deletion failed");
       }
     },
@@ -160,17 +183,26 @@ function DeleteAccountSection({ onDeleted }: { onDeleted: () => void }) {
         </button>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-sm)", maxWidth: 360 }}>
-          <label htmlFor="delete-confirm-password" style={{ fontSize: "0.85rem" }}>
-            Confirm with your password:
-          </label>
-          <input
-            id="delete-confirm-password"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="current-password"
-            style={{ padding: "var(--space-sm)" }}
-          />
+          {hasPassword ? (
+            <>
+              <label htmlFor="delete-confirm-password" style={{ fontSize: "0.85rem" }}>
+                Confirm with your password:
+              </label>
+              <input
+                id="delete-confirm-password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
+                style={{ padding: "var(--space-sm)" }}
+              />
+            </>
+          ) : (
+            <p style={{ fontSize: "0.85rem" }}>
+              This account signs in with Google. If you signed in more than ten minutes ago, you'll be asked to sign in with Google again first.
+            </p>
+          )}
+          {needsGoogle && <GoogleSignInButton target={{ kind: "app", path: "/app/settings/account" }} label="Sign in with Google again" />}
           {error ? (
             <p style={{ color: "var(--color-error, #c0392b)", fontSize: "0.85rem" }}>{error}</p>
           ) : null}
@@ -179,7 +211,7 @@ function DeleteAccountSection({ onDeleted }: { onDeleted: () => void }) {
               type="button"
               className="btn-danger"
               onClick={() => deleteMutation.mutate()}
-              disabled={!password || deleteMutation.isPending}
+              disabled={(hasPassword && !password) || deleteMutation.isPending}
               style={{ fontSize: "0.85rem" }}
             >
               {deleteMutation.isPending ? "Deleting…" : "Permanently delete"}

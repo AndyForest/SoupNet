@@ -85,7 +85,12 @@ function tokenFingerprint(token: string | null): string {
  * Why ONLY 401 and ONLY when a token was sent: 403 is "you're authed but
  * not allowed here" (e.g. trying to read a recipe book you're not a member
  * of) — that's a legitimate browse, not a stale session. 401 with no token
- * sent is "we're just not logged in" — nothing to clear.
+ * sent is "we're just not logged in" — nothing to clear. The 403s that do
+ * end the session are an account switched off mid-session
+ * (`account_disabled` by the person's organization, `account_suspended` by
+ * the site operator) and a session the organization's require_sso no longer
+ * accepts (`sso_required`, stream SSO): every request would fail the same
+ * way, and signing in again shows the person which it is.
  */
 export const AUTH_INVALIDATED_EVENT = "soupnet:auth-invalidated";
 
@@ -110,10 +115,22 @@ export async function authFetch(
   // valid" signal. The guard `token && getToken()` makes this idempotent
   // when many in-flight requests hit 401 in quick succession: the first one
   // clears the token, the rest see getToken() === null and skip the event.
+  // The event carries the server's reason (a code from the closed list in
+  // lib/login-notice.ts), so the sign-in page can say why the person was
+  // signed out (stream SSO, SSO-U4).
   if (res.status === 401 && token && getToken() === token) {
+    const body = (await res.clone().json().catch(() => null)) as { error?: unknown } | null;
     clearToken();
     if (typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent(AUTH_INVALIDATED_EVENT));
+      window.dispatchEvent(new CustomEvent(AUTH_INVALIDATED_EVENT, { detail: { reason: body?.error === "session_expired" ? "session_expired" : null } }));
+    }
+  } else if (res.status === 403 && token && getToken() === token) {
+    const body = (await res.clone().json().catch(() => null)) as { error?: unknown } | null;
+    if (body?.error === "account_disabled" || body?.error === "account_suspended" || body?.error === "sso_required") {
+      clearToken();
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent(AUTH_INVALIDATED_EVENT, { detail: { reason: body.error } }));
+      }
     }
   }
 
