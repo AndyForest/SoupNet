@@ -22,6 +22,8 @@ Five streams, each in its own session on a branch it creates and pushes itself (
 
 Shared files: the authorization seam under `apps/backend/src/authz/` (Core adds the disabled and managed predicates first; Offboarding adds the directory check after; nobody else edits it); `routes/oauth.ts` (plugin stream O, then SSO); migrations (claim the next number when the branch is first pushed, in this order: Core, SSO, Domains, Offboarding; Console needs none); `design-thinking.md` (Core only); `docs/connectors/index.md` (not this round).
 
+**Migration numbers across both rounds (F108, 2026-10-26):** one sequence, claimed at first push, in this order: plugin O `0043`, org Core `0044`, org SSO `0045`, org Domains `0046`, org Offboarding `0047`, then E's slice 9 `check_feedback.user_id` follow-up. A stream that needs an unplanned migration asks the planning session for the next number before generating it.
+
 Merge order: Core, then SSO, then Domains, then Offboarding, then Console. One deploy approval per merged pair is fine; the customer needs all five.
 
 ## What the operator does
