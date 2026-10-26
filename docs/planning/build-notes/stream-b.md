@@ -8,7 +8,7 @@ Written 2026-10-26 by stream B (agent `a-drafts-6a-2026-10-24`, Soup.net intent 
 
 **The decision**, checked as recipe `ce61eb6d`: a depth cap, not keyset paging.
 - **The cap.** No listing serves a row past the first 10,000. A request whose page would start past that point is refused with an error that names the parameter and how to narrow. Below the cap, behaviour is unchanged: a page past the end of a short list is still an empty page with its end line.
-- **One constant, in one module** (`apps/backend/src/lib/listing-depth.ts`). The report parser and the flat list both read it, so the two paths cannot drift apart (recipe `01bfbe35`).
+- **One constant, in one module** (`packages/domain/src/listing-depth.ts`, so the backend and the renderer read the same number). The report parser and the flat list both read it, so the two paths cannot drift apart (recipe `01bfbe35`).
 - **Why a cap and not keyset paging:**
   - A cursor would be a new parameter on `search_recipes`, and the shared descriptions have 7 characters left (recipe `ded7f5ed`).
   - The flat list's triage order sorts on a computed expression, which a cursor would have to carry.
@@ -50,3 +50,11 @@ Written 2026-10-26 by stream B (agent `a-drafts-6a-2026-10-24`, Soup.net intent 
 - Layer 3: `report-read-paths.test.ts` D-1 (all four report paths, the web intent page included) and `flat-list.test.ts` D-2 (MCP and `/check`, flat and ranked, and a check with a deep page that stores nothing). `node scripts/test-ci-local.mjs -- flat-list.test.ts report-read-paths.test.ts` passed: 33 tests.
 
 **Gate:** `TESTCI_PGPORT=5611 npm run test:ci` (frontend build included since #159) passed: 2,244 tests passed and 6 skipped, the authz seam held, and the ranking eval's 9 thresholds were green. The first run passed every test that reported (2,236) and then hit the known Windows worker exit.
+
+### After the fix-verification audit (stream B, 2026-10-26)
+
+The audit (claimNet record `fix-verify-f105-f110-a0d2105.md`) closed F105 and F110 at `a0d2105` with no new finding, and left three polish notes and one backlog clause. Their dispositions:
+- **A refused check with ride-along `feedback_*` parameters still records the feedback row.** The reply now says "The recipe was not stored." instead of "Nothing was stored." The row is not refused with the page. Ride-along feedback is about an earlier call and is recorded independently of this one, as it is on every other `/check` refusal (a grammar error, a missing parameter): a bad row never blocks a call, and a refused call does not drop a good row.
+- **The HTML `/check` pager linked page 201 from page 200.** On the last page within the reach it now shows no "next" and says it is the last page a search reaches, for the flat list (50 a page) and ranked results (20). Covered by a `renderPage` case in `check-form-headless.test.ts`.
+- **This note's decision paragraph named the wrong file;** it now names `packages/domain/src/listing-depth.ts`.
+- **`/traces` accepts a negative raw `offset`:** added to the backlog item for the signed-in and admin listings.

@@ -559,12 +559,16 @@ export async function submitAndSearch(
   const page = params.page ?? 1;
   const perPage = params.perPage ?? 20;
 
-  // A page past the listing depth (F105, F110) is refused before anything
+  // A page past the listing depth (F105, F110) is refused before the recipe
   // is stored: ranked paging asks the vector search for (offset + limit)
   // candidates, so a deep page is a costly call however small the corpus.
+  // The reply names the recipe, not "nothing": ride-along feedback about an
+  // earlier call is recorded independently of this one, as on every other
+  // refusal (a bad row never blocks a call, and a refused call never drops
+  // a good row).
   if (pageBeyondReach(page, perPage)) {
     return {
-      error: `${searchPageBeyondReachError(page, perPage, "Narrow with read_recipe_books, or search with more specific text.")} Nothing was stored.`,
+      error: `${searchPageBeyondReachError(page, perPage, "Narrow with read_recipe_books, or search with more specific text.")} The recipe was not stored.`,
       results: [],
       totalResults: 0,
       currentPage: page,

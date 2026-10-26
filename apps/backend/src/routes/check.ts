@@ -16,7 +16,7 @@ import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { authenticateKey, keyForcesDrafts } from "../authz";
 import type { Principal } from "../authz";
-import { HTML_ACCEPT_TYPES, renderCheckResponseMarkdown, fenceCheckResponseMarkdown, parseVerbosity, renderRatingsMarkdown, isShownDraftState, parseDraftFlag, draftLabel, INTENT_QUALIFIER_NOT_RECOGNIZED, openQuestionLine, FLAT_LIST_ORDER_LABELS, flatListPageLine } from "@soupnet/domain";
+import { HTML_ACCEPT_TYPES, renderCheckResponseMarkdown, fenceCheckResponseMarkdown, parseVerbosity, renderRatingsMarkdown, isShownDraftState, parseDraftFlag, draftLabel, INTENT_QUALIFIER_NOT_RECOGNIZED, openQuestionLine, FLAT_LIST_ORDER_LABELS, flatListPageLine, pageBeyondReach } from "@soupnet/domain";
 import type { CheckResponseJson } from "@soupnet/domain";
 import type { Recipe } from "@soupnet/contracts";
 import { TRIAGE_RATING_VALUES } from "@soupnet/contracts";
@@ -900,11 +900,16 @@ export function renderPage(
     let paginationHtml = "";
     if (result.totalPages > 1) {
       const prevPage = result.currentPage > 1 ? result.currentPage - 1 : null;
+      // No "next" past the listing depth (F110): the server would refuse
+      // that page. The flat list pages 50 at a time, ranked results 20 (the
+      // services' default; /check takes no page-size parameter).
+      const pageSize = result.listing?.perPage ?? 20;
+      const lastReached = result.currentPage < result.totalPages && pageBeyondReach(result.currentPage + 1, pageSize);
       const nextPage =
-        result.currentPage < result.totalPages ? result.currentPage + 1 : null;
-      const pageLabel = result.clustered
+        result.currentPage < result.totalPages && !lastReached ? result.currentPage + 1 : null;
+      const pageLabel = (result.clustered
         ? `Batch ${result.currentPage} of ${result.totalPages} (${result.totalResults} total recipes)`
-        : `Page ${result.currentPage} of ${result.totalPages}`;
+        : `Page ${result.currentPage} of ${result.totalPages}`) + (lastReached ? " (the last page a search reaches; narrow the query for the rest)" : "");
       paginationHtml = `
     <nav>
       ${pageLabel}

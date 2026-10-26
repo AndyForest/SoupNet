@@ -395,7 +395,7 @@ describe.skipIf(!BASE || !canConnect())("the flat list and changed-since (drafts
     const before = await sql`SELECT count(*)::int AS n FROM claimnet.traces WHERE group_id = ${many.id}::uuid`;
     const check = await fetch(`${BASE}/check?${new URLSearchParams({ key: manyKey, recipe: recipe("deep page check"), ef: evidence("deep page"), page: "501", format: "json" }).toString()}`);
     expect(check.status).toBe(400);
-    expect(((await check.json()) as Json)["error"]).toContain("Nothing was stored.");
+    expect(((await check.json()) as Json)["error"]).toContain("The recipe was not stored.");
     const after = await sql`SELECT count(*)::int AS n FROM claimnet.traces WHERE group_id = ${many.id}::uuid`;
     expect(after[0]!["n"]).toBe(before[0]!["n"]);
   });
