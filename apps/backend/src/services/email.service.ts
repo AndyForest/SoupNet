@@ -5,20 +5,45 @@ import { getDb } from "../db";
 
 let transporter: Transporter | null = null;
 
+/** Relays that are reached without leaving the machine or the compose
+ *  network: Mailpit locally, which offers no STARTTLS. */
+const LOCAL_RELAY_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "mailpit"]);
+
+/**
+ * SMTP transport options from the environment (F123). Without `secure`
+ * (implicit TLS, port 465) the connection starts in plain text and upgrades
+ * with STARTTLS, which nodemailer treats as optional: a server, or anyone on
+ * the path, that leaves STARTTLS out of its reply gets the AUTH credentials
+ * in clear. `requireTLS` refuses to continue without the upgrade. It is on
+ * for every non-secure connection except a local relay, and
+ * SMTP_REQUIRE_TLS=true|false overrides that either way.
+ */
+export function smtpTransportOptions(env: NodeJS.ProcessEnv): {
+  host: string;
+  port: number;
+  secure: boolean;
+  requireTLS: boolean;
+  auth?: { user: string; pass: string };
+} {
+  const host = env["SMTP_HOST"] ?? "localhost";
+  const secure = env["SMTP_SECURE"] === "true";
+  const override = env["SMTP_REQUIRE_TLS"];
+  const requireTLS =
+    override === "true" ? true : override === "false" ? false : !secure && !LOCAL_RELAY_HOSTS.has(host.toLowerCase());
+  const user = env["SMTP_USER"];
+  const pass = env["SMTP_PASS"];
+  return {
+    host,
+    port: parseInt(env["SMTP_PORT"] ?? "1125", 10),
+    secure,
+    requireTLS,
+    ...(user && pass ? { auth: { user, pass } } : {}),
+  };
+}
+
 function getTransporter(): Transporter {
   if (!transporter) {
-    const smtpHost = process.env["SMTP_HOST"] ?? "localhost";
-    const smtpPort = parseInt(process.env["SMTP_PORT"] ?? "1125", 10);
-    const smtpUser = process.env["SMTP_USER"];
-    const smtpPass = process.env["SMTP_PASS"];
-    const smtpSecure = process.env["SMTP_SECURE"] === "true";
-
-    transporter = createTransport({
-      host: smtpHost,
-      port: smtpPort,
-      secure: smtpSecure,
-      ...(smtpUser && smtpPass ? { auth: { user: smtpUser, pass: smtpPass } } : {}),
-    });
+    transporter = createTransport(smtpTransportOptions(process.env));
   }
   return transporter;
 }
