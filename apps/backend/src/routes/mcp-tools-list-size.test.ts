@@ -18,8 +18,7 @@
  *   after slice 4 (2026-09-27):  16,986 bytes (on_behalf_of)
  *   after slice 5 (2026-09-28):  16,986 bytes, identical for a headless key (S5-Z1)
  *   before slices 6 to 9 (2026-10-24): 16,986 bytes; cap raised ahead of them (PR A0, see below)
- *   zod 3 to 4 (2026-10-26): 18,930 to 18,764 bytes; zod 4 drops additionalProperties:false from tool
- *     input objects, adds the safe-integer maximum on page and propertyNames on feedback rows
+ *   zod 3 to 4 (2026-10-26): 19,546 to 19,699 bytes, tools registered as z.strictObject (see the cap)
  * The stdio twin lives in apps/mcp-server/src/server.test.ts.
  */
 import { describe, it, expect } from "vitest";
@@ -51,8 +50,13 @@ import type { Principal } from "../authz";
  *  the cap again by their own measured bytes (docs/connectors/openai-plugin.md).
  *  18,950 → 19,600 (2026-10-26, OpenAI plugin directory stream O, item 12,
  *  measured on main after T's #150): every tool's `_meta.securitySchemes`,
- *  616 bytes over the nine tools (18,930 → 19,546). */
-const REMOTE_TOOLS_LIST_MAX_BYTES = 19_600;
+ *  616 bytes over the nine tools (18,930 → 19,546).
+ *  19,600 → 19,750 (2026-10-26, zod 3 to 4, dependency PR #166): every tool
+ *  registers z.strictObject, so input objects keep additionalProperties:false
+ *  (now on get_profile and list_my_recipe_books too, which had none), and zod
+ *  4 adds a safe-integer maximum on `page` and propertyNames on feedback rows.
+ *  Measured 19,546 → 19,699 (dependency-stack audit observation O1). */
+const REMOTE_TOOLS_LIST_MAX_BYTES = 19_750;
 
 const stubPrincipal: Principal = {
   keyId: "00000000-0000-0000-0000-000000000001",
@@ -111,6 +115,12 @@ describe("remote MCP tools/list as served (drafts-and-triage slice 1)", () => {
   it(`S1-Z1 / DT-TOOL-01: the served payload is at most ${REMOTE_TOOLS_LIST_MAX_BYTES} bytes`, async () => {
     const { bytes } = await servedToolsList();
     expect(bytes, `served tools/list is ${bytes} bytes`).toBeLessThanOrEqual(REMOTE_TOOLS_LIST_MAX_BYTES);
+  });
+
+  it("every tool's input object is closed (additionalProperties: false), as under zod 3 (#166, audit O1)", async () => {
+    for (const t of (await servedToolsList()).tools as Array<{ name: string; inputSchema: Record<string, unknown> }>) {
+      expect(t.inputSchema["additionalProperties"], t.name).toBe(false);
+    }
   });
 
   it("S5-Z1: a headless key is served the same tools/list, byte for byte, verify_draft included", async () => {

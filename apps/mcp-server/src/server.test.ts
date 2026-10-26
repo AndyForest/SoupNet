@@ -12,7 +12,7 @@
  *   after slice 1 (2026-09-27):  12,074 bytes, with impact and uncertainty added
  *   after slice 2 (2026-09-27):  13,064 bytes, with draft and verify_draft added (still under the cap)
  *   after slice 3 (2026-09-27):  13,063 bytes (the search query description names the new qualifiers)
- *   zod 3 to 4 (2026-10-26): 14,738 to 14,625 bytes (the same three schema changes as the remote server)
+ *   zod 3 to 4 (2026-10-26): 14,738 to 14,799 bytes (strict input objects as on the remote server)
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -29,7 +29,10 @@ import { servedToolsList } from "./served-tools-list.js";
 // 14,700 → 14,750 (2026-10-26, OpenAI plugin directory stream T): every
 // description in the reviewed shape and explicit annotations, as on the remote
 // server. Measured 14,407 on main (with slice 8b's page parameter) → 14,738.
-const STDIO_TOOLS_LIST_MAX_BYTES = 14_750;
+// 14,750 → 14,850 (2026-10-26, zod 3 to 4, dependency PR #166): the same move
+// as the remote cap (z.strictObject keeps additionalProperties:false; zod 4
+// adds the page maximum and feedback propertyNames). Measured 14,738 → 14,799.
+const STDIO_TOOLS_LIST_MAX_BYTES = 14_850;
 
 const BACKEND = "http://backend.test";
 
@@ -78,6 +81,12 @@ describe("stdio MCP tools/list as served", () => {
   it(`S1-Z2: the served payload does not grow past ${STDIO_TOOLS_LIST_MAX_BYTES} bytes, ratings included`, async () => {
     const { bytes } = await servedToolsList(newServer());
     expect(bytes, `served tools/list is ${bytes} bytes`).toBeLessThanOrEqual(STDIO_TOOLS_LIST_MAX_BYTES);
+  });
+
+  it("every tool's input object is closed (additionalProperties: false), as under zod 3 (#166, audit O1)", async () => {
+    for (const t of (await servedToolsList(newServer())).tools as Array<{ name: string; inputSchema: Record<string, unknown> }>) {
+      expect(t.inputSchema["additionalProperties"], t.name).toBe(false);
+    }
   });
 
   it("S1-B1: check_recipe lists impact and uncertainty as plain strings", async () => {
