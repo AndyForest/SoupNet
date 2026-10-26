@@ -1,13 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import postgres from "postgres";
 import { seedVerifiedUser } from "../test-users";
-import { CHECK_LOG_ACTIONS } from "../services/audit-actions";
+import { CHECK_LOG_ACTIONS, ACCOUNT_EVENT_ACTIONS, RECIPE_TEXT_ACTIONS } from "../services/audit-actions";
 
 /**
  * Account deletion anonymises the person's check-log rows rather than
- * deleting them (recipe 1d1531da, keeping the September design 569fc2cc).
- * Layer 3 against a running backend (BACKEND_URL); rubric rows R-A1 to R-A5
- * in docs/planning/openai-plugin-build/audit-log-retention.md.
+ * deleting them (recipe 1d1531da, keeping the September design 569fc2cc), and
+ * removes their recipe text from the account events that carry it (F116).
+ * Layer 3 against a running backend (BACKEND_URL); rubric rows R-A1 to R-A6
+ * and R-C2 in docs/planning/openai-plugin-build/audit-log-retention.md.
  */
 
 const BASE = process.env["BACKEND_URL"] ?? "";
@@ -15,7 +16,9 @@ const run = Date.now();
 const PASSWORD = "audit-anonymise-pw";
 type Row = { id: string; actor_user_id: string | null; api_key_id: string | null; action: string; target_type: string | null; target_id: string | null; metadata: Record<string, unknown> | null; occurred_at: Date };
 
-describe.skipIf(!BASE)("account deletion anonymises the check log (R-A1 to R-A5)", () => {
+const isRecipeText = (action: string) => (RECIPE_TEXT_ACTIONS as readonly string[]).includes(action);
+
+describe.skipIf(!BASE)("account deletion anonymises the check log (R-A1 to R-A6)", () => {
   let sql: ReturnType<typeof postgres>;
   interface Actor { email: string; jwt: string; userId: string; personal: string; org: string }
   let pat: Actor; // deletes the account
@@ -28,6 +31,9 @@ describe.skipIf(!BASE)("account deletion anonymises the check log (R-A1 to R-A5)
   let patEventIds: string[] = [];
   let boIds: string[] = [];
   let onBehalfRowId = "";
+  let patTextIds: string[] = []; // Pat deleting a recipe of Pat's
+  let boMovedPatsId = ""; // Bo moving a recipe of Pat's
+  let boDeletedOwnId = ""; // Bo deleting a recipe of Bo's: keeps its text
 
   function call(jwt: string, method: string, path: string, body?: unknown): Promise<Response> {
     return fetch(`${BASE}${path}`, { method, headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
@@ -87,15 +93,37 @@ describe.skipIf(!BASE)("account deletion anonymises the check log (R-A1 to R-A5)
     await tool(boKey, "check_recipe", { recipe: `As a colleague staying on, I prefer my rows untouched by others leaving ${run}.`, supporting_evidence: evidence("untouched"), recipe_book: shared.slug });
     await tool(boKey, "check_recipe", { recipe: `As a person leaving a service, I prefer a deposit about me to stay recorded without my name ${run}.`, supporting_evidence: evidence("about Pat"), recipe_book: shared.slug, on_behalf_of: pat.email });
 
+    // Recipe-text account events (F116): Pat deletes a recipe of Pat's, Bo
+    // moves another of Pat's out of the shared book, and Bo deletes one of Bo's.
+    const texts = {
+      patDeletes: `As a person leaving a service, I prefer this deleted recipe's words gone with me ${run}.`,
+      boMoves: `As a person leaving a service, I prefer this moved recipe's words gone with me ${run}.`,
+      boOwn: `As a colleague staying on, I prefer my own deleted recipe's record kept ${run}.`,
+    };
+    await tool(patKey, "check_recipe", { recipe: texts.patDeletes, supporting_evidence: evidence("deleted"), recipe_book: shared.slug });
+    await tool(patKey, "check_recipe", { recipe: texts.boMoves, supporting_evidence: evidence("moved"), recipe_book: shared.slug });
+    await tool(boKey, "check_recipe", { recipe: texts.boOwn, supporting_evidence: evidence("kept"), recipe_book: shared.slug });
+    const traceId = async (text: string) => ((await sql`SELECT id FROM claimnet.traces WHERE claim_text = ${text}`) as unknown as Array<{ id: string }>)[0]?.id ?? "";
+    const [patDeletes, boMoves, boOwn] = await Promise.all([traceId(texts.patDeletes), traceId(texts.boMoves), traceId(texts.boOwn)]);
+    expect((await call(pat.jwt, "DELETE", `/traces/${patDeletes}`)).status).toBe(200);
+    expect((await call(bo.jwt, "PATCH", `/traces/${boMoves}`, { groupId: bo.personal })).status).toBe(200);
+    expect((await call(bo.jwt, "DELETE", `/traces/${boOwn}`)).status).toBe(200);
+
     const patRows = (await sql`SELECT id, action FROM claimnet.audit_log WHERE actor_user_id = ${pat.userId}::uuid`) as unknown as Array<{ id: string; action: string }>;
     patCheckLogIds = patRows.filter((r) => (CHECK_LOG_ACTIONS as readonly string[]).includes(r.action)).map((r) => r.id);
-    patEventIds = patRows.filter((r) => !(CHECK_LOG_ACTIONS as readonly string[]).includes(r.action)).map((r) => r.id);
-    boIds = ((await sql`SELECT id FROM claimnet.audit_log WHERE actor_user_id = ${bo.userId}::uuid`) as unknown as Array<{ id: string }>).map((r) => r.id);
+    patEventIds = patRows.filter((r) => !(CHECK_LOG_ACTIONS as readonly string[]).includes(r.action) && !isRecipeText(r.action)).map((r) => r.id);
+    patTextIds = patRows.filter((r) => isRecipeText(r.action)).map((r) => r.id);
+    const boRows = (await sql`SELECT id, action, target_id FROM claimnet.audit_log WHERE actor_user_id = ${bo.userId}::uuid`) as unknown as Array<{ id: string; action: string; target_id: string }>;
+    boIds = boRows.map((r) => r.id);
+    boMovedPatsId = boRows.find((r) => r.action === "trace.moved" && r.target_id === boMoves)?.id ?? "";
+    boDeletedOwnId = boRows.find((r) => r.action === "trace.deleted" && r.target_id === boOwn)?.id ?? "";
+    expect(patTextIds.length).toBe(1);
+    expect([boMovedPatsId, boDeletedOwnId]).not.toContain("");
     onBehalfRowId = ((await sql`SELECT id FROM claimnet.audit_log WHERE actor_user_id = ${bo.userId}::uuid AND metadata->>'subjectUserId' = ${pat.userId}`) as unknown as Array<{ id: string }>)[0]?.id ?? "";
     expect(new Set(patRows.filter((r) => patCheckLogIds.includes(r.id)).map((r) => r.action))).toEqual(new Set(["recipe.checked", "check.searched", "briefing.issued"]));
     expect(patEventIds.length).toBeGreaterThan(0);
     expect(onBehalfRowId).not.toBe("");
-    for (const r of await rows([...patCheckLogIds, ...patEventIds, ...boIds])) before.set(r.id, r);
+    for (const r of await rows([...patCheckLogIds, ...patEventIds, ...patTextIds, ...boIds])) before.set(r.id, r);
     const countsBefore = await counts(patCheckLogIds);
 
     const del = await call(pat.jwt, "DELETE", "/auth/me", { password: PASSWORD });
@@ -121,7 +149,7 @@ describe.skipIf(!BASE)("account deletion anonymises the check log (R-A1 to R-A5)
     }
     const search = after.find((r) => r.action === "check.searched");
     expect(JSON.stringify(search?.metadata)).not.toContain(`my private search words ${run}`);
-    expect(after.find((r) => r.action === "recipe.checked")?.metadata?.["intentId"]).toMatch(/^int_/);
+    expect(after.filter((r) => r.action === "recipe.checked").map((r) => r.metadata?.["intentId"])).toContainEqual(expect.stringMatching(/^int_/));
   });
 
   it("R-A2: a colleague's deposit about the person keeps the record, without the person's id", async () => {
@@ -139,14 +167,55 @@ describe.skipIf(!BASE)("account deletion anonymises the check log (R-A1 to R-A5)
     expect(selfDelete[0]?.n).toBe(1);
   });
 
-  it("R-A4: nobody else's rows change, apart from the one field R-A2 names", async () => {
-    const after = await rows(boIds.filter((id) => id !== onBehalfRowId));
-    expect(after).toEqual(boIds.filter((id) => id !== onBehalfRowId).map((id) => before.get(id)).sort((a, b) => a!.id.localeCompare(b!.id)));
+  it("R-A4: nobody else's rows change, apart from the fields R-A2 and R-A6 name", async () => {
+    const untouched = boIds.filter((id) => id !== onBehalfRowId && id !== boMovedPatsId);
+    expect(untouched).toContain(boDeletedOwnId);
+    const after = await rows(untouched);
+    expect(after).toEqual(untouched.map((id) => before.get(id)).sort((a, b) => a!.id.localeCompare(b!.id)));
+    expect(after.find((r) => r.id === boDeletedOwnId)?.metadata?.["claimText"]).toMatch(/my own deleted recipe's record kept/);
+  });
+
+  it("R-A6: a recipe's text goes from the account events the person wrote or that name their recipe, and nothing else does (F116)", async () => {
+    const ids = [...patTextIds, boMovedPatsId];
+    const after = await rows(ids);
+    expect(after.length).toBe(ids.length);
+    for (const r of after) {
+      const was = before.get(r.id)!;
+      expect(was.metadata).toHaveProperty("claimText");
+      const { claimText: _t, ...kept } = was.metadata ?? {};
+      expect(r.metadata).toEqual(kept);
+      expect([r.actor_user_id, r.action, r.target_id, r.occurred_at.toISOString()]).toEqual([was.actor_user_id, was.action, was.target_id, was.occurred_at.toISOString()]);
+    }
+    expect(after.find((r) => r.id === boMovedPatsId)?.actor_user_id).toBe(bo.userId);
   });
 
   it("R-A5: counts survive, in total and by month and intent", async () => {
     const after = await rows(patCheckLogIds);
     expect(after.length).toBe(patCheckLogIds.length);
     expect((await counts(patCheckLogIds)).length).toBeGreaterThan(0);
+  });
+});
+
+/** F118: writeAudit's type covers its callers; this covers every other path
+ *  into the table, including ones the source scan in audit-actions.test.ts
+ *  cannot read (a name built at run time). It reads whatever the test run has
+ *  written so far. */
+describe.skipIf(!BASE)("every action in the table is classified (R-C2)", () => {
+  it("SELECT DISTINCT action names only listed actions", async () => {
+    const sql = postgres({
+      host: process.env["PGHOST"] ?? "localhost",
+      port: Number(process.env["PGPORT"] ?? 5633),
+      user: process.env["PGUSER"] ?? "claimnet",
+      password: process.env["PGPASSWORD"] ?? "claimnet",
+      database: process.env["PGDATABASE"] ?? "claimnet",
+    });
+    try {
+      const listed = new Set<string>([...CHECK_LOG_ACTIONS, ...ACCOUNT_EVENT_ACTIONS]);
+      const actions = ((await sql`SELECT DISTINCT action FROM claimnet.audit_log`) as unknown as Array<{ action: string }>).map((r) => r.action);
+      expect(actions.length).toBeGreaterThan(0);
+      expect(actions.filter((a) => !listed.has(a))).toEqual([]);
+    } finally {
+      await sql.end();
+    }
   });
 });

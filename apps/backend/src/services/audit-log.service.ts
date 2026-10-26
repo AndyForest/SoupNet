@@ -1,10 +1,11 @@
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { CHECK_LOG_ACTIONS } from "./audit-actions";
+import { CHECK_LOG_ACTIONS, RECIPE_TEXT_ACTIONS } from "./audit-actions";
+import type { AuditAction } from "./audit-actions";
 
 export interface AuditEventInput {
   actorUserId: string | null;
-  action: string;
+  action: AuditAction;
   targetType?: string | null;
   targetId?: string | null;
   /** Agent-initiated events set the indexed api_key_id column (F29 reads it
@@ -37,8 +38,11 @@ export async function writeAudit(
 
 /**
  * Anonymise a departing person's check log (recipe 1d1531da; the September
- * design 569fc2cc: "null `actor_user_id`, redact `metadata.filter`"). Run
- * inside the account-deletion cascade's final transaction.
+ * design 569fc2cc: "null `actor_user_id`, redact `metadata.filter`"), and
+ * remove their recipe text from the account events that carry it. Run inside
+ * the account-deletion cascade's final transaction, and once more after it
+ * commits for a row a request in flight wrote meanwhile (F119); it is
+ * idempotent.
  *
  * Their check-log rows (CHECK_LOG_ACTIONS) lose what points at them: the
  * actor, the key in `api_key_id` and in `metadata.apiKeyId`, a target that
@@ -52,9 +56,11 @@ export async function writeAudit(
  * someone happened survives without naming them. That match reads metadata
  * across the check log; account deletion is rare, so the scan is accepted.
  *
- * Account events are left as they are.
+ * Account events are kept, except that a recipe-text event
+ * (RECIPE_TEXT_ACTIONS) the person wrote, or one about a recipe of theirs,
+ * loses `claimText` (F116). Its action, ids and counts stay.
  */
-export async function anonymiseCheckLogOf(db: PostgresJsDatabase, userId: string): Promise<void> {
+export async function anonymiseAuditLogOf(db: PostgresJsDatabase, userId: string): Promise<void> {
   const checkLog = sql.join(CHECK_LOG_ACTIONS.map((a) => sql`${a}`), sql`, `);
   await db.execute(sql`
     UPDATE claimnet.audit_log
@@ -70,5 +76,13 @@ export async function anonymiseCheckLogOf(db: PostgresJsDatabase, userId: string
     SET metadata = jsonb_set(metadata, '{subjectUserId}', 'null'::jsonb)
     WHERE action IN (${checkLog})
       AND metadata->>'subjectUserId' = ${userId}
+  `);
+  const recipeText = sql.join(RECIPE_TEXT_ACTIONS.map((a) => sql`${a}`), sql`, `);
+  await db.execute(sql`
+    UPDATE claimnet.audit_log
+    SET metadata = metadata - 'claimText'
+    WHERE action IN (${recipeText})
+      AND metadata ? 'claimText'
+      AND (actor_user_id = ${userId}::uuid OR metadata->>'traceUserId' = ${userId})
   `);
 }

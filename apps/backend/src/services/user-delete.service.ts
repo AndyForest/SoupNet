@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { deleteTraceCascade } from "./trace-delete.service";
-import { anonymiseCheckLogOf } from "./audit-log.service";
+import { anonymiseAuditLogOf } from "./audit-log.service";
 import {
   sharedBooksOwnedBy,
   pickSuccessor,
@@ -98,8 +98,8 @@ export interface BookHandover {
  *   - vector_cache — content-hash keyed, stores no source text and no FKs
  *     back to any entity; genuinely PII-free (see enqueue.ts header)
  *   - audit_log — no FK to the actor. The check log (CHECK_LOG_ACTIONS) is
- *     anonymised in the final transaction (anonymiseCheckLogOf, recipe
- *     1d1531da); account events are left as they are
+ *     anonymised in the final transaction (anonymiseAuditLogOf, recipe
+ *     1d1531da); account events are kept, less any recipe text (F116)
  *
  * Transaction strategy (checked on Soup.net, recipe 9517f6f4): one
  * transaction PER TRACE (reusing deleteTraceCascade, the audited path for
@@ -168,6 +168,13 @@ export async function deleteUserCascade(
       WHERE api_key_id IN (SELECT id FROM claimnet.api_keys WHERE user_id = ${userId}::uuid)
     `);
     await tx.execute(sql`DELETE FROM claimnet.api_keys WHERE user_id = ${userId}::uuid`);
+
+    // The check log is anonymised, not deleted (recipe 1d1531da): counts
+    // and task groupings survive without naming the person. Account events
+    // are kept, less any recipe text (F116). In this transaction, so a failed
+    // deletion leaves the rows as they were and a re-run anonymises them;
+    // before the book locks below, so its scan of audit_log holds none.
+    await anonymiseAuditLogOf(txDb, userId);
 
     // OAuth in-flight authorization codes for this user.
     await tx.execute(sql`
@@ -256,18 +263,22 @@ export async function deleteUserCascade(
     // the users delete because of the FK.
     await removeAllMembershipsOf(tx, userId);
 
-    // The check log is anonymised, not deleted (recipe 1d1531da): counts
-    // and task groupings survive without naming the person. Account events
-    // are left as they are. In this transaction, so a failed deletion leaves
-    // the rows attributed and a re-run anonymises them.
-    await anonymiseCheckLogOf(txDb, userId);
-
     // invitations.inviter_id, trace_reactions.user_id, and
     // check_feedback_stars.user_id are FKs with ON DELETE CASCADE (F18 for
     // invitations) — handled by this delete. audit_log.actor_user_id is
     // nullable with no FK.
     await tx.execute(sql`DELETE FROM claimnet.users WHERE id = ${userId}::uuid`);
   });
+
+  // A request that authenticated before the keys went can still write a check
+  // row after the commit (audit_log has no FK to stop it). Once more now that
+  // no key of the person's is left (F119). The account is already gone, so a
+  // failure here is logged rather than reported as a failed deletion.
+  try {
+    await anonymiseAuditLogOf(db, userId);
+  } catch (err) {
+    console.error("[user-delete] Re-running the audit anonymisation failed:", { userId, err });
+  }
 
   return { ok: true, userId, tracesDeleted, evidenceDeleted, referencesDeleted, booksHandedOver };
 }

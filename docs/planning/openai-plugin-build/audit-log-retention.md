@@ -19,6 +19,7 @@ Written 2026-10-26, before implementation, from the ruling, the September design
 
 | # | Criterion | Evidence |
 |---|---|---|
+| R-C2 | *(Added 2026-10-26 from audit finding F118.)* `writeAudit` takes the union of the two lists as its action type, so an unlisted action does not compile. Every action in the table is listed. | Typecheck; Layer 3 `SELECT DISTINCT action` against the lists, which also covers names built at run time that the source scan cannot read. |
 | R-C1 | One module lists the check-log actions (`recipe.checked`, `check.searched`, `briefing.issued`) and the account-event actions (every other action written today). Every action the backend writes is in exactly one list, and the lists name no action the backend no longer writes. | A test that scans the backend source for every audit write (`writeAudit` and `insert(auditLog)` actions, literals inside `INSERT INTO claimnet.audit_log` statements, and `*_ACTIONS` maps) and fails on an action in neither list, in both, or in a list but not written. |
 
 ### Anonymise on account deletion
@@ -27,9 +28,10 @@ Written 2026-10-26, before implementation, from the ruling, the September design
 |---|---|---|
 | R-A1 | Inside the account-deletion cascade's final transaction (before the `users` row goes), every check-log row the person made is changed as follows: <br>- `actor_user_id` and `api_key_id` become null; <br>- `target_id` becomes null where `target_type` is `api_key` (the briefing row's target is the key); <br>- `metadata` loses `apiKeyId` (the key) and `filter` (the query text). <br>Everything else stays: the action, the target recipe or search, the time, and the rest of `metadata` (surface, ranking version, result ids and counts, ratings, draft flag, session and intent ids, OAuth client). | Layer 3: a person checks, searches and gets a briefing, then deletes the account. Read the rows back by id. |
 | R-A2 | In other people's check-log rows, a `subjectUserId` that names the deleted person becomes null. The key stays, so the record that a deposit about someone happened survives without naming them. | Layer 3: a colleague deposits about the person on their behalf; the person deletes their account. |
-| R-A3 | Account-event rows are not changed by account deletion. They keep their actor and age out with the sweep. | Layer 3: the `user.self_delete` row and a book-change row are byte-identical before and after. |
-| R-A4 | Nobody else's rows change, apart from R-A2's one field. | Layer 3: another person's check-log and account-event rows are byte-identical before and after. |
+| R-A3 | Account-event rows are not changed by account deletion, apart from R-A6. They keep their actor and age out with the sweep. | Layer 3: the `user.self_delete` row and a book-change row are byte-identical before and after. |
+| R-A4 | Nobody else's rows change, apart from R-A2's and R-A6's fields. | Layer 3: another person's check-log and account-event rows are byte-identical before and after, including the colleague's deletion of a recipe of their own, which keeps its text. |
 | R-A5 | Counts survive. The number of `recipe.checked`, `check.searched` and `briefing.issued` rows is the same before and after, in total and when grouped by month and by intent id. Those groupings are what a report and an intent lineage read. | Layer 3 counts before and after. |
+| R-A6 | *(Added 2026-10-26 from audit finding F116.)* `trace.deleted` and `trace.moved` rows (`RECIPE_TEXT_ACTIONS`) that the person wrote, or whose `metadata.traceUserId` is the person, lose `metadata.claimText`. Everything else in them stays, actor included. | Layer 3: the person deletes a recipe of theirs and a colleague moves another, then the person deletes their account. |
 
 ### Deferred
 
@@ -56,6 +58,13 @@ Written by the builder for the verifier and the audit coordinator.
 - `docs/backlog.md` carries the deferred 12-month sweep, with a note on the audit-log FK item and on the search-filter item.
 
 **Tests:** `routes/audit-anonymise.test.ts` (Layer 3, R-A1 to R-A5). A person checks under an intent, searches with free text and gets a briefing, and changes a book description. A colleague makes their own check and a deposit about the person on their behalf. The person deletes their account, and every row is compared with its snapshot.
+
+**After the audit (F116 to F119, 2026-10-26):**
+- **F116:** `anonymiseCheckLogOf` became `anonymiseAuditLogOf` and also removes `claimText` from the person's recipe-text account events (R-A6). The test adds the person deleting a recipe of theirs, a colleague moving another, and a colleague deleting one of their own, which keeps its text.
+- **F118:** `writeAudit` and the draft-resolution map take `AuditAction`. The `insert(auditLog)` and raw-SQL writes keep literal names, which the source scan reads. R-C2 checks the table.
+- **F119:** the cascade runs the anonymisation once more after the final transaction commits, for a check row an in-flight request wrote meanwhile. A failure there is logged, since the account is already gone.
+- **The audit's note on locks:** the anonymisation now runs in the final transaction right after the keys are deleted, before `lockBooksForDeparture`, so its scan of `audit_log` holds no book lock.
+- **F117** (agent and session labels, and the join back to the person through kept account events) is on the backlog with the 12-month sweep.
 
 **One earlier rubric row changed:** drafts-and-triage S4-A4 asserted that the depositor's `recipe.checked` row keeps their actor after their account is deleted. The ruling anonymises that row, so the test now asserts a null actor with the subject kept. S4-S4 (the depositor recoverable from `audit_log` alone) still holds through `recipe.draft_verified`'s `previousAuthorId`, an account event that deletion leaves as it is. The S4-A4 row in `drafts-and-triage-build.md` carries the amendment.
 
