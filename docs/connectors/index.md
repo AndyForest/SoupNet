@@ -74,6 +74,10 @@ Custom connectors launched March 2026. Free-tier users: see [Web fallback](#web-
 3. Auth method: **OAuth**. Add.
 4. Sign in to Soup.net and authorize.
 
+### For OAuth client developers
+
+Clients that register dynamically get a client secret and use it at the token endpoint; clients that identify themselves with a metadata-document URL (ChatGPT, for example) use no secret (`none`, with PKCE as the proof) or a signed assertion (`private_key_jwt`). That is why the server's metadata lists `none` beside the secret methods.
+
 ## Connect via API key (developer tools)
 
 For Claude Code, Claude Desktop, VS Code (Copilot), Google Antigravity, Cursor, Windsurf, and Zed. The Soup.net dashboard's **[API Keys page](/app/keys)** has copy-paste configs for each — sign in first, then copy the one-line config into your client's MCP file.
