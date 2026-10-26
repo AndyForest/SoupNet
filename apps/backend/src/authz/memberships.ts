@@ -15,6 +15,7 @@ import { groupMembers } from "@soupnet/db";
 import { countsAsMembership, membershipOf } from "./membership-sql";
 import { inBooks } from "./scope-sql";
 import { OWNER_OR_ADMIN_ROLES } from "./roles";
+import { sharingPolicyAllows } from "./sharing-policy";
 
 export interface BookMember {
   user_id: string;
@@ -141,7 +142,12 @@ export async function addMember(
   bookId: string,
   userId: string,
   role: "member" | "admin",
-): Promise<AddMemberResult> {
+  /** Who is adding them: an organization's sharing policy can depend on it. */
+  actorUserId: string,
+): Promise<AddMemberResult | "sharing_blocked"> {
+  // An organization's sharing policy can refuse a grant that crosses its
+  // boundary (sharing-policy.ts; stream Console fills it).
+  if (!(await sharingPolicyAllows(db, { bookId, userId, actorUserId }))) return "sharing_blocked";
   // Two passes at most: the second only runs if the row that blocked the
   // insert was removed before we could read it.
   for (let attempt = 0; attempt < 2; attempt++) {

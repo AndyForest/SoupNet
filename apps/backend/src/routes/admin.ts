@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { z } from "zod";
 import crypto from "crypto";
 import { getDb } from "../db";
@@ -10,7 +11,10 @@ import {
   getVerifiedUserCount,
   getPendingInvitationCount,
 } from "../services/system-settings.service";
-import { QUEUE_DESCRIPTIONS, getQueueDescription } from "@soupnet/domain";
+import { QUEUE_DESCRIPTIONS, getQueueDescription, ORGANIZATION_FULL_MESSAGE } from "@soupnet/domain";
+import { orgMemberCount } from "../authz";
+import type { JoinRefusal } from "../authz";
+import { createOrganizationAndNotify, joinOrganizationAndNotify } from "../services/organization.service";
 import { approveWaitlistedUser, promoteTopWaitlisted } from "../services/waitlist.service";
 import { setUserPremium } from "../services/user-premium.service";
 import { sendWaitlistApprovedEmail } from "../services/email.service";
@@ -33,16 +37,164 @@ const admin = new Hono<AppEnv>();
 // Order: requireAuth → requireVerifiedEmail → requireSystem.
 admin.use("/*", requireAuth, requireVerifiedEmail, requireSystem);
 
-// GET /admin/organizations — list all orgs (system only)
+// GET /admin/organizations — list all orgs (system only). Company
+// organizations carry their member counts (all, and active: the ones that
+// take a seat) and seat limit; personal ones have no member rows.
 admin.get("/organizations", async (c) => {
   const rows = await getDb().execute(sql`
     SELECT o.id, o.name, o.slug, o.is_personal, o.created_at,
-           u.email as owner_email
+           u.email as owner_email,
+           o.seat_limit,
+           ${orgMemberCount(sql`o.id`, { activeOnly: false })} AS members,
+           ${orgMemberCount(sql`o.id`, { activeOnly: true })} AS active_members
     FROM claimnet.organizations o
     JOIN claimnet.users u ON u.id = o.owner_id
     ORDER BY o.created_at DESC
   `);
   return c.json({ ok: true, data: rows });
+});
+
+// ── Company organizations: the site operator's tools (org round 1, stream
+// Core). Until domains are verified in the console, the site operator starts
+// an organization by hand and adds its first people. Each add runs the same
+// join every later member goes through (authz/organizations.ts), with the
+// operator as its authority.
+
+const JOIN_REFUSALS: Record<JoinRefusal | "slug_taken", { status: 400 | 404 | 409; message: string }> = {
+  not_authorized: { status: 400, message: "This join needs the site operator's authority." },
+  organization_not_found: { status: 404, message: "No company organization with that id." },
+  unknown_account: { status: 404, message: "No account with that email." },
+  already_a_member: { status: 409, message: "That account is already a member of this organization." },
+  already_in_an_organization: { status: 409, message: "That account already belongs to another organization." },
+  organization_full: { status: 409, message: ORGANIZATION_FULL_MESSAGE },
+  slug_taken: { status: 409, message: "An organization already uses that slug." },
+};
+
+function refuseJoin(c: Context<AppEnv>, refusal: JoinRefusal | "slug_taken"): Response {
+  const { status, message } = JOIN_REFUSALS[refusal];
+  return c.json({ ok: false, error: refusal, message }, status);
+}
+
+const createOrganizationSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+  slug: z.string().min(1).max(100).regex(/^[a-z0-9-]+$/),
+  ownerEmail: z.string().email(),
+  seatLimit: z.number().int().min(1).nullable().optional(),
+}).strict();
+
+async function accountIdByEmail(email: string): Promise<string | null> {
+  const rows = await getDb().execute(sql`SELECT id FROM claimnet.users WHERE email = ${normalizeEmail(email)} LIMIT 1`);
+  return (rows as unknown as Array<{ id: string }>)[0]?.id ?? null;
+}
+
+// POST /admin/organizations — create a company organization, its default
+// book, and its owner's join (an existing account, which becomes managed).
+admin.post("/organizations", async (c) => {
+  const parsed = createOrganizationSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ ok: false, error: "Invalid input", details: parsed.error.issues }, 400);
+  const ownerUserId = await accountIdByEmail(parsed.data.ownerEmail);
+  if (!ownerUserId) return refuseJoin(c, "unknown_account");
+  const result = await createOrganizationAndNotify(getDb(), {
+    name: parsed.data.name,
+    slug: parsed.data.slug,
+    ownerUserId,
+    seatLimit: parsed.data.seatLimit ?? null,
+    actorUserId: c.get("user").id,
+  });
+  if (!result.ok) return refuseJoin(c, result.refusal);
+  return c.json({
+    ok: true,
+    data: { organizationId: result.organizationId, defaultRecipeBookId: result.defaultBookId, movedBooks: result.join.movedBooks },
+  }, 201);
+});
+
+const updateOrganizationSchema = z.object({
+  seatLimit: z.number().int().min(1).nullable(),
+}).strict();
+
+// PATCH /admin/organizations/:id — the site operator's settings (seats).
+admin.patch("/organizations/:id", async (c) => {
+  const id = c.req.param("id");
+  const parsed = updateOrganizationSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success || !z.string().uuid().safeParse(id).success) {
+    return c.json({ ok: false, error: "Invalid input", details: parsed.success ? [] : parsed.error.issues }, 400);
+  }
+  const rows = await getDb().execute(sql`
+    UPDATE claimnet.organizations SET seat_limit = ${parsed.data.seatLimit}, updated_at = NOW()
+    WHERE id = ${id}::uuid AND NOT is_personal
+    RETURNING id
+  `);
+  if ((rows as unknown as unknown[]).length === 0) return refuseJoin(c, "organization_not_found");
+  await writeAudit(getDb(), {
+    actorUserId: c.get("user").id, action: "organization.seat_limit_set", targetType: "organization", targetId: id,
+    metadata: { seatLimit: parsed.data.seatLimit },
+  });
+  return c.json({ ok: true });
+});
+
+const addOrganizationMemberSchema = z.object({
+  email: z.string().email(),
+  role: z.enum(["owner", "admin", "member"]).optional(),
+}).strict();
+
+// POST /admin/organizations/:id/members — add an existing account: the
+// migration path for an account that predates the organization.
+admin.post("/organizations/:id/members", async (c) => {
+  const id = c.req.param("id");
+  const parsed = addOrganizationMemberSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success || !z.string().uuid().safeParse(id).success) {
+    return c.json({ ok: false, error: "Invalid input", details: parsed.success ? [] : parsed.error.issues }, 400);
+  }
+  const userId = await accountIdByEmail(parsed.data.email);
+  if (!userId) return refuseJoin(c, "unknown_account");
+  const result = await joinOrganizationAndNotify(getDb(), {
+    organizationId: id,
+    userId,
+    role: parsed.data.role ?? "member",
+    via: "operator",
+    authority: { kind: "operator", actorUserId: c.get("user").id },
+  });
+  if (!result.ok) return refuseJoin(c, result.refusal);
+  return c.json({ ok: true, data: { userId, movedBooks: result.movedBooks } }, 201);
+});
+
+// POST /admin/users/:id/suspend and /unsuspend — the site operator's
+// suspension (users.suspended_at). It is read by the same account-state
+// predicate as an org admin's disable and kept apart from it, so an org
+// admin's re-enable never lifts it. Reversible; no key is touched.
+const suspendSchema = z.object({ reason: z.string().trim().max(500).optional() }).strict();
+
+admin.post("/users/:id/suspend", async (c) => {
+  const id = c.req.param("id");
+  const parsed = suspendSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success || !z.string().uuid().safeParse(id).success) {
+    return c.json({ ok: false, error: "Invalid input" }, 400);
+  }
+  const actor = c.get("user");
+  if (id === actor.id) {
+    return c.json({ ok: false, error: "cannot_suspend_self", message: "You can't suspend your own account." }, 400);
+  }
+  const rows = await getDb().execute(sql`
+    UPDATE claimnet.users SET suspended_at = COALESCE(suspended_at, NOW()), suspended_reason = ${parsed.data.reason ?? null}
+    WHERE id = ${id}::uuid RETURNING id
+  `);
+  if ((rows as unknown as unknown[]).length === 0) return c.json({ ok: false, error: "User not found" }, 404);
+  await writeAudit(getDb(), {
+    actorUserId: actor.id, action: "user.suspended", targetType: "user", targetId: id,
+    metadata: { reason: parsed.data.reason ?? null },
+  });
+  return c.json({ ok: true });
+});
+
+admin.post("/users/:id/unsuspend", async (c) => {
+  const id = c.req.param("id");
+  if (!z.string().uuid().safeParse(id).success) return c.json({ ok: false, error: "Invalid input" }, 400);
+  const rows = await getDb().execute(sql`
+    UPDATE claimnet.users SET suspended_at = NULL, suspended_reason = NULL WHERE id = ${id}::uuid RETURNING id
+  `);
+  if ((rows as unknown as unknown[]).length === 0) return c.json({ ok: false, error: "User not found" }, 404);
+  await writeAudit(getDb(), { actorUserId: c.get("user").id, action: "user.unsuspended", targetType: "user", targetId: id });
+  return c.json({ ok: true });
 });
 
 // GET /admin/settings — get system settings

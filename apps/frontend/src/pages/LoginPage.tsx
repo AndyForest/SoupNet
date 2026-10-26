@@ -199,6 +199,11 @@ export function LoginPage() {
           setLoginNeedsTurnstile(false);
           setNotice(data.message ?? "You're on the waitlist — we'll email you when a spot opens.");
         }
+      } else if (data.error === "account_disabled" || data.error === "account_suspended") {
+        // Right password, but the account is switched off (by the person's
+        // organization, or by the site operator): say which, so they ask the
+        // right person instead of resetting a password that was never the problem.
+        setError(data.message ?? "This account can't sign in right now.");
       } else {
         setError(data.error ?? "Authentication failed");
         // A Turnstile token is single-use: get a fresh one for the retry.
