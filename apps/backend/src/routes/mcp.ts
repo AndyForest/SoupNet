@@ -34,6 +34,7 @@ import {
   renderBriefingIdLine,
   guardUnknownParams,
   toolParamsFromRegistry,
+  MCP_SERVER_INSTRUCTIONS,
 } from "@soupnet/domain";
 import type { CheckResponseJson, McpTransportLike } from "@soupnet/domain";
 import type { Recipe } from "@soupnet/contracts";
@@ -49,6 +50,7 @@ import { getDb } from "../db";
 import { authenticateKey, inBooks, isOwnerOrAdmin, roleIn } from "../authz";
 import type { Principal } from "../authz";
 import { maybeSynthesize } from "../services/synthesis.service";
+import { ownAccountProfile, renderAccountProfile } from "../services/account-profile.service";
 import type { SynthesisResult } from "../services/synthesis.service";
 import {
   RECIPE_LOOKUP_MAX_IDS,
@@ -67,9 +69,17 @@ import type { AppEnv } from "../types";
 import { writeAudit } from "../services/audit-log.service";
 import { ClientSafeError, publicErrorMessage } from "../lib/client-safe-error";
 import { invalidKeyMessage } from "../lib/key-remediation";
-import type { RawFeedbackRow } from "../services/feedback.service";
+import type { FeedbackRowResult, RawFeedbackRow } from "../services/feedback.service";
 import { verifyDraft, describeVerifyResult } from "../services/draft-verify.service";
 import { feedbackTargetLabel, ingestFeedback, isFeedbackRowObject, summarizeFeedbackResults, withCheckDefaults } from "../services/feedback.service";
+
+/** Ride-along feedback results as an agent sees them: the stored feedback
+ *  row's id is left out, since no tool takes it back (output minimisation,
+ *  docs/connectors/openai-plugin.md). REST keeps it. */
+function withoutFeedbackIds(results: unknown): unknown {
+  if (!Array.isArray(results)) return results;
+  return (results as FeedbackRowResult[]).map(({ feedbackId: _feedbackId, ...rest }) => rest);
+}
 
 // F47 (security-audit-2026-06-11): tool catch-alls surface only deliberate
 // ClientSafeError messages (validation, size caps, MIME — written for the
@@ -392,13 +402,18 @@ function ratingParam(description: string) {
  * way (F65). The Principal's arrays are effective scope; tools only narrow it.
  */
 export function createMcpServer(backendUrl: string, principal: Principal): McpServer {
-  const server = new McpServer({
-    name: "soupnet",
-    version: "0.4.0",
-    description:
-      "Soup.net: check recipes — taste and judgment traces with evidence. " +
-      "Call get_briefing before your first check to learn the format and get a sample of the user's corpus.",
-  });
+  const server = new McpServer(
+    {
+      name: "soupnet",
+      version: "0.4.0",
+      description:
+        "Soup.net: check recipes — taste and judgment traces with evidence. " +
+        "Call get_briefing before your first check to learn the format and get a sample of the user's corpus.",
+    },
+    // Read once per connection, before any tool description; the first 512
+    // characters carry the cross-tool moves (plugin directory item 5).
+    { instructions: MCP_SERVER_INSTRUCTIONS },
+  );
 
   // MCP_TOOL_PROFILE=lean — diagnostic bisect instrument (2026-07-06,
   // claude.ai conversation-runtime tool-registry investigation, see
@@ -511,6 +526,9 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
       // state. Open-world: results pull from a corpus other agents write to between
       // calls, and idempotentHint concerns only identical-argument re-fires, so it
       // never suppresses distinct checks (stigmergy is unaffected).
+      // Open-world (annotation rule, docs/connectors/openai-plugin.md): a
+      // file_url is fetched from the public internet. Every other tool is
+      // bounded to the books the account can read or write.
       readOnlyHint: false,
       destructiveHint: false,
       idempotentHint: true,
@@ -687,7 +705,7 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
         // Never both.
         if (response_format === "structured") {
           const data = jsonResponse["data"] as Record<string, unknown>;
-          if (feedbackResults !== undefined) data["feedbackResults"] = feedbackResults;
+          if (feedbackResults !== undefined) data["feedbackResults"] = withoutFeedbackIds(feedbackResults);
           const checkedFill = data["checked"] as { recipeId?: string } | undefined;
           const stub = `Recipe checked as #${String(checkedFill?.recipeId)}. ${String(data["totalResults"])} similar recipe(s) — see structuredContent.`;
           return {
@@ -738,10 +756,11 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
       title: "Recipe search",
       // Genuinely read-only: no trace row, no corpus write. The check.searched
       // audit row is call bookkeeping, same as every read surface's accounting.
+      // Closed-world: it reads only the account's own books.
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
-      openWorldHint: true,
+      openWorldHint: false,
     },
     async ({ query, verbosity, response_format, known_recipes, session_id, intent, agent_id, feedback, read_recipe_books }) => {
       const knownRecipeIds = new Set(
@@ -819,7 +838,7 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
 
         if (response_format === "structured") {
           const data = jsonResponse["data"] as Record<string, unknown>;
-          if (feedbackResults !== undefined) data["feedbackResults"] = feedbackResults;
+          if (feedbackResults !== undefined) data["feedbackResults"] = withoutFeedbackIds(feedbackResults);
           const stub = `Read-only search — ${String(data["totalResults"])} result(s)${result.searchId ? `, searchId ${result.searchId}` : ""}. See structuredContent.`;
           return {
             content: [{ type: "text" as const, text: stub }],
@@ -856,7 +875,10 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
     },
     {
       title: "Get briefing",
+      // Read-only: its writes are the call's own audit row and, when intent
+      // text is given, the intent the caller asked to register.
       readOnlyHint: true,
+      destructiveHint: false,
       idempotentHint: true,
       openWorldHint: false,
     },
@@ -915,10 +937,12 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
     {
       title: "Get recipes by id",
       readOnlyHint: true,
+      destructiveHint: false,
       idempotentHint: true,
-      // openWorldHint: true — a previously unreadable id can become readable
-      // (book shared, key rescoped) between calls.
-      openWorldHint: true,
+      // Closed-world: the account's own books. (Open-world used to stand for
+      // "an unreadable id can become readable between calls", a changing
+      // corpus, which is not what the hint means.)
+      openWorldHint: false,
     },
     async ({ recipe_ids }) => {
       try {
@@ -968,10 +992,13 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
     },
     {
       title: "Resolve a draft",
-      // A one-way state change plus appended evidence: not read-only, not
-      // destructive, and a repeat is refused rather than repeated.
+      // A one-way state change plus appended evidence, and a repeat is
+      // refused rather than repeated. Destructive by the annotation rule: it
+      // moves the draft to a state this surface cannot undo (a verified draft
+      // becomes visible to the book's members). Under ChatGPT's default
+      // permission this asks the person to confirm each resolution.
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: false,
       openWorldHint: false,
     },
@@ -1004,9 +1031,11 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
     {
       title: "List my recipe books",
       readOnlyHint: true,
+      destructiveHint: false,
       idempotentHint: true,
-      // openWorldHint: true because shared books may gain new recipes between calls.
-      openWorldHint: true,
+      // Closed-world: the account's own books (a shared book changing between
+      // calls is a changing corpus, not an open world).
+      openWorldHint: false,
     },
     async () => {
       try {
@@ -1050,9 +1079,7 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
   if (!lean)
   server.tool(
     "update_recipe_book_description",
-    "Update a recipe book's description. It shapes how every future agent reads and writes there, " +
-    "so recipe-check the proposed text before committing. Requires the key's user to be an owner or " +
-    "admin AND the book to be in the key's write scope.",
+    MCP_TOOL_DESCRIPTIONS.updateRecipeBookDescription,
     {
       recipe_book_id_or_slug: z.string().describe(
         "The recipe book's UUID or slug (list_my_recipe_books shows both)."
@@ -1063,10 +1090,13 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
     },
     {
       title: "Update recipe book description",
-      // Mutates a single field; idempotent under the same input. Not
-      // destructive — the description is metadata, not user content.
+      // Replaces a single field; idempotent under the same input. Destructive
+      // by the annotation rule: the earlier text is overwritten, and that the
+      // response echoes it does not make the change additive (OpenAI: "Being
+      // able to undo an action does not, by itself, justify setting
+      // destructiveHint to false").
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: true,
       openWorldHint: false,
     },
@@ -1230,14 +1260,56 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
           // traceId: name the right target so the confirmation never reads
           // "for check " (blank).
           const target = feedbackTargetLabel(r);
+          // No feedback id: no tool takes one back, so it is an internal
+          // identifier the agent has no use for (output minimisation).
           const text = r.dup
-            ? `Feedback already recorded for ${target} (feedback id ${r.feedbackId}) — identical resubmission.`
-            : `Feedback recorded for ${target} (feedback id ${r.feedbackId}).`;
+            ? `Feedback already recorded for ${target} — identical resubmission.`
+            : `Feedback recorded for ${target}.`;
           return { content: [{ type: "text" as const, text }] };
         }
         return { content: [{ type: "text" as const, text: `Feedback rejected: ${r?.error ?? "unknown error"}` }] };
       } catch (err) {
         return { content: [{ type: "text" as const, text: toolErrorText(err, "log_feedback") }] };
+      }
+    },
+  );
+
+  // ── get_profile tool ─────────────────────────────────────────────────────
+  //
+  // The connected account (OpenAI plugin directory item 13): a stable opaque
+  // id with email and display name as separate fields, so a client connected
+  // to two Soup.net accounts can tell them apart. `_meta["openai/profile"]`
+  // marks it as the profile tool for ChatGPT; other clients see an ordinary
+  // read-only tool. It reads the principal's own user row only.
+
+  if (!lean)
+  server.registerTool(
+    "get_profile",
+    {
+      title: "Get profile",
+      description: MCP_TOOL_DESCRIPTIONS.getProfile,
+      inputSchema: {},
+      annotations: {
+        title: "Get profile",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+      _meta: { "openai/profile": true },
+    },
+    async () => {
+      try {
+        const profile = await ownAccountProfile(getDb(), principal.userId);
+        if (!profile) {
+          return { isError: true, content: [{ type: "text" as const, text: "Error: Profile unavailable." }] };
+        }
+        return {
+          content: [{ type: "text" as const, text: renderAccountProfile(profile) }],
+          structuredContent: { ...profile },
+        };
+      } catch (err) {
+        return { isError: true, content: [{ type: "text" as const, text: toolErrorText(err, "get_profile") }] };
       }
     },
   );
@@ -1368,9 +1440,9 @@ export function buildMcpJsonResponse(
     ...(result.intent && intentEchoLine(result.intent)
       ? { intentNotice: intentEchoLine(result.intent) }
       : {}),
-    // Which ranking served this response (mirrors check.ts) — structured
-    // metadata only; the default markdown format stays token-lean.
-    ...(result.ranking ? { ranking: result.ranking } : {}),
+    // The ranking block (which algorithm served the response) stays on the
+    // REST /check JSON for eval tooling and is left out here: an agent never
+    // acts on it (output minimisation, docs/connectors/openai-plugin.md).
   };
 
   // Format warning

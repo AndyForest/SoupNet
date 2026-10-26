@@ -20,9 +20,9 @@ Written 2026-10-26, before implementation, from the plan, OpenAI's plugin guidel
 |---|---|---|
 | T-A1 | Every tool on the remote `tools/list` carries `title`, `readOnlyHint`, `destructiveHint` and `openWorldHint` as explicit booleans. Today `get_briefing`, `get_recipes` and `list_my_recipe_books` omit `destructiveHint`. | A test over the served `tools/list` that fails on any missing or non-boolean flag. |
 | T-A2 | Each flag's value follows the rule above, and a test pins the full table (tool × flag), so any change is a reviewed edit. | The pin test; the justification document's table. |
-| T-A3 | `update_recipe_book_description` is `destructiveHint: true`, and its description says that the call replaces the book's description and the earlier text is not kept. | The pin test; the description text. |
+| T-A3 | `update_recipe_book_description` is `destructiveHint: true`, and its description says that the call replaces the book's description and that the response shows the earlier text once. (Amended while building: the audit row keeps the earlier text, so "is not kept" would claim more than the server does.) | The pin test; the description text. |
 | T-A4 | `verify_draft` is judged by the same rule. A resolution changes a draft's state, and the agent surface cannot undo it (a repeat is refused), so it is `destructiveHint: true` unless the code shows otherwise. The value, and the confirmation prompt it brings in ChatGPT, are named in the PR. | The pin test; the justification. |
-| T-A5 | The stdio server's flags equal the remote ones for every tool it serves. | A parity test. |
+| T-A5 | The stdio server's flags follow the same rule for every tool it serves, and equal the remote ones where the behaviour is equal. (Amended while building: stdio's `check_recipe` attaches a local file, never a URL, so it is closed-world there.) | A stdio test pinning its table. |
 
 ### Descriptions (item 4)
 
@@ -73,3 +73,24 @@ Written 2026-10-26, before implementation, from the plan, OpenAI's plugin guidel
 | T-G1 | `docs/connectors/openai-plugin.md` holds the rule, the annotation table with a justification per flag per tool, each description and its claim-to-code map, the output inventory with reasons, the plan-language audit, and the profile tool. Every quoted guideline is verbatim with its link. | The document. |
 | T-G2 | `spec-decision-log.md` records each description and instructions change, the scenarios watched, and the bytes. | The log. |
 | T-G3 | The gate passes on the branch with `main` merged (`npm run test:ci`, distinct ports). The authz seam holds: the profile tool reads only the caller's own user row, through the principal. | The gate. |
+
+## Build notes (2026-10-26)
+
+Written by the builder for the verifier; the verification record is the verifier's to write.
+
+**Gate:** `TESTCI_PGPORT=5644 TESTCI_BACKEND_PORT=3288 npm run test:ci` exited 0 with 2,214 tests passed and 6 skipped (149 files, 2 skipped). Typecheck, lint (0 errors), the data-model check and the authz seam passed. New suites:
+- `routes/tool-contract.test.ts`: in-process remote `initialize` and `tools/list`, for rows A1 to A4, D1 to D3, I1 to I3 and F2.
+- `routes/tool-contract-outputs.test.ts`: Layer 3, for rows F1, O2, O3 and P1.
+- `apps/mcp-server/src/tool-contract.test.ts`: stdio, for rows A5, D2 and I1.
+
+**Output inventory (T-O1):** taken from each tool's real output on a fresh stack, with a temporary probe that captured every tool in markdown and structured form, successes and refusals. The probe is not committed. The inventory and its reasons are in `docs/connectors/openai-plugin.md`. Two findings in the briefing text went to stream L, and L took both (PR #151).
+
+**Rows to check closely:**
+- **T-A3, T-A5, T-D3:** amended while building, and the rubric rows say how. The audit row keeps the earlier description, so the description says the response shows the earlier text once. Stdio's check is closed-world. The dedup is per key, so the check description says "and key".
+- **T-D4:** the schema snapshot against `main` is to be taken after stream B's `page` parameter lands, as the verification coordinator advised. Only descriptions and annotations changed here, plus one added tool.
+- **T-O3:** `ranking` and the feedback id left MCP only; REST keeps both. The refusal paths are unchanged, so the uniform-marker tests stand as they were.
+- **T-F1:** the profile tool reads the principal's own user row, takes no parameters, and refuses an argument.
+
+**Seam:** `feedback.service.ts` was re-fingerprinted (`c7490c2928a4` → `e1e7da957b6a`, same 26 lines). The duplicate-row summary line, whose feedback id was removed, sits inside a fingerprinted statement window. No SQL changed.
+
+**Caps:** remote 18,200 → 18,800, shared descriptions 6,600 → 7,300, stdio held at 14,700, each dated. These are measured again after stream B lands.

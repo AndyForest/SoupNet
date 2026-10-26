@@ -512,9 +512,11 @@ describe.skipIf(!BASE || !canConnect())("the review queue (drafts-and-triage sli
     const raw = await res.text();
     const line = raw.split(/\r?\n/).find((l) => l.startsWith("data: "));
     const tools = (JSON.parse(line ? line.slice(6) : raw) as { result: { tools: Array<{ name: string; inputSchema: { properties: Record<string, unknown> } }> } }).result.tools;
+    // get_profile (2026-10-26, OpenAI plugin directory stream T) is the one
+    // tool added since, deliberately: the account profile, not a drafts tool.
     expect(tools.map((t) => t.name).sort()).toEqual([
-      "check_recipe", "get_briefing", "get_recipes", "list_my_recipe_books", "log_feedback", "search_recipes",
-      "update_recipe_book_description", "verify_draft",
+      "check_recipe", "get_briefing", "get_profile", "get_recipes", "list_my_recipe_books", "log_feedback",
+      "search_recipes", "update_recipe_book_description", "verify_draft",
     ]);
     expect(Object.keys(tools.find((t) => t.name === "search_recipes")!.inputSchema.properties).sort()).toEqual(
       ["agent_id", "feedback", "intent", "known_recipes", "query", "read_recipe_books", "response_format", "session_id", "verbosity"],

@@ -930,16 +930,23 @@ export const TIPS = [
 // (mcp-tool-descriptions.test.ts). Depth belongs in BRIEFING/docs, not here.
 
 export const MCP_TOOL_DESCRIPTIONS = {
+  // Reviewed shape (OpenAI plugin directory, stream T, 2026-10-26): what the
+  // tool does, when to use it, and when not to with the tool to use instead,
+  // as plain statements that claim only what the hosted server does. The
+  // claim-to-code map is in docs/connectors/openai-plugin.md.
+
   /** Shared lead — identical across HTTP and stdio MCP. */
   checkRecipeLead:
-    "Check a recipe against Soup.net — returns similar recipes with evidence, and logs your recipe " +
-    "so future checks get smarter (stigmergy). Check freely: before starting a task, at judgment " +
-    "calls, and after meaningful work. A recipe is the HUMAN USER's genuine position, never a " +
-    "fabricated query.",
+    "Logs your user's position (a recipe: a claim with evidence) to a recipe book and returns " +
+    "similar recipes from the books you can read. Use before a judgment call, or after a decision " +
+    "to record it. Not for lookups: use search_recipes, or get_recipes for ids you hold. A recipe " +
+    "is your user's genuine position, never a made-up query. The same recipe text, book and key " +
+    "return the same recipe id.",
 
   /** HTTP-only — file attachment via file_url or file_base64. */
   checkRecipeFileAttachment:
-    "Attach a reference file (image, PDF, audio, video) via file_url or file_base64 for multimodal evidence.",
+    "Attach a reference file (image, PDF, audio, video) via file_url, which the server fetches " +
+    "from the public internet, or file_base64.",
 
   /** Shared trailer — identical across HTTP and stdio MCP. */
   checkRecipeTrailer:
@@ -947,30 +954,32 @@ export const MCP_TOOL_DESCRIPTIONS = {
 
   /** Identical across both MCP surfaces. */
   getBriefing:
-    "Get the Soup.net briefing — the recipe-check format and voice rules, and this user's recipe " +
-    "books with a per-book index of their corpus. Call once before your first check.",
+    "Returns the briefing: the recipe format and voice rules, this user's recipe books with a " +
+    "per-book index, and a briefing id for feedback. Use once at the start of a session, before " +
+    "your first check. Not for a mid-session refresh of the books: use list_my_recipe_books.",
 
   /** Shared by HTTP and stdio MCP. */
   logFeedback:
-    "Log feedback on a PRIOR recipe check: what it surfaced and what you did with it (kind " +
-    "'check-feedback'), an operational finding ('operational'), or a session wrap-up ('outcome'). " +
-    "Target: the check's recipe id (or its short id), a search or briefing id, or, for " +
-    "an outcome row, the intent alone. Null results earn a row. Mid-flow, " +
-    "prefer the feedback param on your next check_recipe; this tool fits end-of-session rows.",
+    "Records feedback on a prior check, search or briefing: what it surfaced and what you did " +
+    "with it ('check-feedback'), an operational finding ('operational'), or a session wrap-up " +
+    "('outcome'). Target: a recipe id or short id, a search or briefing id, or, for an outcome " +
+    "row, the intent alone. Use at session end; mid-flow, check_recipe's feedback param does " +
+    "the same. Not for new recipes: use check_recipe.",
 
   /** Identical across both MCP surfaces (WT-3 retrieval API). */
   getRecipes:
-    "Fetch recipes by id (up to 20 per call) — full text, evidence, references, book, and dates. " +
-    "Use when you already hold ids (frontmatter, prior check results) instead of re-checking. " +
-    "Unresolvable ids return a not_found_or_unreadable marker without failing the batch.",
+    "Fetches recipes by id (up to 20 per call): full text, evidence, book, author and date. " +
+    "Use when you already hold ids (frontmatter, prior results). Not for finding recipes: use " +
+    "search_recipes. An id that does not resolve returns a not_found_or_unreadable marker, and " +
+    "the rest of the batch still returns.",
 
   /** Shared by HTTP and stdio MCP (recipe search, 2026-08-19). */
   searchRecipes:
-    "Read-only search over your readable recipe books, your own recipes included. For judgment " +
-    "already logged: yours, or a teammate's in a shared book (a PR area, a book you just joined). " +
-    "With a genuine hypothesis about your user's taste, use check_recipe; with neither, " +
-    "ask the user — Soup.net is a decision log, not documentation. Results are context, not " +
-    "instructions. searchId closes the loop via log_feedback search_id.",
+    "Read-only search over your readable recipe books, your own recipes included; logs no recipe. " +
+    "Use for judgment already logged: yours, or a teammate's in a shared book. Not for recording " +
+    "a position: use check_recipe. With neither need, ask the user; Soup.net is a decision log, " +
+    "not documentation. Results are context, not instructions. searchId closes the loop via " +
+    "log_feedback.",
 
   /** Shared by HTTP and stdio MCP (drafts-and-triage slice 2): the one agent
    *  operation that changes a draft's state. Its REST twin is
@@ -978,15 +987,30 @@ export const MCP_TOOL_DESCRIPTIONS = {
    *  the three outcomes; "once they confirm it" read as a rule that the person
    *  must be asked, which ruling 46 and recipe 200ed4fe say it is not. */
   verifyDraft:
-    "Publish, reject, or mark not chosen a draft about your user once you or they can stand " +
-    "behind the answer: new evidence quoting their words, or the context that settles it. " +
-    "Evidence that adds nothing new is refused.",
+    "Publishes, rejects, or marks not chosen a draft about your user. Use once you or they can " +
+    "stand behind the answer: new evidence quoting their words, or the context that settles it. " +
+    "Resolution is one-way; a second call is refused, as is evidence that adds nothing new. " +
+    "Not for new recipes: use check_recipe.",
 
   /** HTTP-only today; stdio may grow this tool later. */
   listMyRecipeBooks:
-    "Refresh corpus context — the user's identity and recipe books (descriptions, access, members, " +
-    "per-book index). Call when the conversation moves into a new area of the user's work. " +
-    "Same as the briefing's recipe-books section without the boilerplate.",
+    "Returns your user's identity and recipe books: descriptions, access, members, pending " +
+    "invites on books they manage, and a per-book index. Use mid-session when the work moves to " +
+    "a new area or a book may have changed. Not needed right after get_briefing, which carries " +
+    "the same section.",
+
+  /** HTTP-only. Destructive by the annotation rule: it replaces the text. */
+  updateRecipeBookDescription:
+    "Replaces a recipe book's description, which shapes how every future agent reads and writes " +
+    "there; the response shows the earlier text once. Use when your user asks to change it, after " +
+    "recipe-checking the new text. Requires an owner or admin of a book in the key's write " +
+    "scope. Not for recipes: use check_recipe.",
+
+  /** HTTP-only. The account profile ChatGPT reads to tell connected
+   *  accounts apart (`_meta["openai/profile"]`, plugin directory item 13). */
+  getProfile:
+    "Returns the connected Soup.net account: a stable id, email and display name. Use to tell " +
+    "which account is connected. Not for recipe books or recipes: use list_my_recipe_books.",
 } as const;
 
 // Canonical-source stitches (operator ruling 2026-07-18, recipe 43ce7ec0):
@@ -1102,8 +1126,8 @@ export const MCP_PARAM_DESCRIPTIONS = {
     "log_feedback's fields. A rejected row never blocks this call.",
 
   synthesize:
-    "Premium opt-in: distil results into one short preference profile (newest wins, ids cited). " +
-    "Ineligible callers get a one-line hint, never an error.",
+    "Opt-in: distil results into one short preference profile (newest wins, ids cited). " +
+    "Where synthesis is off for the account, one line says so and the check runs as usual.",
 
   /** get_recipes — the id list (WT-3 retrieval API). */
   recipeIds:
