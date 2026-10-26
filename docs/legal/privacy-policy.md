@@ -72,7 +72,7 @@ When you delete your account, the recipe-keyed embeddings are deleted along with
 You can connect an AI app to Soup.net (ChatGPT, Codex, Claude, Mistral, Perplexity, or any other app that speaks the Model Context Protocol). When you connect, you sign in to Soup.net and choose which recipe books the app may read and write. Then:
 
 - **What the app sends us:** what its agent puts in each tool call, which is the recipe text, evidence and references it writes, the searches it runs, and optional labels such as an agent name or a task description. We don't receive your conversation with the app, only what its agent chooses to send.
-- **What the app receives:** recipes, evidence and authors' names from the books you granted, your recipe-book names and descriptions, and the members of those books. It never receives your password, and it receives nothing from books you didn't grant.
+- **What the app receives:** recipes, evidence and authors' names from the books you granted, your recipe-book names and descriptions, the members of those books, and your own account's id, email address and display name. It never receives your password, and it receives nothing from books you didn't grant.
 - **What we keep about the connection:** the app's registration (its name and where it returns after sign-in), and its access tokens as hashes, kept as Section 8 describes.
 - **The app's side:** what the app's provider does with your conversation, including whatever it receives from Soup.net, is governed by that provider's terms and privacy policy, not this one.
 
