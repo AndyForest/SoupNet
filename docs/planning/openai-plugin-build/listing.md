@@ -78,3 +78,4 @@ Sample recipes for the reviewer account's "Directory Review" book (operator step
 5. As a home gardener with clay soil, I chose raised beds for tomatoes so that the roots don't sit in water.
 
 For the operator before upload: the demo recording URL (`review.demo_recording_url`) goes in the dashboard or the manifest once recorded; reviewer credentials go only in Review details, never in the package (the validator refuses credential-shaped strings and any email but `admin@soup.net`).
+- **Console's sign-in record** (org round, rubric CN-T2): not on main when this branch merges, so the policy doesn't describe it yet. Console merges after #151 and adds to §2.1's list of account events "each successful sign-in, with its time and whether it was by password or Google" in its own PR (agreed with stream Console, 2026-10-26). Its retention follows the audit log's (question 1).
