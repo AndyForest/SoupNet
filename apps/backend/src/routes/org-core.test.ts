@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll } from "vitest";
 import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
 import { seedVerifiedUser } from "../test-users";
+import { canonicalResource } from "../lib/oauth-resource";
 
 /**
  * Organization accounts round 1, stream Core (rubric
@@ -370,6 +371,8 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Core", ()
       scopeReadGroupIds: [max.personalBookId],
       scopeWriteGroupIds: [max.personalBookId],
       scopeDefaultWriteGroupId: max.personalBookId,
+      resource: canonicalResource(),
+      oidcScopes: [],
     });
     const refreshHash = crypto.createHash("sha256").update(bundle.refreshToken).digest("hex");
     const unknownKeyResponse = await fetch(`${BASE}/health/version`, { headers: { Authorization: "Bearer cn_s_not-a-real-key-at-all-000000000" } });
