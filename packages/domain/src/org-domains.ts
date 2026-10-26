@@ -296,6 +296,15 @@ export function domainJoinNotice(organizationName: string): string {
   return `Confirming this address adds your account to ${organizationName} on Soup.net. ${organizationName}'s admins will manage it.`;
 }
 
+/** The verify page after the click joined (OD-J1). */
+export function domainJoinedNotice(organizationName: string): string {
+  return `Your account now belongs to ${organizationName} on Soup.net. ${organizationName}'s admins manage it.`;
+}
+
+/** The verify page when the organization had no free seat (OD-C1). */
+export const DOMAIN_JOIN_FULL_RETRY =
+  "Your address isn't verified yet. This same link works for 24 hours once a seat is free, or sign in later to get a new one.";
+
 export interface DomainEmail {
   subject: string;
   text: string;

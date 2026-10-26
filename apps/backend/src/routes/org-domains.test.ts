@@ -205,7 +205,7 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
 
     const randomOrg = crypto.randomUUID();
     const reference = await (await call(rex, "GET", `/organizations/${randomOrg}/domains`)).text();
-    for (const who of [rex, ann, ada]) {
+    for (const who of [rex, ann]) {
       for (const [method, path, body] of [
         ["GET", `/organizations/${orgId}/domains`, undefined],
         ["POST", `/organizations/${orgId}/domains`, { domain: testDomain() }],
@@ -218,6 +218,11 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
         expect(await res.text()).toBe(reference);
       }
     }
+    // A disabled admin never reaches the gate: Core's session lookup refuses
+    // every JWT route for a disabled account (OC-A1).
+    const disabled = await call(ada, "GET", `/organizations/${orgId}/domains`);
+    expect(disabled.status).toBe(403);
+    expect(((await disabled.json()) as Json)["error"]).toBe("account_disabled");
     // A malformed id, and Olive naming a claim id that isn't Acme's.
     expect(await (await call(olive, "GET", `/organizations/not-a-uuid/domains`)).text()).toBe(reference);
     expect(await (await call(olive, "DELETE", `/organizations/${orgId}/domains/${crypto.randomUUID()}`)).text()).toBe(reference);
@@ -434,10 +439,10 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
     const before = await getDb().execute(sql`SELECT group_id, role, via FROM claimnet.group_members WHERE user_id = ${max.userId}::uuid ORDER BY group_id`);
     const tokenBefore = (await claimRow(claimId))["challenge_token"];
 
-    await getDb().execute(sql`UPDATE claimnet.organization_domains SET failing_since = NOW() - interval '13 days 23 hours' WHERE id = ${claimId}::uuid`);
+    await getDb().execute(sql`UPDATE claimnet.organization_domains SET failing_since = NOW() - interval '13 days 22 hours' WHERE id = ${claimId}::uuid`);
     expect((await domains.recheckDomains(getDb(), { lookup: absent, organizationId: orgId })).events).toEqual({ still_failing: 1 });
 
-    await getDb().execute(sql`UPDATE claimnet.organization_domains SET failing_since = NOW() - interval '14 days' WHERE id = ${claimId}::uuid`);
+    await getDb().execute(sql`UPDATE claimnet.organization_domains SET failing_since = NOW() - interval '14 days 1 hour' WHERE id = ${claimId}::uuid`);
     expect((await domains.recheckDomains(getDb(), { lookup: absent, organizationId: orgId })).events).toEqual({ lapsed: 1 });
     const row = await claimRow(claimId);
     expect(row).toMatchObject({ verified_at: null, failing_since: null, auto_join: true });

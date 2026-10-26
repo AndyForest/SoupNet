@@ -1,11 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { API_BASE, setEmailVerified, isLoggedIn } from "../auth.js";
+import { DOMAIN_JOIN_FULL_RETRY, domainJoinedNotice } from "@soupnet/domain";
 
 export function VerifyPage() {
-  const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
+  const [status, setStatus] = useState<"loading" | "success" | "full" | "error">("loading");
   const [email, setEmail] = useState("");
   const [waitlisted, setWaitlisted] = useState(false);
+  // The organization this click joined, on a domain it has verified, or the
+  // message when it had no free seat (stream Domains, OD-J1, OD-C1).
+  const [organization, setOrganization] = useState<string | null>(null);
+  const [fullMessage, setFullMessage] = useState("");
   // Guard against React StrictMode double-invocation in dev. The /auth/verify
   // endpoint is idempotent on the backend, but firing twice would still
   // briefly flash an error before the second response lands. Belt and braces.
@@ -28,12 +33,18 @@ export function VerifyPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token }),
     })
-      .then((res) => res.json() as Promise<{ ok: boolean; data?: { email: string; waitlisted?: boolean } }>)
+      .then((res) => res.json() as Promise<{ ok: boolean; error?: string; message?: string; data?: { email: string; waitlisted?: boolean; organization?: { name: string } | null } }>)
       .then((data) => {
+        if (!data.ok && data.error === "organization_full") {
+          setFullMessage(data.message ?? "");
+          setStatus("full");
+          return;
+        }
         if (data.ok && data.data) {
           setStatus("success");
           setEmail(data.data.email);
           setWaitlisted(data.data.waitlisted === true);
+          setOrganization(data.data.organization?.name ?? null);
           // If the user is logged in in this tab, update the cached flag so
           // subsequent navigation no longer redirects to /verify-pending.
           if (isLoggedIn()) setEmailVerified(true);
@@ -74,6 +85,11 @@ export function VerifyPage() {
                 ? `${email} is verified and your spot on the waitlist is held. We'll email you the moment a spot opens — nothing else to do for now.`
                 : `${email} is now verified. You can sign in and start using Soup.net.`}
             </p>
+            {organization && (
+              <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)" }}>
+                {domainJoinedNotice(organization)}
+              </p>
+            )}
             {!waitlisted && (
               <Link to="/auth/login" style={{ textDecoration: "none" }}>
                 <button style={{ width: "100%", justifyContent: "center" }}>
@@ -81,6 +97,16 @@ export function VerifyPage() {
                 </button>
               </Link>
             )}
+          </>
+        )}
+
+        {status === "full" && (
+          <>
+            <h1 style={{ color: "var(--color-error)", fontSize: "1.5rem", marginBottom: "var(--space-md)" }}>
+              No free seats
+            </h1>
+            <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-md)" }}>{fullMessage}</p>
+            <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)" }}>{DOMAIN_JOIN_FULL_RETRY}</p>
           </>
         )}
 

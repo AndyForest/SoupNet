@@ -291,7 +291,13 @@ Feature: Verified domains, automatic joining, and existing accounts on a claimed
         | caller                                        |
         | Rex, an admin of Globex                       |
         | an ordinary member of Acme                    |
-        | a disabled admin of Acme                      |
+
+    @ORG-DOM-09 @unreleased
+    Scenario: A disabled admin is refused before the domain routes
+      # Guards: Core OC-A1 (a disabled account's sessions are refused on every JWT route).
+      Given Ada has been disabled by Acme's owner
+      When Ada lists Acme's domains
+      Then the response is 403 with error "account_disabled"
 
     @ORG-DOM-10 @unreleased
     Scenario: Deleting a claim stops joining and keeps every member

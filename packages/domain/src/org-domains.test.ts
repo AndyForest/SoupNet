@@ -16,6 +16,8 @@ import {
   domainInstructions,
   domainNotFoundMessage,
   domainJoinNotice,
+  domainJoinedNotice,
+  DOMAIN_JOIN_FULL_RETRY,
   domainFailingEmail,
   domainLapsedEmail,
   DOMAIN_CHALLENGE_LABEL,
@@ -339,6 +341,11 @@ describe("copy", () => {
 
   it("ORG-JOIN-D01: the join notice names the organization and its admins", () => {
     expect(domainJoinNotice("Acme")).toBe("Confirming this address adds your account to Acme on Soup.net. Acme's admins will manage it.");
+  });
+
+  it("ORG-JOIN-D01, ORG-SEAT-D01: the verify page's lines", () => {
+    expect(domainJoinedNotice("Acme")).toBe("Your account now belongs to Acme on Soup.net. Acme's admins manage it.");
+    expect(DOMAIN_JOIN_FULL_RETRY).toContain("same link works");
   });
 
   it("ORG-DOM-04, ORG-DOM-06: the admin emails say what is frozen and when it lapses", () => {
