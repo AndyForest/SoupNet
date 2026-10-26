@@ -12,7 +12,7 @@ import { sendVerificationEmail, sendPasswordResetEmail } from "../services/email
 import { rateLimit } from "../middleware/rate-limit";
 import { normalizeEmail } from "../lib/normalize-email";
 import { onBehalfSubjectOf, feedbackOwnedBy, intentOwnedBy, managedOrganizationOf } from "../authz";
-import { ACCOUNT_DISABLED_MESSAGE, ACCOUNT_SUSPENDED_MESSAGE, MANAGED_ACCOUNT_DELETE_MESSAGE, ORGANIZATION_FULL_MESSAGE } from "@soupnet/domain";
+import { ACCOUNT_DISABLED_MESSAGE, ACCOUNT_SUSPENDED_MESSAGE, MANAGED_ACCOUNT_DELETE_MESSAGE, ORGANIZATION_FULL_MESSAGE, DOMAIN_JOIN_FULL_RETRY, domainJoinedNotice } from "@soupnet/domain";
 import { verifyTurnstile } from "../lib/turnstile";
 import { capturingOrganizationName, joinOnVerification } from "../services/org-domains.service";
 import type { AppEnv } from "../types";
@@ -812,7 +812,7 @@ auth.post("/verify", verifyRateLimit, async (c) => {
     });
   } catch (err) {
     if (err instanceof OrganizationFull) {
-      return c.json({ ok: false, error: "organization_full", message: ORGANIZATION_FULL_MESSAGE }, 409);
+      return c.json({ ok: false, error: "organization_full", message: ORGANIZATION_FULL_MESSAGE, detail: DOMAIN_JOIN_FULL_RETRY }, 409);
     }
     throw err;
   }
@@ -854,7 +854,7 @@ auth.post("/verify", verifyRateLimit, async (c) => {
       // "sign in and start" — signing in won't work until promotion.
       waitlisted: updated.waitlisted,
       // The organization this click joined, for the verify page (OD-J1).
-      organization: outcome.joined ? { name: outcome.joined } : null,
+      organization: outcome.joined ? { name: outcome.joined, notice: domainJoinedNotice(outcome.joined) } : null,
     },
   });
 });

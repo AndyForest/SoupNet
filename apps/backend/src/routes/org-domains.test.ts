@@ -489,7 +489,7 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
     const res = await verify(nia.token);
     expect(res.status).toBe(200);
     const data = ((await res.json()) as { data: Json }).data;
-    expect(data).toMatchObject({ verified: true, waitlisted: false, organization: { name: expect.stringContaining("Acme") } });
+    expect(data).toMatchObject({ verified: true, waitlisted: false, organization: { name: expect.stringContaining("Acme"), notice: expect.stringMatching(/^Your account now belongs to Acme .* on Soup\.net\. Acme .*'s admins manage it\.$/) } });
     const userId = await userIdOf(email);
     expect(await orgOf(userId)).toMatchObject({ organization_id: orgId, joined_via: "domain", role: "member" });
     const row = (await getDb().execute(sql`SELECT daily_read FROM claimnet.group_members WHERE group_id = ${defaultBookId}::uuid AND user_id = ${userId}::uuid`)) as unknown as Array<{ daily_read: boolean }>;
@@ -642,7 +642,12 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
     const { token } = await register(email);
     const refused = await verify(token);
     expect(refused.status).toBe(409);
-    expect(await refused.json()).toEqual({ ok: false, error: "organization_full", message: "This organization has no free seats. Ask one of its admins." });
+    expect(await refused.json()).toEqual({
+      ok: false,
+      error: "organization_full",
+      message: "This organization has no free seats. Ask one of its admins.",
+      detail: "Your address isn't verified yet. This same link works for 24 hours once a seat is free, or sign in later to get a new one.",
+    });
     expect(await verifiedAt(email)).toBeNull();
 
     expect((await call(olive, "POST", `/organizations/${orgId}/members/${ann.userId}/disable`)).status).toBe(200);
