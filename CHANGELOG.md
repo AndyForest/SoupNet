@@ -4,12 +4,21 @@ What changed for people who use the hosted service at [soup.net](https://www.sou
 
 Two narrower logs exist beside this one: [`docs/architecture/ranking-changelog.md`](docs/architecture/ranking-changelog.md) records every change to the shipped ranking defaults, and [`docs/backlog-completed.md`](docs/backlog-completed.md) keeps the work-queue items as they were closed. The design history behind each feature is in the recipes the planning docs link to.
 
-## In review, not yet deployed
+## 2026-10-26
 
-- **Intent link** (#6a, stream B): a recipe records the task it was deposited under (`traces.intent_id`), and search gains an `intent:` qualifier, so a task's whole lineage is one query.
-- **Report read paths** (#140): `GET /intents`, `GET /intents/:id` (what a task's checks were shown, deposited and concluded) and `GET /feedback/rows`, under the API key, scoped to the caller's own fleet. Built for the behaviour-change figure the README's field-data section still quotes from July.
-- **Briefing rewrite** (#138 and a second commit): a Drafts section, "a returned recipe is a call someone made in their context, not a rule", evidence standards, and the explicit over-caution line (drafts are for calls the context does not settle, not for every call).
-- **Drafts as a bus** (slice 10): a draft stays live while the task that asked it was active in the last 24 hours, then leaves the queue and default listings without being deleted; check and search results name a nearby open question the caller may be able to settle.
+Intents as the spine, read paths for reports, the briefing rewrite, drafts as a bus, and membership an agent can act on. Two deploys in one night; from this one on, every merge to `main` deploys after one approval instead of a separate manual run. #141 to #147.
+
+- **A recipe records the task it was deposited under.** `traces.intent_id` is written at deposit from the `int_` id the agent carries; search gains an `intent:` qualifier, so one task's whole lineage is one query. Recipes deposited before this deploy carry no link. #142
+- **Read paths for reports.** `GET /intents` (your intents, newest first, with counts), `GET /intents/:id` (what a task's checks were shown, deposited and concluded, oldest first) and `GET /feedback/rows` (filtered by intent, recipe, search, agent, since, book), under the API key, scoped to the caller's own fleet. Documented in [`docs/api/reports.md`](docs/api/reports.md). The web gets `/app/intents/:id`. #140
+- **The briefing rewritten** around what the field showed: a Drafts section ("a draft is yours to resolve": whichever of a person's agents holds the settling context resolves it), a Reading results section ("a returned recipe is a call someone made in their context, not a rule"), three new When-to-check moments, the recipient-role pattern for things the person receives, and plain evidence standards. The deposit notice and the draft parameter say what a draft is rather than that the person could not be asked; the dashboard card says "agents", since drafts deposited on your behalf count too. #138, #146
+- **Drafts as a bus.** A draft stays live while the intent it was deposited under was used in the last 24 hours, and expires when that task goes quiet (seven days from deposit for a draft with no intent). Expired drafts leave the queue, the default `is:draft` listing and every result set, stay readable and resolvable by id, and come back with `is:expired`; resolving one revives it. Check and search results carry a dispatch line naming a nearby open question the caller may be able to settle. A resolved draft read by id says how and when. Headless keys are exempt. Expiry is never deletion. #144
+- **Membership an agent can act on.** Every recipe book in the briefing and in `list_my_recipe_books` carries a Members line with the caller first as "you", solo books included, and books the caller owns or administers carry a Pending invites count, zero included, so an unattended reader can tell "nobody joined yet" from "the line is hidden". #145
+- Repository: README tool roster and this changelog (#141); deploys run from the merge behind the `production` environment's approval (#143); the next-round workflow notes (#147).
+
+## In review
+
+- **8b items 1 and 2** (stream B): a flat paged list for qualifier-only searches, and `changed-after:` and `created-after:` qualifiers for agents that poll on a tick.
+- **Slice 9 follow-ups** (stream E): feedback rows stamped with their user at write so a deleted key does not orphan them, and a reports script over the read paths that computes the behaviour-change figure.
 
 ## 2026-10-25
 
