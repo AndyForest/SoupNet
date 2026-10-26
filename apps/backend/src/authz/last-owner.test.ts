@@ -58,7 +58,7 @@ describe.skipIf(!canConnect() || !BASE)("removeMember keeps the last owner", () 
     const bookId = ((await res.json()) as { data?: { id: string } }).data?.id ?? "";
     if (!bookId) throw new Error(`Failed to create book ${label}`);
     const db = getDb();
-    await authz.addMember(db, bookId, b.userId, "member");
+    await authz.addMember(db, bookId, b.userId, "member", a.userId);
     await db.execute(sql`
       UPDATE claimnet.group_members SET role = 'owner'
       WHERE group_id = ${bookId}::uuid AND user_id = ${b.userId}::uuid
@@ -91,7 +91,7 @@ describe.skipIf(!canConnect() || !BASE)("removeMember keeps the last owner", () 
 
     // A non-member, and a non-owner, are not the rule's business.
     expect(await authz.removeMember(db, bookId, a.userId)).toBe("not_a_member");
-    await authz.addMember(db, bookId, a.userId, "admin");
+    await authz.addMember(db, bookId, a.userId, "admin", b.userId);
     expect(await authz.removeMember(db, bookId, a.userId)).toBe("removed");
     expect(await authz.countOwners(db, bookId)).toBe(1);
   });

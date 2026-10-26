@@ -11,7 +11,8 @@ import { orgMembershipDisabled } from "./account-state";
 // round 1). These pin what each answers until its stream fills it: nothing
 // joins on a domain's authority, no session is refused for how it signed in,
 // no membership grant is refused by a sharing policy. A stream that fills a
-// body updates its row here in the same change.
+// body updates its row here in the same change (Console owns
+// sharing-policy.ts whole, and its row).
 
 const dialect = new PgDialect();
 
@@ -26,7 +27,7 @@ describe("the hooks' answers before their streams fill them", () => {
 
   it("sharingPolicyAllows is true (stream Console)", async () => {
     const neverCalled = { execute: () => { throw new Error("the stub reads nothing"); } } as never;
-    expect(await sharingPolicyAllows(neverCalled, { bookId: "b", userId: "u" })).toBe(true);
+    expect(await sharingPolicyAllows(neverCalled, { bookId: "b", userId: "u", actorUserId: "a" })).toBe(true);
   });
 
   it("orgMembershipDisabled is the org admin's switch (stream Offboarding extends it)", () => {
