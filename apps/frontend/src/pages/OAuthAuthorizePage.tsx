@@ -25,14 +25,22 @@ import { RecipeBookScopePicker } from "../components/RecipeBookScopePicker.js";
  *      contains the redirect URL with code + state baked in. Navigate to it
  *      via window.location (full-page redirect — we're leaving Soup.net).
  *
- * Cancel: navigate to the redirect_uri with ?error=access_denied&state=... so
- * the client (claude.ai) sees the rejection rather than hanging.
+ * Cancel: POST /oauth/authorize/deny, which checks the client's registered
+ * redirect URIs and returns the access_denied redirect with state and the
+ * RFC 9207 iss, so the client sees the rejection rather than hanging.
+ *
+ * `resource` (RFC 8707) and `scope` pass through to the grant: the server
+ * binds the code to the resource and records the OpenID scopes it grants
+ * (OpenAI plugin directory round, stream O).
  */
 
 interface ClientInfo {
   client_id: string;
   client_name: string | null;
   redirect_uris: string[];
+  /** The domain that published a client ID metadata document; null for a
+   *  dynamically registered client, whose name is self-reported. */
+  verified_domain?: string | null;
 }
 
 interface RecipeBook {
@@ -56,6 +64,7 @@ interface OAuthParams {
   codeChallenge: string;
   codeChallengeMethod: string;
   scope: string;
+  resource: string;
 }
 
 function parseOAuthParams(): OAuthParams {
@@ -68,6 +77,7 @@ function parseOAuthParams(): OAuthParams {
     codeChallenge: qs.get("code_challenge") ?? "",
     codeChallengeMethod: qs.get("code_challenge_method") ?? "",
     scope: qs.get("scope") ?? "",
+    resource: qs.get("resource") ?? "",
   };
 }
 
@@ -135,6 +145,8 @@ export function OAuthAuthorizePage() {
           scope_read_group_ids: readIds,
           scope_write_group_ids: writeIds,
           scope_default_write_group_id: defaultWriteId,
+          scope: params.scope,
+          resource: params.resource,
         }),
       });
       const body = (await res.json()) as GrantResponse;
@@ -155,25 +167,23 @@ export function OAuthAuthorizePage() {
     },
   });
 
-  function handleCancel() {
+  async function handleCancel() {
     // F44 (security-audit-2026-06-11): only navigate to a redirect_uri that is
-    // exactly registered for this client. The success path is validated
-    // server-side at /oauth/authorize/grant; without this check, Cancel was a
-    // client-side open redirect (real client_id + attacker redirect_uri in the
-    // query string).
+    // exactly registered for this client. The server builds the access_denied
+    // redirect (RFC 6749 §4.1.2.1) after the same check the grant makes, and
+    // adds the RFC 9207 iss; anything it refuses sends the user home.
     if (!isRegisteredRedirectUri(params.redirectUri, clientQuery.data?.redirect_uris ?? [])) {
       window.location.href = "/";
       return;
     }
-    // Send the user back to the client with access_denied per RFC 6749 §4.1.2.1.
     try {
-      const url = new URL(params.redirectUri);
-      url.searchParams.set("error", "access_denied");
-      if (params.state) url.searchParams.set("state", params.state);
-      window.location.href = url.toString();
+      const res = await authFetch("/oauth/authorize/deny", {
+        method: "POST",
+        body: JSON.stringify({ client_id: params.clientId, redirect_uri: params.redirectUri, state: params.state }),
+      });
+      const body = (await res.json()) as GrantResponse;
+      window.location.href = res.ok && body.redirect_url ? body.redirect_url : "/";
     } catch {
-      // If redirect_uri is malformed there's nowhere to send the user — just
-      // navigate home. The server-side validation would have caught this too.
       window.location.href = "/";
     }
   }
@@ -244,6 +254,9 @@ export function OAuthAuthorizePage() {
     );
   }
 
+  const asksEmail = params.scope.split(/\s+/).includes("email");
+  const verifiedDomain = client?.verified_domain ?? null;
+
   const canSubmit =
     readIds.length > 0 &&
     writeIds.length > 0 &&
@@ -258,14 +271,25 @@ export function OAuthAuthorizePage() {
       <p>
         This will let <strong>{client?.client_name ?? client?.client_id}</strong> recipe-check the books you choose below — searching them
         for context and logging new recipes when you make a call.
+        {asksEmail && <> It also asks to see your email address.</>}
       </p>
 
-      {/* F44: client_name is self-reported at registration (anonymous DCR) —
-          an attacker can register as any name. Surface the actual destination
-          so the user can judge for themselves. */}
-      <div style={warningBoxStyle}>
-        <strong>Unverified app.</strong> The name above is self-reported by the connector, not
-        verified by Soup.net. After you authorize (or cancel), your browser will be sent to:
+      {/* F44: a dynamically registered client's name is self-reported (anonymous
+          DCR), so an attacker can register as any name. A client identified by
+          a metadata document is vouched for by the domain that published it.
+          Either way, surface the actual destination so the user can judge. */}
+      <div style={warningBoxStyle} data-testid="oauth-client-identity">
+        {verifiedDomain ? (
+          <>
+            <strong>Published by {verifiedDomain}.</strong> The name above comes from a document on{" "}
+            {verifiedDomain}. After you authorize (or cancel), your browser will be sent to:
+          </>
+        ) : (
+          <>
+            <strong>Unverified app.</strong> The name above is self-reported by the connector, not
+            verified by Soup.net. After you authorize (or cancel), your browser will be sent to:
+          </>
+        )}
         <div style={{ fontFamily: "monospace", fontSize: "0.85em", marginTop: "var(--space-xs)", wordBreak: "break-all" }}>
           {params.redirectUri}
         </div>
@@ -307,7 +331,7 @@ export function OAuthAuthorizePage() {
         >
           {grantMutation.isPending ? "Authorizing…" : "Authorize"}
         </button>
-        <button type="button" onClick={handleCancel} style={secondaryButtonStyle}>
+        <button type="button" onClick={() => void handleCancel()} style={secondaryButtonStyle}>
           Cancel
         </button>
       </div>
