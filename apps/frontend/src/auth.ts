@@ -115,10 +115,14 @@ export async function authFetch(
   // valid" signal. The guard `token && getToken()` makes this idempotent
   // when many in-flight requests hit 401 in quick succession: the first one
   // clears the token, the rest see getToken() === null and skip the event.
+  // The event carries the server's reason (a code from the closed list in
+  // lib/login-notice.ts), so the sign-in page can say why the person was
+  // signed out (stream SSO, SSO-U4).
   if (res.status === 401 && token && getToken() === token) {
+    const body = (await res.clone().json().catch(() => null)) as { error?: unknown } | null;
     clearToken();
     if (typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent(AUTH_INVALIDATED_EVENT));
+      window.dispatchEvent(new CustomEvent(AUTH_INVALIDATED_EVENT, { detail: { reason: body?.error === "session_expired" ? "session_expired" : null } }));
     }
   } else if (res.status === 403 && token && getToken() === token) {
     const body = (await res.clone().json().catch(() => null)) as { error?: unknown } | null;
@@ -128,7 +132,7 @@ export async function authFetch(
     ) {
       clearToken();
       if (typeof window !== "undefined") {
-        window.dispatchEvent(new CustomEvent(AUTH_INVALIDATED_EVENT));
+        window.dispatchEvent(new CustomEvent(AUTH_INVALIDATED_EVENT, { detail: { reason: body.error } }));
       }
     }
   }

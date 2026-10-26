@@ -15,8 +15,12 @@
  *                                       accounts (checks the assertion's
  *                                       signature against a registered key)
  *   GET  /directory/users/:userKey      the Directory API's users.get
+ *   GET  /authorize                     for a browser: redirects straight back to the
+ *                                       backend's callback with a code for the identity
+ *                                       set by /__fake/next-identity (or access_denied)
  * and, for test files running in other processes, control routes:
  *   POST /__fake/codes                  { claims, nonce, codeChallenge, refreshToken? } → { code }
+ *   POST /__fake/next-identity          { claims, refreshToken? } for the next browser /authorize
  *   PUT  /__fake/directory/:userKey     { suspended?, archived?, httpStatus?, delayMs? }
  *   POST /__fake/service-accounts       { clientEmail, publicKeyPem }
  *   POST /__fake/revoke                 every access and refresh token stops working
@@ -67,6 +71,7 @@ export async function startFakeGoogleIssuer(opts: {
   const directory = new Map<string, DirectoryEntry>();
   const directoryRequests: Record<string, number> = {};
   let tokenRequests = 0;
+  let nextIdentity: { claims: FakeIdClaims; refreshToken: string | null } | null = null;
 
   function json(res: http.ServerResponse, status: number, body: unknown): void {
     res.writeHead(status, { "content-type": "application/json" });
@@ -153,6 +158,11 @@ export async function startFakeGoogleIssuer(opts: {
       directory.set(decodeURIComponent(path.slice("/__fake/directory/".length)), JSON.parse(await readBody(req)) as DirectoryEntry);
       return json(res, 200, { ok: true });
     }
+    if (req.method === "POST" && path === "/__fake/next-identity") {
+      const body = JSON.parse(await readBody(req)) as { claims: FakeIdClaims; refreshToken?: string };
+      nextIdentity = { claims: body.claims, refreshToken: body.refreshToken ?? null };
+      return json(res, 200, { ok: true });
+    }
     if (req.method === "POST" && path === "/__fake/service-accounts") {
       const body = JSON.parse(await readBody(req)) as { clientEmail: string; publicKeyPem: string };
       serviceAccounts.set(body.clientEmail, crypto.createPublicKey(body.publicKeyPem));
@@ -179,6 +189,27 @@ export async function startFakeGoogleIssuer(opts: {
       return;
     }
     if (req.method === "POST" && path === "/token") return done(token(req, res));
+    if (req.method === "GET" && path === "/authorize") {
+      // Only the backend's registered callback is honoured, as Google would.
+      const back = new URL(url.searchParams.get("redirect_uri") ?? "");
+      const state = url.searchParams.get("state") ?? "";
+      if (!nextIdentity) {
+        back.search = new URLSearchParams({ state, error: "access_denied" }).toString();
+      } else {
+        const code = crypto.randomBytes(16).toString("base64url");
+        codes.set(code, {
+          claims: nextIdentity.claims,
+          nonce: url.searchParams.get("nonce") ?? "",
+          codeChallenge: url.searchParams.get("code_challenge") ?? "",
+          refreshToken: nextIdentity.refreshToken,
+        });
+        nextIdentity = null;
+        back.search = new URLSearchParams({ state, code }).toString();
+      }
+      res.writeHead(302, { location: back.toString() });
+      res.end();
+      return;
+    }
     if (req.method === "GET" && path.startsWith("/directory/users/")) return done(directoryUser(req, res, decodeURIComponent(path.slice("/directory/users/".length))));
     if (path.startsWith("/__fake/")) return done(control(req, res, path));
     res.writeHead(404);
@@ -203,6 +234,9 @@ export function fakeGoogle(issuer: string) {
   return {
     async issue(claims: FakeIdClaims, binding: { nonce: string; codeChallenge: string; refreshToken?: string }): Promise<string> {
       return ((await post("/__fake/codes", { claims, ...binding })) as { code: string }).code;
+    },
+    async setNextIdentity(claims: FakeIdClaims, refreshToken?: string): Promise<void> {
+      await post("/__fake/next-identity", { claims, ...(refreshToken ? { refreshToken } : {}) });
     },
     async setDirectoryUser(userKey: string, entry: DirectoryEntry): Promise<void> {
       await post(`/__fake/directory/${encodeURIComponent(userKey)}`, entry, "PUT");
