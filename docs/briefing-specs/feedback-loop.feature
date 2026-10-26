@@ -68,3 +68,31 @@ Feature: Feedback ingestion — chained on the next check, or via log_feedback
     When it has feedback on an earlier check to report
     Then it builds GET /feedback?key=...&trace_id=...&kind=... with the same flat field names the POST body uses
     And it does not attempt a POST request or a custom Authorization header
+
+  Scenario: A session's outcome with no single recipe joins its intent alone
+    # Guards: drafts-and-triage slice 8a (S8a-O1): an outcome row may name
+    # only its declared intent (log_feedback's trace_id and intent_id
+    # descriptions; feedback.service validateFeedbackRow). The headless
+    # profile's closing row ("one outcome feedback row listing the draft ids
+    # you left open") is the field case.
+    Given an agent that declared an intent at briefing time and is ending its session
+    And the outcome it has to report is about the whole task, not one earlier check
+    When it logs the wrap-up
+    Then it calls log_feedback with kind "outcome" and that intent_id, and no trace_id
+    And it does not attach the row to an arbitrary recipe just to have a target
+
+  Scenario: Feedback about the briefing itself carries the briefing id
+    # Guards: drafts-and-triage slice 8a (S8a-O4, S8a-O5): get_briefing's last
+    # line names its briefing id and that log_feedback accepts it as
+    # briefing_id.
+    Given an agent whose briefing was missing something it needed, or misled it
+    When it reaches a feedback moment
+    Then it logs a row with briefing_id set to the id its briefing ended with
+    And the row says what in the briefing helped or failed, rather than being filed against an unrelated check
+
+  Scenario: A rejected feedback row is fixed in one retry
+    # Guards: drafts-and-triage slice 8a (S8a-V1): the rejection names every
+    # failing field with its allowed values.
+    Given an agent whose log_feedback row was rejected naming several fields
+    When it retries
+    Then it corrects every named field in the same retry, using the allowed values the rejection listed

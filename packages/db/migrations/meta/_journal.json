@@ -288,6 +288,20 @@
       "when": 1790572838375,
       "tag": "0040_api_keys_deposit_level",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1792849658188,
+      "tag": "0041_check_feedback_briefing_and_intent_targets",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1792971707776,
+      "tag": "0042_traces_intent_link",
+      "breakpoints": true
     }
   ]
 }

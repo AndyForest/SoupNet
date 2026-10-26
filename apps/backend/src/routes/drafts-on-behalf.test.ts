@@ -406,10 +406,13 @@ describe.skipIf(!BASE || !canConnect())("drafts on behalf of another person (dra
     expect(page).toContain(`deposited by ${dana.email}`);
   });
 
-  it("S4-V1 / S4-Q4: Dana's agents find it labelled as about Pat only under author:me or author:anyone, never under is:draft", async () => {
-    const byDefault = await mcp(D, "search_recipes", { query: `"${mainToken}"` });
-    expect(byDefault.raw).not.toContain(mainDraft);
-    for (const query of [`author:me "${mainToken}"`, `author:anyone "${mainToken}"`]) {
+  // Since 2026-10-24 search includes the caller's own recipes by default
+  // (recipe 885143c2), so Dana's agents also find it with no qualifier,
+  // still labelled as about Pat; -author:me leaves it out.
+  it("S4-V1 / S4-Q4: Dana's agents find it labelled as about Pat by default and under author:me or author:anyone, never under is:draft", async () => {
+    const others = await mcp(D, "search_recipes", { query: `-author:me "${mainToken}"` });
+    expect(others.raw).not.toContain(mainDraft);
+    for (const query of [`"${mainToken}"`, `author:me "${mainToken}"`, `author:anyone "${mainToken}"`]) {
       const st = await mcp(D, "search_recipes", { query, response_format: "structured" });
       const hit = ((st.structured?.["results"] ?? []) as Json[]).find((r) => r["recipeId"] === mainDraft);
       expect(hit, query).toMatchObject({ draftState: "unverified", draftAbout: pat.email });

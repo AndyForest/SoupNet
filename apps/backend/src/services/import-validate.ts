@@ -49,6 +49,10 @@ export interface ImportTraceRow {
   /** Slice 4: the email of the person an on-behalf draft is about (the
    *  export's `onBehalfOf`); absent on everything else. */
   onBehalfOf: string | null;
+  /** Slice 6a: the declared intent the recipe was deposited under (the
+   *  export's `intentId`). Restored only when it names one of the
+   *  importer's intents; import.service drops any other value. */
+  intentId: string | null;
   createdAt: Date;
   updatedAt: Date | null;
 }
@@ -290,6 +294,7 @@ export function parseExportPayload(json: unknown): ParseExportResult {
     uncertainty: optEnum(row, "uncertainty", TRIAGE_RATING_VALUES),
     draftState: optEnum(row, "draftState", DRAFT_STATE_VALUES),
     onBehalfOf: optString(row, "onBehalfOf"),
+    intentId: optString(row, "intentId"),
     createdAt: reqDate(row, "createdAt"),
     updatedAt: optDate(row, "updatedAt"),
   }));

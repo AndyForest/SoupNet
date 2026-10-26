@@ -1,7 +1,16 @@
 /**
- * Agent verification of a draft (drafts-and-triage slice 2) — the one agent
- * operation that changes a draft's state. Served by the MCP `verify_draft`
- * tool and its REST twin, POST /recipes/:id/verify.
+ * Agent resolution of a draft (drafts-and-triage slice 2; outcomes from slice
+ * 6c) — the one agent operation that changes a draft's state. Served by the
+ * MCP `verify_draft` tool and its REST twin, POST /recipes/:id/verify.
+ *
+ * Slice 6c: one `outcome` parameter (verified | rejected | not_chosen,
+ * verified when omitted) makes this "resolve a draft" with the same name and
+ * one contract (recipe d21d3894): an agent can now close a draft its person
+ * rejected, or one a later verified recipe covers (cited by id in the
+ * evidence; ruling 46, recipe 12591bef), as the review queue can. Authority
+ * and the evidence rule are the same for every outcome. An unrecognized
+ * outcome is refused before anything is looked up and stores nothing: a
+ * typo must never fall through to the default and publish (recipe 3f0e1bc1).
  *
  * The flow the design names (docs/planning/drafts-and-triage.md §Verifying a
  * draft): an agent asks its person, gets an answer, and verifies the draft
@@ -30,13 +39,14 @@
  *     write-authority check again, live in the resolving UPDATE itself
  *     (authz/draft-resolution.ts).
  *
- * Nothing is stored unless the draft is verified in the same transaction:
+ * Nothing is stored unless the draft is resolved in the same transaction:
  * the state change runs first and the evidence is attached only if it
  * matched, so a refused call leaves no rows (DT-VER-05, DT-VER-08).
  */
 
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { validateVerificationEvidence, onlySubjectReviewsReason, headlessVerifyRefusal } from "@soupnet/domain";
+import { validateVerificationEvidence, onlySubjectReviewsReason, headlessVerifyRefusal, parseDraftOutcome, describeResolution } from "@soupnet/domain";
+import type { DraftOutcome } from "@soupnet/domain";
 import { keyMayVerifyDrafts, resolveDraft, hasWriteAuthority } from "../authz";
 import type { Principal } from "../authz";
 import { parseEvidenceMarkdown } from "./evidence-parser";
@@ -45,7 +55,7 @@ import { lookupRecipes } from "./recipe-lookup.service";
 import { draftQueueUrl } from "../lib/key-remediation";
 
 export type VerifyDraftResult =
-  | { status: "verified"; recipeId: string; draftState: "verified"; evidenceAdded: number; verifiedByDepositingKey: boolean }
+  | { status: "resolved"; recipeId: string; draftState: DraftOutcome; evidenceAdded: number; verifiedByDepositingKey: boolean }
   | { status: "not_found_or_unreadable"; recipeId: string }
   | { status: "ambiguous_prefix"; recipeId: string; candidates: string[] }
   | { status: "not_a_draft"; recipeId: string }
@@ -58,18 +68,18 @@ export type VerifyDraftResult =
 /** Human-readable text for a result — the MCP tool's reply and the REST error. */
 export function describeVerifyResult(r: VerifyDraftResult): string {
   switch (r.status) {
-    case "verified":
-      return `Draft ${r.recipeId} is verified: it is now an ordinary recipe that collaborators can find, with your new evidence attached (${r.evidenceAdded} entr${r.evidenceAdded === 1 ? "y" : "ies"}).`;
+    case "resolved":
+      return describeResolution(r.recipeId, r.draftState, r.evidenceAdded);
     case "not_found_or_unreadable":
       return `${r.recipeId}: not_found_or_unreadable — this id does not exist or is not readable by this API key (the two cases are deliberately indistinguishable).`;
     case "ambiguous_prefix":
       return `${r.recipeId}: ambiguous_prefix — this short id matches more than one readable recipe (${r.candidates.join(", ")}). Use a longer prefix or the full id.`;
     case "not_a_draft":
-      return `${r.recipeId} is not a draft, so there is nothing to verify; nothing was stored.`;
+      return `${r.recipeId} is not a draft, so there is nothing to resolve; nothing was stored.`;
     case "already_resolved":
       return `${r.recipeId} was already resolved (${r.draftState}); resolution is one-way and nothing was stored.`;
     case "needs_write_access":
-      return `${r.recipeId} is a draft in the recipe book "${r.recipeBook.name}" (${r.recipeBook.slug}), and verifying it needs write access to this recipe book, which this API key does not have; nothing was stored. Verify it with a key that can write ${r.recipeBook.slug}, or ask the person to confirm it in their review queue: ${draftQueueUrl([r.recipeId])}`;
+      return `${r.recipeId} is a draft in the recipe book "${r.recipeBook.name}" (${r.recipeBook.slug}), and resolving it needs write access to this recipe book, which this API key does not have; nothing was stored. Resolve it with a key that can write ${r.recipeBook.slug}, or hand the review link to the person it is about: ${draftQueueUrl([r.recipeId])}`;
     case "only_subject_reviews":
       return `${onlySubjectReviewsReason(r.subjectEmail, draftQueueUrl([r.recipeId]))} Nothing was stored.`;
     case "key_cannot_verify":
@@ -81,10 +91,22 @@ export function describeVerifyResult(r: VerifyDraftResult): string {
 
 export async function verifyDraft(
   db: PostgresJsDatabase,
-  params: { principal: Principal; recipeId: string; evidence: string },
+  params: { principal: Principal; recipeId: string; evidence: string; outcome?: unknown },
 ): Promise<VerifyDraftResult> {
   const { principal } = params;
   const recipeId = params.recipeId.trim();
+
+  // The outcome is judged first, before the key or the id, so the refusal is
+  // the same for every id apart from its echo. It also reports what is
+  // structurally wrong with the evidence (no entry with a quote and a
+  // citation), so one retry fixes everything (agreed with stream D, slice
+  // 8a); whether a quote is new needs the draft, so that waits for a lookup.
+  const parsedOutcome = parseDraftOutcome(params.outcome);
+  if (!parsedOutcome.ok) {
+    const shape = validateVerificationEvidence(parseEvidenceMarkdown(params.evidence ?? ""), []);
+    return { status: "refused", recipeId, error: shape.ok ? parsedOutcome.error : `${parsedOutcome.error} Also: ${shape.error}` };
+  }
+  const outcome = parsedOutcome.outcome;
 
   // Decided from the key alone, before anything is looked up, so the answer
   // is the same for every id apart from its echo (S5-U1).
@@ -130,26 +152,26 @@ export async function verifyDraft(
 
   const entries = parseEvidenceMarkdown(params.evidence ?? "");
   const existingQuotes = entry.evidence.flatMap((e) => e.references.map((r) => r.quote ?? "")).filter(Boolean);
-  const check = validateVerificationEvidence(entries, existingQuotes);
+  const check = validateVerificationEvidence(entries, existingQuotes, outcome);
   if (!check.ok) return { status: "refused", recipeId: entry.recipeId, error: check.error };
 
   // Attach everything except entries that repeat a quote the draft carries.
   const known = new Set(existingQuotes.map((q) => q.replace(/\s+/g, " ").trim().toLowerCase()));
   const fresh = entries.filter((e) => !e.quote || !known.has(e.quote.replace(/\s+/g, " ").trim().toLowerCase()));
 
-  const outcome = await db.transaction(async (tx) => {
+  const resolution = await db.transaction(async (tx) => {
     // The resolving statement writes the audit row itself, in this
     // transaction, naming the previous author when a draft deposited about
     // this person becomes theirs (S4-R4).
     const resolved = await resolveDraft(tx, {
       traceId: entry.recipeId,
       actorUserId: principal.userId,
-      resolution: "verified",
+      resolution: outcome,
       byKeyId: principal.keyId,
       authority,
       auditMetadata: { via: "agent", evidenceAdded: fresh.length },
     });
-    // Resolved by a concurrent call, moved out of the key's write scope
+    // Resolved by a concurrent call (any outcome), moved out of the key's write scope
     // meanwhile, or (from slice 4) not the person it is about: nothing is
     // stored.
     if (!resolved) return null;
@@ -160,12 +182,16 @@ export async function verifyDraft(
       apiKeyId: principal.keyId,
       groupId: bookId,
       entries: fresh,
+      // Every outcome's evidence is attached as `for`, the only stance ingest
+      // writes (evidence_against was retired: embeddings cannot tell stance).
+      // For a rejection the interpretation says why the claim does not hold;
+      // it is the record the person reads on the draft's page (ruling 55).
       stance: "for",
     });
     return resolved;
   });
 
-  if (!outcome) {
+  if (!resolution) {
     // A concurrent resolution is reported as such; anything else is the
     // uniform answer for an id this key cannot act on.
     const [now] = await lookupRecipes(db, [entry.recipeId], { readGroupIds: principal.readGroupIds, userId: principal.userId });
@@ -177,7 +203,9 @@ export async function verifyDraft(
     return { status: "not_found_or_unreadable", recipeId };
   }
 
-  const verifiedByDepositingKey = outcome.depositingKeyId === principal.keyId;
+  // Named for slice 2's wire shape; for a rejection or not chosen it says
+  // whether the depositing key resolved its own draft, as the audit row does.
+  const verifiedByDepositingKey = resolution.depositingKeyId === principal.keyId;
 
-  return { status: "verified", recipeId: entry.recipeId, draftState: "verified", evidenceAdded: fresh.length, verifiedByDepositingKey };
+  return { status: "resolved", recipeId: entry.recipeId, draftState: outcome, evidenceAdded: fresh.length, verifiedByDepositingKey };
 }

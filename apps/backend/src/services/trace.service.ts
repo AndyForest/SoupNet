@@ -41,11 +41,11 @@ import { runSearchPipeline } from "./search-pipeline";
 import { StageTimer } from "../lib/stage-timer";
 import { searchSelections } from "./search-selection";
 import { draftQueueUrl } from "../lib/key-remediation";
-import { DEFAULT_RANKING, RANKING_ALGORITHM_VERSION, parseSearchQuery, AUTHOR_ME, buildOwnExcludedNote, parseTriageRating, parseTriageRatings, repeatRatingsNotice, parseDraftFlag, draftDepositNotice, isShownDraftState, onBehalfRefusal } from "@soupnet/domain";
+import { DEFAULT_RANKING, RANKING_ALGORITHM_VERSION, parseSearchQuery, AUTHOR_ME, searchZeroResultLine, parseTriageRating, parseTriageRatings, repeatRatingsNotice, parseDraftFlag, draftDepositNotice, isShownDraftState, onBehalfRefusal } from "@soupnet/domain";
 import type { CandidateSignals, VerbositySteer, ParsedSearchQuery, TriageRatings } from "@soupnet/domain";
 import type { DraftState } from "@soupnet/contracts";
 import type { StructuredTraceFilters } from "./vector-search.service";
-import { resolveIntent, fetchIntentShownIds, recordIntentShown } from "./intent.service";
+import { resolveIntent, fetchIntentShownIds, recordIntentShown, ownedIntentIds } from "./intent.service";
 import type { IntentResolution } from "./intent.service";
 
 /** Session tokens are opaque and validation-free (they only compress the
@@ -295,6 +295,10 @@ export interface SubmitAndSearchResult {
    *  notice discloses it so "no matches among N" can't read as an outage
    *  (cold-start v2 Phase A, honesty gap). */
   searchedOwnExcluded?: number | undefined;
+  /** Read-only search path: the query's `intent:` id named none of the
+   *  caller's intents, so it selected nothing (slice 6a). Unknown and other
+   *  people's ids set it alike. */
+  intentNotRecognized?: boolean | undefined;
 }
 
 /**
@@ -307,15 +311,9 @@ export function buildSearchOnlyNotice(result: {
   totalResults: number;
   searchedCorpusSize?: number | undefined;
   searchedOwnExcluded?: number | undefined;
+  intentNotRecognized?: boolean | undefined;
 }): string {
-  let zeroNotice = "";
-  if (result.totalResults === 0) {
-    const scope = result.searchedCorpusSize !== undefined
-      ? ` among the ${result.searchedCorpusSize} recipes in scope`
-      : "";
-    const own = buildOwnExcludedNote(result.searchedOwnExcluded, result.searchedCorpusSize);
-    zeroNotice = ` No matches${scope}${own} — a thin-corpus signal worth a feedback row (story_fulfilled: no).`;
-  }
+  const zeroNotice = result.totalResults === 0 ? ` ${searchZeroResultLine(result)}` : "";
   return `Read-only search — nothing was written to the corpus.${zeroNotice}`;
 }
 
@@ -725,10 +723,13 @@ export async function submitAndSearch(
 
   await timer.time("write", () => db.transaction(async (tx) => {
     // Try to insert — unique constraint on (api_key_id, group_id, claim_text_hash)
-    // prevents duplicates from the same agent + group
+    // prevents duplicates from the same agent + group. intent_id (slice 6a)
+    // is the intent step 1e resolved to this user, joined or just registered,
+    // and NULL when it resolved none; this is its one writer outside import,
+    // and an identical repeat keeps the first value (DO NOTHING).
     const traceRows = await tx.execute(sql`
-      INSERT INTO claimnet.traces (user_id, group_id, api_key_id, claim_text, claim_text_hash, format_adherence_score, decided_at, session_id, impact, uncertainty, draft_state, subject_user_id)
-      VALUES (${userId}::uuid, ${groupId}::uuid, ${keyId}::uuid, ${params.traceText}, ${claimTextHash}, ${adherence.score}, ${decidedAt ? decidedAt.toISOString() : null}::timestamptz, ${session.sessionId}, ${requestedRatings.ratings.impact}, ${requestedRatings.ratings.uncertainty}, ${storedDraftState}, ${subject?.userId ?? null}::uuid)
+      INSERT INTO claimnet.traces (user_id, group_id, api_key_id, claim_text, claim_text_hash, format_adherence_score, decided_at, session_id, impact, uncertainty, draft_state, subject_user_id, intent_id)
+      VALUES (${userId}::uuid, ${groupId}::uuid, ${keyId}::uuid, ${params.traceText}, ${claimTextHash}, ${adherence.score}, ${decidedAt ? decidedAt.toISOString() : null}::timestamptz, ${session.sessionId}, ${requestedRatings.ratings.impact}, ${requestedRatings.ratings.uncertainty}, ${storedDraftState}, ${subject?.userId ?? null}::uuid, ${intent.intentId})
       ON CONFLICT (api_key_id, group_id, claim_text_hash) DO NOTHING
       RETURNING id
     `);
@@ -1095,7 +1096,7 @@ export async function resolveStructuredFilters(
   db: PostgresJsDatabase,
   parsed: ParsedSearchQuery,
   ctx: { callerUserId: string; excludeOwnDefault: boolean },
-): Promise<StructuredTraceFilters> {
+): Promise<{ structured: StructuredTraceFilters; intentNotRecognized: boolean }> {
   const emailValues = [
     ...(parsed.authors.kind === "listed" ? parsed.authors.values : []),
     ...parsed.authorsNegated,
@@ -1125,31 +1126,43 @@ export async function resolveStructuredFilters(
   // authors.kind === "anyone": no author filter, and the surface default is
   // explicitly overridden. is:draft overrides it too (below).
 
-  // is:draft, -is:draft, impact:, uncertainty: (drafts-and-triage slice 3):
-  // selections built outside the ranking files and ANDed in as opaque
-  // predicates, so they only ever remove rows (services/search-selection.ts).
-  const selections = searchSelections(parsed, ctx.callerUserId);
+  // intent: (slice 6a) selects only within the caller's own intents: one
+  // read-only lookup, made only when the query names an intent. An unknown
+  // id and someone else's get the same empty selection and the same note.
+  const intentOwned = parsed.intent !== undefined
+    && (await ownedIntentIds(db, ctx.callerUserId, [parsed.intent])).has(parsed.intent);
+
+  // is:draft, -is:draft, impact:, uncertainty: (drafts-and-triage slice 3)
+  // and intent: (slice 6a): selections built outside the ranking files and
+  // ANDed in as opaque predicates, so they only ever remove rows
+  // (services/search-selection.ts).
+  const selections = searchSelections(parsed, ctx.callerUserId, intentOwned);
 
   return {
-    lexicalGroups: parsed.lexicalGroups.length > 0 ? parsed.lexicalGroups : undefined,
-    lexicalNegated: parsed.lexicalNegated.length > 0 ? parsed.lexicalNegated : undefined,
-    includeUserIds,
-    excludeUserIds: excludeUserIds.length > 0 ? excludeUserIds : undefined,
-    decidedAfter: parsed.after,
-    decidedBefore: parsed.before,
-    selections: selections.length > 0 ? selections : undefined,
+    structured: {
+      lexicalGroups: parsed.lexicalGroups.length > 0 ? parsed.lexicalGroups : undefined,
+      lexicalNegated: parsed.lexicalNegated.length > 0 ? parsed.lexicalNegated : undefined,
+      includeUserIds,
+      excludeUserIds: excludeUserIds.length > 0 ? excludeUserIds : undefined,
+      decidedAfter: parsed.after,
+      decidedBefore: parsed.before,
+      selections: selections.length > 0 ? selections : undefined,
+    },
+    intentNotRecognized: parsed.intent !== undefined && !intentOwned,
   };
 }
 
 /**
  * Whether the surface's exclude-own default applies to this query: only
  * when the surface has one (MCP search), no positive author: qualifier was
- * written, and the query is not is:draft. Every draft a viewer can list is
- * their own (slice 3), so is:draft lifts the default the way author: does,
- * or it would always return nothing (build log ruling 24, recipe 303e17cf).
+ * written, and the query is neither is:draft nor intent:. Every draft a
+ * viewer can list is their own (slice 3), so is:draft lifts the default the
+ * way author: does, or it would always return nothing (build log ruling 24,
+ * recipe 303e17cf); every recipe under the viewer's own intent was deposited
+ * by them, so intent: lifts it for the same reason (slice 6a).
  */
 function excludesOwnByDefault(parsed: ParsedSearchQuery, surfaceExcludesOwn: boolean): boolean {
-  return surfaceExcludesOwn && parsed.authors.kind === "surface-default" && parsed.isDraft !== true;
+  return surfaceExcludesOwn && parsed.authors.kind === "surface-default" && parsed.isDraft !== true && parsed.intent === undefined;
 }
 
 export interface SearchOnlyParams {
@@ -1240,7 +1253,7 @@ export async function searchWithoutLogging(
       totalPages: 0,
     };
   }
-  const structured = await resolveStructuredFilters(db, parsed.query, {
+  const { structured, intentNotRecognized } = await resolveStructuredFilters(db, parsed.query, {
     callerUserId: keyResult.userId,
     excludeOwnDefault: params.excludeOwnDefault ?? false,
   });
@@ -1439,6 +1452,7 @@ export async function searchWithoutLogging(
     searchId,
     searchedCorpusSize,
     searchedOwnExcluded,
+    ...(intentNotRecognized ? { intentNotRecognized: true } : {}),
     // The read-only filter path never demotes (echo suppression applies to
     // the logging check path only) and uses legacy ordering — but it is still
     // a ranked response, so it reports the algorithm version it ran under.

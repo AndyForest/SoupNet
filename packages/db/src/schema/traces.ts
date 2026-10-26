@@ -101,6 +101,19 @@ export const traces = claimnetSchema.table(
     // through `subjectOf` in apps/backend/src/authz/draft-sql.ts, and ranking
     // never reads it (ranking-isolation.test.ts).
     subjectUserId: uuid("subject_user_id"),
+    // The declared intent this recipe was deposited under (drafts-and-triage
+    // slice 6a; `int_…`, see intents.ts). NULL = deposited without one. Set
+    // once, by the deposit, from the intent that check resolved to the
+    // depositor (joined by id or registered from story text), and restored by
+    // import only when the intent is the importer's own; nothing updates it,
+    // so verification, a move, and the on-behalf author flip leave it as
+    // deposited (static test: authz/intent-link.test.ts). Read only through
+    // the `intent:` search qualifier and the review queue's grouping, both
+    // of which resolve the id against the viewer's own intents, so another
+    // person's intent is never an oracle and its story is never shown. No
+    // foreign key, like user_id and check_feedback.intent_id: a link whose
+    // intent is gone is inert. NEVER read by ranking (ranking-isolation.test.ts).
+    intentId: text("intent_id"),
 
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
@@ -126,6 +139,11 @@ export const traces = claimnetSchema.table(
     index("traces_unpublished_draft_idx")
       .on(t.userId)
       .where(sql`${t.draftState} IS NOT NULL AND ${t.draftState} <> 'verified'`),
+    // The `intent:` qualifier (slice 6a): the recipes under one intent. Most
+    // recipes carry none, so only linked rows are indexed.
+    index("traces_intent_id_idx")
+      .on(t.intentId)
+      .where(sql`${t.intentId} IS NOT NULL`),
     // tsvector GIN index defined in migration SQL
   ]
 );

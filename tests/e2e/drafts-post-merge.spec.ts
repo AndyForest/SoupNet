@@ -183,8 +183,8 @@ test("N1 the recipe page shows the agent's ratings, as the agent's", async ({ pa
   await test.step("Pat opens the rated recipe's detail page", async () => {
     await openTrace(page, rated);
     await expect(page.getByRole("heading", { level: 1 }), "the detail page should show the rated recipe").toContainText(m.rated);
-    const label = page.getByText(/Agent's ratings/);
-    await expect(label, "the ratings should read as the agent's, with impact high and uncertainty high").toHaveText("Agent's ratings: impact high · uncertainty high");
+    const label = page.getByText(/Depositing agent's ratings/);
+    await expect(label, "the ratings should read as the depositing agent's, with impact high and uncertainty high").toHaveText("Depositing agent's ratings: impact high · uncertainty high");
     note(testInfo, "N1 ratings hover title", (await label.getAttribute("title")) ?? "(none)");
     const body = await page.locator("main, body").first().innerText();
     note(testInfo, "N1 rated header", (await page.locator("header").last().innerText()).replace(/\n+/g, " / "));

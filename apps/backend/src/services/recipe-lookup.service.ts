@@ -99,9 +99,21 @@ export type RecipeLookupEntry = RecipeLookupFound | RecipeLookupMarker | RecipeL
  * Parse a comma- and/or whitespace-separated id list into unique ids in
  * first-seen order. Does NOT validate UUID shape — malformed entries flow
  * through so lookupRecipes can return their markers (uniform marker rule).
+ *
+ * Also takes an array of such strings, and reads a string that is itself a
+ * JSON array (`["a","b"]`) as the ids inside it: the parameter's plural name
+ * invites an array, and three field sessions sent one (drafts-and-triage
+ * slice 8a, S8a-I1/I2). Only brackets and quotes AROUND an id are stripped;
+ * an id with a stray character inside still reaches its marker. Non-string
+ * array entries are dropped.
  */
-export function parseRecipeIds(raw: string): string[] {
-  return [...new Set(raw.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean))];
+export function parseRecipeIds(raw: string | readonly unknown[]): string[] {
+  const parts = typeof raw === "string" ? [raw] : raw.filter((p): p is string => typeof p === "string");
+  const ids = parts
+    .flatMap((p) => p.split(/[\s,]+/))
+    .map((s) => s.trim().replace(/^[[\]"']+|[[\]"']+$/g, ""))
+    .filter(Boolean);
+  return [...new Set(ids)];
 }
 
 // ── Lookup ───────────────────────────────────────────────────────────────────

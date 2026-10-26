@@ -486,6 +486,9 @@ auth.get("/me/export", requireAuth, requireVerifiedEmail, async (c) => {
   // 4, S4-E1): a draft deposited about someone else is in the depositor's
   // export with that person's email (`onBehalfOf`) until they verify it, and
   // from then on in theirs, as their own recipe (the subject is cleared).
+  // The intent link (slice 6a) rides along only when the intent is the
+  // exporter's own: a verified on-behalf recipe keeps its depositor's
+  // intent, and that id is not the subject's to receive.
   const traces = await db.execute(sql`
     SELECT id, user_id AS "userId", group_id AS "groupId", api_key_id AS "apiKeyId",
            claim_text AS "claimText", claim_text_hash AS "claimTextHash",
@@ -494,6 +497,7 @@ auth.get("/me/export", requireAuth, requireVerifiedEmail, async (c) => {
            impact, uncertainty,
            draft_state AS "draftState", draft_resolved_at AS "draftResolvedAt",
            (SELECT su.email FROM claimnet.users su WHERE su.id = ${onBehalfSubjectOf("t")}) AS "onBehalfOf",
+           (SELECT oi.id FROM claimnet.intents oi WHERE oi.id = t.intent_id AND oi.user_id = ${user.id}::uuid) AS "intentId",
            created_at AS "createdAt", updated_at AS "updatedAt"
     FROM claimnet.traces t WHERE user_id = ${user.id}::uuid
     ORDER BY created_at

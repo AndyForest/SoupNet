@@ -44,12 +44,13 @@ describe("MCP tool descriptions — recipe-book rename", () => {
 describe("MCP tool registrations — WT-3 retrieval API", () => {
   it("registers the get_recipes tool", () => {
     expect(mcpSource).toContain('"get_recipes"');
-    expect(mcpSource).toContain("recipe_ids: z.string()");
+    // A string or an array of ids since drafts-and-triage slice 8a (S8a-I1).
+    expect(mcpSource).toContain("recipe_ids: recipeIdsParam().describe(");
   });
 
   it("get_briefing accepts purpose and recipe_ids params", () => {
     expect(mcpSource).toContain("purpose: z.string().optional()");
-    expect(mcpSource).toContain("recipe_ids: z.string().optional()");
+    expect(mcpSource).toContain("recipe_ids: recipeIdsParam().optional()");
   });
 
   it("the stdio mirror registers get_recipes too", () => {

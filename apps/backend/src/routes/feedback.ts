@@ -129,6 +129,7 @@ function readFeedbackQueryRow(c: Context): RawFeedbackRow {
     trace_id: q("trace_id"),
     recipe_id: q("recipe_id"),
     search_id: q("search_id"),
+    briefing_id: q("briefing_id"),
     kind: q("kind"),
     impact: q("impact"),
     disposition: q("disposition"),
@@ -175,14 +176,14 @@ feedback.post("/", feedbackBodyLimit, feedbackRateLimit, async (c) => {
   let rows: RawFeedbackRow[];
   if (Array.isArray((body as { feedback?: unknown }).feedback)) {
     rows = (body as { feedback: RawFeedbackRow[] }).feedback;
-  } else if (
-    body && typeof body === "object" &&
-    ("trace_id" in (body as Record<string, unknown>) || "search_id" in (body as Record<string, unknown>))
-  ) {
+  } else if (body && typeof body === "object" && !Array.isArray(body)) {
+    // A single row object. A row's own target problems (none, two, or a
+    // malformed one) are reported by the service with every other failing
+    // field (slice 8a, S8a-V1), not by a coarse 400 here.
     rows = [body as RawFeedbackRow];
   } else {
     return c.json(
-      { ok: false, error: "Body must be a feedback row object (with trace_id or search_id) or { \"feedback\": [rows] }" },
+      { ok: false, error: "Body must be a feedback row object or { \"feedback\": [rows] }" },
       400,
     );
   }
@@ -239,8 +240,12 @@ feedback.get("/", feedbackRateLimit, async (c) => {
   }
 
   const row = readFeedbackQueryRow(c);
-  if (!row.trace_id && !row.recipe_id) {
-    const message = "Missing required param: trace_id (or its alias recipe_id) naming the recipe this feedback is about.";
+  // Any target the service accepts: a recipe, a search, a briefing, or an
+  // intent on an outcome row (slice 8a). The service judges the target's
+  // shape and the rest of the row together; this only catches a URL that
+  // names no target at all.
+  if (!row.trace_id && !row.recipe_id && !row.search_id && !row.briefing_id && !row.intent_id) {
+    const message = "Missing required param: trace_id (or its alias recipe_id) naming the recipe this feedback is about; or search_id, briefing_id, or, on an outcome row, intent_id.";
     return jsonMode
       ? c.json({ ok: false, error: message }, 400)
       : c.html(renderFeedbackErrorHtml(message), 400);

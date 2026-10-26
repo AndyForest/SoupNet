@@ -15,6 +15,14 @@
  * is ordered for triage (impact × uncertainty, S3-O1), which never enters
  * the ranking pipeline (S3-M3).
  *
+ * Drafts deposited under one of the person's own declared intents are
+ * listed together, under the intent's story (slice 6a, DT-OPT-01): a group
+ * sits where its highest-placed member would sit, its members in order
+ * within it, and every other draft keeps its place. Only the viewer's own
+ * intents group or show a story: a colleague's on-behalf draft under that
+ * colleague's intent is listed ungrouped, so nobody's task story reaches
+ * anyone else.
+ *
  * The id-list form (`?ids=a,b,…`, S3-L1 to S3-L4) lists exactly the named
  * recipes the person may read, in the order given, at most 20. Every id that
  * does not resolve to one readable recipe (unreadable, missing, malformed,
@@ -24,7 +32,7 @@
 
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { parseSearchQuery, onlySubjectReviewsReason } from "@soupnet/domain";
+import { parseSearchQuery, onlySubjectReviewsReason, INTENT_QUALIFIER_NOT_RECOGNIZED } from "@soupnet/domain";
 import type { ParsedSearchQuery } from "@soupnet/domain";
 import {
   booksFor,
@@ -89,6 +97,10 @@ export interface DraftQueueItem {
   /** The first evidence entry's interpretation: why the agent couldn't ask
    *  and what would settle it, shown without opening the recipe (DT-QUE-05). */
   firstInterpretation: string | null;
+  /** The declared intent the draft was deposited under, with its story, when
+   *  that intent is the viewer's own (slice 6a); null otherwise, including a
+   *  colleague's intent on a draft about the viewer. */
+  intent: { id: string; story: string } | null;
   state: QueueItemState;
   /** The three actions are available: an unresolved draft whose book the
    *  person may write at this moment (S3-A4). */
@@ -108,6 +120,9 @@ export type DraftQueueResult =
     totalPages: number;
     /** "triage" for a qualifier-only listing, "similarity" with semantic text. */
     order: "triage" | "similarity";
+    /** Set when the query's intent: id is not one of the person's intents
+     *  (the same sentence agent search gives, slice 6a). */
+    notice?: string;
   }
   | { ok: false; error: string };
 
@@ -176,11 +191,13 @@ export async function listDraftQueue(
   const requested = Math.floor(params.page ?? 1);
   const page = Number.isFinite(requested) ? Math.min(Math.max(1, requested), DRAFT_QUEUE_MAX_PAGE) : 1;
   const { bookIds, roleOf } = await scopeFor(db, userId);
-  const structured = await resolveStructuredFilters(db, parsed.query, { callerUserId: userId, excludeOwnDefault: false });
+  const { structured, intentNotRecognized } = await resolveStructuredFilters(db, parsed.query, { callerUserId: userId, excludeOwnDefault: false });
   const semantic = parsed.query.semanticText.length > 0;
 
+  const notice = intentNotRecognized ? { notice: `No drafts listed: ${INTENT_QUALIFIER_NOT_RECOGNIZED}.` } : {};
+
   if (bookIds.length === 0) {
-    return { ok: true, items: [], total: 0, page, perPage, totalPages: 0, order: semantic ? "similarity" : "triage" };
+    return { ok: true, items: [], total: 0, page, perPage, totalPages: 0, order: semantic ? "similarity" : "triage", ...notice };
   }
 
   let ids: string[];
@@ -201,7 +218,11 @@ export async function listDraftQueue(
     ids = result.results.map((r) => r.id);
     total = result.totalResults;
   } else {
-    // Qualifier-only: the triage order (S3-O1), total because it ends in the id.
+    // Qualifier-only: the triage order (S3-O1), total because it ends in the
+    // id, with drafts under one of the person's own intents pulled together
+    // at their highest-placed member's position (slice 6a): `pos` is today's
+    // triage position, and a group's rows sort by their group's lowest pos.
+    // A draft with no own intent is its own group, so it keeps its place.
     const where = sql`${inBooks(sql`t.group_id`, bookIds)}
       AND ${traceVisibleTo("t", { viewerUserId: userId })}
       AND ${draftAwaitingReviewBy("t", userId)}
@@ -211,14 +232,24 @@ export async function listDraftQueue(
     `);
     total = Number((countRows as unknown as Array<{ n: number }>)[0]?.n ?? 0);
     const rows = await db.execute(sql`
-      SELECT t.id FROM claimnet.traces t WHERE ${where}
-      ORDER BY ${triageOrderSql("t")}
+      WITH listed AS (
+        SELECT t.id, COALESCE(oi.id, t.id::text) AS grp,
+               row_number() OVER (ORDER BY ${triageOrderSql("t")}) AS pos
+        FROM claimnet.traces t
+        LEFT JOIN claimnet.intents oi ON oi.id = t.intent_id AND oi.user_id = ${userId}::uuid
+        WHERE ${where}
+      )
+      SELECT id FROM listed
+      ORDER BY min(pos) OVER (PARTITION BY grp), pos
       LIMIT ${perPage} OFFSET ${(page - 1) * perPage}
     `);
     ids = (rows as unknown as Array<{ id: string }>).map((r) => r.id);
   }
 
-  const items = await loadItems(db, userId, ids, roleOf);
+  const loaded = await loadItems(db, userId, ids, roleOf);
+  // With semantic text the pipeline pages by similarity; on the page, a
+  // group's later members move up beside its first (S6a-G3).
+  const items = semantic ? groupByOwnIntent(loaded) : loaded;
   return {
     ok: true,
     items,
@@ -227,7 +258,30 @@ export async function listDraftQueue(
     perPage,
     totalPages: Math.ceil(total / perPage),
     order: semantic ? "similarity" : "triage",
+    ...notice,
   };
+}
+
+/**
+ * Stable grouping by the viewer's own intent (slice 6a): each group sits at
+ * its first member's position, members in their given order; an item with
+ * no own intent keeps its place.
+ */
+export function groupByOwnIntent<T extends { id: string; intent: { id: string } | null }>(items: readonly T[]): T[] {
+  const groups = new Map<string, T[]>();
+  const order: T[][] = [];
+  for (const item of items) {
+    const key = item.intent?.id;
+    const existing = key !== undefined ? groups.get(key) : undefined;
+    if (existing) {
+      existing.push(item);
+      continue;
+    }
+    const group = [item];
+    if (key !== undefined) groups.set(key, group);
+    order.push(group);
+  }
+  return order.flat();
 }
 
 /** Split a link's `ids` value into distinct references, in order. */
@@ -301,11 +355,14 @@ async function loadItems(
          JOIN claimnet.evidence e ON e.id = te.evidence_id
         WHERE te.trace_id = t.id
         ORDER BY e.created_at ASC, e.id ASC
-        LIMIT 1) AS "firstInterpretation"
+        LIMIT 1) AS "firstInterpretation",
+      oi.id AS "intentId",
+      oi.story AS "intentStory"
     FROM claimnet.traces t
     JOIN claimnet.groups g ON g.id = t.group_id
     LEFT JOIN claimnet.api_keys ak ON ak.id = t.api_key_id
     LEFT JOIN claimnet.users ou ON ou.id = ${onBehalfPartyFor("t", userId)}
+    LEFT JOIN claimnet.intents oi ON oi.id = t.intent_id AND oi.user_id = ${userId}::uuid
     WHERE t.id IN (${sql.join(ids.map((id) => sql`${id}::uuid`), sql`, `)})
       AND ${traceReadableById("t", userId)}
   `);
@@ -314,6 +371,7 @@ async function loadItems(
     impact: string | null; uncertainty: string | null; depositedAt: string | Date; decidedAt: string | Date | null;
     keyLabel: string | null; draftState: string | null; firstInterpretation: string | null;
     onBehalfSide: string | null; onBehalfEmail: string | null;
+    intentId: string | null; intentStory: string | null;
   };
   const byId = new Map((rows as unknown as Row[]).map((r) => [r.id, r]));
   const iso = (v: string | Date | null): string | null => (v === null ? null : new Date(v).toISOString());
@@ -345,6 +403,7 @@ async function loadItems(
       depositedBy,
       about,
       firstInterpretation: r.firstInterpretation,
+      intent: r.intentId !== null && r.intentStory !== null ? { id: r.intentId, story: r.intentStory } : null,
       state,
       canResolve,
       ...(state === "unverified" && isDepositorOnly

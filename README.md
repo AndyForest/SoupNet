@@ -23,6 +23,8 @@ Most agent memory stores facts and conversation state, inside one vendor's ecosy
 
 Because every check leaves a dated, append-only trace, you also get observability for free: one inspectable log of the judgment your agents exercised on your behalf. As agents run longer between check-ins, that record is what keeps you in the driver's seat.
 
+When an agent's context does not settle a call, it deposits a **draft** instead of a recipe: a hypothesis visible only to you and your own agents, waiting in a review queue. You confirm or reject it in one click, or another of your agents resolves it when its context holds the answer, quoting what settled it. Agents that run unattended get **headless keys**, whose every deposit is a draft. Drafts are how an agent keeps working with confidence instead of stopping to ask, and how what it assumed becomes something you can see and correct.
+
 Soup.net is developed with its own workflow. The AI agents that build it recipe-check their design decisions into the maintainer's corpus as they work — so the system's design history lives in the system, and the agents extending it retrieve the judgment calls that shaped the code they're changing.
 
 The Recipe Map is how a human watches that corpus grow: recipes cluster by semantic similarity, projected onto any two concept axes you choose.
@@ -64,6 +66,8 @@ claude mcp add --transport http soupnet https://mcp.soup.net/mcp --header "Autho
 - [`docs/architecture/ranking-engine.md`](docs/architecture/ranking-engine.md) — the check_recipe ranking engine: goals, the pipeline stage by stage, extension points, and the hypothesis register
 - [`docs/planning/pivot-search-as-logging.md`](docs/planning/pivot-search-as-logging.md) — the search-as-logging pivot (decision history)
 - [`docs/engineering-principles.md`](docs/engineering-principles.md) — 13 principles that govern every design choice
+- [`docs/planning/drafts-and-triage.md`](docs/planning/drafts-and-triage.md) — drafts, triage ratings, headless keys and deciding by building both: the design, with every ruling linked to its recipe
+- [`CHANGELOG.md`](CHANGELOG.md) — what changed for users and self-hosters, one entry per production deploy
 - [`docs/backlog.md`](docs/backlog.md) — current work queue; completed items in `docs/backlog-completed.md`
 - [`docs/adr/`](docs/adr/) — architecture decisions with dates and status lines
 - [`docs/testing-plan.md`](docs/testing-plan.md), [`docs/workflows/security.md`](docs/workflows/security.md) — how tests and audits work
@@ -138,8 +142,13 @@ docs/rough-notes/  Dated working notes, meant to rot — see its README for the 
                    and the fidelity ladder (rough-notes → planning → adopted docs/ADRs)
 docs/workflows/    Repeatable processes (security audit cycle, etc.)
 docs/connectors/   Connector-facing docs (claude.ai directory submission material)
+docs/briefing-specs/ The agent briefing as behavioural specs: .feature scenarios per
+                   paragraph, the decision log for every copy edit, and the untrimmed
+                   text kept beside the served text for ablation
 docs/legal/        Privacy policy + ToS source material
 
+tests/e2e/         Playwright browser verification against a local stack (drafts
+                   regression suite, device widths, accessibility findings)
 scripts/           Dev/ops one-offs: test-ci-local.mjs (the canonical gate), cleanup,
                    data-model doc generation, QA harnesses
 ```
@@ -176,9 +185,22 @@ Any HTTP-MCP client uses the same three facts, whatever its config schema calls 
 
 Per-client config blocks (Codex, VS Code, Google Antigravity, Claude Desktop via `mcp-remote` or the stdio server in `apps/mcp-server/`) live in the guide at `/docs/mcp-setup` — served by your own instance, or [hosted](https://mcp.soup.net/docs/mcp-setup) with your key pre-filled when reached from the dashboard. One living page instead of forked copies.
 
-**3. Restart the client** (or run `/mcp` in Claude Code) to pick up the new server. Available tools: `check_recipe`, `get_briefing`, `list_my_recipe_books`, `update_recipe_book_description`.
+**3. Restart the client** (or run `/mcp` in Claude Code) to pick up the new server. The remote server offers eight tools:
 
-The tool contract is read + append only. There is no update or delete surface, so a confused (or prompt-injected) agent can add traces but can never destroy or rewrite the record — worth knowing if you evaluate MCP servers on security posture.
+| Tool | What it does |
+|---|---|
+| `check_recipe` | The recipe check: search with a hypothesis about your taste, get back prior decisions with evidence, and leave the hypothesis as a trace. Optional `draft: true` parks a call the agent could not settle; `impact` and `uncertainty` ratings triage it. |
+| `search_recipes` | Read-only search with the same ranking and a Gmail-shaped query grammar (`author:`, `after:`, `is:draft`, quoted phrases). Logs nothing. Includes your own recipes by default; `-author:me` excludes them. |
+| `get_recipes` | Fetch recipes by id, one or a JSON array. |
+| `get_briefing` | The session briefing: principles, format, your recipe books and their current state. |
+| `log_feedback` | Close the loop on an earlier check, search or briefing: what it surfaced and what the agent did with it. |
+| `verify_draft` | Resolve a draft as verified, rejected or not chosen, with the person's answer quoted and cited as new evidence. |
+| `list_my_recipe_books` | The books this key can read and write, with recipe counts and pending drafts. |
+| `update_recipe_book_description` | Maintain a book's description, which is the standing context every briefing carries. |
+
+The stdio server in `apps/mcp-server/` carries the first six.
+
+The tool contract is read and append. Nothing deletes or rewrites a recipe: a check appends a trace, feedback appends a row, and resolving a draft changes that one draft's state while appending the evidence that settled it. A confused (or prompt-injected) agent can add to the record but can never destroy it — worth knowing if you evaluate MCP servers on security posture.
 
 ---
 

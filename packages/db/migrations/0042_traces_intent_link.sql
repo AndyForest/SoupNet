@@ -1,0 +1,2 @@
+ALTER TABLE "claimnet"."traces" ADD COLUMN "intent_id" text;--> statement-breakpoint
+CREATE INDEX "traces_intent_id_idx" ON "claimnet"."traces" USING btree ("intent_id") WHERE "claimnet"."traces"."intent_id" IS NOT NULL;

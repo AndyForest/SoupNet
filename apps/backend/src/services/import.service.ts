@@ -69,6 +69,7 @@ import {
 } from "@soupnet/db";
 import { getEmbeddingModelId } from "../lib/embeddings/provider";
 import { normalizeOnBehalfOf, resolveNameableSubject, onBehalfSubjectOf } from "../authz";
+import { ownedIntentIds } from "./intent.service";
 import { onBehalfRefusal } from "@soupnet/domain";
 import type {
   ParsedExport,
@@ -412,6 +413,14 @@ export async function importCorpus(
         const naming = normalizeOnBehalfOf(t.onBehalfOf);
         return naming.present ? subjectOf.get(naming.email) ?? null : null;
       };
+      // The intent link (slice 6a) is restored only onto the importer's own
+      // intents: a file cannot attach a recipe to anyone else's intent, and
+      // an unknown or ill-shaped id is dropped, so the row imports unlinked.
+      const ownIntents = await ownedIntentIds(
+        tx,
+        userId,
+        tracesToInsert.flatMap((t) => (t.intentId === null ? [] : [t.intentId])),
+      );
       for (const chunk of chunks(tracesToInsert)) {
         const rows = await tx
           .insert(tracesTable)
@@ -439,6 +448,7 @@ export async function importCorpus(
             uncertainty: t.uncertainty,
             draftState,
             subjectUserId,
+            intentId: t.intentId !== null && ownIntents.has(t.intentId) ? t.intentId : null,
             // Resolution attribution and time are never taken from the file
             // ([F83]): an imported resolved draft is resolved by the importer,
             // now (an import is a human control, so no key); an unverified one

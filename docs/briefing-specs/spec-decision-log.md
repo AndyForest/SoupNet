@@ -66,6 +66,70 @@ Fixture from `recipe-guide-content.test.ts`; the five-exemplar section is built 
 | Full briefing with that section | 29,059 | 30,953, +1,894 | none |
 | Remote `tools/list` / stdio / shared descriptions | 16,986 bytes / 13,196 / 6,051 characters | unchanged | 18,200 / 14,700 / 6,600 |
 
+## 2026-10-24 — Drafts-and-triage slice 6a: one grammar term in `search_recipes`, and the intent qualifier's not-recognized note
+
+Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-and-triage-slices-6-7-revision.md) §6a, §6f. Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 6a rubric (S6a-Z1).
+
+### Edits
+
+1. **`MCP_PARAM_DESCRIPTIONS.searchQuery`** (served on remote and stdio `search_recipes`): adds `intent:int_… (your intent's recipes)`. To stay inside the 420-character per-description limit (`mcp-tool-descriptions.test.ts`, not one of A0's raised caps) the text drops "and" before "citations", "for PR review" after "quote filenames" (the briefing's Search vs check paragraph keeps the PR-review example), and "ISO" before "judgment date" (the date error message spells out the format), and says "open drafts" for "unresolved drafts". The last clause is slice 8a's "-author:me leaves out your own." (recipe `885143c2`), kept as 8a wrote it: an earlier form of this entry also shortened the exclude-own clause, which 8a's flip of that default replaced. 396 → 406 characters, measured on the rebase onto `f6b85f4` (2026-10-25).
+2. **Not-recognized note (new):** a search whose `intent:` id names none of the caller's intents answers "No matches among the N recipes in scope: the intent: id was not recognized (unknown or not yours, deliberately indistinguishable), so it matched nothing." on the JSON notice, the markdown report, and (without the scope count) the HTML page; the review queue says the same after "No drafts listed:". It replaces the thin-corpus pointer for that case only, since the corpus is not thin. One constant, `INTENT_QUALIFIER_NOT_RECOGNIZED`, with `searchZeroResultLine` shared by the JSON and markdown builders.
+3. **Grammar error (new):** "intent: takes an intent id (int_ and 24 letters or digits) — got "…". A task story goes in the intent parameter, not the query.", plus the one-id and no-negation errors; the unknown-qualifier help lists `intent:`.
+4. **`/check` search help (HTML):** one line naming `intent:int_…`.
+
+### Scenarios intended to move
+
+- `drafts-and-triage.feature` **DT-OPT-01**, reworded to what ships (found by `is:draft intent:<id>`, listed together under the story, and not an oracle for another person's id) and moved out of the `@unreleased` option-set rule into a released rule of its own.
+
+### Scenarios watched, with rationale for holding
+
+- **Search scenarios that name the grammar** (`checking-behavior.feature` search-vs-check, `known-recipes-dedup.feature`): every existing qualifier keeps its meaning and its wording in the error help; the description's trims remove words that are restated where an agent meets them (the date error, the briefing's PR-review example).
+- **Zero-result thinness scenarios** (`feedback-loop.feature` null results): the line is byte-identical for every query without `intent:` (one builder now produces it for both JSON and markdown).
+- **Every briefing scenario:** no briefing text changed.
+
+### Measured
+
+| Measure | Before | After | Cap |
+|---|---|---|---|
+| Remote `tools/list` | 17,630 bytes | 17,642 | 18,200 |
+| Stdio `tools/list` | 14,133 bytes | 14,145 | 14,700 |
+| Shared descriptions | 6,376 characters | 6,386 | 6,600 |
+| `searchQuery` | 396 characters | 406 | 420 per description |
+
+Before is main at `f6b85f4` (slices 6c and 8a merged), after is this branch rebased onto it. The first measure, at `32ffa5c` before either merged, was 16,986 → 16,990 remote, 13,196 → 13,200 stdio, 6,051 → 6,053 shared, and 415 → 417 for `searchQuery`.
+
+## 2026-10-24 — Drafts-and-triage slice 6c (PR A1): `outcome` on verify_draft, its 7b description, and the per-outcome replies and refusals
+
+Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-and-triage-slices-6-7-revision.md) §6c and §7b (ratified 2026-10-24; rulings 46 and 55). Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 6c rubric.
+
+### Edits
+
+1. **`verify_draft` description, both MCP servers** (`MCP_TOOL_DESCRIPTIONS.verifyDraft`): "Publish your user's draft recipe once they confirm it, with new evidence quoting their answer and a citation. Evidence that adds nothing new is refused." becomes the revision doc's 7b text, "Publish, reject, or mark not chosen a draft about your user once you or they can stand behind the answer: new evidence quoting their words, or the context that settles it. Evidence that adds nothing new is refused." (152 → 214 characters). The old text read as a rule that the person must be asked (field item 2), which ruling 46 and recipe `200ed4fe` say it is not.
+2. **New `outcome` parameter, both MCP servers** (`MCP_PARAM_DESCRIPTIONS.draftOutcome`, a plain string, not a schema enum): "verified (default) | rejected | not_chosen. Reject when it does not hold or a verified recipe covers it (cite its id); not_chosen when a viable option lost." (156 characters). The tool's annotation title becomes "Resolve a draft".
+3. **`supporting_evidence` on `verify_draft`** (`verificationEvidence`): "Your interpretation, then > the person's answer verbatim, then -- where they said it." becomes "Your interpretation, then > a person's answer or a covering recipe's words, verbatim, then -- where they were said (or recipe <id>)." (85 → 132 characters). "A person", not "the person", throughout the new copy: in a shared book the call may be a colleague's (Andy, 2026-10-24; recipe `5d3ddfc7`).
+4. **Replies:** a rejection answers "Draft <id> is rejected: it stays private, leaves the review queue, and no longer appears in results; your evidence is attached (n entries)."; not chosen the same with "is marked not chosen". The verified reply is unchanged. The stdio server now words its reply with the same domain function as the remote tool (`describeResolution`).
+5. **Refusals:** the evidence refusal opens per outcome ("Verifying", "Rejecting", "Marking a draft not chosen … needs new evidence"). The rejection form says the quote may be "a person's answer, or the words of the verified recipe that covers the same call" cited as "-- recipe <id>", and every refusal for missing evidence now ends by saying how the text was read ("The text was read as 2 entries: entry 1 has a quote but no citation; entry 2 has a citation but no quote."). The verification form now says "a person's answer, or the words that settle it", where it said "the person's answer". An unknown outcome answers "outcome "<value>" is not one of verified | rejected | not_chosen (verified when omitted); nothing was stored.", followed by "Also: " and the evidence refusal when the evidence is also short. "is not a draft, so there is nothing to verify" becomes "… nothing to resolve", and the write-access refusal says "resolving it needs write access … Resolve it with a key that can write <book>, or hand the review link to the person it is about".
+6. **Label of a rejected draft on agent surfaces** (`draftLabel`): "[rejected draft: the person said this is wrong]" becomes "[rejected draft: its evidence says why]", since an agent may now reject on the settling context.
+
+### Scenarios intended to move
+
+- **Product spec** ([../product-specs/drafts-and-triage.feature](../product-specs/drafts-and-triage.feature)): DT-VER-10 to DT-VER-14 (`@slice-6c`), added in this PR, and the Rule title, which no longer says verification needs "the person's own words".
+- **Briefing spec:** the agent-behaviour scenario "a briefed agent closes a draft settled elsewhere with `verify_draft` outcome rejected, citing the covering recipe" belongs in `checking-behavior.feature`, which stream C owns. It lands with C1, whose briefing body is what teaches resolving drafts and which merges after this PR. Until then the tool description is the only copy that says it.
+
+### Scenarios watched, with rationale for holding
+
+- **`briefing-surfaces.feature` "it does not call verify_draft"** (headless): unchanged. A headless key is refused for every outcome before any lookup, with the slice 5 text.
+- **Every briefing scenario:** no briefing text changed. Only the `verify_draft` tool and its parameters changed, and the briefing fixtures are byte-identical.
+
+### Measured
+
+| Measure | Before | After | Cap (A0) |
+|---|---|---|---|
+| Remote `tools/list` | 16,986 bytes | 17,297 | 18,200 |
+| Stdio `tools/list` | 13,196 bytes | 13,507 | 14,700 |
+| Shared descriptions | 6,051 characters | 6,316 | 6,600 |
+| `verify_draft` as served (remote) | 774 bytes | 1,085 | |
+
 ## 2026-10-24 — Drafts-and-triage slices 6 to 9, scaffold (PR A0): four size caps raised ahead of parallel streams; no copy changed
 
 Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-and-triage-slices-6-7-revision.md) (ratified 2026-10-24) and [../planning/drafts-and-triage-slices-6-9-implementation-plan.md](../planning/drafts-and-triage-slices-6-9-implementation-plan.md) §PR A0. Build log: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slices 6 to 9.
@@ -92,6 +156,37 @@ All: nothing an agent reads changed; both fixtures and the served rosters are by
 | Stdio `tools/list` | 13,196 bytes | 13,196 | 13,670 | 14,700 |
 | Shared descriptions | 6,051 characters | 6,051 | 6,080 | 6,600 |
 | Thin briefing fixture | 18,183 characters; headless 18,536 | unchanged | 18,200; headless 18,600 | 21,000; headless 21,500 |
+
+## 2026-10-24 — Drafts-and-triage slice 8a (stream D): tool shapes the field logged
+
+Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-and-triage-slices-6-7-revision.md) slice 8 items 4 to 7, and [../planning/drafts-and-triage-slices-6-9-implementation-plan.md](../planning/drafts-and-triage-slices-6-9-implementation-plan.md) stream D. Rubric and build notes: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 8a.
+
+### Edits
+
+1. **`MCP_PARAM_DESCRIPTIONS.recipeIds`** names the array form: "Recipe ids, up to 20: an array, or one comma- or whitespace-separated string; …". `get_recipes` and `get_briefing` serve `recipe_ids` as a string or an array of strings on both servers.
+2. **`MCP_TOOL_DESCRIPTIONS.logFeedback`** names every target: "Target: the check's recipe id (or its short id), a search or briefing id, or, for an outcome row, the intent alone." To stay under the 420-character cap it drops "(full UUID or 8+ char short id)", a detail `trace_id`'s own description still carries, and "worth a row too" becomes "earn a row".
+3. **`log_feedback` parameter descriptions**, identical on both servers: `story` begins "Required on every row."; `trace_id` states the one-target rule; `search_id` drops its "Give exactly one of…" sentence, which `trace_id` now carries; `intent_id` says an outcome row may name it alone; and a new `briefing_id` parameter. The stdio tool gains `search_id`, which it never had, and its `trace_id` is no longer required.
+4. **The briefing id line**: "Briefing id: <uuid> — log_feedback accepts it as briefing_id, for feedback about this briefing." It's the last line of `get_briefing` on both servers, composed outside `BRIEFING.build`. `GET /briefing` returns the id as `data.briefingId`.
+5. **Search includes the caller's own recipes (the operator's ruling of 2026-10-24, recipe `885143c2`, superseding `303e17cf`).** This replaces item 7's planned "author:me" recovery line, which was built, then removed in the same PR because the default it recovered from is gone.
+   - `MCP_TOOL_DESCRIPTIONS.searchRecipes`: "For judgment made by OTHER people (a teammate's PR, a shared book); results exclude your own recipes by default." becomes "…, your own recipes included. For judgment already logged: yours, or a teammate's in a shared book (a PR area, a book you just joined)."
+   - `MCP_PARAM_DESCRIPTIONS.searchQuery`: "author: or is:draft lifts the exclude-own default." becomes "-author:me leaves out your own." Stream B owns the rest of that string and keeps its `intent:` term on rebase.
+   - Stream C's C1 rewrites the briefing's "Search vs check" paragraph to match.
+6. **Validation and refusal text**: a feedback row's rejection lists every failing field ("N fields need fixing: …"; one field reads as before). New markers: `briefing_id not found or not readable with this key` and `intent_id not found or not readable with this key`. The unknown-parameter refusal reads "Error: <tool> does not take <name> (did you mean <name>?). Nothing was run; send it again with the names it takes: …" (mode `refuse`, ruled by the operator 2026-10-24). The warning form is built but not served.
+
+Bytes, measured with the slice 1 method: remote `tools/list` 16,986 → 17,319 (cap 18,200); stdio 13,196 → 13,822 (cap 14,700; 26 bytes over the 600 share the 8a rubric set itself, which is the stdio `search_id` this PR adds); shared descriptions 6,051 → 6,111 characters (cap 6,600). The search wording in item 5 accounts for 1 byte of each. Thin and full briefing fixtures unchanged.
+
+### Scenarios intended to move
+
+- `feedback-loop.feature`: three new scenarios, "A session's outcome with no single recipe joins its intent alone", "Feedback about the briefing itself carries the briefing id", and "A rejected feedback row is fixed in one retry" (added in this PR). Stream C's C1 declares the first one moved by its briefing clause, too.
+- `intent-registration.feature` "Feedback closes the declared loop" gains the intent-only outcome row (edited in this PR).
+
+### Scenarios watched, with rationale for holding
+
+- **`feedback-loop.feature` scenarios that already existed**: the field vocabulary, the carriers (ride-along, `log_feedback`, `POST /feedback`, `GET /feedback`) and the recipe-id join are unchanged. The tool description's shorter join sentence still names the recipe id first.
+- **`known-recipes-dedup.feature`, `frontmatter-recipe-lookup.feature`**: `get_recipes` resolves the same ids the same way; only the accepted input forms widened.
+- **`checking-behavior.feature` "Probing the system does not log junk recipes"**: search stays the read-only lookup. Including the caller's own recipes only widens what it can find.
+- **`docs/product-specs/drafts-and-triage.feature`** (product spec, not briefing): two comments that cited "search excludes the caller's own recipes by default" now cite the reversal. A person's own drafts appear in a default search under their draft label, as they already do in check results, and slice 8b's "own open drafts set apart" serves both.
+- **Every other scenario**: no briefing body text changed (stream C owns it). The unknown-parameter refusal fires only on names a tool does not declare, so every documented call is byte-identical.
 
 ## 2026-09-28 — Drafts-and-triage slice 5: the headless briefing section, the headless deposit notice, and the verify refusal
 

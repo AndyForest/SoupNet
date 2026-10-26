@@ -31,6 +31,9 @@ export interface QueueItem {
   /** Slice 4: on a draft your agent deposited about someone else, their email. */
   about?: string | null;
   firstInterpretation: string | null;
+  /** Slice 6a: the declared intent the draft was deposited under, when it is
+   *  one of yours; the server never sends anyone else's. */
+  intent?: { id: string; story: string } | null;
   state: QueueItemState;
   canResolve: boolean;
   blockedReason?: string;
@@ -46,6 +49,38 @@ const NAME_EXCERPT = 80;
 export function excerpt(text: string, max = NAME_EXCERPT): string {
   const flat = text.replace(/\s+/g, " ").trim();
   return flat.length > max ? `${flat.slice(0, max - 1).trimEnd()}…` : flat;
+}
+
+/** How much of an intent's story a group heading shows. */
+const INTENT_HEADING_EXCERPT = 200;
+
+/**
+ * The list as runs of neighbouring drafts that share one of your intents
+ * (slice 6a). The server already puts a group's drafts together; this only
+ * finds where each group starts and ends, in the order given, so a link's
+ * own order (S3-L1) is kept and a group split across it shows twice.
+ */
+export function intentRuns<T extends { intent?: { id: string; story: string } | null }>(
+  items: readonly T[],
+): Array<{ intent: { id: string; story: string } | null; items: T[] }> {
+  const runs: Array<{ intent: { id: string; story: string } | null; items: T[] }> = [];
+  for (const item of items) {
+    const intent = item.intent ?? null;
+    const last = runs[runs.length - 1];
+    if (last && (last.intent?.id ?? null) === (intent?.id ?? null)) last.items.push(item);
+    else runs.push({ intent, items: [item] });
+  }
+  return runs;
+}
+
+/** A group heading: the intent's story, shortened past 200 characters. */
+export function intentHeadingText(story: string): string {
+  return excerpt(story, INTENT_HEADING_EXCERPT);
+}
+
+/** The queue search that lists only one intent's drafts. */
+export function intentFilterQuery(intentId: string): string {
+  return `intent:${intentId}`;
 }
 
 /**

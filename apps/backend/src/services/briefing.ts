@@ -30,7 +30,7 @@ import { fetchBriefingExemplars } from "./briefing-exemplars";
 import { fetchBookStats } from "./book-stats.service";
 import { listMembersOfBooks, keyForcesDrafts } from "../authz";
 import type { Principal } from "../authz";
-import { writeAudit } from "./audit-log.service";
+import { auditLog } from "@soupnet/db";
 import {
   RECIPE_LOOKUP_MAX_IDS,
   lookupRecipes,
@@ -89,6 +89,11 @@ export interface BriefingComposeSuccess {
   text: string;
   groups: BriefingGroup[];
   exemplarCount: number;
+  /** The briefing.issued audit row's id — the handle a feedback row carries
+   *  as briefing_id (drafts-and-triage slice 8a, S8a-O4). Absent when the
+   *  audit write failed (the briefing never fails for it) and on
+   *  composeCorpusContext, which writes no audit row. */
+  briefingId?: string;
 }
 
 export type BriefingComposeError = { ok: false; code: "no_groups" };
@@ -142,23 +147,30 @@ export async function composeBriefing(input: BriefingComposeInput): Promise<Brie
 
   // UVP Layer 1: briefing.issued makes the survivorship denominator visible —
   // get_briefing calls with zero subsequent checks are the null cohort no
-  // local log could see. Awaited like the recipe.checked audit write —
-  // writeAudit swallows failures so it can never fail the briefing, and an
+  // local log could see. Awaited like the recipe.checked audit write, and an
   // awaited insert is deterministic for consumers reading the funnel. F29's
   // limiter filters on action = 'recipe.checked', so these rows add no load
-  // to its indexed COUNT.
-  await writeAudit(input.db, {
-    actorUserId: scope.userId,
-    action: "briefing.issued",
-    targetType: "api_key",
-    targetId: scope.keyId,
-    apiKeyId: scope.keyId,
-    metadata: {
-      surface: input.surface ?? null,
-      exemplarCount,
-      ...(intent?.intentId ? { intentId: intent.intentId } : {}),
-    },
-  });
+  // to its indexed COUNT. The row's id doubles as the briefing's feedback
+  // handle (briefing_id, slice 8a), as check.searched's does for a search;
+  // a failed write never fails the briefing, it only leaves no id.
+  let briefingId: string | undefined;
+  try {
+    const inserted = await input.db.insert(auditLog).values({
+      actorUserId: scope.userId,
+      action: "briefing.issued",
+      targetType: "api_key",
+      targetId: scope.keyId,
+      apiKeyId: scope.keyId,
+      metadata: {
+        surface: input.surface ?? null,
+        exemplarCount,
+        ...(intent?.intentId ? { intentId: intent.intentId } : {}),
+      },
+    }).returning({ id: auditLog.id });
+    briefingId = inserted[0]?.id;
+  } catch (err) {
+    console.error("[audit-log] Failed to write audit event:", { action: "briefing.issued", targetId: scope.keyId, err });
+  }
 
   // No raw credential ever reaches the template: BRIEFING.build takes no key
   // input at all. Non-OAuth briefings render the literal placeholder
@@ -207,7 +219,7 @@ ${renderRecipeEntries(entries)}${truncated}`;
     ...(requestedRecipesSection ? { requestedRecipesSection } : {}),
   });
 
-  return { ok: true, text, groups: scope.groups, exemplarCount };
+  return { ok: true, text, groups: scope.groups, exemplarCount, ...(briefingId ? { briefingId } : {}) };
 }
 
 /** Compose just the corpus-context section (identity + recipe books +

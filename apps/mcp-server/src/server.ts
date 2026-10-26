@@ -18,11 +18,14 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
+  DRAFT_OUTCOMES,
   EXT_TO_MIME,
   MCP_PARAM_DESCRIPTIONS,
   MCP_TOOL_DESCRIPTIONS,
   VERBOSITY_LEVELS,
   buildCheckRecipeToolDescription,
+  describeResolution,
+  renderBriefingIdLine,
   renderCheckResponseMarkdown,
 } from "@soupnet/domain";
 import type { CheckResponseJson } from "@soupnet/domain";
@@ -89,6 +92,17 @@ function formatLookupEntries(entries: LookupEntry[]): string {
     }
     return text;
   }).join("\n\n");
+}
+
+// recipe_ids on get_recipes and get_briefing (drafts-and-triage slice 8a,
+// S8a-I1): an array of ids or the comma/whitespace-separated string, same as
+// the remote tools. The backend's parseRecipeIds reads either once joined.
+function recipeIdsParam() {
+  return z.union([z.string(), z.array(z.string())]);
+}
+
+function joinRecipeIds(ids: string | string[]): string {
+  return Array.isArray(ids) ? ids.join(",") : ids;
 }
 
 /** A triage-rating param (slice 1) that never fails the check on a wrong
@@ -343,8 +357,9 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
 
   // ── search_recipes tool ────────────────────────────────────────────────────────
   // Read-only structured search (2026-08-19) — forwards to the backend /check
-  // filter path. The X-SoupNet-Surface header carries the mcp-stdio identity,
-  // which the backend maps to the MCP exclude-own default (recipe 303e17cf).
+  // filter path. The X-SoupNet-Surface header carries the mcp-stdio identity
+  // for the audit row's surface; own recipes are included on every surface
+  // (recipe 885143c2, superseding the exclude-own default of 303e17cf).
 
   server.tool(
     "search_recipes",
@@ -430,15 +445,21 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
     "log_feedback",
     MCP_TOOL_DESCRIPTIONS.logFeedback,
     {
-      trace_id: z.string().describe(
-        "Recipe id of the prior check — the full UUID from the check response, or an unambiguous short-id prefix (8+ chars, e.g. '18912fbd'). Ambiguous prefixes are rejected naming the candidates."
+      trace_id: z.string().optional().describe(
+        "Recipe id of the prior check — the full UUID from the check response, or an unambiguous short-id prefix (8+ chars, e.g. '18912fbd'). Ambiguous prefixes are rejected naming the candidates. One target per row: trace_id, search_id or briefing_id; an outcome row may give intent_id alone."
+      ),
+      search_id: z.string().optional().describe(
+        "searchId of a prior search_recipes call (full UUID from its response) — feedback about what a search surfaced and what you did with it."
+      ),
+      briefing_id: z.string().optional().describe(
+        "briefingId a get_briefing response returned (full UUID) — feedback about the briefing itself."
       ),
       kind: z.string().describe("check-feedback | operational | outcome"),
       impact: z.string().describe("none | new | subtle | big | operational"),
       disposition: z.string().describe("proceeded | corrected | asked-human | charted-new | deferred"),
       story_fulfilled: z.string().describe("yes | partial | no | unknown"),
       story: z.string().describe(
-        "The user story behind the check — why it was made (e.g. 'As an AI sub-agent working on X, I wanted Y so that Z')."
+        "Required on every row. The user story behind the check — why it was made (e.g. 'As an AI sub-agent working on X, I wanted Y so that Z')."
       ),
       note: z.string().optional().describe("What you did with the result — how it changed (or confirmed) your approach."),
       agent_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.agentId),
@@ -453,7 +474,7 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
         "The session token from your check responses — joins your feedback to that session's check lineage. Capture only."
       ),
       intent_id: z.string().optional().describe(
-        "The int_… id from a prior response — joins this row to that declared intent. Join-only: this surface never registers; send intent TEXT on a check/search/briefing instead."
+        "The int_… id from a prior response — joins this row to that declared intent; on an outcome row it may be the only target. Never registers: send intent TEXT on a check/search/briefing instead."
       ),
     },
     {
@@ -478,11 +499,20 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
         const json = (await res.json()) as {
           ok: boolean;
           error?: string;
-          data?: { recorded: number; results: Array<{ ok: boolean; traceId: string; feedbackId?: string; error?: string }> };
+          data?: {
+            recorded: number;
+            results: Array<{ ok: boolean; traceId: string; searchId?: string; briefingId?: string; intentId?: string; feedbackId?: string; error?: string }>;
+          };
         };
         const r = json.data?.results?.[0];
         if (r?.ok) {
-          return { content: [{ type: "text" as const, text: `Feedback recorded for check ${r.traceId} (feedback id ${r.feedbackId}).` }] };
+          // Name the row's actual target: search, briefing and intent-only
+          // rows carry an empty traceId (drafts-and-triage slice 8a).
+          const target = r.searchId ? `search ${r.searchId}`
+            : r.briefingId ? `briefing ${r.briefingId}`
+            : r.intentId ? `intent ${r.intentId}`
+            : `check ${r.traceId}`;
+          return { content: [{ type: "text" as const, text: `Feedback recorded for ${target} (feedback id ${r.feedbackId}).` }] };
         }
         return { content: [{ type: "text" as const, text: `Feedback rejected: ${r?.error ?? json.error ?? "unknown error"}` }] };
       } catch (err) {
@@ -505,7 +535,7 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
     {
       purpose: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.briefingPurpose),
       intent: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.intent),
-      recipe_ids: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.briefingRecipeIds),
+      recipe_ids: recipeIdsParam().optional().describe(MCP_PARAM_DESCRIPTIONS.briefingRecipeIds),
       verbosity: z.enum(VERBOSITY_LEVELS).optional().describe(MCP_PARAM_DESCRIPTIONS.briefingVerbosity),
     },
     {
@@ -525,7 +555,7 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
         const params = new URLSearchParams();
         if (purpose) params.set("purpose", purpose);
         if (intent) params.set("intent", intent);
-        if (recipe_ids) params.set("recipe_ids", recipe_ids);
+        if (recipe_ids) params.set("recipe_ids", joinRecipeIds(recipe_ids));
         if (verbosity) params.set("verbosity", verbosity);
         const qs = params.toString();
         const res = await fetch(`${backendUrl}/briefing${qs ? `?${qs}` : ""}`, {
@@ -533,11 +563,16 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
           // /check — briefing.issued audit rows record surface=mcp-stdio.
           headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "X-SoupNet-Surface": "mcp-stdio" },
         });
-        const json = (await res.json()) as { ok: boolean; error?: string; data?: { text: string } };
+        const json = (await res.json()) as { ok: boolean; error?: string; data?: { text: string; briefingId?: string } };
         if (!json.ok || !json.data) {
           return { content: [{ type: "text" as const, text: `Error: ${json.error ?? "briefing fetch failed"}` }] };
         }
-        return { content: [{ type: "text" as const, text: json.data.text }] };
+        // Same last line as the remote tool: the briefing's feedback handle
+        // (drafts-and-triage slice 8a, S8a-O4).
+        const text = json.data.briefingId
+          ? `${json.data.text}\n\n${renderBriefingIdLine(json.data.briefingId)}`
+          : json.data.text;
+        return { content: [{ type: "text" as const, text }] };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         return { content: [{ type: "text" as const, text: `Error fetching briefing: ${message}` }] };
@@ -551,24 +586,26 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
   // backend enforces the key's read scope and returns a uniform
   // not_found_or_unreadable marker for ids that don't resolve.
 
-  // ── verify_draft tool (drafts-and-triage slice 2) ────────────────────────
+  // ── verify_draft tool (drafts-and-triage slice 2; outcomes slice 6c) ──────
   // Proxies to POST /recipes/:id/verify — same service, same rules, same
-  // uniform not-found answer as the remote tool.
+  // uniform not-found answer as the remote tool. The reply is worded by the
+  // same domain function the remote tool uses, so both say the same words.
   server.tool(
     "verify_draft",
     MCP_TOOL_DESCRIPTIONS.verifyDraft,
     {
       recipe_id: z.string().describe(MCP_PARAM_DESCRIPTIONS.draftRecipeId),
       supporting_evidence: z.string().describe(MCP_PARAM_DESCRIPTIONS.verificationEvidence),
+      outcome: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.draftOutcome),
     },
     {
-      title: "Verify a draft",
+      title: "Resolve a draft",
       readOnlyHint: false,
       destructiveHint: false,
       idempotentHint: false,
       openWorldHint: false,
     },
-    async ({ recipe_id, supporting_evidence }) => {
+    async ({ recipe_id, supporting_evidence, outcome }) => {
       if (!apiKey) {
         return {
           content: [{ type: "text" as const, text: "Error: SOUPNET_API_KEY not configured. Get a key from your Soup.net dashboard." }],
@@ -578,18 +615,15 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
         const res = await fetch(`${backendUrl}/recipes/${encodeURIComponent(recipe_id)}/verify`, {
           method: "POST",
           headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify({ supporting_evidence }),
+          body: JSON.stringify(outcome === undefined ? { supporting_evidence } : { supporting_evidence, outcome }),
         });
-        const json = (await res.json()) as { ok: boolean; error?: string; data?: { recipeId: string; evidenceAdded: number } };
+        const json = (await res.json()) as { ok: boolean; error?: string; data?: { recipeId: string; draftState?: string; evidenceAdded: number } };
         if (!json.ok || !json.data) {
           return { content: [{ type: "text" as const, text: json.error ?? "Error: verification failed" }] };
         }
-        const n = json.data.evidenceAdded;
+        const state = DRAFT_OUTCOMES.find((o) => o === json.data?.draftState) ?? "verified";
         return {
-          content: [{
-            type: "text" as const,
-            text: `Draft ${json.data.recipeId} is verified: it is now an ordinary recipe that collaborators can find, with your new evidence attached (${n} entr${n === 1 ? "y" : "ies"}).`,
-          }],
+          content: [{ type: "text" as const, text: describeResolution(json.data.recipeId, state, json.data.evidenceAdded) }],
         };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -602,7 +636,7 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
     "get_recipes",
     MCP_TOOL_DESCRIPTIONS.getRecipes,
     {
-      recipe_ids: z.string().describe(MCP_PARAM_DESCRIPTIONS.recipeIds),
+      recipe_ids: recipeIdsParam().describe(MCP_PARAM_DESCRIPTIONS.recipeIds),
     },
     {
       title: "Get recipes by id",
@@ -619,7 +653,7 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
 
       try {
         const params = new URLSearchParams();
-        params.set("ids", recipe_ids);
+        params.set("ids", joinRecipeIds(recipe_ids));
         const res = await fetch(`${backendUrl}/recipes?${params.toString()}`, {
           headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
         });

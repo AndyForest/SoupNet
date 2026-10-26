@@ -45,6 +45,7 @@ import {
   timestamp,
   index,
   unique,
+  uniqueIndex,
   check,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
@@ -57,8 +58,9 @@ export const checkFeedback = claimnetSchema.table(
     id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
 
     /** The check (trace) this feedback is about. NULL when the row is about
-     *  a read-only search instead — see searchAuditId; exactly one of the two
-     *  targets is present (check_feedback_one_target). */
+     *  a read-only search or a briefing instead (searchAuditId,
+     *  briefingAuditId), or an outcome row about an intent alone; see
+     *  check_feedback_one_target. */
     traceId: uuid("trace_id")
       .references(() => traces.id, { onDelete: "cascade" }),
 
@@ -68,6 +70,12 @@ export const checkFeedback = claimnetSchema.table(
      *  no FKs (append-only forensics; see the backlog FK section). NULL for
      *  check feedback. */
     searchAuditId: uuid("search_audit_id"),
+
+    /** The briefing this feedback is about (drafts-and-triage slice 8a): the
+     *  briefing.issued audit_log row's id, returned to callers as
+     *  `briefingId` by get_briefing and GET /briefing. Soft pointer, same
+     *  posture as search_audit_id. NULL unless the row is about a briefing. */
+    briefingAuditId: uuid("briefing_audit_id"),
 
     /** The key that submitted the feedback (not necessarily the key that
      *  made the original check). No FK — matches trace_evidence.api_key_id.
@@ -149,12 +157,19 @@ export const checkFeedback = claimnetSchema.table(
       "check_feedback_one_actor",
       sql`(${t.apiKeyId} IS NULL) <> (${t.actorUserId} IS NULL)`,
     ),
-    // Exactly one target: a check's trace or a read-only search's audit row.
-    // Structural, so no write path can produce a target-less (or
-    // double-targeted) row.
+    // At most one target: a check's trace, a read-only search's audit row,
+    // or a briefing's audit row. A row with none is allowed only as an
+    // outcome row naming its declared intent (drafts-and-triage slice 8a: a
+    // session's wrap-up about a whole task, which no single recipe stands
+    // for). Structural, so no write path can produce a double-targeted row or
+    // an unattached one.
     check(
       "check_feedback_one_target",
-      sql`(${t.traceId} IS NULL) <> (${t.searchAuditId} IS NULL)`,
+      sql`(CASE WHEN ${t.traceId} IS NULL THEN 0 ELSE 1 END
+         + CASE WHEN ${t.searchAuditId} IS NULL THEN 0 ELSE 1 END
+         + CASE WHEN ${t.briefingAuditId} IS NULL THEN 0 ELSE 1 END) = 1
+        OR (${t.traceId} IS NULL AND ${t.searchAuditId} IS NULL AND ${t.briefingAuditId} IS NULL
+            AND ${t.kind} = 'outcome' AND ${t.intentId} IS NOT NULL)`,
     ),
     // Identical agent resubmission (retry, prefetching link-preview bot,
     // re-clicked URL) lands on the conflict and returns the original row;
@@ -164,6 +179,13 @@ export const checkFeedback = claimnetSchema.table(
     // Same idempotency for search-target rows (trace_id NULL never collides
     // in the index above — Postgres treats NULLs as distinct).
     unique("check_feedback_search_dedup_unique").on(t.apiKeyId, t.searchAuditId, t.contentHash),
+    // And for briefing-target rows (slice 8a).
+    unique("check_feedback_briefing_dedup_unique").on(t.apiKeyId, t.briefingAuditId, t.contentHash),
+    // And for intent-only outcome rows: partial, so a recipe or search row
+    // carrying the same intent never collides here.
+    uniqueIndex("check_feedback_intent_dedup_unique")
+      .on(t.apiKeyId, t.intentId, t.contentHash)
+      .where(sql`trace_id IS NULL AND search_audit_id IS NULL AND briefing_audit_id IS NULL`),
   ],
 );
 

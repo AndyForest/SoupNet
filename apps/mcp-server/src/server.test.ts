@@ -16,7 +16,8 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { MCP_PARAM_DESCRIPTIONS } from "@soupnet/domain";
+import { MCP_PARAM_DESCRIPTIONS, describeResolution, guardUnknownParams, toolParamsFromRegistry } from "@soupnet/domain";
+import type { McpTransportLike } from "@soupnet/domain";
 import { createStdioServer } from "./server.js";
 import { servedToolsList } from "./served-tools-list.js";
 
@@ -240,6 +241,30 @@ describe("stdio drafts (slice 2)", () => {
     expect(text).toContain("is verified");
   });
 
+  it("S6c-B4: verify_draft forwards outcome and words the reply with the shared domain function", async () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(input), init });
+      return new Response(JSON.stringify({ ok: true, data: { recipeId: id, draftState: "rejected", evidenceAdded: 2 } }));
+    }));
+    const result = await callTool("verify_draft", { recipe_id: "11111111", supporting_evidence: evidence, outcome: "rejected" });
+    expect(JSON.parse(String(calls[0]!.init?.body))).toEqual({ supporting_evidence: evidence, outcome: "rejected" });
+    expect((result.content as Array<{ text: string }>)[0]!.text).toBe(describeResolution(id, "rejected", 2));
+  });
+
+  it("S6c-B6: an unknown outcome reaches the backend (no schema enum), whose refusal is relayed verbatim", async () => {
+    const refusal = 'outcome "reject" is not one of verified | rejected | not_chosen (verified when omitted); nothing was stored.';
+    const calls: Array<{ init: RequestInit | undefined }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      calls.push({ init });
+      return new Response(JSON.stringify({ ok: false, error: refusal, status: "refused" }), { status: 400 });
+    }));
+    const result = await callTool("verify_draft", { recipe_id: "x", supporting_evidence: evidence, outcome: "reject" });
+    expect(JSON.parse(String(calls[0]!.init?.body)).outcome).toBe("reject");
+    expect((result.content as Array<{ text: string }>)[0]!.text).toBe(refusal);
+  });
+
   it("verify_draft relays the backend's refusal verbatim", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ok: false, error: "x: not_found_or_unreadable — nope" }), { status: 404 })));
     const result = await callTool("verify_draft", { recipe_id: "x", supporting_evidence: evidence });
@@ -257,7 +282,7 @@ describe("stdio drafts (slice 2)", () => {
   });
 
   it("S3-F1: verify_draft relays the honest write-access refusal (403) verbatim, so the agent learns the way forward", async () => {
-    const refusal = "abc is a draft in the recipe book \"Shared\" (shared), and verifying it needs write access to this recipe book, which this API key does not have; nothing was stored.";
+    const refusal = "abc is a draft in the recipe book \"Shared\" (shared), and resolving it needs write access to this recipe book, which this API key does not have; nothing was stored.";
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ok: false, error: refusal, status: "needs_write_access" }), { status: 403 })));
     const result = await callTool("verify_draft", { recipe_id: "abc", supporting_evidence: evidence });
     expect((result.content as Array<{ text: string }>)[0]!.text).toBe(refusal);
@@ -274,5 +299,86 @@ describe("stdio on behalf of (slice 4)", () => {
     expect(new URL(calls[0]!.url).searchParams.get("on_behalf_of")).toBe(" Pat@Example.test ");
     await callTool("check_recipe", { recipe, supporting_evidence: evidence });
     expect(new URL(calls[1]!.url).searchParams.has("on_behalf_of")).toBe(false);
+  });
+});
+
+// Drafts-and-triage slice 8a: the stdio twins of the tool-shape fixes.
+describe("slice 8a tool shapes (stdio)", () => {
+  const ID_A = "11111111-1111-4111-8111-111111111111";
+  const ID_B = "22222222-2222-4222-8222-222222222222";
+
+  function recordFetch(body: unknown) {
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      urls.push(String(input));
+      return new Response(JSON.stringify(body));
+    }));
+    return urls;
+  }
+
+  it("S8a-I1: get_recipes forwards an array as the same ids string the string form sends", async () => {
+    const urls = recordFetch({ ok: true, data: { recipes: [] } });
+    await callTool("get_recipes", { recipe_ids: [ID_A, ID_B] });
+    await callTool("get_recipes", { recipe_ids: `${ID_A},${ID_B}` });
+    expect(new URL(urls[0]!).searchParams.get("ids")).toBe(`${ID_A},${ID_B}`);
+    expect(urls[0]).toBe(urls[1]);
+  });
+
+  it("S8a-I3: get_briefing forwards an array of recipe_ids", async () => {
+    const urls = recordFetch({ ok: true, data: { text: "briefing" } });
+    await callTool("get_briefing", { recipe_ids: [ID_A, ID_B] });
+    expect(new URL(urls[0]!).searchParams.get("recipe_ids")).toBe(`${ID_A},${ID_B}`);
+  });
+
+  it("S8a-O4: get_briefing ends with the briefing id the backend returned, and adds nothing without one", async () => {
+    recordFetch({ ok: true, data: { text: "briefing body", briefingId: ID_A } });
+    const withId = await callTool("get_briefing", {});
+    expect((withId.content as Array<{ text: string }>)[0]!.text).toBe(
+      `briefing body\n\nBriefing id: ${ID_A} — log_feedback accepts it as briefing_id, for feedback about this briefing.`,
+    );
+    recordFetch({ ok: true, data: { text: "briefing body" } });
+    const without = await callTool("get_briefing", {});
+    expect((without.content as Array<{ text: string }>)[0]!.text).toBe("briefing body");
+  });
+
+  it("S8a-V3: log_feedback takes any one of trace_id, search_id, briefing_id (none required) and says story is required", async () => {
+    const { tools } = await servedToolsList(newServer());
+    const logFeedback = tools.find((t) => t.name === "log_feedback")!;
+    const props = logFeedback.inputSchema.properties ?? {};
+    for (const name of ["trace_id", "search_id", "briefing_id", "intent_id"]) expect(props[name]).toBeDefined();
+    const required = (logFeedback.inputSchema as { required?: string[] }).required ?? [];
+    expect(required).not.toContain("trace_id");
+    expect(required).toContain("story");
+    expect(String(props["story"]?.["description"])).toMatch(/^Required on every row\./);
+  });
+
+  it("S8a-O1: log_feedback names an intent-only row's target in its confirmation", async () => {
+    recordFetch({ ok: true, data: { recorded: 1, results: [{ index: 0, ok: true, traceId: "", intentId: "int_AbCdEfGhIjKlMnOpQrStUvWx", feedbackId: "f1" }] } });
+    const r = await callTool("log_feedback", {
+      kind: "outcome", impact: "none", disposition: "proceeded", story_fulfilled: "yes",
+      story: "As a tester, I wanted the run's outcome on its intent.", intent_id: "int_AbCdEfGhIjKlMnOpQrStUvWx",
+    });
+    expect((r.content as Array<{ text: string }>)[0]!.text).toBe("Feedback recorded for intent int_AbCdEfGhIjKlMnOpQrStUvWx (feedback id f1).");
+  });
+
+  it("S8a-U1/U2: the guard the stdio entry installs refuses an undeclared name on this server's tools", async () => {
+    const urls = recordFetch({ ok: true, data: { recipes: [] } });
+    const server = newServer();
+    const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "stdio-guard-test", version: "0" });
+    await server.connect(serverSide);
+    guardUnknownParams(serverSide as unknown as McpTransportLike, toolParamsFromRegistry(server), "refuse");
+    await client.connect(clientSide);
+    try {
+      const r = await client.callTool({ name: "get_recipes", arguments: { recipe_id: ID_A } });
+      expect(r.isError).toBe(true);
+      expect((r.content as Array<{ text: string }>)[0]!.text).toBe(
+        "Error: get_recipes does not take recipe_id (did you mean recipe_ids?). Nothing was run; send it again with the names it takes: recipe_ids.",
+      );
+      expect(urls).toEqual([]);
+    } finally {
+      await client.close();
+      await server.close();
+    }
   });
 });

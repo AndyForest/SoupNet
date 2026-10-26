@@ -10,6 +10,9 @@ import {
   actionOutcome,
   depositedText,
   excerpt,
+  intentFilterQuery,
+  intentHeadingText,
+  intentRuns,
   linkNotShownText,
   nextFocusId,
   partyText,
@@ -27,12 +30,14 @@ import styles from "./DraftQueuePage.module.css";
  * The review queue (drafts-and-triage slice 3): drafts your agents parked
  * about your taste and judgment because they could not ask you, sorted for
  * triage, with confirm, reject, and not chosen. `?ids=a,b` (the link an
- * agent hands you) shows exactly those recipes instead. Everything listed
+ * agent hands you) shows exactly those recipes instead. Drafts deposited
+ * under one of your declared intents sit together under the intent's story
+ * (slice 6a). Everything listed
  * comes from GET /traces/drafts, which decides what you may see; this page
  * only renders and acts.
  */
 
-interface QueueData { mode: "queue"; items: QueueItem[]; total: number; page: number; perPage: number; totalPages: number; order: string }
+interface QueueData { mode: "queue"; items: QueueItem[]; total: number; page: number; perPage: number; totalPages: number; order: string; notice?: string }
 interface LinkData { mode: "ids"; items: QueueItem[]; notShown: number; truncated: boolean }
 
 class QueryError extends Error {}
@@ -185,8 +190,8 @@ export function DraftQueuePage() {
       {!linkMode && (
         <p id="draft-search-hint" className={styles["hint"]}>
           Same syntax as agent search: words search by meaning, <code>"quoted terms"</code> match exactly,
-          and <code>impact:</code> / <code>uncertainty:</code> (low, medium, high) or <code>after:</code> narrow the list.
-          Only your drafts are listed.
+          and <code>impact:</code> / <code>uncertainty:</code> (low, medium, high), <code>after:</code>, or <code>intent:</code> (an
+          intent id) narrow the list. Only your drafts are listed.
         </p>
       )}
       <div role="alert" className={styles["error"]}>{queryError ?? actionError ?? ""}</div>
@@ -209,71 +214,40 @@ export function DraftQueuePage() {
             </p>
           )}
 
+          {!linkMode && queueQuery.data?.notice && (
+            <p className={styles["hint"]} data-testid="queue-notice">{queueQuery.data.notice}</p>
+          )}
           {items.length === 0 ? (
             <p className={styles["empty"]} data-testid="queue-empty">
               {linkMode ? "None of the recipes in this link can be shown." : q ? "No drafts match this search." : "No drafts await your review."}
             </p>
           ) : (
             <ol className={styles["list"]} aria-label={heading}>
-              {items.map((item) => (
-                <li key={item.id}>
-                  <article
-                    className={styles["item"]}
-                    tabIndex={-1}
-                    aria-labelledby={`draft-${item.id}`}
-                    ref={(el) => {
-                      if (el) itemRefs.current.set(item.id, el);
-                      else itemRefs.current.delete(item.id);
-                    }}
-                    data-testid="queue-item"
-                  >
-                    <p id={`draft-${item.id}`} className={styles["recipe"]}>{item.recipe}</p>
-                    {stateLabel(item.state) && <p className={styles["state"]}>{stateLabel(item.state)}</p>}
-                    {partyText(item) && <p className={styles["state"]} data-testid="queue-party">{partyText(item)}</p>}
-                    <p className={styles["meta"]}>
-                      <span>Recipe book: {item.recipeBook.name}</span>
-                      <span>{queueRatingsText(item)}</span>
-                      <span>{depositedText(item)}</span>
-                    </p>
-                    {item.firstInterpretation && (
-                      <p className={styles["why"]}>
-                        <span className={styles["whyLabel"]}>{whyLabel(item.state, item)} </span>
-                        {item.firstInterpretation}
-                      </p>
-                    )}
-                    {item.state === "unverified" && !item.canResolve && item.blockedReason && (
-                      <p id={`blocked-${item.id}`} className={styles["blocked"]}>{item.blockedReason}</p>
-                    )}
-                    <div
-                      className={styles["actions"]}
-                      role="group"
-                      aria-label={`Actions for draft ${item.id.slice(0, 8)}`}
-                      {...(item.state === "unverified" && !item.canResolve && item.blockedReason ? { "aria-describedby": `blocked-${item.id}` } : {})}
-                    >
-                      {item.canResolve && QUEUE_ACTIONS.map((action) => (
-                        <button
-                          key={action}
-                          type="button"
-                          className={action === "confirm" ? "btn-primary" : "btn-secondary"}
-                          aria-label={actionAccessibleName(action, item)}
-                          disabled={mutation.isPending}
-                          onClick={() => mutation.mutate({ action, item })}
-                        >
-                          {actionLabel(action, item)}
-                        </button>
-                      ))}
-                      <Link
-                        to="/app/traces/$traceId"
-                        params={{ traceId: item.id }}
-                        className={styles["detailLink"]}
-                        aria-label={`Open recipe: ${excerpt(item.recipe)}`}
+              {intentRuns(items).map((run) => run.intent === null
+                ? run.items.map(renderItem)
+                : (
+                  <li key={`intent-${run.intent.id}-${run.items[0]!.id}`} className={styles["intentGroup"]} data-testid="queue-intent-group">
+                    <section aria-labelledby={`intent-${run.intent.id}-${run.items[0]!.id}`}>
+                      <h2
+                        id={`intent-${run.intent.id}-${run.items[0]!.id}`}
+                        className={styles["intentHeading"]}
+                        aria-label={`Intent: ${run.intent.story}`}
                       >
-                        Open recipe
-                      </Link>
-                    </div>
-                  </article>
-                </li>
-              ))}
+                        {intentHeadingText(run.intent.story)}
+                      </h2>
+                      {q !== intentFilterQuery(run.intent.id) && (
+                        <p className={styles["hint"]}>
+                          <Link to="/app/drafts" search={{ q: intentFilterQuery(run.intent.id) } as never}>
+                            Show only this intent&rsquo;s drafts
+                          </Link>
+                        </p>
+                      )}
+                      <ol className={styles["list"]} aria-label={`Drafts under this intent: ${intentHeadingText(run.intent.story)}`}>
+                        {run.items.map(renderItem)}
+                      </ol>
+                    </section>
+                  </li>
+                ))}
             </ol>
           )}
 
@@ -293,4 +267,66 @@ export function DraftQueuePage() {
       )}
     </div>
   );
+
+  function renderItem(item: QueueItem) {
+    return (
+      <li key={item.id}>
+        <article
+          className={styles["item"]}
+          tabIndex={-1}
+          aria-labelledby={`draft-${item.id}`}
+          ref={(el) => {
+            if (el) itemRefs.current.set(item.id, el);
+            else itemRefs.current.delete(item.id);
+          }}
+          data-testid="queue-item"
+        >
+          <p id={`draft-${item.id}`} className={styles["recipe"]}>{item.recipe}</p>
+          {stateLabel(item.state) && <p className={styles["state"]}>{stateLabel(item.state)}</p>}
+          {partyText(item) && <p className={styles["state"]} data-testid="queue-party">{partyText(item)}</p>}
+          <p className={styles["meta"]}>
+            <span>Recipe book: {item.recipeBook.name}</span>
+            <span>{queueRatingsText(item)}</span>
+            <span>{depositedText(item)}</span>
+          </p>
+          {item.firstInterpretation && (
+            <p className={styles["why"]}>
+              <span className={styles["whyLabel"]}>{whyLabel(item.state, item)} </span>
+              {item.firstInterpretation}
+            </p>
+          )}
+          {item.state === "unverified" && !item.canResolve && item.blockedReason && (
+            <p id={`blocked-${item.id}`} className={styles["blocked"]}>{item.blockedReason}</p>
+          )}
+          <div
+            className={styles["actions"]}
+            role="group"
+            aria-label={`Actions for draft ${item.id.slice(0, 8)}`}
+            {...(item.state === "unverified" && !item.canResolve && item.blockedReason ? { "aria-describedby": `blocked-${item.id}` } : {})}
+          >
+            {item.canResolve && QUEUE_ACTIONS.map((action) => (
+              <button
+                key={action}
+                type="button"
+                className={action === "confirm" ? "btn-primary" : "btn-secondary"}
+                aria-label={actionAccessibleName(action, item)}
+                disabled={mutation.isPending}
+                onClick={() => mutation.mutate({ action, item })}
+              >
+                {actionLabel(action, item)}
+              </button>
+            ))}
+            <Link
+              to="/app/traces/$traceId"
+              params={{ traceId: item.id }}
+              className={styles["detailLink"]}
+              aria-label={`Open recipe: ${excerpt(item.recipe)}`}
+            >
+              Open recipe
+            </Link>
+          </div>
+        </article>
+      </li>
+    );
+  }
 }

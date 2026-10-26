@@ -227,3 +227,27 @@ describe("parseExportPayload — linked sections", () => {
     if (good.ok) expect(good.data.traceEvidence[0]!.apiKeyId).toBeNull();
   });
 });
+
+describe("parseExportPayload — the intent link (slice 6a, S6a-E2)", () => {
+  it("carries intentId as given, and null when absent or null", () => {
+    const res = parseExportPayload({
+      schemaVersion: 1,
+      traces: [
+        minimalTrace({ intentId: "int_AbCdEfGhIjKlMnOpQrStUv01" }),
+        minimalTrace({ id: T2, intentId: null }),
+        minimalTrace({ id: L1 }),
+      ],
+    });
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.data.traces.map((t) => t.intentId)).toEqual(["int_AbCdEfGhIjKlMnOpQrStUv01", null, null]);
+  });
+
+  it("keeps an ill-shaped string for import to drop, and refuses a non-string as a row error", () => {
+    const shaped = parseExportPayload({ schemaVersion: 1, traces: [minimalTrace({ intentId: "not an id" })] });
+    expect(shaped.ok).toBe(true);
+    if (shaped.ok) expect(shaped.data.traces[0]!.intentId).toBe("not an id");
+    const typed = parseExportPayload({ schemaVersion: 1, traces: [minimalTrace({ intentId: 7 })] });
+    expect(typed.ok).toBe(false);
+    if (!typed.ok) expect(JSON.stringify(typed)).toContain("intentId must be a string or null");
+  });
+});

@@ -140,6 +140,29 @@ export async function resolveIntent(
   return { intentId: id, registered: true };
 }
 
+/**
+ * Which of `ids` name intents this user owns (drafts-and-triage slice 6a):
+ * the read-only ownership test behind the `intent:` search qualifier and
+ * import's restore of a recipe's intent link. Unlike resolveIntent it never
+ * touches last_used_at, since selecting by an intent or restoring a link is
+ * not a use of it, and an id that is unknown and one that is someone else's
+ * are both simply absent from the result.
+ */
+export async function ownedIntentIds(
+  db: PostgresJsDatabase,
+  userId: string,
+  ids: readonly string[],
+): Promise<Set<string>> {
+  const wellFormed = [...new Set(ids.filter((id) => INTENT_ID_RE.test(id)))];
+  if (wellFormed.length === 0) return new Set();
+  const rows = await db.execute(sql`
+    SELECT id FROM claimnet.intents
+    WHERE user_id = ${userId}::uuid
+      AND id IN (${sql.join(wellFormed.map((id) => sql`${id}`), sql`, `)})
+  `);
+  return new Set((rows as unknown as Array<{ id: string }>).map((r) => r.id));
+}
+
 /** Delivered-recipe ids for an intent within the rendering window (7 days,
  *  mirroring the session known-set window). RENDERING ONLY — the result
  *  feeds knownIds stub rendering, never ranking. */

@@ -54,6 +54,8 @@
 
 import crypto from "node:crypto";
 import { sql } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
+import type { IndexColumn } from "drizzle-orm/pg-core";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { inBooks, traceReadableById } from "../authz";
 import {
@@ -81,6 +83,9 @@ export interface RawFeedbackRow {
    *  `searchId` a search response returned. Full UUID only; mutually
    *  exclusive with trace_id/recipe_id. */
   search_id?: unknown;
+  /** Feedback about a briefing (drafts-and-triage slice 8a): the
+   *  `briefingId` get_briefing returned. Full UUID only; one target per row. */
+  briefing_id?: unknown;
   kind?: unknown;
   impact?: unknown;
   disposition?: unknown;
@@ -101,10 +106,15 @@ export interface RawFeedbackRow {
 }
 
 export interface ValidatedFeedbackRow {
-  /** Empty string for search-target rows (searchId carries the target). */
+  /** Which record the row is about; exactly one per row. */
+  target: FeedbackTarget;
+  /** Empty string unless target is "trace". */
   traceId: string;
-  /** Full search UUID for search-target rows; null for check feedback. */
+  /** Full search UUID for search-target rows; null otherwise. */
   searchId: string | null;
+  /** Full briefing (briefing.issued audit row) UUID for briefing-target
+   *  rows; null otherwise. */
+  briefingId: string | null;
   kind: string;
   impact: string;
   disposition: string;
@@ -132,6 +142,10 @@ export interface FeedbackRowResult {
   traceId: string;
   /** Search-target rows only: the search UUID the row is about. */
   searchId?: string;
+  /** Briefing-target rows only: the briefing UUID the row is about. */
+  briefingId?: string;
+  /** Intent-only outcome rows only: the intent the row is about. */
+  intentId?: string;
   /** Present on success. */
   feedbackId?: string;
   /** Present on rejection — validation, ACL, or budget. */
@@ -165,6 +179,16 @@ export const TRACE_NOT_READABLE =
  *  only to your own user's searches). */
 export const SEARCH_NOT_READABLE =
   "search_id not found or not readable with this key";
+
+/** Uniform marker for briefing targets (slice 8a): unknown ids, another
+ *  user's briefing, and an audit id that is not a briefing's read the same. */
+export const BRIEFING_NOT_READABLE =
+  "briefing_id not found or not readable with this key";
+
+/** Uniform marker for an intent-only outcome row (slice 8a, S8a-O2): an
+ *  unknown intent and another user's read the same. */
+export const INTENT_NOT_READABLE =
+  "intent_id not found or not readable with this key";
 
 /** Session-token shape — same rule as trace.service's resolveSessionId
  *  (8-64 url-safe chars), but with capture-only leniency: a malformed or
@@ -239,6 +263,20 @@ function rowTraceId(raw: unknown): string {
   return isFeedbackRowObject(raw) && typeof raw.trace_id === "string" ? raw.trace_id : "";
 }
 
+/** Join a row's field errors into one message (S8a-V1): one error reads as
+ *  it always has; several are counted and listed in schema order, so an
+ *  agent fixes the whole row on its first retry. */
+function joinFieldErrors(errors: string[]): string {
+  return errors.length === 1 ? errors[0]! : `${errors.length} fields need fixing: ${errors.join("; ")}`;
+}
+
+/** Which record a row is about. "intent" is an outcome row that names its
+ *  declared intent alone (drafts-and-triage slice 8a, S8a-O1). */
+export type FeedbackTarget = "trace" | "search" | "briefing" | "intent";
+
+const TRACE_ID_SHAPE_ERROR =
+  `trace_id (alias: recipe_id) must be the full recipe UUID from a prior check response, or an unambiguous prefix of at least ${MIN_TRACE_ID_PREFIX} characters (the short id check responses print); for feedback about a read-only search, pass search_id instead`;
+
 export function validateFeedbackRow(
   raw: unknown,
 ): { ok: true; row: ValidatedFeedbackRow } | { ok: false; error: string } {
@@ -246,6 +284,10 @@ export function validateFeedbackRow(
     const got = raw === undefined ? "undefined" : JSON.stringify(raw).slice(0, 60);
     return { ok: false, error: `each feedback row must be an object with log_feedback's fields (got ${got})` };
   }
+  // Every failing field is collected and reported together, in schema order
+  // (drafts-and-triage slice 8a, S8a-V1).
+  const errors: string[] = [];
+
   // Full UUID or an unambiguous short-id prefix (≥ MIN_TRACE_ID_PREFIX hex
   // chars — the form check responses print). Normalized to lowercase so the
   // resolved-set membership checks below compare canonically. `recipe_id` is
@@ -259,20 +301,38 @@ export function validateFeedbackRow(
 
   // search_id: feedback about a read-only search (2026-08-19). Full UUID
   // only — the id was just returned in the search response, so there's no
-  // short-id citation surface to honor. Exactly one target per row.
+  // short-id citation surface to honor. briefing_id (slice 8a): the same for
+  // a briefing, whose briefing.issued audit row id get_briefing returns.
   const rawSearchId = typeof raw.search_id === "string" ? raw.search_id.trim().toLowerCase() : "";
-  if (rawSearchId !== "" && traceId !== "") {
-    return { ok: false, error: "give exactly one of trace_id (a prior check's recipe) or search_id (a prior search) — not both" };
-  }
-  if (rawSearchId !== "") {
-    if (!UUID_RE.test(rawSearchId)) {
-      return { ok: false, error: "search_id must be the full searchId UUID a search response returned" };
+  const rawBriefingId = typeof raw.briefing_id === "string" ? raw.briefing_id.trim().toLowerCase() : "";
+
+  // Declared intent (Phase C): capture-only and join-only (the feedback path
+  // never registers; text here is a shape mismatch, stored as NULL), EXCEPT
+  // on an outcome row that names no other target, where the intent is the
+  // target and so must be well formed (S8a-O1).
+  const intentIdCandidate = typeof raw.intent_id === "string" ? raw.intent_id.trim() : "";
+  const intentId = INTENT_ID_RE.test(intentIdCandidate) ? intentIdCandidate : null;
+
+  // Exactly one target per row.
+  const named = [traceId, rawSearchId, rawBriefingId].filter((v) => v !== "").length;
+  let target: FeedbackTarget = "trace";
+  if (named > 1) {
+    errors.push("give exactly one of trace_id (a prior check's recipe), search_id (a prior search) or briefing_id (a prior briefing), not two");
+  } else if (rawSearchId !== "") {
+    target = "search";
+    if (!UUID_RE.test(rawSearchId)) errors.push("search_id must be the full searchId UUID a search response returned");
+  } else if (rawBriefingId !== "") {
+    target = "briefing";
+    if (!UUID_RE.test(rawBriefingId)) errors.push("briefing_id must be the full briefingId UUID a get_briefing response returned");
+  } else if (traceId !== "") {
+    if (!UUID_RE.test(traceId) && !isTraceIdPrefix(traceId)) errors.push(TRACE_ID_SHAPE_ERROR);
+  } else if (raw.kind === "outcome" && intentIdCandidate !== "") {
+    target = "intent";
+    if (!intentId) {
+      errors.push("intent_id must be the int_… id a prior response returned (an outcome row that names only its intent needs a well-formed one)");
     }
-  } else if (!UUID_RE.test(traceId) && !isTraceIdPrefix(traceId)) {
-    return {
-      ok: false,
-      error: `trace_id (alias: recipe_id) must be the full recipe UUID from a prior check response, or an unambiguous prefix of at least ${MIN_TRACE_ID_PREFIX} characters (the short id check responses print); for feedback about a read-only search, pass search_id instead`,
-    };
+  } else {
+    errors.push(`${TRACE_ID_SHAPE_ERROR}, and about a briefing, briefing_id; an outcome row may instead give intent_id alone`);
   }
 
   const enums: Array<{ field: string; value: unknown; allowed: readonly string[] }> = [
@@ -283,79 +343,75 @@ export function validateFeedbackRow(
   ];
   for (const { field, value, allowed } of enums) {
     if (typeof value !== "string" || !allowed.includes(value)) {
-      return {
-        ok: false,
-        error: `${field} must be one of: ${vocab(allowed)} (got ${JSON.stringify(value ?? null)})`,
-      };
+      errors.push(`${field} must be one of: ${vocab(allowed)} (got ${JSON.stringify(value ?? null)})`);
     }
   }
 
-  if (typeof raw.story !== "string" || raw.story.trim().length === 0) {
-    return { ok: false, error: "story is required — the user story for why this check was made" };
-  }
-  if (raw.story.length > MAX_TEXT_LEN) {
-    return { ok: false, error: `story too long (max ${MAX_TEXT_LEN} chars)` };
+  const story = typeof raw.story === "string" ? raw.story.trim() : "";
+  if (story.length === 0) {
+    errors.push("story is required — the user story for why this check was made");
+  } else if ((raw.story as string).length > MAX_TEXT_LEN) {
+    errors.push(`story too long (max ${MAX_TEXT_LEN} chars)`);
   }
 
-  const err: { error?: string } = {};
-  const note = optionalString(raw.note, "note", err);
-  if (err.error) return { ok: false, error: err.error };
-  const agentId = optionalString(raw.agent_id, "agent_id", err);
-  if (err.error) return { ok: false, error: err.error };
-  const model = optionalString(raw.model, "model", err);
-  if (err.error) return { ok: false, error: err.error };
-  const harness = optionalString(raw.harness, "harness", err);
-  if (err.error) return { ok: false, error: err.error };
-  const harnessVersion = optionalString(raw.harness_version, "harness_version", err);
-  if (err.error) return { ok: false, error: err.error };
+  const optional = (value: unknown, field: string): string | null => {
+    const err: { error?: string } = {};
+    const v = optionalString(value, field, err);
+    if (err.error) errors.push(err.error);
+    return v;
+  };
+  const note = optional(raw.note, "note");
+  const agentId = optional(raw.agent_id, "agent_id");
+  const model = optional(raw.model, "model");
+  const harness = optional(raw.harness, "harness");
+  const harnessVersion = optional(raw.harness_version, "harness_version");
 
   let topSimilarity: number | null = null;
   if (raw.top_similarity !== undefined && raw.top_similarity !== null) {
     const n = Number(raw.top_similarity);
     if (!Number.isFinite(n) || n < 0 || n > 1) {
-      return { ok: false, error: "top_similarity must be a number between 0 and 1" };
+      errors.push("top_similarity must be a number between 0 and 1");
+    } else {
+      topSimilarity = n;
     }
-    topSimilarity = n;
   }
 
   let relatedTraceIds: string[] | null = null;
   if (raw.related_trace_ids !== undefined && raw.related_trace_ids !== null) {
     if (!Array.isArray(raw.related_trace_ids)) {
-      return { ok: false, error: "related_trace_ids must be an array of recipe UUIDs" };
-    }
-    if (raw.related_trace_ids.length > MAX_RELATED_IDS) {
-      return { ok: false, error: `related_trace_ids too long (max ${MAX_RELATED_IDS})` };
-    }
-    const ids: string[] = [];
-    for (const id of raw.related_trace_ids) {
-      if (typeof id !== "string" || !UUID_RE.test(id.trim())) {
-        return { ok: false, error: `related_trace_ids entries must be full recipe UUIDs (got ${JSON.stringify(id)})` };
+      errors.push("related_trace_ids must be an array of recipe UUIDs");
+    } else if (raw.related_trace_ids.length > MAX_RELATED_IDS) {
+      errors.push(`related_trace_ids too long (max ${MAX_RELATED_IDS})`);
+    } else {
+      const bad = (raw.related_trace_ids as unknown[]).find((id) => typeof id !== "string" || !UUID_RE.test(id.trim()));
+      if (bad !== undefined) {
+        errors.push(`related_trace_ids entries must be full recipe UUIDs (got ${JSON.stringify(bad)})`);
+      } else {
+        const ids = (raw.related_trace_ids as string[]).map((id) => id.trim());
+        relatedTraceIds = ids.length > 0 ? ids : null;
       }
-      ids.push(id.trim());
     }
-    relatedTraceIds = ids.length > 0 ? ids : null;
   }
+
+  if (errors.length > 0) return { ok: false, error: joinFieldErrors(errors) };
 
   // Capture-only (see SESSION_ID_RE note): valid shape → stored, anything
   // else → NULL. Deliberately not an error path.
   const sessionIdCandidate = typeof raw.session_id === "string" ? raw.session_id.trim() : "";
   const sessionId = SESSION_ID_RE.test(sessionIdCandidate) ? sessionIdCandidate : null;
 
-  // Declared intent (Phase C): same capture-only leniency, join-only — the
-  // feedback path never registers (text here is a shape mismatch → NULL).
-  const intentIdCandidate = typeof raw.intent_id === "string" ? raw.intent_id.trim() : "";
-  const intentId = INTENT_ID_RE.test(intentIdCandidate) ? intentIdCandidate : null;
-
   return {
     ok: true,
     row: {
-      traceId: rawSearchId !== "" ? "" : traceId,
-      searchId: rawSearchId !== "" ? rawSearchId : null,
+      target,
+      traceId: target === "trace" ? traceId : "",
+      searchId: target === "search" ? rawSearchId : null,
+      briefingId: target === "briefing" ? rawBriefingId : null,
       kind: raw.kind as string,
       impact: raw.impact as string,
       disposition: raw.disposition as string,
       storyFulfilled: raw.story_fulfilled as string,
-      story: raw.story.trim(),
+      story,
       note,
       agentId,
       topSimilarity,
@@ -427,6 +483,85 @@ export function computeFeedbackContentHash(
   return crypto.createHash("sha256").update(canonical).digest("hex");
 }
 
+// ── Non-recipe targets (search, briefing, intent alone) ──────────────────────
+
+/** Which of `ids` are audit rows of `action` made by `userId`. Anything else
+ *  (unknown, another user's, another action's) is simply absent, so every
+ *  miss gets the same marker. */
+async function ownAuditRowIds(
+  db: PostgresJsDatabase,
+  ids: ReadonlySet<string>,
+  action: "check.searched" | "briefing.issued",
+  userId: string,
+): Promise<Set<string>> {
+  const found = new Set<string>();
+  if (ids.size === 0) return found;
+  const rows = await db.execute(sql`
+    SELECT id::text AS id FROM claimnet.audit_log
+    WHERE id IN (${sql.join([...ids].map((id) => sql`${id}::uuid`), sql`, `)})
+      AND action = ${action}
+      AND actor_user_id = ${userId}::uuid
+  `);
+  for (const r of rows as unknown as Array<{ id: string }>) found.add(r.id);
+  return found;
+}
+
+/** The pieces of a search-, briefing- or intent-target row's insert that
+ *  differ by target: its id (hashed in place of a trace id), whether this
+ *  caller may attach to it, the uniform marker when not, what the result
+ *  echoes, and the dedup index to land on. */
+function otherTarget(
+  row: ValidatedFeedbackRow,
+  acl: { readableSearches: ReadonlySet<string>; readableBriefings: ReadonlySet<string>; ownIntents: ReadonlySet<string> },
+): {
+  id: string;
+  readable: boolean;
+  marker: string;
+  echo: { searchId?: string; briefingId?: string; intentId?: string };
+  conflict: { target: IndexColumn[]; where?: SQL };
+  match: SQL;
+} {
+  if (row.target === "search") {
+    const id = row.searchId!;
+    return {
+      id,
+      readable: acl.readableSearches.has(id),
+      marker: SEARCH_NOT_READABLE,
+      echo: { searchId: id },
+      conflict: { target: [checkFeedback.apiKeyId, checkFeedback.searchAuditId, checkFeedback.contentHash] },
+      match: sql`${checkFeedback.searchAuditId} = ${id}::uuid`,
+    };
+  }
+  if (row.target === "briefing") {
+    const id = row.briefingId!;
+    return {
+      id,
+      readable: acl.readableBriefings.has(id),
+      marker: BRIEFING_NOT_READABLE,
+      echo: { briefingId: id },
+      conflict: { target: [checkFeedback.apiKeyId, checkFeedback.briefingAuditId, checkFeedback.contentHash] },
+      match: sql`${checkFeedback.briefingAuditId} = ${id}::uuid`,
+    };
+  }
+  const id = row.intentId!;
+  return {
+    id,
+    readable: acl.ownIntents.has(id),
+    marker: INTENT_NOT_READABLE,
+    echo: { intentId: id },
+    // The partial unique index (check_feedback_intent_dedup_unique): the
+    // predicate must match the index's for Postgres to infer it.
+    conflict: {
+      target: [checkFeedback.apiKeyId, checkFeedback.intentId, checkFeedback.contentHash],
+      where: sql`trace_id IS NULL AND search_audit_id IS NULL AND briefing_audit_id IS NULL`,
+    },
+    match: sql`${checkFeedback.intentId} = ${id}
+      AND ${checkFeedback.traceId} IS NULL
+      AND ${checkFeedback.searchAuditId} IS NULL
+      AND ${checkFeedback.briefingAuditId} IS NULL`,
+  };
+}
+
 // ── Ingestion ────────────────────────────────────────────────────────────────
 
 export interface IngestFeedbackParams {
@@ -476,19 +611,26 @@ export async function ingestFeedback(
     }
   }
 
-  // Validate all rows first, collecting the trace ids that need ACL checks.
-  // Full UUIDs go to the batch ACL query; short-id prefixes go to the
-  // scope-filtered prefix resolver below.
+  // Validate all rows first, collecting the ids that need ACL checks. Full
+  // trace UUIDs go to the batch ACL query; short-id prefixes go to the
+  // scope-filtered prefix resolver below; search, briefing and intent targets
+  // go to their own-user checks.
   const validated: Array<{ index: number; row: ValidatedFeedbackRow } | { index: number; error: string; traceId: string }> = [];
   const idsToCheck = new Set<string>();
   const prefixesToResolve = new Set<string>();
   const searchIdsToCheck = new Set<string>();
+  const briefingIdsToCheck = new Set<string>();
+  const intentIdsToCheck = new Set<string>();
   rows.forEach((raw, index) => {
     const v = validateFeedbackRow(raw);
     if (v.ok) {
       validated.push({ index, row: v.row });
-      if (v.row.searchId) {
-        searchIdsToCheck.add(v.row.searchId);
+      if (v.row.target === "search") {
+        searchIdsToCheck.add(v.row.searchId!);
+      } else if (v.row.target === "briefing") {
+        briefingIdsToCheck.add(v.row.briefingId!);
+      } else if (v.row.target === "intent") {
+        intentIdsToCheck.add(v.row.intentId!);
       } else if (UUID_RE.test(v.row.traceId)) {
         idsToCheck.add(v.row.traceId);
       } else {
@@ -534,19 +676,26 @@ export async function ingestFeedback(
     }
   }
 
-  // ACL for search targets: the check.searched audit row must exist AND
-  // belong to this key's user. Unknown ids and other users' searches collapse
-  // into the same absent-set → uniform marker (no existence oracle).
-  const readableSearches = new Set<string>();
-  if (searchIdsToCheck.size > 0) {
-    const searchRows = await db.execute(sql`
-      SELECT id::text AS id FROM claimnet.audit_log
-      WHERE id IN (${sql.join([...searchIdsToCheck].map((id) => sql`${id}::uuid`), sql`, `)})
-        AND action = 'check.searched'
-        AND actor_user_id = ${userId}::uuid
+  // ACL for search and briefing targets: the audit row must exist, be of the
+  // right action, AND belong to this key's user. Unknown ids, other users'
+  // rows, and a search's id offered as a briefing's collapse into the same
+  // absent-set → uniform marker (no existence oracle).
+  const readableSearches = await ownAuditRowIds(db, searchIdsToCheck, "check.searched", userId);
+  const readableBriefings = await ownAuditRowIds(db, briefingIdsToCheck, "briefing.issued", userId);
+
+  // ACL for intent-only outcome rows (slice 8a, S8a-O2): the intent must be
+  // this key's user's. Unknown, malformed (already refused above), and other
+  // users' intents get one uniform marker, so the target is not an existence
+  // oracle for other people's intents.
+  const ownIntents = new Set<string>();
+  if (intentIdsToCheck.size > 0) {
+    const intentRows = await db.execute(sql`
+      SELECT id FROM claimnet.intents
+      WHERE id IN (${sql.join([...intentIdsToCheck].map((id) => sql`${id}`), sql`, `)})
+        AND user_id = ${userId}::uuid
     `);
-    for (const r of searchRows as unknown as Array<{ id: string }>) {
-      readableSearches.add(r.id);
+    for (const r of intentRows as unknown as Array<{ id: string }>) {
+      ownIntents.add(r.id);
     }
   }
 
@@ -576,18 +725,21 @@ export async function ingestFeedback(
     }
     const { row, index } = entry;
 
-    // Search-target rows: full-UUID id, own-user ACL, own dedup index.
-    if (row.searchId) {
-      if (!readableSearches.has(row.searchId)) {
-        results.push({ index, ok: false, traceId: "", searchId: row.searchId, error: SEARCH_NOT_READABLE });
+    // Search, briefing, and intent-only rows: own-user ACL, each with its
+    // own dedup index.
+    if (row.target !== "trace") {
+      const target = otherTarget(row, { readableSearches, readableBriefings, ownIntents });
+      if (!target.readable) {
+        results.push({ index, ok: false, traceId: "", ...target.echo, error: target.marker });
         continue;
       }
-      const searchHash = computeFeedbackContentHash(row.searchId, row);
-      const insertedSearch = await params.db
+      const hash = computeFeedbackContentHash(target.id, row);
+      const inserted = await params.db
         .insert(checkFeedback)
         .values({
           traceId: null,
           searchAuditId: row.searchId,
+          briefingAuditId: row.briefingId,
           apiKeyId,
           agentId: row.agentId,
           kind: row.kind,
@@ -603,30 +755,28 @@ export async function ingestFeedback(
           relatedTraceIds: row.relatedTraceIds,
           sessionId: row.sessionId,
           intentId: row.intentId,
-          contentHash: searchHash,
+          contentHash: hash,
         })
-        .onConflictDoNothing({
-          target: [checkFeedback.apiKeyId, checkFeedback.searchAuditId, checkFeedback.contentHash],
-        })
+        .onConflictDoNothing(target.conflict)
         .returning({ id: checkFeedback.id });
-      const searchFeedbackId = insertedSearch[0]?.id;
-      if (searchFeedbackId) {
-        results.push({ index, ok: true, traceId: "", searchId: row.searchId, feedbackId: searchFeedbackId });
+      const feedbackId = inserted[0]?.id;
+      if (feedbackId) {
+        results.push({ index, ok: true, traceId: "", ...target.echo, feedbackId });
       } else {
         const existing = await params.db
           .select({ id: checkFeedback.id })
           .from(checkFeedback)
           .where(
             sql`${checkFeedback.apiKeyId} = ${apiKeyId}::uuid
-              AND ${checkFeedback.searchAuditId} = ${row.searchId}::uuid
-              AND ${checkFeedback.contentHash} = ${searchHash}`,
+              AND ${target.match}
+              AND ${checkFeedback.contentHash} = ${hash}`,
           )
           .limit(1);
         const existingId = existing[0]?.id;
         if (existingId) {
-          results.push({ index, ok: true, traceId: "", searchId: row.searchId, feedbackId: existingId, dup: true });
+          results.push({ index, ok: true, traceId: "", ...target.echo, feedbackId: existingId, dup: true });
         } else {
-          results.push({ index, ok: false, traceId: "", searchId: row.searchId, error: "insert failed" });
+          results.push({ index, ok: false, traceId: "", ...target.echo, error: "insert failed" });
         }
       }
       continue;
@@ -719,6 +869,15 @@ export async function ingestFeedback(
   return results;
 }
 
+/** What a result row is about, for confirmations and summaries: never a
+ *  blank "check " when the target is not a recipe. */
+export function feedbackTargetLabel(r: FeedbackRowResult): string {
+  if (r.searchId) return `search ${r.searchId}`;
+  if (r.briefingId) return `briefing ${r.briefingId}`;
+  if (r.intentId) return `intent ${r.intentId}`;
+  return r.traceId ? `check ${r.traceId}` : "no trace_id";
+}
+
 /** One-line summary of a batch's results for MCP text responses. */
 export function summarizeFeedbackResults(results: FeedbackRowResult[]): string {
   if (results.length === 0) return "";
@@ -727,7 +886,9 @@ export function summarizeFeedbackResults(results: FeedbackRowResult[]): string {
   const dupSuffix = dupCount > 0 ? ` (${dupCount} already recorded — identical resubmission)` : "";
   const lines = [`Feedback: ${okCount}/${results.length} row(s) recorded${dupSuffix}.`];
   for (const r of results) {
-    const target = r.searchId ? `search ${r.searchId}` : r.traceId || "no trace_id";
+    // A recipe row keeps its bare id here, as before; the other targets name
+    // themselves.
+    const target = r.searchId || r.briefingId || r.intentId ? feedbackTargetLabel(r) : r.traceId || "no trace_id";
     if (!r.ok) {
       lines.push(`  - row ${r.index + 1} (${target}): ${r.error}`);
     } else if (r.dup) {

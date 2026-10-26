@@ -214,7 +214,7 @@ Feature: Drafts, triage ratings, and deciding by building both
     @DT-VIS-06 @slice-2
     Scenario: The person's own agents see their drafts, labelled
       Given Pat's agent deposited a draft
-      When any of Pat's keys with read scope on the book checks near the draft, or searches near it with author:me or author:anyone (search excludes the caller's own recipes by default)
+      When any of Pat's keys with read scope on the book checks near the draft, or searches near it (search includes the caller's own recipes by default since 2026-10-24)
       Then the draft can appear in results, ranked exactly as it would be if it were not a draft
       And each appearance is labelled as a draft in both the markdown and structured formats
 
@@ -309,9 +309,12 @@ Feature: Drafts, triage ratings, and deciding by building both
       And the authz seam guard fails when a source file outside the module reads the traces table in a statement that neither uses the module's condition nor is registered with a reason
 
   # ─────────────────────────────────────────────────────────────────────────
-  Rule: A draft is verified by its person, or by their agent with the person's own words
+  Rule: A draft is resolved by its person, or by their agent with new evidence that settles it
     # The agent operation is the verify_draft MCP tool and its REST twin,
-    # POST /recipes/:id/verify (slice 2).
+    # POST /recipes/:id/verify (slice 2), with outcome verified | rejected |
+    # not_chosen from slice 6c (verified when omitted). The evidence may quote
+    # the person's answer or the context that settles the call, such as a
+    # covering verified recipe cited by id (ruling 46; recipe 200ed4fe).
     # Guards: drafts-and-triage.md §Verifying a draft; recipe 94e0e682 (agents
     # may update some surfaces; verification by the person or an agent under
     # their control).
@@ -381,13 +384,49 @@ Feature: Drafts, triage ratings, and deciding by building both
       Then its impact is still "high"
       And the recipe's text, embeddings, and judgment date are unchanged
 
+    @DT-VER-10 @slice-6c
+    Scenario: The person's agent rejects a draft with the settling evidence
+      Given Pat's agent deposited a draft
+      When one of Pat's keys calls the verify operation with outcome rejected and a new evidence entry with a quote and a citation
+      Then the draft is rejected, recording when and which key, with no reaction
+      And the new evidence entry is attached to the draft
+      And it leaves Pat's review queue and his agents' results, and Sam still finds it uniformly absent
+
+    @DT-VER-11 @slice-6c
+    Scenario: The person's agent marks a draft not chosen
+      Given Pat's agent deposited a draft
+      When one of Pat's keys calls the verify operation with outcome not_chosen and new evidence
+      Then the draft is marked not chosen, stored distinctly from rejected, and stays hidden like any draft
+
+    @DT-VER-12 @slice-6c
+    Scenario: A draft superseded by a verified recipe is rejected citing it
+      Given Pat's agent deposited a draft
+      And a later verified recipe covers the same call
+      When one of Pat's keys rejects the draft with an entry quoting that recipe and citing it by id
+      Then the draft is rejected
+      And the server does not look the cited id up, so the same entry citing an unreadable id is accepted alike
+
+    @DT-VER-13 @slice-6c
+    Scenario: One evidence entry may have blank lines between its parts
+      Given evidence written as an interpretation, a blank line, a quote, a blank line, and a citation
+      When it is sent to the verify operation or with a check
+      Then it is read as one entry with an interpretation, a quote, and a citation
+
+    @DT-VER-14 @slice-6c
+    Scenario: An unknown outcome is refused and stores nothing
+      Given Pat's agent deposited a draft
+      When one of Pat's keys calls the verify operation with outcome "reject"
+      Then the call is refused, naming verified, rejected, and not_chosen
+      And the draft is still unverified
+
   # ─────────────────────────────────────────────────────────────────────────
   Rule: The review queue is the human search page, sorted for triage
     # Guards: drafts-and-triage.md §Build notes; design-thinking.md §Reviewing
     # drafts, §Dashboard as a Feed. Build log rulings 21 to 27: the queue is
     # the SPA page /app/drafts, listed by a signed-in (JWT) route that parses
     # the search grammar over the person's live memberships; is:draft means
-    # "unresolved drafts about me" and lifts search's exclude-own default.
+    # "unresolved drafts about me" (search's exclude-own default, which it used
+    # to lift, was retired on 2026-10-24, recipe 885143c2).
     # Requirement: C01-R15 ("The review experience should share the human search page")
 
     @DT-QUE-01 @slice-3
@@ -683,16 +722,26 @@ Feature: Drafts, triage ratings, and deciding by building both
       And Sam finds it uniformly absent until Pat confirms it
 
   # ─────────────────────────────────────────────────────────────────────────
+  Rule: A recipe remembers the intent it was deposited under
+    # Guards: docs/architecture/agent-context-seams.md gap 2 (recipe-to-intent
+    # link); drafts-and-triage-slices-6-7-revision.md §6a; build log §Slice 6a
+    # rubric. Reworded 2026-10-24 to what slice 6a ships: the link and the
+    # listing. Resolving a set is DT-OPT-02 (slice 6b).
+
+    @DT-OPT-01 @slice-6a
+    Scenario: Drafts deposited under one intent are found and listed together
+      Given Pat's agent declared an intent whose story names the choice
+      When it deposits two drafts carrying that intent
+      Then both drafts are linked to that intent
+      And "is:draft intent:<id>" returns exactly those two drafts to Pat's agents
+      And Pat's queue lists them together under the intent's story
+      And Sam, given the same intent id, finds nothing and cannot tell it from a made-up id
+
+  # ─────────────────────────────────────────────────────────────────────────
   @unreleased
   Rule: Option sets decide by building both against a rubric set in advance
     # Guards: drafts-and-triage.md §Deciding by building both; recipe ea930c3d;
-    # docs/architecture/agent-context-seams.md gap 2 (recipe-to-intent link).
-
-    @DT-OPT-01 @slice-6
-    Scenario: Drafts deposited under one intent form a set
-      Given Pat's agent declared an intent whose story names the choice and the rubric
-      When it deposits two drafts carrying that intent
-      Then both drafts are linked to that intent and listed together in Pat's queue
+    # the intent link above (DT-OPT-01, slice 6a).
 
     @DT-OPT-02 @slice-6
     Scenario: Resolving a set verifies the winner and marks the rest not chosen
