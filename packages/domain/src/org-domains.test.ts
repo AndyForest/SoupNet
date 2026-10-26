@@ -364,6 +364,20 @@ describe("copy", () => {
     expect(lapsed.text).toContain("Nobody's account");
   });
 
+  it("F120: with the directory connected on the domain, both emails say its checks have stopped too; without, they don't", () => {
+    const failing = domainFailingEmail({ organizationName: "Acme", domain: "acme.example", recordName: "_soupnet-challenge.acme.example", lapsesAt: NOW, directoryConnected: true });
+    const lapsed = domainLapsedEmail({ organizationName: "Acme", domain: "acme.example", directoryConnected: true });
+    expect(failing.text).toContain("Checks against your Google Workspace directory have stopped for acme.example too");
+    expect(failing.text).toContain("until the record is back; anyone already switched off stays switched off.");
+    expect(lapsed.text).toContain("until it is verified again; anyone already switched off stays switched off.");
+    for (const plain of [
+      domainFailingEmail({ organizationName: "Acme", domain: "acme.example", recordName: "_soupnet-challenge.acme.example", lapsesAt: NOW }),
+      domainLapsedEmail({ organizationName: "Acme", domain: "acme.example", directoryConnected: false }),
+    ]) {
+      expect(plain.text).not.toContain("Google Workspace");
+    }
+  });
+
   it("OD-R2: the emails carry the record's name, never a token value", () => {
     const failing = domainFailingEmail({ organizationName: "Acme", domain: "acme.example", recordName: "_soupnet-challenge.acme.example", lapsesAt: NOW });
     const lapsed = domainLapsedEmail({ organizationName: "Acme", domain: "acme.example" });

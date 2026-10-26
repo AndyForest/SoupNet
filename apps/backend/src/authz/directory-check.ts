@@ -32,6 +32,7 @@ import type { DirectoryAnswer, DirectoryStatus } from "@soupnet/domain";
 import { open, seal } from "../lib/secret-box";
 import type { SealedSecret } from "../lib/secret-box";
 import { checkedUnder, directoryCheckDue } from "./directory-sql";
+import { domainClaimCurrentAt } from "./domain-authority";
 
 type SqlExecutor = Pick<PostgresJsDatabase, "execute">;
 
@@ -233,18 +234,26 @@ export interface DirectoryConnectionView {
   lastSuccessAt: string | null;
   lastError: string | null;
   lastErrorAt: string | null;
+  /**
+   * Connected, but the domain's claim isn't current (failing, stale, or
+   * lapsed), so no member is checked and nobody goes stale until it is;
+   * refusals already recorded hold (audit F120, F113).
+   */
+  checksPaused: boolean;
 }
 
 /** What an org admin may see of the connection: never the credential. */
 export async function directoryConnectionOf(db: SqlExecutor, organizationId: string): Promise<DirectoryConnectionView> {
   const rows = (await db.execute(sql`
-    SELECT kind, domain, admin_email, service_account_email, connected_at, last_success_at, last_error, last_error_at
-    FROM claimnet.organization_directory_connections WHERE organization_id = ${organizationId}::uuid
-  `)) as unknown as Array<Record<string, string | null>>;
+    SELECT dc.kind, dc.domain, dc.admin_email, dc.service_account_email, dc.connected_at, dc.last_success_at, dc.last_error, dc.last_error_at,
+      NOT ${domainClaimCurrentAt(sql`dc.organization_id`, sql`dc.domain`)} AS checks_paused
+    FROM claimnet.organization_directory_connections dc WHERE dc.organization_id = ${organizationId}::uuid
+  `)) as unknown as Array<Record<string, string | null> & { checks_paused: boolean }>;
   const r = rows[0];
-  if (!r) return { connected: false, kind: null, domain: null, adminEmail: null, serviceAccountEmail: null, connectedAt: null, lastSuccessAt: null, lastError: null, lastErrorAt: null };
+  if (!r) return { connected: false, kind: null, domain: null, adminEmail: null, serviceAccountEmail: null, connectedAt: null, lastSuccessAt: null, lastError: null, lastErrorAt: null, checksPaused: false };
   return {
     connected: true,
+    checksPaused: r.checks_paused,
     kind: r["kind"] as "admin_consent" | "service_account",
     domain: r["domain"] ?? null,
     adminEmail: r["admin_email"] ?? null,
@@ -256,10 +265,22 @@ export async function directoryConnectionOf(db: SqlExecutor, organizationId: str
   };
 }
 
+/** Does this organization have a directory connection on `domain`? For the domain emails (F120). */
+export async function directoryConnectedOn(db: SqlExecutor, organizationId: string, domain: string): Promise<boolean> {
+  const rows = (await db.execute(sql`
+    SELECT 1 FROM claimnet.organization_directory_connections WHERE organization_id = ${organizationId}::uuid AND domain = ${domain}
+  `)) as unknown as unknown[];
+  return rows.length > 0;
+}
+
+/** How many members each refusing status covered when a connection change cleared them, for the audit row. */
+export type DirectoryStatusesCleared = Record<"suspended" | "archived" | "deleted", number>;
+
 /**
  * Store (or replace) the organization's connection, sealing the credential
  * with the organization id as additional data. Replacing it clears every
- * member's directory status, so nobody stays switched off by the old one.
+ * member's directory status, so nobody stays switched off by the old one;
+ * the refusals it cleared come back for the audit row.
  */
 export async function saveDirectoryConnection(
   db: PostgresJsDatabase,
@@ -274,9 +295,9 @@ export async function saveDirectoryConnection(
     secret: string;
     connectedBy: string;
   },
-): Promise<void> {
+): Promise<DirectoryStatusesCleared> {
   const sealed: SealedSecret = seal(key, input.secret, input.organizationId);
-  await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
     await tx.execute(sql`
       INSERT INTO claimnet.organization_directory_connections
         (organization_id, kind, domain, domain_unicode, admin_email, service_account_email,
@@ -292,27 +313,38 @@ export async function saveDirectoryConnection(
         connected_by = EXCLUDED.connected_by, connected_at = NOW(), last_success_at = NOW(),
         last_error = NULL, last_error_at = NULL, warned_at = NULL
     `);
-    await resetMemberStatuses(tx, input.organizationId);
+    return resetMemberStatuses(tx, input.organizationId);
   });
 }
 
-/** Remove the connection: checks stop, and the directory switches nobody off. */
-export async function deleteDirectoryConnection(db: PostgresJsDatabase, organizationId: string): Promise<boolean> {
+/**
+ * Remove the connection: checks stop, and the directory switches nobody off.
+ * Says which refusals that lifted, for the audit row.
+ */
+export async function deleteDirectoryConnection(db: PostgresJsDatabase, organizationId: string): Promise<{ removed: boolean; cleared: DirectoryStatusesCleared }> {
   return db.transaction(async (tx) => {
     const rows = (await tx.execute(sql`
       DELETE FROM claimnet.organization_directory_connections WHERE organization_id = ${organizationId}::uuid RETURNING id
     `)) as unknown as unknown[];
-    await resetMemberStatuses(tx, organizationId);
-    return rows.length > 0;
+    const cleared = await resetMemberStatuses(tx, organizationId);
+    return { removed: rows.length > 0, cleared };
   });
 }
 
-async function resetMemberStatuses(tx: SqlExecutor, organizationId: string): Promise<void> {
-  await tx.execute(sql`
-    UPDATE claimnet.organization_members
+async function resetMemberStatuses(tx: SqlExecutor, organizationId: string): Promise<DirectoryStatusesCleared> {
+  // The subquery reads each row's status before this statement's update.
+  const rows = (await tx.execute(sql`
+    UPDATE claimnet.organization_members om
     SET directory_status = NULL, directory_checked_at = NULL, directory_check_claimed_at = NULL
-    WHERE organization_id = ${organizationId}::uuid
-  `);
+    FROM (SELECT id, directory_status FROM claimnet.organization_members WHERE organization_id = ${organizationId}::uuid) before
+    WHERE om.id = before.id
+    RETURNING before.directory_status AS was
+  `)) as unknown as Array<{ was: string | null }>;
+  const cleared: DirectoryStatusesCleared = { suspended: 0, archived: 0, deleted: 0 };
+  for (const { was } of rows) {
+    if (was === "suspended" || was === "archived" || was === "deleted") cleared[was]++;
+  }
+  return cleared;
 }
 
 /** Owners' and admins' addresses, for the six-hour warning (OB-C8). */

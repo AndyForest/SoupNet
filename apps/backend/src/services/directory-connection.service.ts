@@ -183,7 +183,7 @@ export async function completeDirectoryConnect(
   const credential = { organizationId, kind: "admin_consent" as const, adminEmail: claims.email.toLowerCase(), secret: tokens.refreshToken };
   if (await testDirectoryCredential(config, credential, fetchImpl)) return fail("directory_not_admin");
 
-  await saveDirectoryConnection(db, key, {
+  const cleared = await saveDirectoryConnection(db, key, {
     organizationId,
     kind: "admin_consent",
     domain,
@@ -193,7 +193,7 @@ export async function completeDirectoryConnect(
     secret: tokens.refreshToken,
     connectedBy: userId,
   });
-  await writeAudit(db, { actorUserId: userId, action: "organization.directory_connected", targetType: "organization", targetId: organizationId, metadata: { kind: "admin_consent", domain } });
+  await writeAudit(db, { actorUserId: userId, action: "organization.directory_connected", targetType: "organization", targetId: organizationId, metadata: { kind: "admin_consent", domain, cleared } });
   return { ok: true };
 }
 
@@ -224,7 +224,7 @@ export async function connectServiceAccount(
       message: "Google wouldn't let this service account read the directory as that admin. Check its domain-wide delegation for the read-only directory scope.",
     };
   }
-  await saveDirectoryConnection(db, boxKey, {
+  const cleared = await saveDirectoryConnection(db, boxKey, {
     organizationId: input.organizationId,
     kind: "service_account",
     domain,
@@ -234,6 +234,6 @@ export async function connectServiceAccount(
     secret,
     connectedBy: input.userId,
   });
-  await writeAudit(db, { actorUserId: input.userId, action: "organization.directory_connected", targetType: "organization", targetId: input.organizationId, metadata: { kind: "service_account", domain } });
+  await writeAudit(db, { actorUserId: input.userId, action: "organization.directory_connected", targetType: "organization", targetId: input.organizationId, metadata: { kind: "service_account", domain, cleared } });
   return null;
 }

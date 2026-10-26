@@ -174,10 +174,10 @@ organizationsRouter.delete("/:id/directory", async (c) => {
   const gate = await directoryGate(c);
   if (gate instanceof Response) return gate;
   const db = getDb();
-  const removed = await deleteDirectoryConnection(db, gate.organizationId);
+  const { removed, cleared } = await deleteDirectoryConnection(db, gate.organizationId);
   forgetDirectoryTokens(gate.organizationId);
   if (removed) {
-    await writeAudit(db, { actorUserId: c.get("user").id, action: "organization.directory_disconnected", targetType: "organization", targetId: gate.organizationId });
+    await writeAudit(db, { actorUserId: c.get("user").id, action: "organization.directory_disconnected", targetType: "organization", targetId: gate.organizationId, metadata: { cleared } });
   }
   return c.json({ ok: true, data: { removed } });
 });

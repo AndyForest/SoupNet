@@ -222,7 +222,7 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     expect(view.status).toBe(200);
     const text = await view.text();
     expect(text).not.toContain("PRIVATE KEY");
-    expect(JSON.parse(text).data).toMatchObject({ connected: true, kind: "service_account", domain: org.domain, adminEmail: org.olive.email, serviceAccountEmail: org.serviceAccount.clientEmail });
+    expect(JSON.parse(text).data).toMatchObject({ connected: true, kind: "service_account", domain: org.domain, adminEmail: org.olive.email, serviceAccountEmail: org.serviceAccount.clientEmail, checksPaused: false });
     const row = (await getDb().execute(sql`SELECT credential_ciphertext FROM claimnet.organization_directory_connections WHERE organization_id = ${org.orgId}::uuid`)) as unknown as Array<{ credential_ciphertext: string }>;
     expect(row[0]!.credential_ciphertext).not.toContain("PRIVATE KEY");
     const audit = (await getDb().execute(sql`SELECT metadata FROM claimnet.audit_log WHERE action = 'organization.directory_connected' AND target_id = ${org.orgId}::uuid`)) as unknown as Array<{ metadata: Json }>;
@@ -527,11 +527,16 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     await google.setDirectoryUser(max.email, { suspended: true });
     await makeDue(max.userId, 25);
     const before = await requestsFor(max.email);
+    const paused = async () => ((await (await call(org.olive.token, "GET", `/organizations/${org.orgId}/directory`)).json()) as { data: Json }).data["checksPaused"];
     for (const state of ["failing", "stale", "lapsed"] as const) {
       await setClaim(org.orgId, state);
       expect((await useKey(max.key)).status, state).toBe(200);
       expect(await requestsFor(max.email), state).toBe(before);
+      // F120: the console's view says so.
+      expect(await paused(), state).toBe(true);
     }
+    await setClaim(org.orgId, "current");
+    expect(await paused()).toBe(false);
   });
 
   it("F113: a recorded refusal holds whatever state the domain claim is in", async () => {
@@ -565,6 +570,10 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     const claim = (await getDb().execute(sql`SELECT failing_since FROM claimnet.organization_domains WHERE id = ${claimId}::uuid`)) as unknown as Array<{ failing_since: string | null }>;
     expect(claim[0]!.failing_since).not.toBeNull();
     await refused("txt removed");
+    // F120: the failing-domain email adds the directory line for this domain and no other.
+    const { directoryConnectedOn } = await import("../authz");
+    expect(await directoryConnectedOn(getDb(), org.orgId, gone)).toBe(true);
+    expect(await directoryConnectedOn(getDb(), org.orgId, org.domain)).toBe(false);
   });
 
   it("OB-C1: a member the directory switched off is refused at OAuth refresh and at password sign-in", async () => {
@@ -666,7 +675,21 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     expect((await useKey(max.key)).status).toBe(401);
     expect((await call(org.olive.token, "DELETE", `/organizations/${org.orgId}/directory`)).status).toBe(200);
     expect((await useKey(max.key)).status).toBe(200);
-    expect(await auditRows("organization.directory_disconnected", org.orgId)).toEqual([{}]);
+    expect(await auditRows("organization.directory_disconnected", org.orgId)).toEqual([{ cleared: { suspended: 1, archived: 0, deleted: 0 } }]);
+  });
+
+  it("OB-K6: replacing the connection clears the old one's refusals, and its audit row counts them", async () => {
+    const org = await acme();
+    const gone = await member(org, "replaced-gone");
+    const archived = await member(org, "replaced-archived");
+    await google.setDirectoryUser(archived.email, { archived: true });
+    expect((await useKey(gone.key)).status).toBe(401);
+    expect((await useKey(archived.key)).status).toBe(401);
+    const again = await call(org.olive.token, "PUT", `/organizations/${org.orgId}/directory/service-account`, { key: org.serviceAccount.key, adminEmail: org.olive.email });
+    expect(again.status).toBe(200);
+    const connected = await auditRows("organization.directory_connected", org.orgId);
+    expect(connected).toHaveLength(2);
+    expect(connected[1]).toMatchObject({ kind: "service_account", cleared: { suspended: 0, archived: 1, deleted: 1 } });
   });
 
   it("OB-C10 / OB-K6: the site operator's DELETE recovers a locked-out organization, audited as the operator's (draft 47f9620f)", async () => {
@@ -680,7 +703,7 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     expect(((await removed.json()) as { data: Json }).data).toEqual({ removed: true });
     expect((await useKey(max.key)).status).toBe(200);
     expect((await memberRow(max.userId)).directory_status).toBeNull();
-    expect(await auditRows("organization.directory_disconnected", org.orgId)).toEqual([{ by: "operator" }]);
+    expect(await auditRows("organization.directory_disconnected", org.orgId)).toEqual([{ by: "operator", cleared: { suspended: 1, archived: 0, deleted: 0 } }]);
   });
 
   it("OB-K5: in process, with DIRECTORY_CREDENTIALS_KEY unset, the routes answer 503 directory_not_configured and no checker is installed", async () => {

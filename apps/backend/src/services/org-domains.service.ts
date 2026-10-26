@@ -41,7 +41,7 @@ import {
   DOMAIN_CHALLENGE_TTL_DAYS,
 } from "@soupnet/domain";
 import type { DomainClaimState, DomainClaimStatus, DomainCheckEvent, DomainRefusal } from "@soupnet/domain";
-import { accountIsManaged, domainVerifiedFor, joinOrganizationInTx, orgMembersOf } from "../authz";
+import { accountIsManaged, directoryConnectedOn, domainVerifiedFor, joinOrganizationInTx, orgMembersOf } from "../authz";
 import type { JoinResult } from "../authz";
 import { checkDomainRecord, type TxtLookup } from "../lib/dns-txt";
 import { sendJoinNotice } from "./organization.service";
@@ -362,12 +362,16 @@ async function applyOutcome(db: PostgresJsDatabase, claimId: string, outcome: "f
 /** After a check has committed: tell the admins, and migrate if the claim is now captured. */
 async function afterCheck(db: PostgresJsDatabase, applied: AppliedCheck): Promise<MigrationSummary | undefined> {
   const { row, event } = applied;
-  if (event === "failing") {
-    void emailManagers(db, row.organization_id, (organizationName) =>
-      domainFailingEmail({ organizationName, domain: row.domain, recordName: domainChallengeRecord(row.domain, row.challenge_token).name, lapsesAt: domainLapsesAt(stateOf(row))! }),
-    );
-  } else if (event === "lapsed") {
-    void emailManagers(db, row.organization_id, (organizationName) => domainLapsedEmail({ organizationName, domain: row.domain }));
+  if (event === "failing" || event === "lapsed") {
+    // A directory connection on the domain stops checking too (stream Offboarding, audit F120).
+    const directoryConnected = await directoryConnectedOn(db, row.organization_id, row.domain);
+    if (event === "failing") {
+      void emailManagers(db, row.organization_id, (organizationName) =>
+        domainFailingEmail({ organizationName, domain: row.domain, recordName: domainChallengeRecord(row.domain, row.challenge_token).name, lapsesAt: domainLapsesAt(stateOf(row))!, directoryConnected }),
+      );
+    } else {
+      void emailManagers(db, row.organization_id, (organizationName) => domainLapsedEmail({ organizationName, domain: row.domain, directoryConnected }));
+    }
   }
   if ((event === "verified" || event === "recovered") && row.auto_join) return migrateDomainAccounts(db, row.id);
   return undefined;

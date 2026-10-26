@@ -156,10 +156,10 @@ admin.patch("/organizations/:id", async (c) => {
 admin.delete("/organizations/:id/directory", async (c) => {
   const id = c.req.param("id");
   if (!z.string().uuid().safeParse(id).success) return c.json({ ok: false, error: "Invalid input" }, 400);
-  const removed = await deleteDirectoryConnection(getDb(), id);
+  const { removed, cleared } = await deleteDirectoryConnection(getDb(), id);
   forgetDirectoryTokens(id);
   if (removed) {
-    await writeAudit(getDb(), { actorUserId: c.get("user").id, action: "organization.directory_disconnected", targetType: "organization", targetId: id, metadata: { by: "operator" } });
+    await writeAudit(getDb(), { actorUserId: c.get("user").id, action: "organization.directory_disconnected", targetType: "organization", targetId: id, metadata: { by: "operator", cleared } });
   }
   return c.json({ ok: true, data: { removed } });
 });
