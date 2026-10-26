@@ -24,6 +24,13 @@ Feature: Surface-profiled briefings — thin index for tool-connected agents, fu
     Given a fresh MCP-capable agent that wants a corpus sample in one call
     When it calls get_briefing with verbosity high
     Then the briefing carries clustered exemplars (~10) in addition to the index lines
+    And the exemplars carry no selection diagnostics (cluster count, map mode, filter, embedding strategy)
+
+  Scenario: An agent connected through OAuth gets no instructions that need a key it doesn't hold
+    Given an agent connected to Soup.net through OAuth, such as a directory plugin, holding no API key
+    When it calls get_briefing
+    Then the briefing says it is connected and has no key to copy or protect
+    And it carries no API-key placeholder and no /uploads example that sends a Bearer token
 
   Scenario: Thin-briefed agent reaches corpus depth by retrieval, not by a bigger briefing
     Given a fresh MCP-capable agent primed with only the thin briefing, starting a task

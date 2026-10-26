@@ -35,6 +35,7 @@ import { sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { membershipOf } from "./membership-sql";
+import { canonicalResource } from "../lib/oauth-resource";
 
 /** Runs on the root connection or inside a transaction. */
 type SqlExecutor = Pick<PostgresJsDatabase, "execute">;
@@ -208,6 +209,16 @@ export interface AuthenticateKeyOptions {
  *     future change to how rotation marks the row. Always NULL for daily and
  *     scoped keys.
  *   - the user-state predicate (`activeUserPredicate`).
+ *   - audience, for OAuth keys only: a key bound to another resource than
+ *     the server's canonical one as it stands now fails like any dead key
+ *     (RFC 8707; OpenAI plugin directory round, recipe 0cfb2ec7). A key with
+ *     no audience is accepted (recipe 8b5a7baa): only code from before
+ *     migration 0043 mints one (the mint's resource is required now), which
+ *     covers keys held at the deploy and keys minted by old tasks during the
+ *     rolling deploy, so connected clients see no wave of 401s. The window
+ *     closes itself: such an access token dies with its hour through the
+ *     expiry guard above, and a refresh binds its successor to the canonical
+ *     resource. Daily and scoped keys carry no audience and are untouched.
  */
 export async function authenticateKey(
   db: PostgresJsDatabase,
@@ -228,6 +239,7 @@ export async function authenticateKey(
     WHERE k.key = ${hashedKey}
       AND k.expires_at > NOW()
       AND k.consumed_at IS NULL
+      AND (k.key_type <> 'oauth' OR k.oauth_resource IS NULL OR k.oauth_resource = ${canonicalResource()})
       AND ${activeUserPredicate()}
       ${ownerClause}
     LIMIT 1
@@ -286,6 +298,11 @@ export interface ConsumedRefreshToken {
   /** The stored default pointer, carried forward unchanged (the column is NOT
    *  NULL). Whether it is usable is decided at authentication, every time. */
   storedDefaultWriteGroupId: string;
+  /** The audience the consumed token was bound to; null for a row minted
+   *  before migration 0043. The rotation decides what the next one gets. */
+  resource: string | null;
+  /** The OpenID scopes granted on the connection, carried forward. */
+  oidcScopes: string[];
 }
 
 /**
@@ -335,7 +352,8 @@ export async function consumeRefreshToken(
       AND u.id = k.user_id
       AND ${activeUserPredicate()}
     RETURNING k.user_id, k.oauth_client_id, k.default_write_group_id,
-              k.read_group_ids, k.write_group_ids
+              k.read_group_ids, k.write_group_ids,
+              k.oauth_resource, k.oauth_oidc_scopes
   `);
   const row = (rows as unknown as Array<{
     user_id: string;
@@ -343,6 +361,8 @@ export async function consumeRefreshToken(
     default_write_group_id: string;
     read_group_ids: string[];
     write_group_ids: string[];
+    oauth_resource: string | null;
+    oauth_oidc_scopes: string[] | null;
   }>)[0];
   if (!row) return null;
   return {
@@ -351,7 +371,39 @@ export async function consumeRefreshToken(
     readGroupIds: row.read_group_ids,
     writeGroupIds: row.write_group_ids,
     storedDefaultWriteGroupId: row.default_write_group_id,
+    resource: row.oauth_resource,
+    oidcScopes: row.oauth_oidc_scopes ?? [],
   };
+}
+
+// ── OAuth UserInfo ─────────────────────────────────────────────────────────
+
+/** What GET /oauth/userinfo may say about an authenticated OAuth key's owner. */
+export interface OAuthUserInfo {
+  /** OpenID scopes granted on the connection ('openid', 'email'). */
+  oidcScopes: string[];
+  email: string;
+  emailVerified: boolean;
+}
+
+/**
+ * The OpenID grant and the owner's email for a key already authenticated by
+ * `authenticateKey` (recipe 6ba99331). Null for a daily or scoped key: only an
+ * OAuth connection was granted, or refused, the OpenID scopes. The caller
+ * decides from `oidcScopes` what to return; nothing here widens the grant.
+ */
+export async function oauthUserInfo(db: PostgresJsDatabase, principal: Principal): Promise<OAuthUserInfo | null> {
+  if (principal.keyType !== "oauth") return null;
+  const rows = await db.execute(sql`
+    SELECT k.oauth_oidc_scopes, u.email, u.email_verified_at
+    FROM claimnet.api_keys k
+    JOIN claimnet.users u ON u.id = k.user_id
+    WHERE k.id = ${principal.keyId}::uuid AND k.key_type = 'oauth'
+    LIMIT 1
+  `);
+  const row = (rows as unknown as Array<{ oauth_oidc_scopes: string[] | null; email: string; email_verified_at: string | null }>)[0];
+  if (!row) return null;
+  return { oidcScopes: row.oauth_oidc_scopes ?? [], email: row.email, emailVerified: row.email_verified_at !== null };
 }
 
 // ── Workspace scope binding ─────────────────────────────────────────────────

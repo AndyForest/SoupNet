@@ -138,7 +138,7 @@ The cold-start program for fresh agent sessions on a rich corpus (design rulings
 
 ### `[IMPL]` Drafts and triage, slices 6 to 9: follow-ups parked by the 2026-10-24 re-plan
 
-From [planning/drafts-and-triage-slices-6-7-revision.md](planning/drafts-and-triage-slices-6-7-revision.md) (ratified 2026-10-24). Three small items the plan sends here rather than into a slice: the drill-down hint says "re-check with this recipe text", which sends a reader to the write path (it should say "search with this text"); a response can print two similarity figures for one pair (claim-to-claim and evidence-to-claim) without saying which is which; and once slices 8b and 6b have merged, re-tighten the four size caps raised by the scaffold PR A0 (remote `tools/list` 18,200; shared descriptions 6,600; thin briefing 21,000; headless thin 21,500) to the measured figures plus the usual slack.
+From [planning/drafts-and-triage-slices-6-7-revision.md](planning/drafts-and-triage-slices-6-7-revision.md) (ratified 2026-10-24). Three small items the plan sends here rather than into a slice: the drill-down hint says "re-check with this recipe text", which sends a reader to the write path (it should say "search with this text"), and its `drillDown.exemplarText` repeats the result's own `recipe` text, which output minimisation would drop (plugin stream T audit, docs/connectors/openai-plugin.md); a response can print two similarity figures for one pair (claim-to-claim and evidence-to-claim) without saying which is which; and once slices 8b and 6b have merged, re-tighten the four size caps raised by the scaffold PR A0 (remote `tools/list` 18,200; shared descriptions 6,600; thin briefing 21,000; headless thin 21,500) to the measured figures plus the usual slack.
 
 ### `[IMPL]` Cap the paging depth of the signed-in and admin listings too
 
@@ -349,13 +349,19 @@ Operator note 2026-09-19: ChatGPT plugins are MCP-based now (since July, per ope
 
 Status (2026-10-26): verified against OpenAI's current docs and planned as a round in [planning/openai-plugin-directory.md](planning/openai-plugin-directory.md): three streams (OAuth hardening with audience-bound tokens, CIMD and RFC 9207; the tool contract with annotation justifications and output minimisation; the listing package, skill, Codex marketplace file and connect-page copy), then the operator's portal steps. Research brief with sources in the companion repo.
 
+Status (2026-10-26, later): the three streams are built: the tool contract (#150), OAuth hardening (#152) and the listing package (#151). What remains is the operator's: the steps in the plan's "What the operator does" and the pre-upload notes in [planning/openai-plugin-build/listing.md](planning/openai-plugin-build/listing.md) (reviewer credentials go only into the portal, never the package), and the listing subtitle (draft `3ca50187`). Close this item when the listing is submitted.
+
+### `[IMPL]` Audit-log retention on account deletion (ruling `1d1531da`)
+
+Ruled 2026-10-26 in the OpenAI plugin round: when an account is deleted, its check-log rows in `audit_log` (`recipe.checked`, `check.searched`, `briefing.issued`) are anonymized rather than deleted, and its account-event rows are kept for a limited period, then deleted. Today nothing deletes or anonymizes `audit_log` rows ("append-only trail outlives the actor", `user-delete.service.ts`). The privacy policy's §8 is worded by criteria ("only as long as needed for security, legal and operational purposes"), which is true before and after this lands, so the PR needs no policy change. Owner: stream T's follow-up PR. Mind the `audit_log.*` FK note under Database: the rows deliberately outlive the actor, so anonymization rewrites the actor columns rather than relying on a cascade.
+
+### `[DECISION NEEDED]` Retention for session display history
+
+`session_shown` rows (which recipes a session's searches and checks displayed, keyed by an opaque session token) are never deleted, not even with the account. Draft `c293df54` asks the operator; the recommendation is no sweep for now, with the policy saying so plainly (it does: "kept as long as needed for operational purposes"). A limit would apply to `session_shown` alone, never `intent_shown`, which slice 9's intent lineage (`intent-read.service.ts`) reads with no time window; a 30-day sweep built and reverted on `plugin/listing-package` (8fc9303) is the starting point if the answer is yes.
+
 ---
 
 ## OAuth follow-ups
-
-### `[IMPL]` Rate-limit `/oauth/token` and `/oauth/authorize/grant`
-
-`POST /oauth/register` is rate-limited (30/hour per IP via `registerRateLimit`). `/oauth/token` and `/oauth/authorize/grant` are not. The downstream guards already require a valid `client_secret` or JWT respectively, so the practical exposure is small, but consistent rate limits across the OAuth surface make the surface easier to reason about and harden in case any of the upstream guards weaken.
 
 ### `[DESIGN]` Consent-screen design-system polish
 
@@ -376,6 +382,8 @@ Found by the 2026-09-27 browser verification of #96/#97 (E5). The Recipe Books m
 ### `[DESIGN]` Write ADR-0022 for the OAuth 2.1 connector flow
 
 `apps/backend/src/routes/oauth.ts:9` references "ADR-pending" — the implementation is complete (DCR → consent → auth code → token/refresh) but the design rationale isn't recorded. Capture: the access token *is* an `api_keys` row (`key_type='oauth'`, 1h TTL, 30d refresh) rather than a separate token store; the coarse `read`/`write` scope string vs. the structured per-book `read_group_ids`/`write_group_ids`/`default_write_group_id` columns (per-book granularity deliberately kept out of the OAuth `scope` param); PKCE-S256 mandatory; exact redirect-URI match (F44); refresh rotation with TOCTOU defense (F38) — since 2026-07-06 the consumption marker is a dedicated `consumed_at` column (migration 0028) with an atomic `UPDATE ... WHERE consumed_at IS NULL` compare-and-swap, and rotation deliberately revokes the old access token by truncating its `expires_at` to the epoch sentinel (policy: a stolen access token dies with its bundle; mechanism keeps mixed-version deploys race-free — see `refreshOAuthTokenBundle`'s header comment and recipe efeaab7a).
+
+Added 2026-10-26 by the OpenAI plugin round (stream O, #152; details in [planning/openai-plugin-build/oauth.md](planning/openai-plugin-build/oauth.md)): the origin-form `resource` and the audience it binds to the token (RFC 8707; `invalid_target` for anything but the origin or `<origin>/mcp`), the RFC 9207 `iss` parameter on the authorization response, Client ID Metadata Documents beside DCR, and UserInfo (`openid`, `email`) without ID tokens.
 
 
 ## How to use this file

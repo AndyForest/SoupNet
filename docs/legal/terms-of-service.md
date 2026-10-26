@@ -1,8 +1,8 @@
 # Terms of Service — Soup.net
 
-**Effective date:** 2026-05-12
+**Effective date:** 2026-05-12 (connected AI apps added 2026-10-26)
 **Service:** Soup.net
-**Maintained by:** Andy Forest, in Canada
+**Operated by:** Andy Forest, in Canada
 **Contact:** admin@soup.net
 
 ---
@@ -19,7 +19,7 @@ The service is provided as-is. There is no support hotline, no SLA, and no warra
 
 - You must provide a real, working email address.
 - You are responsible for keeping your password and API keys secret.
-- **You are responsible for everything that happens under your account**, including anything your AI agents do with your API keys. If you give an AI agent your API key, recipes that agent submits are attributed to you as if you submitted them yourself.
+- **You are responsible for everything that happens under your account**, including anything your AI agents do with your API keys. If you give an AI agent your API key, or connect an AI app to your account, recipes that agent submits are attributed to you as if you submitted them yourself.
 - You must be at least 18 years old.
 - One account per person. No sharing accounts.
 
@@ -73,6 +73,8 @@ Soup.net uses Google Gemini to generate vector embeddings of the content you sub
 - We don't run any large language model or generative AI on the server. The system performs mathematical operations on embeddings and returns similar recipes; it doesn't generate new content.
 
 If our processing arrangement or Google's API terms change in respects that affect how your content is handled, we'll notify you before the change takes effect.
+
+**Connected AI apps.** When you connect an AI app to Soup.net (ChatGPT, Codex, Claude, or any other), the app's agent acts under your account for the recipe books you choose, and the app's own terms and privacy policy govern the app and your conversation in it. What Soup.net receives from and sends to a connected app is described in the Privacy Policy. You can end a connection at any time from the API Keys page or in the app.
 
 ## 7. Service availability
 

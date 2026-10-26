@@ -25,7 +25,10 @@ import { servedToolsList } from "./served-tools-list.js";
 /** 13,670 → 14,700 (2026-10-24, drafts-and-triage slices 6 to 9, scaffold PR A0): moves with
  *  the remote roster cap (17,000 → 18,200); reason and re-tightening note in
  *  apps/backend/src/routes/mcp-tools-list-size.test.ts. */
-const STDIO_TOOLS_LIST_MAX_BYTES = 14_700;
+// 14,700 → 14,750 (2026-10-26, OpenAI plugin directory stream T): every
+// description in the reviewed shape and explicit annotations, as on the remote
+// server. Measured 14,407 on main (with slice 8b's page parameter) → 14,738.
+const STDIO_TOOLS_LIST_MAX_BYTES = 14_750;
 
 const BACKEND = "http://backend.test";
 
