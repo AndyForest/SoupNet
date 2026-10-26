@@ -35,7 +35,7 @@ An organization can require its members to sign in with Google Workspace (recipe
 
 - One login page and one consent page serve password and Google sign-in, and the consent page returns a signed-out person to itself either way. Password sign-in returns through the audited same-origin rule, which now allows exactly `/oauth/authorize`.
 - `users.password_hash` is nullable. Every reader handles null: login compares a dummy hash and answers like a wrong password, and deleting a password-less account is confirmed by a Google sign-in under ten minutes old.
-- The residual lapsed-domain risk of silent linking is open with the operator (draft `06f7ff88`): whoever recreates a lapsed company domain's Workspace could link into a dormant verified password account. The alternative is to ask once for the password when linking into a verified account that has one.
+- The residual lapsed-domain risk of silent linking is accepted: whoever recreates a lapsed company domain's Workspace could link into a dormant verified password account. Asking for the password at that link was proposed and rejected (draft `06f7ff88`): "Password reset would have the exact same problem anyways, this solves no security issue and is just overthinking." (the operator, 2026-10-26). Whoever controls the mailbox can already reset the password by email.
 - Self-hosters without a Google client see no Google button and no new routes (the `/auth/google/*` routes answer 404).
 
 ## References
