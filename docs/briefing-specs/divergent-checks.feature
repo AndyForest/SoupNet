@@ -37,3 +37,12 @@ Feature: Divergent recipe checks — the user's selection is the signal
     When the agent delivers
     Then the plan itself is the primary output, with recipe-check links tagging the taste calls within it
     And the plan is not replaced by a bare list of divergent options
+
+  Scenario: Options that will all be pursued are each checked as ordinary recipes
+    # Guards: briefing §Divergent recipe checks, the building-both clause; recipes 7942b8c0 and ea930c3d; drafts-and-triage slice 7 (build log §Slice 7 rubric; spec-decision-log.md 2026-10-24, C1).
+    Given a deferrable call where the agent will genuinely try every option
+    When it starts the work
+    Then it checks each option as an ordinary recipe before the outcome is known
+    And once the outcome is in, it checks the chosen path with the outcome as evidence and leaves a feedback row on each other option
+    When instead it cannot stand behind any option yet
+    Then it drafts each option under one intent, with the rubric stated in the evidence before measuring

@@ -352,7 +352,9 @@ export function renderCheckResponseMarkdown(
       // closes the feedback loop on null results.
       text += `\n${searchZeroResultLine(data)}`;
     } else {
-      text += "\nNo similar recipes found.";
+      // Slice 7 (7d.8, recipe b7e90f25): a thin result is a cue to think
+      // harder, not a reason to stretch a distant match or to check less.
+      text += "\nNo similar recipes found. When results in your context are thin, think harder and check more of your calls, rather than stretching a distant match.";
     }
     if (data.sessionId) {
       text += `\nSession: ${data.sessionId} — pass session_id on your next check to keep responses lean.`;

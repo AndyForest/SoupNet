@@ -126,6 +126,8 @@ describe("renderCheckResponseMarkdown", () => {
     };
     const text = renderCheckResponseMarkdown(res);
     expect(text).toContain("No similar recipes found.");
+    // Slice 7 (S7-D8): thin results are a cue to think harder and check more.
+    expect(text).toContain("When results in your context are thin, think harder and check more of your calls, rather than stretching a distant match.");
   });
 
   it("picks up formatWarning from either location (MCP: in data; /check JSON: top-level)", () => {

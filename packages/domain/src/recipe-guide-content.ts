@@ -29,10 +29,11 @@ This is stigmergy — indirect coordination through environmental traces, like a
  */
 export const ROLE_PATTERNS = `**Role and goal are different things.** The role is who the user is — professionally or contextually (data engineer, product owner, parent volunteer) — abstracted from name and project. The goal is what they're working on right now (authoring options docs, evaluating AI agent outputs, organizing a fundraiser). Both are needed; conflating them into verb-form roles ("As an author authoring docs...") reads weakly and clusters worse than role + separate goal.
 
-**Make the role findable across users and projects.** Three patterns keep it transferable:
+**Make the role findable across users and projects.** Four patterns keep it transferable:
 - **Use the user's role, not yours.** Rather than "As an AI agent, I recommend...", write the user's perspective: "As a [their role], I prefer...". The recipe logs the human's preference, not your reasoning. Practical test: read the recipe with the user's actual name swapped in for "I" — if it becomes false, the voice is wrong.
 - **Use a transferable functional role, not a personal name.** Rather than "As Andy reviewing two AI design briefings...", use "As a product owner evaluating AI agent outputs..." — so the recipe is findable when any other user faces the same kind of call. Personal names collapse the role onto one person.
-- **Replace project-specific proper nouns with their underlying functional equivalent.** Proper nouns (company names, codenames, product names) cluster weakly in vector space compared to descriptive functional roles, and the recipe-book description already supplies project context — restating it in the role bloats the embedding without adding cluster-useful signal. The work is substitution, not deletion: "Soup.net maintainer" written to soup-net-development becomes "MCP server maintainer," not just "maintainer" (too vague to cluster against). "Soup.net developer cleaning up iPhone Safari issues" becomes "front-end React developer cleaning up iPhone Safari mobile issues." "Acme consultant mapping client GL codes" becomes "data engineer mapping client GL codes to a canonical taxonomy." The test: would the substituted role retrieve usefully for an agent working on a different project facing the same kind of call?`;
+- **Replace project-specific proper nouns with their underlying functional equivalent.** Proper nouns (company names, codenames, product names) cluster weakly in vector space compared to descriptive functional roles, and the recipe-book description already supplies project context — restating it in the role bloats the embedding without adding cluster-useful signal. The work is substitution, not deletion: "Soup.net maintainer" written to soup-net-development becomes "MCP server maintainer," not just "maintainer" (too vague to cluster against). "Soup.net developer cleaning up iPhone Safari issues" becomes "front-end React developer cleaning up iPhone Safari mobile issues." "Acme consultant mapping client GL codes" becomes "data engineer mapping client GL codes to a canonical taxonomy." The test: would the substituted role retrieve usefully for an agent working on a different project facing the same kind of call?
+- **For what the user receives**, the recipient role is the invariant one: name the kind of thing received ("As a reader of weekly status reports..."), keep the goal separate, and use "prefer" or "chose", not "want". Test: it stays true when the same person authors the next one.`;
 
 /**
  * Collaboration / cross-pollination framing. Shared recipe books mean an
@@ -252,7 +253,7 @@ export const PRINCIPLES = `You're already working to understand your user. These
 
 **Stigmergy.** What you learn about the user becomes a trace the next agent reads. Every genuine check makes the corpus smarter — not just for you, but for every agent this user works with. The corpus stays useful when recipes describe what you'd want a future version of yourself to find, rather than what checks a box right now.
 
-**Truthfulness.** The corpus only works if the record is true — and you already wouldn't want to hallucinate user preferences. Every claim, every quoted reference, every "so that" needs to be true at the moment you submit. A quoted reference is a verbatim substring of the cited source — if you can't find the exact string in the original, it's interpretation, not data. Everything else — broad, vague, thin, exploratory — is welcome, as long as it's true.
+**Truthfulness.** The corpus only works if the record is true — and you already wouldn't want to hallucinate user preferences. Every claim, every quoted reference, every "so that" needs to be true at the moment you submit, and checkable by someone who wasn't there. A quoted reference is a verbatim substring of the cited source — if you can't find the exact string in the original, it's interpretation, not data. Everything else — broad, vague, thin, exploratory — is welcome, as long as it's true.
 
 **Structure makes taste findable.** You're already forming hypotheses about what the user prefers. Inspired by Toulmin argumentation and Design Thinking user stories, this structure makes those hypotheses findable and verifiable — a mental model, not a rigid format: Recipe = the claim, from the human's perspective: "As a [role] working on [goal], I [prefer/chose] so that [reason]." Evidence = your interpretation of why the source material supports the claim. Reference = a raw verifiable quote + citation. A recipe without evidence is a bare assertion — you can gather evidence first, or form a different recipe you can support. The user's current message is itself a legitimate source; quoting the lines that made your framing a candidate gives you concrete warrant material.
 
@@ -260,13 +261,18 @@ export const PRINCIPLES = `You're already working to understand your user. These
 
 The same mechanics govern a changed mind. Every surface that shapes what gets displayed — similarity search, clustering, MMR diversity selection — sees only vectors, and embeddings encode topic, not stance: a bare flip ("I no longer prefer X") lands as close to the original as a plain rephrase does (measured 0.86 vs 0.88 cosine on a real corpus), so the display layer treats the pair as duplicates and one of them yields its slot. The new reasoning is what separates the pair: give the reversal its own fresh "so that" and the same example drops to 0.81, while real justification-rich reversals measure 0.70–0.74 — fully distinct judgments the search surfaces on their own merits. So when logging a decision that supersedes an earlier one, write the new judgment's full reason — the justification text is what makes the change findable as its own judgment rather than filed as an echo of the old one. (Measurements: docs/planning/ranking-research/stance-separation-probe.md.)
 
+Granularity and generality are separate axes: one judgment per recipe is the count; how much of the case sits in the claim is the specificity. State the claim at the most general level that's still true, as a choice, not a "must", with the specifics in the evidence, where they stay checkable.
+
 **Co-authorship is a dialogue.** You're already collaborating with the user on their intent. Recipe checks make that collaboration visible and persistent — when you surface options and they choose, the choice becomes evidence that future agents can build on. When something doesn't add up, surfacing the tension tends to work better than silently complying or silently overriding. Your judgment is valued input.`;
 
 /** Shared workflow — when to check. */
 export const WORKFLOW_WHEN = `You already have these moments in your work. Recipe checks are how you handle them with lasting value:
 - Starting a task? Check a broad recipe to surface what other agents have learned.
 - Facing a judgment call? Check the specific decision with your evidence. The corpus may confirm, refine, or contradict.
-- Completed meaningful work? Log the outcome so future agents find it.`;
+- Completed meaningful work? Log the outcome so future agents find it.
+- Extending something that already has a default (who gets through when nothing matches)? It may not feel like a call; a check finds any principle already logged.
+- Writing for a particular reader in a particular place? A check before writing finds the corrections already logged.
+- An instruction pulling against your judgment? Check the call you think is right, with the instruction quoted, then proceed; its id is where redirection attaches.`;
 
 /**
  * Shared annotation guidance — the recipe-as-annotation pattern. The primary
@@ -489,7 +495,7 @@ export const BRIEFING_KEY_PLACEHOLDER = "YOUR_API_KEY";
  * what the key is. At most 400 characters (pinned in the test).
  */
 export const HEADLESS_KEY_SECTION = `## This key is headless
-Every recipe you check through this key is stored as a draft that only your user and their agents see until your user confirms it, and this key cannot verify drafts. In each draft, say why your user couldn't be asked and what would settle it. End the session with one \`outcome\` feedback row listing the draft ids you left open.`;
+Every recipe you check through this key is stored as a draft that only your user and their agents see until your user confirms it, and this key cannot verify drafts. Drafting well is the work (see Drafts): say in each what would settle it, rate it, and draft open options under one intent. End the session with one \`outcome\` feedback row listing the draft ids you left open.`;
 
 export interface BriefingBuildInput {
   user: BriefingUser;
@@ -685,15 +691,15 @@ ${webSetupSection}
 `}## How to check
 \`check_recipe\` accepts: \`recipe\` (the claim), \`supporting_evidence\` (warrant + data), and \`recipe_book\` (slug). Optional: \`axes\` (concept projection), \`verbosity\` (response detail: low | medium | high, omit for automatic), and reference file attachments (images, PDF, audio, video) — see your tool schema for the exact file-input params. HTTP MCP also accepts an optional \`region.image_box\` with normalized \`{x0, y0, x1, y1}\` coordinates (0-1) to mark a specific area of an attached image — the embedding pipeline crops to that region plus padding, blurs the padding, and weights the marked area heavily; the original image is stored unmodified, so the region treatment can be redone later.
 
-Further optional params live in your tool schema, each doing what its one-line description says: \`session_id\` (returned on every check — pass it back and recipes you've already been shown collapse to id-stubs while results walk to unseen ones), \`known_recipes\` (client-declared ids you still hold — same id-stub rendering, never ranking), \`decided_at\` (backfill the original date of a historical decision), \`response_format\` (markdown report or structured JSON), \`agent_id\` (mint your own id so your checks form a joinable lineage), and \`feedback\` (close the loop on earlier checks or searches while making this one; each row takes the same fields as \`log_feedback\`).
+Further optional params live in your tool schema, each doing what its one-line description says: \`session_id\` (returned on every check — pass it back and recipes you've already been shown collapse to id-stubs while results walk to unseen ones), \`known_recipes\` (client-declared ids you still hold — same id-stub rendering, never ranking), \`decided_at\` (backfill the original date of a historical decision), \`response_format\` (markdown report or structured JSON), \`agent_id\` (mint your own id so your checks form a joinable lineage), \`impact\` and \`uncertainty\` (triage ratings, low | medium | high; leave out one you have no view on), and \`feedback\` (close the loop on earlier checks or searches while making this one; each row takes the same fields as \`log_feedback\`).
 
 \`intent\` takes your task story or an \`int_…\` id, and each response says how to carry the id. Recipes already delivered to an intent render as id-stubs: rendering only, never ranking. Story text always registers a new intent (identical wording never merges sessions), so if you lose the id, for example to context compaction, re-send the story: the fresh intent starts with no stubs, and recipes render in full again.
 
-**Search vs check.** \`search_recipes\` (or the check page's \`filter\` param) is the read-only sibling: same corpus, same ranking — and it's the tool to reach for when the judgment you need was made by OTHER people: reviewing a teammate's PR area (quote the changed filenames: \`("a.service.ts" OR "b.ts")\`), or joining a shared recipe book mid-project. Its results exclude your own recipes by default; \`author:me\` / \`author:anyone\` override, and \`after:\`/\`before:\` bound the judgment date. The division of labor: check when you hold a genuine hypothesis about your user's taste — that's the append path that grows the corpus; search when the answer lives in a collaborator's logged judgment. With neither, the corpus isn't the place to look — ask the user or read the project's own sources; Soup.net is a decision log, not documentation. Already hold recipe ids (frontmatter, prior results)? \`get_recipes\` fetches them directly, and \`get_briefing\`'s \`purpose\` param tailors the briefing's exemplars to your task.
+**Search vs check.** \`search_recipes\` (or the check page's \`filter\` param) is the read-only sibling: same corpus, same ranking — and it's the tool to reach for when the judgment you need is already logged: reviewing a teammate's PR area (quote the changed filenames: \`("a.service.ts" OR "b.ts")\`), or joining a shared recipe book mid-project. It includes your own recipes: \`author:<email>\` narrows to one person, \`-author:me\` leaves yours out, and \`after:\`/\`before:\` bound the judgment date. The division of labor: check when you hold a genuine hypothesis about your user's taste — that's the append path that grows the corpus; search when the answer is already in someone's logged judgment. With neither, the corpus isn't the place to look — ask the user or read the project's own sources; Soup.net is a decision log, not documentation. Probing the corpus (what's there, how a role clusters) is a search too; a probe check takes exemplar slots from real recipes. Already hold recipe ids (frontmatter, prior results)? \`get_recipes\` fetches them directly, and \`get_briefing\`'s \`purpose\` param tailors the briefing's exemplars to your task.
 
-If you auto-compact your context or otherwise no longer hold the recipes you've been shown, refresh your session by omitting \`session_id\` on your next check — a fresh session means full recipe text again.
+${mcpProfile ? "" : `If you auto-compact your context or otherwise no longer hold the recipes you've been shown, refresh your session by omitting \`session_id\` on your next check — a fresh session means full recipe text again.
 
-Full field meanings for every response object live at \`GET ${backendUrl}/schemas/recipe.json\` (and \`/schemas/check-response.json\`) — canonical, generated from the same source the server validates against.
+`}Full field meanings for every response object live at \`GET ${backendUrl}/schemas/recipe.json\` (and \`/schemas/check-response.json\`) — canonical, generated from the same source the server validates against.
 
 For local files that have no public URL (screenshots, generated artifacts, anything on your disk), \`file_base64\` will blow your context window on anything bigger than a thumbnail. Instead, POST the file to the \`/uploads\` REST endpoint first using your same Bearer token, then pass the returned URL as \`file_url\`. The MCP server detects own-hostname URLs and resolves them internally — no second HTTP fetch, no public exposure. Example:
 
@@ -702,12 +708,15 @@ For local files that have no public URL (screenshots, generated artifacts, anyth
       -F "file=@/local/path/to/screenshot.png"
     # → {"ok":true,"file_url":"${backendUrl}/uploads/<uuid>.png", ...}
 
-The returned \`file_url\` is opaque (a GET against it returns 404) and only resolvable by the same key that uploaded it.
+The returned \`file_url\` is opaque (a GET against it returns 404) and only resolvable by the same key that uploaded it.${mcpProfile ? "" : `
 
-Evidence entries follow this shape: your interpretation, then \`> "direct quote"\`, then \`-- source citation\`, separated by blank lines.
+Evidence entries follow this shape: your interpretation, then \`> "direct quote"\`, then \`-- source citation\`, separated by blank lines.`}
+
+## Reading results
+A returned recipe is a call someone made in their context, not a rule: weigh it against yours and say how it applies. A familiar judgment in a new context is worth logging, with that context as evidence. A neighbor that is your own open draft is your assumption coming back; weigh it as that.
 
 ## Closing the loop — feedback
-Stateless sessions lose what happened after a check — whether the surfaced recipes confirmed, corrected, or redirected your work. If your tools include \`log_feedback\` (or \`check_recipe\`'s optional \`feedback\` parameter), you can close that loop: after a check shapes a decision, log a short feedback row about the PRIOR check, joined by the recipe id the check response reported (the full UUID, or an unambiguous short-id prefix of at least 8 characters). Without MCP tools, the same loop closes over REST: POST ${backendUrl}/feedback with your Bearer API key — the body is one row object (with trace_id) or {"feedback": [rows]}, same fields as below. If URLs are what you can build, the same fields travel as query params: prefix them with feedback_ on your next check URL (feedback_trace_id, feedback_kind, ...) and the row rides along with that check, or GET ${backendUrl}/feedback with the unprefixed fields stands alone when no follow-up check is coming — same auth as your check URLs. A row carries kind (check-feedback | operational | outcome), impact (none | new | subtle | big | operational), disposition (proceeded | corrected | asked-human | charted-new | deferred), story_fulfilled (yes | partial | no | unknown), the story behind the check, and a note on what you did with the result. Feedback renders on the recipe's detail page, so the human sees which recipes earned their keep — and results that didn't help are worth a row too: "nothing similar found" tells the corpus where it's thin, and an ignored or contradicted result is exactly the calibration future agents lack. Read-only searches close the same loop: a search response returns a \`searchId\`, and a row carrying \`search_id\` instead of trace_id records what the search surfaced and what you did with it. Mid-flow, attach rows to your next check (fewer calls); use standalone \`log_feedback\` or POST /feedback for end-of-session rows.
+Stateless sessions lose what happened after a check — whether the surfaced recipes confirmed, corrected, or redirected your work. If your tools include \`log_feedback\` (or \`check_recipe\`'s optional \`feedback\` parameter), you can close that loop: after a check shapes a decision, log a short feedback row about the PRIOR check, joined by the recipe id the check response reported (the full UUID, or an unambiguous short-id prefix of at least 8 characters). Without MCP tools, the same loop closes over REST: POST ${backendUrl}/feedback with your Bearer API key — the body is one row object (with trace_id) or {"feedback": [rows]}, same fields as below. If URLs are what you can build, the same fields travel as query params: prefix them with feedback_ on your next check URL (feedback_trace_id, feedback_kind, ...) and the row rides along with that check, or GET ${backendUrl}/feedback with the unprefixed fields stands alone when no follow-up check is coming — same auth as your check URLs. A row carries kind (check-feedback | operational | outcome), impact (none | new | subtle | big | operational), disposition (proceeded | corrected | asked-human | charted-new | deferred), story_fulfilled (yes | partial | no | unknown), the story behind the check, and a note on what you did with the result. Feedback renders on the recipe's detail page, so the human sees which recipes earned their keep — and results that didn't help are worth a row too: "nothing similar found" tells the corpus where it's thin, and an ignored or contradicted result is exactly the calibration future agents lack. Read-only searches close the same loop: a search response returns a \`searchId\`, and a row carrying \`search_id\` instead of trace_id records what the search surfaced and what you did with it. A whole-session outcome row with no single recipe can carry your intent_id alone. Mid-flow, attach rows to your next check (fewer calls); use standalone \`log_feedback\` or POST /feedback for end-of-session rows.
 
 ## Annotating creative output
 ${WORKFLOW_ANNOTATION}
@@ -725,9 +734,14 @@ MCP-capable agents: present the options as text in your reply and wait for the u
 
 ${mcpProfile ? "" : `Web-only agents: present the options as 2-4 divergent clickable recipe-check links (see the link-formatting guidance below for Gemini-vs-Claude format). The user clicks the framing that fits.
 
-`}The user's selection is itself evidence. Once they've chosen, append a line like "the user was presented with N framings and chose this one" to the warrant of the chosen recipe — that captures the selection signal. Checking candidates before the user picks writes that sentence while it's still false; wait for the choice, then check only the chosen one.
+`}The user's selection is itself evidence. Once they've chosen, append a line like "the user was presented with N framings and chose this one" to the warrant of the chosen recipe — that captures the selection signal. Checking candidates before the user picks writes that sentence while it's still false; wait for the choice, then check only the chosen one. The exception is building both: when every option will genuinely be pursued, check each as an ordinary recipe; when you can't stand behind any yet, draft each under one intent, with the rubric for choosing stated first. Then check the chosen path, the outcome as evidence, and leave feedback on the rest.
 
-If none of your framings fit, ask the user to clarify and form new hypotheses rather than picking the closest miss.${mcpProfile ? "" : `
+If none of your framings fit, ask the user to clarify and form new hypotheses rather than picking the closest miss.
+
+## Drafts
+A draft (\`draft: true\`) is a hypothesis you can't yet stand behind from the context you hold, private to the person it's about and their agents until resolved. At such a call: if you'll act on it, check it as an ordinary recipe and own it; if it's a person's call and they're reachable, ask plainly with your recommendation and its reasoning, and if you keep working meanwhile, draft that recommendation under your intent so their answer reaches you wherever it's given; otherwise draft it, say in the first evidence entry what would settle it, rate it, and return when that lands.
+
+A draft is yours to resolve: whichever of a person's agents holds the settling context, you included once the work or a reply settles it, resolves it with \`verify_draft\` (verified, rejected, or not chosen) under the same confidence rule as any check, quoting their words wherever they gave them. A draft waits for a person's click only while nothing any agent holds settles it. With sub-agents, work live: they decide as they go and raise only high impact × uncertainty calls; poll \`is:draft intent:<id>\`, correct mid-run, and resolve what you can before finishing.${mcpProfile ? "" : `
 
 ${linkFormattingSection}
 
@@ -831,8 +845,17 @@ export function buildExemplarsSection(
 
     let text = `${metaLines}\n\n${ex.claimText}`;
     const blocks = (ex.evidenceBlocks ?? []).filter((b) => b.trim().length > 0);
-    if (blocks.length > 0) {
-      text += `\n\nEvidence:\n${blocks.join("\n\n")}`;
+    // Slimming lever (recipe aae000d2, drafts-and-triage slice 7, S7-L1):
+    // the top evidence entry only, and a pointer to the rest by id. The
+    // exemplar is context about the corpus's shape, so one entry carries its
+    // warrant; a reader who wants the full record fetches it.
+    const [top] = blocks;
+    if (top !== undefined) {
+      text += `\n\nEvidence:\n${top}`;
+      const more = blocks.length - 1;
+      if (more > 0) {
+        text += `\n(${more} more evidence ${more === 1 ? "entry" : "entries"}: get_recipes or GET /recipes?ids=${ex.recipeId})`;
+      }
     }
     return text;
   });

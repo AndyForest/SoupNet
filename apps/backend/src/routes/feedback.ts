@@ -41,6 +41,12 @@ import { authenticateKey } from "../authz";
 import { rateLimit } from "../middleware/rate-limit";
 import type { RawFeedbackRow, FeedbackRowResult } from "../services/feedback.service";
 import { ingestFeedback } from "../services/feedback.service";
+import { parseReportQuery } from "../services/report-params";
+import type { FeedbackFilterName } from "../services/report-params";
+import { listFeedbackRows } from "../services/intent-read.service";
+import { reportPrincipal, keyViewer, reportIpRateLimit, reportPerKeyRateLimit } from "./intents";
+
+const FEEDBACK_ROW_FILTERS: readonly FeedbackFilterName[] = ["intent_id", "trace_id", "search_id", "agent_id", "since", "recipe_book"];
 
 const feedbackRateLimit = rateLimit({ max: 1000, windowMs: 60 * 60 * 1000 });
 
@@ -210,6 +216,22 @@ feedback.post("/", feedbackBodyLimit, feedbackRateLimit, async (c) => {
 
   const okCount = results.filter((r) => r.ok).length;
   return c.json({ ok: okCount > 0 || results.length === 0, data: { recorded: okCount, results } }, okCount > 0 || results.length === 0 ? 200 : 400);
+});
+
+// GET /feedback/rows — the caller's user's feedback rows, for reports
+// (drafts-and-triage slice 9). A read, unlike every other verb here: Bearer
+// only, JSON only, strict parameters (services/report-params.ts), the
+// filters intent_id, trace_id (alias recipe_id), search_id, agent_id, since,
+// recipe_book, and page/per_page. Rows about a recipe are listed only when the
+// presenting key may read it now (authz/report-scope.ts). The bare GET below
+// stays the URL-built write form.
+feedback.get("/rows", reportIpRateLimit, reportPerKeyRateLimit, async (c) => {
+  const principal = await reportPrincipal(c);
+  if (principal instanceof Response) return principal;
+  const parsed = parseReportQuery(c.req.queries(), FEEDBACK_ROW_FILTERS);
+  if (!parsed.ok) return c.json({ ok: false, error: parsed.error, fields: parsed.fields }, 400);
+  const data = await listFeedbackRows(getDb(), keyViewer(principal), parsed.filters, parsed.paging);
+  return c.json({ ok: true, data });
 });
 
 // GET /feedback — backup surface for web-only agents that can construct a

@@ -39,6 +39,68 @@ Before is `main` at `c21f421` (slices 6c, 8a and 6a merged; the figures slice 6a
 | Shared descriptions | 6,386 characters | 6,393 | 6,600 |
 | `searchQuery` | 406 characters | 413 | 420 per description |
 
+## 2026-10-24 — Drafts-and-triage slice 7, PR C1: the Drafts section, the planned slice 7 copy, eight field additions, and the exemplar slimming lever
+
+Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-and-triage-slices-6-7-revision.md) §7a to §7e (ratified 2026-10-24; rulings 48 and 52). Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 7 rubric. Agent `a-drafts-7-2026-10-24`; the wording and budget calls are recipe-checked in `soupnet-oss` under intent `int_YtrwcjA9yqBoBZYQCHlPVFnc`.
+
+Written against stream A's `outcome` on `verify_draft` (6c) and stream B's `intent:` qualifier (6a); this PR merges after both. No tool or parameter description, deposit notice, or web copy changes here: the `draft` parameter, the deposit notice, and the queue and dashboard copy are PR C2, and `verify_draft`'s description is stream A's.
+
+### Edits and the scenarios they move
+
+1. **Drafts section (new, shared body, both profiles; 7a, with the operator's addition of 2026-10-24, revision commit `a7f4d20`).** A draft is "a hypothesis you can't yet stand behind from the context you hold"; the order of moves (act on it: check it as an ordinary recipe and own it; a person's call and they're reachable: ask plainly with your recommendation and its reasoning, and if you keep working meanwhile, draft that recommendation under your intent so their answer reaches you wherever it's given; otherwise draft, say in the first evidence entry what would settle it, rate it, and return when that lands); "A draft is yours to resolve": whichever of a person's agents holds the settling context, the depositor included once the work or a reply settles it, resolves it with `verify_draft` (verified, rejected, or not chosen) under the same confidence rule as any check, quoting their words wherever they gave them; "A draft waits for a person's click only while nothing any agent holds settles it"; with sub-agents, work live (poll `is:draft intent:<id>`, correct mid-run, resolve what you can before finishing). "A person", not "the person", since in a shared book the call may be a colleague's (recipe `7b89581e`).
+   → Moves: `checking-behavior.feature` "An agent drafts only when it cannot ask…" rewritten as "An agent drafts only a call it cannot stand behind, and a person's call it keeps working on becomes a draft it owns", out of `@unreleased`; new "An agent resolves a draft once a reply or the work settles it"; `advanced-workflows.feature` new "An orchestrator watches its run's drafts live…"; `checking-behavior.feature` "hands its person the queue link" and "records a colleague's judgment as a draft on their behalf" out of `@unreleased` (slice 7 was what they waited on).
+2. **Building both, in Divergent recipe checks (7a, 7b's divergent sentence).** "The exception is building both: when every option will genuinely be pursued, check each as an ordinary recipe; when you can't stand behind any yet, draft each under one intent, with the rubric for choosing stated first. Then check the chosen path with the outcome as evidence and leave feedback on the rest." "Wait for the choice, then check only the chosen one" stays for the ordinary case.
+   → Moves: `divergent-checks.feature` new "Options that will all be pursued are each checked as ordinary recipes".
+3. **Truthfulness (7c):** "…true at the moment you submit, and checkable by someone who wasn't there."
+   → Moves: `evidence-integrity.feature` new "Evidence is checkable by someone who wasn't there".
+4. **Ratings in How to check (7c):** "`impact` and `uncertainty` (triage ratings, low | medium | high; leave out one you have no view on)".
+   → Moves: `checking-behavior.feature` "A rated check uses the rating vocabulary…" out of `@unreleased`.
+5. **Headless section (7c; moved into C1 from C2's list because it depends on neither 6c nor 6a and would contradict the new Drafts section in between; recipe `ee7d5eac`).** "In each draft, say why your user couldn't be asked and what would settle it." becomes "Drafting well is the work (see Drafts): say in each what would settle it, rate it, and draft open options under one intent." 351 → 398 characters (cap 400). A headless briefing is still the ordinary one with exactly this section inserted.
+   → Moves: `briefing-surfaces.feature` headless scenario rewritten ("its evidence says what would settle it") and out of `@unreleased`. `drafts-and-triage.feature` DT-HDL-05 already describes this profile; unchanged.
+6. **Reading results (new, shared body; 7d items 1 and 6).** "A returned recipe is a call someone made in their context, not a rule: weigh it against yours and say how it applies. A familiar judgment in a new context is worth logging, with that context as evidence. A neighbor that is your own open draft is your assumption coming back; weigh it as that." A new short section because the only results-interpretation text today is in "When the user copies JSON results back", which the thin profile drops (recipe `4357942f`).
+   → Moves: `checking-behavior.feature` new "A returned recipe is weighed as a call made in its own context…", "A familiar judgment in a new context is logged…", "The agent's own open draft is not read as support".
+7. **When to check, three moments (7d items 2 and 5),** in the example-and-goal form (recipe `72f788bf`): extending something that already has a default; writing for a particular reader in a particular place; an instruction pulling against your judgment (checked "with the instruction quoted", a verifier follow-up).
+   → Moves: `checking-behavior.feature` three new scenarios, one per moment.
+8. **Two axes, in Authoring for retrieval (7d item 3):** count and specificity are separate; the claim at the most general level that's still true, as a choice rather than a "must", the specifics in the evidence.
+   → Moves: `recipe-voice.feature` new "The claim is stated generally and the specifics move to the evidence".
+9. **Recipient role, a fourth role pattern (7d item 4):** "Three patterns" becomes "Four patterns"; the recipient role for what the person receives, with the stays-true-when-they-author-it test.
+   → Moves: `recipe-voice.feature` new "A judgment about what the person receives uses the recipient role".
+10. **A probe is a search, in Search vs check (7d item 7).**
+   → Moves: `checking-behavior.feature` new "A probe of the corpus is made as a search".
+11. **Thin results, in the check response (7d item 8):** "No similar recipes found." gains "When results in your context are thin, think harder and check more of your calls, rather than stretching a distant match." (`check-response-renderer.ts`; not briefing text, placed where the revision put it).
+   → Moves: `checking-behavior.feature` new "Thin results lead to more checks, not a stretched match".
+12. **Thin profile only: two duplicates of the MCP tool schema dropped (recipe `63abcc48`).** "If you auto-compact your context … omitting `session_id` …" (the `session_id` parameter says "Compacted your context? Omit it next check for full text again.") and "Evidence entries follow this shape: …" (the `supporting_evidence` parameter gives the same shape; Recipe format shows it with examples). Both stay in the full profile, whose paste readers have no tool schema. With every addition tightened, the thin fixture was 123 characters over its ceiling without this.
+13. **Slimming lever (recipe `aae000d2`), `buildExemplarsSection`:** each exemplar shows its top evidence entry and "(N more evidence entries: get_recipes or GET /recipes?ids=<id>)" when it has more. Selection, ordering, claim, and metadata unchanged. The thin briefing renders no exemplars at its default, so this shrinks the full and paste briefing and any briefing with exemplars opted in, not the thin fixture (build log question 56).
+14. **Closing the loop — feedback: one clause for stream D's intent-only outcome row (recipe `60bb0fa0`).** "A whole-session outcome row with no single recipe can carry your intent_id alone." Stream D (8a) made the target valid (recipe `831a11ea`), and the headless section's closing outcome row had no target the briefing named. The briefing-id line D adds is composed outside `BRIEFING.build` and describes itself where it is printed, so the briefing body does not repeat it.
+   → Moves: `feedback-loop.feature` "A session's outcome with no single recipe joins its intent alone" (added on stream D's branch, which merges before this PR).
+15. **Search vs check: the exclude-own default reversed (recipe `885143c2`, superseding `303e17cf`; this check `8b66f622`).** The operator reversed the MCP search's default today; stream D flips the tool and its description in 8a and asked this PR to carry the briefing. "the tool to reach for when the judgment you need was made by OTHER people" becomes "…is already logged"; "Its results exclude your own recipes by default; `author:me` / `author:anyone` override" becomes "It includes your own recipes: `author:<email>` narrows to one person, `-author:me` leaves yours out"; "search when the answer lives in a collaborator's logged judgment" becomes "…is already in someone's logged judgment". Paid for by two trims of this PR's own copy ("when nothing matches"; "the chosen path, the outcome as evidence"). Depends on stream D's flip, which merges first.
+   → No scenario asserted the old default; the search-vs-check scenarios ("check_recipe is never used as a keyword search", "A probe of the corpus is made as a search") hold, since search stays the lookup path and check the append path.
+
+### Scenarios watched, with rationale for holding
+
+- **`checking-behavior.feature` "Checks happen autonomously, without permission-seeking"**, the highest-risk interaction for a Drafts section: the first move it names is "check it as an ordinary recipe and own it", asking is only for the person's own call while they are reachable, and nothing added frames checking as costly. Recipe `0c59b8a2` (no special-casing that contests check-freely) was weighed; the new sections apply to every profile.
+- **`divergent-checks.feature` "MCP agent waits for the choice before checking"** and the two others: the wait-for-the-choice sentence is unchanged and still governs the ordinary case; the building-both clause names its own condition (every option genuinely pursued, or none stood behind).
+- **`checking-behavior.feature` "Trivial implementation details are not checked"**: the three new moments are examples of calls that clear the bar, not new duties; the `(uncertainty × impact)` framing is untouched.
+- **`recipe-voice.feature` existing scenarios**: the first three role patterns are unchanged; the fourth adds a case.
+- **`known-recipes-dedup.feature`, `intent-registration.feature`**: the `session_id` and intent paragraphs that remain are unchanged; the dropped compaction paragraph's guidance is still in the `session_id` parameter for MCP agents and in the full profile for everyone else.
+- **`briefing-surfaces.feature` profile scenarios**: the thin profile still drops exactly the setup, link-formatting, and pasted-JSON sections, plus the two duplicates above; the full profile keeps everything it had.
+- **`feedback-loop.feature`, `web-only-agents.feature`, `recipe-book-routing.feature`, `frontmatter-recipe-lookup.feature`, `subagent-purpose-briefing.feature`, `comprehension-quiz.feature`**: no copy they rely on changed. Briefing exemplars now show one evidence entry with a pointer; no scenario asserts on exemplar evidence.
+- Suite re-run: the agent-run harness is not yet wired (README §regression rule "once wired"); the `.feature` files remain the manual checklist.
+
+### Measured
+
+Fixture from `recipe-guide-content.test.ts`; the five-exemplar section is built by `buildExemplarsSection` with one to three evidence entries each.
+
+| Measure | Before | After | Cap |
+|---|---|---|---|
+| Thin briefing fixture | 18,183 characters (18,297 bytes) | 20,993 (21,106 bytes), +2,810 | 21,000 (unchanged) |
+| Thin headless fixture | 18,536 | 21,393 | 21,500 (unchanged) |
+| Headless section | 351 | 398 | 400 (unchanged) |
+| Full briefing fixture | 24,119 | 27,271, +3,152 | none |
+| Five-exemplar section | 4,990 | 3,732, −1,258 | none |
+| Full briefing with that section | 29,059 | 30,953, +1,894 | none |
+| Remote `tools/list` / stdio / shared descriptions | 16,986 bytes / 13,196 / 6,051 characters | unchanged | 18,200 / 14,700 / 6,600 |
+
 ## 2026-10-24 — Drafts-and-triage slice 6a: one grammar term in `search_recipes`, and the intent qualifier's not-recognized note
 
 Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-and-triage-slices-6-7-revision.md) §6a, §6f. Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 6a rubric (S6a-Z1).

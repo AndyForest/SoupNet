@@ -33,5 +33,7 @@ A PR that touches briefing copy (`packages/domain/src/recipe-guide-content.ts`, 
 | `known-recipes-dedup.feature` | `@unreleased` — `known_recipes` trims repeats in rendering only, never in the logged trace (WT-4) |
 | `feedback-loop.feature` | Feedback chained on the next check, via `log_feedback` standalone, or via `POST /feedback` for web/REST agents (shipped 2026-07-05) |
 | `subagent-purpose-briefing.feature` | `@unreleased` — `purpose`-scoped `get_briefing` for sub-agents, alongside the standard fleet check-instructions (WT-3) |
-| `briefing-surfaces.feature` | Surface profiles (cold-start v2 Phase B): thin MCP index vs full paste artifact; per-book Index lines; verbosity opt-in; one `@unreleased` scenario for the headless-key section (drafts-and-triage slice 5) |
+| `briefing-surfaces.feature` | Surface profiles (cold-start v2 Phase B): thin MCP index vs full paste artifact; per-book Index lines; verbosity opt-in; the headless-key section (drafts-and-triage slices 5 and 7) |
 | `intent-registration.feature` | Declared intents (cold-start v2 Phase C): always-new registration, rendering-only stub ledger, compaction recovery, sub-agent isolation, feedback join |
+
+The [expanded/](expanded/README.md) folder keeps the untrimmed text of briefing copy that was trimmed to fit a budget, unserved, for ablation testing (operator ruling 2026-10-24); each budget-trimming PR adds its chunks there alongside its spec-decision-log entry.
