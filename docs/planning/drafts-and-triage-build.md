@@ -2557,3 +2557,5 @@ Slice 6a merged (#142) while this branch waited, so the branch is rebased onto `
 
 Layer 3 after the rebase: `drafts-bus.test.ts` 19 passed against the worktree backend (`soupnet_e2e_10`, migrated to 6a's `0042` at startup).
 
+
+Gate at `a52c79d`: one run failed one test, `draft-queue.test.ts` S3-A1, whose audit query took the newest row by `occurred_at` and got the deposit's `recipe.checked` instead of the not-chosen row; it passed three times out of three alone. Both rows take the database's `NOW()` and the deposit's is awaited first, so a backward clock step in the database VM is the explanation that fits (recipe `2f40fb9f`). The query now selects the resolution's own row by action. The rerun passed: 2,070 tests, 6 skipped, exit 0. The browser specs `drafts-slice10` and `drafts-slice6c` passed on the rebased stack (25 on both projects).
