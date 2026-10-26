@@ -141,12 +141,14 @@ describe("guardUnknownParams — refuse", () => {
 });
 
 describe("guardUnknownParams — warn", () => {
-  it("runs the call and puts one warning block first in its result", async () => {
+  it("runs the call without the undeclared name and puts one warning block first in its result", async () => {
     const t = fakeTransport();
     guardUnknownParams(t, acceptedFor, "warn");
     const m = call(9, { recipe_ids: "a", recipe_id: "b" });
     t.deliver(m);
-    expect(t.received).toEqual([m]);
+    // The guard drops the name itself: the tools' strict schemas would
+    // otherwise refuse it at the SDK (#166).
+    expect(t.received).toEqual([call(9, { recipe_ids: "a" })]);
     await t.send({ jsonrpc: "2.0", id: 9, result: { content: [{ type: "text", text: "Requested recipes" }], structuredContent: { a: 1 } } });
     expect(t.sent).toEqual([{
       jsonrpc: "2.0",

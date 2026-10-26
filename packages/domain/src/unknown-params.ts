@@ -1,8 +1,8 @@
 /**
  * Unknown MCP parameter names (drafts-and-triage slice 8a, S8a-U1 to S8a-U4).
  *
- * The MCP SDK validates a tools/call against the tool's zod object, which
- * strips keys the tool does not declare before the handler runs. An agent
+ * Under zod 3 the MCP SDK validated a tools/call against a tool's zod object
+ * that stripped keys the tool does not declare before the handler ran. An agent
  * that sends `recipe_id` to get_recipes, or `limit` to search_recipes, gets
  * an answer that silently ignored what it asked for (the revision doc's
  * "an unknown search parameter name was accepted without error and had no
@@ -19,8 +19,9 @@
  */
 
 /** "refuse": a call naming an undeclared parameter runs nothing and answers
- *  a tool error. "warn": it runs as before (the SDK drops the name) and its
- *  result leads with one warning line. The operator chooses (build log,
+ *  a tool error. "warn": the guard drops the name and runs the call, and its
+ *  result leads with one warning line. (The tools register strict objects
+ *  since zod 4, #166, so the SDK itself would refuse the name, not drop it.) The operator chooses (build log,
  *  question 56); both are built so the two answers can be compared. */
 export type UnknownParamMode = "refuse" | "warn";
 export const UNKNOWN_PARAM_MODE: UnknownParamMode = "refuse";
@@ -121,6 +122,13 @@ interface ToolCall {
   args: unknown;
 }
 
+/** The tools/call message with the named arguments removed (warn mode). */
+function withoutArguments(message: unknown, names: readonly string[]): unknown {
+  const m = message as { params: { arguments: Record<string, unknown> } };
+  const args = Object.fromEntries(Object.entries(m.params.arguments).filter(([k]) => !names.includes(k)));
+  return { ...m, params: { ...m.params, arguments: args } };
+}
+
 function asToolCall(message: unknown): ToolCall | undefined {
   if (message === null || typeof message !== "object") return undefined;
   const m = message as { id?: unknown; method?: unknown; params?: unknown };
@@ -165,6 +173,7 @@ export function guardUnknownParams(
       warnings.set(call.id, text);
       // Maps iterate in insertion order, so the first key is the oldest.
       if (warnings.size > MAX_PENDING_WARNINGS) warnings.delete(warnings.keys().next().value!);
+      message = withoutArguments(message, unknown);
     }
     inbound?.(message, extra);
   };
