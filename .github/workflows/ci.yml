@@ -6,7 +6,8 @@ on:
   # No base-branch filter on pull_request: the filter matches the PR's BASE
   # branch, so stacked PRs (base = another feature branch) silently got no CI
   # (found 2026-08-23 on the cold-start v2 stack, PRs #77/#78). Quality gates
-  # now run on every PR; deploy stays workflow_dispatch-only below.
+  # now run on every PR; deploy runs on push to main and on dispatch, behind
+  # the production environment's approval (see the deploy job).
   pull_request:
   workflow_dispatch:  # manual trigger from GitHub Actions UI
 
@@ -281,9 +282,23 @@ jobs:
   deploy:
     name: Build + Deploy
     needs: [quality, ranking-eval]
-    # Production deploy: manual trigger only (workflow_dispatch).
-    # Dev/staging (future): auto-deploy on push to main.
-    if: github.event_name == 'workflow_dispatch'
+    # Production deploy runs after a merge to main (push) and on manual
+    # dispatch (to redeploy the same commit), and pauses on the `production`
+    # environment until its required reviewer approves it in the Actions UI
+    # (repository Settings -> Environments -> production). Pull-request runs
+    # never reach this job. Before 2026-10-26 the deploy was dispatch-only,
+    # which re-ran the test jobs a third time on a tree the PR run and the
+    # merge run had already passed.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    environment:
+      name: production
+      url: https://www.soup.net
+    # One deploy at a time. A run that is still waiting for approval when a
+    # newer merge lands is superseded by it, so a batch of merges deploys the
+    # newest commit once. A deploy already in progress is never cancelled.
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
     runs-on: ubuntu-latest
 
     # OIDC role assumption requires id-token: write at the workflow or job
