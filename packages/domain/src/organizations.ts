@@ -152,9 +152,9 @@ export const ACCOUNT_SUSPENDED_MESSAGE =
 export const SESSION_EXPIRED_MESSAGE =
   "This session has ended. Sign in again.";
 
-/** Placeholder until stream SSO words it. */
+/** A session or password sign-in refused by the organization's require_sso (stream SSO, SSO-R2). */
 export const SSO_REQUIRED_MESSAGE =
-  "Your organization requires signing in with Google. Sign in again with Google.";
+  "Your organization signs in with Google. Sign in with Google to continue.";
 
 export const ORGANIZATION_FULL_MESSAGE =
   "This organization has no free seats. Ask one of its admins.";
