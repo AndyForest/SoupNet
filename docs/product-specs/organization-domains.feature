@@ -28,7 +28,7 @@ Feature: Verified domains, automatic joining, and existing accounts on a claimed
     # Requirement: C01-R05
     # Guards: research §5 items 1 and 3; recipes 4d5b5b81, ddb90531.
 
-    @ORG-DOM-01 @unreleased
+    @ORG-DOM-01
     Scenario: Adding a domain returns the record to publish
       When Ada adds "Acme.Example." to Acme
       Then the response is 201 with domain "acme.example" and status "pending"
@@ -36,7 +36,7 @@ Feature: Verified domains, automatic joining, and existing accounts on a claimed
       And recordValue starts with "soupnet-domain-verification="
       And tokenExpiresAt is seven days from now
 
-    @ORG-DOM-02 @unreleased
+    @ORG-DOM-02
     Scenario Outline: Domains that can't be claimed are refused at the form
       When Ada adds "<domain>" to Acme
       Then the response is 400 with error "<reason>"
@@ -49,21 +49,21 @@ Feature: Verified domains, automatic joining, and existing accounts on a claimed
         | localhost    | invalid_domain        |
         | exa mple.com | invalid_domain        |
 
-    @ORG-DOM-02 @unreleased
+    @ORG-DOM-02
     Scenario: A domain verified by another organization is refused without naming it
       Given Globex's claim on acme.example is verified
       When Ada adds "acme.example" to Acme
       Then the response is 409 with error "domain_taken"
       And the response body does not contain "Globex"
 
-    @ORG-DOM-03 @unreleased
+    @ORG-DOM-03
     Scenario: Check now verifies when the exact record is published
       Given Ada has added acme.example
       And the record is published
       When Ada checks acme.example now
       Then its status is "verified"
 
-    @ORG-DOM-03 @unreleased
+    @ORG-DOM-03
     Scenario Outline: Check now leaves the claim pending without the exact record
       Given Ada has added acme.example
       And the DNS answer at _soupnet-challenge.acme.example is <answer>
@@ -78,7 +78,7 @@ Feature: Verified domains, automatic joining, and existing accounts on a claimed
         | "soupnet-domain-verification=<another token>"       |
         | "x soupnet-domain-verification=<Acme's token> y"    |
 
-    @ORG-DOM-03 @unreleased
+    @ORG-DOM-03
     Scenario: An unverified claim expires after seven days
       Given Ada added acme.example eight days ago and it was never verified
       When Ada checks acme.example now
@@ -90,7 +90,7 @@ Feature: Verified domains, automatic joining, and existing accounts on a claimed
     # Guards: research §5 item 2; program §3.2 "freeze auto-join and alert,
     # never dissolve the org"; recipe b79cc790.
 
-    @ORG-DOM-04 @unreleased
+    @ORG-DOM-04
     Scenario: A failed daily check freezes joining and tells the admins
       Given acme.example is captured
       And the record has been removed
@@ -99,14 +99,14 @@ Feature: Verified domains, automatic joining, and existing accounts on a claimed
       And each active owner and admin of Acme has one email about it
       And a new verification click by Nia joins nothing
 
-    @ORG-DOM-05 @unreleased
+    @ORG-DOM-05
     Scenario: The record coming back resumes joining
       Given acme.example is failing
       And the record is published again
       When the daily re-check runs
       Then acme.example is captured
 
-    @ORG-DOM-06 @unreleased
+    @ORG-DOM-06
     Scenario: Fourteen days of failure lapses the claim and leaves every member in place
       Given acme.example has been failing for fourteen days
       And Max and Nia are members of Acme
@@ -114,7 +114,7 @@ Feature: Verified domains, automatic joining, and existing accounts on a claimed
       Then acme.example's status is "pending" with a new token
       And Max and Nia are members of Acme with the same roles and books
 
-    @ORG-DOM-07 @unreleased
+    @ORG-DOM-07
     Scenario Outline: The join's domain authority holds only for a captured domain
       Given acme.example is captured
       And <change>
@@ -128,7 +128,7 @@ Feature: Verified domains, automatic joining, and existing accounts on a claimed
         | the last successful check was 49 hours ago    |
         | the claim is Globex's, not Acme's             |
 
-    @ORG-DOM-08 @unreleased
+    @ORG-DOM-08
     Scenario: Another organization verifying a lapsed domain inherits nobody
       Given Acme's claim on acme.example has lapsed
       And Max is a member of Acme
@@ -142,7 +142,7 @@ Feature: Verified domains, automatic joining, and existing accounts on a claimed
     # Guards: design-thinking.md archetype 6 "Deliberate exception to 'no
     # auto-accept'"; research §5 item 5; recipes f653c2f1, 58eb66f7, 43b6aac9.
 
-    @ORG-JOIN-D01 @unreleased
+    @ORG-JOIN-D01
     Scenario: A password sign-up joins on its verification click
       Given acme.example is captured
       When Nia registers with a password
@@ -153,14 +153,16 @@ Feature: Verified domains, automatic joining, and existing accounts on a claimed
       And her daily links include Acme's default book
       And clicking the link again succeeds and changes nothing
 
-    @ORG-JOIN-D02 @unreleased
+    @ORG-JOIN-D02
     Scenario: With automatic joining off, verification joins nothing
       Given Acme's claim on acme.example is verified with automatic joining off
       When Nia registers and clicks her verification link
       Then her address is verified
       And she is in no company organization
 
-    @ORG-JOIN-D03 @unreleased
+    @ORG-JOIN-D03
+    # Realized through onGoogleSignIn directly; the run through SSO's
+    # afterGoogleSignIn hook is added when that hook lands (rubric OD-J3).
     Scenario Outline: A Google sign-in joins only on a matching hd claim
       Given acme.example is captured
       When a Google sign-in creates Nia's account with email "<email>" and hd "<hd>"
@@ -173,14 +175,14 @@ Feature: Verified domains, automatic joining, and existing accounts on a claimed
         | nia@acme.example   | acme-corp.example | none   |
         | nia@other.example  | acme.example      | none   |
 
-    @ORG-JOIN-D04 @unreleased
+    @ORG-JOIN-D04
     Scenario: The site operator's own account is never joined automatically
       Given acme.example is captured
       And the site operator's account is ops@acme.example
       When the daily re-check runs
       Then the site operator's account is in no company organization
 
-    @ORG-JOIN-D05 @unreleased
+    @ORG-JOIN-D05
     Scenario: An account already in another organization stays there
       Given acme.example is captured
       And the site operator added nia@acme.example to Globex before she verified
@@ -188,7 +190,7 @@ Feature: Verified domains, automatic joining, and existing accounts on a claimed
       Then her address is verified
       And she is a member of Globex, not Acme
 
-    @ORG-JOIN-D06 @unreleased
+    @ORG-JOIN-D06
     Scenario: A claim covers its exact domain, never its subdomains
       # Guards: research §2.3 (scope must be explicit; most products don't
       # inherit); audit and verification coordinators, rubric stage.
@@ -204,7 +206,7 @@ Feature: Verified domains, automatic joining, and existing accounts on a claimed
     # Guards: program Settled simplifications "migrated into the org
     # automatically"; Core OC-J2, OC-J4; recipe 061a7926.
 
-    @ORG-MIG-01 @unreleased
+    @ORG-MIG-01
     Scenario: Turning on automatic joining migrates existing verified accounts
       Given Acme's claim on acme.example is verified with automatic joining off
       And Max owns a book "Personal" in his personal organization
@@ -214,19 +216,19 @@ Feature: Verified domains, automatic joining, and existing accounts on a claimed
       And his book "Personal" is a private book in Acme
       And Max has an email saying he joined Acme
 
-    @ORG-MIG-02 @unreleased
+    @ORG-MIG-02
     Scenario: An account with an unverified email is not migrated
       Given an account on dee@acme.example that never verified its email
       When acme.example becomes captured
       Then that account is in no company organization
 
-    @ORG-MIG-03 @unreleased
+    @ORG-MIG-03
     Scenario: The daily job continues a migration the request didn't finish
       Given more accounts on acme.example than one request migrates
       When acme.example becomes captured and the daily re-check then runs
       Then every eligible account on acme.example is a member of Acme
 
-    @ORG-MIG-04 @unreleased
+    @ORG-MIG-04
     Scenario: Admins see a count of accounts waiting, never a list, and only after proof
       Given Ada has added acme.example and not yet published the record
       When Ada lists Acme's domains
@@ -241,7 +243,7 @@ Feature: Verified domains, automatic joining, and existing accounts on a claimed
     # Guards: round plan "Seat exhaustion: block with a clear message in round
     # 1"; Core OC-J5; recipes 5406ed04, 15b767de.
 
-    @ORG-SEAT-D01 @unreleased
+    @ORG-SEAT-D01
     Scenario: A verification click at the seat limit is refused and can be retried
       Given acme.example is captured
       And Acme has 10 active members
@@ -252,14 +254,14 @@ Feature: Verified domains, automatic joining, and existing accounts on a claimed
       And Nia clicks the same link again
       Then she is a member of Acme
 
-    @ORG-SEAT-D02 @unreleased
+    @ORG-SEAT-D02
     Scenario: A Google sign-in at the seat limit reports full
       Given acme.example is captured
       And Acme has 10 active members
       When a Google sign-in for nia@acme.example with hd "acme.example" calls the sign-in hook
       Then the hook returns "full"
 
-    @ORG-SEAT-D03 @unreleased
+    @ORG-SEAT-D03
     Scenario: An existing account the migration can't seat is left as it is
       Given Acme has 10 active members
       When acme.example becomes captured
@@ -268,7 +270,7 @@ Feature: Verified domains, automatic joining, and existing accounts on a claimed
       When a seat frees and the daily re-check runs
       Then Max is a member of Acme
 
-    @ORG-SEAT-D04 @unreleased
+    @ORG-SEAT-D04
     Scenario: A domain join doesn't wait on, or use up, the public signup cap
       Given the public signup cap is reached
       And acme.example is captured
@@ -281,7 +283,7 @@ Feature: Verified domains, automatic joining, and existing accounts on a claimed
     # Requirement: C01-R05
     # Guards: Core OC-R1 (uniform 404).
 
-    @ORG-DOM-09 @unreleased
+    @ORG-DOM-09
     Scenario Outline: Anyone else gets the same 404 as for a missing organization
       Given <caller>
       When they list, add, check, change or delete Acme's domains
@@ -292,14 +294,14 @@ Feature: Verified domains, automatic joining, and existing accounts on a claimed
         | Rex, an admin of Globex                       |
         | an ordinary member of Acme                    |
 
-    @ORG-DOM-09 @unreleased
+    @ORG-DOM-09
     Scenario: A disabled admin is refused before the domain routes
       # Guards: Core OC-A1 (a disabled account's sessions are refused on every JWT route).
       Given Ada has been disabled by Acme's owner
       When Ada lists Acme's domains
       Then the response is 403 with error "account_disabled"
 
-    @ORG-DOM-10 @unreleased
+    @ORG-DOM-10
     Scenario: Deleting a claim stops joining and keeps every member
       Given acme.example is captured and Max is a member of Acme
       When Ada deletes the acme.example claim
