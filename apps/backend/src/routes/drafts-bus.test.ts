@@ -358,6 +358,19 @@ describe.skipIf(!BASE || !canConnect())("drafts as a bus (drafts-and-triage slic
     expect(danaView).toMatchObject({ draftState: "unverified", draftExpiry: "intent_idle" });
   });
 
+  it("S10-K3: an intent's lineage counts its drafts that are live, expired, and resolved", async () => {
+    const live = await draftUnderIntent(K1, recipe("lineage live"));
+    const intentId = live.intentId;
+    // Two more drafts under the same intent: one resolved, one aged past the week with the intent idle.
+    const resolved = (await mcp(K1, "check_recipe", { recipe: recipe("lineage resolved"), supporting_evidence: evidence("lineage resolved"), draft: true, intent: intentId, response_format: "structured" })).structured;
+    const resolvedId = (resolved?.["checked"] as { recipeId?: string } | undefined)?.recipeId ?? "";
+    await mcp(K2, "verify_draft", { recipe_id: resolvedId, outcome: "rejected", supporting_evidence: settling("lineage") });
+    const lineage = async (): Promise<Json> => ((await (await fetch(`${BASE}/intents/${intentId}`, { headers: { Authorization: `Bearer ${K1}` } })).json()) as { data: { intent: { counts: Json } } }).data.intent.counts;
+    expect((await lineage())["drafts"]).toEqual({ live: 1, expired: 0, resolved: 1 });
+    await idleIntent(intentId, 25);
+    expect((await lineage())["drafts"]).toEqual({ live: 0, expired: 1, resolved: 1 });
+  });
+
   it("S10-D3: the dispatch line carries the intent's story only for the caller's own intent", async () => {
     const ownText = recipe("story own");
     const own = await draftUnderIntent(K1, ownText);

@@ -2927,3 +2927,10 @@ Layer 3 after the rebase: `drafts-bus.test.ts` 19 passed against the worktree ba
 
 
 Gate at `a52c79d`: one run failed one test, `draft-queue.test.ts` S3-A1, whose audit query took the newest row by `occurred_at` and got the deposit's `recipe.checked` instead of the not-chosen row; it passed three times out of three alone. Both rows take the database's `NOW()` and the deposit's is awaited first, so a backward clock step in the database VM is the explanation that fits (recipe `2f40fb9f`). The query now selects the resolution's own row by action. The rerun passed: 2,070 tests, 6 skipped, exit 0. The browser specs `drafts-slice10` and `drafts-slice6c` passed on the rebased stack (25 on both projects).
+
+### Slice 10 after slice 9 merged (stream A, 2026-10-26)
+
+`main` (with slice 9, #140, and C1, #138) is merged into the branch rather than rebased, since the branch is on origin (the planning session's direction: a rebase would need a force-push). The merge's conflicts were each two additions side by side: the intent-link register (this slice's `authz/draft-sql.ts` beside slice 9's second `routes/auth.ts` mention), the `traces.intent_id` schema comment (each slice's readers, now listed together), the decision log (this entry above C1's), and a refreshed seam fingerprint.
+
+- **S10-K3 (built).** `GET /intents` and `GET /intents/:id` count an intent's draft deposits under `counts.drafts`: `live`, `expired` and `resolved`, each as the viewer sees the draft's state (`draftStateShownTo` composed with `draftLive` and `draftExpired`), so the depositor of an on-behalf draft never learns from a count that its subject verified it. Slice 9's three exact assertions on `counts` gain the field. Layer 3: one live and one rejected draft under an intent count `{ live: 1, expired: 0, resolved: 1 }`, and with the intent idle 25 hours, `{ live: 0, expired: 1, resolved: 1 }`. `drafts-bus.test.ts`: 20 passed.
+- **Still waiting:** the briefing's bus line on C2 (#146), settled at 114 characters against C2's Drafts section ("A draft is a question on a bus: it stays live while your intent is in use, and expires once your task goes quiet.").
