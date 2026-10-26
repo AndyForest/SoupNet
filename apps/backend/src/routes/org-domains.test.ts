@@ -379,7 +379,7 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
     expect(await holds((await createOrg(rex)).orgId)).toBe(false);
 
     // Through Core's join: Nia on the domain, with the switch off, is refused.
-    const nia = await actor("nia", `nia-${run}-${++n}@${domain}`);
+    const nia = await actor("nia", `test-orgdom-nia-${run}-${++n}@${domain}`);
     await set(sql`auto_join = false`);
     expect(await authz.joinOrganization(getDb(), { organizationId: orgId, userId: nia.userId, role: "member", via: "migrated", authority: { kind: "domain", domain } })).toEqual({ ok: false, refusal: "not_authorized" });
   });
@@ -414,7 +414,7 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
     expect(mail.map((m) => m.to_email).sort()).toEqual([olive.email, ada.email].sort());
 
     // A newcomer's join is refused while failing.
-    const nia = await actor("nia", `nia-${run}-${++n}@${domain}`);
+    const nia = await actor("nia", `test-orgdom-nia-${run}-${++n}@${domain}`);
     expect((await domains.migrateDomainAccounts(getDb(), claimId)).joined).toBe(0);
     expect(await orgOf(nia.userId)).toBeUndefined();
 
@@ -433,7 +433,7 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
     const olive = await actor("olive");
     const { orgId, defaultBookId } = await createOrg(olive);
     const { claimId, domain } = await capture(olive, orgId);
-    const max = await actor("max", `max-${run}-${++n}@${domain}`);
+    const max = await actor("max", `test-orgdom-max-${run}-${++n}@${domain}`);
     await domains.migrateDomainAccounts(getDb(), claimId);
     expect(await orgOf(max.userId)).toMatchObject({ organization_id: orgId });
     const before = await getDb().execute(sql`SELECT group_id, role, via FROM claimnet.group_members WHERE user_id = ${max.userId}::uuid ORDER BY group_id`);
@@ -458,7 +458,7 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
     const olive = await actor("olive");
     const acme = await createOrg(olive);
     const { claimId, domain } = await capture(olive, acme.orgId);
-    const max = await actor("max", `max-${run}-${++n}@${domain}`);
+    const max = await actor("max", `test-orgdom-max-${run}-${++n}@${domain}`);
     await domains.migrateDomainAccounts(getDb(), claimId);
     await getDb().execute(sql`UPDATE claimnet.organization_domains SET failing_since = NOW() - interval '15 days' WHERE id = ${claimId}::uuid`);
     await domains.recheckDomains(getDb(), { lookup: absent, organizationId: acme.orgId });
@@ -479,9 +479,9 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
     const { orgId, defaultBookId } = await createOrg(olive);
     const { domain } = await capture(olive, orgId);
 
-    const email = `nia-${run}-${++n}@${domain}`;
+    const email = `test-orgdom-nia-${run}-${++n}@${domain}`;
     const nia = await register(email);
-    const other = await register(`gus-${run}-${++n}@test.local`);
+    const other = await register(`test-orgdom-gus-${run}-${++n}@test.local`);
     // The register bodies differ only in the test-mode token.
     const strip = (b: Json) => JSON.stringify({ ...b, data: { ...(b["data"] as Json), verificationToken: undefined } });
     expect(strip(nia.body)).toBe(strip(other.body));
@@ -495,10 +495,10 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
     const row = (await getDb().execute(sql`SELECT daily_read FROM claimnet.group_members WHERE group_id = ${defaultBookId}::uuid AND user_id = ${userId}::uuid`)) as unknown as Array<{ daily_read: boolean }>;
     expect(row[0]?.daily_read).toBe(true);
 
-    // The second click changes nothing.
+    // The second click changes nothing, and still says which organization manages the account.
     const again = await verify(nia.token);
     expect(again.status).toBe(200);
-    expect(((await again.json()) as { data: Json }).data["organization"]).toBeNull();
+    expect(((await again.json()) as { data: Json }).data["organization"]).toEqual(data["organization"]);
     expect(await orgOf(userId)).toMatchObject({ organization_id: orgId, joined_via: "domain" });
 
     // An account on an ordinary domain: verified, no organization.
@@ -513,7 +513,7 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
     for (const state of [sql`auto_join = false`, sql`failing_since = NOW()`, sql`last_checked_at = NOW() - interval '3 days'`]) {
       await getDb().execute(sql`UPDATE claimnet.organization_domains SET auto_join = true, failing_since = NULL, last_checked_at = NOW() WHERE id = ${claimId}::uuid`);
       await getDb().execute(sql`UPDATE claimnet.organization_domains SET ${state} WHERE id = ${claimId}::uuid`);
-      const email = `nia-${run}-${++n}@${domain}`;
+      const email = `test-orgdom-nia-${run}-${++n}@${domain}`;
       const { token } = await register(email);
       expect((await verify(token)).status).toBe(200);
       expect(await verifiedAt(email)).not.toBeNull();
@@ -529,12 +529,12 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
       const a = await actor("g", email);
       return getDb().transaction((tx) => domains.onGoogleSignIn(tx, { userId: a.userId, email, hd }));
     };
-    expect(await hook(`a-${run}-${++n}@${domain}`, null)).toBe("none");
-    expect(await hook(`b-${run}-${++n}@${domain}`, `acme-corp-${run}.test`)).toBe("none");
-    expect(await hook(`c-${run}-${++n}@sub.${domain}`, domain)).toBe("none");
-    expect(await hook(`d-${run}-${++n}@${domain}`, domain.toUpperCase())).toBe("joined");
+    expect(await hook(`test-orgdom-a-${run}-${++n}@${domain}`, null)).toBe("none");
+    expect(await hook(`test-orgdom-b-${run}-${++n}@${domain}`, `acme-corp-${run}.test`)).toBe("none");
+    expect(await hook(`test-orgdom-c-${run}-${++n}@sub.${domain}`, domain)).toBe("none");
+    expect(await hook(`test-orgdom-d-${run}-${++n}@${domain}`, domain.toUpperCase())).toBe("joined");
     // Olive and d hold both seats.
-    expect(await hook(`e-${run}-${++n}@${domain}`, domain)).toBe("full");
+    expect(await hook(`test-orgdom-e-${run}-${++n}@${domain}`, domain)).toBe("full");
   });
 
   it("ORG-JOIN-D04, ORG-JOIN-D05 / OD-J5, OD-J6: never the site operator's account; an account in another organization stays there", async () => {
@@ -542,7 +542,7 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
     const { orgId } = await createOrg(olive);
     const { claimId, domain } = await capture(olive, orgId);
 
-    const ops = await actor("ops", `ops-${run}-${++n}@${domain}`);
+    const ops = await actor("ops", `test-orgdom-ops-${run}-${++n}@${domain}`);
     await getDb().execute(sql`UPDATE claimnet.users SET role = 'system' WHERE id = ${ops.userId}::uuid`);
     await domains.migrateDomainAccounts(getDb(), claimId);
     expect(await orgOf(ops.userId)).toBeUndefined();
@@ -550,7 +550,7 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
 
     const rex = await actor("rex");
     const globex = await createOrg(rex);
-    const email = `nia-${run}-${++n}@${domain}`;
+    const email = `test-orgdom-nia-${run}-${++n}@${domain}`;
     const { token } = await register(email);
     const niaId = await userIdOf(email);
     expect(await authz.joinOrganization(getDb(), { organizationId: globex.orgId, userId: niaId, role: "member", via: "operator", authority: { kind: "operator", actorUserId: sys.userId } })).toMatchObject({ ok: true });
@@ -562,7 +562,7 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
     const olive = await actor("olive");
     const { orgId } = await createOrg(olive);
     const { claimId, domain } = await capture(olive, orgId);
-    const email = `nia-${run}-${++n}@mail.${domain}`;
+    const email = `test-orgdom-nia-${run}-${++n}@mail.${domain}`;
     const { token } = await register(email);
     expect((await verify(token)).status).toBe(200);
     const niaId = await userIdOf(email);
@@ -581,8 +581,8 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
     const claim = await addDomain(olive, orgId, domain);
     const claimId = claim["id"] as string;
 
-    const max = await actor("max", `max-${run}-${++n}@${domain}`);
-    const dee = `dee-${run}-${++n}@${domain}`;
+    const max = await actor("max", `test-orgdom-max-${run}-${++n}@${domain}`);
+    const dee = `test-orgdom-dee-${run}-${++n}@${domain}`;
     await register(dee); // never verified
 
     // Pending: no count at all.
@@ -623,7 +623,7 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
     const olive = await actor("olive");
     const { orgId } = await createOrg(olive);
     const { claimId, domain } = await capture(olive, orgId);
-    const people = await Promise.all([1, 2, 3].map(() => actor("p", `p-${run}-${++n}@${domain}`)));
+    const people = await Promise.all([1, 2, 3].map(() => actor("p", `test-orgdom-p-${run}-${++n}@${domain}`)));
     expect(await domains.migrateDomainAccounts(getDb(), claimId, 2)).toEqual({ joined: 2, awaitingSeat: 0 });
     await domains.recheckDomains(getDb(), { lookup: found, organizationId: orgId });
     for (const p of people) expect(await orgOf(p.userId)).toMatchObject({ organization_id: orgId });
@@ -638,7 +638,7 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
     await addToOrg(orgId, ann);
     const { domain } = await capture(olive, orgId);
 
-    const email = `nia-${run}-${++n}@${domain}`;
+    const email = `test-orgdom-nia-${run}-${++n}@${domain}`;
     const { token } = await register(email);
     const refused = await verify(token);
     expect(refused.status).toBe(409);
@@ -663,7 +663,7 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
     const claim = await addDomain(olive, orgId, domain);
     const claimId = claim["id"] as string;
     await checkNow(olive, orgId, claimId);
-    const max = await actor("max", `max-${run}-${++n}@${domain}`);
+    const max = await actor("max", `test-orgdom-max-${run}-${++n}@${domain}`);
 
     const on = ((await (await setAutoJoin(olive, orgId, claimId, true)).json()) as { data: Json }).data;
     expect(on["migration"]).toEqual({ joined: 0, awaitingSeat: 1 });
@@ -681,7 +681,7 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
     const olive = await actor("olive");
     const { orgId } = await createOrg(olive);
     const { domain } = await capture(olive, orgId);
-    const nia = await actor("nia", `nia-${run}-${++n}@${domain}`);
+    const nia = await actor("nia", `test-orgdom-nia-${run}-${++n}@${domain}`);
     await getDb().execute(sql`UPDATE claimnet.users SET waitlisted_at = NOW() WHERE id = ${nia.userId}::uuid`);
 
     // One snapshot, so other tests' sign-ups can't move the count under us.
@@ -709,14 +709,14 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
     const olive = await actor("olive");
     const { orgId } = await createOrg(olive);
     const { claimId, domain } = await capture(olive, orgId);
-    const max = await actor("max", `max-${run}-${++n}@${domain}`);
+    const max = await actor("max", `test-orgdom-max-${run}-${++n}@${domain}`);
     await domains.migrateDomainAccounts(getDb(), claimId);
 
     expect((await call(olive, "DELETE", `/organizations/${orgId}/domains/${claimId}`)).status).toBe(200);
     expect(await auditRows("organization_domain.removed", claimId)).toHaveLength(1);
     expect(await orgOf(max.userId)).toMatchObject({ organization_id: orgId });
 
-    const email = `nia-${run}-${++n}@${domain}`;
+    const email = `test-orgdom-nia-${run}-${++n}@${domain}`;
     const { token } = await register(email);
     expect((await verify(token)).status).toBe(200);
     expect(await orgOf(await userIdOf(email))).toBeUndefined();

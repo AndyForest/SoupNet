@@ -109,6 +109,11 @@ export function VerifyPage() {
             {fullLines.map((line) => (
               <p key={line} style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-md)" }}>{line}</p>
             ))}
+            <Link to="/auth/login" style={{ textDecoration: "none" }}>
+              <button className="btn-secondary" style={{ width: "100%", justifyContent: "center", marginTop: "var(--space-md)" }}>
+                Back to sign in
+              </button>
+            </Link>
           </>
         )}
 

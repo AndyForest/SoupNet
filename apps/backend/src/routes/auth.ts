@@ -839,6 +839,8 @@ auth.post("/verify", verifyRateLimit, async (c) => {
   `);
   const pendingCount = ((pendingInviteCount as unknown as Array<{ total: number }>)[0]?.total) ?? 0;
 
+  const managedBy = outcome.joined ?? (await managedOrganizationOf(db, updated.id))?.name ?? null;
+
   // A verification can take the last slots (verified users count against
   // the cap), so check for "near" here too. Waitlisted verifications don't
   // consume a slot and are reported at registration, not again here.
@@ -853,8 +855,10 @@ auth.post("/verify", verifyRateLimit, async (c) => {
       // Waitlisted accounts get "your place is held" copy instead of
       // "sign in and start" — signing in won't work until promotion.
       waitlisted: updated.waitlisted,
-      // The organization this click joined, for the verify page (OD-J1).
-      organization: outcome.joined ? { name: outcome.joined, notice: domainJoinedNotice(outcome.joined) } : null,
+      // The organization that manages this account, for the verify page
+      // (OD-J1): the one this click joined, and on a later visit of the same
+      // link the one it joined then, so a reload still says so.
+      organization: managedBy ? { name: managedBy, notice: domainJoinedNotice(managedBy) } : null,
     },
   });
 });
