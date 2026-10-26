@@ -9,6 +9,7 @@ Two narrower logs exist beside this one: [`docs/architecture/ranking-changelog.m
 - **Intent link** (#6a, stream B): a recipe records the task it was deposited under (`traces.intent_id`), and search gains an `intent:` qualifier, so a task's whole lineage is one query.
 - **Report read paths** (#140): `GET /intents`, `GET /intents/:id` (what a task's checks were shown, deposited and concluded) and `GET /feedback/rows`, under the API key, scoped to the caller's own fleet. Built for the behaviour-change figure the README's field-data section still quotes from July.
 - **Briefing rewrite** (#138 and a second commit): a Drafts section, "a returned recipe is a call someone made in their context, not a rule", evidence standards, and the explicit over-caution line (drafts are for calls the context does not settle, not for every call).
+- **Outgoing mail requires STARTTLS** (#165, F123): without `SMTP_SECURE=true`, the backend now refuses to send to any relay that doesn't upgrade the connection to TLS, so the SMTP credentials can't go out in clear. Local relays (`localhost`, `127.0.0.1`, `::1`, `mailpit`) are exempt. Self-hosters on a plain-text relay elsewhere set `SMTP_REQUIRE_TLS=false`. nodemailer moves to 10.
 - **Drafts as a bus** (slice 10): a draft stays live while the task that asked it was active in the last 24 hours, then leaves the queue and default listings without being deleted; check and search results name a nearby open question the caller may be able to settle.
 
 ## 2026-10-25

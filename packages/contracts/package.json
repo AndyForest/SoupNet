@@ -20,8 +20,8 @@
     "generate": "tsx scripts/generate-openapi.ts"
   },
   "dependencies": {
-    "@asteasolutions/zod-to-openapi": "^9.1.0",
-    "zod": "^4.6.6"
+    "@asteasolutions/zod-to-openapi": "9.1.0",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@soupnet/config": "*",

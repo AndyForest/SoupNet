@@ -231,6 +231,85 @@ describe.skipIf(!BASE)("/mcp stateless behavior", () => {
     expect(body.error).toBe("forbidden_origin");
   });
 
+  // OpenAI plugin directory round (stream O): ChatGPT's web origin is
+  // allowlisted by exact match, scheme included; look-alikes are not.
+  it.each([
+    ["https://chatgpt.com", 200],
+    ["https://chatgpt.com.evil.example", 403],
+    ["http://chatgpt.com", 403],
+    ["https://evilchatgpt.com", 403],
+    ["https://chatgpt.com:8443", 403],
+  ])("Origin %s gets %s", async (origin, status) => {
+    const res = await fetch(`${BASE}/mcp`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: ACCEPT_BOTH, Authorization: `Bearer ${apiKey}`, Origin: origin },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "initialize",
+        params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "origin-chatgpt-test", version: "0.0.1" } },
+        id: 1,
+      }),
+    });
+    expect(res.status).toBe(status);
+  });
+
+  // Rubric O6-2, O6-3 (stream O, recipe 3350158d): a refused tools/call keeps
+  // the 401 and its challenge header, and its body is a tool error result
+  // carrying the tool-level challenge. Nothing from the request but its id
+  // comes back.
+  describe("401 on a tools/call carries the tool-level challenge", () => {
+    async function call(headers: Record<string, string>, body: unknown): Promise<Response> {
+      return fetch(`${BASE}/mcp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: ACCEPT_BOTH, ...headers },
+        body: JSON.stringify(body),
+      });
+    }
+    const toolCall = (id: string | number) => ({
+      jsonrpc: "2.0",
+      id,
+      method: "tools/call",
+      params: { name: "check_recipe", arguments: { recipe: "REFLECT-ME-ARG", supporting_evidence: "x" } },
+    });
+
+    it("with no credential: 401, the header, and an isError result with insufficient_scope", async () => {
+      const res = await call({ "X-Probe": "REFLECT-ME-HEADER" }, toolCall("call-1"));
+      expect(res.status).toBe(401);
+      expect(res.headers.get("www-authenticate") ?? "").toContain("/.well-known/oauth-protected-resource");
+      const text = await res.text();
+      expect(text).not.toContain("REFLECT-ME");
+      const body = JSON.parse(text) as { id: unknown; result?: { isError?: boolean; content?: Array<{ text: string }>; _meta?: Record<string, string[]> } };
+      expect(body.id).toBe("call-1");
+      expect(body.result?.isError).toBe(true);
+      expect(body.result?.content?.[0]?.text).toContain("Authorization");
+      const challenge = body.result?._meta?.["mcp/www_authenticate"]?.[0] ?? "";
+      expect(challenge).toContain(`resource_metadata="${BASE.replace(/\/+$/, "")}/.well-known/oauth-protected-resource"`);
+      expect(challenge).toContain('error="insufficient_scope"');
+      expect(challenge).toContain("error_description=");
+    });
+
+    it("with a dead key: 401 invalid_token, identical across kinds of dead key", async () => {
+      const a = await call({ Authorization: "Bearer cn_s_doesnotexist" }, toolCall(5));
+      const b = await call({ Authorization: "Bearer something-else-entirely" }, toolCall(5));
+      expect(a.status).toBe(401);
+      expect(a.headers.get("www-authenticate") ?? "").toContain('error="invalid_token"');
+      const ta = await a.text();
+      expect(ta).toBe(await b.text());
+      const body = JSON.parse(ta) as { id: unknown; result?: { isError?: boolean; _meta?: Record<string, string[]> } };
+      expect(body.id).toBe(5);
+      expect(body.result?.isError).toBe(true);
+      expect(body.result?._meta?.["mcp/www_authenticate"]?.[0]).toContain('error="invalid_token"');
+    });
+
+    it("every other method keeps the plain JSON-RPC error body", async () => {
+      const res = await call({}, { jsonrpc: "2.0", id: 9, method: "tools/list", params: {} });
+      expect(res.status).toBe(401);
+      const body = (await res.json()) as { error?: { code?: number }; result?: unknown };
+      expect(body.error?.code).toBe(-32001);
+      expect(body.result).toBeUndefined();
+    });
+  });
+
   it("accepts a request with no Origin header (server-to-server)", async () => {
     // The Bearer-token check is the security boundary for these calls; Origin
     // validation only kicks in when an Origin header is actually present.

@@ -48,8 +48,11 @@ import type { Principal } from "../authz";
  *  and explicit annotations on every tool. Measured 17,904 on main (with
  *  slice 8b's page parameter) → 18,930; the profile tool is about 400 of the
  *  1,026 bytes. Stream O's per-tool securitySchemes land after this and move
- *  the cap again by their own measured bytes (docs/connectors/openai-plugin.md). */
-const REMOTE_TOOLS_LIST_MAX_BYTES = 18_950;
+ *  the cap again by their own measured bytes (docs/connectors/openai-plugin.md).
+ *  18,950 → 19,600 (2026-10-26, OpenAI plugin directory stream O, item 12,
+ *  measured on main after T's #150): every tool's `_meta.securitySchemes`,
+ *  616 bytes over the nine tools (18,930 → 19,546). */
+const REMOTE_TOOLS_LIST_MAX_BYTES = 19_600;
 
 const stubPrincipal: Principal = {
   keyId: "00000000-0000-0000-0000-000000000001",
