@@ -18,17 +18,23 @@ import { sendOrganizationJoinNotice } from "./email.service";
 
 export async function joinOrganizationAndNotify(db: PostgresJsDatabase, input: JoinInput): Promise<JoinResult> {
   const result = await joinOrganization(db, input);
-  if (result.ok) notify(result);
+  if (result.ok) sendJoinNotice(result);
   return result;
 }
 
 export async function createOrganizationAndNotify(db: PostgresJsDatabase, input: CreateOrganizationInput): Promise<CreateOrganizationResult> {
   const result = await createOrganization(db, input);
-  if (result.ok) notify(result.join);
+  if (result.ok) sendJoinNotice(result.join);
   return result;
 }
 
-function notify(join: Extract<JoinResult, { ok: true }>): void {
+/**
+ * Send the notice a join owes, if it owes one. For a caller that ran
+ * `joinOrganizationInTx` in its own transaction: call it after that
+ * transaction commits. Never throws.
+ */
+export function sendJoinNotice(join: JoinResult): void {
+  if (!join.ok) return;
   if (!join.noticeOwed) return;
   void sendOrganizationJoinNotice(join.email, join.organizationName, join.movedBooks).catch((err) => {
     console.error("[organizations] join notice failed to send (the email_log row records it):", err);

@@ -135,6 +135,14 @@ export function emailChangeAllowed(managed: boolean, current: string, next: stri
 
 // ── Copy ────────────────────────────────────────────────────────────────────
 
+/**
+ * The one not-found body for organization routes: a non-manager, an unknown
+ * or malformed organization id, and a user outside the organization all get
+ * it, byte for byte, so nobody outside learns who is in an organization or
+ * whether it exists.
+ */
+export const ORGANIZATION_NOT_FOUND = { ok: false, error: "not_found" } as const;
+
 export const ACCOUNT_DISABLED_MESSAGE =
   "Your organization has disabled this account. Ask one of its admins to turn it back on.";
 

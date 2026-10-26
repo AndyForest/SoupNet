@@ -53,6 +53,16 @@ export function orgMembersOf(organizationId: string): SQL {
 }
 
 /**
+ * Is the account in `userIdColumn` (a column of the enclosing statement)
+ * managed: does it hold a company organization membership, disabled or not?
+ * For counts that must leave managed accounts out, such as the public signup
+ * cap (org seats are the operator's allowance outside it, recipe 15b767de).
+ */
+export function accountIsManaged(userIdColumn: SQL): SQL {
+  return sql`EXISTS (SELECT 1 FROM claimnet.organization_members om WHERE om.user_id = ${userIdColumn})`;
+}
+
+/**
  * Per member of an organization, how many of its books they hold a
  * membership in, split into private and org-wide: a derived table of
  * (user_id, private_books, org_wide_books). For the console's member list,
@@ -126,6 +136,22 @@ export async function managedOrganizationOf(db: SqlExecutor, userId: string): Pr
     joinedVia: row.joined_via,
     disabledAt: row.disabled_at ? new Date(row.disabled_at) : null,
   };
+}
+
+/**
+ * The caller's role in a company organization when they are an active owner
+ * or admin of it, else null (a member, a disabled manager, a non-member, an
+ * unknown organization). The gate for an org admin's routes; answer null with
+ * the uniform 404 (`ORGANIZATION_NOT_FOUND` in @soupnet/domain).
+ */
+export async function activeOrgManagerRole(db: SqlExecutor, organizationId: string, userId: string): Promise<"owner" | "admin" | null> {
+  const rows = await db.execute(sql`
+    SELECT om.role FROM claimnet.organization_members om
+    JOIN claimnet.organizations o ON o.id = om.organization_id AND NOT o.is_personal
+    WHERE om.organization_id = ${organizationId}::uuid AND om.user_id = ${userId}::uuid
+      AND om.disabled_at IS NULL AND om.role IN ('owner', 'admin')
+  `);
+  return (rows as unknown as Array<{ role: "owner" | "admin" }>)[0]?.role ?? null;
 }
 
 /** See `homeOrganizationIdOf`. */
@@ -207,7 +233,16 @@ export async function joinOrganization(db: PostgresJsDatabase, input: JoinInput)
   return db.transaction(async (tx) => joinOrganizationInTx(tx, input));
 }
 
-async function joinOrganizationInTx(tx: SqlExecutor, input: JoinInput): Promise<JoinResult> {
+/**
+ * The join inside a caller's transaction, for a caller whose own writes must
+ * roll back with it (Domains' verification click, SSO's Google sign-up). It
+ * takes the organization row lock first, so call it before anything else in
+ * the transaction that could wait on that row. A refusal is returned, not
+ * thrown: the caller's transaction decides whether to roll back. After the
+ * caller commits, it sends the notice with `sendJoinNotice`
+ * (services/organization.service.ts).
+ */
+export async function joinOrganizationInTx(tx: SqlExecutor, input: JoinInput): Promise<JoinResult> {
   const { organizationId, userId, role, via, authority } = input;
   if (!VIA_FOR_AUTHORITY[authority.kind].includes(via)) return { ok: false, refusal: "not_authorized" };
 

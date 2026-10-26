@@ -302,6 +302,39 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Core", ()
     expect(statuses).toEqual([201, 409]);
   });
 
+  it("OC-J1 (for Domains and SSO): the join inside a caller's transaction rolls back with it; the manager gate and accountIsManaged agree with the rows", async () => {
+    const olive = await actor("olive");
+    const { orgId } = await createOrg(olive);
+    const ada = await actor("ada");
+    const max = await actor("max");
+    await mustAdd(orgId, ada, "admin");
+    const db = getDb();
+
+    // A caller's own write and the join commit or roll back together.
+    await db.transaction(async (tx) => {
+      const joined = await authz.joinOrganizationInTx(tx, {
+        organizationId: orgId, userId: max.userId, role: "member", via: "operator",
+        authority: { kind: "operator", actorUserId: sys.userId },
+      });
+      expect(joined.ok).toBe(true);
+      await tx.execute(sql`UPDATE claimnet.users SET display_name = 'rolled back' WHERE id = ${max.userId}::uuid`);
+      tx.rollback();
+    }).catch(() => undefined);
+    expect(await authz.managedOrganizationOf(db, max.userId)).toBeNull();
+    expect((await bookOf(max.personalBookId)).organization_id).toBe(max.personalOrgId);
+
+    expect(await authz.activeOrgManagerRole(db, orgId, olive.userId)).toBe("owner");
+    expect(await authz.activeOrgManagerRole(db, orgId, ada.userId)).toBe("admin");
+    expect(await authz.activeOrgManagerRole(db, orgId, max.userId)).toBeNull();
+    expect(await authz.activeOrgManagerRole(db, crypto.randomUUID(), olive.userId)).toBeNull();
+
+    const managed = (await db.execute(sql`
+      SELECT u.id, ${authz.accountIsManaged(sql`u.id`)} AS managed FROM claimnet.users u
+      WHERE u.id IN (${olive.userId}::uuid, ${max.userId}::uuid)
+    `)) as unknown as Array<{ id: string; managed: boolean }>;
+    expect(Object.fromEntries(managed.map((r) => [r.id, r.managed]))).toEqual({ [olive.userId]: true, [max.userId]: false });
+  });
+
   // ── Disable, re-enable, suspension ────────────────────────────────────────
 
   it("ORG-OFF-01, ORG-OFF-02 / OC-A1, OC-A2, OC-A6: disabling refuses every credential with nothing swept, and re-enabling restores the same ones", async () => {

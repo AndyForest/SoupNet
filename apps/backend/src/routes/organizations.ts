@@ -21,7 +21,7 @@ import { requireAuth, requireVerifiedEmail } from "../auth";
 import type { AppEnv } from "../types";
 import { actOnMember } from "../authz";
 import type { MemberActionRefusal } from "../authz";
-import { ORG_ACTION_MESSAGES, ORGANIZATION_FULL_MESSAGE, isOrgRole } from "@soupnet/domain";
+import { ORG_ACTION_MESSAGES, ORGANIZATION_FULL_MESSAGE, ORGANIZATION_NOT_FOUND, isOrgRole } from "@soupnet/domain";
 import type { OrgMemberAction } from "@soupnet/domain";
 
 const organizationsRouter = new Hono<AppEnv>();
@@ -31,7 +31,7 @@ organizationsRouter.use("/*", requireAuth, requireVerifiedEmail);
 const uuid = z.string().uuid();
 
 /** The one not-found body (byte-identical for every reason it is given). */
-const NOT_FOUND = { ok: false, error: "not_found" } as const;
+const NOT_FOUND = ORGANIZATION_NOT_FOUND;
 
 async function act(c: Context<AppEnv>, action: OrgMemberAction): Promise<Response> {
   const organizationId = c.req.param("id");

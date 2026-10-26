@@ -16,7 +16,9 @@ import type { SQL } from "drizzle-orm";
 
 /**
  * Has `organizationId` verified `domain` (lowercase), currently and outside
- * any auto-join freeze? A boolean SQL expression.
+ * any auto-join freeze, with auto-join switched on? The switch is inside the
+ * fragment so no caller can join on a domain's authority with it off. A
+ * boolean SQL expression.
  */
 export function domainVerifiedFor(_organizationId: string, _domain: string): SQL {
   return sql`FALSE`;
