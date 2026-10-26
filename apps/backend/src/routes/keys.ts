@@ -7,7 +7,8 @@ import { generateDailyKey, generateScopedKey, listKeys, revokeKey } from "../ser
 import { rateLimit } from "../middleware/rate-limit";
 import { sql } from "drizzle-orm";
 import { composeBriefing } from "../services/briefing";
-import { authenticateKey, inBooks } from "../authz";
+import { authenticateKey, inBooks, managedOrganizationOf } from "../authz";
+import { keyLifetimeCapMessage, scopedKeyMaxDays } from "@soupnet/domain";
 import { parseRecipeIds } from "../services/recipe-lookup.service";
 
 // C1 — recipe-book rename. Wire-format field names use the new "recipe book"
@@ -179,9 +180,21 @@ keys.post("/scoped", keyGenRateLimit, async (c) => {
     return c.json({ ok: false, error: "expiresAt cannot be more than 1 year in the future" }, 400);
   }
 
+  const db = getDb();
+
+  // A managed account's scoped keys last at most MANAGED_KEY_MAX_DAYS: a
+  // fixed backstop behind the organization's offboarding, with no per-org
+  // setting in the first release, and nothing done to keys minted before the
+  // account became managed (OC-K1, recipe d5d0f730).
+  if (await managedOrganizationOf(db, user.id)) {
+    const capDays = scopedKeyMaxDays(true);
+    if (expiresDate.getTime() > now.getTime() + capDays * 24 * 60 * 60 * 1000) {
+      return c.json({ ok: false, error: "key_lifetime_cap", maxDays: capDays, message: keyLifetimeCapMessage(capDays) }, 400);
+    }
+  }
+
   // Verify user is a member of all requested recipe books (both read and write)
   const allGroupIds = [...new Set([...readGroupIds, ...writeGroupIds])];
-  const db = getDb();
   const memberGroups = await db.execute(sql`
     SELECT group_id FROM claimnet.group_members
     WHERE user_id = ${user.id}::uuid

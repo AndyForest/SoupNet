@@ -184,7 +184,7 @@ A collaborator a power-user invites into a shared decision — a non-technical f
 
 Someone whose Soup.net account belongs to their employer. They may be an experienced developer, or one of the growing number of people close to the customer who are starting to build software with AI agents and have never thought of themselves as developers. The second group matters most: they learn from the judgment calls colleagues have logged, and their own decisions become visible to colleagues who can help.
 
-(Aspirational, not yet implemented. Plan: [planning/org-accounts-program.md](planning/org-accounts-program.md). Requirements from a first prospective organization: [customers/c01-requirements.md](customers/c01-requirements.md).)
+(Being built in organization accounts round 1, [planning/org-accounts-round-1.md](planning/org-accounts-round-1.md). Plan: [planning/org-accounts-program.md](planning/org-accounts-program.md). Requirements from a first prospective organization: [customers/c01-requirements.md](customers/c01-requirements.md).)
 
 **A managed account, with no mixing.** An account on a company's verified domain belongs wholly to the company. A person who wants recipe books under their own control keeps a separate personal account and shares a personal book with their work account. People bring their personal context to work all the time; ordinary sharing is how they do it here.
 
@@ -200,6 +200,8 @@ Someone whose Soup.net account belongs to their employer. They may be an experie
 - **Work tied to what it's about.** *"When my agent declares what it's working on, it attaches the pull request and the ticket. Later a reviewer asks for every judgment call tied to that PR and gets them."*
 - **Leaving.** *"When I leave the company and my work account is switched off, my API keys stop working within the hour. Nobody had to remember Soup.net."*
 - **Already had an account.** *"I'd signed up with my work email before my company joined. When they did, my account moved into the organization and my books came with me, and I was told it happened."*
+- **Switched off, and back on.** *"My admin disabled my account by mistake. When I tried to sign in, Soup.net told me my organization had disabled it and to ask an admin, not that my password was wrong. They re-enabled me, and my agents' existing keys worked again with nothing to re-mint."*
+- **Mine to delete, or the company's.** *"My work account belongs to my company, so I can't delete it myself; the settings page tells me to ask an org admin. My personal account, on my own email, I can delete whenever I like."*
 
 **Deliberate exception to "no auto-accept".** Archetype 2's anti-spam rule says verifying an email never joins you to anything. An organization is the exception, and only because it has proven it owns the domain: a company that controls the address space you signed up under isn't a stranger planting an invite. Everything short of that proof stays an offer you click.
 
@@ -208,7 +210,7 @@ Someone whose Soup.net account belongs to their employer. They may be an experie
 
 A role, usually held by whoever already administers the company's identity provider. They set policy and manage people. They don't read anyone's private judgment.
 
-(Aspirational, not yet implemented.)
+(Being built in organization accounts round 1.)
 
 **Key needs:** Prove the company owns its domains. Decide whether people on those domains join automatically. See who is in the organization and how much each person uses it. Switch a person off and on again. Oversee every org-wide recipe book. Control sharing outside the company. Get all of the organization's data out.
 
@@ -218,7 +220,12 @@ A role, usually held by whoever already administers the company's identity provi
 - **Switching someone off.** *"I disable a person. Their sign-in and every one of their API keys stop working immediately, including keys their agents made for sub-agents. If I re-enable them, the same keys work again. If I need it faster than the hourly sync, I do it here by hand."*
 - **Sharing policy.** *"I decide whether members can share recipe books with people outside the company. I can always set sharing on any org-wide book myself."*
 - **Data out.** *"I download everything in our organization's books in one export."*
-- **Not mine to set.** *"How many seats we have and whether they're premium is set by Soup.net, not by me."*
+- **Org-wide books.** *"I make a recipe book org-wide. Everyone in the organization can read and add to it, including people who join next month, and my fellow admins can manage it. If I make it private again, the people I'd invited to it directly keep their access and nobody else does."*
+- **Roles.** *"I make a colleague an admin. Admins manage members and org-wide books; only an owner can make someone an owner, and nobody can disable themselves or change their own role, so the organization is never left with nobody in charge."*
+- **Out of seats.** *"When every seat is taken, the next person who tries to join is told plainly that the organization is full and to ask an admin. Disabled people don't take a seat, so re-enabling someone needs a free one."*
+- **Not mine to set.** *"How many seats we have and whether they're premium is set by Soup.net, not by me. So is a site suspension: if Soup.net suspends an account for abuse, re-enabling it in my console doesn't lift that."*
+
+**Starting an organization (the first release).** Until domains are verified in the console, the site operator creates an organization by hand: names it, names its first owner (an existing account, which becomes managed), and sets its seats. That creates the organization's default book, which is org-wide, and runs the same join every later member goes through.
 
 **What the admin deliberately can't do:** browse private books, see their names, read free-text audit detail about members' searches, or act on a member's account without the member being able to see that it happened.
 

@@ -18,7 +18,19 @@ import {
   addMember,
   removeMember,
   updateDailyPrefs,
+  homeOrganizationOf,
+  mayCreateBookIn,
+  setBookOrgWide,
 } from "../authz";
+import type { OrgWideRefusal } from "../authz";
+
+const SHARING_BLOCKED_MESSAGE = "An organization's sharing policy doesn't allow this person in this recipe book. Ask one of its admins.";
+
+const ORG_WIDE_MESSAGES: Record<OrgWideRefusal, string> = {
+  not_a_company_book: "Only a recipe book in a company organization can be org-wide.",
+  default_book_stays_org_wide: "The organization's default recipe book is always org-wide.",
+  book_not_found: "Recipe book not found.",
+};
 
 // Description cap is 2000 on every surface — the MCP
 // update_recipe_book_description tool already accepted 2000, and the REST cap
@@ -28,8 +40,14 @@ import {
 const createGroupSchema = z.object({
   name: z.string().min(1).max(100),
   slug: z.string().min(1).max(100).regex(/^[a-z0-9-]+$/),
-  organizationId: z.string().uuid(),
+  // Optional since organization accounts round 1: without it the book lands
+  // in the caller's home organization (their company organization when the
+  // account is managed, else their personal one).
+  organizationId: z.string().uuid().optional(),
   description: z.string().max(2000).optional(),
+  // Org-wide: every member of the (company) organization can read and add to
+  // it. Only in a company organization.
+  orgWide: z.boolean().optional(),
 });
 
 // Slug is intentionally omitted — it stays stable across renames so existing
@@ -63,17 +81,23 @@ groupsRouter.post("/", async (c) => {
     return c.json({ ok: false, error: "Invalid input", details: parsed.error.issues }, 400);
   }
 
-  const { name, slug, organizationId, description } = parsed.data;
+  const { name, slug, description, orgWide } = parsed.data;
 
   const db = getDb();
 
-  // Verify user owns the organization
-  const orgCheck = await db.execute(sql`
-    SELECT id FROM claimnet.organizations
-    WHERE id = ${organizationId}::uuid AND owner_id = ${user.id}::uuid
-  `);
-  if ((orgCheck as unknown as Array<unknown>).length === 0) {
-    return c.json({ ok: false, error: "Organization not found or not owned by you" }, 403);
+  // Where the book lands: the named organization only when the caller may
+  // create there (they own it, or they are an active member of the company
+  // organization that manages their account; a guest of one of a company's
+  // books is neither), else their home organization (OC-B2).
+  const organizationId = parsed.data.organizationId ?? (await homeOrganizationOf(db, user.id));
+  if (!organizationId || !(await mayCreateBookIn(db, user.id, organizationId))) {
+    return c.json({ ok: false, error: "Organization not found or not yours to create recipe books in" }, 403);
+  }
+  if (orgWide) {
+    const orgRows = await db.execute(sql`SELECT is_personal FROM claimnet.organizations WHERE id = ${organizationId}::uuid`);
+    if ((orgRows as unknown as Array<{ is_personal: boolean }>)[0]?.is_personal !== false) {
+      return c.json({ ok: false, error: "not_a_company_book", message: ORG_WIDE_MESSAGES.not_a_company_book }, 400);
+    }
   }
 
   const groupRows = await db.insert(groups).values({
@@ -88,7 +112,43 @@ groupsRouter.post("/", async (c) => {
   // via invite accept (see invitations.ts), not to groups you create.
   await addCreatorAsOwner(db, group.id, user.id);
 
-  return c.json({ ok: true, data: { id: group.id, name, slug } }, 201);
+  // The organization was checked to be a company one above, so this can't
+  // refuse; a crash between the two statements leaves a private book.
+  if (orgWide) await setBookOrgWide(db, group.id, true);
+
+  return c.json({ ok: true, data: { id: group.id, name, slug, orgWide: orgWide === true } }, 201);
+});
+
+// PUT /recipe-books/:id/org-wide { orgWide } — make a company book org-wide
+// (every member of the organization holds a membership, org owners and
+// admins as the book's admins) or private again (the org-provenance rows go;
+// anyone granted the book directly keeps it). For the book's owners and
+// admins, which includes the organization's owners and admins on an
+// org-wide book (OC-B3).
+const orgWideSchema = z.object({ orgWide: z.boolean() }).strict();
+
+groupsRouter.put("/:id/org-wide", async (c) => {
+  const user = c.get("user");
+  const groupId = c.req.param("id");
+  const parsed = orgWideSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success || !z.string().uuid().safeParse(groupId).success) {
+    return c.json({ ok: false, error: "Invalid input" }, 400);
+  }
+  const db = getDb();
+  if (!isOwnerOrAdmin(await roleIn(db, user.id, groupId))) {
+    return c.json({ ok: false, error: "Only recipe-book owners and admins can change who can see a recipe book" }, 403);
+  }
+  const refusal = await setBookOrgWide(db, groupId, parsed.data.orgWide);
+  if (refusal) {
+    return c.json({ ok: false, error: refusal, message: ORG_WIDE_MESSAGES[refusal] }, refusal === "book_not_found" ? 404 : 400);
+  }
+  await writeAudit(db, {
+    actorUserId: user.id,
+    action: parsed.data.orgWide ? "group.made_org_wide" : "group.made_private",
+    targetType: "group",
+    targetId: groupId,
+  });
+  return c.json({ ok: true, data: { id: groupId, orgWide: parsed.data.orgWide } });
 });
 
 // PUT /groups/:id — update group name and/or description. Owner-only.
@@ -237,6 +297,9 @@ groupsRouter.post("/:id/members", async (c) => {
   // read/write — same anti-spam posture as invite-accept. The new member can
   // opt in on the Groups page.
   const added = await addMember(db, groupId, target.id, parsed.data.role);
+  if (added === "sharing_blocked") {
+    return c.json({ ok: false, error: "sharing_blocked", message: SHARING_BLOCKED_MESSAGE }, 403);
+  }
 
   // Already a member: nothing was written, and this endpoint never changes an
   // existing member's role. Say so (409, as other "already exists" answers

@@ -24,6 +24,10 @@ Status: written 2026-09-19 at the end of the idea-capture session. The next sess
 - A paste-ready brief for a long-running workflow session to write a public-safe discovery document: [../briefings/workflow-discovery-brief.md](../briefings/workflow-discovery-brief.md).
 - Still open for the operator, in rough order of how much they block: the `f1543441` exception wording; OAuth-parent handling for derived keys; the key-lifetime cap (default and minimum) and whether it applies to existing scoped keys; whether the empirical Workspace test gates the liveness probe; break-glass under `require_sso`; confirm-step versus silent account linking; offline access from day one; whether admins see a list or a count of pre-existing accounts on their domain. Each is detailed in the relevant research doc's §6.
 
+## 0c. Update, 2026-10-26 (round 1, stream Core)
+
+- The organization archetypes and user stories (§0 "still to do") are in `design-thinking.md` archetypes 6 and 7, extended by the core stream before its schema: switched off and back on, deleting a managed account, org-wide books, roles, seats, site suspension, and how the first organization is started. Rubric: [org-accounts-build/core.md](org-accounts-build/core.md).
+
 ## 1. State at handoff (first session)
 
 - Done: the operator's ideas organized into the two planning docs, grounded in a read of the current schemas (`organizations`, `users`, `groups`, `api_keys`, `intents`, `session_shown`, `ephemeral_books`), `validateKey`, and the backlog. Backlog pointers added, including the ChatGPT MCP note.

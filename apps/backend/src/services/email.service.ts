@@ -2,6 +2,8 @@ import { createTransport } from "nodemailer";
 import type { Transporter } from "nodemailer";
 import { sql } from "drizzle-orm";
 import { getDb } from "../db";
+import { organizationJoinNotice } from "@soupnet/domain";
+import type { MovedBook } from "@soupnet/domain";
 
 let transporter: Transporter | null = null;
 
@@ -72,7 +74,8 @@ export type EmailKind =
   | "verification"
   | "password_reset"
   | "invitation"
-  | "waitlist_approved";
+  | "waitlist_approved"
+  | "organization_joined";
 
 async function sendLoggedMail(
   kind: EmailKind,
@@ -193,6 +196,33 @@ export async function sendWaitlistApprovedEmail(email: string): Promise<void> {
         <p style="color: #737973; font-size: 0.85rem; margin-top: 1.5rem;">Your account is the one you created when you joined the waitlist — same email, same password.</p>
       </div>
     `,
+  });
+}
+
+/**
+ * Tell an existing account it joined a company organization, and which of
+ * its books moved there (organization accounts round 1, OC-J4: "tell the
+ * user it happened"). The recipient already has an account, so this is not
+ * mail to a non-user. Throws on a failed send after the logged sender has
+ * written the email_log row; the caller logs it.
+ */
+export async function sendOrganizationJoinNotice(
+  email: string,
+  organizationName: string,
+  moved: readonly MovedBook[],
+): Promise<void> {
+  const notice = organizationJoinNotice(organizationName, moved);
+  const paragraphs = notice.text.split("\n\n").map((block) => {
+    const lines = block.split("\n");
+    const items = lines.filter((l) => l.startsWith("- "));
+    const prose = lines.filter((l) => !l.startsWith("- ")).join(" ");
+    return `${prose ? `<p>${escHtml(prose)}</p>` : ""}${items.length ? `<ul>${items.map((i) => `<li>${escHtml(i.slice(2))}</li>`).join("")}</ul>` : ""}`;
+  });
+  await sendLoggedMail("organization_joined", {
+    to: email,
+    subject: notice.subject,
+    text: notice.text,
+    html: `<div style="font-family: Georgia, serif; max-width: 480px; margin: 0 auto; padding: 2rem;">${paragraphs.join("")}</div>`,
   });
 }
 
