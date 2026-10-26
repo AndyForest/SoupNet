@@ -343,6 +343,8 @@ Corpus import gives an id owned by another user a fresh id and reports the remap
 
 Operator note 2026-09-19: ChatGPT plugins are MCP-based now (since July, per operator — verify against OpenAI's current docs). Check that `POST /mcp` + the OAuth 2.1 connector flow work as a ChatGPT connector/app, note any gaps (tool-shape requirements, auth quirks, directory listing), and add ChatGPT to the public connect page's client list if it works.
 
+Status (2026-10-26): verified against OpenAI's current docs and planned as a round in [planning/openai-plugin-directory.md](planning/openai-plugin-directory.md): three streams (OAuth hardening with audience-bound tokens, CIMD and RFC 9207; the tool contract with annotation justifications and output minimisation; the listing package, skill, Codex marketplace file and connect-page copy), then the operator's portal steps. Research brief with sources in the companion repo.
+
 ---
 
 ## OAuth follow-ups
@@ -580,10 +582,6 @@ Observed 2026-08-23 on PR #76's GitHub Actions run (passed on three same-tree lo
 ### `[IMPL]` `deleteEmbeddingChainForSource` may race the worker strategy sweep (FK violation)
 
 Split out 2026-09-27 from the import overwrite flake, whose import path no longer exists (corpus import only creates rows since recipe `5d541d2c`; see `backlog-completed.md`). The helper's suspected mechanism is unchanged: it deletes the chain bottom-up without locking the source rows, so a concurrent `embedding_chunk_strategies` insert from `embedding-worker/jobs/strategy-check.ts` can land between the child deletes and the source delete. Its remaining callers are trace delete and `trace-move.service.ts` (evidence redaction). Neither has been seen to fail. If one does, the fix sketched in the original item applies: lock the source rows `FOR UPDATE` before deleting their children, and add a regression test that runs the sweep concurrently.
-
-### `[IMPL]` test:ci flake: account-deletion succession picks the wrong heir under full-suite load
-
-Observed 2026-10-25 on `drafts/10-bus` (`TESTCI_PGPORT=5544`): `auth-delete-shared-books.test.ts` "succession skips accounts that cannot act … [F75]" failed once in the full gate (`expected '<one user id>' to be '<the active member's id>'`), then passed three times out of three run alone against the same code. Nothing in that path changed on the branch. Not yet diagnosed; a first look would be whether another file's fixtures (waitlisting, verification) touch the same users or books concurrently, or whether the test reads the book row before the deletion's succession has committed.
 
 ### `[IMPL]` test:ci flake: vitest worker fork "exited unexpectedly" after all tests pass
 
