@@ -48,6 +48,8 @@ Three streams, each in a session that already holds the context, each on a branc
 
 Shared files: `routes/mcp.ts` (O touches the 401 challenge and `securitySchemes`; T touches descriptions and annotations; coordinate by hunk, T merges first); `packages/domain/src/recipe-guide-content.ts` (T owns the `MCP_TOOL_DESCRIPTIONS` and `MCP_PARAM_DESCRIPTIONS` blocks and adds a server-instructions constant in its own file; L owns the rest and asks T for any description change); the size-cap tests (T moves caps as measured, dated; stream B's 8b branch leaves the shared-descriptions cap 7 characters of headroom, so expect a move); `docs/connectors/index.md` (L only). No migrations expected; if one is needed, claim the number when the branch is first pushed.
 
+**Migration numbers across both rounds (F108, 2026-10-26):** one sequence, claimed at first push, in this order: plugin O `0043`, org Core `0044`, org SSO `0045`, org Domains `0046`, org Offboarding `0047`, then E's slice 9 `check_feedback.user_id` follow-up. A stream that needs an unplanned migration asks the planning session for the next number before generating it.
+
 Merge order: T, then O, then L. One deploy approval after the three. Then the operator's portal steps.
 
 ## What the operator does
