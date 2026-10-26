@@ -1,6 +1,9 @@
 /**
- * Append-only audit trail for all significant system actions.
- * Never updated or deleted — only inserted.
+ * Audit trail for all significant system actions. Rows are inserted and
+ * never deleted; the one update is account deletion anonymising the
+ * person's check-log rows and removing their recipe text from account
+ * events (apps/backend/src/services/audit-actions.ts, recipe 1d1531da). No foreign keys: rows outlive their actor by design
+ * (recipe 569fc2cc).
  *
  * actor_user_id: set for human-initiated actions
  * actor_node_id: set for client-node-initiated actions
