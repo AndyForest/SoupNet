@@ -339,6 +339,8 @@ Corpus import gives an id owned by another user a fresh id and reports the remap
 
 Operator note 2026-09-19: ChatGPT plugins are MCP-based now (since July, per operator — verify against OpenAI's current docs). Check that `POST /mcp` + the OAuth 2.1 connector flow work as a ChatGPT connector/app, note any gaps (tool-shape requirements, auth quirks, directory listing), and add ChatGPT to the public connect page's client list if it works.
 
+Status (2026-10-26): verified against OpenAI's current docs and planned as a round in [planning/openai-plugin-directory.md](planning/openai-plugin-directory.md): three streams (OAuth hardening with audience-bound tokens, CIMD and RFC 9207; the tool contract with annotation justifications and output minimisation; the listing package, skill, Codex marketplace file and connect-page copy), then the operator's portal steps. Research brief with sources in the companion repo.
+
 ---
 
 ## OAuth follow-ups
