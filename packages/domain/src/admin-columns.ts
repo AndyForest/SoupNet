@@ -149,6 +149,17 @@ export function adminUserStatus(input: { suspendedAt: unknown; orgDisabledAt: un
   return "active";
 }
 
+/** How a member arrived (the membership row's joined_via), as both consoles label it. */
+export const ADMIN_JOINED_VIA_LABELS: Readonly<Record<string, string>> = {
+  created: "Named at creation",
+  operator: "Added by Soup.net",
+  domain: "Email domain",
+  migrated: "Existing account",
+};
+
+/** An organization role, as both consoles label it. */
+export const ADMIN_ORG_ROLE_LABELS: Readonly<Record<string, string>> = { owner: "Owner", admin: "Admin", member: "Member" };
+
 /** Labels for the status, with the cause named. */
 export const ADMIN_USER_STATUS_LABELS: Record<AdminUserStatus, string> = {
   active: "Active",

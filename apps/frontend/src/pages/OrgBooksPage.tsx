@@ -127,7 +127,7 @@ export function OrgBooksPage() {
 
   return (
     <AdminLayout scope="org" heading={overview.data?.name}>
-      <AdminPageHeader title="Recipe books" subtitle="Org-wide books are open to every member. Private books are counted here, never named." />
+      <AdminPageHeader eyebrow="Organization" title="Recipe books" subtitle="Org-wide books are open to every member. Private books are counted here, never named." />
 
       <div style={{ display: "flex", gap: "var(--space-sm)", padding: "0 var(--space-lg) var(--space-md)", flexWrap: "wrap" }}>
         <AdminMetricCard label="Org-wide books" value={books.data?.orgWideBooks.length ?? "—"} />

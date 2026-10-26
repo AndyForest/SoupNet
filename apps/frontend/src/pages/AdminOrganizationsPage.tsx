@@ -79,14 +79,6 @@ export function AdminOrganizationsPage() {
       header: "Organization",
       render: (o) => <Link to="/admin/organizations/$orgId" params={{ orgId: o.id }}>{o.name}</Link>,
     },
-    { key: "owner", header: "Owner", render: (o) => <span>{o.owner_email}</span> },
-    { key: "members", header: "Members", align: "right", render: (o) => <span>{o.members}</span> },
-    {
-      key: "seats",
-      header: "Seats used",
-      align: "right",
-      render: (o) => <span>{o.active_members}{o.seat_limit === null ? "" : ` / ${o.seat_limit}`}</span>,
-    },
     {
       key: "seatLimit",
       header: "Seat limit",
@@ -97,13 +89,21 @@ export function AdminOrganizationsPage() {
           min={1}
           defaultValue={o.seat_limit ?? ""}
           placeholder="none"
-          style={{ width: "6rem" }}
+          style={{ width: "6rem", padding: "0.15rem 0.4rem" }}
           onBlur={(e) => {
             const next = e.target.value === "" ? null : Number(e.target.value);
             if (next !== o.seat_limit) seats.mutate({ id: o.id, seatLimit: next });
           }}
         />
       ),
+    },
+    { key: "owner", header: "Owner", render: (o) => <span>{o.owner_email}</span> },
+    { key: "members", header: "Members", align: "right", render: (o) => <span>{o.members}</span> },
+    {
+      key: "seats",
+      header: "Seats used",
+      align: "right",
+      render: (o) => <span>{o.active_members}{o.seat_limit === null ? "" : ` / ${o.seat_limit}`}</span>,
     },
     { key: "created", header: "Created", render: (o) => <span>{fmtAdminDate(o.created_at)}</span> },
   ];

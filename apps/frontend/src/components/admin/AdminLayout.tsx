@@ -114,7 +114,8 @@ export function AdminLayout({ children, inspector, scope = "site", heading }: Ad
         })}
       </nav>
 
-      <main style={{ overflow: "auto" }}>{children}</main>
+      {/* A div, not main: the app shell already has the page's one main landmark. */}
+      <div style={{ overflow: "auto", minWidth: 0 }}>{children}</div>
 
       {inspector ? (
         <aside

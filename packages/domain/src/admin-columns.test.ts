@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
+  ADMIN_JOINED_VIA_LABELS,
+  ADMIN_ORG_ROLE_LABELS,
   ADMIN_USER_COLUMNS,
   ADMIN_USER_STATUS_LABELS,
   adminUserStatus,
@@ -132,6 +134,11 @@ describe("adminUserStatus", () => {
     expect(adminUserStatus({ suspendedAt: "2026-10-26T00:00:00Z", orgDisabledAt: "2026-10-26T00:00:00Z" })).toBe(
       "suspended",
     );
+  });
+
+  it("labels every arrival and role the organization tables allow", () => {
+    expect(Object.keys(ADMIN_JOINED_VIA_LABELS).sort()).toEqual(["created", "domain", "migrated", "operator"]);
+    expect(Object.keys(ADMIN_ORG_ROLE_LABELS).sort()).toEqual(["admin", "member", "owner"]);
   });
 
   it("names the cause in each label", () => {

@@ -61,7 +61,7 @@ export function useAdminGate(scope: AdminScope = "site"): {
   } else if (!isAdmin) {
     gate = (
       <div style={{ padding: "var(--space-lg)", maxWidth: 600 }}>
-        <h1>Admin</h1>
+        <h1>{scope === "org" ? "Organization" : "Admin"}</h1>
         <p style={{ color: "var(--color-on-surface-variant)", marginTop: "var(--space-md)" }}>
           {DENIED_COPY[scope]}
         </p>

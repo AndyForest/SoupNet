@@ -85,9 +85,10 @@ export function SettingsOrganizationPage() {
 
       <h2>The one way in</h2>
       <p>
-        Your organization can get to your data by taking over this account, for example by resetting your
-        company Google password and signing in as you. Soup.net doesn't let admins browse your books, so that
-        is the only path, and it shows up below as a sign-in you didn't make.
+        Your organization can get to your data by taking over this account. Because it controls your work
+        email and, if you sign in with Google, your company Google account, it can reset your sign-in and sign
+        in as you. Soup.net doesn't let admins browse your books, so that is the only path, and it shows up
+        below as a sign-in you didn't make.
       </p>
 
       <h2>Your recent sign-ins</h2>

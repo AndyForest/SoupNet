@@ -313,6 +313,7 @@ Stream Console (`org/console`, PR #156; rubric [planning/org-accounts-build/cons
 - the last-directory-check column (CN-U5), reading stream Offboarding's stored check time once it merges;
 - the privacy policy's §2.1 sign-in line (CN-X4), added once stream L's #151 is on `main`;
 - `AdminQueuesPage` and `AdminEmbeddingsPage` onto the admin kit (CN-X3; untouched by the shared table, so not in this round).
+- A phone layout for the admin kit. `AdminLayout`'s fixed 200px nav column squeezes both consoles' tables to about 200px at phone width; the browser verification of `org/console` recorded it at 412px (X3, open). The pages work, but they are hard to read. Stacking the nav above the content below the app shell's 768px breakpoint, as `SettingsLayout` does, would fix both consoles.
 
 ### `[DESIGN]` Derived API keys — an orchestrator mints scoped-down keys for its sub-agents (direction decided 2026-09-19; optional, separate track)
 

@@ -1,13 +1,12 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ADMIN_USER_STATUS_LABELS, orgActionRefusal } from "@soupnet/domain/browser";
+import { ADMIN_ORG_ROLE_LABELS, ADMIN_USER_STATUS_LABELS, orgActionRefusal } from "@soupnet/domain/browser";
 import type { AdminUserStatus, OrgMemberAction, OrgRole } from "@soupnet/domain/browser";
 import { authFetch } from "../auth.js";
 import {
   AdminLayout,
   AdminPageHeader,
   AdminMetricCard,
-  AdminStatusDot,
   AdminEmptyState,
   AdminFilterBar,
   AdminField,
@@ -17,7 +16,6 @@ import {
   AdminPagination,
   useAdminGate,
   useAdminListQuery,
-  type AdminStatus,
 } from "../components/admin/index.js";
 
 /** A member row as GET /organizations/:id/members returns it (the org column set). */
@@ -50,15 +48,6 @@ interface OrgOverview {
 }
 
 const PAGE_SIZE = 50;
-
-const STATUS_DOT: Record<AdminUserStatus, AdminStatus> = { active: "healthy", disabled: "warning", suspended: "error" };
-
-const JOINED_VIA: Record<string, string> = {
-  created: "Named at creation",
-  operator: "Added by Soup.net",
-  domain: "Email domain",
-  migrated: "Existing account",
-};
 
 /**
  * The org console's Members page (/org): every member with aggregates only,
@@ -133,7 +122,7 @@ export function OrgMembersPage() {
 
   return (
     <AdminLayout scope="org" heading={overview.data?.name}>
-      <AdminPageHeader title="Members" subtitle="Who is in the organization and how much each person uses it. Private books are counted, never named." />
+      <AdminPageHeader eyebrow="Organization" title="Members" subtitle="Who is in the organization and how much each person uses it. Private books are counted, never named." />
 
       <div style={{ display: "flex", gap: "var(--space-sm)", padding: "0 var(--space-lg) var(--space-md)", flexWrap: "wrap" }}>
         <AdminMetricCard label="Members" value={overview.data?.members ?? "—"} />
@@ -190,6 +179,7 @@ export function OrgMembersPage() {
               show={["email", "displayName", "status", "orgRole", "joinedVia", "joinedAt", "lastActiveAt", "recipeCount", "privateBookCount", "orgWideBookCount", "activeKeyCount"]}
               rows={rows}
               sortable={["email", "joinedAt", "lastActiveAt"]}
+              extraAfterFirst
               sortBy={sortBy}
               sortDir={sortDir}
               onSortChange={(nextBy, nextDir) => {
@@ -198,22 +188,22 @@ export function OrgMembersPage() {
                 setSortDir(nextDir);
               }}
               render={{
-                status: (u) => <AdminStatusDot status={STATUS_DOT[u.status]} label={ADMIN_USER_STATUS_LABELS[u.status]} />,
-                joinedVia: (u) => <span>{JOINED_VIA[u.joinedVia] ?? u.joinedVia}</span>,
                 orgRole: (u) => {
                   const options = (["owner", "admin", "member"] as const).filter(
                     (r) => r === u.orgRole || allowed(u, { kind: "set_role", role: r }),
                   );
-                  if (options.length < 2) return <span style={{ textTransform: "capitalize" }}>{u.orgRole}</span>;
+                  if (options.length < 2) return <span>{ADMIN_ORG_ROLE_LABELS[u.orgRole]}</span>;
                   return (
                     <select
                       aria-label={`Role for ${u.email}`}
                       value={u.orgRole}
                       disabled={act.isPending}
                       onChange={(e) => act.mutate({ userId: u.id, action: { kind: "set_role", role: e.target.value as OrgRole } })}
+                      // The global form rule makes selects full width; in a table cell that hides the value.
+                      style={{ width: "auto", padding: "0.15rem 0.4rem", fontSize: "0.8125rem" }}
                     >
                       {options.map((r) => (
-                        <option key={r} value={r}>{r[0]!.toUpperCase() + r.slice(1)}</option>
+                        <option key={r} value={r}>{ADMIN_ORG_ROLE_LABELS[r]}</option>
                       ))}
                     </select>
                   );

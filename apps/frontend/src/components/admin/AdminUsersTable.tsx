@@ -1,7 +1,13 @@
 import type { ReactNode } from "react";
-import { columnsFor } from "@soupnet/domain/browser";
-import type { AdminListing, AdminViewer } from "@soupnet/domain/browser";
+import {
+  ADMIN_JOINED_VIA_LABELS,
+  ADMIN_ORG_ROLE_LABELS,
+  ADMIN_USER_STATUS_LABELS,
+  columnsFor,
+} from "@soupnet/domain/browser";
+import type { AdminListing, AdminUserStatus, AdminViewer } from "@soupnet/domain/browser";
 import { AdminTable, type AdminColumn } from "./AdminTable.js";
+import { AdminStatusDot, type AdminStatus } from "./AdminStatusDot.js";
 
 /**
  * The users table the site console and the org console share (CN-M4, recipe
@@ -27,6 +33,11 @@ interface AdminUsersTableProps<Row extends { id: string }> {
   headers?: Partial<Record<string, string>>;
   /** Columns that aren't data, such as row actions, appended after the data columns. */
   extra?: AdminColumn<Row>[];
+  /**
+   * Put the `extra` columns right after the first data column instead, so a
+   * row's actions stay in view when the table is wider than its box.
+   */
+  extraAfterFirst?: boolean;
   /** Column keys the backend can sort by. */
   sortable?: readonly string[];
   sortBy?: string | undefined;
@@ -44,7 +55,16 @@ export function fmtAdminDate(iso: string | null | undefined): string {
   return d.toLocaleDateString() + " " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+const STATUS_DOT: Record<AdminUserStatus, AdminStatus> = { active: "healthy", disabled: "warning", suspended: "error" };
+
 function defaultRender(key: string, value: unknown): ReactNode {
+  // Codes the domain labels, so neither console shows a raw value.
+  if (key === "status" && typeof value === "string" && value in STATUS_DOT) {
+    const status = value as AdminUserStatus;
+    return <AdminStatusDot status={STATUS_DOT[status]} label={ADMIN_USER_STATUS_LABELS[status]} />;
+  }
+  if (key === "joinedVia" && typeof value === "string") return <span>{ADMIN_JOINED_VIA_LABELS[value] ?? value}</span>;
+  if (key === "orgRole" && typeof value === "string") return <span>{ADMIN_ORG_ROLE_LABELS[value] ?? value}</span>;
   if (typeof value === "number") return <span style={MONO}>{value}</span>;
   if (key.endsWith("At")) return <span style={MUTED}>{fmtAdminDate(value as string | null)}</span>;
   if (value === null || value === undefined || value === "") return <span style={MUTED}>—</span>;
@@ -59,6 +79,7 @@ export function AdminUsersTable<Row extends { id: string }>({
   render = {},
   headers = {},
   extra = [],
+  extraAfterFirst = false,
   sortable = [],
   sortBy,
   sortDir,
@@ -85,7 +106,7 @@ export function AdminUsersTable<Row extends { id: string }>({
   return (
     <AdminTable
       rows={rows}
-      columns={[...columns, ...extra]}
+      columns={extraAfterFirst ? [...columns.slice(0, 1), ...extra, ...columns.slice(1)] : [...columns, ...extra]}
       rowKey={(r) => r.id}
       sortBy={sortBy}
       sortDir={sortDir}

@@ -146,6 +146,15 @@ Recorded 2026-10-26 during the build.
 - **The Domains page lands with CN-D1.** The org nav has no Domains entry until stream Domains merges, so nothing links to a page that doesn't exist yet.
 - **The Books page's counts live in `authz/sharing-policy.ts`** (`orgBookSummary`). They read memberships, which only the authz module may, and they're the review surface for the sharing policy (CN-P5). Core agreed the file is Console's whole.
 - **An invitation reveals whether an off-domain email is a colleague.** With outbound `blocked`, Max can learn whether an email outside Acme's verified domains belongs to an Acme member: an invitation to it is created rather than refused. It reveals only membership of his own organization, to one of its members. Recorded for the auditor rather than closed with a uniform answer, because refusing a colleague's invitation would break ordinary sharing inside the company.
+- **Making an existing book org-wide is on the book's own page** (CN-B2, from the verification coordinator's review of `42ec7e4`). The Recipe Books page offers "Make org-wide" or "Make private" to an owner or admin of a company book, except the organization's default book. It calls Core's `PUT /recipe-books/:id/org-wide`, and `GET /recipe-books` now says whether each book is in a company organization, org-wide, or the default. The Books page keeps "Make private" for org-wide books. Putting the control on the book's own page lets any book owner use it, not only an org admin, which matches archetype 7's "I make a recipe book org-wide".
+- **Fixed after the browser verification of `42ec7e4`:**
+  - The Recipe Books page showed a sharing refusal as the raw code (`sharing_blocked`) on an invitation, and showed nothing on an accept. These were pre-existing: both read `error` and never `message`, and the accept error was never rendered. They now show the plain sentence.
+  - The console's role select and the book form's radios were stretched by the global form rule.
+  - A row's actions on Members now sit right after the email, so they stay in view when the table is wider than its box. Organizations shows its seat limit next to the name.
+  - Org console pages say "Organization" rather than "Admin".
+  - The admin layout no longer nests a second `<main>`.
+  - The site operator's per-organization member list shows labels rather than codes.
+  - The member page's takeover sentence now holds for an account that signs in with a password.
 - **The site operator is held to a company's outbound policy when re-filing** (CN-P4), unlike the trace gates, which let the system role through. The policy is the company's, and the operator's tools for a company go through `/admin`.
 
 ### Out of this stream

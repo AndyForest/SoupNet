@@ -50,7 +50,7 @@ export function OrgActivityPage() {
 
   return (
     <AdminLayout scope="org" heading={overview.data?.name}>
-      <AdminPageHeader title="Activity" subtitle="What owners, admins and Soup.net did in the organization. Members see the actions that touched their own account." />
+      <AdminPageHeader eyebrow="Organization" title="Activity" subtitle="What owners, admins and Soup.net did in the organization. Members see the actions that touched their own account." />
       <div style={{ padding: "0 var(--space-lg) var(--space-lg)" }}>
         {activity.error ? (
           <div style={{ color: "var(--color-error, #ef4444)" }}>{(activity.error as Error).message}</div>
