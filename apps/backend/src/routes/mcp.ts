@@ -14,6 +14,7 @@
  */
 
 import { ownDraftFields } from "../lib/own-draft-fields";
+import { flatListFields } from "../lib/flat-list-fields";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
@@ -723,6 +724,8 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
     lean ? "Read-only search over your readable recipe books." : MCP_TOOL_DESCRIPTIONS.searchRecipes,
     {
       query: z.string().describe(MCP_PARAM_DESCRIPTIONS.searchQuery),
+      // Slice 8b: the flat list's page; an integer from 1, refused otherwise.
+      page: z.number().int().min(1).optional().describe(MCP_PARAM_DESCRIPTIONS.searchPage),
       verbosity: z.enum(VERBOSITY_LEVELS).optional().describe(MCP_PARAM_DESCRIPTIONS.verbosity),
       response_format: z.enum(["markdown", "structured"]).optional().describe(MCP_PARAM_DESCRIPTIONS.responseFormat),
       known_recipes: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.knownRecipes),
@@ -743,7 +746,7 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
       idempotentHint: true,
       openWorldHint: true,
     },
-    async ({ query, verbosity, response_format, known_recipes, session_id, intent, agent_id, feedback, read_recipe_books }) => {
+    async ({ query, page, verbosity, response_format, known_recipes, session_id, intent, agent_id, feedback, read_recipe_books }) => {
       const knownRecipeIds = new Set(
         (known_recipes ?? "").split(",").map((s) => s.trim()).filter(Boolean),
       );
@@ -752,6 +755,7 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
         const result = await searchWithoutLogging({
           principal,
           filter: query,
+          page: page ?? undefined,
           verbosity: verbosity ?? ("auto" as const),
           readGroups: read_recipe_books ?? undefined,
           surface: "mcp-http",
@@ -769,8 +773,10 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
         }
 
         const db = getDb();
-        let enriched = await enrichResults(db, result.results, principal?.userId);
-        enriched = await clusterEvidenceInResults(db, enriched);
+        // The flat list's rows are index entries: book and draft label only
+        // (slice 8b); get_recipes fetches the evidence.
+        let enriched = await enrichResults(db, result.results, principal?.userId, { evidence: !result.listing });
+        if (!result.listing) enriched = await clusterEvidenceInResults(db, enriched);
 
         const jsonResponse = buildMcpJsonResponse(result, enriched, 1, knownRecipeIds);
         // Search-only reshaping — same fields as the web builder
@@ -790,6 +796,8 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
             ...(result.searchedOwnExcluded !== undefined ? { searchedOwnExcluded: result.searchedOwnExcluded } : {}),
             ...(result.intentNotRecognized ? { intentNotRecognized: true } : {}),
             ...data,
+            // No bare text: the flat list's rows and page (slice 8b).
+            ...(result.listing ? flatListFields({ ...result, listing: result.listing }, enriched) : {}),
           };
         }
         console.warn(`[mcp] search_recipes: success — ${result.results.length} results (${response_format ?? "markdown"})`);

@@ -4,6 +4,39 @@ Every PR that touches briefing copy (`packages/domain/src/recipe-guide-content.t
 
 (Renamed from declared-intent-log.md on 2026-08-23: "intent" now names the runtime intent-registration mechanism — cold-start v2 Phase C — so the discipline's log takes an unambiguous name. The discipline itself is unchanged.)
 
+## 2026-10-26 — Drafts-and-triage slice 8b items 1 and 2 (stream B): the flat list, and created-after: / changed-after:
+
+Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-and-triage-slices-6-7-revision.md) §Slice 8 items 1 and 2; ruling 51. Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 8b items 1 and 2 rubric. Design checked as recipe `4a517f5b`; qualifier names as recipe `dc8e7d09`.
+
+### Edits
+
+1. **`MCP_PARAM_DESCRIPTIONS.searchQuery`** (the `query` parameter of `search_recipes`, remote and stdio): gains `created-after:/changed-after: (deposit, any change)`. It loses "Qualifier-only: newest first.", which edit 2 replaces, and "(your intent's recipes)" after `intent:int_…`, trimmed under the question 56 rule (untrimmed text in [expanded/slice8b.md](expanded/slice8b.md)). 413 → 412 characters.
+2. **`MCP_PARAM_DESCRIPTIONS.searchPage` (new):** the `page` parameter of `search_recipes` on both servers, saying what a search with no bare text returns: a flat list, 50 per page, and its three orders. 152 characters, trimmed from 189 to fit the shared total (untrimmed text in the same file).
+3. **The response of a search with no bare text** (shared markdown renderer, `/check` JSON and HTML, structured MCP): the flat list. One row per match with its id, a time and its book, then the page line ("Page p of n, 50 per page. Next: page=p+1." or "This is the last page."), and a page past the end that says so. The renderer's header invariant "No 'Page X of Y' pagination text" now applies to ranked results only. JSON gains `listOrder` and `perPage`, and flat rows carry `loggedAt` and `changedAt` (both described in `/schemas/recipe.json` and `check-response.json`).
+
+### Scenarios intended to move
+
+- `drafts-and-triage.feature`: the new rule "An unattended sweep reads every id that arrived or moved since it last looked" (DT-SWP-01, DT-SWP-02).
+
+### Scenarios watched, with rationale for holding
+
+- **Every search with bare text:** unchanged. The flat path is taken only when the parsed query has no semantic text, and the ranked path's code is not edited (the ranking-regression eval and the S6a and slice 3 search tests pass as they stand).
+- **The `intent:` scenarios (DT-OPT-01):** the qualifier's meaning is unchanged. Its listing is now the flat list, which lists every recipe under the intent instead of exemplars.
+- **`is:draft` and `is:expired`:** the same sets, now listed in the review queue's triage order.
+
+### Measured
+
+Slice 6a's method: `createMcpServer` and the stdio server over the in-memory transport. Before is `main` at `5b81097` (PR #147).
+
+| Measure | Before | After | Cap |
+|---|---|---|---|
+| Remote `tools/list` | 17,698 bytes | 17,904 | 18,200 |
+| Stdio `tools/list` | 14,201 bytes | 14,407 | 14,700 |
+| Shared descriptions | 6,442 characters | 6,593 | 6,600 |
+| `searchQuery` | 413 characters | 412 | 420 |
+
+No cap moves.
+
 ## 2026-10-25 — Drafts-and-triage slice 8b item 3 (stream D): a Members line on every book, and pending invites for the books you manage
 
 Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-and-triage-slices-6-7-revision.md) §Slice 8 item 3. Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 8b item 3 rubric. Design checked as recipe `173384b3`.

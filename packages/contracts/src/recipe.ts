@@ -87,7 +87,14 @@ export const LOGGED_AT_DEFINITION =
   "When the recipe entered the corpus (ISO 8601, the raw append time). Differs from createdAt "
   + "only for decisions backfilled from dated artifacts (decision archaeology), where createdAt "
   + "carries the original judgment date. Present on the full-detail lookup surface (get_recipes / "
-  + "GET /recipes); check results carry createdAt alone.";
+  + "GET /recipes) and on the flat list a qualifier-only search returns; other check results "
+  + "carry createdAt alone.";
+
+export const CHANGED_AT_DEFINITION =
+  "When the recipe last changed (ISO 8601): the latest of its logging, a draft's verification "
+  + "or rejection, a move to another recipe book, its newest feedback row, and its newest "
+  + "reaction. Present on the flat list a qualifier-only search returns; changed-after: "
+  + "selects by it.";
 
 export const AUTHOR_DEFINITION =
   "The human account the recipe belongs to — whose taste and judgment it records. Present only "
@@ -253,6 +260,7 @@ const recipeFields = {
   similarity: z.number().min(0).max(1).optional().describe(SIMILARITY_DEFINITION),
   createdAt: z.string().optional().describe(CREATED_AT_DEFINITION),
   loggedAt: z.string().optional().describe(LOGGED_AT_DEFINITION),
+  changedAt: z.string().optional().describe(CHANGED_AT_DEFINITION),
   author: RecipeAuthorSchema.optional().describe(AUTHOR_DEFINITION),
   known: z.boolean().optional().describe(KNOWN_DEFINITION),
   clusterSize: z.number().int().optional().describe(CLUSTER_SIZE_DEFINITION),
@@ -280,6 +288,7 @@ export interface Recipe {
   similarity?: number | undefined;
   createdAt?: string | undefined;
   loggedAt?: string | undefined;
+  changedAt?: string | undefined;
   author?: RecipeAuthor | undefined;
   known?: boolean | undefined;
   clusterSize?: number | undefined;
@@ -358,7 +367,18 @@ export const CheckResponseDataSchema = z
       .number()
       .optional()
       .describe("Search-only, zero results: recipes in the searched scope — distinguishes a thin corpus from a bad minute."),
-    searchMode: z.string().optional().describe("How candidates were retrieved: \"semantic\" (vector similarity), or \"lexical\" for quoted/qualifier-only searches — exact matches, newest first, no similarity scores."),
+    searchMode: z.string().optional().describe("How candidates were retrieved: \"semantic\" (vector similarity), or \"lexical\" for searches with no bare text — exact matches, no similarity scores, returned as the flat list (listOrder)."),
+    listOrder: z
+      .enum(["judgment", "triage", "changed"])
+      .optional()
+      .describe(
+        "Present when the search had no bare text: results are the flat list, every match one row "
+        + "and perPage to a page, ordered by \"judgment\" (newest judgment date first), \"triage\" "
+        + "(is:draft and is:expired: impact times uncertainty, then newest logged), or \"changed\" "
+        + "(with changed-after:, latest changedAt first). Every order ends in the id, so pages never "
+        + "overlap; ask for the next page until page equals totalPages.",
+      ),
+    perPage: z.number().int().optional().describe("Flat list only: rows per page (fixed)."),
     clustered: z.boolean().optional().describe("Whether results are clustered exemplars."),
     results: z
       .array(RecipeSchema)

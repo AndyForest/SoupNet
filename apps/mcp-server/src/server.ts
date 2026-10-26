@@ -366,6 +366,8 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
     MCP_TOOL_DESCRIPTIONS.searchRecipes,
     {
       query: z.string().describe(MCP_PARAM_DESCRIPTIONS.searchQuery),
+      // Slice 8b: the flat list's page; an integer from 1, refused otherwise.
+      page: z.number().int().min(1).optional().describe(MCP_PARAM_DESCRIPTIONS.searchPage),
       verbosity: z.enum(VERBOSITY_LEVELS).optional().describe(MCP_PARAM_DESCRIPTIONS.verbosity),
       response_format: z.enum(["markdown", "structured"]).optional().describe(MCP_PARAM_DESCRIPTIONS.responseFormat),
       known_recipes: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.knownRecipes),
@@ -383,7 +385,7 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
       idempotentHint: true,
       openWorldHint: true,
     },
-    async ({ query, verbosity, response_format, known_recipes, session_id, intent, agent_id, read_recipe_books }) => {
+    async ({ query, page, verbosity, response_format, known_recipes, session_id, intent, agent_id, read_recipe_books }) => {
       if (!apiKey) {
         return {
           content: [{ type: "text" as const, text: "Error: SOUPNET_API_KEY not configured. Get a key from your Soup.net dashboard." }],
@@ -393,6 +395,7 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
         const params = new URLSearchParams();
         params.set("key", apiKey);
         params.set("filter", query);
+        if (page !== undefined) params.set("page", String(page));
         if (verbosity) params.set("verbosity", verbosity);
         if (agent_id) params.set("agent_id", agent_id);
         if (known_recipes) params.set("known_recipes", known_recipes);

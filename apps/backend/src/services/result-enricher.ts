@@ -107,6 +107,10 @@ export async function enrichResults(
   /** The viewer, so an on-behalf draft can name the other party from their
    *  side (slice 4, S4-L1). Without it no party is named. */
   viewerUserId?: string,
+  /** `evidence: false` loads only the book and the draft label: the flat
+   *  list's rows are index entries, and get_recipes fetches the rest
+   *  (slice 8b). */
+  opts: { evidence?: boolean } = {},
 ): Promise<EnrichedResult[]> {
   if (results.length === 0) return [];
 
@@ -152,7 +156,7 @@ export async function enrichResults(
 
   // 1. Load evidence for all trace IDs (stance column persists for legacy
   // rows but is not surfaced — see file header).
-  const evidenceRows = await db.execute(sql`
+  const evidenceRows = opts.evidence === false ? [] : await db.execute(sql`
     SELECT te.trace_id, e.content, e.id AS evidence_id
     FROM claimnet.trace_evidence te
     JOIN claimnet.evidence e ON e.id = te.evidence_id

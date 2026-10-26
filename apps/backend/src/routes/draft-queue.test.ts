@@ -516,8 +516,10 @@ describe.skipIf(!BASE || !canConnect())("the review queue (drafts-and-triage sli
       "check_recipe", "get_briefing", "get_recipes", "list_my_recipe_books", "log_feedback", "search_recipes",
       "update_recipe_book_description", "verify_draft",
     ]);
+    // Slice 8b adds `page` for the flat list (revision doc slice 8 item 1),
+    // the one parameter its rubric allows; the queue itself still adds none.
     expect(Object.keys(tools.find((t) => t.name === "search_recipes")!.inputSchema.properties).sort()).toEqual(
-      ["agent_id", "feedback", "intent", "known_recipes", "query", "read_recipe_books", "response_format", "session_id", "verbosity"],
+      ["agent_id", "feedback", "intent", "known_recipes", "page", "query", "read_recipe_books", "response_format", "session_id", "verbosity"],
     );
   });
 

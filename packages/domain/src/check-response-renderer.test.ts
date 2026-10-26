@@ -3,6 +3,8 @@ import {
   renderCheckResponseMarkdown,
   fenceCheckResponseMarkdown,
   buildOwnExcludedNote,
+  flatListPageLine,
+  FLAT_LIST_CLAIM_CHARS,
 } from "./check-response-renderer";
 import type { CheckResponseJson } from "./check-response-renderer";
 
@@ -507,5 +509,97 @@ describe("renderCheckResponseMarkdown — drafts as a bus", () => {
       data: { ...base.data, results: [{ ...base.data.results[0]!, draftState: "unverified", draftExpired: "age" }] },
     });
     expect(text).toContain("[expired draft: it was deposited with no intent over 7 days ago");
+  });
+});
+
+describe("the flat list (slice 8b, S8b-L1, S8b-L2)", () => {
+  const long = `As a steward ${"x".repeat(300)}`;
+  const flat = (over: Record<string, unknown> = {}): CheckResponseJson => ({
+    ok: true,
+    data: {
+      searchOnly: true,
+      filter: "author:me",
+      searchId: "s-1",
+      listOrder: "judgment",
+      perPage: 50,
+      results: [
+        { recipeId: UUID_A, recipe: "Short claim.", createdAt: "2026-01-15T00:00:00.000Z", loggedAt: "2026-10-26T01:00:00.000Z", changedAt: "2026-10-26T02:00:00.000Z", recipeBook: { name: "SoupNet" } },
+        { recipeId: UUID_B, recipe: long, createdAt: "2026-10-20T08:15:00.000Z", loggedAt: "2026-10-20T08:15:00.000Z", changedAt: "2026-10-26T03:00:00.000Z", draftState: "unverified", impact: "high", uncertainty: null, known: true },
+      ],
+      totalResults: 120,
+      page: 1,
+      totalPages: 3,
+      sessionId: "sess-1",
+      intentNotice: "Intent: int_x",
+      ...over,
+    },
+  });
+
+  it("lists every row in full with its id, time and book, then the page line naming the next page", () => {
+    const text = renderCheckResponseMarkdown(flat());
+    expect(text).toContain("120 recipe(s) match, listed newest judgment date first; each row shows its judgment date:");
+    expect(text).toContain(`- ${UUID_A} 2026-01-15T00:00Z [SoupNet] Short claim.`);
+    // A known recipe is not stubbed: a sweep needs every id (S8b-L5).
+    expect(text).toContain(`- ${UUID_B} 2026-10-20T08:15Z`);
+    expect(text).not.toContain("known to you");
+    expect(text).toContain("Page 1 of 3, 50 per page. Next: page=2.");
+    expect(text).toContain("Fetch full recipes by id");
+    expect(text).toContain("Session: sess-1");
+    expect(text).toContain("Intent: int_x");
+    expect(text).not.toMatch(/similar recipe\(s\) found|clustered to|Related evidence/);
+  });
+
+  it("cuts a long claim at the limit with an ellipsis, and labels the viewer's own draft", () => {
+    const text = renderCheckResponseMarkdown(flat());
+    const line = text.split("\n").find((l) => l.includes(UUID_B))!;
+    expect(line).toContain(`${long.slice(0, FLAT_LIST_CLAIM_CHARS)}…`);
+    expect(line).not.toContain(long.slice(0, FLAT_LIST_CLAIM_CHARS + 1));
+    expect(line).toMatch(/draft/);
+  });
+
+  it("shows the time each order reads: logged for triage, changed for changed-after:", () => {
+    const triage = renderCheckResponseMarkdown(flat({ listOrder: "triage" }));
+    expect(triage).toContain("listed in triage order");
+    expect(triage).toContain(`- ${UUID_A} 2026-10-26T01:00Z`);
+    const changed = renderCheckResponseMarkdown(flat({ listOrder: "changed" }));
+    expect(changed).toContain("listed latest change first");
+    expect(changed).toContain(`- ${UUID_A} 2026-10-26T02:00Z`);
+  });
+
+  it("falls back to the judgment date when a row carries no other time", () => {
+    const bare = flat({ listOrder: "changed", results: [{ recipeId: UUID_A, recipe: "Short claim.", createdAt: "2026-01-15T00:00:00.000Z" }], totalResults: 1, totalPages: 1 });
+    const text = renderCheckResponseMarkdown(bare);
+    expect(text).toContain(`- ${UUID_A} 2026-01-15T00:00Z Short claim.`);
+    expect(text).toContain("Page 1 of 1, 50 per page. This is the last page.");
+    const triage = renderCheckResponseMarkdown({ ...bare, data: { ...bare.data, listOrder: "triage" } });
+    expect(triage).toContain(`- ${UUID_A} 2026-01-15T00:00Z`);
+  });
+
+  it("an empty page past the end says so; no matches is the zero line", () => {
+    const past = renderCheckResponseMarkdown(flat({ results: [], page: 4 }));
+    expect(past).toContain("Page 4 is past the end: 120 match(es) on 3 page(s) of 50.");
+    const none = renderCheckResponseMarkdown(flat({ results: [], totalResults: 0, totalPages: 0, searchedCorpusSize: 7, sessionId: undefined, intentNotice: undefined }));
+    expect(none).toContain("No matches among the 7 recipes in scope");
+    expect(none).not.toContain("Session:");
+  });
+
+  it("tolerates missing page fields and ids", () => {
+    const text = renderCheckResponseMarkdown(flat({ results: [{ recipe: "No id." }], totalResults: undefined, page: undefined, totalPages: undefined, perPage: undefined }));
+    expect(text).toContain("1 recipe(s) match");
+    expect(text).toContain("- ? ");
+    expect(text).toContain("Page 1 of 1, 1 per page. This is the last page.");
+  });
+
+  it("flatListPageLine: middle, last, past the end, and nothing for no matches", () => {
+    expect(flatListPageLine({ page: 2, totalPages: 3, totalResults: 120, perPage: 50 })).toBe("Page 2 of 3, 50 per page. Next: page=3.");
+    expect(flatListPageLine({ page: 3, totalPages: 3, totalResults: 120, perPage: 50 })).toBe("Page 3 of 3, 50 per page. This is the last page.");
+    expect(flatListPageLine({ page: 9, totalPages: 3, totalResults: 120, perPage: 50 })).toBe("Page 9 is past the end: 120 match(es) on 3 page(s) of 50.");
+    expect(flatListPageLine({ page: 1, totalPages: 0, totalResults: 0, perPage: 50 })).toBe("");
+  });
+
+  it("a checked response is never the flat list, even with listOrder set", () => {
+    const text = renderCheckResponseMarkdown({ ok: true, data: { checked: { recipeId: UUID_A }, listOrder: "judgment", results: [], totalResults: 0 } });
+    expect(text).toContain(`Recipe checked as #${UUID_A}`);
+    expect(text).not.toContain("recipe(s) match");
   });
 });
