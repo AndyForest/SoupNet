@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { CHECK_LOG_ACTIONS, RECIPE_TEXT_ACTIONS } from "./audit-actions";
+import { BOOK_TEXT_ACTIONS, CHECK_LOG_ACTIONS, RECIPE_TEXT_ACTIONS } from "./audit-actions";
 import type { AuditAction } from "./audit-actions";
 
 export interface AuditEventInput {
@@ -58,7 +58,9 @@ export async function writeAudit(
  *
  * Account events are kept, except that a recipe-text event
  * (RECIPE_TEXT_ACTIONS) the person wrote, or one about a recipe of theirs,
- * loses `claimText` (F116). Its action, ids and counts stay.
+ * loses `claimText`, and a book-text event (BOOK_TEXT_ACTIONS) the person
+ * wrote loses the names and descriptions it recorded (F116). Their action,
+ * ids, book slug and counts stay.
  */
 export async function anonymiseAuditLogOf(db: PostgresJsDatabase, userId: string): Promise<void> {
   const checkLog = sql.join(CHECK_LOG_ACTIONS.map((a) => sql`${a}`), sql`, `);
@@ -84,5 +86,13 @@ export async function anonymiseAuditLogOf(db: PostgresJsDatabase, userId: string
     WHERE action IN (${recipeText})
       AND metadata ? 'claimText'
       AND (actor_user_id = ${userId}::uuid OR metadata->>'traceUserId' = ${userId})
+  `);
+  const bookText = sql.join(BOOK_TEXT_ACTIONS.map((a) => sql`${a}`), sql`, `);
+  await db.execute(sql`
+    UPDATE claimnet.audit_log
+    SET metadata = metadata - 'previousDescription' - 'newDescription' - 'previousName' - 'newName' - 'groupName'
+    WHERE action IN (${bookText})
+      AND actor_user_id = ${userId}::uuid
+      AND metadata ?| array['previousDescription', 'newDescription', 'previousName', 'newName', 'groupName']
   `);
 }

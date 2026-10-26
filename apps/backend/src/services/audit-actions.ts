@@ -8,7 +8,8 @@
  *   task groupings survive without naming anyone.
  * - ACCOUNT EVENTS: account and recipe-book changes, sign-up and admin events,
  *   and system events. Kept by account deletion, except that the ones in
- *   RECIPE_TEXT_ACTIONS lose the recipe text they carry (F116). A 12-month
+ *   RECIPE_TEXT_ACTIONS and BOOK_TEXT_ACTIONS lose the text the person wrote
+ *   (F116). A 12-month
  *   sweep of these is a deferred backlog item; it would delete only this list,
  *   never an unlisted action.
  *
@@ -51,3 +52,10 @@ export type AuditAction = (typeof CHECK_LOG_ACTIONS)[number] | (typeof ACCOUNT_E
  *  account deletion the text goes from the rows the person wrote and from the
  *  rows about their recipes (F116); the event itself stays. */
 export const RECIPE_TEXT_ACTIONS = ["trace.moved", "trace.deleted"] as const satisfies readonly AuditAction[];
+
+/** Account events whose metadata keeps a recipe book's name or description,
+ *  old and new. On account deletion the text goes from the rows the person
+ *  wrote; the event and the book's ids stay, and so do the book's live name
+ *  and description, which belong to the book (F116, extended by the planning
+ *  session 2026-10-26). */
+export const BOOK_TEXT_ACTIONS = ["group.description_updated", "group.name_updated"] as const satisfies readonly AuditAction[];

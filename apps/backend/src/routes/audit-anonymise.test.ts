@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import postgres from "postgres";
 import { seedVerifiedUser } from "../test-users";
-import { CHECK_LOG_ACTIONS, ACCOUNT_EVENT_ACTIONS, RECIPE_TEXT_ACTIONS } from "../services/audit-actions";
+import { CHECK_LOG_ACTIONS, ACCOUNT_EVENT_ACTIONS, RECIPE_TEXT_ACTIONS, BOOK_TEXT_ACTIONS } from "../services/audit-actions";
 
 /**
  * Account deletion anonymises the person's check-log rows rather than
@@ -17,6 +17,8 @@ const PASSWORD = "audit-anonymise-pw";
 type Row = { id: string; actor_user_id: string | null; api_key_id: string | null; action: string; target_type: string | null; target_id: string | null; metadata: Record<string, unknown> | null; occurred_at: Date };
 
 const isRecipeText = (action: string) => (RECIPE_TEXT_ACTIONS as readonly string[]).includes(action);
+const isText = (action: string) => isRecipeText(action) || (BOOK_TEXT_ACTIONS as readonly string[]).includes(action);
+const TEXT_KEYS = ["claimText", "previousDescription", "newDescription", "previousName", "newName", "groupName"];
 
 describe.skipIf(!BASE)("account deletion anonymises the check log (R-A1 to R-A6)", () => {
   let sql: ReturnType<typeof postgres>;
@@ -31,7 +33,7 @@ describe.skipIf(!BASE)("account deletion anonymises the check log (R-A1 to R-A6)
   let patEventIds: string[] = [];
   let boIds: string[] = [];
   let onBehalfRowId = "";
-  let patTextIds: string[] = []; // Pat deleting a recipe of Pat's
+  let patTextIds: string[] = []; // Pat deleting a recipe of Pat's, and changing a book's description and name
   let boMovedPatsId = ""; // Bo moving a recipe of Pat's
   let boDeletedOwnId = ""; // Bo deleting a recipe of Bo's: keeps its text
 
@@ -87,8 +89,11 @@ describe.skipIf(!BASE)("account deletion anonymises the check log (R-A1 to R-A6)
     await tool(patKey, "check_recipe", { recipe: `As a person leaving a service, I prefer my checks counted but not named ${run}.`, supporting_evidence: evidence("counted"), recipe_book: shared.slug, intent: `As a tester, I want an intent to group checks ${run}.` });
     await tool(patKey, "search_recipes", { query: `my private search words ${run}` });
     await tool(patKey, "get_briefing", {});
-    // An account event of Pat's: a book description change.
+    // Book-text account events: Pat changes the description and the name of
+    // Pat's book; Bo changes the shared book's description, which keeps its text.
     expect((await call(pat.jwt, "PUT", `/recipe-books/${pat.personal}`, { description: `Pat's book ${run}` })).status).toBe(200);
+    expect((await call(pat.jwt, "PUT", `/recipe-books/${pat.personal}`, { name: `Pat's renamed book ${run}` })).status).toBe(200);
+    expect((await call(bo.jwt, "PUT", `/recipe-books/${shared.id}`, { description: `Bo's shared book ${run}` })).status).toBe(200);
     // Bo's own check, and a deposit about Pat on Pat's behalf.
     await tool(boKey, "check_recipe", { recipe: `As a colleague staying on, I prefer my rows untouched by others leaving ${run}.`, supporting_evidence: evidence("untouched"), recipe_book: shared.slug });
     await tool(boKey, "check_recipe", { recipe: `As a person leaving a service, I prefer a deposit about me to stay recorded without my name ${run}.`, supporting_evidence: evidence("about Pat"), recipe_book: shared.slug, on_behalf_of: pat.email });
@@ -111,17 +116,16 @@ describe.skipIf(!BASE)("account deletion anonymises the check log (R-A1 to R-A6)
 
     const patRows = (await sql`SELECT id, action FROM claimnet.audit_log WHERE actor_user_id = ${pat.userId}::uuid`) as unknown as Array<{ id: string; action: string }>;
     patCheckLogIds = patRows.filter((r) => (CHECK_LOG_ACTIONS as readonly string[]).includes(r.action)).map((r) => r.id);
-    patEventIds = patRows.filter((r) => !(CHECK_LOG_ACTIONS as readonly string[]).includes(r.action) && !isRecipeText(r.action)).map((r) => r.id);
-    patTextIds = patRows.filter((r) => isRecipeText(r.action)).map((r) => r.id);
+    patEventIds = patRows.filter((r) => !(CHECK_LOG_ACTIONS as readonly string[]).includes(r.action) && !isText(r.action)).map((r) => r.id);
+    patTextIds = patRows.filter((r) => isText(r.action)).map((r) => r.id);
     const boRows = (await sql`SELECT id, action, target_id FROM claimnet.audit_log WHERE actor_user_id = ${bo.userId}::uuid`) as unknown as Array<{ id: string; action: string; target_id: string }>;
     boIds = boRows.map((r) => r.id);
     boMovedPatsId = boRows.find((r) => r.action === "trace.moved" && r.target_id === boMoves)?.id ?? "";
     boDeletedOwnId = boRows.find((r) => r.action === "trace.deleted" && r.target_id === boOwn)?.id ?? "";
-    expect(patTextIds.length).toBe(1);
+    expect(new Set(patRows.filter((r) => isText(r.action)).map((r) => r.action))).toEqual(new Set(["trace.deleted", "group.description_updated", "group.name_updated"]));
     expect([boMovedPatsId, boDeletedOwnId]).not.toContain("");
     onBehalfRowId = ((await sql`SELECT id FROM claimnet.audit_log WHERE actor_user_id = ${bo.userId}::uuid AND metadata->>'subjectUserId' = ${pat.userId}`) as unknown as Array<{ id: string }>)[0]?.id ?? "";
     expect(new Set(patRows.filter((r) => patCheckLogIds.includes(r.id)).map((r) => r.action))).toEqual(new Set(["recipe.checked", "check.searched", "briefing.issued"]));
-    expect(patEventIds.length).toBeGreaterThan(0);
     expect(onBehalfRowId).not.toBe("");
     for (const r of await rows([...patCheckLogIds, ...patEventIds, ...patTextIds, ...boIds])) before.set(r.id, r);
     const countsBefore = await counts(patCheckLogIds);
@@ -160,11 +164,12 @@ describe.skipIf(!BASE)("account deletion anonymises the check log (R-A1 to R-A6)
     expect(r!.actor_user_id).toBe(bo.userId);
   });
 
-  it("R-A3: the person's account-event rows are not changed by the deletion", async () => {
+  it("R-A3: the person's account-event rows are not changed by the deletion, apart from R-A6's text", async () => {
     const after = await rows(patEventIds);
     expect(after).toEqual(patEventIds.map((id) => before.get(id)).sort((a, b) => a!.id.localeCompare(b!.id)));
-    const selfDelete = (await sql`SELECT COUNT(*)::int AS n FROM claimnet.audit_log WHERE actor_user_id = ${pat.userId}::uuid AND action = 'user.self_delete'`) as unknown as Array<{ n: number }>;
-    expect(selfDelete[0]?.n).toBe(1);
+    // Written as the deletion starts, so it has no snapshot: it keeps its actor and metadata.
+    const selfDelete = (await sql`SELECT metadata FROM claimnet.audit_log WHERE actor_user_id = ${pat.userId}::uuid AND action = 'user.self_delete'`) as unknown as Array<{ metadata: Record<string, unknown> }>;
+    expect(selfDelete.map((r) => r.metadata)).toEqual([{ source: "DELETE /auth/me" }]);
   });
 
   it("R-A4: nobody else's rows change, apart from the fields R-A2 and R-A6 name", async () => {
@@ -173,20 +178,22 @@ describe.skipIf(!BASE)("account deletion anonymises the check log (R-A1 to R-A6)
     const after = await rows(untouched);
     expect(after).toEqual(untouched.map((id) => before.get(id)).sort((a, b) => a!.id.localeCompare(b!.id)));
     expect(after.find((r) => r.id === boDeletedOwnId)?.metadata?.["claimText"]).toMatch(/my own deleted recipe's record kept/);
+    expect(after.find((r) => r.action === "group.description_updated")?.metadata?.["newDescription"]).toBe(`Bo's shared book ${run}`);
   });
 
-  it("R-A6: a recipe's text goes from the account events the person wrote or that name their recipe, and nothing else does (F116)", async () => {
+  it("R-A6: recipe and book text goes from the account events the person wrote or that name their recipe, and nothing else does (F116)", async () => {
     const ids = [...patTextIds, boMovedPatsId];
     const after = await rows(ids);
     expect(after.length).toBe(ids.length);
     for (const r of after) {
       const was = before.get(r.id)!;
-      expect(was.metadata).toHaveProperty("claimText");
-      const { claimText: _t, ...kept } = was.metadata ?? {};
-      expect(r.metadata).toEqual(kept);
+      expect(TEXT_KEYS.some((k) => k in (was.metadata ?? {})), r.action).toBe(true);
+      const kept = Object.fromEntries(Object.entries(was.metadata ?? {}).filter(([k]) => !TEXT_KEYS.includes(k)));
+      expect(r.metadata, r.action).toEqual(kept);
       expect([r.actor_user_id, r.action, r.target_id, r.occurred_at.toISOString()]).toEqual([was.actor_user_id, was.action, was.target_id, was.occurred_at.toISOString()]);
     }
     expect(after.find((r) => r.id === boMovedPatsId)?.actor_user_id).toBe(bo.userId);
+    expect(after.find((r) => r.action === "group.name_updated")?.metadata).toHaveProperty("groupSlug");
   });
 
   it("R-A5: counts survive, in total and by month and intent", async () => {
