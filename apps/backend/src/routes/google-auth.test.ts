@@ -4,6 +4,9 @@ import jwt from "jsonwebtoken";
 import { seedVerifiedUser } from "../test-users";
 import { startFakeGoogleIssuer } from "../test-google-issuer";
 import type { FakeGoogleIssuer, FakeIdClaims } from "../test-google-issuer";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { GOOGLE_SIGN_IN_ERRORS, googleSignInErrorMessage } from "@soupnet/domain";
 import { googleAuthRoutes } from "./google-auth";
 
 /**
@@ -168,6 +171,15 @@ async function userIdByEmail(email: string): Promise<string | undefined> {
   const rows = (await getDb().execute(sql`SELECT id FROM claimnet.users WHERE email = ${email}`)) as unknown as Array<{ id: string }>;
   return rows[0]?.id;
 }
+
+describe("the SPA's outcome copy (SSO-U3)", () => {
+  it("carries every closed-list sentence word for word", () => {
+    const spa = readFileSync(fileURLToPath(new URL("../../../frontend/src/lib/google-sign-in.ts", import.meta.url)), "utf8");
+    for (const code of GOOGLE_SIGN_IN_ERRORS) {
+      expect(spa, code).toContain(`${code}: ${JSON.stringify(googleSignInErrorMessage(code))}`);
+    }
+  });
+});
 
 describe("Google sign-in, unconfigured (SSO-G7, in process)", () => {
   it("answers 404 on every route when no client id is set", async () => {

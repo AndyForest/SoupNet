@@ -85,11 +85,12 @@ function tokenFingerprint(token: string | null): string {
  * Why ONLY 401 and ONLY when a token was sent: 403 is "you're authed but
  * not allowed here" (e.g. trying to read a recipe book you're not a member
  * of) — that's a legitimate browse, not a stale session. 401 with no token
- * sent is "we're just not logged in" — nothing to clear. The one 403 that
- * does end the session is an account switched off mid-session
+ * sent is "we're just not logged in" — nothing to clear. The 403s that do
+ * end the session are an account switched off mid-session
  * (`account_disabled` by the person's organization, `account_suspended` by
- * the site operator): every request would fail the same way, and signing in
- * again shows the person which it is.
+ * the site operator) and a session the organization's require_sso no longer
+ * accepts (`sso_required`, stream SSO): every request would fail the same
+ * way, and signing in again shows the person which it is.
  */
 export const AUTH_INVALIDATED_EVENT = "soupnet:auth-invalidated";
 
@@ -121,7 +122,7 @@ export async function authFetch(
     }
   } else if (res.status === 403 && token && getToken() === token) {
     const body = (await res.clone().json().catch(() => null)) as { error?: unknown } | null;
-    if (body?.error === "account_disabled" || body?.error === "account_suspended") {
+    if (body?.error === "account_disabled" || body?.error === "account_suspended" || body?.error === "sso_required") {
       clearToken();
       if (typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent(AUTH_INVALIDATED_EVENT));
