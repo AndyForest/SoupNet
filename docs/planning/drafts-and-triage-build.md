@@ -2821,6 +2821,78 @@ After the verification record (`bf7ea02`, accept with follow-ups). No applicatio
 
 **After C2 (#146) and slice 10 (#144) merged:** `main` was merged in again. The same two files conflicted, and again both sides were kept. C2's raise to 22,800 replaced this branch's 21,050. With main at 22,795 thin and 23,195 headless, the lines measured 22,845 and 23,245, so both caps move by 50: thin 22,800 → 22,850 and headless 23,200 → 23,250, each dated at its assertion and in the spec-decision log.
 
+#### Slice 8b items 1 and 2 rubric: the flat list and changed-since (stream B)
+
+Written 2026-10-26 by stream B (agent `a-drafts-6a-2026-10-24`, Soup.net intent `int_Xls5LzHUWH5boPEY7MIPn2Or`), before implementation, from the revision doc's slice 8 items 1 and 2 and ruling 51, against `main` at `5b81097` (PR #147, with 6a, 8a, 9, 10 and D's 8b item 3 merged). Branch `drafts/8b-flat-list`. The design is checked as recipe `4a517f5b`. Consumers are agents (`search_recipes` on both MCP servers, and `/check?filter=` as JSON and HTML), and above all the unattended sweep: an orchestrator or steward that polls on a tick and needs every id that arrived or moved since it last looked. Security-relevant: yes. A new listing over recipes has to compose the draft visibility fragments and register with the seam check, like every other read.
+
+Settled before this rubric and not reopened here:
+- The flat list is for queries with no semantic text. It has `page`, lists newest first, and uses triage order for `is:draft` (revision doc, slice 8 item 1).
+- "Changed since" is built with creation time as the fallback. Both qualifiers are built (ruling 51).
+- The flat list reaches agents through the agent search surface, not the web queue endpoint (revision doc, "Considered and set aside").
+- There is no new noun, and nothing reaches ranking.
+
+**Decisions this rubric makes.** Each is reversible, and each is recorded in the build notes with its reasoning.
+
+1. **When the flat list applies.** On the read-only search surfaces (`search_recipes` on both MCP servers, and `/check` with `filter` and no recipe), whenever the parsed query has no semantic text. Under the prose-parenthetical rule (`8481d9bc`), a parenthetical counts as semantic text. `check_recipe` always carries text, so it is unchanged.
+2. **Row shape.** Rows ride in the existing `results` field, so a script that reads `results[].recipeId` keeps working. `searchMode` is `"list"`. Each row carries:
+   - `recipeId` and the book;
+   - the judgment date (`decidedAt`, or the deposit time when unset), the deposit time, and the changed time;
+   - the depositing agent's ratings;
+   - the state (the viewer's own draft label, as on every result, or none for a published recipe);
+   - the claim.
+
+   Structured output carries the whole claim. Markdown shows its first 160 characters, with an ellipsis when cut. No evidence and no clusters: a row is an index entry, and `get_recipes` fetches what a sweep wants to read.
+3. **Order.** Newest judgment date first, which is today's corpus-mode order. With `is:draft` (or `is:expired`), the queue's triage order (`triageOrderSql`), without the queue's intent grouping. With `changed-after:`, latest change first. Every order ends in the id, so paging is total: no row repeats or vanishes between pages unless it changes.
+4. **Paging.** A `page` parameter, an integer from 1, is added to `search_recipes` on both servers. `/check` already has `page`. The page size is fixed at 50, so the tool roster gets no size parameter: the operator's "Even new parameters must be very well justified, I don't want single purpose profusion" (recipe `ded7f5ed`) allows the one parameter the revision doc names and no more. Every flat response says "page p of n (N matches)" and names the next page when there is one. A page past the end returns no rows and that line, not an error, so a sweep's loop ends naturally. `SEARCH_CORPUS_LIMIT` (200) no longer caps a qualifier-only search, because the pager reaches every match. With semantic text, `page` behaves as `/check`'s `page` does today.
+5. **No walk-down, and nothing marked as shown.** A flat row is an index entry, not the recipe, so it does not enter the session's or the intent's shown set. A known recipe is not stubbed or skipped either, because a sweep needs every id. The flat list therefore writes no `session_shown` or `intent_shown` rows. It still writes the `check.searched` audit row, which is its `searchId`.
+6. **Two qualifiers.** Each takes a date or a full ISO datetime, and each is a selection. The names were checked as recipe `dc8e7d09`: each names the clock it reads, follows `after:`'s inclusive reading, and needs no operator syntax.
+   - `created-after:` means deposited at or after the time.
+   - `changed-after:` means changed at or after the time. A recipe's changed time is the latest of its deposit, `traces.updated_at` (set by a draft's resolution and by a move to another book), its newest feedback row, and its newest reaction.
+
+   Feedback rows and reactions count whoever wrote them. A reader of the recipe already sees every row and its date on the recipe's page (`GET /traces/:id` lists all `check_feedback` rows on it), so the changed time discloses nothing new. Each qualifier takes one value, cannot be negated, and errors on a second value, by the `after:` rules. Both are built in `services/search-selection.ts`, which is outside the ranking files, and both are added to the ranking-isolation guard. With semantic text they filter the ranked path like any other selection.
+7. **Copy.** `searchQuery` gains the two qualifiers. It loses "Qualifier-only: newest first.", which the `page` parameter's description replaces with the flat list's own sentence. At 413 of 420 characters it must also lose "(your intent's recipes)" after `intent:int_…`. The question 56 rule applies: trim, and keep the untrimmed text in `docs/briefing-specs/expanded/`. The shared renderer's header invariant "No 'Page X of Y' pagination text — agents can't page" is corrected for the flat list in the same commit.
+
+Cast: Pat (the key's owner), Sam (a member of Pat's shared book).
+
+**Baselines** at `5b81097`, measured with the slice 6a method (`createMcpServer` and the stdio server over the in-memory transport):
+
+| Measure | Value | Cap |
+|---|---|---|
+| Remote `tools/list` | 17,698 bytes | 18,200 |
+| Stdio `tools/list` | 14,201 bytes | 14,700 |
+| Shared descriptions | 6,442 characters | 6,600 |
+| `searchQuery` | 413 characters | 420 |
+
+**The flat list**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| S8b-L1 | A qualifier-only search (`author:me`) returns the flat list: `searchMode: "list"`, no clusters, no "represents N similar" lines, no related-evidence section, and one row per match with decision 2's fields, in decision 3's order. | Layer 3 on MCP structured and markdown, and on `/check` JSON and HTML. |
+| S8b-L2 | Paging is total. Over 120 visible recipes, pages 1 to 3 hold 50, 50 and 20 distinct ids whose union is the full set, in order. Page 4 is empty with the end line. `totalResults` is 120 on every page. | Layer 3. |
+| S8b-L3 | `is:draft` lists in the queue's triage order: the same ids in the same sequence as `GET /traces/drafts` for drafts with no intent. | Layer 3 comparing the two. |
+| S8b-L4 | Visibility is unchanged. Pat's flat list never holds Sam's unresolved draft, a rejected draft, or a recipe in a book outside the key's read scope. Rows and totals use the same draft condition (RP-03). The new statement is registered in `scripts/check-authz-seam.mjs` with its reason. | Layer 3; the gate's seam check. |
+| S8b-L5 | No walk-down. Two identical flat requests under one session and one intent return identical rows, and a following semantic search under that session shows none of them as stubs. | Layer 3. |
+| S8b-L6 | A query with semantic text is unchanged: the S6a and slice 3 search tests pass as they stand, and the ranking-regression fixtures are green. | The gate. |
+
+**Changed-since**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| S8b-C1 | `created-after:<t>` selects exactly the recipes deposited at or after t, for a date and for a full ISO datetime, on the flat path and the ranked path. | Layer 3. |
+| S8b-C2 | `changed-after:<t>` selects a recipe deposited before t when, after t, it was verified, rejected (when still visible to the viewer), moved, given a feedback row, or given a reaction. Each of the five is its own case. A recipe untouched since t is not selected. The order is latest change first. | Layer 3. |
+| S8b-C3 | Grammar: each qualifier takes one date. A malformed value, a second value, a group and a negation are loud errors naming the form. | Layer 1 in `search-query.test.ts`. |
+| S8b-C4 | Neither qualifier reaches ranking: both terms are in the ranking-isolation guard, and a mutation check shows the guard fails when one is added to a ranking file. | The guard test; mutation recorded in the build notes. |
+
+**Parameter, bytes, docs**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| S8b-P1 | `page` on `search_recipes` validates as an integer from 1. A zero, a negative, a fraction or a string is the validation error naming the field (8a's form), not a silent page 1. On `/check`, a page that does not parse falls back to page 1, as today. | Layer 3 on the remote server; Layer 1 on stdio. |
+| S8b-B1 | Sizes: both `tools/list` payloads within their caps, shared descriptions within 6,600, and `searchQuery` within 420, each measured before and after in `spec-decision-log.md`. | Size tests; the figures. |
+| S8b-D1 | Docs: the `recipe-search-design.md` rows for both qualifiers and the flat list, `CLAUDE.md`'s qualifier list, `drafts-and-triage-read-paths.md` if it names the session walk, and a sweep scenario in the feature file. | Review. |
+
+Open, to settle by check during the build, not for the operator: whether 50 rows of markdown stay inside a typical tool-result budget (measure a full page's bytes first), and whether a `changed-after:` row should name what changed (resolved, moved, feedback, reaction), which a sweep would use but which costs a join per row.
+
 ### Slice 6b rubric: option sets (stream G, after 6c and 6a merge)
 
 ### Slice 10 rubric: drafts as a bus (stream A)
