@@ -7,7 +7,14 @@ import type { FakeGoogleIssuer, FakeIdClaims } from "../test-google-issuer";
 import { readFileSync, readdirSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { GOOGLE_SIGN_IN_ERRORS, googleSignInErrorMessage } from "@soupnet/domain";
+import {
+  GOOGLE_SIGN_IN_ERRORS,
+  googleSignInErrorMessage,
+  SESSION_EXPIRED_MESSAGE,
+  ACCOUNT_DISABLED_MESSAGE,
+  ACCOUNT_SUSPENDED_MESSAGE,
+  SSO_REQUIRED_MESSAGE,
+} from "@soupnet/domain";
 import { googleAuthRoutes } from "./google-auth";
 
 /**
@@ -178,6 +185,20 @@ describe("the SPA's outcome copy (SSO-U3)", () => {
     const spa = readFileSync(fileURLToPath(new URL("../../../frontend/src/lib/google-sign-in.ts", import.meta.url)), "utf8");
     for (const code of GOOGLE_SIGN_IN_ERRORS) {
       expect(spa, code).toContain(`${code}: ${JSON.stringify(googleSignInErrorMessage(code))}`);
+    }
+  });
+});
+
+describe("the SPA's signed-out notices (SSO-U4)", () => {
+  it("carry every refusal sentence word for word", () => {
+    const spa = readFileSync(fileURLToPath(new URL("../../../frontend/src/lib/login-notice.ts", import.meta.url)), "utf8");
+    for (const [code, message] of Object.entries({
+      session_expired: SESSION_EXPIRED_MESSAGE,
+      account_disabled: ACCOUNT_DISABLED_MESSAGE,
+      account_suspended: ACCOUNT_SUSPENDED_MESSAGE,
+      sso_required: SSO_REQUIRED_MESSAGE,
+    })) {
+      expect(spa, code).toContain(`${code}: ${JSON.stringify(message)}`);
     }
   });
 });
