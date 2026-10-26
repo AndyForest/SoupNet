@@ -2275,4 +2275,58 @@ Rubric to be written by stream E from the revision doc's slice 9 before implemen
 
 ### Slice 8b rubric: unattended readers (stream F, after 6c, 6a and 8a merge)
 
+#### Slice 8b item 3 rubric: membership an agent can act on (stream D)
+
+Written 2026-10-25 by stream D (agent `a-drafts-8b-members-2026-10-25`, Soup.net intent `int_hyLjJWkSmzo3TmIq8VBPyCrC`), before implementation, from the revision doc's slice 8 item 3 and its field item 6, and from the code at `68b14c2` (`main` with 6c, 8a and 6a merged). Branch `drafts/8b-book-members`. Items 1 and 2 are stream B's, written under this heading separately; items 8 and 9 are superseded by slice 10's dispatch line and are not built. Consumer: agents, on every surface that renders the corpus-context block. No web page change. Security-relevant: yes, in one place: an invitation count is a fact about a book that a plain member's page does not show.
+
+**The design**, checked as recipe `173384b3`:
+- Every book is "shared-capable": any book takes invitations from its owners and admins, and nothing in the schema marks a book personal-only. So every listed book gets a Members line, a solo book included ("Members (1): you").
+- "Books the caller owns" is read as owner or admin. Those are the roles that may invite, and the ones that `GET /recipe-books/:id/invitations` shows the pending list to. The count shows an agent nothing its person cannot already see on the web.
+- Zero is printed. The item exists because an omitted line is ambiguous.
+- The caller is listed first as "you". The production briefing shows one person's two accounts in one book with nothing saying which one is the caller.
+
+**Baselines** at `68b14c2`:
+
+| Measure | Value | Cap |
+|---|---|---|
+| Thin briefing, fixed fixture (`thinInput()`) | 18,183 characters | 21,000 |
+| Thin headless briefing, same fixture | 18,536 characters | 21,500 |
+| Remote `tools/list` | 17,630 bytes | 18,200 |
+
+Stream C's PR #138 (open) brings the thin fixture to within 7 characters of its cap, so the second of the two to merge measures again and moves the cap on its own branch, with a date and a reason (plan, "the cap raise is coordination, not permission").
+
+**Members line**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| S8b3-M1 | Every book in the corpus-context block has a Members line, solo books included: `    Members (n): you, <others>`. n counts every member, the caller included. | Layer 1 renderer test (solo, two members, five members); Layer 3 on `list_my_recipe_books` for a solo book. |
+| S8b3-M2 | The caller is identified by user id, not by email or display name, is listed first as "you", and appears once. The others keep today's label (`Name <email>`, or the email alone) and today's order (by email). | Layer 1; Layer 3 with two accounts that share a display name in one book, each seeing itself as "you". |
+| S8b3-M3 | The roster is the book's live membership at call time. A member removed since the last call is gone, and one who accepted an invitation since then appears. | Layer 3: accept an invitation between two calls. |
+
+**Pending invites line**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| S8b3-P1 | A book on which the caller's live role is owner or admin carries `    Pending invites (n)` under its Members line, `(0)` included. A book on which the caller is a plain member carries no such line. | Layer 1; Layer 3 with an owner, an admin and a member of one book, the same invitations, three calls. |
+| S8b3-P2 | n counts the book's live invitations only: not accepted, not declined, and `expires_at > NOW()`. A revoked invitation, an expired one and a re-sent one each count as `GET /recipe-books/:id/invitations` lists them (a re-send expires the earlier one, so the count is 1). | Layer 3: accept one, decline one, revoke one, re-send one, and let one lapse (the expiry set in the past), then compare the count with the web route's list length. |
+| S8b3-P3 | Invitations to another book never count, including another book the caller owns. An invitation with no book (the admin's invite-by-email) counts nowhere. | Layer 3 with two owned books. |
+| S8b3-P4 | The role is read live. An admin demoted to member loses the line on the next call, and a member promoted to admin gains it. | Layer 3. |
+
+**Surfaces and access**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| S8b3-S1 | One loader and one renderer serve every surface: `get_briefing` (remote MCP), the stdio `get_briefing` (through `GET /briefing`), `GET /briefing`, `list_my_recipe_books` (remote MCP) and `POST /keys/briefing` (the web copy-briefing). For the same person and the same book scope, the recipe-books block is identical across them. | Layer 3 comparing the block between `list_my_recipe_books`, `get_briefing` and `GET /briefing`; code review for the copy-briefing path, which calls the same composer. |
+| S8b3-S2 | The books listed are unchanged: the key's scope as today. A key scoped to one book shows no member and no count for any other book, even one the caller owns. | Layer 3 with a scoped key. |
+| S8b3-S3 | The role and invitation reads live in `apps/backend/src/authz/` (a `group_members` reference anywhere else fails the seam check). `npm run check:authz-seam` passes, and no `claimnet.traces` read is added or re-fingerprinted. | The gate; code review. |
+| S8b3-S4 | Nothing is written: no audit row, no feedback row, and no change to any response other than the recipe-books block. | Layer 3 counting audit rows before and after a call. |
+
+**Bytes, specs, copy**
+
+| # | Criterion | Evidence |
+|---|---|---|
+| S8b3-Z1 | `tools/list` is unchanged on both servers (no schema or description edit). The thin and headless fixtures are updated to the real shape (the caller in each roster, a pending count on owned books), their growth is recorded here and in `spec-decision-log.md`, and a cap moves only if the measured figure needs it, with a dated reason. | Size tests; the figures. |
+| S8b3-F1 | `briefing-surfaces.feature` gains a scenario for the solo book's line, the owner's and admin's count, and the member's missing count. | The feature file. |
+| S8b3-F2 | The comments that describe the old rule (`BriefingGroup.members` "omitted for solo books", the renderer's "omit when … the user is the only member", the loader's "solo books skip the Members line") are corrected in the same commit. | Code review. |
+
 ### Slice 6b rubric: option sets (stream G, after 6c and 6a merge)
