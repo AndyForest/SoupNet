@@ -38,6 +38,14 @@ import { membershipOf } from "./membership-sql";
 type SqlExecutor = Pick<PostgresJsDatabase, "execute">;
 
 // ── Fragments for other modules ─────────────────────────────────────────────
+//
+// A fragment that takes a column of the caller's statement gives its own
+// tables prefixed aliases (home_, managed_, count_), never the short ones
+// callers use (u, o, om). Otherwise a caller passing sql`u.id` from its own
+// `claimnet.users u` would have the subquery's `u` shadow it, so the
+// condition would compare a row with itself and match every user (found by
+// stream Console). account-state.ts is the opposite convention on purpose:
+// its fragments are written against the caller's `u`.
 
 /**
  * An organization's members as a derived table: (user_id, role, joined_via,
@@ -59,7 +67,7 @@ export function orgMembersOf(organizationId: string): SQL {
  * cap (org seats are the operator's allowance outside it, recipe 15b767de).
  */
 export function accountIsManaged(userIdColumn: SQL): SQL {
-  return sql`EXISTS (SELECT 1 FROM claimnet.organization_members om WHERE om.user_id = ${userIdColumn})`;
+  return sql`EXISTS (SELECT 1 FROM claimnet.organization_members managed_om WHERE managed_om.user_id = ${userIdColumn})`;
 }
 
 /**
@@ -87,9 +95,9 @@ export function orgMemberBookCounts(organizationId: string): SQL {
  * input) has; `activeOnly` counts those who take a seat.
  */
 export function orgMemberCount(organizationIdColumn: SQL, options: { activeOnly: boolean }): SQL {
-  const active = options.activeOnly ? sql`AND om.disabled_at IS NULL` : sql``;
-  return sql`(SELECT count(*)::int FROM claimnet.organization_members om
-    WHERE om.organization_id = ${organizationIdColumn} ${active})`;
+  const active = options.activeOnly ? sql`AND count_om.disabled_at IS NULL` : sql``;
+  return sql`(SELECT count(*)::int FROM claimnet.organization_members count_om
+    WHERE count_om.organization_id = ${organizationIdColumn} ${active})`;
 }
 
 /**
@@ -100,10 +108,10 @@ export function orgMemberCount(organizationIdColumn: SQL, options: { activeOnly:
  */
 export function homeOrganizationIdOf(userIdColumn: SQL): SQL {
   return sql`COALESCE(
-    (SELECT om.organization_id FROM claimnet.organization_members om WHERE om.user_id = ${userIdColumn}),
-    (SELECT u.personal_organization_id FROM claimnet.users u WHERE u.id = ${userIdColumn}),
-    (SELECT o.id FROM claimnet.organizations o WHERE o.owner_id = ${userIdColumn}
-      ORDER BY o.is_personal DESC, o.created_at ASC, o.id ASC LIMIT 1)
+    (SELECT home_om.organization_id FROM claimnet.organization_members home_om WHERE home_om.user_id = ${userIdColumn}),
+    (SELECT home_u.personal_organization_id FROM claimnet.users home_u WHERE home_u.id = ${userIdColumn}),
+    (SELECT home_o.id FROM claimnet.organizations home_o WHERE home_o.owner_id = ${userIdColumn}
+      ORDER BY home_o.is_personal DESC, home_o.created_at ASC, home_o.id ASC LIMIT 1)
   )`;
 }
 

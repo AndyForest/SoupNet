@@ -296,7 +296,7 @@ groupsRouter.post("/:id/members", async (c) => {
   // Add to group. Directly-added members default to excluded from daily-link
   // read/write — same anti-spam posture as invite-accept. The new member can
   // opt in on the Groups page.
-  const added = await addMember(db, groupId, target.id, parsed.data.role);
+  const added = await addMember(db, groupId, target.id, parsed.data.role, user.id);
   if (added === "sharing_blocked") {
     return c.json({ ok: false, error: "sharing_blocked", message: SHARING_BLOCKED_MESSAGE }, 403);
   }

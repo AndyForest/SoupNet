@@ -11,7 +11,8 @@ import { orgMembershipDisabled } from "./account-state";
 // round 1). These pin what each answers until its stream fills it: nothing
 // joins on a domain's authority, and no membership grant is refused by a
 // sharing policy. SSO's row pins the filled policy instead. A stream that
-// fills a body updates its row here in the same change.
+// fills a body updates its row here in the same change (Console owns
+// sharing-policy.ts whole, and its row).
 
 const dialect = new PgDialect();
 
@@ -28,7 +29,7 @@ describe("the hooks' answers before their streams fill them", () => {
 
   it("sharingPolicyAllows is true (stream Console)", async () => {
     const neverCalled = { execute: () => { throw new Error("the stub reads nothing"); } } as never;
-    expect(await sharingPolicyAllows(neverCalled, { bookId: "b", userId: "u" })).toBe(true);
+    expect(await sharingPolicyAllows(neverCalled, { bookId: "b", userId: "u", actorUserId: "a" })).toBe(true);
   });
 
   it("orgMembershipDisabled is the org admin's switch (stream Offboarding extends it)", () => {
@@ -37,7 +38,7 @@ describe("the hooks' answers before their streams fill them", () => {
 
   it("accountIsManaged is an EXISTS over the caller's column, binding nothing", () => {
     const q = dialect.sqlToQuery(accountIsManaged(sql`u.id`));
-    expect(q.sql).toBe("EXISTS (SELECT 1 FROM claimnet.organization_members om WHERE om.user_id = u.id)");
+    expect(q.sql).toBe("EXISTS (SELECT 1 FROM claimnet.organization_members managed_om WHERE managed_om.user_id = u.id)");
     expect(q.params).toEqual([]);
   });
 });

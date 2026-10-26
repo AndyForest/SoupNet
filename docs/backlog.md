@@ -305,7 +305,8 @@ Left open by Core, each for the stream named:
 - the SPA's private or org-wide choice when creating a book, and the members page (Console);
 - `domainVerifiedFor` in `authz/domain-authority.ts`, `FALSE` until Domains fills it;
 - a per-organization key-cap minimum, deferred by the settled simplification "no org-level cap policy in the first release";
-- seat tier (out of the round).
+- seat tier (out of the round);
+- bounding the operator join (core.md OC-F1, after Domains merges): an operator add requires the account's email domain to be verified for the organization, with the unbounded form kept only for the concierge first customer, behind the system-role check, and audit-logged.
 
 ### `[DESIGN]` Derived API keys — an orchestrator mints scoped-down keys for its sub-agents (direction decided 2026-09-19; optional, separate track)
 
