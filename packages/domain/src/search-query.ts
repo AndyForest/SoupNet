@@ -394,7 +394,7 @@ export function parseSearchQuery(input: string): ParseSearchQueryResult {
             }
             isDraft = !negated;
           } else {
-            return { ok: false, error: `is: takes draft or expired (is:draft lists your open drafts, is:expired the ones whose task went quiet) — got "${values[0]}"` };
+            return { ok: false, error: `is: takes draft or expired (is:draft lists your open drafts, is:expired the ones that expired unanswered) — got "${values[0]}"` };
           }
           if (isExpired && isDraft === false) {
             return { ok: false, error: "is:expired and -is:draft contradict each other — keep one" };

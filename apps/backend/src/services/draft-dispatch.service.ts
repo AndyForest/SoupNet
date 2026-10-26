@@ -2,11 +2,13 @@
  * Dispatch of nearby open questions (drafts-and-triage slice 10, "drafts as
  * a bus", ruled 2026-10-25, recipe 053c9b97).
  *
- * A check or search whose neighbourhood holds a live draft the caller may
- * read (one it deposited, or one about its user) names that draft in one
- * line after the exemplars, inviting the caller to resolve it when its own
- * context settles it. The line is how a question asked by one of the
- * person's sessions reaches another working nearby.
+ * A check or search whose neighbourhood holds a live draft about the
+ * caller's user names that draft in one line after the exemplars, inviting
+ * the caller to resolve it when its own context settles it. The line is how
+ * a question asked by one of the person's sessions reaches another working
+ * nearby. A draft the caller's user deposited about a colleague is not
+ * named: only its subject's agents can resolve it, and the ruling names
+ * them as the ones who see its line (recipe c21da2d1).
  *
  * The lookup is its own, not a reading of the displayed exemplars (recipe
  * bff6f47b): search hides the caller's own recipes by default, so a line
@@ -14,7 +16,8 @@
  * person's sessions. It compares the caller's live drafts in the call's book
  * scope (at most OPEN_QUESTION_CANDIDATES, newest first) with the call's
  * query vector, and names the nearest one that is no less similar than the
- * least similar result shown. It never takes an exemplar slot, never touches
+ * least similar result shown and within NEARBY_BAND of the best match
+ * (`pickOpenQuestion`). It never takes an exemplar slot, never touches
  * ranking (the five ranking files are not edited; S10-M3), and reads only
  * drafts the caller could already read, so its absence says nothing (S10-D4).
  */
@@ -22,7 +25,7 @@
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import type { OpenQuestion } from "@soupnet/domain";
-import { inBooks, traceVisibleTo, draftLive } from "../authz";
+import { inBooks, traceVisibleTo, draftLiveAwaitingReviewBy } from "../authz";
 import { fetchTraceVectors, parseVector, cosineSimilarity } from "./search-pipeline";
 
 /** Most drafts one call compares (S10-D6). */
@@ -36,6 +39,37 @@ export const OPEN_QUESTION_CANDIDATES = 200;
  * under 1.
  */
 const SIMILARITY_TOLERANCE = 0.005;
+
+/**
+ * How far below the best match a draft may score and still be nearby. The
+ * shown results are chosen for diversity, so the least similar of them can
+ * sit far from the call (the slice 10 verifier saw one at -1%); the band
+ * keeps "nearby" relative to the call, the way the ranking bounds relevance
+ * by a band below the top score rather than a global cutoff (ranking-config
+ * `band` mode, 0.15).
+ */
+export const NEARBY_BAND = 0.15;
+
+/**
+ * The nearest candidate that counts as nearby, or undefined. Pure: the
+ * candidates' similarities to the call, and the similarities of the results
+ * shown. Nearby means no less similar than the least similar result shown,
+ * and within NEARBY_BAND of the best one, each to SIMILARITY_TOLERANCE.
+ */
+export function pickOpenQuestion<T extends { similarity: number }>(
+  candidates: readonly T[],
+  shownSimilarities: ReadonlyArray<number | undefined>,
+): T | undefined {
+  const shown = shownSimilarities.filter((s): s is number => typeof s === "number" && Number.isFinite(s));
+  if (shown.length === 0) return undefined;
+  const floor = Math.max(Math.min(...shown), Math.max(...shown) - NEARBY_BAND) - SIMILARITY_TOLERANCE;
+  let best: T | undefined;
+  for (const c of candidates) {
+    if (!Number.isFinite(c.similarity) || c.similarity < floor) continue;
+    if (!best || c.similarity > best.similarity) best = c;
+  }
+  return best;
+}
 
 export interface OpenQuestionParams {
   viewerUserId: string;
@@ -55,18 +89,17 @@ export interface OpenQuestionParams {
 /** The nearby open question for this call, or undefined for no line. */
 export async function findOpenQuestion(db: PostgresJsDatabase, p: OpenQuestionParams): Promise<OpenQuestion | undefined> {
   if (p.headless || !p.queryVectorStr || p.groupIds.length === 0) return undefined;
-  const shown = p.shownSimilarities.filter((s): s is number => typeof s === "number" && Number.isFinite(s));
-  if (shown.length === 0) return undefined;
-  const floor = Math.min(...shown);
+  if (!p.shownSimilarities.some((s) => typeof s === "number" && Number.isFinite(s))) return undefined;
 
-  // The caller's own live drafts: the viewer audience holds published recipes
-  // and the viewer's live drafts, and draftLive keeps only the drafts.
+  // The live drafts about the caller's user, in scope: one bounded statement
+  // per call (the review set's partial index), and a vector fetch only when
+  // it finds any (S10-D6).
   const rows = await db.execute(sql`
     SELECT t.id::text AS id, t.created_at AS "createdAt"
     FROM claimnet.traces t
     WHERE ${inBooks(sql`t.group_id`, [...p.groupIds])}
       AND ${traceVisibleTo("t", { viewerUserId: p.viewerUserId })}
-      AND ${draftLive("t")}
+      AND ${draftLiveAwaitingReviewBy("t", p.viewerUserId)}
       ${p.excludeTraceId ? sql`AND t.id <> ${p.excludeTraceId}::uuid` : sql``}
     ORDER BY t.created_at DESC, t.id
     LIMIT ${OPEN_QUESTION_CANDIDATES}
@@ -76,14 +109,11 @@ export async function findOpenQuestion(db: PostgresJsDatabase, p: OpenQuestionPa
 
   const query = parseVector(p.queryVectorStr);
   const vectors = await fetchTraceVectors(db, candidates.map((c) => c.id));
-  let best: { id: string; createdAt: string | Date; similarity: number } | undefined;
-  for (const c of candidates) {
+  const scored = candidates.flatMap((c) => {
     const v = vectors.get(c.id);
-    if (!v || v.length !== query.length) continue;
-    const similarity = cosineSimilarity(query, v);
-    if (similarity < floor - SIMILARITY_TOLERANCE) continue;
-    if (!best || similarity > best.similarity) best = { ...c, similarity };
-  }
+    return v && v.length === query.length ? [{ ...c, similarity: cosineSimilarity(query, v) }] : [];
+  });
+  const best = pickOpenQuestion(scored, p.shownSimilarities);
   if (!best) return undefined;
   // The intent's story joins here once slice 6a links a draft to its intent,
   // and only when that intent is the caller's own (S10-D3).

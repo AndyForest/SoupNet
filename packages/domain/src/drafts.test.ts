@@ -452,18 +452,18 @@ describe("draftLabel: expiry and resolution (S10-R1, S10-R3)", () => {
     const idle = draftLabel("unverified", { expired: "intent_idle" });
     expect(idle).toBe("[expired draft: its task has been quiet for over 24 hours, so it has left the review queue and results; it can still be verified or rejected by id]");
     expect(draftLabel("unverified", { expired: "age" })).toContain("deposited with no intent over 7 days ago");
-    expect(draftLabel("unverified", { expired: "age", draftAbout: "pat@test.local" })).toMatch(/^\[expired draft about pat@test\.local: /);
+    expect(draftLabel("unverified", { expired: "age", draftAbout: "pat@test.local" })).toMatch(/^\[expired draft about pat@test\.local: .*; only they can still verify or reject it\]$/);
     expect(draftLabel("unverified", { expired: null })).toMatch(/^\[unverified draft: /);
   });
 
   it("names how and when for each resolved state, verified included", () => {
     expect(draftLabel("rejected", { resolution: { by: "agent", keyLabel: "K2", at } }))
-      .toBe('[rejected draft: rejected by their agent "K2" on 2026-10-25; its evidence says why]');
+      .toBe(`[rejected draft: rejected by your user's agent "K2" on 2026-10-25; its evidence says why]`);
     expect(draftLabel("not_chosen", { resolution: { by: "depositing_agent", at } }))
       .toBe("[draft not chosen: marked not chosen by the agent that deposited it on 2026-10-25]");
     expect(draftLabel("verified", { resolution: { by: "person", at: new Date(at) } }))
       .toBe("[verified draft: verified by your user on 2026-10-25]");
-    expect(draftLabel("verified", { resolution: { by: "agent", keyLabel: null, at } })).toContain("by one of their agents");
+    expect(draftLabel("verified", { resolution: { by: "agent", keyLabel: null, at } })).toContain("by one of your user's agents");
   });
 
   it("without a resolution note, the labels are as before, and a verified draft has none", () => {

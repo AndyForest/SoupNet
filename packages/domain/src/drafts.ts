@@ -254,7 +254,7 @@ function describeResolver(r: DraftResolutionNote): string {
     ? "by your user"
     : r.by === "depositing_agent"
       ? "by the agent that deposited it"
-      : r.keyLabel ? `by their agent "${r.keyLabel}"` : "by one of their agents";
+      : r.keyLabel ? `by your user's agent "${r.keyLabel}"` : "by one of your user's agents";
   return `${who} on ${isoDay(r.at)}`;
 }
 
@@ -324,8 +324,10 @@ export function draftLabel(
   let base: string;
   switch (state) {
     case "unverified":
+      // The depositor of a draft about someone else reads it but cannot
+      // resolve it (S4-R2), so its label says who still can.
       base = ratings?.expired
-        ? `[expired draft${party}: ${EXPIRY_REASON[ratings.expired]}, so it has left the review queue and results; it can still be verified or rejected by id]`
+        ? `[expired draft${party}: ${EXPIRY_REASON[ratings.expired]}, so it has left the review queue and results; ${ratings.draftAbout ? "only they can still verify or reject it" : "it can still be verified or rejected by id"}]`
         : `[unverified draft${party}: a hypothesis the person has not confirmed; visible only to them and their agents]`;
       break;
     case "verified":

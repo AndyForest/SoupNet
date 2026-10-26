@@ -223,8 +223,8 @@ describe("drafts under one of your intents are listed together (slice 6a, S6a-G5
 
 describe("queueExpiredText (slice 10, S10-K2)", () => {
   it("names the expired drafts that left the list, and says they can still be answered", () => {
-    expect(queueExpiredText(1, false)).toBe("1 more draft expired unanswered: the task that asked it went quiet, so it left this list. You can still answer it.");
-    expect(queueExpiredText(3, false)).toMatch(/^3 more drafts expired unanswered: .* You can still answer them\.$/);
+    expect(queueExpiredText(1, false)).toBe("1 more draft expired unanswered and left this list. You can still answer it.");
+    expect(queueExpiredText(3, false)).toBe("3 more drafts expired unanswered and left this list. You can still answer them.");
   });
 
   it("is silent with none, and while the expired drafts are what is listed", () => {

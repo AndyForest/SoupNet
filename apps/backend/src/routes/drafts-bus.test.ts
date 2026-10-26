@@ -344,6 +344,54 @@ describe.skipIf(!BASE || !canConnect())("drafts as a bus (drafts-and-triage slic
     expect((await mcp(K2, "search_recipes", { query: text })).text).not.toContain(`Open question near this call: ${id}`);
   }, 60_000);
 
+  it("S10-D4 / DT-BUS-10: a collaborator's search near Pat's live draft is byte-identical to the same search with the draft gone", async () => {
+    // Volatile parts (ids, timestamps, intent and session tokens, timings) normalised away.
+    const norm = (t: string): string => t
+      .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, "<UUID>")
+      .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z/g, "<TS>")
+      .replace(/int_[A-Za-z0-9]{24}/g, "<INT>")
+      .replace(/\b\d+ ?ms\b/g, "<MS>");
+    const text = recipe("byte identity");
+    // A published neighbour of Dana's, so Sam's search has results.
+    await mcp(danaKey, "check_recipe", { recipe: text, supporting_evidence: evidence("published neighbour") });
+    const id = await draft(K1, text);
+    const named = await eventually(async () => {
+      const r = await mcp(K2, "search_recipes", { query: text, response_format: "structured" });
+      return (r.structured?.["openQuestion"] as { recipeId?: string } | undefined)?.recipeId === id ? true : undefined;
+    });
+    expect(named).toBe(true);
+    const samViews = async (): Promise<string[]> => [
+      (await mcp(samKey, "search_recipes", { query: text })).text,
+      JSON.stringify((await mcp(samKey, "search_recipes", { query: text, response_format: "structured" })).structured),
+      await (await fetch(`${BASE}/check?${new URLSearchParams({ key: samKey, filter: text, format: "json" })}`)).text(),
+    ].map(norm);
+    const before = await samViews();
+    expect((await call(pat, "DELETE", `/traces/${id}`)).ok).toBe(true);
+    expect(await samViews()).toEqual(before);
+  }, 60_000);
+
+  it("S10-D1: the depositor of a draft about a colleague is not invited to resolve it; the colleague's agent is", async () => {
+    const text = recipe("dispatch on behalf");
+    const id = await draft(danaKey, text, { on_behalf_of: pat.email });
+    const patNamed = await eventually(async () => {
+      const r = await mcp(K2, "search_recipes", { query: text, response_format: "structured" });
+      return (r.structured?.["openQuestion"] as { recipeId?: string } | undefined)?.recipeId === id ? true : undefined;
+    });
+    expect(patNamed).toBe(true);
+    const danaView = await mcp(danaKey, "search_recipes", { query: text, response_format: "structured" });
+    expect((danaView.structured?.["openQuestion"] as { recipeId?: string } | undefined)?.recipeId).not.toBe(id);
+  }, 60_000);
+
+  it("S10-D6: a caller with no live drafts gets no line", async () => {
+    const solo = await registerAndVerify("solo");
+    const soloKey = (await mintKey(solo, [solo.personalBookId], solo.personalBookId)).key;
+    const text = recipe("no drafts");
+    await mcp(soloKey, "check_recipe", { recipe: text, supporting_evidence: evidence("solo") });
+    const r = await mcp(soloKey, "search_recipes", { query: text, response_format: "structured" });
+    expect(r.structured?.["openQuestion"]).toBeUndefined();
+    expect((await mcp(soloKey, "search_recipes", { query: text })).text).not.toContain("Open question");
+  }, 60_000);
+
   // ── Reading a resolved draft by id ───────────────────────────────────────
 
   it("S10-R1 / DT-BUS-11: by id, the subject's agents see how and when each resolved draft was resolved", async () => {
@@ -356,7 +404,7 @@ describe.skipIf(!BASE || !canConnect())("drafts as a bus (drafts-and-triage slic
     const today = new Date().toISOString().slice(0, 10);
 
     const text = (await mcp(K1, "get_recipes", { recipe_ids: `${byAgent},${byDepositor},${byPerson}` })).text;
-    expect(text).toContain(`[rejected draft: rejected by their agent "K2 ${run}" on ${today}; its evidence says why]`);
+    expect(text).toContain(`[rejected draft: rejected by your user's agent "K2 ${run}" on ${today}; its evidence says why]`);
     expect(text).toContain(`[draft not chosen: marked not chosen by the agent that deposited it on ${today}]`);
     expect(text).toContain(`[verified draft: verified by your user on ${today}]`);
 
