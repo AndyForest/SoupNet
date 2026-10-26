@@ -25,7 +25,10 @@ import { servedToolsList } from "./served-tools-list.js";
 /** 13,670 → 14,700 (2026-10-24, drafts-and-triage slices 6 to 9, scaffold PR A0): moves with
  *  the remote roster cap (17,000 → 18,200); reason and re-tightening note in
  *  apps/backend/src/routes/mcp-tools-list-size.test.ts. */
-const STDIO_TOOLS_LIST_MAX_BYTES = 14_700;
+// 14,700 → 14,750 (2026-10-26, OpenAI plugin directory stream T): every
+// description in the reviewed shape and explicit annotations, as on the remote
+// server. Measured 14,407 on main (with slice 8b's page parameter) → 14,738.
+const STDIO_TOOLS_LIST_MAX_BYTES = 14_750;
 
 const BACKEND = "http://backend.test";
 
@@ -279,6 +282,23 @@ describe("stdio drafts (slice 2)", () => {
     const url = new URL(calls[0]!.url);
     expect(url.pathname).toBe("/check");
     expect(url.searchParams.get("filter")).toBe(query);
+  });
+
+  it("S8b-P1: search_recipes forwards page to /check, sends none when absent, and refuses a page that is not an integer from 1", async () => {
+    const calls = stubBackend();
+    await callTool("search_recipes", { query: "author:me changed-after:2026-10-01", page: 2 });
+    const url = new URL(calls[0]!.url);
+    expect(url.searchParams.get("page")).toBe("2");
+    expect(url.searchParams.get("filter")).toBe("author:me changed-after:2026-10-01");
+    await callTool("search_recipes", { query: "author:me" });
+    expect(new URL(calls[1]!.url).searchParams.has("page")).toBe(false);
+    for (const page of [0, -1, 1.5, "2"]) {
+      const before = calls.length;
+      const refused = await callTool("search_recipes", { query: "author:me", page }).catch((err: unknown) => ({ isError: true, content: [{ text: String(err) }] }));
+      expect(refused.isError, String(page)).toBe(true);
+      expect(JSON.stringify(refused.content), String(page)).toMatch(/page/);
+      expect(calls.length, String(page)).toBe(before);
+    }
   });
 
   it("S3-F1: verify_draft relays the honest write-access refusal (403) verbatim, so the agent learns the way forward", async () => {

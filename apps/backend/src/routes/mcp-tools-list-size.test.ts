@@ -40,11 +40,17 @@ import type { Principal } from "../authz";
  *  spec-decision-log.md; after slices 8b and 6b merge the cap is re-tightened
  *  to the measured figure (docs/planning/drafts-and-triage-slices-6-9-
  *  implementation-plan.md, PR A0).
- *  18,200 → 18,300 (2026-10-26, OpenAI plugin directory round, stream O,
- *  item 12): every tool's `_meta.securitySchemes`, 560 bytes over eight tools
- *  (measured 17,698 → 18,258). Stream T merges first and moves this line for
- *  its own changes; the second to merge re-measures and sets it. */
-const REMOTE_TOOLS_LIST_MAX_BYTES = 18_300;
+ *  18,200 → 18,950 (2026-10-26, OpenAI plugin directory stream T): every
+ *  description in the reviewed shape (what it does, when to use it, when not
+ *  to and what to use instead), the get_profile tool the directory asks for,
+ *  and explicit annotations on every tool. Measured 17,904 on main (with
+ *  slice 8b's page parameter) → 18,930; the profile tool is about 400 of the
+ *  1,026 bytes. Stream O's per-tool securitySchemes land after this and move
+ *  the cap again by their own measured bytes (docs/connectors/openai-plugin.md).
+ *  18,950 → 19,600 (2026-10-26, OpenAI plugin directory stream O, item 12,
+ *  measured on main after T's #150): every tool's `_meta.securitySchemes`,
+ *  616 bytes over the nine tools (18,930 → 19,546). */
+const REMOTE_TOOLS_LIST_MAX_BYTES = 19_600;
 
 const stubPrincipal: Principal = {
   keyId: "00000000-0000-0000-0000-000000000001",
