@@ -281,6 +281,23 @@ describe("stdio drafts (slice 2)", () => {
     expect(url.searchParams.get("filter")).toBe(query);
   });
 
+  it("S8b-P1: search_recipes forwards page to /check, sends none when absent, and refuses a page that is not an integer from 1", async () => {
+    const calls = stubBackend();
+    await callTool("search_recipes", { query: "author:me changed-after:2026-10-01", page: 2 });
+    const url = new URL(calls[0]!.url);
+    expect(url.searchParams.get("page")).toBe("2");
+    expect(url.searchParams.get("filter")).toBe("author:me changed-after:2026-10-01");
+    await callTool("search_recipes", { query: "author:me" });
+    expect(new URL(calls[1]!.url).searchParams.has("page")).toBe(false);
+    for (const page of [0, -1, 1.5, "2"]) {
+      const before = calls.length;
+      const refused = await callTool("search_recipes", { query: "author:me", page }).catch((err: unknown) => ({ isError: true, content: [{ text: String(err) }] }));
+      expect(refused.isError, String(page)).toBe(true);
+      expect(JSON.stringify(refused.content), String(page)).toMatch(/page/);
+      expect(calls.length, String(page)).toBe(before);
+    }
+  });
+
   it("S3-F1: verify_draft relays the honest write-access refusal (403) verbatim, so the agent learns the way forward", async () => {
     const refusal = "abc is a draft in the recipe book \"Shared\" (shared), and resolving it needs write access to this recipe book, which this API key does not have; nothing was stored.";
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ok: false, error: refusal, status: "needs_write_access" }), { status: 403 })));
