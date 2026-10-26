@@ -2959,3 +2959,7 @@ Gate at `a52c79d`: one run failed one test, `draft-queue.test.ts` S3-A1, whose a
 
 - **S10-K3 (built).** `GET /intents` and `GET /intents/:id` count an intent's draft deposits under `counts.drafts`: `live`, `expired` and `resolved`, each as the viewer sees the draft's state (`draftStateShownTo` composed with `draftLive` and `draftExpired`), so the depositor of an on-behalf draft never learns from a count that its subject verified it. Slice 9's three exact assertions on `counts` gain the field. Layer 3: one live and one rejected draft under an intent count `{ live: 1, expired: 0, resolved: 1 }`, and with the intent idle 25 hours, `{ live: 0, expired: 1, resolved: 1 }`. `drafts-bus.test.ts`: 20 passed.
 - **Still waiting:** the briefing's bus line on C2 (#146), settled at 114 characters against C2's Drafts section ("A draft is a question on a bus: it stays live while your intent is in use, and expires once your task goes quiet.").
+
+### Slice 10 after C2 merged (stream A, 2026-10-26)
+
+`main` with C2 (#146) is merged in (a merge commit; only the decision log conflicted, this entry kept above C2's). The bus line is in C2's "## Drafts" section, just before "With sub-agents, work live:": "A draft is a question on a bus: it stays live while your intent is in use, and expires once your task goes quiet." Thin briefing 22,681 → 22,795 of 22,800, headless 23,081 → 23,195 of 23,200; no cap moved. Its scenario is in `checking-behavior.feature`. S10-C3 is built, and every slice 10 row is now built.

@@ -16,16 +16,18 @@ Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-
 4. **The search grammar's refusals** (`parseSearchQuery`): the qualifier list names `is:expired`; an unknown `is:` value names both values ("is:expired the ones that expired unanswered"); `-is:expired` and `is:expired -is:draft` are refused with a sentence each.
 5. **`is:expired` in reference copy:** the web `/check` page's search help and the `filter` field's description in the published recipe schema (`packages/contracts/src/recipe.ts`) name it beside `is:draft`. Neither is a tool or parameter description.
 6. **`search_recipes` query description** (`MCP_PARAM_DESCRIPTIONS.searchQuery`, both MCP servers), after the rebase onto slice 6a: "is:draft (your open drafts)" becomes "is:draft (open drafts), is:expired" (406 → 413 characters of the 420 per-description limit). Dropping "your" pays for most of it; `is:expired` names what it lists.
+7. **The briefing's "## Drafts" section** (C2's text, after C2 merged): one sentence before "With sub-agents, work live:", "A draft is a question on a bus: it stays live while your intent is in use, and expires once your task goes quiet." Stream C handed it to this slice (2026-10-25), since it describes behaviour this slice ships. It keeps clear of the words C2's voice test refuses in that section. Thin briefing 22,681 → 22,795 characters (cap 22,800, C2's); headless 23,081 → 23,195 (cap 23,200). No cap moved; 5 characters remain on each, which stream D's Members lines (8b item 3) will need a dated raise for.
 
 ### Scenarios intended to move
 
 - **Product spec** ([../product-specs/drafts-and-triage.feature](../product-specs/drafts-and-triage.feature)): DT-BUS-01 to DT-BUS-11 (`@slice-10`), added in this PR. DT-BUS-02 and 03 are `@unreleased` until slice 6a's intent link.
-- **Briefing spec:** the line about drafts as questions on a bus lands in the briefing's "## Drafts" section with its `checking-behavior.feature` scenario once stream C's C1 and C2 merge (stream C handed it to this slice on 2026-10-25, since it describes behaviour this slice ships).
+- **Briefing spec** ([checking-behavior.feature](checking-behavior.feature)): new scenario "A draft lives while its task does, and an open question named near a call is answered when the agent's context settles it", for edit 7 and the dispatch line.
 
 ### Scenarios watched, with rationale for holding
 
 - **DT-VIS-09 and the books-block tests:** the Drafts line keeps its exact wording when no draft has expired, so every existing fixture is byte-identical.
 - **Every other tool and parameter description:** unchanged. `searchQuery` (edit 6) is the only one this slice touches.
+- **C1 and C2's briefing scenarios:** the Drafts section grows by one sentence and nothing else in the briefing changes; C2's voice test over that section and the thin and headless size tests pass.
 - **Check and search responses with no live draft nearby:** byte-identical, since the line is added only when a draft qualifies.
 
 ### Measured
