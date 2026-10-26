@@ -1169,7 +1169,7 @@ export function renderPage(
 
       ${headless
         ? ""
-        : `<label for="draft"><input type="checkbox" id="draft" name="draft" value="true"${parseDraftFlag(params.draft).draft ? " checked" : ""}> Deposit as a draft &mdash; the person could not be asked; only they and their agents see it until they verify it</label>`}
+        : `<label for="draft"><input type="checkbox" id="draft" name="draft" value="true"${parseDraftFlag(params.draft).draft ? " checked" : ""}> Deposit as a draft &mdash; a high-impact, uncertain call you can't settle yet from the context you hold; only they and their agents see it until it's verified</label>`}
 
       <label for="on_behalf_of">On behalf of &mdash; the email of the person this recipe is about, if not you (optional; always a draft only they can verify)</label>
       <input type="email" id="on_behalf_of" name="on_behalf_of" value="${esc(params.onBehalfOf ?? "")}" autocomplete="off">

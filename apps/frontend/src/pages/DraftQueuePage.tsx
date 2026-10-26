@@ -29,7 +29,7 @@ import styles from "./DraftQueuePage.module.css";
 
 /**
  * The review queue (drafts-and-triage slice 3): drafts your agents parked
- * about your taste and judgment because they could not ask you, sorted for
+ * about your taste and judgment, calls they couldn't yet settle, sorted for
  * triage, with confirm, reject, and not chosen. `?ids=a,b` (the link an
  * agent hands you) shows exactly those recipes instead. Drafts deposited
  * under one of your declared intents sit together under the intent's story

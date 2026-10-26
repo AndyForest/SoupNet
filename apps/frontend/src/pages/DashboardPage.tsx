@@ -10,7 +10,7 @@ import { describeDailyReadScope } from "../lib/daily-scope.js";
 import { dailyKeyErrorCode } from "../lib/daily-key-error.js";
 import { DailyKeyError } from "../components/DailyKeyError.js";
 import { draftStatusLabel } from "../lib/draft-status-label.js";
-import { dashboardDraftsEntry } from "../lib/draft-queue.js";
+import { DRAFTS_CARD_TEXT, dashboardDraftsEntry } from "../lib/draft-queue.js";
 
 // Note: the email-verification banner that used to live here has been
 // replaced by the /verify-pending route, which is the only authed route an
@@ -257,7 +257,7 @@ export function DashboardPage() {
             <div style={{ flex: 1, minWidth: 0 }}>
               <h2 id="drafts-entry-heading" style={{ fontSize: "1.05rem", margin: 0 }}>{draftsEntry}</h2>
               <p className="text-sm" style={{ color: "var(--color-on-surface-variant)", margin: "var(--space-xs) 0 0 0" }}>
-                Hypotheses your agents parked about your taste and judgment because they could not ask you.
+                {DRAFTS_CARD_TEXT}
               </p>
             </div>
             <Link to="/app/drafts" className="btn" style={{ textDecoration: "none", fontSize: "0.85rem" }}>

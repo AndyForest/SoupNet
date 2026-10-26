@@ -26,4 +26,12 @@ describe("/check form: the draft box for a headless key", () => {
     expect(box?.[0]).not.toContain("disabled");
     expect(box!.index).toBeGreaterThan(html.indexOf(advanced));
   });
+
+  // Slice 7 C2 (7b, S7-B4): the box's label says what a draft is, as the
+  // draft parameter does, not that the person could not be asked.
+  it("labels the optional box with what a draft is, for an ordinary key", () => {
+    const html = renderPage(params);
+    expect(html).toContain("Deposit as a draft &mdash; a high-impact, uncertain call you can't settle yet from the context you hold");
+    expect(html).not.toMatch(/could not be asked|couldn't be asked|can(?:'|no)t be asked/);
+  });
 });

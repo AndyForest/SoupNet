@@ -107,18 +107,28 @@ export function linkHeading(items: ReadonlyArray<Pick<Partial<QueueItem>, "depos
 /**
  * The page's intro, true for the viewer (post-merge findings, 2026-09-29):
  * "your agents … about your taste and judgment" only when every listed draft
- * is the viewer's own agents' about the viewer, as for the heading.
+ * is the viewer's own agents' about the viewer, as for the heading. Slice 7
+ * C2 (S7-B3): it says what a draft is, a call no agent could yet settle, not
+ * that the agent could not ask.
  */
 export function queueIntro(items: ReadonlyArray<Pick<Partial<QueueItem>, "depositedBy" | "about">>): string {
   if (items.some((i) => i.depositedBy || i.about)) {
-    return "Agents parked these hypotheses about a person's taste and judgment because they could not ask them. "
+    return "Agents parked these hypotheses about a person's taste and judgment: calls they couldn't yet settle from the context they held. "
       + "Only the person a draft is about can confirm or reject it: confirming publishes it to its recipe book, where collaborators can find it; "
       + "rejecting it or marking it not chosen keeps it private. Each choice is final.";
   }
-  return "Your agents parked these hypotheses about your taste and judgment because they could not ask you. "
+  return "Your agents parked these hypotheses about your taste and judgment: calls they couldn't yet settle from the context they held. "
     + "Confirming publishes a draft to its recipe book, where collaborators can find it; rejecting it or "
     + "marking it not chosen keeps it private to you and your agents. Each choice is final.";
 }
+
+/** The dashboard drafts card's line (slice 7 C2, S7-B3: what a draft is, not
+ *  "because they could not ask you"). "Agents", not "your agents": the card
+ *  has only a count, and a draft another person's agent deposited on your
+ *  behalf is counted too (the queue's intro, which sees the items, says
+ *  "your agents" only when it can). */
+export const DRAFTS_CARD_TEXT =
+  "Hypotheses agents parked about your taste and judgment: calls they couldn't yet settle from the context they held.";
 
 /** Slice 4 (S4-Q2, S4-Q5): the line naming the other party of an on-behalf draft, as text. */
 export function partyText(item: Pick<Partial<QueueItem>, "depositedBy" | "about">): string | null {

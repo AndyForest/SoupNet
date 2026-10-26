@@ -456,8 +456,9 @@ Feature: Drafts, triage ratings, and deciding by building both
       Then drafts a and b are listed and nothing indicates that c exists
 
     @DT-QUE-05 @slice-3
-    Scenario: The queue shows why the agent couldn't ask
-      Given a draft whose first evidence interpretation says why Pat couldn't be asked and what would settle it
+    Scenario: The queue shows why each draft is a draft and what would settle it
+      # Reworded in slice 7 C2 (7b, S7-B3) from "why the agent couldn't ask".
+      Given a draft whose first evidence interpretation says why it is a draft rather than a check and what would settle it
       When Pat views the draft in the queue
       Then that interpretation is shown without opening the detail page
 
