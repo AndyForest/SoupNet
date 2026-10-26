@@ -1,16 +1,16 @@
 # ClaimNet Data Model — Generated Reference
 
-> **Auto-generated** from Drizzle migration snapshot `0045_snapshot.json`.
+> **Auto-generated** from Drizzle migration snapshot `0046_snapshot.json`.
 > Do not edit by hand. Regenerate with: `npx tsx scripts/generate-data-model-docs.ts`
 >
-> Schema as of migration `0045_google_sign_in` (2026-10-26).
-> Tables: 34 | Schema: `claimnet`
+> Schema as of migration `0046_organization_domains` (2026-10-26).
+> Tables: 35 | Schema: `claimnet`
 
 For design rationale, conventions, and context, see [data-model.md](data-model.md).
 
 ## Tables
 
-**Identity & Access:** [`users`](#claimnetusers) · [`user_identities`](#claimnetuser_identities) · [`sso_login_requests`](#claimnetsso_login_requests) · [`organizations`](#claimnetorganizations) · [`organization_members`](#claimnetorganization_members) · [`groups`](#claimnetgroups) · [`group_members`](#claimnetgroup_members) · [`ephemeral_books`](#claimnetephemeral_books)
+**Identity & Access:** [`users`](#claimnetusers) · [`user_identities`](#claimnetuser_identities) · [`sso_login_requests`](#claimnetsso_login_requests) · [`organizations`](#claimnetorganizations) · [`organization_members`](#claimnetorganization_members) · [`organization_domains`](#claimnetorganization_domains) · [`groups`](#claimnetgroups) · [`group_members`](#claimnetgroup_members) · [`ephemeral_books`](#claimnetephemeral_books)
 **Core Content:** [`traces`](#claimnettraces) · [`evidence`](#claimnetevidence) · [`references`](#claimnetreferences) · [`uploads`](#claimnetuploads)
 **Linking:** [`trace_evidence`](#claimnettrace_evidence) · [`trace_references`](#claimnettrace_references) · [`evidence_references`](#claimnetevidence_references)
 **Feedback & Reactions:** [`check_feedback`](#claimnetcheck_feedback) · [`check_feedback_stars`](#claimnetcheck_feedback_stars) · [`trace_reactions`](#claimnettrace_reactions) · [`session_shown`](#claimnetsession_shown) · [`intents`](#claimnetintents) · [`intent_shown`](#claimnetintent_shown)
@@ -247,6 +247,21 @@ erDiagram
         timestamptz last_used_at
     }
 
+    organization_domains {
+        uuid id PK
+        uuid organization_id FK
+        text domain
+        text challenge_token
+        timestamptz token_issued_at
+        timestamptz verified_at
+        timestamptz last_checked_at
+        timestamptz last_found_at
+        timestamptz failing_since
+        boolean auto_join
+        uuid added_by
+        timestamptz created_at
+    }
+
     organization_members {
         uuid id PK
         uuid organization_id FK
@@ -452,6 +467,7 @@ erDiagram
     intents }o--|| users : "user_id"
     invitations }o--|| users : "inviter_id"
     invitations }o--|| groups : "group_id"
+    organization_domains }o--|| organizations : "organization_id"
     organization_members }o--|| organizations : "organization_id"
     organization_members ||--|| users : "user_id"
     organizations }o--|| users : "owner_id"
@@ -628,6 +644,35 @@ These are created by raw SQL in migration files and are not captured in the snap
 
 **Indexes:**
 - `organization_members_organization_id_idx`: `(organization_id)`
+
+---
+
+### `claimnet.organization_domains`
+
+| Column | Type | Nullable | Default | PK |
+|---|---|---|---|---|
+| `id` | `uuid` | NO | `gen_random_uuid()` | PK |
+| `organization_id` | `uuid` | NO |  |  |
+| `domain` | `text` | NO |  |  |
+| `challenge_token` | `text` | NO |  |  |
+| `token_issued_at` | `timestamptz` | NO |  |  |
+| `verified_at` | `timestamptz` | YES |  |  |
+| `last_checked_at` | `timestamptz` | YES |  |  |
+| `last_found_at` | `timestamptz` | YES |  |  |
+| `failing_since` | `timestamptz` | YES |  |  |
+| `auto_join` | `boolean` | NO |  |  |
+| `added_by` | `uuid` | YES |  |  |
+| `created_at` | `timestamptz` | NO | `now()` |  |
+
+**Foreign keys:**
+- `organization_id` → `organizations.id`
+
+**Unique constraints:**
+- `organization_domains_org_domain_unique`: `(organization_id, domain)`
+
+**Indexes:**
+- `organization_domains_verified_domain_unique`: `(domain)` (unique)
+- `organization_domains_domain_idx`: `(domain)`
 
 ---
 

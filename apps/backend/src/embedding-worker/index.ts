@@ -29,6 +29,7 @@ import { handleVectorCheck } from "./jobs/vector-check";
 import { handleVectorApiCall } from "./jobs/vector-api-call";
 import { handleChunkingJob } from "./jobs/chunking";
 import { handleVectoringJob } from "./jobs/vectoring";
+import { handleOrgDomainsRecheck } from "./jobs/org-domains-recheck";
 import { handleEphemeralReap } from "./jobs/ephemeral-reap";
 import { sweepSsoLoginRequests } from "../services/google-sign-in.service";
 
@@ -95,6 +96,7 @@ export async function startEmbeddingWorker(
   await boss.createQueue(QUEUES.EMBEDDINGS_CHUNK);
   await boss.createQueue(QUEUES.EMBEDDINGS_VECTOR);
   await boss.createQueue(QUEUES.EPHEMERAL_REAP);
+  await boss.createQueue(QUEUES.ORG_DOMAINS_RECHECK);
   await boss.createQueue(QUEUES.SSO_REQUEST_SWEEP);
 
   // Cleanup orphaned schedules from pre-refactor worker.
@@ -184,6 +186,13 @@ export async function startEmbeddingWorker(
   await boss.work(
     QUEUES.EPHEMERAL_REAP,
     async () => { await handleEphemeralReap(db); },
+  );
+
+  // Verified-domain re-check — daily at 04:17 UTC. See jobs/org-domains-recheck.ts.
+  await boss.schedule(QUEUES.ORG_DOMAINS_RECHECK, "17 4 * * *", {});
+  await boss.work(
+    QUEUES.ORG_DOMAINS_RECHECK,
+    async () => { await handleOrgDomainsRecheck(db); },
   );
 
   // Google sign-in request rows older than a day go hourly, so the table is

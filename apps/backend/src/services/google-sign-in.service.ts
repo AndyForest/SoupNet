@@ -38,6 +38,7 @@ import { accountRefusal, invalidateSessions, ssoRequiredFor } from "../authz";
 import { mayRegister, logSignupCapState } from "./system-settings.service";
 import { sendVerificationEmail } from "./email.service";
 import { getClientPublic } from "./oauth.service";
+import { onGoogleSignIn } from "./org-domains.service";
 import {
   buildGoogleAuthorizationUrl,
   exchangeGoogleCode,
@@ -170,10 +171,10 @@ export type JoinHookResult = "joined" | "full" | "none";
  * with `organization_full`; for an existing account it changes nothing.
  */
 export async function afterGoogleSignIn(
-  _tx: SqlExecutor,
-  _input: { userId: string; email: string; hd: string | null; created: boolean },
+  tx: SqlExecutor,
+  input: { userId: string; email: string; hd: string | null; created: boolean },
 ): Promise<JoinHookResult> {
-  return "none";
+  return onGoogleSignIn(tx, input);
 }
 
 class Rollback extends Error {
