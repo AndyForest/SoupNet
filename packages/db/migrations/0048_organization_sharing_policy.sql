@@ -1,0 +1,4 @@
+ALTER TABLE "claimnet"."organizations" ADD COLUMN "outbound_sharing" text DEFAULT 'allowed' NOT NULL;--> statement-breakpoint
+ALTER TABLE "claimnet"."organizations" ADD COLUMN "inbound_sharing" text DEFAULT 'allowed' NOT NULL;--> statement-breakpoint
+ALTER TABLE "claimnet"."organizations" ADD CONSTRAINT "organizations_outbound_sharing_check" CHECK ("claimnet"."organizations"."outbound_sharing" IN ('blocked', 'admins_only', 'allowed'));--> statement-breakpoint
+ALTER TABLE "claimnet"."organizations" ADD CONSTRAINT "organizations_inbound_sharing_check" CHECK ("claimnet"."organizations"."inbound_sharing" IN ('blocked', 'allowed'));
