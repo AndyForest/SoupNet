@@ -15,4 +15,5 @@ export * from "./verbosity";
 export * from "./triage-ratings";
 export * from "./drafts";
 export * from "./search-query";
+export * from "./listing-depth";
 export * from "./unknown-params";

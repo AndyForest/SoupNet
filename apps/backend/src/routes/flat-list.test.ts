@@ -373,6 +373,33 @@ describe.skipIf(!BASE || !canConnect())("the flat list and changed-since (drafts
     expect(rows.map((r) => r.recipeId)).not.toContain(ids["untouched"]);
   });
 
+  // ── Listing depth (F110, F105) ───────────────────────────────────────────
+
+  it("D-2: a page past the first 10,000 results is refused on every search surface, naming page and how to narrow", async () => {
+    // The flat list: page 200 is the last within reach (50 a page). Past the
+    // end of a short list it is an empty page; page 201 is refused.
+    const last = await search(manyKey, "author:me", { page: 200 });
+    expect(last.rows).toEqual([]);
+    expect(last.data["totalResults"]).toBe(MANY);
+    const refused = await mcp(manyKey, "search_recipes", { query: "author:me", page: 201 });
+    expect(refused.text).toContain("Error: page 201 is past what a search pages through: the first 10,000 results (pages 1 to 200 at 50 per page).");
+    expect(refused.text).toContain("changed-after:, created-after: or read_recipe_books");
+    const web201 = await fetch(`${BASE}/check?${new URLSearchParams({ key: manyKey, filter: "author:me", page: "201", format: "json" }).toString()}`);
+    expect(web201.status).toBe(400);
+    expect(((await web201.json()) as Json)["error"]).toContain("page 201 is past what a search pages through");
+    // The ranked path pages 20 at a time: page 501 is refused.
+    const ranked = await fetch(`${BASE}/check?${new URLSearchParams({ key: manyKey, filter: "steward sweeping", page: "501", format: "json" }).toString()}`);
+    expect(ranked.status).toBe(400);
+    expect(((await ranked.json()) as Json)["error"]).toContain("(pages 1 to 500 at 20 per page)");
+    // A check with a deep page is refused before anything is stored.
+    const before = await sql`SELECT count(*)::int AS n FROM claimnet.traces WHERE group_id = ${many.id}::uuid`;
+    const check = await fetch(`${BASE}/check?${new URLSearchParams({ key: manyKey, recipe: recipe("deep page check"), ef: evidence("deep page"), page: "501", format: "json" }).toString()}`);
+    expect(check.status).toBe(400);
+    expect(((await check.json()) as Json)["error"]).toContain("Nothing was stored.");
+    const after = await sql`SELECT count(*)::int AS n FROM claimnet.traces WHERE group_id = ${many.id}::uuid`;
+    expect(after[0]!["n"]).toBe(before[0]!["n"]);
+  });
+
   // ── Parameter ────────────────────────────────────────────────────────────
 
   it("S8b-P1: page must be an integer from 1; anything else is refused naming the field", async () => {
