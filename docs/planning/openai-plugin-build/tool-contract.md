@@ -93,4 +93,6 @@ Written by the builder for the verifier; the verification record is the verifier
 
 **Seam:** `feedback.service.ts` was re-fingerprinted (`c7490c2928a4` → `e1e7da957b6a`, same 26 lines). The duplicate-row summary line, whose feedback id was removed, sits inside a fingerprinted statement window. No SQL changed.
 
-**Caps:** remote 18,200 → 18,800, shared descriptions 6,600 → 7,300, stdio held at 14,700, each dated. These are measured again after stream B lands.
+**Caps:** set once after slice 8b (#154) merged, measured on `main` at `cf6e13e` plus this branch: remote 17,904 → 18,930 (cap 18,200 → 18,950), stdio 14,407 → 14,738 (14,700 → 14,750), shared descriptions 6,593 → 7,434 (6,600 → 7,450), each dated at its assertion.
+
+**T-D4, closed after #154 merged:** a structural snapshot took the served `tools/list` of both servers on this branch and on `main`'s own server code at `cf6e13e`, with descriptions stripped. Every existing tool's name, parameter names, types and required list are identical on both servers. The one difference is `get_profile`, added on the remote server.

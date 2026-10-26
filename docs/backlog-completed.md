@@ -4,6 +4,14 @@ Items moved here from `backlog.md` when finished. Date-stamped so we can see wha
 
 ---
 
+## 2026-10-26 — the F75 succession flake
+
+### `[IMPL]` test:ci flake: account-deletion succession picks the wrong heir under full-suite load
+
+Observed 2026-10-25 on `drafts/10-bus` (`TESTCI_PGPORT=5544`): `auth-delete-shared-books.test.ts` "succession skips accounts that cannot act … [F75]" failed once in the full gate (`expected '<one user id>' to be '<the active member's id>'`), then passed three times out of three run alone against the same code. Nothing in that path changed on the branch. Not yet diagnosed; a first look would be whether another file's fixtures (waitlisting, verification) touch the same users or books concurrently, or whether the test reads the book row before the deletion's succession has committed.
+
+**Resolution (2026-10-26, stream B, branch `fix/waitlist-test-isolation`):** another file's fixture was the cause. `waitlist.service.test.ts` called `promoteTopWaitlisted(db, 50)`, which clears `waitlisted_at` on every verified waitlisted account in the database. When vitest scheduled it beside the F75 test, the promotion landed in that test's window: its verified-but-waitlisted member became active, outranked the active member by tenure, and inherited the book. The verifier of the 2026-10-26 round saw it in the SSO and Console full gates, and never in a file run alone. The fix is in the test layer. The large-headroom promotion now runs in a transaction that is rolled back, so no other file sees an account it did not promote, and a new fixture (a verified waitlisted account standing in for another file's) proves it stays waitlisted. The test's two committed one-account promotions land only on its own fixtures, by invitation and by its backdated sign-up date. The F75 test keeps its verified-but-waitlisted member, because it is the only coverage of "waitlisted outranks verified" in `activeUserPredicate`. `pickSuccessor` is unchanged: its order already ends in `gm.id`.
+
 ## 2026-09-28 — local gate reliability
 
 Branch `chore/gate-reliability`. Measured with `TESTCI_PGPORT=5814 SKIP_RANKING_EVAL=1 node scripts/test-ci-local.mjs --reporter=default --reporter=json --outputFile.json=<path>`, a sampler polling the CI Postgres and the backend process every few seconds, and clock probes inside and outside the Docker VM.

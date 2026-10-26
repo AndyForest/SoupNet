@@ -5,7 +5,8 @@
  * single semantic query (embedded whole — no boolean operators over a vector),
  * double-quoted terms are lexical substring matches, and a small allowlisted
  * qualifier vocabulary (`author:`, `after:`, `before:`, and from the drafts
- * work `is:draft`, `impact:`, `uncertainty:`, `intent:`) carries the
+ * work `is:draft`, `impact:`, `uncertainty:`, `intent:`, and slice 8b's
+ * `created-after:` and `changed-after:`) carries the
  * structured filters. Design + syntax precedent citations:
  * docs/planning/recipe-search-design.md.
  *
@@ -25,7 +26,9 @@ export const SEARCH_QUERY_MAX_LENGTH = 2000;
 export const SEARCH_QUERY_MAX_LEXICAL_TERMS = 8;
 export const SEARCH_QUERY_MAX_AUTHOR_VALUES = 8;
 
-export const SEARCH_QUALIFIERS = ["author", "after", "before", "is", "impact", "uncertainty", "intent"] as const;
+export const SEARCH_QUALIFIERS = [
+  "author", "after", "before", "created-after", "changed-after", "is", "impact", "uncertainty", "intent",
+] as const;
 export type SearchQualifier = (typeof SEARCH_QUALIFIERS)[number];
 
 /** Reserved author values (case-insensitive on the wire, canonical lowercase here). */
@@ -88,6 +91,13 @@ export interface ParsedSearchQuery {
   after?: string | undefined;
   /** Judgment-date upper bound, exclusive (`before:D` ⇒ date < D). ISO string as written. */
   before?: string | undefined;
+  /** Deposit-time lower bound, inclusive (`created-after:D`, slice 8b): when
+   *  the recipe arrived, not when the judgment was made. ISO string as written. */
+  createdAfter?: string | undefined;
+  /** Changed-time lower bound, inclusive (`changed-after:D`, slice 8b): the
+   *  latest of the deposit, a resolution or move, and the newest feedback row
+   *  or reaction. What a sweep asks on each tick. ISO string as written. */
+  changedAfter?: string | undefined;
   /** `is:draft` ⇒ true: only the viewer's own unresolved drafts, and the
    *  surface's exclude-own default is lifted (as any author: does).
    *  `-is:draft` ⇒ false: the viewer's unresolved drafts are left out.
@@ -113,7 +123,7 @@ export type ParseSearchQueryResult =
   | { ok: false; error: string };
 
 const QUALIFIER_HELP =
-  "valid qualifiers are author:, after:, before:, is:draft, is:expired, intent: (an int_… id), impact: and uncertainty: (low, medium, or high)";
+  "valid qualifiers are author:, after:, before:, created-after:, changed-after:, is:draft, is:expired, intent: (an int_… id), impact: and uncertainty: (low, medium, or high)";
 
 /** `YYYY-MM-DD` or a full ISO datetime; Date.parse re-checks real dates. */
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/;
@@ -265,6 +275,7 @@ export function parseSearchQuery(input: string): ParseSearchQueryResult {
   let sawAuthorQualifier = false;
   let after: string | undefined;
   let before: string | undefined;
+  const sinceBounds: { "created-after"?: string; "changed-after"?: string } = {};
   let isDraft: boolean | undefined;
   let intent: string | undefined;
   let isExpired: true | undefined;
@@ -426,6 +437,13 @@ export function parseSearchQuery(input: string): ParseSearchQueryResult {
             }
             sel.equals = rating;
           }
+        } else if (name === "created-after" || name === "changed-after") {
+          if (negated) return { ok: false, error: `-${name}: is not supported — give the time to list from, e.g. ${name}:2026-10-01` };
+          if (values.length !== 1) return { ok: false, error: `${name}: takes a single date` };
+          const parsed = parseDateValue(name, values[0]!);
+          if (!parsed.ok) return parsed;
+          if (sinceBounds[name] !== undefined) return { ok: false, error: `duplicate ${name}: — give one lower bound` };
+          sinceBounds[name] = parsed.value;
         } else {
           if (negated) return { ok: false, error: `-${name}: is not supported — use the opposite bound instead` };
           if (values.length !== 1) return { ok: false, error: `${name}: takes a single date` };
@@ -475,6 +493,8 @@ export function parseSearchQuery(input: string): ParseSearchQueryResult {
       authorsNegated,
       after,
       before,
+      ...(sinceBounds["created-after"] !== undefined ? { createdAfter: sinceBounds["created-after"] } : {}),
+      ...(sinceBounds["changed-after"] !== undefined ? { changedAfter: sinceBounds["changed-after"] } : {}),
       // `is:draft is:expired` reads as `is:expired`: the expired drafts are a
       // part of the drafts set, so the narrower selection wins.
       ...(isExpired ? { isExpired } : isDraft !== undefined ? { isDraft } : {}),

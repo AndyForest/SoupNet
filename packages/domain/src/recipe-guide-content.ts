@@ -1070,13 +1070,26 @@ export const MCP_PARAM_DESCRIPTIONS = {
    *  briefing already carry ("ISO" is in the date error; the PR-review
    *  filename example is in the briefing's Search vs check). Slice 10
    *  (2026-10-26) adds is:expired, a name that says what it lists, inside the
-   *  same limit by dropping "your" before "open drafts". */
+   *  same limit by dropping "your" before "open drafts". Slice 8b
+   *  (2026-10-26) adds created-after: and changed-after: inside the same
+   *  limit: "Qualifier-only: newest first." moves to the page parameter,
+   *  which says what a qualifier-only search returns, and "(your intent's
+   *  recipes)" after intent:int_… is trimmed (the intent: error says what
+   *  the id is; untrimmed text in docs/briefing-specs/expanded/slice8b.md). */
   searchQuery:
     "Bare text is one semantic phrase. \"Quoted terms\" match exact substrings of recipe, evidence, " +
     "citations (quote filenames); group with (\"a\" OR \"b\"); -\"term\" excludes. Qualifiers: " +
-    "author: (email, me, anyone), after:/before: (judgment date), is:draft (open drafts), is:expired, " +
-    "intent:int_… (your intent's recipes), impact:/uncertainty: (low|medium|high). " +
-    "-author:me leaves out your own. Qualifier-only: newest first.",
+    "author: (email, me, anyone), after:/before: (judgment date), " +
+    "created-after:/changed-after: (deposit, any change), is:draft (open drafts), is:expired, " +
+    "intent:int_…, impact:/uncertainty: (low|medium|high). -author:me leaves out your own.",
+
+  /** search_recipes page (slice 8b): the flat list a qualifier-only search
+   *  returns, paged at a fixed size so the roster takes no size parameter
+   *  (recipe ded7f5ed). Trimmed to fit the shared-description total
+   *  (untrimmed text in docs/briefing-specs/expanded/slice8b.md). */
+  searchPage:
+    "From 1. No bare text: a flat list of every match, 50 per page; newest judgment first, " +
+    "triage order for is:draft, latest change first for changed-after:.",
 
   /** Deprecated legacy levers — kept in schema so existing callers stay
    *  honored (the SDK strips unknown keys silently, which would recreate the
