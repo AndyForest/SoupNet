@@ -19,3 +19,4 @@ export * from "./unknown-params";
 export * from "./organizations";
 export * from "./sharing-policy";
 export * from "./admin-columns";
+export * from "./org-activity";

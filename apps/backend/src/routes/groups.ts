@@ -1,4 +1,6 @@
 import { Hono } from "hono";
+import type { Context } from "hono";
+import { sharingRefusalMessage } from "@soupnet/domain";
 import { z } from "zod";
 import { getDb } from "../db";
 import { requireAuth, requireVerifiedEmail } from "../auth";
@@ -21,10 +23,18 @@ import {
   homeOrganizationOf,
   mayCreateBookIn,
   setBookOrgWide,
+  sharingDecisionFor,
+  outboundSharingAllowsInvitation,
 } from "../authz";
 import type { OrgWideRefusal } from "../authz";
 
-const SHARING_BLOCKED_MESSAGE = "An organization's sharing policy doesn't allow this person in this recipe book. Ask one of its admins.";
+/** The one answer for "can't add this email directly": no account, or one its organization keeps out. */
+function noSuchAccount(c: Context<AppEnv>): Response {
+  return c.json({
+    ok: false,
+    error: "Could not add member. The user may not have an account yet — try sending an invitation instead.",
+  }, 404);
+}
 
 const ORG_WIDE_MESSAGES: Record<OrgWideRefusal, string> = {
   not_a_company_book: "Only a recipe book in a company organization can be org-wide.",
@@ -286,19 +296,20 @@ groupsRouter.post("/:id/members", async (c) => {
     SELECT id, email FROM claimnet.users WHERE email = ${normalizeEmail(parsed.data.email)}
   `);
   const target = (targetUser as unknown as Array<{ id: string; email: string }>)[0];
-  if (!target) {
-    return c.json({
-      ok: false,
-      error: "Could not add member. The user may not have an account yet — try sending an invitation instead.",
-    }, 404);
-  }
+  if (!target) return noSuchAccount(c);
 
   // Add to group. Directly-added members default to excluded from daily-link
   // read/write — same anti-spam posture as invite-accept. The new member can
   // opt in on the Groups page.
   const added = await addMember(db, groupId, target.id, parsed.data.role, user.id);
   if (added === "sharing_blocked") {
-    return c.json({ ok: false, error: "sharing_blocked", message: SHARING_BLOCKED_MESSAGE }, 403);
+    const decision = await sharingDecisionFor(db, { bookId: groupId, userId: target.id, actorUserId: user.id });
+    // The person's own organization refusing them (inbound) is that
+    // organization's business: answer as if they had no account here, so the
+    // adder learns nothing about it, and the invitation the answer suggests
+    // reaches them with the reason at accept (CN-P3).
+    if (decision.allowed || decision.refusal === "inbound_blocked") return noSuchAccount(c);
+    return c.json({ ok: false, error: "sharing_blocked", message: sharingRefusalMessage(decision.refusal, "sharer") }, 403);
   }
 
   // Already a member: nothing was written, and this endpoint never changes an
@@ -364,6 +375,14 @@ groupsRouter.post("/:id/invite", async (c) => {
     SELECT email FROM claimnet.users WHERE id = ${user.id}::uuid
   `);
   const inviterEmail = (inviterRow as unknown as Array<{ email: string }>)[0]?.email ?? "";
+
+  // The book's organization's outbound policy, refused here so the inviter
+  // hears it now rather than the invitee at accept (CN-P2). Outbound only:
+  // an invitee's own organization's policy reaches the invitee at accept.
+  const sharing = await outboundSharingAllowsInvitation(db, { bookId: groupId, email: inviteeEmail, actorUserId: user.id });
+  if (!sharing.allowed) {
+    return c.json({ ok: false, error: "sharing_blocked", message: sharingRefusalMessage(sharing.refusal, "sharer") }, 403);
+  }
 
   // Expire any existing pending invitation for this email+group (idempotent).
   // Stamped a minute in the past, not NOW(): liveness is `expires_at > NOW()`
