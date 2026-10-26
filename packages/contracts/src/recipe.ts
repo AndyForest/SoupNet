@@ -469,8 +469,28 @@ export type CheckResponse = z.infer<typeof CheckResponseSchema>;
 // generator itself. Every field description above is embedded verbatim —
 // external consumers validate against exactly what the builders are typed
 // against.
+//
+// zod's own JSON Schema output (draft-07), kept in the layout these documents
+// have always had: the root is `{ "$ref": "#/definitions/<Name>" }` with the
+// schema under `definitions`. zod roots it at the document instead, so its
+// self-references ("#", the recursive Recipe) and its nested definitions are
+// moved under that one name.
 
-import { zodToJsonSchema } from "zod-to-json-schema";
+function publishedJsonSchema(schema: z.ZodType, name: string): Record<string, unknown> {
+  const { $schema, definitions, ...root } = z.toJSONSchema(schema, { target: "draft-7" }) as Record<string, unknown>;
+  const reRoot = (node: unknown): unknown => {
+    if (Array.isArray(node)) return node.map(reRoot);
+    if (typeof node !== "object" || node === null) return node;
+    return Object.fromEntries(
+      Object.entries(node).map(([k, v]) => [k, k === "$ref" && v === "#" ? `#/definitions/${name}` : reRoot(v)]),
+    );
+  };
+  return {
+    $ref: `#/definitions/${name}`,
+    definitions: { [name]: reRoot(root), ...(reRoot(definitions ?? {}) as Record<string, unknown>) },
+    $schema,
+  };
+}
 
-export const recipeJsonSchema = zodToJsonSchema(RecipeSchema, "Recipe");
-export const checkResponseJsonSchema = zodToJsonSchema(CheckResponseSchema, "CheckResponse");
+export const recipeJsonSchema = publishedJsonSchema(RecipeSchema, "Recipe");
+export const checkResponseJsonSchema = publishedJsonSchema(CheckResponseSchema, "CheckResponse");

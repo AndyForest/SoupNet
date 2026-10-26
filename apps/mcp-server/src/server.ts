@@ -145,62 +145,64 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
 
   // ── check_recipe tool ──────────────────────────────────────────────────────────
 
-  server.tool(
+  server.registerTool(
     "check_recipe",
-    buildCheckRecipeToolDescription({ includeFileAttachment: false }),
     {
-      recipe: z.string().describe(MCP_PARAM_DESCRIPTIONS.recipe),
-      supporting_evidence: z.string().describe(MCP_PARAM_DESCRIPTIONS.supportingEvidence),
-      verbosity: z.enum(VERBOSITY_LEVELS).optional().describe(MCP_PARAM_DESCRIPTIONS.verbosity),
-      // Deprecated size levers — kept in schema so existing callers stay
-      // honored (mirrors routes/mcp.ts on the HTTP surface).
-      clusters: z.number().optional().describe(MCP_PARAM_DESCRIPTIONS.clusters),
-      max_chars: z.number().optional().describe(MCP_PARAM_DESCRIPTIONS.maxChars),
-      decided_at: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.decidedAt),
-      // No SDK-level outputSchema — see the HTTP MCP route (routes/mcp.ts):
-      // declaring one would force structuredContent onto every response,
-      // violating the one-format-per-response rule.
-      response_format: z.enum(["markdown", "structured"]).optional().describe(MCP_PARAM_DESCRIPTIONS.responseFormat),
-      known_recipes: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.knownRecipes),
-      session_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.sessionId),
-      intent: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.intent),
-      agent_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.agentId),
-      synthesize: z.boolean().optional().describe(MCP_PARAM_DESCRIPTIONS.synthesize),
-      // Triage ratings (slice 1) — plain strings so an unrecognized value
-      // reaches the backend and becomes a notice, never an SDK error that
-      // costs the check (mirrors routes/mcp.ts).
-      // A wrong JSON type (impact: 3) is forwarded as its JSON text, so it
-      // too becomes a notice rather than an SDK error.
-      impact: ratingParam(MCP_PARAM_DESCRIPTIONS.impact),
-      uncertainty: ratingParam(MCP_PARAM_DESCRIPTIONS.uncertainty),
-      // Draft (slice 2): served as a boolean; a wrong-type value is forwarded
-      // for the backend's lenient parser rather than failing the check.
-      draft: z.boolean().optional().catch((ctx) => ctx.input as boolean | undefined).describe(MCP_PARAM_DESCRIPTIONS.draft),
-      // On behalf of (slice 4): forwarded as given; the backend decides who
-      // may be named and refuses everything else with one uniform answer.
-      on_behalf_of: z.string().optional().catch((ctx) => ctx.input as string | undefined).describe(MCP_PARAM_DESCRIPTIONS.onBehalfOf),
-      // Rows take log_feedback's fields; the description points there instead
-      // of repeating the per-field schema (slice 1, S1-Z4). A record, not a
-      // bare object, so the SDK keeps every field for the /feedback forward.
-      // A non-object row passes through (`.catch`) so /feedback gives it a
-      // per-row marker instead of the SDK failing the whole check.
-      feedback: z.array(z.record(z.unknown()).catch((ctx) => ctx.input as Record<string, unknown>)).optional().describe(MCP_PARAM_DESCRIPTIONS.feedbackParam),
-      file: z.string().optional().describe(
-        "Optional file to attach as reference evidence (multimodal embedding). " +
-        "Local file path (e.g., 'docs/screenshot.png') or URL. " +
-        "Supports: images (PNG/JPEG/WebP), video (MP4/MOV ≤120s), audio (MP3/WAV/FLAC/OGG), PDF (≤6 pages)."
-      ),
-    },
-    {
-      title: "Recipe check",
-      // Append-only trace as a side effect — not read-only, but not destructive either.
-      // The remote server's annotation rule (docs/connectors/openai-plugin.md).
-      // Closed-world here: stdio attaches a local file, never a URL. The
-      // backend dedups an identical recipe, so a re-fire is idempotent.
-      readOnlyHint: false,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: false,
+      description: buildCheckRecipeToolDescription({ includeFileAttachment: false }),
+      inputSchema: z.strictObject({
+        recipe: z.string().describe(MCP_PARAM_DESCRIPTIONS.recipe),
+        supporting_evidence: z.string().describe(MCP_PARAM_DESCRIPTIONS.supportingEvidence),
+        verbosity: z.enum(VERBOSITY_LEVELS).optional().describe(MCP_PARAM_DESCRIPTIONS.verbosity),
+        // Deprecated size levers — kept in schema so existing callers stay
+        // honored (mirrors routes/mcp.ts on the HTTP surface).
+        clusters: z.number().optional().describe(MCP_PARAM_DESCRIPTIONS.clusters),
+        max_chars: z.number().optional().describe(MCP_PARAM_DESCRIPTIONS.maxChars),
+        decided_at: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.decidedAt),
+        // No SDK-level outputSchema — see the HTTP MCP route (routes/mcp.ts):
+        // declaring one would force structuredContent onto every response,
+        // violating the one-format-per-response rule.
+        response_format: z.enum(["markdown", "structured"]).optional().describe(MCP_PARAM_DESCRIPTIONS.responseFormat),
+        known_recipes: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.knownRecipes),
+        session_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.sessionId),
+        intent: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.intent),
+        agent_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.agentId),
+        synthesize: z.boolean().optional().describe(MCP_PARAM_DESCRIPTIONS.synthesize),
+        // Triage ratings (slice 1) — plain strings so an unrecognized value
+        // reaches the backend and becomes a notice, never an SDK error that
+        // costs the check (mirrors routes/mcp.ts).
+        // A wrong JSON type (impact: 3) is forwarded as its JSON text, so it
+        // too becomes a notice rather than an SDK error.
+        impact: ratingParam(MCP_PARAM_DESCRIPTIONS.impact),
+        uncertainty: ratingParam(MCP_PARAM_DESCRIPTIONS.uncertainty),
+        // Draft (slice 2): served as a boolean; a wrong-type value is forwarded
+        // for the backend's lenient parser rather than failing the check.
+        draft: z.boolean().optional().catch((ctx) => ctx?.input as boolean | undefined).describe(MCP_PARAM_DESCRIPTIONS.draft),
+        // On behalf of (slice 4): forwarded as given; the backend decides who
+        // may be named and refuses everything else with one uniform answer.
+        on_behalf_of: z.string().optional().catch((ctx) => ctx?.input as string | undefined).describe(MCP_PARAM_DESCRIPTIONS.onBehalfOf),
+        // Rows take log_feedback's fields; the description points there instead
+        // of repeating the per-field schema (slice 1, S1-Z4). A record, not a
+        // bare object, so the SDK keeps every field for the /feedback forward.
+        // A non-object row passes through (`.catch`) so /feedback gives it a
+        // per-row marker instead of the SDK failing the whole check.
+        feedback: z.array(z.record(z.string(), z.unknown()).catch((ctx) => ctx?.input as Record<string, unknown>)).optional().describe(MCP_PARAM_DESCRIPTIONS.feedbackParam),
+        file: z.string().optional().describe(
+          "Optional file to attach as reference evidence (multimodal embedding). " +
+          "Local file path (e.g., 'docs/screenshot.png') or URL. " +
+          "Supports: images (PNG/JPEG/WebP), video (MP4/MOV ≤120s), audio (MP3/WAV/FLAC/OGG), PDF (≤6 pages)."
+        ),
+      }),
+      annotations: {
+        title: "Recipe check",
+        // Append-only trace as a side effect — not read-only, but not destructive either.
+        // The remote server's annotation rule (docs/connectors/openai-plugin.md).
+        // Closed-world here: stdio attaches a local file, never a URL. The
+        // backend dedups an identical recipe, so a re-fire is idempotent.
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
     },
     async ({ recipe, supporting_evidence, verbosity, clusters, max_chars, decided_at, response_format, known_recipes, session_id, intent, agent_id, synthesize, impact, uncertainty, draft, on_behalf_of, feedback, file }) => {
       if (!apiKey) {
@@ -369,29 +371,31 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
   // for the audit row's surface; own recipes are included on every surface
   // (recipe 885143c2, superseding the exclude-own default of 303e17cf).
 
-  server.tool(
+  server.registerTool(
     "search_recipes",
-    MCP_TOOL_DESCRIPTIONS.searchRecipes,
     {
-      query: z.string().describe(MCP_PARAM_DESCRIPTIONS.searchQuery),
-      // Slice 8b: the flat list's page; an integer from 1, refused otherwise.
-      page: z.number().int().min(1).optional().describe(MCP_PARAM_DESCRIPTIONS.searchPage),
-      verbosity: z.enum(VERBOSITY_LEVELS).optional().describe(MCP_PARAM_DESCRIPTIONS.verbosity),
-      response_format: z.enum(["markdown", "structured"]).optional().describe(MCP_PARAM_DESCRIPTIONS.responseFormat),
-      known_recipes: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.knownRecipes),
-      session_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.sessionId),
-      intent: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.intent),
-      agent_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.agentId),
-      read_recipe_books: z.string().optional().describe(
-        "Comma-separated recipe-book slugs to restrict result scope. Default: all readable books."
-      ),
-    },
-    {
-      title: "Recipe search",
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: false,
+      description: MCP_TOOL_DESCRIPTIONS.searchRecipes,
+      inputSchema: z.strictObject({
+        query: z.string().describe(MCP_PARAM_DESCRIPTIONS.searchQuery),
+        // Slice 8b: the flat list's page; an integer from 1, refused otherwise.
+        page: z.number().int().min(1).optional().describe(MCP_PARAM_DESCRIPTIONS.searchPage),
+        verbosity: z.enum(VERBOSITY_LEVELS).optional().describe(MCP_PARAM_DESCRIPTIONS.verbosity),
+        response_format: z.enum(["markdown", "structured"]).optional().describe(MCP_PARAM_DESCRIPTIONS.responseFormat),
+        known_recipes: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.knownRecipes),
+        session_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.sessionId),
+        intent: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.intent),
+        agent_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.agentId),
+        read_recipe_books: z.string().optional().describe(
+          "Comma-separated recipe-book slugs to restrict result scope. Default: all readable books."
+        ),
+      }),
+      annotations: {
+        title: "Recipe search",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
     },
     async ({ query, page, verbosity, response_format, known_recipes, session_id, intent, agent_id, read_recipe_books }) => {
       if (!apiKey) {
@@ -452,49 +456,51 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
   // path). Flat single-row params; batching lives on check_recipe's feedback
   // param.
 
-  server.tool(
+  server.registerTool(
     "log_feedback",
-    MCP_TOOL_DESCRIPTIONS.logFeedback,
     {
-      trace_id: z.string().optional().describe(
-        "Recipe id of the prior check — the full UUID from the check response, or an unambiguous short-id prefix (8+ chars, e.g. '18912fbd'). Ambiguous prefixes are rejected naming the candidates. One target per row: trace_id, search_id or briefing_id; an outcome row may give intent_id alone."
-      ),
-      search_id: z.string().optional().describe(
-        "searchId of a prior search_recipes call (full UUID from its response) — feedback about what a search surfaced and what you did with it."
-      ),
-      briefing_id: z.string().optional().describe(
-        "briefingId a get_briefing response returned (full UUID) — feedback about the briefing itself."
-      ),
-      kind: z.string().describe("check-feedback | operational | outcome"),
-      impact: z.string().describe("none | new | subtle | big | operational"),
-      disposition: z.string().describe("proceeded | corrected | asked-human | charted-new | deferred"),
-      story_fulfilled: z.string().describe("yes | partial | no | unknown"),
-      story: z.string().describe(
-        "Required on every row. The user story behind the check — why it was made (e.g. 'As an AI sub-agent working on X, I wanted Y so that Z')."
-      ),
-      note: z.string().optional().describe("What you did with the result — how it changed (or confirmed) your approach."),
-      agent_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.agentId),
-      top_similarity: z.number().optional().describe("Top similarity the check returned (0-1), as you saw it."),
-      model: z.string().optional().describe("Your model id (e.g. 'claude-fable-5')."),
-      harness: z.string().optional().describe("Your harness (e.g. 'claude-code', 'codex')."),
-      harness_version: z.string().optional().describe("Harness version, if known."),
-      related_trace_ids: z.array(z.string()).optional().describe(
-        "Lineage links — recipe UUIDs in the same arc (e.g. the recipe that changed the action and the trace that logged the new decision). Full UUIDs only — short-id prefixes are not resolved here."
-      ),
-      session_id: z.string().optional().describe(
-        "The session token from your check responses — joins your feedback to that session's check lineage. Capture only."
-      ),
-      intent_id: z.string().optional().describe(
-        "The int_… id from a prior response — joins this row to that declared intent; on an outcome row it may be the only target. Never registers: send intent TEXT on a check/search/briefing instead."
-      ),
-    },
-    {
-      title: "Log feedback",
-      // The backend dedups an identical row, as on the remote server.
-      readOnlyHint: false,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: false,
+      description: MCP_TOOL_DESCRIPTIONS.logFeedback,
+      inputSchema: z.strictObject({
+        trace_id: z.string().optional().describe(
+          "Recipe id of the prior check — the full UUID from the check response, or an unambiguous short-id prefix (8+ chars, e.g. '18912fbd'). Ambiguous prefixes are rejected naming the candidates. One target per row: trace_id, search_id or briefing_id; an outcome row may give intent_id alone."
+        ),
+        search_id: z.string().optional().describe(
+          "searchId of a prior search_recipes call (full UUID from its response) — feedback about what a search surfaced and what you did with it."
+        ),
+        briefing_id: z.string().optional().describe(
+          "briefingId a get_briefing response returned (full UUID) — feedback about the briefing itself."
+        ),
+        kind: z.string().describe("check-feedback | operational | outcome"),
+        impact: z.string().describe("none | new | subtle | big | operational"),
+        disposition: z.string().describe("proceeded | corrected | asked-human | charted-new | deferred"),
+        story_fulfilled: z.string().describe("yes | partial | no | unknown"),
+        story: z.string().describe(
+          "Required on every row. The user story behind the check — why it was made (e.g. 'As an AI sub-agent working on X, I wanted Y so that Z')."
+        ),
+        note: z.string().optional().describe("What you did with the result — how it changed (or confirmed) your approach."),
+        agent_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.agentId),
+        top_similarity: z.number().optional().describe("Top similarity the check returned (0-1), as you saw it."),
+        model: z.string().optional().describe("Your model id (e.g. 'claude-fable-5')."),
+        harness: z.string().optional().describe("Your harness (e.g. 'claude-code', 'codex')."),
+        harness_version: z.string().optional().describe("Harness version, if known."),
+        related_trace_ids: z.array(z.string()).optional().describe(
+          "Lineage links — recipe UUIDs in the same arc (e.g. the recipe that changed the action and the trace that logged the new decision). Full UUIDs only — short-id prefixes are not resolved here."
+        ),
+        session_id: z.string().optional().describe(
+          "The session token from your check responses — joins your feedback to that session's check lineage. Capture only."
+        ),
+        intent_id: z.string().optional().describe(
+          "The int_… id from a prior response — joins this row to that declared intent; on an outcome row it may be the only target. Never registers: send intent TEXT on a check/search/briefing instead."
+        ),
+      }),
+      annotations: {
+        title: "Log feedback",
+        // The backend dedups an identical row, as on the remote server.
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
     },
     async (args) => {
       if (!apiKey) {
@@ -541,21 +547,23 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
   // recipe books, and includes a clustered sample of exemplar recipes. Same
   // artifact as the dashboard's Copy briefing button.
 
-  server.tool(
+  server.registerTool(
     "get_briefing",
-    MCP_TOOL_DESCRIPTIONS.getBriefing,
     {
-      purpose: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.briefingPurpose),
-      intent: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.intent),
-      recipe_ids: recipeIdsParam().optional().describe(MCP_PARAM_DESCRIPTIONS.briefingRecipeIds),
-      verbosity: z.enum(VERBOSITY_LEVELS).optional().describe(MCP_PARAM_DESCRIPTIONS.briefingVerbosity),
-    },
-    {
-      title: "Get briefing",
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: false,
+      description: MCP_TOOL_DESCRIPTIONS.getBriefing,
+      inputSchema: z.strictObject({
+        purpose: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.briefingPurpose),
+        intent: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.intent),
+        recipe_ids: recipeIdsParam().optional().describe(MCP_PARAM_DESCRIPTIONS.briefingRecipeIds),
+        verbosity: z.enum(VERBOSITY_LEVELS).optional().describe(MCP_PARAM_DESCRIPTIONS.briefingVerbosity),
+      }),
+      annotations: {
+        title: "Get briefing",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
     },
     async ({ purpose, intent, recipe_ids, verbosity }) => {
       if (!apiKey) {
@@ -603,20 +611,22 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
   // Proxies to POST /recipes/:id/verify — same service, same rules, same
   // uniform not-found answer as the remote tool. The reply is worded by the
   // same domain function the remote tool uses, so both say the same words.
-  server.tool(
+  server.registerTool(
     "verify_draft",
-    MCP_TOOL_DESCRIPTIONS.verifyDraft,
     {
-      recipe_id: z.string().describe(MCP_PARAM_DESCRIPTIONS.draftRecipeId),
-      supporting_evidence: z.string().describe(MCP_PARAM_DESCRIPTIONS.verificationEvidence),
-      outcome: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.draftOutcome),
-    },
-    {
-      title: "Resolve a draft",
-      readOnlyHint: false,
-      destructiveHint: true,
-      idempotentHint: false,
-      openWorldHint: false,
+      description: MCP_TOOL_DESCRIPTIONS.verifyDraft,
+      inputSchema: z.strictObject({
+        recipe_id: z.string().describe(MCP_PARAM_DESCRIPTIONS.draftRecipeId),
+        supporting_evidence: z.string().describe(MCP_PARAM_DESCRIPTIONS.verificationEvidence),
+        outcome: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.draftOutcome),
+      }),
+      annotations: {
+        title: "Resolve a draft",
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
     },
     async ({ recipe_id, supporting_evidence, outcome }) => {
       if (!apiKey) {
@@ -645,18 +655,20 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
     },
   );
 
-  server.tool(
+  server.registerTool(
     "get_recipes",
-    MCP_TOOL_DESCRIPTIONS.getRecipes,
     {
-      recipe_ids: recipeIdsParam().describe(MCP_PARAM_DESCRIPTIONS.recipeIds),
-    },
-    {
-      title: "Get recipes by id",
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: false,
+      description: MCP_TOOL_DESCRIPTIONS.getRecipes,
+      inputSchema: z.strictObject({
+        recipe_ids: recipeIdsParam().describe(MCP_PARAM_DESCRIPTIONS.recipeIds),
+      }),
+      annotations: {
+        title: "Get recipes by id",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
     },
     async ({ recipe_ids }) => {
       if (!apiKey) {
