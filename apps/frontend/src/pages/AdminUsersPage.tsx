@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import type { ReactNode } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { authFetch } from "../auth.js";
 import {
   AdminLayout,
@@ -11,10 +12,10 @@ import {
   AdminField,
   AdminTextInput,
   AdminSelect,
-  AdminTable,
+  AdminUsersTable,
   AdminPagination,
   useAdminGate,
-  type AdminColumn,
+  useAdminListQuery,
   type AdminStatus,
 } from "../components/admin/index.js";
 
@@ -58,12 +59,6 @@ interface StatsResponse {
 
 const PAGE_SIZE = 50;
 
-function fmtDate(iso: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  return d.toLocaleDateString() + " " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
-
 function userStatus(u: AdminUser): { status: AdminStatus; label: string } {
   if (u.suspendedAt) return { status: "error", label: "Suspended" };
   if (u.waitlistedAt) return { status: "warning", label: "Waitlisted" };
@@ -95,26 +90,19 @@ export function AdminUsersPage() {
   params.set("limit", String(PAGE_SIZE));
   params.set("offset", String(offset));
 
-  const usersQuery = useQuery({
-    queryKey: ["admin", "users", params.toString()],
-    queryFn: async () => {
-      const res = await authFetch(`/admin/users?${params.toString()}`);
-      const json = (await res.json()) as { ok: boolean; data?: UsersResponse; error?: string };
-      if (!json.ok || !json.data) throw new Error(json.error ?? "Failed to load users");
-      return json.data;
-    },
+  const usersQuery = useAdminListQuery<UsersResponse>({
+    queryKey: ["admin", "users"],
+    path: "/admin/users",
+    params,
     enabled: isAdmin,
+    failure: "Failed to load users",
   });
 
-  const statsQuery = useQuery({
+  const statsQuery = useAdminListQuery<StatsResponse>({
     queryKey: ["admin", "stats"],
-    queryFn: async () => {
-      const res = await authFetch("/admin/stats");
-      const json = (await res.json()) as { ok: boolean; data?: StatsResponse; error?: string };
-      if (!json.ok || !json.data) throw new Error(json.error ?? "Failed to load stats");
-      return json.data;
-    },
+    path: "/admin/stats",
     enabled: isAdmin,
+    failure: "Failed to load stats",
   });
 
   // Assign / revoke premium. Mirrors the Signups page Approve mutation:
@@ -137,107 +125,50 @@ export function AdminUsersPage() {
 
   if (gate) return gate;
 
-  const columns: AdminColumn<AdminUser>[] = [
-    {
-      key: "email",
-      header: "Email",
-      sortable: true,
-      render: (u) => (
-        <span style={{ fontFamily: "'Space Grotesk', sans-serif" }}>{u.email}</span>
-      ),
+  // The site operator's view of every account (CN-G3). Headers keep the
+  // page's existing titles; the columns themselves come from the domain set.
+  const render: Partial<Record<string, (u: AdminUser) => ReactNode>> = {
+    email: (u) => <span style={{ fontFamily: "'Space Grotesk', sans-serif" }}>{u.email}</span>,
+    status: (u) => {
+      const s = userStatus(u);
+      return <AdminStatusDot status={s.status} label={s.label} />;
     },
-    {
-      key: "status",
-      header: "Status",
-      render: (u) => {
-        const s = userStatus(u);
-        return <AdminStatusDot status={s.status} label={s.label} />;
-      },
-    },
-    {
-      key: "role",
-      header: "Role",
-      render: (u) => (
-        <span
-          style={{
-            fontFamily: "'Space Grotesk', sans-serif",
-            fontSize: "0.7rem",
-            textTransform: "uppercase",
-            letterSpacing: "0.06em",
-            color: u.role === "system" ? "#89CEFF" : "var(--color-on-surface-variant)",
-          }}
-        >
-          {u.role}
+    role: (u) => (
+      <span
+        style={{
+          fontFamily: "'Space Grotesk', sans-serif",
+          fontSize: "0.7rem",
+          textTransform: "uppercase",
+          letterSpacing: "0.06em",
+          color: u.role === "system" ? "#89CEFF" : "var(--color-on-surface-variant)",
+        }}
+      >
+        {u.role}
+      </span>
+    ),
+    premiumAt: (u) => {
+      const isPremium = u.premiumAt !== null;
+      return (
+        <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-sm)" }}>
+          <AdminStatusDot
+            status={isPremium ? "healthy" : "idle"}
+            label={isPremium ? "Premium" : "—"}
+          />
+          <button
+            className="btn-secondary"
+            disabled={premiumMutation.isPending}
+            title={isPremium
+              ? "Revoke premium — disables server-side LLM features for this user"
+              : "Grant premium — unlocks the opt-in server-side LLM features"}
+            onClick={() => premiumMutation.mutate({ userId: u.id, premium: !isPremium })}
+            style={{ fontSize: "0.7rem", padding: "0.15rem 0.5rem" }}
+          >
+            {isPremium ? "Revoke" : "Grant"}
+          </button>
         </span>
-      ),
+      );
     },
-    {
-      key: "premium",
-      header: "Premium",
-      render: (u) => {
-        const isPremium = u.premiumAt !== null;
-        return (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-sm)" }}>
-            <AdminStatusDot
-              status={isPremium ? "healthy" : "idle"}
-              label={isPremium ? "Premium" : "—"}
-            />
-            <button
-              className="btn-secondary"
-              disabled={premiumMutation.isPending}
-              title={isPremium
-                ? "Revoke premium — disables server-side LLM features for this user"
-                : "Grant premium — unlocks the opt-in server-side LLM features"}
-              onClick={() => premiumMutation.mutate({ userId: u.id, premium: !isPremium })}
-              style={{ fontSize: "0.7rem", padding: "0.15rem 0.5rem" }}
-            >
-              {isPremium ? "Revoke" : "Grant"}
-            </button>
-          </span>
-        );
-      },
-    },
-    {
-      key: "createdAt",
-      header: "Created",
-      sortable: true,
-      render: (u) => (
-        <span style={{ color: "var(--color-on-surface-variant)" }}>{fmtDate(u.createdAt)}</span>
-      ),
-    },
-    {
-      key: "lastLoginAt",
-      header: "Last login",
-      sortable: true,
-      render: (u) => (
-        <span style={{ color: "var(--color-on-surface-variant)" }}>{fmtDate(u.lastLoginAt)}</span>
-      ),
-    },
-    {
-      key: "activeKeyCount",
-      header: "Keys",
-      align: "right",
-      render: (u) => (
-        <span style={{ fontFamily: "'Space Grotesk', sans-serif" }}>{u.activeKeyCount}</span>
-      ),
-    },
-    {
-      key: "recipeCount",
-      header: "Recipes",
-      align: "right",
-      render: (u) => (
-        <span style={{ fontFamily: "'Space Grotesk', sans-serif" }}>{u.recipeCount}</span>
-      ),
-    },
-    {
-      key: "groupCount",
-      header: "Recipe books",
-      align: "right",
-      render: (u) => (
-        <span style={{ fontFamily: "'Space Grotesk', sans-serif" }}>{u.groupCount}</span>
-      ),
-    },
-  ];
+  };
 
   const total = usersQuery.data?.total ?? 0;
   const rows = usersQuery.data?.users ?? [];
@@ -351,10 +282,14 @@ export function AdminUsersPage() {
           </div>
         ) : (
           <>
-            <AdminTable
+            <AdminUsersTable
+              viewer="site"
+              listing="all"
+              show={["email", "status", "role", "premiumAt", "createdAt", "lastLoginAt", "activeKeyCount", "recipeCount", "groupCount"]}
               rows={rows}
-              columns={columns}
-              rowKey={(u) => u.id}
+              render={render}
+              headers={{ role: "Role", premiumAt: "Premium", activeKeyCount: "Keys", groupCount: "Recipe books" }}
+              sortable={["email", "createdAt", "lastLoginAt"]}
               sortBy={sortBy}
               sortDir={sortDir}
               onSortChange={(nextBy, nextDir) => {
