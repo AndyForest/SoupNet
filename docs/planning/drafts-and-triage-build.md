@@ -2927,6 +2927,40 @@ Written by the builder for the verifier; the verification record is the verifier
 
 **Gate:** `TESTCI_PGPORT=5611 npm run test:ci` passed on the final tree: 2,232 tests passed and 6 skipped (148 files, 2 skipped), the authz seam held, and the golden-set ranking eval's 9 thresholds were green. Of two earlier runs on earlier trees, the first failed only S3-A7 (the parameter pin, updated above). The second passed every test that reported (2,217) and then failed on the known Windows worker crash (backlog, "Worker exited unexpectedly").
 
+#### Slice 8b items 1 and 2 verification record
+
+Independent verifier: the round's verification coordinator (a fork of the claimNet planning session, agent `a-verify-coordinator-2026-10-26`, Soup.net intent `int_eIvjehx2hEQT5MddCrYY20CV`). Not the builder. Branch `drafts/8b-flat-list`, PR #154, checked out detached in `SoupNet-wt/verify-e`; isolated gate on `TESTCI_PGPORT=5906`. Rubric: "Slice 8b items 1 and 2 rubric" in `docs/planning/drafts-and-triage-build.md` on the branch, with its four build-time amendments. Read in full: `services/recipe-list.service.ts`, `services/search-selection.ts` (the new selections and `changedAtSql`), the `trace.service.ts` hunks, `lib/flat-list-fields.ts`, the `check.ts` and `mcp.ts` hunks, `apps/mcp-server/src/server.ts`, `check-response-renderer.ts`, `search-query.ts`, the description text, `result-enricher.ts`, and the new test names (9 Layer 3 in `flat-list.test.ts`, 7 grammar, 8 renderer, 6 list helpers, 1 stdio).
+
+**Result:** accept; verified end to end (every row pass; isolated gate exit 0)
+
+| Row | Grade | Evidence |
+|---|---|---|
+| S8b-L1 | pass | `searchWithoutLogging` takes `listRecipesFlat` whenever the parsed query has no semantic text; the response carries `listOrder`, `perPage`, `clustered: false`, rows with id, claim, book, judgment date, `loggedAt`, `changedAt` and the viewer's own draft label; no evidence (`enrichResults` with `evidence: false`, no cluster evidence). Layer 3 on MCP structured and markdown, `/check` JSON and HTML. |
+| S8b-L2 | pass | Fixed page size 50; every order ends in `t.id ASC`; count and page share one `WHERE`; a page past the end returns no rows and the end line (`flatListPageLine`). Layer 3 over 120 recipes. |
+| S8b-L3 | pass | `triageOrderSql("t")` for `is:draft` and `is:expired`; Layer 3 compares with `GET /traces/drafts` for drafts with no intent (the queue's intent grouping is the person's page, as the notes say). |
+| S8b-L4 | pass | `listRecipesFlat` composes `inBooks` and `traceVisibleTo` with the search's structured predicates for both the count and the rows (RP-03); the audience includes expired drafts only on `is:expired`; `recipe-list.service.ts` and `search-selection.ts` are registered in the seam check with their reasons. Layer 3 with Sam's draft, a rejected draft and an out-of-scope book. |
+| S8b-L5 | pass | `searchShownIds` is empty for a listing, so neither `session_shown` nor `intent_shown` is written; known recipes are rendered in full, never stubbed; the `check.searched` audit row still gives the `searchId`. Layer 3. |
+| S8b-L6 | pass | The ranked path is untouched except for the `page` pass-through; the ranking-isolation guard gains the since terms; the gate's ranking fixtures decide it. |
+| S8b-C1 | pass | `createdAfterSelection`: `created_at >= t`; Layer 3 for a date and a datetime on both paths. |
+| S8b-C2 | pass | `changedAtSql`: `GREATEST(created_at, updated_at, max(check_feedback.created_at), max(trace_reactions.updated_at))`, NULLs skipped; `changedAfterSelection` over it; the changed order is `changedAt DESC, id`; a rejected draft is excluded by `traceVisibleTo` before any time test, as the amended row says. Layer 3 covers a verification, a move, a feedback row and a reaction. The disclosure reasoning (every feedback row and its date is already on the recipe's page for any reader) holds. |
+| S8b-C3 | pass | Both qualifiers in the allowlist and the help text; one strict ISO value, no negation, no second value, no group; a parenthetical keeps the group reading. 7 Layer 1 cases. |
+| S8b-C4 | pass | Both selections live in `search-selection.ts`; the ranking-isolation test gains a case per ranking file for the since terms and the changed time; the mutation check is recorded in the build notes. |
+| S8b-P1 | pass | `page: z.number().int().min(1).optional()` on both servers; the stdio proxy forwards it to `/check` and refuses a bad value; `/check` clamps and floors (`clampFlatListPage`, capped at 100,000 so no OFFSET overflows). Layer 3 and Layer 1. |
+| S8b-B1 | pass | Remote `tools/list` 17,904 of 18,200, stdio 14,407 of 14,700, shared descriptions 6,593 of 6,600, `searchQuery` within 420 (the "(your intent's recipes)" clause trimmed with the untrimmed text kept in `docs/briefing-specs/expanded/slice8b.md`, under the question 56 rule); no cap moved. Stream T re-measures after this merges. |
+| S8b-D1 | pass | `recipe-search-design.md` rows, `CLAUDE.md`'s qualifier list, the expanded briefing text, the decision-log entry and a sweep scenario in `drafts-and-triage.feature` are in the diff. |
+
+The four build-time amendments (`searchMode` stays `"lexical"` with `listOrder` marking the list; `loggedAt` as the deposit time; ratings only on the viewer's own drafts per S3-AG2; a rejected draft cannot be listed by `changed-after:`) are each graded as amended; each keeps an earlier security property or a reader's contract rather than loosening one.
+
+**Observations, none blocking**
+
+1. **Cost of the changed order**: `changedAtSql` runs two correlated subqueries per candidate row, in the `WHERE` for `changed-after:` and in the `ORDER BY` for the changed order, over the whole filtered set before `LIMIT`. Both subqueries use their table's `trace_id` index, so this is fine at today's corpus sizes; a sweep over a very large book with `changed-after:` far in the past is the case to watch. A materialised `changed_at` column is the lever if it ever matters.
+2. **Two statements per page** (count, then rows). Deliberate and cheap; noted so nobody later folds them into a window function without keeping the one shared `WHERE`.
+3. **`page` on a ranked search** behaves as `/check`'s `page` does today, as the rubric says; the markdown renderer still prints no page line for ranked results, which is the right asymmetry.
+
+**Gate**
+
+Coordinator's isolated gate at 0ce8de6 (`TESTCI_PGPORT=5906`): exit 0. Typecheck, lint, data-model and the authz seam passed; vitest **2,232 tests passed, 6 skipped, 0 failed**; the golden-set ranking eval reports all 9 thresholds green, which is S8b-L6's proof that the ranked path is unchanged. Stream B's 8b items 1 and 2 are verified end to end from this role; the branch merges before plugin stream T, which re-measures the tool-list caps after the `page` parameter lands.
+
 ### Slice 6b rubric: option sets (stream G, after 6c and 6a merge)
 
 ### Slice 10 rubric: drafts as a bus (stream A)

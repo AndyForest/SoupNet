@@ -140,6 +140,10 @@ The cold-start program for fresh agent sessions on a rich corpus (design rulings
 
 From [planning/drafts-and-triage-slices-6-7-revision.md](planning/drafts-and-triage-slices-6-7-revision.md) (ratified 2026-10-24). Three small items the plan sends here rather than into a slice: the drill-down hint says "re-check with this recipe text", which sends a reader to the write path (it should say "search with this text"); a response can print two similarity figures for one pair (claim-to-claim and evidence-to-claim) without saying which is which; and once slices 8b and 6b have merged, re-tighten the four size caps raised by the scaffold PR A0 (remote `tools/list` 18,200; shared descriptions 6,600; thin briefing 21,000; headless thin 21,500) to the measured figures plus the usual slack.
 
+### `[DESIGN]` Watch the cost of `changed-after:` on a large book (slice 8b follow-up)
+
+The changed time (`changedAtSql` in `services/search-selection.ts`) is two correlated subqueries per candidate row, over check_feedback and trace_reactions. Both use their `trace_id` index. With `changed-after:` they run in the `WHERE` and in the changed order's `ORDER BY`, over the whole filtered set before `LIMIT`. That is fine at today's sizes. The case to watch is a sweep over a very large book with a time far in the past. If it ever shows in latency, the lever is a materialised `traces.changed_at`, set wherever `updated_at`, a feedback row or a reaction is written. Two notes for whoever optimises it: the count and the rows must keep sharing one `WHERE` (RP-03), and the column must keep the meaning `CHANGED_AT_DEFINITION` publishes. The verification record of 2026-10-26 (build log, "Slice 8b items 1 and 2 verification record", observations 1 and 2) is the source.
+
 ### `[DESIGN]` Expanded briefing: chunks for ablation, then per-user selection (operator-approved 2026-10-24)
 
 Operator ruling of 2026-10-24 (recipe `a798b93d`). Step 1 is done: [briefing-specs/expanded/](briefing-specs/expanded/README.md) keeps the untrimmed text of every trimmed briefing addition, unserved, starting with slice 7. The remaining steps:
