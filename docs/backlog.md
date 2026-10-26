@@ -349,15 +349,19 @@ Operator note 2026-09-19: ChatGPT plugins are MCP-based now (since July, per ope
 
 Status (2026-10-26): verified against OpenAI's current docs and planned as a round in [planning/openai-plugin-directory.md](planning/openai-plugin-directory.md): three streams (OAuth hardening with audience-bound tokens, CIMD and RFC 9207; the tool contract with annotation justifications and output minimisation; the listing package, skill, Codex marketplace file and connect-page copy), then the operator's portal steps. Research brief with sources in the companion repo.
 
-Status (2026-10-26, later): the three streams are built: the tool contract (#150), OAuth hardening (#152) and the listing package (#151). What remains is the operator's: the steps in the plan's "What the operator does" and the pre-upload notes in [planning/openai-plugin-build/listing.md](planning/openai-plugin-build/listing.md) (reviewer credentials go only into the portal, never the package), and the listing subtitle (draft `3ca50187`). Close this item when the listing is submitted.
+Status (2026-10-26, later): the three streams are built: the tool contract (#150), OAuth hardening (#152) and the listing package (#151). What remains is the operator's: the steps in the plan's "What the operator does" and the pre-upload notes in [planning/openai-plugin-build/listing.md](planning/openai-plugin-build/listing.md) (reviewer credentials go only into the portal, never the package). The subtitle is settled: "Taste and judgment, shared" (`3ca50187`, verified by the operator 2026-10-26), as the package's `shortDescription` already reads. Close this item when the listing is submitted.
 
 ### `[IMPL]` Audit-log retention on account deletion (ruling `1d1531da`)
 
 Ruled 2026-10-26 in the OpenAI plugin round: when an account is deleted, its check-log rows in `audit_log` (`recipe.checked`, `check.searched`, `briefing.issued`) are anonymized rather than deleted, and its account-event rows are kept for a limited period, then deleted. Today nothing deletes or anonymizes `audit_log` rows ("append-only trail outlives the actor", `user-delete.service.ts`). The privacy policy's §8 is worded by criteria ("only as long as needed for security, legal and operational purposes"), which is true before and after this lands, so the PR needs no policy change. Owner: stream T's follow-up PR. Mind the `audit_log.*` FK note under Database: the rows deliberately outlive the actor, so anonymization rewrites the actor columns rather than relying on a cascade.
 
-### `[DECISION NEEDED]` Retention for session display history
+### `[DESIGN]` Retention for session display history (no limit for now, ruled `c293df54`)
 
-`session_shown` rows (which recipes a session's searches and checks displayed, keyed by an opaque session token) are never deleted, not even with the account. Draft `c293df54` asks the operator; the recommendation is no sweep for now, with the policy saying so plainly (it does: "kept as long as needed for operational purposes"). A limit would apply to `session_shown` alone, never `intent_shown`, which slice 9's intent lineage (`intent-read.service.ts`) reads with no time window; a 30-day sweep built and reverted on `plugin/listing-package` (8fc9303) is the starting point if the answer is yes.
+`session_shown` rows (which recipes a check session was shown, keyed by an opaque session token rather than the account) are never deleted, not even with the account. Ruled 2026-10-26 (draft `c293df54`, verified by the operator): no retention limit for now. The privacy policy's §8 already says so by its criteria ("kept as long as needed for operational purposes"), so it stays true either way.
+
+The trade-off: unlimited rows cost storage and keep a longer record of what sessions were shown, against truncating history that the reports and evals may read. Only the stub readers' 7-day look-back (`trace.service.ts`) affects what gets displayed, so a limit well past 7 days wouldn't change any response.
+
+The upgrade path, if storage or a privacy request makes a limit worth having: sweep `session_shown` alone, after checking which reports read sessions historically. `intent_shown` is never swept: slice 9's intent lineage (`intent-read.service.ts`) reads it with no time window, and it already goes with its intent or account by cascade. A 30-day sweep was built and reverted on `plugin/listing-package` (8fc9303), and it is the starting point; bring back its authz-seam fingerprint change with it.
 
 ---
 
