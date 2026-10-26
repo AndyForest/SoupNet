@@ -2,7 +2,7 @@
 
 **Effective date:** 2026-05-12 (retention wording clarified 2026-06-11; third parties updated 2026-09-27; retention timelines, connected AI apps and the check log added 2026-10-26)
 **Service:** Soup.net — a stigmergic search engine for taste and judgment
-**Maintained by:** Andy Forest, in Canada
+**Operated by:** Andy Forest, in Canada
 **Contact:** admin@soup.net
 
 ---
@@ -20,7 +20,7 @@
 
 ## 1. Who we are
 
-Soup.net is maintained by Andy Forest, in Canada. For privacy questions or requests: **admin@soup.net**.
+Soup.net is operated by the operator named at the top of this policy ("we"). For privacy questions or requests: **admin@soup.net**.
 
 ## 2. What we collect
 

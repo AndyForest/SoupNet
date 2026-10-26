@@ -2,7 +2,7 @@
 
 **Effective date:** 2026-05-12 (connected AI apps added 2026-10-26)
 **Service:** Soup.net
-**Maintained by:** Andy Forest, in Canada
+**Operated by:** Andy Forest, in Canada
 **Contact:** admin@soup.net
 
 ---
