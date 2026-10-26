@@ -4,6 +4,10 @@
  *
  * JWT-auth + verified-email required, matching the rest of the JWT-authed
  * router family (keys, traces, recipe-books).
+ *
+ * GET /me/intents/:id is the web intent page's data (drafts-and-triage slice
+ * 9): the same service as the agent's GET /intents/:id, read by the person's
+ * rule instead of a key's scope.
  */
 import { Hono } from "hono";
 import { sql } from "drizzle-orm";
@@ -15,6 +19,9 @@ import {
   mergeUserPreferences,
   applyPreferencesPatch,
 } from "@soupnet/domain";
+import { bookIdsFor } from "../authz";
+import { parseReportQuery } from "../services/report-params";
+import { getIntent } from "../services/intent-read.service";
 
 const me = new Hono<AppEnv>();
 
@@ -67,6 +74,20 @@ me.patch("/preferences", async (c) => {
   `);
 
   return c.json({ ok: true, data: mergeUserPreferences(updated) });
+});
+
+// GET /me/intents/:id — one of the person's intents and a page of its
+// lineage, for /app/intents/:id. Another person's intent, a missing one, and a
+// malformed id are the same 404 (S9-W2).
+me.get("/intents/:id", async (c) => {
+  const user = c.get("user");
+  const db = getDb();
+  const parsed = parseReportQuery(c.req.queries(), []);
+  if (!parsed.ok) return c.json({ ok: false, error: parsed.error, fields: parsed.fields }, 400);
+  const memberBookIds = await bookIdsFor(db, user.id);
+  const data = await getIntent(db, { kind: "person", userId: user.id, memberBookIds }, c.req.param("id"), parsed.paging);
+  if (!data) return c.json({ ok: false, error: "Intent not found" }, 404);
+  return c.json({ ok: true, data });
 });
 
 export { me as meRoutes };
