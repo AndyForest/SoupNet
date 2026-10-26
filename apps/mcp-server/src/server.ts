@@ -175,16 +175,16 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
       uncertainty: ratingParam(MCP_PARAM_DESCRIPTIONS.uncertainty),
       // Draft (slice 2): served as a boolean; a wrong-type value is forwarded
       // for the backend's lenient parser rather than failing the check.
-      draft: z.boolean().optional().catch((ctx) => ctx.input as boolean | undefined).describe(MCP_PARAM_DESCRIPTIONS.draft),
+      draft: z.boolean().optional().catch((ctx) => ctx?.input as boolean | undefined).describe(MCP_PARAM_DESCRIPTIONS.draft),
       // On behalf of (slice 4): forwarded as given; the backend decides who
       // may be named and refuses everything else with one uniform answer.
-      on_behalf_of: z.string().optional().catch((ctx) => ctx.input as string | undefined).describe(MCP_PARAM_DESCRIPTIONS.onBehalfOf),
+      on_behalf_of: z.string().optional().catch((ctx) => ctx?.input as string | undefined).describe(MCP_PARAM_DESCRIPTIONS.onBehalfOf),
       // Rows take log_feedback's fields; the description points there instead
       // of repeating the per-field schema (slice 1, S1-Z4). A record, not a
       // bare object, so the SDK keeps every field for the /feedback forward.
       // A non-object row passes through (`.catch`) so /feedback gives it a
       // per-row marker instead of the SDK failing the whole check.
-      feedback: z.array(z.record(z.unknown()).catch((ctx) => ctx.input as Record<string, unknown>)).optional().describe(MCP_PARAM_DESCRIPTIONS.feedbackParam),
+      feedback: z.array(z.record(z.string(), z.unknown()).catch((ctx) => ctx?.input as Record<string, unknown>)).optional().describe(MCP_PARAM_DESCRIPTIONS.feedbackParam),
       file: z.string().optional().describe(
         "Optional file to attach as reference evidence (multimodal embedding). " +
         "Local file path (e.g., 'docs/screenshot.png') or URL. " +

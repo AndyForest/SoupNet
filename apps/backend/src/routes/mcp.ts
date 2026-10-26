@@ -363,10 +363,11 @@ function imageFromBase64(base64: string, filename: string, mimeTypeHint?: string
 //
 // A row that isn't an object at all (a number, a string, null) must not fail
 // the call either: `.catch` hands the raw value through, and the service turns
-// it into a per-row marker. `.catch` leaves the served JSON Schema unchanged
-// (zod-to-json-schema renders the inner record), so agents still read
-// "object" for the item type.
-const feedbackRowSchema = z.record(z.unknown()).catch((ctx) => ctx.input as Record<string, unknown>);
+// it into a per-row marker. The served JSON Schema renders the inner record,
+// so agents still read "object" for the item type: zod's JSON Schema output
+// calls the catch handler with no context to find a static default, and the
+// `?.` makes that call return undefined (no default) instead of throwing.
+const feedbackRowSchema = z.record(z.string(), z.unknown()).catch((ctx) => ctx?.input as Record<string, unknown>);
 
 // recipe_ids on get_recipes and get_briefing (drafts-and-triage slice 8a,
 // S8a-I1): an array of ids or the comma/whitespace-separated string. The
@@ -383,7 +384,7 @@ function recipeIdsParam() {
 // hands non-strings to the service as their JSON text; the served schema
 // still says "string".
 function draftParam() {
-  return z.boolean().optional().catch((ctx) => ctx.input as boolean | undefined).describe(MCP_PARAM_DESCRIPTIONS.draft);
+  return z.boolean().optional().catch((ctx) => ctx?.input as boolean | undefined).describe(MCP_PARAM_DESCRIPTIONS.draft);
 }
 
 function ratingParam(description: string) {
@@ -469,7 +470,7 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
       // On behalf of (slice 4). Served as a string; `.catch` hands a value of
       // the wrong type to the service, which refuses it with the one uniform
       // naming answer rather than an SDK validation error (S4-W4, S4-U1).
-      on_behalf_of: z.string().optional().catch((ctx) => ctx.input as string | undefined).describe(MCP_PARAM_DESCRIPTIONS.onBehalfOf),
+      on_behalf_of: z.string().optional().catch((ctx) => ctx?.input as string | undefined).describe(MCP_PARAM_DESCRIPTIONS.onBehalfOf),
       feedback: z.array(feedbackRowSchema).optional().describe(MCP_PARAM_DESCRIPTIONS.feedbackParam),
       axes: z.string().optional().describe(
         "Two comma-separated concept terms; each result gets x/y similarity positions (0-1) against them (semantic projection)."

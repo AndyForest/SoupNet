@@ -39,7 +39,7 @@ const registerSchema = z.object({
   // server has TURNSTILE_SECRET_KEY (see lib/turnstile.ts).
   turnstileToken: z.string().max(4096).optional(),
   tosAccepted: z.literal(true, {
-    errorMap: () => ({ message: "You must accept the Terms of Service and Privacy Policy to create an account." }),
+    error: "You must accept the Terms of Service and Privacy Policy to create an account.",
   }),
 });
 

@@ -12,6 +12,7 @@
  *   after slice 1 (2026-09-27):  12,074 bytes, with impact and uncertainty added
  *   after slice 2 (2026-09-27):  13,064 bytes, with draft and verify_draft added (still under the cap)
  *   after slice 3 (2026-09-27):  13,063 bytes (the search query description names the new qualifiers)
+ *   zod 3 to 4 (2026-10-26): 14,738 to 14,625 bytes (the same three schema changes as the remote server)
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";

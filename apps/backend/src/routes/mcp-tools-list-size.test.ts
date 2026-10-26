@@ -18,6 +18,8 @@
  *   after slice 4 (2026-09-27):  16,986 bytes (on_behalf_of)
  *   after slice 5 (2026-09-28):  16,986 bytes, identical for a headless key (S5-Z1)
  *   before slices 6 to 9 (2026-10-24): 16,986 bytes; cap raised ahead of them (PR A0, see below)
+ *   zod 3 to 4 (2026-10-26): 18,930 to 18,764 bytes; zod 4 drops additionalProperties:false from tool
+ *     input objects, adds the safe-integer maximum on page and propertyNames on feedback rows
  * The stdio twin lives in apps/mcp-server/src/server.test.ts.
  */
 import { describe, it, expect } from "vitest";

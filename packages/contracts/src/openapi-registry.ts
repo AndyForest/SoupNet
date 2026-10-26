@@ -23,10 +23,9 @@
  *   4. npm run generate:api-client → Orval regenerates React Query hooks
  *   Never hand-edit the generated files.
  */
-import { OpenAPIRegistry, OpenApiGeneratorV31, extendZodWithOpenApi } from "@asteasolutions/zod-to-openapi";
+import "./zod-openapi-extend";
+import { OpenAPIRegistry, OpenApiGeneratorV31 } from "@asteasolutions/zod-to-openapi";
 import { z } from "zod";
-
-extendZodWithOpenApi(z);
 import { IdSchema, PaginationSchema } from "./common";
 import {
   ClaimSchema,
