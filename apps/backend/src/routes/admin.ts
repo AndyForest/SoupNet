@@ -22,6 +22,7 @@ import { normalizeEmail } from "../lib/normalize-email";
 import { rateLimit } from "../middleware/rate-limit";
 import { writeAudit } from "../services/audit-log.service";
 import { repairOrphanedEmbeddings } from "../services/integrity-repair.service";
+import { listUsers } from "../services/users-list.service";
 import type { AppEnv } from "../types";
 
 // Rate limit admin invitations: 20 per hour per user
@@ -331,102 +332,37 @@ admin.post("/invite", inviteRateLimit, async (c) => {
   });
 });
 
-// GET /admin/users — list users (paginated, filtered, sortable).
+// GET /admin/users — every account (paginated, filtered, sortable), through
+// the users-list service both consoles share (stream Console, CN-G3).
 // Query params:
 //   q?            — case-insensitive email search
 //   verified?     — "yes" | "no"
 //   role?         — exact match (e.g. "tenant", "system")
-//   hasKeys?      — "yes" | "no" (at least one active, non-expired key)
+//   hasKeys?      — "yes" | "no" (at least one live key)
 //   suspended?    — "yes" | "no"
 //   premium?      — "yes" | "no"
+//   waitlisted?   — "yes" | "no"
 //   sortBy?       — createdAt | lastLoginAt | email  (default createdAt)
 //   sortDir?      — asc | desc  (default desc)
 //   limit?        — default 50, max 200
 //   offset?       — default 0
 admin.get("/users", async (c) => {
-  const db = getDb();
+  const data = await listUsers(getDb(), { viewer: "site" }, c.req.query());
+  return c.json({ ok: true, data });
+});
 
-  const q = c.req.query("q")?.trim() ?? "";
-  const verified = c.req.query("verified");
-  const role = c.req.query("role");
-  const hasKeys = c.req.query("hasKeys");
-  const suspended = c.req.query("suspended");
-  const sortBy = c.req.query("sortBy") ?? "createdAt";
-  const sortDir = c.req.query("sortDir") === "asc" ? "asc" : "desc";
-  const limit = Math.min(parseInt(c.req.query("limit") ?? "50", 10) || 50, 200);
-  const offset = Math.max(parseInt(c.req.query("offset") ?? "0", 10) || 0, 0);
-
-  const sortColumnMap: Record<string, string> = {
-    createdAt: "u.created_at",
-    lastLoginAt: "u.last_login_at",
-    email: "u.email",
-  };
-  const sortColumn = sortColumnMap[sortBy] ?? "u.created_at";
-
-  const where = [sql`1=1`];
-  if (q) where.push(sql`u.email ILIKE ${"%" + q + "%"}`);
-  if (verified === "yes") where.push(sql`u.email_verified_at IS NOT NULL`);
-  if (verified === "no") where.push(sql`u.email_verified_at IS NULL`);
-  if (role) where.push(sql`u.role = ${role}`);
-  if (suspended === "yes") where.push(sql`u.suspended_at IS NOT NULL`);
-  if (suspended === "no") where.push(sql`u.suspended_at IS NULL`);
-  const premium = c.req.query("premium");
-  if (premium === "yes") where.push(sql`u.premium_at IS NOT NULL`);
-  if (premium === "no") where.push(sql`u.premium_at IS NULL`);
-  const waitlisted = c.req.query("waitlisted");
-  if (waitlisted === "yes") where.push(sql`u.waitlisted_at IS NOT NULL`);
-  if (waitlisted === "no") where.push(sql`u.waitlisted_at IS NULL`);
-  if (hasKeys === "yes") {
-    where.push(sql`EXISTS (
-      SELECT 1 FROM claimnet.api_keys ak
-      WHERE ak.user_id = u.id AND ak.expires_at > now()
-    )`);
+// GET /admin/organizations/:id/members — one company organization's members
+// with every column the site operator sees, the membership ones included
+// (CN-S1). Same query parameters as /admin/users, plus status
+// (active | disabled | suspended) and orgRole; sortBy joinedAt (default),
+// lastActiveAt, email, createdAt or lastLoginAt.
+admin.get("/organizations/:id/members", async (c) => {
+  const organizationId = c.req.param("id");
+  if (!z.string().uuid().safeParse(organizationId).success) {
+    return c.json({ ok: false, error: "not_found" }, 404);
   }
-  if (hasKeys === "no") {
-    where.push(sql`NOT EXISTS (
-      SELECT 1 FROM claimnet.api_keys ak
-      WHERE ak.user_id = u.id AND ak.expires_at > now()
-    )`);
-  }
-  const whereClause = sql.join(where, sql` AND `);
-  const orderClause = sql.raw(`${sortColumn} ${sortDir.toUpperCase()} NULLS LAST`);
-
-  const rows = await db.execute(sql`
-    SELECT
-      u.id,
-      u.email,
-      u.role,
-      u.email_verified_at  AS "emailVerifiedAt",
-      u.suspended_at       AS "suspendedAt",
-      u.suspended_reason   AS "suspendedReason",
-      u.waitlisted_at      AS "waitlistedAt",
-      u.premium_at         AS "premiumAt",
-      u.signup_reason      AS "signupReason",
-      u.last_login_at      AS "lastLoginAt",
-      u.created_at         AS "createdAt",
-      (SELECT COUNT(*)::int FROM claimnet.api_keys ak
-        WHERE ak.user_id = u.id AND ak.expires_at > now())
-                           AS "activeKeyCount",
-      (SELECT COUNT(*)::int FROM claimnet.traces t WHERE t.user_id = u.id)
-                           AS "recipeCount",
-      (SELECT COUNT(*)::int FROM claimnet.group_members gm WHERE gm.user_id = u.id)
-                           AS "groupCount"
-    FROM claimnet.users u
-    WHERE ${whereClause}
-    ORDER BY ${orderClause}
-    LIMIT ${limit}
-    OFFSET ${offset}
-  `);
-
-  const countRows = await db.execute(sql`
-    SELECT COUNT(*)::int AS total FROM claimnet.users u WHERE ${whereClause}
-  `);
-  const total = (countRows as unknown as Array<{ total: number }>)[0]?.total ?? 0;
-
-  return c.json({
-    ok: true,
-    data: { users: rows, total, limit, offset, sortBy, sortDir, queriedAt: new Date().toISOString() },
-  });
+  const data = await listUsers(getDb(), { viewer: "site", organizationId }, c.req.query());
+  return c.json({ ok: true, data });
 });
 
 // GET /admin/stats — top-line numbers for the admin landing + user-management header

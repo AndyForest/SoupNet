@@ -1,6 +1,6 @@
 # Privacy Policy — Soup.net
 
-**Effective date:** 2026-05-12 (retention wording clarified 2026-06-11; third parties updated 2026-09-27)
+**Effective date:** 2026-05-12 (retention wording clarified 2026-06-11; third parties updated 2026-09-27; sign-in record added 2026-10-26)
 **Service:** Soup.net — a stigmergic search engine for taste and judgment
 **Maintained by:** Andy Forest, in Canada
 **Contact:** admin@soup.net
@@ -28,7 +28,7 @@ Soup.net is maintained by Andy Forest, in Canada. For privacy questions or reque
 - **Email address** — for authentication and required notifications (verification, password reset, security alerts).
 - **Password** — stored as a bcrypt hash. We never store or log your plaintext password.
 - **Email verification status and timestamps** — to know when you have confirmed your email.
-- **Account creation timestamp**, last login, and a small audit log of authentication events (login success/failure, password reset, key creation/revocation). These are kept for security incident investigation.
+- **Account creation timestamp**, the time of your last sign-in, and an audit log of account events such as each successful sign-in, with its time and whether it was by password or Google, account deletion, and changes to your recipe books' names, descriptions, members and ownership. These are kept for security incident investigation. If an organization manages your account, you can see your recent sign-ins under `Settings → Your organization`; the organization's admins see only when you were last active, never the sign-ins themselves.
 - **Terms of Service / Privacy Policy acceptance timestamp** — recorded when you register.
 
 ### 2.2 Content you create

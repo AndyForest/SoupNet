@@ -302,11 +302,18 @@ Customer-driven program; the customer's needs are segmented anonymously in [cust
 Streams SSO, Domains, Offboarding and Console follow in that merge order.
 
 Left open by Core, each for the stream named:
-- the SPA's private or org-wide choice when creating a book, and the members page (Console);
+- ~~the SPA's private or org-wide choice when creating a book, and the members page (Console);~~ built on `org/console` (PR #156), with the rest of the console below;
 - `domainVerifiedFor` in `authz/domain-authority.ts`, `FALSE` until Domains fills it;
 - a per-organization key-cap minimum, deferred by the settled simplification "no org-level cap policy in the first release";
 - seat tier (out of the round);
 - bounding the operator join (core.md OC-F1, after Domains merges): an operator add requires the account's email domain to be verified for the organization, with the unbounded form kept only for the concierge first customer, behind the system-role check, and audit-logged.
+
+Stream Console (`org/console`, PR #156; rubric [planning/org-accounts-build/console.md](planning/org-accounts-build/console.md)) built the org admin console at `/org` (Members, Books with the sharing policy, Activity), the shared users-list service and table the site console now uses, the inbound and outbound sharing policy (migration `0048`), the site operator's Organizations page, the member's "What your organization's admins can see" page, and a sign-in record listed only to its person. Left open, each waiting on the stream named:
+- the Domains page (CN-D1), against stream Domains' routes once they merge, and its entry in the org nav;
+- the last-directory-check column (CN-U5) and the directory connection section, status labels and Activity entries (CN-U6), against stream Offboarding's routes and columns (#160) once it merges;
+- the privacy policy's §2.1 sign-in line (CN-X4), added once stream L's #151 is on `main`;
+- `AdminQueuesPage` and `AdminEmbeddingsPage` onto the admin kit (CN-X3; untouched by the shared table, so not in this round).
+- A phone layout for the admin kit. `AdminLayout`'s fixed 200px nav column squeezes both consoles' tables to about 200px at phone width; the browser verification of `org/console` recorded it at 412px (X3, open). The pages work, but they are hard to read. Stacking the nav above the content below the app shell's 768px breakpoint, as `SettingsLayout` does, would fix both consoles.
 
 ### `[DESIGN]` Derived API keys — an orchestrator mints scoped-down keys for its sub-agents (direction decided 2026-09-19; optional, separate track)
 

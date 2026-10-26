@@ -132,7 +132,6 @@ const TEST_FILE = /\.test\.[cm]?[jt]sx?$/;
  */
 const NOT_YET_MIGRATED = {
   "apps/backend/src/auth.ts": { n: 2, fp: "63ff09a602b9" },
-  "apps/backend/src/routes/admin.ts": { n: 1, fp: "3d166cf17c25" },
   "apps/backend/src/routes/auth.ts": { n: 4, fp: "ffe3569201fd" },
   "apps/backend/src/routes/invitations.ts": { n: 2, fp: "21fcda0422e1" },
   "apps/backend/src/routes/keys.ts": { n: 3, fp: "371eb1888237" },
@@ -149,6 +148,7 @@ const NOT_YET_MIGRATED = {
 const MEMBERSHIP_MENTIONS = {
   "packages/contracts/src/groups.ts": { n: 1, fp: "455fd5eff999", why: "a doc comment on the legacy contract" },
   "packages/domain/src/trace-move.ts": { n: 3, fp: "a479b69c8a35", why: "doc comments on the pure role allowlist; no I/O in this package" },
+  "apps/backend/src/services/users-list.service.ts": { n: 1, fp: "5141400fe7e2", why: "the site operator's per-account book count for display, moved from admin.ts with GET /admin/users; gates nothing (stream Console, CN-G3)" },
 };
 
 /**
@@ -174,8 +174,12 @@ const NON_AUTHORIZING_KEY_SQL = {
     why: "counting only: maps a credential to the id its usage is counted under; the id never reaches a handler",
   },
   "apps/backend/src/routes/admin.ts": {
-    n: 4, fp: "084c26a0f9ba",
-    why: "admin user list and stats: counts and existence flags for display, behind requireSystem",
+    n: 1, fp: "4408be735d28",
+    why: "admin stats: a live-key count for display, behind requireSystem",
+  },
+  "apps/backend/src/services/users-list.service.ts": {
+    n: 3, fp: "7f7b74821bc3",
+    why: "users list for both consoles: a live-key count, a has-live-key filter (site operator only) and the newest last_used_at for last active; counts and timestamps for display, never a key's label, prefix or grant (stream Console, CN-U2)",
   },
   "apps/backend/src/routes/auth.ts": {
     n: 1, fp: "82e00470187d",
@@ -257,7 +261,7 @@ const TRACE_READS = {
     why: "writes embedding rows for a recipe being deposited (RP-43)",
   },
   "apps/backend/src/routes/admin.ts": {
-    n: 11, fp: "668a2da6698f", composes: false,
+    n: 10, fp: "165f50ebe499", composes: false,
     why: "system-role totals and embedding coverage counts for the operator (RP-31 to RP-34)",
   },
   "apps/backend/src/routes/auth.ts": {
@@ -275,6 +279,14 @@ const TRACE_READS = {
   "apps/backend/src/services/intent-read.service.ts": {
     n: 11, fp: "08931b6f57a7", composes: true,
     why: "report read paths (slice 9): every recipe a feedback row, shown id, deposit, or related id names passes traceReadableByViewer before it is listed or counted",
+  },
+  "apps/backend/src/services/users-list.service.ts": {
+    n: 2, fp: "5809521f01dc", composes: false,
+    why: "users list for both consoles (stream Console): an organization's member counts compose publishedTrace over that organization's books (CN-U2); the site operator's all-accounts count is every recipe, drafts included, as GET /admin/users always counted (RP-31)",
+  },
+  "apps/backend/src/routes/organization-console.ts": {
+    n: 1, fp: "89f6292f0a38", composes: true,
+    why: "the org console's Books page: published recipes per org-wide book, through publishedTrace; private books get no per-book figure (stream Console, CN-B1)",
   },
   "apps/backend/src/services/book-stats.service.ts": {
     n: 6, fp: "9c1e64a70445", composes: true,

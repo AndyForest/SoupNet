@@ -23,6 +23,12 @@ interface Group {
   member_role: string;
   daily_read: boolean;
   daily_write: boolean;
+  /** In a company organization, and open to its every member (CN-B2). */
+  org_wide?: boolean;
+  /** The organization's default book, which stays org-wide. */
+  org_default?: boolean;
+  /** The book belongs to a company organization rather than a personal one. */
+  company_book?: boolean;
 }
 
 interface Member {
@@ -67,6 +73,19 @@ export function GroupsPage() {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newGroupName, setNewGroupName] = useState("");
   const [newGroupDesc, setNewGroupDesc] = useState("");
+  const [newGroupOrgWide, setNewGroupOrgWide] = useState(false);
+  // A managed account chooses private or org-wide for a new book (CN-B2);
+  // a personal account's books are always its own.
+  const meQuery = useQuery({
+    queryKey: ["auth", "me"],
+    queryFn: async () => {
+      const res = await authFetch("/auth/me");
+      const json = (await res.json()) as { ok: boolean; data?: { user: { organization?: { name: string } | null } } };
+      if (!json.ok || !json.data) throw new Error("Failed");
+      return json.data.user;
+    },
+  });
+  const organizationName = meQuery.data?.organization?.name ?? null;
 
   const groupsQuery = useQuery({
     queryKey: ["groups"],
@@ -94,8 +113,11 @@ export function GroupsPage() {
         ok: boolean;
         data?: { groupSlug: string | null; groupName: string | null };
         error?: string;
+        message?: string;
       };
-      if (!json.ok || !json.data) throw new Error(json.error ?? "Failed to accept");
+      // A refusal's message is the plain sentence (a sharing policy's, CN-P3);
+      // error is its code.
+      if (!json.ok || !json.data) throw new Error(json.message ?? json.error ?? "Failed to accept");
       return json.data;
     },
     onSuccess: (data) => {
@@ -131,7 +153,7 @@ export function GroupsPage() {
   }, [search.justJoined, groupsQuery.data]);
 
   const createGroupMutation = useMutation({
-    mutationFn: async ({ name, description }: { name: string; description: string }) => {
+    mutationFn: async ({ name, description, orgWide }: { name: string; description: string; orgWide: boolean }) => {
       // No organization in the body: the backend files the book in the
       // account's home organization (its company organization when the
       // account is managed, else its personal one). Choosing from the book
@@ -140,10 +162,10 @@ export function GroupsPage() {
       const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
       const res = await authFetch("/recipe-books", {
         method: "POST",
-        body: JSON.stringify({ name, slug, description: description || undefined }),
+        body: JSON.stringify({ name, slug, description: description || undefined, ...(orgWide ? { orgWide: true } : {}) }),
       });
-      const json = (await res.json()) as { ok: boolean; error?: string };
-      if (!json.ok) throw new Error(json.error ?? "Failed to create recipe book");
+      const json = (await res.json()) as { ok: boolean; error?: string; message?: string };
+      if (!json.ok) throw new Error(json.message ?? json.error ?? "Failed to create recipe book");
       return json;
     },
     onSuccess: () => {
@@ -151,6 +173,7 @@ export function GroupsPage() {
       setShowCreateForm(false);
       setNewGroupName("");
       setNewGroupDesc("");
+      setNewGroupOrgWide(false);
     },
   });
 
@@ -190,7 +213,7 @@ export function GroupsPage() {
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              createGroupMutation.mutate({ name: newGroupName, description: newGroupDesc });
+              createGroupMutation.mutate({ name: newGroupName, description: newGroupDesc, orgWide: organizationName !== null && newGroupOrgWide });
             }}
             style={{ display: "flex", flexDirection: "column", gap: "var(--space-sm)" }}
           >
@@ -214,6 +237,19 @@ export function GroupsPage() {
               human and agent collaborator. Example: <em>A volunteer team planning our
               community spring fundraiser.</em>
             </p>
+            {organizationName !== null && (
+              <fieldset style={{ border: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: "var(--space-xs)" }}>
+                <legend className="text-sm" style={{ marginBottom: "var(--space-xs)" }}>Who can see it</legend>
+                <label className="text-sm">
+                  <input type="radio" name="book-scope" checked={!newGroupOrgWide} onChange={() => setNewGroupOrgWide(false)} style={{ width: "auto", margin: 0 }} />{" "}
+                  Private: only you, and anyone you invite. {organizationName}'s admins see that it exists, never its name or contents.
+                </label>
+                <label className="text-sm">
+                  <input type="radio" name="book-scope" checked={newGroupOrgWide} onChange={() => setNewGroupOrgWide(true)} style={{ width: "auto", margin: 0 }} />{" "}
+                  Org-wide: everyone in {organizationName} can read and add to it, including people who join later.
+                </label>
+              </fieldset>
+            )}
             <button className="btn" type="submit" disabled={createGroupMutation.isPending || !newGroupName}>
               {createGroupMutation.isPending ? "Creating..." : "Create Recipe Book"}
             </button>
@@ -280,6 +316,11 @@ export function GroupsPage() {
                       Decline
                     </button>
                   </div>
+                  {acceptInviteMutation.isError && acceptInviteMutation.variables === inv.id && (
+                    <p role="alert" style={{ color: "var(--color-error)", fontSize: "0.85rem", margin: 0, flexBasis: "100%" }}>
+                      {(acceptInviteMutation.error as Error).message}
+                    </p>
+                  )}
                 </div>
               );
             })}
@@ -520,6 +561,7 @@ function GroupCard({
       {expanded && <AgentConnectBox group={group} allGroups={allGroups} justJoined={justJoined} />}
 
       {expanded && <DailyPrefsToggles group={group} />}
+      {expanded && isOwnerOrAdmin && group.company_book && !group.org_default && <BookScopeToggle group={group} />}
 
       {expanded && (
         <div style={{ marginTop: "var(--space-md)", borderTop: "1px solid var(--color-border)", paddingTop: "var(--space-md)" }}>
@@ -615,8 +657,10 @@ function InviteBox({ groupId }: { groupId: string }) {
         method: "POST",
         body: JSON.stringify({ email: inviteeEmail }),
       });
-      const json = (await res.json()) as { ok: boolean; data?: InviteResult; error?: string };
-      if (!json.ok || !json.data) throw new Error(json.error ?? "Failed to create invitation");
+      const json = (await res.json()) as { ok: boolean; data?: InviteResult; error?: string; message?: string };
+      // A refusal's message is the plain sentence (a sharing policy's, CN-P2);
+      // error is its code.
+      if (!json.ok || !json.data) throw new Error(json.message ?? json.error ?? "Failed to create invitation");
       return json.data;
     },
     onSuccess: (data) => {
@@ -941,6 +985,49 @@ function AgentConnectBox({ group, allGroups, justJoined }: { group: Group; allGr
  * design-thinking.md §Configurable defaults for the "daily agent link"
  * buttons.
  */
+/**
+ * Private or org-wide, for an owner or admin of a company book (CN-B2). The
+ * organization's default book stays org-wide, so it has no toggle.
+ */
+function BookScopeToggle({ group }: { group: Group }) {
+  const queryClient = useQueryClient();
+  const orgWide = group.org_wide === true;
+  const change = useMutation({
+    mutationFn: async (next: boolean) => {
+      const res = await authFetch(`/recipe-books/${group.id}/org-wide`, {
+        method: "PUT",
+        body: JSON.stringify({ orgWide: next }),
+      });
+      const json = (await res.json()) as { ok: boolean; error?: string; message?: string };
+      if (!json.ok) throw new Error(json.message ?? json.error ?? "Couldn't change who can see this recipe book");
+    },
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: ["groups"] }),
+  });
+
+  return (
+    <div style={{ marginTop: "var(--space-md)" }}>
+      <p className="text-label" style={{ marginBottom: "var(--space-xs)" }}>Who can see it</p>
+      <p className="text-sm" style={{ margin: 0 }}>
+        {orgWide
+          ? "Org-wide: everyone in your organization can read and add to it, including people who join later."
+          : "Private: only its members. Your organization's admins see that it exists, never its name or contents."}
+      </p>
+      <button
+        className="btn-secondary"
+        style={{ fontSize: "0.8rem", marginTop: "var(--space-xs)" }}
+        disabled={change.isPending}
+        onClick={() => change.mutate(!orgWide)}
+        title={orgWide ? "People you added to it directly keep their access; everyone else loses it." : undefined}
+      >
+        {orgWide ? "Make private" : "Make org-wide"}
+      </button>
+      {change.isError && (
+        <p role="alert" style={{ color: "var(--color-error)", fontSize: "0.85rem" }}>{(change.error as Error).message}</p>
+      )}
+    </div>
+  );
+}
+
 function DailyPrefsToggles({ group }: { group: Group }) {
   const queryClient = useQueryClient();
   const [saveError, setSaveError] = useState<string | null>(null);

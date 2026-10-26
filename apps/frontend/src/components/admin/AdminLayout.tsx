@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
 import { Link, useLocation } from "@tanstack/react-router";
 import { Icon } from "../Icon.js";
+import type { AdminScope } from "./useAdminGate.js";
 
-type NavIcon = "home" | "users" | "clock" | "settings" | "mail";
+type NavIcon = "home" | "users" | "clock" | "settings" | "mail" | "book-open" | "shield";
 
 interface NavItem {
   label: string;
@@ -13,21 +14,41 @@ interface NavItem {
 // User management pair (Users, Signups) sits together; no generic "Settings"
 // page — each control lives with the surface it governs (the embeddings
 // kill-switch is on the Embeddings page, the signup cap on Signups).
-const NAV: NavItem[] = [
-  { label: "Overview", href: "/admin", icon: "home" },
-  { label: "Users", href: "/admin/users", icon: "users" },
-  { label: "Signups", href: "/admin/signups", icon: "users" },
-  { label: "Emails", href: "/admin/emails", icon: "mail" },
-  { label: "Queues", href: "/admin/queues", icon: "clock" },
-  { label: "Embeddings", href: "/admin/workers/embeddings", icon: "settings" },
-];
+//
+// The org console (CN-M4, recipe b66536c5) follows the same rule: the sharing
+// policy sits on Books beside the books it governs, and nothing in its nav
+// leads into the site operator's pages.
+const NAV: Record<AdminScope, NavItem[]> = {
+  site: [
+    { label: "Overview", href: "/admin", icon: "home" },
+    { label: "Users", href: "/admin/users", icon: "users" },
+    { label: "Organizations", href: "/admin/organizations", icon: "shield" },
+    { label: "Signups", href: "/admin/signups", icon: "users" },
+    { label: "Emails", href: "/admin/emails", icon: "mail" },
+    { label: "Queues", href: "/admin/queues", icon: "clock" },
+    { label: "Embeddings", href: "/admin/workers/embeddings", icon: "settings" },
+  ],
+  org: [
+    { label: "Members", href: "/org", icon: "users" },
+    { label: "Books", href: "/org/books", icon: "book-open" },
+    { label: "Activity", href: "/org/activity", icon: "clock" },
+  ],
+};
+
+const HEADING: Record<AdminScope, string> = { site: "System Admin", org: "Organization" };
 
 interface AdminLayoutProps {
   children: ReactNode;
   inspector?: ReactNode | undefined;
+  /** Which console's nav to show; the site operator's by default. */
+  scope?: AdminScope;
+  /** Shown above the nav in place of the console's generic heading (the organization's name). */
+  heading?: string | undefined;
 }
 
-export function AdminLayout({ children, inspector }: AdminLayoutProps) {
+export function AdminLayout({ children, inspector, scope = "site", heading }: AdminLayoutProps) {
+  const nav = NAV[scope];
+  const home = nav[0]?.href;
   const location = useLocation();
   const current = location.pathname;
 
@@ -62,12 +83,12 @@ export function AdminLayout({ children, inspector }: AdminLayoutProps) {
             marginBottom: "var(--space-xs)",
           }}
         >
-          System Admin
+          {heading ?? HEADING[scope]}
         </div>
-        {NAV.map((item) => {
+        {nav.map((item) => {
           const active =
-            item.href === "/admin"
-              ? current === "/admin"
+            item.href === home
+              ? current === home
               : current === item.href || current.startsWith(item.href + "/");
           return (
             <Link
@@ -93,7 +114,8 @@ export function AdminLayout({ children, inspector }: AdminLayoutProps) {
         })}
       </nav>
 
-      <main style={{ overflow: "auto" }}>{children}</main>
+      {/* A div, not main: the app shell already has the page's one main landmark. */}
+      <div style={{ overflow: "auto", minWidth: 0 }}>{children}</div>
 
       {inspector ? (
         <aside
