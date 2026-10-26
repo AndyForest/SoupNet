@@ -39,13 +39,13 @@ import type { EvidenceSearchResult } from "./vector-search.service";
 import { scoreFormatAdherence } from "./format-adherence";
 import { runSearchPipeline } from "./search-pipeline";
 import { findOpenQuestion } from "./draft-dispatch.service";
-import { listRecipesFlat, flatListOrderFor } from "./recipe-list.service";
+import { listRecipesFlat, flatListOrderFor, clampFlatListPage, FLAT_LIST_PAGE_SIZE } from "./recipe-list.service";
 import type { FlatListOrder } from "./recipe-list.service";
 import { embedQuery } from "../lib/embeddings/provider";
 import { StageTimer } from "../lib/stage-timer";
 import { searchSelections } from "./search-selection";
 import { draftQueueUrl } from "../lib/key-remediation";
-import { DEFAULT_RANKING, RANKING_ALGORITHM_VERSION, parseSearchQuery, AUTHOR_ME, searchZeroResultLine, parseTriageRating, parseTriageRatings, repeatRatingsNotice, parseDraftFlag, draftDepositNotice, isShownDraftState, onBehalfRefusal } from "@soupnet/domain";
+import { DEFAULT_RANKING, RANKING_ALGORITHM_VERSION, pageBeyondReach, searchPageBeyondReachError, FLAT_LIST_NARROWING, parseSearchQuery, AUTHOR_ME, searchZeroResultLine, parseTriageRating, parseTriageRatings, repeatRatingsNotice, parseDraftFlag, draftDepositNotice, isShownDraftState, onBehalfRefusal } from "@soupnet/domain";
 import type { CandidateSignals, VerbositySteer, ParsedSearchQuery, TriageRatings, OpenQuestion } from "@soupnet/domain";
 import type { DraftState } from "@soupnet/contracts";
 import type { StructuredTraceFilters } from "./vector-search.service";
@@ -558,6 +558,23 @@ export async function submitAndSearch(
   const db = getDb();
   const page = params.page ?? 1;
   const perPage = params.perPage ?? 20;
+
+  // A page past the listing depth (F105, F110) is refused before the recipe
+  // is stored: ranked paging asks the vector search for (offset + limit)
+  // candidates, so a deep page is a costly call however small the corpus.
+  // The reply names the recipe, not "nothing": ride-along feedback about an
+  // earlier call is recorded independently of this one, as on every other
+  // refusal (a bad row never blocks a call, and a refused call never drops
+  // a good row).
+  if (pageBeyondReach(page, perPage)) {
+    return {
+      error: `${searchPageBeyondReachError(page, perPage, "Narrow with read_recipe_books, or search with more specific text.")} The recipe was not stored.`,
+      results: [],
+      totalResults: 0,
+      currentPage: page,
+      totalPages: 0,
+    };
+  }
 
   // 1. The caller is already authenticated. The Principal's arrays are
   // EFFECTIVE scope (authz/key-auth.ts): a book the key's owner has left, or a
@@ -1287,6 +1304,23 @@ export async function searchWithoutLogging(
       totalPages: 0,
     };
   }
+  // How deep the requested page reaches (F105, F110): the flat list pages
+  // 50 at a time, the ranked results `perPage` at a time, and neither serves
+  // a page past the listing depth. Refused here, before any statement runs.
+  const qualifierOnly = parsed.query.semanticText.length === 0;
+  const requestedPage = qualifierOnly ? clampFlatListPage(params.page) : page;
+  const requestedPerPage = qualifierOnly ? FLAT_LIST_PAGE_SIZE : perPage;
+  if (pageBeyondReach(requestedPage, requestedPerPage)) {
+    return {
+      error: searchPageBeyondReachError(requestedPage, requestedPerPage, qualifierOnly
+        ? FLAT_LIST_NARROWING
+        : "Narrow with read_recipe_books, or search with more specific text."),
+      results: [],
+      totalResults: 0,
+      currentPage: requestedPage,
+      totalPages: 0,
+    };
+  }
   const { structured, intentNotRecognized } = await resolveStructuredFilters(db, parsed.query, {
     callerUserId: keyResult.userId,
     excludeOwnDefault: params.excludeOwnDefault ?? false,
@@ -1360,7 +1394,7 @@ export async function searchWithoutLogging(
       audience,
       structured,
       order: flatListOrderFor(parsed.query),
-      page: params.page,
+      page: requestedPage,
     }));
     listing = {
       order: flat.order,
