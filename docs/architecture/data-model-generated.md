@@ -1,9 +1,9 @@
 # ClaimNet Data Model — Generated Reference
 
-> **Auto-generated** from Drizzle migration snapshot `0043_snapshot.json`.
+> **Auto-generated** from Drizzle migration snapshot `0044_snapshot.json`.
 > Do not edit by hand. Regenerate with: `npx tsx scripts/generate-data-model-docs.ts`
 >
-> Schema as of migration `0043_organization_members` (2026-10-26).
+> Schema as of migration `0044_organization_members` (2026-10-26).
 > Tables: 32 | Schema: `claimnet`
 
 For design rationale, conventions, and context, see [data-model.md](data-model.md).
