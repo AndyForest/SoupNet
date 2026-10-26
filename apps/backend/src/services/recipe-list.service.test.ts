@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parseSearchQuery } from "@soupnet/domain";
-import { clampFlatListPage, flatListOrderFor, FLAT_LIST_MAX_PAGE } from "./recipe-list.service";
+import { clampFlatListPage, flatListOrderFor } from "./recipe-list.service";
 
 /** Layer 1: the flat list's pure helpers (drafts-and-triage slice 8b). */
 
@@ -36,8 +36,8 @@ describe("clampFlatListPage (S8b-P1, /check's lenient page)", () => {
     expect(clampFlatListPage(-4)).toBe(1);
     expect(clampFlatListPage(Number.NaN)).toBe(1);
   });
-  it("caps the page so no OFFSET can overflow", () => {
-    expect(clampFlatListPage(Number.MAX_SAFE_INTEGER)).toBe(FLAT_LIST_MAX_PAGE);
+  it("leaves depth to the listing-depth check (F110), and reads a non-finite page as page 1", () => {
+    expect(clampFlatListPage(Number.MAX_SAFE_INTEGER)).toBe(Number.MAX_SAFE_INTEGER);
     expect(clampFlatListPage(Number.POSITIVE_INFINITY)).toBe(1);
   });
 });

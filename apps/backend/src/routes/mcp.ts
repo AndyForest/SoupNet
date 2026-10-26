@@ -69,6 +69,7 @@ import { sql } from "drizzle-orm";
 import type { AppEnv } from "../types";
 import { writeAudit } from "../services/audit-log.service";
 import { ClientSafeError, publicErrorMessage } from "../lib/client-safe-error";
+import { guardedFetchFile } from "../lib/guarded-fetch";
 import { invalidKeyMessage } from "../lib/key-remediation";
 import { applyToolSecuritySchemes, toolCallAuthErrorBody, toolCallId } from "../lib/mcp-auth-meta";
 import type { FeedbackRowResult, RawFeedbackRow } from "../services/feedback.service";
@@ -248,78 +249,52 @@ mcpRouter.use("/*", async (c, next) => {
 // server fetches on the agent's behalf). Both produce an ImageAttachment the
 // existing submitAndSearch pipeline already understands.
 //
-// SSRF risk model: file_url asks the server to fetch an arbitrary URL. We
-// mitigate with (a) http/https scheme check, (b) string-based private/
-// loopback/link-local hostname rejection, (c) 10s timeout, (d) size cap at
-// MAX_UPLOAD_BYTES, (e) MIME allowlist. This is best-effort at the
-// application layer; DNS-resolution-aware filtering requires network-layer
-// rules (documented in docs/security/).
+// SSRF risk model (F37): file_url asks the server to fetch a URL an agent
+// names. lib/guarded-fetch.ts's guardedFetchFile connects only to public
+// addresses, judged in the socket's own lookup and on IP literals in any
+// spelling; it follows at most URL_FETCH_MAX_REDIRECTS redirects, checking
+// each hop again and refusing an https-to-http downgrade; and it stops reading
+// at MAX_UPLOAD_BYTES under one deadline. The MIME allowlist applies after.
+// Recipe 78731e77.
 
 const URL_FETCH_TIMEOUT_MS = 10_000;
-
-const PRIVATE_HOST_PATTERNS: RegExp[] = [
-  /^localhost$/i,
-  /^127\./,
-  /^10\./,
-  /^172\.(1[6-9]|2\d|3[01])\./,
-  /^192\.168\./,
-  /^169\.254\./,
-  /^::1$/,
-  /^fe80:/i,
-  /^fc00:/i,
-  /^fd00:/i,
-  /\.internal$/i,
-  /\.local$/i,
-];
+const URL_FETCH_MAX_REDIRECTS = 3;
 
 async function imageFromUrl(url: string): Promise<ImageAttachment> {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new ClientSafeError(`Invalid URL: ${url}`);
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new ClientSafeError(`Unsupported URL scheme: ${parsed.protocol} (http/https only)`);
-  }
-  const host = parsed.hostname.toLowerCase();
-  if (PRIVATE_HOST_PATTERNS.some((p) => p.test(host))) {
-    throw new ClientSafeError(`Private/internal URLs not permitted: ${host}`);
-  }
-
-  const res = await fetch(url, {
-    signal: AbortSignal.timeout(URL_FETCH_TIMEOUT_MS),
-    redirect: "follow",
+  const fetched = await guardedFetchFile(url, {
+    maxBytes: MAX_UPLOAD_BYTES,
+    timeoutMs: URL_FETCH_TIMEOUT_MS,
+    maxRedirects: URL_FETCH_MAX_REDIRECTS,
   });
-  if (!res.ok) throw new ClientSafeError(`Failed to fetch ${url}: HTTP ${res.status}`);
-
-  const rawContentType = (res.headers.get("content-type") ?? "").split(";")[0]?.trim().toLowerCase() ?? "";
-  const contentLengthHeader = res.headers.get("content-length");
-  if (contentLengthHeader) {
-    const declared = parseInt(contentLengthHeader, 10);
-    if (Number.isFinite(declared) && declared > MAX_UPLOAD_BYTES) {
-      throw new ClientSafeError(`File too large per Content-Length: ${declared} bytes (max ${MAX_UPLOAD_BYTES})`);
-    }
+  if (!fetched.ok) {
+    // A name that resolves to a private address and one that does not
+    // connect at all read the same, so file_url cannot map which internal
+    // names exist (the uniform-error precedent of recipe 72737049).
+    const reason =
+      fetched.reason === "too large"
+        ? `larger than ${MAX_UPLOAD_BYTES} bytes`
+        : fetched.reason === "non-public address" || fetched.reason === "request failed"
+          ? "not reachable at a public address"
+          : fetched.reason;
+    throw new ClientSafeError(`Could not fetch ${url}: ${reason}`);
   }
+  const original = new URL(url);
+  const rawContentType = fetched.contentType.split(";")[0]?.trim() ?? "";
 
-  const buffer = Buffer.from(await res.arrayBuffer());
-  if (buffer.byteLength > MAX_UPLOAD_BYTES) {
-    throw new ClientSafeError(`File too large: ${buffer.byteLength} bytes (max ${MAX_UPLOAD_BYTES})`);
-  }
-
-  // Determine MIME: Content-Type header if allowed, else extension fallback.
+  // Determine MIME: Content-Type header if allowed, else the extension of the
+  // URL the agent sent, then of the URL the redirects ended at.
   let mimeType = rawContentType;
-  if (!ALLOWED_MIME_TYPES.has(mimeType)) {
-    const pathExt = parsed.pathname.split(".").pop()?.toLowerCase() ?? "";
-    const extMime = EXT_TO_MIME[pathExt];
+  for (const pathname of [original.pathname, fetched.finalUrl.pathname]) {
+    if (ALLOWED_MIME_TYPES.has(mimeType)) break;
+    const extMime = EXT_TO_MIME[pathname.split(".").pop()?.toLowerCase() ?? ""];
     if (extMime) mimeType = extMime;
   }
   if (!ALLOWED_MIME_TYPES.has(mimeType)) {
     throw new ClientSafeError(`Unsupported or undetectable MIME type (got '${rawContentType || "none"}'). Allowed: ${[...ALLOWED_MIME_TYPES].join(", ")}`);
   }
 
-  const filename = parsed.pathname.split("/").pop() || "attachment";
-  return { buffer, mimeType, filename };
+  const filename = original.pathname.split("/").pop() || "attachment";
+  return { buffer: fetched.body, mimeType, filename };
 }
 
 function imageFromBase64(base64: string, filename: string, mimeTypeHint?: string): ImageAttachment {
