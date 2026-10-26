@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import type { InboundSharing, OutboundSharing } from "@soupnet/domain";
+import type { InboundSharing, OutboundSharing } from "@soupnet/domain/browser";
 import { authFetch } from "../auth.js";
 import {
   AdminLayout,

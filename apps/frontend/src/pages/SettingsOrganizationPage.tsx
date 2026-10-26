@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { memberVisibleDescriptions } from "@soupnet/domain";
-import type { OrgActivityEvent } from "@soupnet/domain";
+import { memberVisibleDescriptions } from "@soupnet/domain/browser";
+import type { OrgActivityEvent } from "@soupnet/domain/browser";
 import { authFetch } from "../auth.js";
 import { describeOrgEvent } from "../lib/org-activity-copy.js";
 

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { OrgActivityEvent } from "@soupnet/domain";
+import type { OrgActivityEvent } from "@soupnet/domain/browser";
 import {
   AdminLayout,
   AdminPageHeader,

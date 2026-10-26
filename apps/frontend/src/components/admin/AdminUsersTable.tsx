@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
-import { columnsFor } from "@soupnet/domain";
-import type { AdminListing, AdminViewer } from "@soupnet/domain";
+import { columnsFor } from "@soupnet/domain/browser";
+import type { AdminListing, AdminViewer } from "@soupnet/domain/browser";
 import { AdminTable, type AdminColumn } from "./AdminTable.js";
 
 /**

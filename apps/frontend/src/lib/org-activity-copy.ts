@@ -1,4 +1,4 @@
-import type { OrgActivityEvent, OrgRole } from "@soupnet/domain";
+import type { OrgActivityEvent, OrgRole } from "@soupnet/domain/browser";
 
 const ROLE_PHRASE: Record<OrgRole, string> = { owner: "an owner", admin: "an admin", member: "a member" };
 

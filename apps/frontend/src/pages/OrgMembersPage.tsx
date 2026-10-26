@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ADMIN_USER_STATUS_LABELS, orgActionRefusal } from "@soupnet/domain";
-import type { AdminUserStatus, OrgMemberAction, OrgRole } from "@soupnet/domain";
+import { ADMIN_USER_STATUS_LABELS, orgActionRefusal } from "@soupnet/domain/browser";
+import type { AdminUserStatus, OrgMemberAction, OrgRole } from "@soupnet/domain/browser";
 import { authFetch } from "../auth.js";
 import {
   AdminLayout,
