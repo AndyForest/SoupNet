@@ -43,3 +43,27 @@ The 12-month sweep of account events (the ruling's second half) is a backlog ite
 | R-X2 | No schema change and no migration: anonymisation is an update. | The diff. |
 | R-X3 | The schema's "never updated or deleted" comment and the deletion service's "outlives the actor" comment are corrected to say what now happens. | Code review. |
 | R-X4 | The gate passes (`npm run test:ci`, distinct ports, frontend build included). | The gate. |
+
+## Build notes (2026-10-26)
+
+Written by the builder for the verifier and the audit coordinator.
+
+**What was built:**
+- `services/audit-actions.ts` holds the two lists: 3 check-log actions and 18 account events.
+- `services/audit-actions.test.ts` scans the backend source and fails on an unclassified, double-classified or stale action.
+- `anonymiseCheckLogOf` in `services/audit-log.service.ts` is called in `deleteUserCascade`'s final transaction, before the `users` row goes.
+- The schema and cascade comments are corrected.
+- `docs/backlog.md` carries the deferred 12-month sweep, with a note on the audit-log FK item and on the search-filter item.
+
+**Tests:** `routes/audit-anonymise.test.ts` (Layer 3, R-A1 to R-A5). A person checks under an intent, searches with free text and gets a briefing, and changes a book description. A colleague makes their own check and a deposit about the person on their behalf. The person deletes their account, and every row is compared with its snapshot.
+
+**One earlier rubric row changed:** drafts-and-triage S4-A4 asserted that the depositor's `recipe.checked` row keeps their actor after their account is deleted. The ruling anonymises that row, so the test now asserts a null actor with the subject kept. S4-S4 (the depositor recoverable from `audit_log` alone) still holds through `recipe.draft_verified`'s `previousAuthorId`, an account event that deletion leaves as it is. The S4-A4 row in `drafts-and-triage-build.md` carries the amendment.
+
+**Gate:**
+- **Full runs:** three runs of `TESTCI_PGPORT=5644 TESTCI_BACKEND_PORT=3288 npm run test:ci` each failed exactly one test, a different one each time, and each passes alone on a fresh stack:
+  - `authz.test.ts` "listMembers … in join order";
+  - S9-I4 in `report-read-paths.test.ts`;
+  - S8b-C2 in `flat-list.test.ts`.
+- **Why they're environmental:** all three order rows by time, none deletes an account or reads the audit log, and the repository already records that Docker Desktop's VM clock steps back 20 to 30 ms every 30 seconds.
+- **The first run's other failure** was the S4-A4 change above, now fixed.
+- **Passing everywhere:** this change's suites, the two existing account-deletion suites and the on-behalf suite. GitHub CI judges the full run.

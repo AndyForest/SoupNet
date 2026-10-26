@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
+import { CHECK_LOG_ACTIONS } from "./audit-actions";
 
 export interface AuditEventInput {
   actorUserId: string | null;
@@ -32,4 +33,42 @@ export async function writeAudit(
   } catch (err) {
     console.error("[audit-log] Failed to write audit event:", { action, targetId, err });
   }
+}
+
+/**
+ * Anonymise a departing person's check log (recipe 1d1531da; the September
+ * design 569fc2cc: "null `actor_user_id`, redact `metadata.filter`"). Run
+ * inside the account-deletion cascade's final transaction.
+ *
+ * Their check-log rows (CHECK_LOG_ACTIONS) lose what points at them: the
+ * actor, the key in `api_key_id` and in `metadata.apiKeyId`, a target that
+ * is the key (a briefing's), and a search's free-text `metadata.filter`.
+ * Everything else stays, so counts and task groupings survive: the action,
+ * the target recipe or search, the time, session and intent ids (the rows
+ * they joined to go with the account), result ids, ratings and surface.
+ *
+ * Other people's check-log rows that name the person as the subject of a
+ * deposit keep `subjectUserId` as null: the record that a deposit about
+ * someone happened survives without naming them. That match reads metadata
+ * across the check log; account deletion is rare, so the scan is accepted.
+ *
+ * Account events are left as they are.
+ */
+export async function anonymiseCheckLogOf(db: PostgresJsDatabase, userId: string): Promise<void> {
+  const checkLog = sql.join(CHECK_LOG_ACTIONS.map((a) => sql`${a}`), sql`, `);
+  await db.execute(sql`
+    UPDATE claimnet.audit_log
+    SET actor_user_id = NULL,
+        api_key_id = NULL,
+        target_id = CASE WHEN target_type = 'api_key' THEN NULL ELSE target_id END,
+        metadata = CASE WHEN metadata IS NULL THEN NULL ELSE metadata - 'apiKeyId' - 'filter' END
+    WHERE actor_user_id = ${userId}::uuid
+      AND action IN (${checkLog})
+  `);
+  await db.execute(sql`
+    UPDATE claimnet.audit_log
+    SET metadata = jsonb_set(metadata, '{subjectUserId}', 'null'::jsonb)
+    WHERE action IN (${checkLog})
+      AND metadata->>'subjectUserId' = ${userId}
+  `);
 }
