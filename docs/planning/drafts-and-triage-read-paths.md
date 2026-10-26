@@ -168,6 +168,18 @@ Rubric: build log §Slice 5 rubric (ids `S5-*`). A headless key is one whose `ap
 | RP-46 | `verify_draft` and `POST /recipes/:id/verify` refused before lookup (`keyMayVerifyDrafts`), REST 403, same bytes for any id | refused, nothing stored | unchanged | S5-R1, S5-U1 |
 | (write, no trace read) | `update_recipe_book_description`: no change. Open question 42's refusal was overridden (orchestrator, 2026-09-28): headless means only that deposits are drafts | same answers as an ordinary key | unchanged | S5-W6 (amended) |
 
+### Touched by slice 6a (the intent link)
+
+Rubric: build log §Slice 6a rubric (ids `S6a-*`). `traces.intent_id` names the declared intent a recipe was deposited under. Nothing new is readable by anyone: every path below still applies the draft rule and the book scope it applied before, and each reads the link only against the viewer's own intents (`claimnet.intents.user_id`).
+
+| # | What slice 6a changes | The viewer's own intent | Someone else's intent, or an unknown id | Rubric |
+|---|---|---|---|---|
+| RP-01 | Deposit writes `intent_id` from the intent the check resolved to the depositor (joined or registered); the idempotent repeat keeps the first value | linked | stored NULL | S6a-S2, S6a-S3 |
+| RP-02, RP-41 | `intent:<id>` on `search_recipes` and `/check?filter=`: an opaque `TraceSelection` (`intentSelection`) ANDed with the existing predicates after one ownership lookup (`ownedIntentIds`); lifts the MCP exclude-own default | selects the recipes under it that the viewer may read | selects nothing, with one uniform note | S6a-Q2 to S6a-Q6 |
+| RP-47 | Queue listing groups by the viewer's own intent (a join to `intents` on `user_id`); items carry `intent { id, story }` only for the viewer's own; `intent:` in the queue's search box | grouped, story shown | ungrouped, `intent: null` | S6a-G1 to S6a-G4 |
+| RP-35 | Import restores `intentId` only onto the importer's own intents | restored | dropped to NULL | S6a-E2 |
+| (export) | `GET /auth/me/export` carries `intentId` only when the exporter owns the intent | carried | `null` | S6a-E1 |
+
 ## Admin (system role only, `routes/admin.ts`)
 
 | # | Path | file:line | Returns / counts | Trace filtering today | Draft disposition |

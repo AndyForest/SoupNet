@@ -253,8 +253,8 @@ const TRACE_READS = {
     why: "loads author, evidence, and references by id for exemplars the pipeline chose under SHARED_AUDIENCE (RP-10, RP-42)",
   },
   "apps/backend/src/services/draft-queue.service.ts": {
-    n: 5, fp: "06c2cb347827", composes: true,
-    why: "the review queue (slice 3): listing and count compose draftAwaitingReviewBy and traceVisibleTo over the person's live books; item details use traceReadableById for ids already resolved through the module, and name an on-behalf draft's other party through onBehalfSideFor and onBehalfPartyFor (slice 4)",
+    n: 5, fp: "fd5b6989f61b", composes: true,
+    why: "the review queue (slice 3): listing and count compose draftAwaitingReviewBy and traceVisibleTo over the person's live books; item details use traceReadableById for ids already resolved through the module, and name an on-behalf draft's other party through onBehalfSideFor and onBehalfPartyFor (slice 4); the listing groups by, and items show, only the viewer's own intents (a join to intents on user_id, slice 6a)",
   },
   "apps/backend/src/services/ephemeral-workspace.service.ts": {
     n: 5, fp: "c8d8ebe28b99", composes: false,
@@ -265,8 +265,8 @@ const TRACE_READS = {
     why: "feedback target ACL: prefix scan and readable set use traceReadableById (RP-11, RP-18); check_feedback inserts and the per-key budget count are writes and the caller's own rows; search, briefing, and intent-only rows (slice 8a) attach only to the caller's user's own audit rows or intents, with dedup lookups on the caller's key",
   },
   "apps/backend/src/services/import.service.ts": {
-    n: 14, fp: "e60103d132b7", composes: false,
-    why: "import only creates rows: it reads rows by id to decide skip / conflict / fresh id (RP-35), keeps a trace only when it is the importer's own and not a draft about someone else (onBehalfSubjectOf, [F92] [F97]), writes links only between rows it created (recipe 5d541d2c), and an on-behalf row's subject goes through the module's naming rule (S4-E2)",
+    n: 14, fp: "b4a8f2ab1a85", composes: false,
+    why: "import only creates rows: it reads rows by id to decide skip / conflict / fresh id (RP-35), keeps a trace only when it is the importer's own and not a draft about someone else (onBehalfSubjectOf, [F92] [F97]), writes links only between rows it created (recipe 5d541d2c), and an on-behalf row's subject goes through the module's naming rule (S4-E2); a row's intent link is restored only onto the importer's own intents (slice 6a, S6a-E2)",
   },
   "apps/backend/src/services/integrity-repair.service.ts": {
     n: 10, fp: "1bf65a3a7142", composes: false,
@@ -285,8 +285,8 @@ const TRACE_READS = {
     why: "corpus mode rows and honest total use traceVisibleTo (RP-41); vector loads are by id for filtered results (RP-42)",
   },
   "apps/backend/src/services/trace.service.ts": {
-    n: 10, fp: "7c01a110f3cf", composes: true,
-    why: "deposit INSERT (the on-behalf subject from the module's naming rule, S4-M1; the draft state forced for a headless key by keyForcesDrafts, S5-M3), the depositing key's own idempotency row with its subject through onBehalfSubjectOf (RP-04, S4-L4), session ledger ids (RP-05), and zero-result scope counts that use traceVisibleTo (RP-03)",
+    n: 10, fp: "5725e3d83e82", composes: true,
+    why: "deposit INSERT (the on-behalf subject from the module's naming rule, S4-M1; the draft state forced for a headless key by keyForcesDrafts, S5-M3; the intent link from the intent the check resolved to the depositor, S6a-S2), the depositing key's own idempotency row with its subject through onBehalfSubjectOf (RP-04, S4-L4), session ledger ids (RP-05), and zero-result scope counts that use traceVisibleTo (RP-03)",
   },
   "apps/backend/src/services/trace-delete.service.ts": {
     n: 15, fp: "66a8c2514e26", composes: false,

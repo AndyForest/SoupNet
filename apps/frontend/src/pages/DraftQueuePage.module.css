@@ -135,3 +135,18 @@
   .actions button { justify-content: center; }
   .detailLink { margin-left: 0; }
 }
+
+/* Slice 6a: drafts under one of the person's intents, under its story. */
+.intentGroup {
+  list-style: none;
+  margin-block: var(--space-md);
+  padding-inline-start: var(--space-md);
+  border-inline-start: 3px solid var(--color-outline-variant);
+}
+
+.intentHeading {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0 0 var(--space-xs);
+  overflow-wrap: anywhere;
+}

@@ -10,7 +10,8 @@
  * non-ranking reason belongs outside this list; moving code into one of
  * these files and reading a rating there is exactly what this test stops.
  *
- * Slice 2 extends the same list to the draft and verification columns.
+ * Slice 2 extends the same list to the draft and verification columns, and
+ * slice 6a to the recipe-to-intent link.
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
@@ -63,6 +64,21 @@ describe("ranking code never reads triage ratings (S1-B8 b, DT-RAT-07)", () => {
         .map((line, i) => ({ line: i + 1, text: line }))
         .filter(({ text }) => DRAFT_TERMS.test(text));
       expect(hits, `${file} mentions a draft column: ${JSON.stringify(hits)}`).toEqual([]);
+    });
+  }
+
+  // Slice 6a (S6a-Q8): the recipe-to-intent link. The intent: qualifier is
+  // a selection built in search-selection.ts and handed over as an opaque
+  // TraceSelection; ranking never reads which intent a recipe came from.
+  const INTENT_TERMS = /\b(intent|intents|intent_id|intentId|intentSelection|ownedIntentIds)\b/i;
+  for (const file of RANKING_FILES) {
+    it(`${file} does not reference the intent link (slice 6a)`, () => {
+      const source = readFileSync(join(repo, file), "utf-8");
+      const hits = source
+        .split("\n")
+        .map((line, i) => ({ line: i + 1, text: line }))
+        .filter(({ text }) => INTENT_TERMS.test(text));
+      expect(hits, `${file} mentions the intent link: ${JSON.stringify(hits)}`).toEqual([]);
     });
   }
 

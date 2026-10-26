@@ -1,9 +1,9 @@
 # ClaimNet Data Model — Generated Reference
 
-> **Auto-generated** from Drizzle migration snapshot `0041_snapshot.json`.
+> **Auto-generated** from Drizzle migration snapshot `0042_snapshot.json`.
 > Do not edit by hand. Regenerate with: `npx tsx scripts/generate-data-model-docs.ts`
 >
-> Schema as of migration `0041_check_feedback_briefing_and_intent_targets` (2026-10-24).
+> Schema as of migration `0042_traces_intent_link` (2026-10-25).
 > Tables: 31 | Schema: `claimnet`
 
 For design rationale, conventions, and context, see [data-model.md](data-model.md).
@@ -335,6 +335,7 @@ erDiagram
         uuid draft_resolved_by_user_id
         uuid draft_resolved_by_key_id
         uuid subject_user_id
+        text intent_id
         timestamptz created_at
         timestamptz updated_at
     }
@@ -582,6 +583,7 @@ These are created by raw SQL in migration files and are not captured in the snap
 | `draft_resolved_by_user_id` | `uuid` | YES |  |  |
 | `draft_resolved_by_key_id` | `uuid` | YES |  |  |
 | `subject_user_id` | `uuid` | YES |  |  |
+| `intent_id` | `text` | YES |  |  |
 | `created_at` | `timestamptz` | NO | `now()` |  |
 | `updated_at` | `timestamptz` | NO | `now()` |  |
 
@@ -596,6 +598,7 @@ These are created by raw SQL in migration files and are not captured in the snap
 - `traces_session_id_created_at_idx`: `(session_id, created_at)`
 - `traces_judgment_date_idx`: `((COALESCE("decided_at", "created_at")))`
 - `traces_unpublished_draft_idx`: `(user_id)`
+- `traces_intent_id_idx`: `(intent_id)`
 
 ---
 

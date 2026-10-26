@@ -5,8 +5,8 @@
  * single semantic query (embedded whole — no boolean operators over a vector),
  * double-quoted terms are lexical substring matches, and a small allowlisted
  * qualifier vocabulary (`author:`, `after:`, `before:`, and from the drafts
- * review queue `is:draft`, `impact:`, `uncertainty:`) carries the structured
- * filters. Design + syntax precedent citations:
+ * work `is:draft`, `impact:`, `uncertainty:`, `intent:`) carries the
+ * structured filters. Design + syntax precedent citations:
  * docs/planning/recipe-search-design.md.
  *
  * SECURITY — secure by default (operator directive, recipe 446bac9f):
@@ -25,7 +25,7 @@ export const SEARCH_QUERY_MAX_LENGTH = 2000;
 export const SEARCH_QUERY_MAX_LEXICAL_TERMS = 8;
 export const SEARCH_QUERY_MAX_AUTHOR_VALUES = 8;
 
-export const SEARCH_QUALIFIERS = ["author", "after", "before", "is", "impact", "uncertainty"] as const;
+export const SEARCH_QUALIFIERS = ["author", "after", "before", "is", "impact", "uncertainty", "intent"] as const;
 export type SearchQualifier = (typeof SEARCH_QUALIFIERS)[number];
 
 /** Reserved author values (case-insensitive on the wire, canonical lowercase here). */
@@ -40,6 +40,12 @@ export const IS_DRAFT = "draft";
  *  triage ratings, slice 1). Matched case-insensitively. */
 export const SEARCH_RATING_VALUES = ["low", "medium", "high"] as const;
 export type SearchRatingValue = (typeof SEARCH_RATING_VALUES)[number];
+
+/** The declared-intent id shape `intent:` takes (drafts-and-triage slice 6a):
+ *  `int_` and 24 base62 characters, the id the intent service mints. Shape
+ *  only: whether the id names one of the viewer's intents is decided by the
+ *  backend, which answers an unknown id and another person's alike. */
+export const SEARCH_INTENT_ID_RE = /^int_[A-Za-z0-9]{24}$/;
 
 /** One rating qualifier's selection: `impact:high` sets `equals` (at most
  *  once); each `-impact:low` adds to `excluded`, which keeps unrated rows.
@@ -86,6 +92,11 @@ export interface ParsedSearchQuery {
    *  A filter the viewer asked for, never a ranking input. */
   impact?: RatingSelector | undefined;
   uncertainty?: RatingSelector | undefined;
+  /** `intent:<id>` (slice 6a): only recipes deposited under this declared
+   *  intent. The id as written (case matters); one per query. Like is:draft
+   *  it lifts the surface's exclude-own default, since every recipe under
+   *  the viewer's own intent is their own. Undefined: no intent qualifier. */
+  intent?: string | undefined;
 }
 
 export type ParseSearchQueryResult =
@@ -93,7 +104,7 @@ export type ParseSearchQueryResult =
   | { ok: false; error: string };
 
 const QUALIFIER_HELP =
-  "valid qualifiers are author:, after:, before:, is:draft, impact: and uncertainty: (low, medium, or high)";
+  "valid qualifiers are author:, after:, before:, is:draft, intent: (an int_… id), impact: and uncertainty: (low, medium, or high)";
 
 /** `YYYY-MM-DD` or a full ISO datetime; Date.parse re-checks real dates. */
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/;
@@ -187,6 +198,26 @@ function readGroup(s: Scanner): { ok: true; items: GroupItem[] } | { ok: false; 
   }
 }
 
+/**
+ * Where a prose parenthetical ends, or -1. Agents write parentheses in
+ * ordinary prose ("…body (merge order, open questions)"), so a top-level
+ * group with nothing grammar-shaped inside (no quote, no uppercase OR, no
+ * nested paren, no qualifier-shaped word) is bare semantic text, as Gmail
+ * reads an OR-less group (recipes 8481d9bc, f0c39b29). Anything that looks
+ * like grammar keeps the strict group reading and its loud errors.
+ */
+function proseParentheticalEnd(s: Scanner): number {
+  const close = s.input.indexOf(")", s.pos + 1);
+  if (close === -1) return -1;
+  const inner = s.input.slice(s.pos + 1, close);
+  if (inner.trim().length === 0 || /["(]/.test(inner) || /(^|\s)OR(\s|$)/.test(inner)) return -1;
+  const qualifierShaped = inner.split(/\s+/).some((w) => {
+    const bare = /^([A-Za-z][A-Za-z0-9_-]+):$/.exec(w);
+    return QUALIFIER_ATTEMPT_RE.test(w) || (bare !== null && (SEARCH_QUALIFIERS as readonly string[]).includes(bare[1]!.toLowerCase()));
+  });
+  return qualifierShaped ? -1 : close + 1;
+}
+
 function parseAuthorValue(raw: string): { ok: true; value: string } | { ok: false; error: string } {
   const v = raw.trim().toLowerCase();
   if (v === AUTHOR_ME || v === AUTHOR_ANYONE) return { ok: true, value: v };
@@ -226,6 +257,7 @@ export function parseSearchQuery(input: string): ParseSearchQueryResult {
   let after: string | undefined;
   let before: string | undefined;
   let isDraft: boolean | undefined;
+  let intent: string | undefined;
   const ratings: { impact?: RatingSelector; uncertainty?: RatingSelector } = {};
 
   const addLexicalGroup = (terms: string[]): string | null => {
@@ -282,6 +314,12 @@ export function parseSearchQuery(input: string): ParseSearchQueryResult {
     }
 
     if (ch === "(") {
+      const proseEnd = proseParentheticalEnd(s);
+      if (proseEnd !== -1) {
+        semanticParts.push(s.input.slice(s.pos, proseEnd));
+        s.pos = proseEnd;
+        continue;
+      }
       const g = readGroup(s);
       if (!g.ok) return g;
       if (g.items.every((i) => i.quoted)) {
@@ -342,6 +380,17 @@ export function parseSearchQuery(input: string): ParseSearchQueryResult {
             return { ok: false, error: "is:draft and -is:draft contradict each other — keep one" };
           }
           isDraft = !negated;
+        } else if (name === "intent") {
+          if (negated) return { ok: false, error: "-intent: is not supported — select one intent with intent:<id>" };
+          if (values.length !== 1) return { ok: false, error: "intent: takes one intent id per query — give one intent:<id>" };
+          const v = values[0]!.trim();
+          if (!SEARCH_INTENT_ID_RE.test(v)) {
+            return { ok: false, error: `intent: takes an intent id (int_ and 24 letters or digits) — got "${values[0]}". A task story goes in the intent parameter, not the query.` };
+          }
+          if (intent !== undefined && intent !== v) {
+            return { ok: false, error: "intent: takes one intent id per query — give one intent:<id>" };
+          }
+          intent = v;
         } else if (name === "impact" || name === "uncertainty") {
           if (values.length !== 1) return { ok: false, error: `${name}: takes one value: low, medium, or high` };
           const v = values[0]!.trim().toLowerCase();
@@ -410,6 +459,7 @@ export function parseSearchQuery(input: string): ParseSearchQueryResult {
       ...(isDraft !== undefined ? { isDraft } : {}),
       ...(ratings.impact ? { impact: ratings.impact } : {}),
       ...(ratings.uncertainty ? { uncertainty: ratings.uncertainty } : {}),
+      ...(intent !== undefined ? { intent } : {}),
     },
   };
 }

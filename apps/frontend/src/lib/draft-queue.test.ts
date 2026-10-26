@@ -15,6 +15,9 @@ import {
   partyText,
   linkHeading,
   queueIntro,
+  intentRuns,
+  intentHeadingText,
+  intentFilterQuery,
   QUEUE_ACTIONS,
 } from "./draft-queue.js";
 import type { QueueItem } from "./draft-queue.js";
@@ -181,5 +184,38 @@ describe("the intro is true for whoever reads it (post-merge findings, 2026-09-2
       expect(intro).not.toMatch(/your taste and judgment/);
       expect(intro).toMatch(/Only the person a draft is about can confirm or reject it/);
     }
+  });
+});
+
+describe("drafts under one of your intents are listed together (slice 6a, S6a-G5)", () => {
+  const I1 = { id: "int_AAAAAAAAAAAAAAAAAAAAAAAA", story: "As a developer choosing a cache strategy, I want both options built." };
+  const I2 = { id: "int_BBBBBBBBBBBBBBBBBBBBBBBB", story: "As a developer naming the queue states." };
+  const it_ = (id: string, intent: typeof I1 | null) => ({ id, intent });
+
+  it("splits the list into runs that share an intent, keeping the order given", () => {
+    const runs = intentRuns([it_("a", I1), it_("b", I1), it_("c", null), it_("d", null), it_("e", I2), it_("f", I1)]);
+    expect(runs.map((r) => [r.intent?.id ?? null, r.items.map((i) => i.id)])).toEqual([
+      [I1.id, ["a", "b"]],
+      [null, ["c", "d"]],
+      [I2.id, ["e"]],
+      [I1.id, ["f"]],
+    ]);
+  });
+
+  it("treats a missing intent field as ungrouped, and an empty list as no runs", () => {
+    expect(intentRuns([{ recipe: "x" } as { intent?: { id: string; story: string } | null }]).map((r) => r.intent)).toEqual([null]);
+    expect(intentRuns([])).toEqual([]);
+  });
+
+  it("shortens a long story for the heading, past 200 characters", () => {
+    expect(intentHeadingText(I1.story)).toBe(I1.story);
+    const long = "As a developer " + "x".repeat(300);
+    const heading = intentHeadingText(long);
+    expect(heading.length).toBe(200);
+    expect(heading.endsWith("…")).toBe(true);
+  });
+
+  it("filters the queue to one intent with the search grammar", () => {
+    expect(intentFilterQuery(I1.id)).toBe("intent:int_AAAAAAAAAAAAAAAAAAAAAAAA");
   });
 });

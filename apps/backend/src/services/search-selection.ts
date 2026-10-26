@@ -1,8 +1,9 @@
 /**
  * The search grammar's selections that are not ranking inputs
  * (drafts-and-triage slice 3): `is:draft` / `-is:draft`, and `impact:` /
- * `uncertainty:` over the stored triage ratings. Plus the review queue's
- * triage order.
+ * `uncertainty:` over the stored triage ratings; and from slice 6a
+ * `intent:`, the recipes deposited under one of the viewer's own intents.
+ * Plus the review queue's triage order.
  *
  * Why a separate file: the five ranking files (vector-search.service.ts,
  * search-pipeline.ts, clustering.service.ts, mmr.ts, ranking-config.ts) may
@@ -71,12 +72,28 @@ export function draftSelection(isDraft: boolean, viewerUserId: string): TraceSel
     : sql`(${draftAwaitingReviewBy(alias, viewerUserId)}) IS NOT TRUE`);
 }
 
-/** Every non-ranking selection a parsed query asks for, for this viewer. */
-export function searchSelections(parsed: ParsedSearchQuery, viewerUserId: string): TraceSelection[] {
+/**
+ * `intent:<id>` (slice 6a): the recipes whose stored intent link is this id.
+ * The caller passes the id only once it is known to be one of the viewer's
+ * own intents (`ownedIntentIds`); null selects nothing, which is the answer
+ * for an unknown id and for someone else's alike. The id binds as a
+ * parameter like every other value here.
+ */
+export function intentSelection(ownIntentId: string | null): TraceSelection {
+  return (alias) => (ownIntentId === null ? sql`FALSE` : sql`${aliasSql(alias)}.intent_id = ${ownIntentId}`);
+}
+
+/**
+ * Every non-ranking selection a parsed query asks for, for this viewer.
+ * `intentOwned` says whether the query's intent: id is one of the viewer's
+ * intents, which the caller has looked up (this module does no I/O).
+ */
+export function searchSelections(parsed: ParsedSearchQuery, viewerUserId: string, intentOwned = false): TraceSelection[] {
   const out: TraceSelection[] = [];
   if (parsed.isDraft !== undefined) out.push(draftSelection(parsed.isDraft, viewerUserId));
   if (parsed.impact) out.push(ratingSelection("impact", parsed.impact));
   if (parsed.uncertainty) out.push(ratingSelection("uncertainty", parsed.uncertainty));
+  if (parsed.intent !== undefined) out.push(intentSelection(intentOwned ? parsed.intent : null));
   return out;
 }
 

@@ -990,13 +990,17 @@ export const MCP_PARAM_DESCRIPTIONS = {
    *  docs/planning/recipe-search-design.md; parser: search-query.ts). Slice 3
    *  of the drafts work (2026-09-27) named is:draft, impact:, and
    *  uncertainty: inside the unchanged budget; the unknown-qualifier error
-   *  lists every qualifier and value, so this stays terse. */
+   *  lists every qualifier and value, so this stays terse. Slice 6a
+   *  (2026-10-24) adds the one term intent: inside the 420-character
+   *  per-description limit by trimming words the error messages and the
+   *  briefing already carry ("ISO" is in the date error; the PR-review
+   *  filename example is in the briefing's Search vs check). */
   searchQuery:
     "Bare text is one semantic phrase. \"Quoted terms\" match exact substrings of recipe, evidence, " +
-    "and citations (quote filenames for PR review); group with (\"a\" OR \"b\"); -\"term\" excludes. " +
-    "Qualifiers: author: (email, me, anyone), after:/before: (ISO judgment date), is:draft (your " +
-    "unresolved drafts), impact:/uncertainty: (low|medium|high). -author:me leaves out your own. " +
-    "Qualifier-only: newest first.",
+    "citations (quote filenames); group with (\"a\" OR \"b\"); -\"term\" excludes. Qualifiers: " +
+    "author: (email, me, anyone), after:/before: (judgment date), is:draft (your open drafts), " +
+    "intent:int_… (your intent's recipes), impact:/uncertainty: (low|medium|high). " +
+    "-author:me leaves out your own. Qualifier-only: newest first.",
 
   /** Deprecated legacy levers — kept in schema so existing callers stay
    *  honored (the SDK strips unknown keys silently, which would recreate the
