@@ -84,6 +84,8 @@ const CI_GOOGLE = {
   GOOGLE_OAUTH_CLIENT_ID: "ci-google-client.apps.googleusercontent.com",
   GOOGLE_OAUTH_CLIENT_SECRET: "ci-google-secret",
   GOOGLE_OIDC_TEST_ISSUER: `http://127.0.0.1:${CI_PORT + 900}`,
+  // Seals Workspace directory credentials (stream Offboarding).
+  DIRECTORY_CREDENTIALS_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 };
 function run(cmd, opts = {}) {
   console.log(`\n> ${cmd}`);

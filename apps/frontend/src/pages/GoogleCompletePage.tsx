@@ -16,6 +16,7 @@ export function GoogleCompletePage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [message, setMessage] = useState<string | null>(null);
+  const [connected, setConnected] = useState(false);
   const ran = useRef(false);
 
   useEffect(() => {
@@ -27,6 +28,10 @@ export function GoogleCompletePage() {
 
     if (!fragment) {
       setMessage(googleSignInMessage("expired"));
+      return;
+    }
+    if ("directoryConnected" in fragment) {
+      setConnected(true);
       return;
     }
     if ("error" in fragment) {
@@ -75,7 +80,15 @@ export function GoogleCompletePage() {
 
   return (
     <div style={{ maxWidth: 420, margin: "var(--space-2xl, 4rem) auto", padding: "0 var(--space-md)" }}>
-      {message ? (
+      {connected ? (
+        <div className="card">
+          <h1 style={{ fontSize: "1.25rem", marginBottom: "var(--space-md)" }}>Directory connected</h1>
+          <p style={{ marginBottom: "var(--space-md)" }}>
+            Your organization's Google Workspace directory is connected. Members who are suspended or removed in Google lose access to Soup.net within the hour.
+          </p>
+          <Link to="/app/dashboard">Back to Soup.net</Link>
+        </div>
+      ) : message ? (
         <div className="card">
           <h1 style={{ fontSize: "1.25rem", marginBottom: "var(--space-md)" }}>Couldn't sign you in</h1>
           <p role="alert" style={{ marginBottom: "var(--space-md)" }}>{message}</p>

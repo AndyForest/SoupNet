@@ -80,3 +80,4 @@ export * from "./organizations";
 export * from "./sharing-policy";
 export * from "./domain-authority";
 export * from "./sso-policy";
+export * from "./directory-check";

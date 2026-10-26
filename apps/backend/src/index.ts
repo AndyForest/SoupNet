@@ -10,6 +10,7 @@ import { getDb } from "./db";
 import { authRoutes } from "./routes/auth";
 import { googleAuthRoutes } from "./routes/google-auth";
 import { googleOidcConfig } from "./services/google-oidc.service";
+import { installDirectoryChecking } from "./services/directory-connection.service";
 import { keyRoutes } from "./routes/keys";
 import { meRoutes } from "./routes/me";
 import { briefingRoutes } from "./routes/briefing";
@@ -221,6 +222,9 @@ async function start() {
   if (!google) console.warn("[backend] Google sign-in: off (GOOGLE_OAUTH_CLIENT_ID unset)");
   else if (google.testIssuer) console.warn(`[backend] Google sign-in: TEST ISSUER ${google.issuers[0]} (GOOGLE_OIDC_TEST_ISSUER; never in production)`);
   else console.warn("[backend] Google sign-in: on");
+  // The Workspace directory check (stream Offboarding): on when the
+  // credential key and Google are both configured. A malformed key throws.
+  console.warn(`[backend] Workspace directory check: ${installDirectoryChecking()}`);
   if (synthesisProviderId === "stub") {
     console.warn(
       "[backend] WARNING: stub synthesis is deterministic but not a real profile. " +

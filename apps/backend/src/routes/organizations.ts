@@ -6,6 +6,10 @@
  *   POST  /organizations/:id/members/:userId/enable
  *   PATCH /organizations/:id/members/:userId   { role }
  *   PATCH /organizations/:id                   { requireSso }   (stream SSO)
+ *   GET    /organizations/:id/directory         the Workspace directory connection (stream Offboarding)
+ *   POST   /organizations/:id/directory/google/start  { binding, domain }
+ *   PUT    /organizations/:id/directory/service-account  { key, adminEmail }
+ *   DELETE /organizations/:id/directory
  *
  * JWT-auth + verified email, like every JWT router. The decision lives in
  * the authz module (`actOnMember`): the caller must be an active owner or
@@ -23,6 +27,9 @@ import { requireAuth, requireVerifiedEmail } from "../auth";
 import type { AppEnv } from "../types";
 import { actOnMember, activeOrgManagerRole } from "../authz";
 import { writeAudit } from "../services/audit-log.service";
+import { directoryConnectionOf, deleteDirectoryConnection } from "../authz";
+import { connectServiceAccount, directoryConnectAvailable, startDirectoryConnect } from "../services/directory-connection.service";
+import { forgetDirectoryTokens } from "../services/google-directory.service";
 import type { MemberActionRefusal } from "../authz";
 import { ORG_ACTION_MESSAGES, ORGANIZATION_FULL_MESSAGE, ORGANIZATION_NOT_FOUND, isOrgRole } from "@soupnet/domain";
 import type { OrgMemberAction } from "@soupnet/domain";
@@ -108,6 +115,71 @@ organizationsRouter.patch("/:id", async (c) => {
     metadata: { requireSso, by: "org_admin" },
   });
   return c.json({ ok: true });
+});
+
+// ── The Google Workspace directory connection (stream Offboarding) ─────────
+//
+// For an active owner or admin of the organization, behind the same uniform
+// 404 as every route here. Never returns the credential (OB-K4).
+
+async function directoryGate(c: Context<AppEnv>): Promise<{ organizationId: string } | Response> {
+  const organizationId = c.req.param("id");
+  if (!organizationId || !uuid.safeParse(organizationId).success) return c.json(NOT_FOUND, 404);
+  if (!(await activeOrgManagerRole(getDb(), organizationId, c.get("user").id))) return c.json(NOT_FOUND, 404);
+  if (!directoryConnectAvailable()) {
+    return c.json({ ok: false, error: "directory_not_configured", message: "This Soup.net server isn't set up to connect a Google Workspace directory." }, 503);
+  }
+  return { organizationId };
+}
+
+async function jsonBody(c: Context<AppEnv>): Promise<Record<string, unknown>> {
+  try {
+    const body: unknown = await c.req.json();
+    return body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+organizationsRouter.get("/:id/directory", async (c) => {
+  const gate = await directoryGate(c);
+  if (gate instanceof Response) return gate;
+  return c.json({ ok: true, data: await directoryConnectionOf(getDb(), gate.organizationId) });
+});
+
+organizationsRouter.post("/:id/directory/google/start", async (c) => {
+  const gate = await directoryGate(c);
+  if (gate instanceof Response) return gate;
+  const body = await jsonBody(c);
+  const binding = body["binding"];
+  if (typeof binding !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(binding)) {
+    return c.json({ ok: false, error: "invalid_request", message: "binding must be the base64url SHA-256 of the tab's secret." }, 400);
+  }
+  const result = await startDirectoryConnect(getDb(), { organizationId: gate.organizationId, userId: c.get("user").id, domain: body["domain"], binding });
+  if ("url" in result) return c.json({ ok: true, data: { url: result.url } });
+  return c.json({ ok: false, error: result.error, message: result.message }, result.status);
+});
+
+organizationsRouter.put("/:id/directory/service-account", async (c) => {
+  const gate = await directoryGate(c);
+  if (gate instanceof Response) return gate;
+  const body = await jsonBody(c);
+  const refused = await connectServiceAccount(getDb(), { organizationId: gate.organizationId, userId: c.get("user").id, key: body["key"], adminEmail: body["adminEmail"] });
+  if (refused) return c.json({ ok: false, error: refused.error, message: refused.message }, refused.status);
+  forgetDirectoryTokens(gate.organizationId);
+  return c.json({ ok: true, data: await directoryConnectionOf(getDb(), gate.organizationId) });
+});
+
+organizationsRouter.delete("/:id/directory", async (c) => {
+  const gate = await directoryGate(c);
+  if (gate instanceof Response) return gate;
+  const db = getDb();
+  const removed = await deleteDirectoryConnection(db, gate.organizationId);
+  forgetDirectoryTokens(gate.organizationId);
+  if (removed) {
+    await writeAudit(db, { actorUserId: c.get("user").id, action: "organization.directory_disconnected", targetType: "organization", targetId: gate.organizationId });
+  }
+  return c.json({ ok: true, data: { removed } });
 });
 
 export default organizationsRouter;

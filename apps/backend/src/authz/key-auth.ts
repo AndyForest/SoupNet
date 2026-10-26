@@ -32,6 +32,8 @@
 
 import crypto from "node:crypto";
 import { sql } from "drizzle-orm";
+import { directoryCheckDueFor } from "./directory-sql";
+import { checkDirectoryIfDue, dueUserForRefusedKey } from "./directory-check";
 import type { SQL } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { membershipOf } from "./membership-sql";
@@ -213,6 +215,24 @@ export async function authenticateKey(
   rawKey: string,
   options: AuthenticateKeyOptions = {},
 ): Promise<Principal | null> {
+  // The Workspace directory check (stream Offboarding, directory-check.ts):
+  // when the owner is due one, run it before answering and judge the key
+  // again if it recorded a status. A refused key's owner is looked up only
+  // to see whether they are due, so a member the directory switched off is
+  // re-checked on their next attempt and comes back once restored.
+  const first = await authenticateKeyOnce(db, rawKey, options);
+  if (first.principal && !first.directoryDue) return first.principal;
+  const userId = first.principal ? first.principal.userId : await dueUserForRefusedKey(db, hashCredential(rawKey));
+  if (!userId) return first.principal;
+  if (!(await checkDirectoryIfDue(db, userId))) return first.principal;
+  return (await authenticateKeyOnce(db, rawKey, options)).principal;
+}
+
+async function authenticateKeyOnce(
+  db: PostgresJsDatabase,
+  rawKey: string,
+  options: AuthenticateKeyOptions,
+): Promise<{ principal: Principal | null; directoryDue: boolean }> {
   const hashedKey = hashCredential(rawKey);
   const ownerClause = options.ownerUserId
     ? sql`AND k.user_id = ${options.ownerUserId}::uuid`
@@ -221,7 +241,8 @@ export async function authenticateKey(
   const rows = await db.execute(sql`
     SELECT k.id, k.user_id, k.key_type, k.oauth_client_id, k.expires_at,
            k.default_write_group_id, k.deposit_level,
-           ${effectiveScopeColumns()}
+           ${effectiveScopeColumns()},
+           ${directoryCheckDueFor(sql`k.user_id`)} AS directory_due
     FROM claimnet.api_keys k
     JOIN claimnet.users u ON u.id = k.user_id
     WHERE k.key = ${hashedKey}
@@ -239,8 +260,9 @@ export async function authenticateKey(
     oauth_client_id: string | null;
     expires_at: string;
     deposit_level: string;
+    directory_due: boolean;
   }>)[0];
-  if (!row) return null;
+  if (!row) return { principal: null, directoryDue: false };
 
   // Telemetry, fire and forget. The catch is load-bearing: an untracked
   // rejection (the pool closing under an in-process caller at test or worker
@@ -255,16 +277,19 @@ export async function authenticateKey(
   });
 
   return {
-    keyId: row.id,
-    userId: row.user_id,
-    keyType: row.key_type,
-    oauthClientId: row.oauth_client_id ?? null,
-    expiresAt: new Date(row.expires_at),
-    depositLevel: row.deposit_level,
-    readGroupIds: row.effective_read_ids,
-    writeGroupIds: row.effective_write_ids,
-    defaultWriteGroupId: effectiveDefault(row),
-    expiredReadGroupIds: row.expired_read_ids,
+    directoryDue: row.directory_due === true,
+    principal: {
+      keyId: row.id,
+      userId: row.user_id,
+      keyType: row.key_type,
+      oauthClientId: row.oauth_client_id ?? null,
+      expiresAt: new Date(row.expires_at),
+      depositLevel: row.deposit_level,
+      readGroupIds: row.effective_read_ids,
+      writeGroupIds: row.effective_write_ids,
+      defaultWriteGroupId: effectiveDefault(row),
+      expiredReadGroupIds: row.expired_read_ids,
+    },
   };
 }
 

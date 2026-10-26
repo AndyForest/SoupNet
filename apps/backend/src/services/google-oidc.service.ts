@@ -99,19 +99,28 @@ export function pkceChallenge(verifier: string): string {
 export function buildGoogleAuthorizationUrl(
   config: GoogleOidcConfig,
   params: { state: string; nonce: string; codeChallenge: string },
+  // Stream Offboarding's directory consent: the read-only directory scope
+  // with offline access, consent forced (Google returns a refresh token only
+  // then), and the Workspace domain as a hint. Sign-in passes nothing.
+  directory?: { scope: string; hostedDomain: string },
 ): string {
   const url = new URL(config.authorizationEndpoint);
-  url.search = new URLSearchParams({
+  const query = new URLSearchParams({
     response_type: "code",
     client_id: config.clientId,
     redirect_uri: config.redirectUri,
-    scope: "openid email profile",
+    scope: directory ? `openid email ${directory.scope}` : "openid email profile",
     state: params.state,
     nonce: params.nonce,
     code_challenge: params.codeChallenge,
     code_challenge_method: "S256",
-    prompt: "select_account",
-  }).toString();
+    prompt: directory ? "consent" : "select_account",
+  });
+  if (directory) {
+    query.set("access_type", "offline");
+    query.set("hd", directory.hostedDomain);
+  }
+  url.search = query.toString();
   return url.toString();
 }
 
@@ -123,6 +132,15 @@ export async function exchangeGoogleCode(
   params: { code: string; codeVerifier: string },
   fetchImpl: FetchLike = fetch,
 ): Promise<string> {
+  return (await exchangeGoogleCodeForTokens(config, params, fetchImpl)).idToken;
+}
+
+/** The exchange with its refresh token, for the directory consent (stream Offboarding). */
+export async function exchangeGoogleCodeForTokens(
+  config: GoogleOidcConfig,
+  params: { code: string; codeVerifier: string },
+  fetchImpl: FetchLike = fetch,
+): Promise<{ idToken: string; refreshToken: string | null }> {
   let res: Response;
   try {
     res = await fetchImpl(config.tokenEndpoint, {
@@ -150,7 +168,8 @@ export async function exchangeGoogleCode(
   }
   const idToken = (body as { id_token?: unknown } | null)?.id_token;
   if (typeof idToken !== "string" || idToken.length === 0) throw new GoogleOidcError("token response carried no id_token");
-  return idToken;
+  const refreshToken = (body as { refresh_token?: unknown } | null)?.refresh_token;
+  return { idToken, refreshToken: typeof refreshToken === "string" && refreshToken.length > 0 ? refreshToken : null };
 }
 
 /** Resolves a key id to Google's public key, or null when no such key is published. */

@@ -12,7 +12,7 @@ import { sendVerificationEmail, sendPasswordResetEmail } from "../services/email
 import { rateLimit } from "../middleware/rate-limit";
 import { normalizeEmail } from "../lib/normalize-email";
 import { onBehalfSubjectOf, feedbackOwnedBy, intentOwnedBy, managedOrganizationOf, ssoRequired, ssoRequiredFor } from "../authz";
-import { ACCOUNT_DISABLED_MESSAGE, ACCOUNT_SUSPENDED_MESSAGE, MANAGED_ACCOUNT_DELETE_MESSAGE, SSO_REQUIRED_MESSAGE, googleSignInErrorMessage, ORGANIZATION_FULL_MESSAGE, DOMAIN_JOIN_FULL_RETRY, domainJoinedNotice } from "@soupnet/domain";
+import { ACCOUNT_DISABLED_MESSAGE, ACCOUNT_SUSPENDED_MESSAGE, MANAGED_ACCOUNT_DELETE_MESSAGE, SSO_REQUIRED_MESSAGE, googleSignInErrorMessage, directoryDisabledMessage, ORGANIZATION_FULL_MESSAGE, DOMAIN_JOIN_FULL_RETRY, domainJoinedNotice } from "@soupnet/domain";
 import { googleOidcConfig } from "../services/google-oidc.service";
 import { verifyTurnstile } from "../lib/turnstile";
 import { capturingOrganizationName, joinOnVerification } from "../services/org-domains.service";
@@ -393,6 +393,9 @@ auth.post("/login", authRateLimit, async (c) => {
   }
   if (result.disabled === "org_disabled") {
     return c.json({ ok: false, error: "account_disabled", message: ACCOUNT_DISABLED_MESSAGE }, 403);
+  }
+  if (result.disabled === "directory_inactive" || result.disabled === "directory_unconfirmed") {
+    return c.json({ ok: false, error: result.disabled, message: directoryDisabledMessage(result.disabled) }, 403);
   }
 
   const db = getDb();

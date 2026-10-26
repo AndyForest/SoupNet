@@ -202,7 +202,10 @@ export function LoginPage() {
           setLoginNeedsTurnstile(false);
           setNotice(data.message ?? "You're on the waitlist — we'll email you when a spot opens.");
         }
-      } else if (data.error === "account_disabled" || data.error === "account_suspended" || data.error === "sso_required") {
+      } else if (
+        data.error === "account_disabled" || data.error === "account_suspended" || data.error === "sso_required" ||
+        data.error === "directory_inactive" || data.error === "directory_unconfirmed"
+      ) {
         // Right password, but the account is switched off (by the person's
         // organization, or by the site operator), or its organization signs in
         // with Google: say which, so they ask the right person or use the
