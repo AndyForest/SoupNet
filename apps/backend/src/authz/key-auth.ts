@@ -35,6 +35,7 @@ import { sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { membershipOf } from "./membership-sql";
+import { accountDisabled } from "./account-state";
 
 /** Runs on the root connection or inside a transaction. */
 type SqlExecutor = Pick<PostgresJsDatabase, "execute">;
@@ -104,21 +105,19 @@ function hashCredential(raw: string): string {
  * same fragment, so an account that cannot act is never preferred as a
  * book's new owner (F75).
  *
- * Today the rule is a verified email (F15) on an account that is not on the
- * waitlist. Login already refuses a waitlisted account a session, so no path
- * mints it a credential; the condition is here so that every consumer states
- * the whole rule.
+ * The rule is a verified email (F15) on an account that is not on the
+ * waitlist and is not switched off. Login already refuses a waitlisted
+ * account a session, so no path mints it a credential; the condition is here
+ * so that every consumer states the whole rule.
  *
- * ACCOUNT DISABLEMENT LANDS HERE, and only here: add the account-state column
- * test to this fragment (for example `AND u.<disabled column> IS NULL`) and
- * every consumer, succession included, inherits it, reversibly, with no sweep
- * over keys. Whether
- * that column is the existing `users.suspended_at` or a new one is an open
- * operator decision; until it is made this fragment deliberately does not
- * read `suspended_at`.
+ * Switched off is `accountDisabled` (account-state.ts): the site operator's
+ * suspension (`users.suspended_at`) or an org admin's disable
+ * (`organization_members.disabled_at`), kept apart so an org admin can't lift
+ * a suspension (recipe 85a7b2e8). Every consumer, succession included,
+ * inherits it, reversibly, with no sweep over keys (recipe 92b866ee).
  */
 export function activeUserPredicate(): SQL {
-  return sql`(u.email_verified_at IS NOT NULL AND u.waitlisted_at IS NULL)`;
+  return sql`(u.email_verified_at IS NOT NULL AND u.waitlisted_at IS NULL AND NOT ${accountDisabled()})`;
 }
 
 /**

@@ -25,7 +25,7 @@
 import crypto from "node:crypto";
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { bindBookToKey } from "../authz";
+import { bindBookToKey, homeOrganizationOf } from "../authz";
 import { deleteTraceCascade } from "./trace-delete.service";
 
 // ── Tunables ─────────────────────────────────────────────────────────────────
@@ -110,17 +110,11 @@ export async function createEphemeralWorkspace(
     );
   }
 
-  // Resolve the org: the pinned personal org, falling back to the oldest owned
-  // org (mirrors import.service.createImportBook) for a user whose pointer was
-  // never backfilled.
-  const orgRows = await db.execute(sql`
-    SELECT COALESCE(
-      (SELECT personal_organization_id FROM claimnet.users WHERE id = ${userId}::uuid),
-      (SELECT id FROM claimnet.organizations WHERE owner_id = ${userId}::uuid
-        ORDER BY is_personal DESC, created_at ASC, id ASC LIMIT 1)
-    ) AS org_id
-  `);
-  const orgId = (orgRows as unknown as Array<{ org_id: string | null }>)[0]?.org_id;
+  // Resolve the org: the account's home organization (its company
+  // organization when it is managed, else the pinned personal org, falling
+  // back to the oldest owned org for a user whose pointer was never
+  // backfilled), the same resolver new books and imports use.
+  const orgId = await homeOrganizationOf(db, userId);
   if (!orgId) {
     throw new EphemeralWorkspaceError(400, "No organization owned by this account — cannot create a workspace.");
   }

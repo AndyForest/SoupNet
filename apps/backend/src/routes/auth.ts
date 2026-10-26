@@ -3,7 +3,7 @@ import { z } from "zod";
 import crypto from "crypto";
 import { sql } from "drizzle-orm";
 import { getDb } from "../db";
-import { registerUser, loginUser, requireAuth, requireVerifiedEmail, hashPassword, verifyPassword } from "../auth";
+import { registerUser, loginUser, requireAuth, requireActiveSession, activeSessionRefusal, requireVerifiedEmail, hashPassword, verifyPassword } from "../auth";
 import { writeAudit } from "../services/audit-log.service";
 import { isSignupCapReached, logSignupCapState, mayRegister } from "../services/system-settings.service";
 import { purgeStaleWaitlistedUsers } from "../services/waitlist.service";
@@ -11,7 +11,8 @@ import { deleteUserCascade } from "../services/user-delete.service";
 import { sendVerificationEmail, sendPasswordResetEmail } from "../services/email.service";
 import { rateLimit } from "../middleware/rate-limit";
 import { normalizeEmail } from "../lib/normalize-email";
-import { onBehalfSubjectOf, feedbackOwnedBy, intentOwnedBy } from "../authz";
+import { onBehalfSubjectOf, feedbackOwnedBy, intentOwnedBy, managedOrganizationOf } from "../authz";
+import { ACCOUNT_DISABLED_MESSAGE, ACCOUNT_SUSPENDED_MESSAGE, MANAGED_ACCOUNT_DELETE_MESSAGE } from "@soupnet/domain";
 import { verifyTurnstile } from "../lib/turnstile";
 import type { AppEnv } from "../types";
 
@@ -381,6 +382,16 @@ auth.post("/login", authRateLimit, async (c) => {
     }, 403);
   }
 
+  // Switched off by the site operator or by the person's organization: no
+  // session, and copy that says which, so a disabled person asks their admin
+  // rather than resetting a password that was never the problem.
+  if (result.disabled === "suspended") {
+    return c.json({ ok: false, error: "account_suspended", message: ACCOUNT_SUSPENDED_MESSAGE }, 403);
+  }
+  if (result.disabled === "org_disabled") {
+    return c.json({ ok: false, error: "account_disabled", message: ACCOUNT_DISABLED_MESSAGE }, 403);
+  }
+
   const db = getDb();
 
   // Stamp last_login_at for admin visibility.
@@ -407,11 +418,15 @@ auth.post("/login", authRateLimit, async (c) => {
 // /auth/me for unverified users would lock them out of their own state.
 // Every other JWT-authed router applies requireAuth + requireVerifiedEmail
 // together — this is one of only two opt-outs (the other is
-// /auth/resend-verification).
-auth.get("/me", requireAuth, async (c) => {
+// /auth/resend-verification). It still mounts requireActiveSession, so a
+// disabled, suspended or cut-off session is refused here too.
+auth.get("/me", requireAuth, requireActiveSession, async (c) => {
   const user = c.get("user");
 
   const db = getDb();
+  // The company organization that manages this account, if any (OC-R3): how
+  // the SPA and the SSO and console streams tell a managed account.
+  const managed = await managedOrganizationOf(db, user.id);
   const rows = await db.execute(sql`
     SELECT email_verified_at AS "emailVerifiedAt",
            premium_at AS "premiumAt"
@@ -422,7 +437,16 @@ auth.get("/me", requireAuth, async (c) => {
   // premium ⇔ premium_at IS NOT NULL (admin-assigned; see premium-llm-features.md).
   return c.json({
     ok: true,
-    data: { user: { ...user, emailVerified: !!row?.emailVerifiedAt, premium: !!row?.premiumAt } },
+    data: {
+      user: {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        emailVerified: !!row?.emailVerifiedAt,
+        premium: !!row?.premiumAt,
+        organization: managed ? { id: managed.organizationId, name: managed.name, role: managed.role } : null,
+      },
+    },
   });
 });
 
@@ -645,7 +669,7 @@ auth.get("/me/export", requireAuth, requireVerifiedEmail, async (c) => {
 //
 // Self-serve deletion auto-rate-limited (5 per 15min per IP) — even if a
 // token leaks, an attacker can't burn an account list quickly.
-auth.delete("/me", authRateLimit, requireAuth, async (c) => {
+auth.delete("/me", authRateLimit, requireAuth, requireActiveSession, async (c) => {
   const user = c.get("user");
   let body: Record<string, unknown>;
   try {
@@ -673,6 +697,14 @@ auth.delete("/me", authRateLimit, requireAuth, async (c) => {
   const passwordOk = await verifyPassword(password, userRow.password_hash);
   if (!passwordOk) {
     return c.json({ ok: false, error: "incorrect password" }, 401);
+  }
+
+  // A managed account belongs to its company organization (recipe 2301b5eb),
+  // so the person can't delete it themselves: the recipes it holds are the
+  // company's (OC-R4, draft 1c7621d2). A personal account keeps self-service
+  // deletion.
+  if (await managedOrganizationOf(db, user.id)) {
+    return c.json({ ok: false, error: "managed_account", message: MANAGED_ACCOUNT_DELETE_MESSAGE }, 409);
   }
 
   // Guard: a shared (non-personal) organization the user owns that still has
@@ -793,13 +825,17 @@ auth.post("/verify", verifyRateLimit, async (c) => {
 // SECURE-BY-DEFAULT OPT-OUT: this route deliberately does NOT call
 // requireVerifiedEmail. By definition only unverified users need to call it,
 // so blocking unverified users would make verification recovery impossible.
-// This is one of only two opt-outs (the other is /auth/me).
+// This is one of only two opt-outs (the other is /auth/me). Like it, it
+// still judges the session's account state, here after the Turnstile check,
+// which runs before this route touches the database.
 auth.post("/resend-verification", resendRateLimit, requireAuth, async (c) => {
   const user = c.get("user");
   const body: unknown = await c.req.json().catch(() => ({}));
   const parsedBody = resendVerificationSchema.safeParse(body ?? {});
   const refusal = await turnstileRefusal(c, parsedBody.success ? parsedBody.data.turnstileToken : undefined, "auth/resend-verification");
   if (refusal) return refusal;
+  const sessionRefusal = await activeSessionRefusal(c);
+  if (sessionRefusal) return sessionRefusal;
   const db = getDb();
 
   // Check if already verified
