@@ -29,10 +29,28 @@ Written 2026-10-26, before implementation. Each row is graded met, not met, or p
 
 ## Retention sources
 
-To be filled as L1 is written: each timeline beside the code constant or Terraform value it comes from.
+Each timeline in the privacy policy's §8, beside what it comes from. Code paths are on `main` at `5b81097` unless this branch changes them; infrastructure is the companion repo's Terraform and its operations runbook (`docs/operations/rds-backups.md`).
+
+| Policy line | Timeline | Source |
+|---|---|---|
+| Account data, recipes, evidence, references, drafts, intents, feedback, memberships | until the item or the account is deleted | `services/user-delete.service.ts` header ("Hard-delete a user account and ALL data attributable to it"); `intents.user_id` "onDelete: cascade" (`packages/db/src/schema/intents.ts`) |
+| API keys | hashes until account deletion; daily keys stop at midnight UTC | `services/api-key.service.ts` ("Generate a daily key that expires at midnight UTC"); `GET /keys` lists only "expires_at > NOW()" |
+| OAuth access and refresh tokens | 1 hour, renewed for up to 30 days; rows deleted 30 days after expiry | `services/oauth.service.ts`: `ACCESS_TOKEN_TTL_SECONDS = 60 * 60`, `REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60`, `OAUTH_KEY_SWEEP_DAYS = 30` |
+| OAuth sign-in codes | deleted 1 day after expiry | `OAUTH_CODE_SWEEP_DAYS = 1`, `AUTH_CODE_TTL_SECONDS = 5 * 60` |
+| Unused app registrations | 30 days | `OAUTH_CLIENT_SWEEP_DAYS = 30` ("only never-authenticated registrations … are swept") |
+| Display history | 30 days | new on this branch: `services/display-history.service.ts`, `DISPLAY_HISTORY_RETENTION_DAYS = 30`; every reader looks back 7 days (`trace.service.ts`, `intent.service.ts`: "shown_at > now() - interval '7 days'") |
+| Audit log, including the check log | unchanged wording, no timeline yet | nothing deletes `audit_log` rows, and account deletion keeps them ("append-only trail outlives the actor", `user-delete.service.ts:99`); question 1 below |
+| Email records | 60 days | `services/email.service.ts`: `EMAIL_LOG_RETENTION_DAYS = 60` |
+| Waitlist accounts | 30 days unverified | unchanged from the existing policy (`services/waitlist.service.ts`) |
+| Application logs | 14 days | `infra/terraform/modules/ecs/main.tf`: `retention_in_days = 14`; the MCP request line logs "status … origin … ua" (`routes/mcp.ts:1460`) |
+| Load balancer access logs | 30 days | `infra/terraform/modules/alb-access-logs/main.tf`: `log_retention_days` default 30, not overridden in `environments/dev` |
+| Backups | 35 days point-in-time; daily 14, weekly 35, monthly 365; a second-region copy on the same schedule | runbook: "Point-in-time restore, 35 days", "daily, kept 14 days; weekly (Sunday), kept 35 days; monthly (the 1st), kept 365 days", "A second-region copy of every snapshot … with the same retention" |
 
 ## Questions for the operator
 
 Asked as draft recipes under this stream's intent; numbered here from 1.
+
+1. **How long the audit log keeps what** (draft `2d85dbc2`). Nothing deletes `audit_log` rows today, account deletion keeps them on purpose, and the same table is the check log at `/app/checks`. Recommendation: the check log (recipe checks, searches, briefings) is kept while the account exists and deleted with it; security events (sign-ins, password and key changes, deletions, with IP addresses) are kept 12 months, matching the monthly backups and the CloudTrail bucket, and anonymized on account deletion as the backlog's audit-log item already decided (null the actor, redact free text). Building it is a throttled sweep plus one deletion step, reviewed by the audit coordinator. Until the ruling, the policy keeps its current audit-log line.
+2. **The listing's 30-character subtitle** (draft `3ca50187`). Recommendation: "Taste and judgment, shared" (26). It carries the pair and both pillars; alternatives in the draft.
 
 ## Build notes
