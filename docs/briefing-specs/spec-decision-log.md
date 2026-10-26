@@ -4,6 +4,35 @@ Every PR that touches briefing copy (`packages/domain/src/recipe-guide-content.t
 
 (Renamed from declared-intent-log.md on 2026-08-23: "intent" now names the runtime intent-registration mechanism — cold-start v2 Phase C — so the discipline's log takes an unambiguous name. The discipline itself is unchanged.)
 
+## 2026-10-26 — OpenAI plugin round, stream L: no selection diagnostics in the exemplars, and no /uploads example over OAuth
+
+Plan: [../planning/openai-plugin-directory.md](../planning/openai-plugin-directory.md) item 6 (output minimisation). Build file: [../planning/openai-plugin-build/listing.md](../planning/openai-plugin-build/listing.md), row L13. Both findings came from stream T's audit of every tool's real output against OpenAI's rule ("Do not include diagnostic, telemetry, or internal identifiers … unless they are strictly required", developers.openai.com/plugins/plugin-guidelines.md), sent to stream L because the text is in L's part of `recipe-guide-content.ts`.
+
+### Edits and the scenarios they move
+
+1. **The exemplars section no longer prints "Selection parameters"** (`buildExemplarsSection`, every surface). The block listed the cluster count, map mode, concept axes, filter keywords, the purpose and the embedding strategy: ranking diagnostics no reader acts on. The purpose line went with it; the agent supplied the purpose itself. The function keeps its context parameter (`_context`) so the composer's call doesn't change.
+   → Moves: `briefing-surfaces.feature` "MCP agent opts back into corpus exemplars" gains "And the exemplars carry no selection diagnostics".
+2. **An OAuth connection's briefing leaves out the `/uploads` paragraph** (`BRIEFING.build`, both profiles, `oauthConnection` only). It told the agent to POST files "using your same Bearer token" with a `curl … Authorization: Bearer YOUR_API_KEY` example, which an OAuth client can't follow: it holds no key, and its access token is refreshed by the client. Key-holding sessions keep the paragraph unchanged. The OAuth key, setup and web sections were already credential-free (2026-07-06).
+   → Moves: `briefing-surfaces.feature` new "An agent connected through OAuth gets no instructions that need a key it doesn't hold".
+
+### Scenarios watched, with rationale for holding
+
+- **Every scenario on an API-key briefing:** unchanged. Edit 2 changes only the OAuth composition, and edit 1 only the exemplars, which the capped fixtures don't carry.
+- **`checking-behavior.feature` file-evidence scenarios:** an OAuth agent still has `file_url` (a public URL) and `file_base64` (small files) from the tool's own parameter descriptions; only the upload route, which needs a key, is gone from its briefing.
+
+### Measured
+
+Built with the test file's inputs (`BRIEFING.build`, no exemplars) and one exemplar for the section.
+
+| Measure | Before | After | Cap |
+|---|---|---|---|
+| Thin briefing (API key) | 22,628 characters | 22,628 | 22,800 (unchanged) |
+| Thin briefing (OAuth) | 22,592 | 21,813, −779 | 22,800 |
+| Full briefing (API key) | 28,814 | 28,814 | none |
+| Full briefing (OAuth) | 24,747 | 23,968, −779 | none |
+| Exemplars section, one exemplar | 775 | 591, −184 per briefing with exemplars | none |
+| `tools/list` and shared descriptions | | unchanged (T's blocks, untouched) | |
+
 ## 2026-10-25 — Drafts-and-triage slice 8b item 3 (stream D): a Members line on every book, and pending invites for the books you manage
 
 Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-and-triage-slices-6-7-revision.md) §Slice 8 item 3. Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 8b item 3 rubric. Design checked as recipe `173384b3`.
