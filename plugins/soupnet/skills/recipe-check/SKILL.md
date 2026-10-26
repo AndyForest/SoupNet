@@ -18,7 +18,7 @@ Call `get_briefing` once at the start of a session. It returns the canonical rec
 3. **After meaningful work.** Record what was chosen and why. This is how the log grows.
 4. **Before you wrap up or hand off.** Sweep for related earlier calls the session didn't surface; that is the cheapest moment to catch a contradiction.
 
-Checks are meant to be frequent: reach for one whenever a call comes up, not only for big decisions. Each check records a recipe, so asking the same thing twice records it twice. The one thing to avoid is checking a recipe you don't believe; that degrades results for everyone who reads the log.
+Checks are meant to be frequent: reach for one whenever a call comes up, not only for big decisions. Each check records a recipe; sending the same recipe text to the same book again returns the recipe already recorded rather than a second one. The one thing to avoid is checking a recipe you don't believe; that degrades results for everyone who reads the log.
 
 ## Writing a recipe
 
