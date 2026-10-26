@@ -39,6 +39,8 @@ import type { EvidenceSearchResult } from "./vector-search.service";
 import { scoreFormatAdherence } from "./format-adherence";
 import { runSearchPipeline } from "./search-pipeline";
 import { findOpenQuestion } from "./draft-dispatch.service";
+import { listRecipesFlat, flatListOrderFor } from "./recipe-list.service";
+import type { FlatListOrder } from "./recipe-list.service";
 import { embedQuery } from "../lib/embeddings/provider";
 import { StageTimer } from "../lib/stage-timer";
 import { searchSelections } from "./search-selection";
@@ -266,6 +268,10 @@ export interface SubmitAndSearchResult {
   totalPages: number;
   searchMode?: "semantic" | "hybrid" | "lexical" | undefined;
   clustered?: boolean | undefined;
+  /** Read-only search with no semantic text (slice 8b): the results are the
+   *  flat list's page, in `order`, `perPage` to a page, and each row's
+   *  deposit and changed times ride here by id. Absent on every other path. */
+  listing?: FlatListMeta | undefined;
   /** Concept-axis positions (TCAV-style). Only when axes param is set. */
   conceptAxes?: {
     axisA: string;
@@ -304,6 +310,13 @@ export interface SubmitAndSearchResult {
    *  caller's intents, so it selected nothing (slice 6a). Unknown and other
    *  people's ids set it alike. */
   intentNotRecognized?: boolean | undefined;
+}
+
+/** The flat list's page metadata on a search result (slice 8b). */
+export interface FlatListMeta {
+  order: FlatListOrder;
+  perPage: number;
+  times: Record<string, { depositedAt: string; changedAt: string }>;
 }
 
 /**
@@ -1331,30 +1344,58 @@ export async function searchWithoutLogging(
     const embedded = await timer.time("query_embed", () => embedQuery(semanticQuery, "SEMANTIC_SIMILARITY"));
     if (embedded) queryVectorStr = `[${embedded.join(",")}]`;
   }
-  const pipelineResult = await runSearchPipeline({
-    db,
-    groupIds: effectiveReadGroupIds,
-    // Own unverified drafts reach the caller's search only when an author
-    // qualifier admits their own recipes (MCP search excludes them by default).
-    // Expired ones only when the query asks for them (slice 10, S10-X3).
-    audience: { viewerUserId: keyResult.userId, includeExpired: parsed.query.isExpired === true },
-    // Qualifier-only queries have no semantic text: corpus mode, judgment-date
-    // ordering, structured predicates applied in fetchCorpusTraces.
-    query: semanticQuery,
-    queryVectorStr,
-    structured,
-    corpusLimit: SEARCH_CORPUS_LIMIT,
-    k: params.clusters,
-    maxChars: params.maxChars,
-    verbosity: params.verbosity,
-    sort: params.sort,
-    page,
-    perPage,
-    axes: params.axes,
-    includeVectors: !!params.axes,
-    knownIds: knownIds.size > 0 ? knownIds : undefined,
-    timer,
-  });
+  // Own unverified drafts reach the caller's search only when an author
+  // qualifier admits their own recipes (MCP search excludes them by default).
+  // Expired ones only when the query asks for them (slice 10, S10-X3).
+  const audience = { viewerUserId: keyResult.userId, includeExpired: parsed.query.isExpired === true };
+  // Qualifier-only queries have no semantic text: the flat list (slice 8b),
+  // every match paged in an order that ends in the id, so an unattended
+  // sweep reaches every id instead of the 200 newest folded into exemplars.
+  // It never enters the ranking pipeline and marks nothing as shown.
+  let listing: FlatListMeta | undefined;
+  let pipelineResult: Awaited<ReturnType<typeof runSearchPipeline>>;
+  if (!semanticQuery) {
+    const flat = await timer.time("search", () => listRecipesFlat(db, {
+      groupIds: effectiveReadGroupIds,
+      audience,
+      structured,
+      order: flatListOrderFor(parsed.query),
+      page: params.page,
+    }));
+    listing = {
+      order: flat.order,
+      perPage: flat.perPage,
+      times: Object.fromEntries(flat.rows.map((r) => [r.id, { depositedAt: r.depositedAt.toISOString(), changedAt: r.changedAt.toISOString() }])),
+    };
+    pipelineResult = {
+      results: flat.rows.map((r) => ({ id: r.id, claimText: r.claimText, createdAt: r.judgedAt, rank: 0 })),
+      totalResults: flat.total,
+      page: flat.page,
+      totalPages: flat.totalPages,
+      searchMode: "corpus",
+      clustered: false,
+    };
+  } else {
+    pipelineResult = await runSearchPipeline({
+      db,
+      groupIds: effectiveReadGroupIds,
+      audience,
+      query: semanticQuery,
+      queryVectorStr,
+      structured,
+      corpusLimit: SEARCH_CORPUS_LIMIT,
+      k: params.clusters,
+      maxChars: params.maxChars,
+      verbosity: params.verbosity,
+      sort: params.sort,
+      page,
+      perPage,
+      axes: params.axes,
+      includeVectors: !!params.axes,
+      knownIds: knownIds.size > 0 ? knownIds : undefined,
+      timer,
+    });
+  }
 
   // Slice 10: a live draft near this search that the caller may answer.
   const openQuestion = await findOpenQuestion(db, {
@@ -1436,7 +1477,9 @@ export async function searchWithoutLogging(
   // Record display history for the session, mirroring the check path's 7b:
   // full-text recipes this response carries become "shown", so later checks
   // and searches in the same session stub them and walk to unseen content.
-  const searchShownIds = [
+  // A flat list's rows are index entries, not the recipes, so they are not
+  // marked: a sweep must see the same ids on every tick (slice 8b, S8b-L5).
+  const searchShownIds = listing ? [] : [
     ...pipelineResult.results.filter((r) => !r.known).map((r) => r.id),
     ...(pipelineResult.relatedEvidence ?? []).map((e) => e.parentTraceId),
   ];
@@ -1476,14 +1519,15 @@ export async function searchWithoutLogging(
     totalResults: pipelineResult.totalResults,
     currentPage: pipelineResult.page,
     totalPages: pipelineResult.totalPages,
-    // A structured search with no semantic text runs corpus mode — matches
-    // are exact (lexical terms / qualifiers), newest-first. Report it as
+    // A structured search with no semantic text is the flat list (slice 8b)
+    // — matches are exact (lexical terms / qualifiers). Report it as
     // "lexical" rather than collapsing to the "semantic" default: results
     // legitimately carry no similarity, and rendering "similarity n/a" under
     // a "semantic" banner made real matches read as unranked leftovers
-    // (operator report, 2026-08-19).
+    // (operator report, 2026-08-19). `listing` says it is the flat list.
     searchMode: pipelineResult.searchMode === "corpus" ? "lexical" : pipelineResult.searchMode,
     clustered: pipelineResult.clustered || undefined,
+    ...(listing ? { listing } : {}),
     conceptAxes: pipelineResult.conceptAxes
       ? {
         axisA: pipelineResult.conceptAxes.axisA,
