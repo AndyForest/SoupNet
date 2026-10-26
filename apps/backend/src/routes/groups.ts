@@ -78,8 +78,27 @@ groupsRouter.use("/*", requireAuth, requireVerifiedEmail);
 // GET /groups — list user's groups (with per-user daily-link prefs)
 groupsRouter.get("/", async (c) => {
   const user = c.get("user");
-  const rows = await booksFor(getDb(), user.id);
-  return c.json({ ok: true, data: rows });
+  const db = getDb();
+  const rows = await booksFor(db, user.id);
+  // Who can see each book, so a book's owner or admin can make it org-wide
+  // or private again from its own page (stream Console, CN-B2): whether it
+  // is in a company organization, org-wide, and that organization's default
+  // book. Facts about the books the caller already belongs to; no access
+  // decision is made here.
+  const ids = rows.map((r) => r.id);
+  const scope = ids.length
+    ? ((await db.execute(sql`
+        SELECT g.id, g.org_wide, g.org_default, NOT o.is_personal AS company_book
+        FROM claimnet.groups g JOIN claimnet.organizations o ON o.id = g.organization_id
+        WHERE g.id IN (${sql.join(ids.map((id) => sql`${id}::uuid`), sql`, `)})
+      `)) as unknown as Array<{ id: string; org_wide: boolean; org_default: boolean; company_book: boolean }>)
+    : [];
+  const byId = new Map(scope.map((r) => [r.id, r]));
+  const data = rows.map((r) => {
+    const s = byId.get(r.id);
+    return { ...r, org_wide: s?.org_wide ?? false, org_default: s?.org_default ?? false, company_book: s?.company_book ?? false };
+  });
+  return c.json({ ok: true, data });
 });
 
 // POST /groups — create a group
