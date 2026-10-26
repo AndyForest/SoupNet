@@ -4,6 +4,32 @@ Every PR that touches briefing copy (`packages/domain/src/recipe-guide-content.t
 
 (Renamed from declared-intent-log.md on 2026-08-23: "intent" now names the runtime intent-registration mechanism — cold-start v2 Phase C — so the discipline's log takes an unambiguous name. The discipline itself is unchanged.)
 
+## 2026-10-25 — Drafts-and-triage slice 10: drafts as a bus (the dispatch line, expired drafts, and how a resolved draft was resolved)
+
+Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-and-triage-slices-6-7-revision.md) §A proposed slice 10 (ruled 2026-10-25, recipe `053c9b97`). Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 10 rubric.
+
+### Edits
+
+1. **The dispatch line, new, in check and search responses** (`openQuestionLine`, rendered after the exemplars on both MCP servers and the web check page): "Open question near this call: <id> (<story>, asked <date>). If your context settles it, resolve it; otherwise leave it." The wording is the ruling's. The story appears only when the draft's intent is the caller's own, so before slice 6a it never does.
+2. **The books block's Drafts line** (`renderBookStatsLine`): it now counts live drafts only, with its wording unchanged. When drafts expired in the last 7 days it adds "; M expired unanswered in the last 7 days (search is:expired)", or reads "Drafts: none awaiting review; M expired unanswered in the last 7 days (search is:expired)".
+3. **Draft labels on agent surfaces** (`draftLabel`): an expired draft reads "[expired draft: its task has been quiet for over 24 hours, so it has left the review queue and results; it can still be verified or rejected by id]" (or "it was deposited with no intent over 7 days ago"). For the draft's subject, a resolved draft's label says how and when: "[rejected draft: rejected by their agent "K2" on 2026-10-25; its evidence says why]", "[draft not chosen: marked not chosen by the agent that deposited it on …]", "[verified draft: verified by your user on …]". A verified draft had no label before; it now has one for its subject only.
+4. **The search grammar's refusals** (`parseSearchQuery`): the qualifier list names `is:expired`; an unknown `is:` value names both values; `-is:expired` and `is:expired -is:draft` are refused with a sentence each.
+
+### Scenarios intended to move
+
+- **Product spec** ([../product-specs/drafts-and-triage.feature](../product-specs/drafts-and-triage.feature)): DT-BUS-01 to DT-BUS-11 (`@slice-10`), added in this PR. DT-BUS-02 and 03 are `@unreleased` until slice 6a's intent link.
+- **Briefing spec:** the line about drafts as questions on a bus lands in the briefing's "## Drafts" section with its `checking-behavior.feature` scenario once stream C's C1 and C2 merge (stream C handed it to this slice on 2026-10-25, since it describes behaviour this slice ships).
+
+### Scenarios watched, with rationale for holding
+
+- **DT-VIS-09 and the books-block tests:** the Drafts line keeps its exact wording when no draft has expired, so every existing fixture is byte-identical.
+- **Every tool and parameter description:** unchanged. The `search_recipes` description's qualifier list belongs to stream B and is edited, and measured, when this branch rebases after B.
+- **Check and search responses with no live draft nearby:** byte-identical, since the line is added only when a draft qualifies.
+
+### Measured
+
+No tool or parameter description changed (diff review of `recipe-guide-content.ts`: only the Drafts line in `renderBookStatsLine` and one import), so remote and stdio `tools/list` and the shared-description total are as on `main`.
+
 ## 2026-10-24 — Drafts-and-triage slice 6a: one grammar term in `search_recipes`, and the intent qualifier's not-recognized note
 
 Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-and-triage-slices-6-7-revision.md) §6a, §6f. Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 6a rubric (S6a-Z1).

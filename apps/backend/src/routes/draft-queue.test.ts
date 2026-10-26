@@ -494,7 +494,8 @@ describe.skipIf(!BASE || !canConnect())("the review queue (drafts-and-triage sli
     expect((await mcp(samKey, "get_recipes", { recipe_ids: d })).text).toContain("not_found_or_unreadable");
     const own = await mcp(patKeyA, "search_recipes", { query: `"not chosen visibility ${run}" author:me`, response_format: "structured" });
     expect(JSON.stringify(own.structured)).not.toContain(d);
-    expect((await mcp(patKeyA, "get_recipes", { recipe_ids: d })).text).toContain("[draft not chosen]");
+    // Slice 10 (S10-R1): the subject's by-id label also says who marked it and when.
+    expect((await mcp(patKeyA, "get_recipes", { recipe_ids: d })).text).toMatch(/\[draft not chosen: marked not chosen by your user on \d{4}-\d{2}-\d{2}\]/);
     expect((await call(sam, "GET", `/traces/${d}`)).status).toBe(404);
   });
 

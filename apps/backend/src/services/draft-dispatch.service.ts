@@ -28,6 +28,15 @@ import { fetchTraceVectors, parseVector, cosineSimilarity } from "./search-pipel
 /** Most drafts one call compares (S10-D6). */
 export const OPEN_QUESTION_CANDIDATES = 200;
 
+/**
+ * How far below the least similar shown result a draft may score and still
+ * count as no less similar: half a percent, the precision results are shown
+ * at. The pipeline's score and this cosine come from different arithmetic
+ * (and a halfvec copy), so a draft identical to the call can read a hair
+ * under 1.
+ */
+const SIMILARITY_TOLERANCE = 0.005;
+
 export interface OpenQuestionParams {
   viewerUserId: string;
   /** The call's effective read scope. */
@@ -72,7 +81,7 @@ export async function findOpenQuestion(db: PostgresJsDatabase, p: OpenQuestionPa
     const v = vectors.get(c.id);
     if (!v || v.length !== query.length) continue;
     const similarity = cosineSimilarity(query, v);
-    if (similarity < floor) continue;
+    if (similarity < floor - SIMILARITY_TOLERANCE) continue;
     if (!best || similarity > best.similarity) best = { ...c, similarity };
   }
   if (!best) return undefined;
