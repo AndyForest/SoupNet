@@ -2,8 +2,10 @@
  * The search grammar's selections that are not ranking inputs
  * (drafts-and-triage slice 3): `is:draft` / `-is:draft`, and `impact:` /
  * `uncertainty:` over the stored triage ratings; and from slice 6a
- * `intent:`, the recipes deposited under one of the viewer's own intents.
- * Plus the review queue's triage order.
+ * `intent:`, the recipes deposited under one of the viewer's own intents;
+ * and from slice 8b `created-after:` and `changed-after:`, which read when a
+ * recipe arrived and when it last changed. Plus the review queue's triage
+ * order and the changed time a sweep's list is ordered by.
  *
  * Why a separate file: the five ranking files (vector-search.service.ts,
  * search-pipeline.ts, clustering.service.ts, mmr.ts, ranking-config.ts) may
@@ -89,6 +91,32 @@ export function intentSelection(ownIntentId: string | null): TraceSelection {
 }
 
 /**
+ * When a recipe last changed (slice 8b, decision 6): the latest of its
+ * deposit, `updated_at` (a draft's resolution and a move to another book
+ * set it), its newest feedback row and its newest reaction, whoever wrote
+ * them. A reader of the recipe already sees every feedback row and its date
+ * on the recipe's page, so this discloses nothing new. GREATEST skips the
+ * NULL of a recipe with no feedback or no reaction. Both subqueries use
+ * their table's trace_id index.
+ */
+export function changedAtSql(alias: Alias): SQL {
+  const a = aliasSql(alias);
+  return sql`GREATEST(${a}.created_at, ${a}.updated_at,
+    (SELECT max(cf.created_at) FROM claimnet.check_feedback cf WHERE cf.trace_id = ${a}.id),
+    (SELECT max(rx.updated_at) FROM claimnet.trace_reactions rx WHERE rx.trace_id = ${a}.id))`;
+}
+
+/** `created-after:<t>` (slice 8b): deposited at or after t. */
+export function createdAfterSelection(since: string): TraceSelection {
+  return (alias) => sql`${aliasSql(alias)}.created_at >= ${since}::timestamptz`;
+}
+
+/** `changed-after:<t>` (slice 8b): changed at or after t (`changedAtSql`). */
+export function changedAfterSelection(since: string): TraceSelection {
+  return (alias) => sql`${changedAtSql(alias)} >= ${since}::timestamptz`;
+}
+
+/**
  * Every non-ranking selection a parsed query asks for, for this viewer.
  * `intentOwned` says whether the query's intent: id is one of the viewer's
  * intents, which the caller has looked up (this module does no I/O).
@@ -100,6 +128,8 @@ export function searchSelections(parsed: ParsedSearchQuery, viewerUserId: string
   if (parsed.impact) out.push(ratingSelection("impact", parsed.impact));
   if (parsed.uncertainty) out.push(ratingSelection("uncertainty", parsed.uncertainty));
   if (parsed.intent !== undefined) out.push(intentSelection(intentOwned ? parsed.intent : null));
+  if (parsed.createdAfter !== undefined) out.push(createdAfterSelection(parsed.createdAfter));
+  if (parsed.changedAfter !== undefined) out.push(changedAfterSelection(parsed.changedAfter));
   return out;
 }
 

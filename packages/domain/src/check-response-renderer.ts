@@ -17,9 +17,11 @@
  *   - Every exemplar line carries its full recipe UUID and similarity inline,
  *     on a single line — this is what makes the check → feedback join work in
  *     the default format (agents cite trace ids without a structured payload).
- *   - No "Page X of Y" pagination text — agents can't page (the tools accept
- *     no page param). When more results exist beyond the exemplars shown, a
- *     one-line narrowing hint replaces it.
+ *   - No "Page X of Y" pagination text on ranked results — agents page only
+ *     the flat list. When more results exist beyond the exemplars shown, a
+ *     one-line narrowing hint replaces it. A search with no bare text is the
+ *     flat list (slice 8b, `listOrder` set): one line per match, its page
+ *     line, and the next page named, so an unattended sweep reaches every id.
  *   - Recipes the caller already holds (declared via known_recipes, or in the
  *     session's known-set — the builders' `known: true` flag) render as
  *     one-line id-only stubs — rendering only; trace logging and cluster math
@@ -31,6 +33,7 @@ import type { TriageRating } from "@soupnet/contracts";
 import { renderRatingsMarkdown } from "./triage-ratings";
 import { draftLabel, openQuestionLine } from "./drafts";
 import type { DraftExpiry, OpenQuestion } from "./drafts";
+import { LISTING_DEPTH_MAX, lastReachablePage, FLAT_LIST_NARROWING } from "./listing-depth";
 
 // ── Response shape (tolerant — both builders' outputs satisfy it) ───────────
 
@@ -57,6 +60,10 @@ export interface CheckResultItem {
   recipeId?: string;
   recipe?: string;
   createdAt?: string | Date;
+  /** Flat list rows only (slice 8b): when the recipe was logged, and when it
+   *  last changed (a resolution, a move, a feedback row or a reaction). */
+  loggedAt?: string;
+  changedAt?: string;
   /** Recipe book, {recipeBookId, name} on check results; the description
    *  lives in the briefing (operator ruling 2026-07-18). */
   recipeBook?: { recipeBookId?: string; name?: string };
@@ -150,6 +157,10 @@ export interface CheckResponseData {
   intentNotice?: string;
   searchMode?: string;
   clustered?: boolean;
+  /** Set when a search had no bare text (slice 8b): `results` is the flat
+   *  list, in this order, `perPage` to a page. */
+  listOrder?: FlatListOrder;
+  perPage?: number;
   results?: CheckResultItem[];
   relatedEvidence?: CheckRelatedEvidence[];
   /** Known evidence parents (seam 2): parents whose evidence would have made
@@ -344,6 +355,17 @@ export function renderCheckResponseMarkdown(
     text += `\n${data.synthesisNotice}\n`;
   }
 
+  if (data.searchOnly && data.listOrder) {
+    text += renderFlatList(data, data.listOrder);
+    if (data.sessionId) {
+      text += `\nSession: ${data.sessionId} — pass session_id on your next check to keep responses lean.`;
+    }
+    if (data.intentNotice) {
+      text += `\n${data.intentNotice}`;
+    }
+    return text;
+  }
+
   const results = data.results ?? [];
   if (results.length === 0) {
     if (data.searchOnly) {
@@ -422,6 +444,66 @@ export function renderCheckResponseMarkdown(
     text += `\n${data.intentNotice}`;
   }
 
+  return text;
+}
+
+// ── The flat list (slice 8b) ─────────────────────────────────────────────────
+
+export type FlatListOrder = "judgment" | "triage" | "changed";
+
+/** How each order reads, and which time its rows show. */
+export const FLAT_LIST_ORDER_LABELS: Readonly<Record<FlatListOrder, string>> = {
+  judgment: "newest judgment date first; each row shows its judgment date",
+  triage: "in triage order (impact × uncertainty, then newest logged); each row shows when it was logged",
+  changed: "latest change first; each row shows when it last changed",
+};
+
+/** The claim's first characters a flat row shows in markdown; structured output carries it whole. */
+export const FLAT_LIST_CLAIM_CHARS = 160;
+
+/**
+ * The flat list's page line, shared by the markdown renderer and the /check
+ * page: where this page sits, and the next page to ask for, so a sweep's loop
+ * ends on "last page" or on an empty page past the end, never on an error.
+ * On the last page within the listing depth (F110) with more matches beyond
+ * it, the line says so and how to narrow, instead of naming a page the server
+ * would refuse.
+ */
+export function flatListPageLine(p: { page: number; totalPages: number; totalResults: number; perPage: number }): string {
+  if (p.totalResults === 0) return "";
+  if (p.page > p.totalPages) {
+    return `Page ${p.page} is past the end: ${p.totalResults} match(es) on ${p.totalPages} page(s) of ${p.perPage}.`;
+  }
+  const where = `Page ${p.page} of ${p.totalPages}, ${p.perPage} per page.`;
+  if (p.page >= p.totalPages) return `${where} This is the last page.`;
+  if (p.page >= lastReachablePage(p.perPage)) {
+    return `${where} This is the last page the list reaches (its first ${LISTING_DEPTH_MAX.toLocaleString("en-US")} matches). ${FLAT_LIST_NARROWING}`;
+  }
+  return `${where} Next: page=${p.page + 1}.`;
+}
+
+function flatRowTime(r: CheckResultItem, order: FlatListOrder): CheckResultItem["createdAt"] {
+  if (order === "triage") return r.loggedAt ?? r.createdAt;
+  if (order === "changed") return r.changedAt ?? r.createdAt;
+  return r.createdAt;
+}
+
+function renderFlatList(data: CheckResponseData, order: FlatListOrder): string {
+  const rows = data.results ?? [];
+  const total = data.totalResults ?? rows.length;
+  if (total === 0) return `\n${searchZeroResultLine(data)}`;
+  let text = `${total} recipe(s) match, listed ${FLAT_LIST_ORDER_LABELS[order]}:\n`;
+  for (const r of rows) {
+    // Every row in full: a sweep needs every id on every tick, so a known
+    // recipe is not stubbed here (S8b-L5).
+    const claim = r.recipe ?? "";
+    const shown = claim.length > FLAT_LIST_CLAIM_CHARS ? `${claim.slice(0, FLAT_LIST_CLAIM_CHARS).trimEnd()}…` : claim;
+    const label = draftLabel(r.draftState, { ...r, expired: r.draftExpired });
+    const book = r.recipeBook?.name ? ` [${r.recipeBook.name}]` : "";
+    text += `\n- ${r.recipeId ?? "?"} ${dateLabel(flatRowTime(r, order))}${book}${label ? ` ${label}` : ""} ${shown}`;
+  }
+  text += `\n\n${flatListPageLine({ page: data.page ?? 1, totalPages: data.totalPages ?? 1, totalResults: total, perPage: data.perPage ?? rows.length })}`;
+  text += "\nFetch full recipes by id: get_recipes (MCP) or GET /recipes?ids=<id> (same API key).";
   return text;
 }
 

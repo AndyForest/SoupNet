@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import crypto from "node:crypto";
 import { seedVerifiedUser } from "../test-users";
+import { canonicalResource } from "../lib/oauth-resource";
 
 /**
  * Integration tests for the key half of the authorization seam (key-auth.ts)
@@ -263,6 +264,8 @@ describe.skipIf(!canConnect() || !BASE)("authz seam — API-key authentication",
         scopeReadGroupIds: bookIds,
         scopeWriteGroupIds: bookIds,
         scopeDefaultWriteGroupId: member.personalBookId,
+        resource: canonicalResource(),
+        oidcScopes: [],
       });
       return sha256hex(bundle.refreshToken);
     }
@@ -304,6 +307,62 @@ describe.skipIf(!canConnect() || !BASE)("authz seam — API-key authentication",
       }
       // Refused, not burned: the same token rotates once the owner passes again.
       expect(await authz.consumeRefreshToken(getDb(), hash)).not.toBeNull();
+    });
+  });
+
+  // ── OAuth audience (RFC 8707; rubric O1-5, O1-6, O1-7) ───────────────────
+
+  describe("authenticateKey — OAuth audience", () => {
+    async function mintAccess(resource: string): Promise<{ access: string; refreshHash: string }> {
+      const bundle = await oauth.mintOAuthTokenBundle(getDb(), {
+        userId: member.userId,
+        clientId: `key-seam-aud-${uid}`,
+        scopeReadGroupIds: [member.personalBookId],
+        scopeWriteGroupIds: [member.personalBookId],
+        scopeDefaultWriteGroupId: member.personalBookId,
+        resource,
+        oidcScopes: ["openid"],
+      });
+      return { access: bundle.accessToken, refreshHash: sha256hex(bundle.refreshToken) };
+    }
+
+    it("accepts a key bound to the canonical resource", async () => {
+      const { access } = await mintAccess(canonicalResource());
+      expect(await authz.authenticateKey(getDb(), access)).not.toBeNull();
+    });
+
+    it("refuses a key bound to another resource, exactly as a dead key (null)", async () => {
+      const { access } = await mintAccess("https://elsewhere.example.com");
+      expect(await authz.authenticateKey(getDb(), access)).toBeNull();
+      const { access: pathForm } = await mintAccess(`${canonicalResource()}/mcp`);
+      expect(await authz.authenticateKey(getDb(), pathForm)).toBeNull();
+    });
+
+    it("accepts a key minted before the audience existed (NULL), the no-wave rule of recipe 8b5a7baa", async () => {
+      const { access } = await mintAccess(canonicalResource());
+      await getDb().execute(sql`UPDATE claimnet.api_keys SET oauth_resource = NULL WHERE key = ${sha256hex(access)}`);
+      expect(await authz.authenticateKey(getDb(), access)).not.toBeNull();
+    });
+
+    it("leaves daily and scoped keys alone", async () => {
+      const key = await mintScopedKey(member, [member.personalBookId], member.personalBookId);
+      expect(await authz.authenticateKey(getDb(), key)).not.toBeNull();
+    });
+
+    it("hands the consumed row's audience and OpenID scopes to the rotation", async () => {
+      const { refreshHash } = await mintAccess(canonicalResource());
+      const consumed = await authz.consumeRefreshToken(getDb(), refreshHash);
+      expect(consumed?.resource).toBe(canonicalResource());
+      expect(consumed?.oidcScopes).toEqual(["openid"]);
+    });
+
+    it("reads the OpenID grant and the owner's email for an OAuth key only", async () => {
+      const { access } = await mintAccess(canonicalResource());
+      const principal = await authz.authenticateKey(getDb(), access);
+      const info = await authz.oauthUserInfo(getDb(), principal!);
+      expect(info).toEqual({ oidcScopes: ["openid"], email: member.email, emailVerified: true });
+      const scoped = await authz.authenticateKey(getDb(), await mintScopedKey(member, [member.personalBookId], member.personalBookId));
+      expect(await authz.oauthUserInfo(getDb(), scoped!)).toBeNull();
     });
   });
 

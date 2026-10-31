@@ -269,6 +269,8 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
       { kind: "url", path: "/app/x" },
       { kind: "oauth_authorize", params: { response_type: "code", client_id: "unknown-client", redirect_uri: "https://evil.example/cb", code_challenge: "a".repeat(43), code_challenge_method: "S256", state: "s" } },
       { kind: "oauth_authorize", params: { response_type: "token", client_id: "x", redirect_uri: "https://x.example", code_challenge: "a".repeat(43), code_challenge_method: "S256" } },
+      // SSO-G8: a metadata-document client that doesn't resolve, as the grant would refuse it.
+      { kind: "oauth_authorize", params: { response_type: "code", client_id: "https://cimd-unresolvable.invalid/oauth/client.json", redirect_uri: "https://cimd-unresolvable.invalid/cb", code_challenge: "a".repeat(43), code_challenge_method: "S256", state: "s" } },
     ]) {
       const { res } = await start(target);
       expect(res.status, JSON.stringify(target)).toBe(400);
@@ -580,6 +582,10 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
     const back = new URL(s.returnTo, "https://spa.invalid");
     expect(back.pathname).toBe("/oauth/authorize");
     for (const [k, v] of Object.entries(params)) expect(back.searchParams.get(k), k).toBe(v);
+    // SSO-G8: a resource the grant would answer invalid_target is refused at start, as is the client's unregistered redirect.
+    expect((await start({ kind: "oauth_authorize", params: { ...params, resource: "https://elsewhere.example.com" } })).res.status).toBe(400);
+    expect((await start({ kind: "oauth_authorize", params: { ...params, resource: `${BASE}/mcp` } })).res.status).toBe(200);
+    expect((await start({ kind: "oauth_authorize", params: { ...params, redirect_uri: "https://client.example/other" } })).res.status).toBe(400);
   });
 
   // ── require_sso ───────────────────────────────────────────────────────────

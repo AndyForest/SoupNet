@@ -163,9 +163,13 @@ async function main() {
     run(`${COMPOSE} up -d --wait`, { env: COMPOSE_ENV });
 
     // 2. Build
-    console.log("\n=== Building packages + backend ===");
+    console.log("\n=== Building packages + backend + frontend ===");
     run("npm run build:packages");
     run("npm run build -w apps/backend");
+    // Mirrors CI's "Build frontend" step (added 2026-10-26): the SPA bundle
+    // used to be built only at deploy, so a Node-only import in the frontend
+    // passed every gate and failed in production.
+    run("npm run build -w apps/frontend");
 
     // 3. Typecheck — mirrors CI's separate typecheck step. Clear
     //    tsbuildinfo first so tsc doesn't skip files it thinks are

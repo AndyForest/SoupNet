@@ -11,11 +11,13 @@
  * Pure: no I/O. The routes hand in `c.req.queries()`.
  */
 
+import { LISTING_DEPTH_MAX, lastReachablePage, pageBeyondReach } from "@soupnet/domain";
 import { INTENT_ID_RE } from "./intent.service";
 
 export const REPORT_PER_PAGE_DEFAULT = 50;
 export const REPORT_PER_PAGE_MAX = 200;
-/** A page number past any real report; keeps OFFSET arithmetic small. */
+/** A page number past any real report; keeps the parsed number small. How
+ *  deep a page may reach is the listing depth below (F105). */
 export const REPORT_PAGE_MAX = 100_000;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -134,6 +136,18 @@ export function parseReportQuery(
         break;
       }
     }
+  }
+
+  // How deep a page reaches (F105): a report serves rows only from its first
+  // LISTING_DEPTH_MAX, so no call makes the server skip millions of rows.
+  // Totals stay exact; the refusal names the last reachable page for the
+  // per_page in effect, and how to narrow.
+  if (!problems.some((p) => p.field === "page" || p.field === "per_page") && pageBeyondReach(page, perPage)) {
+    const narrow = allowedFilters.length > 0 ? "; narrow with since or another filter to reach older rows" : "";
+    problems.push({
+      field: "page",
+      message: `at most ${lastReachablePage(perPage)} at per_page=${perPage}: a report pages through its first ${LISTING_DEPTH_MAX.toLocaleString("en-US")} rows${narrow}`,
+    });
   }
 
   if (problems.length > 0) {

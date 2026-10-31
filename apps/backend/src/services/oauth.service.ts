@@ -274,6 +274,26 @@ export interface MintAuthCodeInput {
   scopeReadGroupIds: string[];
   scopeWriteGroupIds: string[];
   scopeDefaultWriteGroupId: string;
+  /** The canonical resource the grant is for (lib/oauth-resource.ts). */
+  resource: string;
+  /** OpenID scopes granted at consent: a subset of OIDC_SCOPES. */
+  oidcScopes: string[];
+}
+
+/** The OpenID scopes the server grants (recipe 6ba99331). Anything else in a
+ *  request's `scope` is ignored (RFC 6749 §3.3 lets the server narrow). */
+export const OIDC_SCOPES = ["openid", "email"] as const;
+
+/** The OpenID scopes a request's space-separated `scope` asks for, in
+ *  canonical order. */
+export function requestedOidcScopes(scope: string): string[] {
+  const asked = new Set(scope.split(/\s+/).filter(Boolean));
+  return OIDC_SCOPES.filter((s) => asked.has(s));
+}
+
+/** A text[] literal for a list of plain strings (an empty list included). */
+function textArray(values: string[]) {
+  return sql`ARRAY[${sql.join(values.map((v) => sql`${v}`), sql`,`)}]::text[]`;
 }
 
 export async function mintAuthCode(
@@ -289,6 +309,7 @@ export async function mintAuthCode(
       id, code_hash, client_id, user_id, redirect_uri,
       code_challenge, code_challenge_method,
       scope_read_group_ids, scope_write_group_ids, scope_default_write_group_id,
+      resource, oidc_scopes,
       expires_at, created_at
     ) VALUES (
       gen_random_uuid(),
@@ -301,6 +322,8 @@ export async function mintAuthCode(
       ${sql`ARRAY[${sql.join(input.scopeReadGroupIds.map((g) => sql`${g}::uuid`), sql`,`)}]`},
       ${sql`ARRAY[${sql.join(input.scopeWriteGroupIds.map((g) => sql`${g}::uuid`), sql`,`)}]`},
       ${input.scopeDefaultWriteGroupId}::uuid,
+      ${input.resource},
+      ${textArray(input.oidcScopes)},
       ${expiresAt.toISOString()}::timestamptz,
       NOW()
     )
@@ -325,6 +348,8 @@ interface AuthCodeRow {
   scope_read_group_ids: string[];
   scope_write_group_ids: string[];
   scope_default_write_group_id: string;
+  resource: string | null;
+  oidc_scopes: string[] | null;
   consumed_at: Date | null;
   expires_at: Date;
 }
@@ -336,6 +361,8 @@ export interface RedeemedAuthCode {
   scopeReadGroupIds: string[];
   scopeWriteGroupIds: string[];
   scopeDefaultWriteGroupId: string;
+  resource: string;
+  oidcScopes: string[];
 }
 
 /**
@@ -345,7 +372,7 @@ export interface RedeemedAuthCode {
  */
 export async function redeemAuthCode(
   db: PostgresJsDatabase,
-  params: { code: string; codeVerifier: string; clientId: string; redirectUri: string },
+  params: { code: string; codeVerifier: string; clientId: string; redirectUri: string; resource: string },
 ): Promise<RedeemedAuthCode> {
   const codeHash = hashOpaque(params.code);
 
@@ -369,7 +396,7 @@ export async function redeemAuthCode(
       AND ${activeUserPredicate()}
     RETURNING ac.client_id, ac.user_id, ac.redirect_uri, ac.code_challenge, ac.code_challenge_method,
               ac.scope_read_group_ids, ac.scope_write_group_ids, ac.scope_default_write_group_id,
-              ac.consumed_at, ac.expires_at
+              ac.resource, ac.oidc_scopes, ac.consumed_at, ac.expires_at
   `);
   const row = (rows as unknown as AuthCodeRow[])[0];
   if (!row) throw new RedeemCodeError("invalid_grant", "authorization code is invalid, expired, or already used");
@@ -381,6 +408,13 @@ export async function redeemAuthCode(
   }
   if (row.redirect_uri !== params.redirectUri) {
     throw new RedeemCodeError("invalid_grant", "redirect_uri does not match the authorization code");
+  }
+  // RFC 8707: the token request's resource (already normalized by the caller,
+  // which refuses an unknown one before the code is touched) must be the one
+  // the code was granted for. A code minted before migration 0043 carries
+  // none and was granted for this server, so it reads as the caller's value.
+  if (row.resource !== null && row.resource !== params.resource) {
+    throw new RedeemCodeError("invalid_grant", "resource does not match the authorization code");
   }
 
   // PKCE verification. We accept only S256 at issuance time, so this branch
@@ -403,6 +437,8 @@ export async function redeemAuthCode(
     scopeReadGroupIds: row.scope_read_group_ids,
     scopeWriteGroupIds: row.scope_write_group_ids,
     scopeDefaultWriteGroupId: row.scope_default_write_group_id,
+    resource: row.resource ?? params.resource,
+    oidcScopes: row.oidc_scopes ?? [],
   };
 }
 
@@ -431,6 +467,9 @@ interface MintTokenBundleInput {
   scopeReadGroupIds: string[];
   scopeWriteGroupIds: string[];
   scopeDefaultWriteGroupId: string;
+  /** The audience the access token is bound to (the canonical resource). */
+  resource: string;
+  oidcScopes: string[];
 }
 
 /** The subset of the db interface mint needs — lets it run inside a
@@ -455,7 +494,8 @@ export async function mintOAuthTokenBundle(
     INSERT INTO claimnet.api_keys (
       id, key, key_prefix, user_id, read_group_ids, write_group_ids,
       default_write_group_id, label, key_type, refresh_token_hash,
-      refresh_token_expires_at, oauth_client_id, expires_at, created_at
+      refresh_token_expires_at, oauth_client_id, oauth_resource, oauth_oidc_scopes,
+      expires_at, created_at
     ) VALUES (
       gen_random_uuid(),
       ${accessTokenHash},
@@ -469,6 +509,8 @@ export async function mintOAuthTokenBundle(
       ${refreshTokenHash},
       ${refreshExpiresAt.toISOString()}::timestamptz,
       ${input.clientId},
+      ${input.resource},
+      ${textArray(input.oidcScopes)},
       ${accessExpiresAt.toISOString()}::timestamptz,
       NOW()
     )
@@ -478,7 +520,7 @@ export async function mintOAuthTokenBundle(
     accessToken,
     refreshToken,
     expiresInSeconds: ACCESS_TOKEN_TTL_SECONDS,
-    scope: scopeString(input.scopeWriteGroupIds, input.scopeReadGroupIds),
+    scope: scopeString(input.scopeWriteGroupIds, input.scopeReadGroupIds, input.oidcScopes),
   };
 }
 
@@ -519,7 +561,7 @@ export class RefreshTokenError extends Error {
  */
 export async function refreshOAuthTokenBundle(
   db: PostgresJsDatabase,
-  params: { refreshToken: string; clientId: string },
+  params: { refreshToken: string; clientId: string; resource: string },
 ): Promise<OAuthTokenBundle> {
   const refreshTokenHash = hashOpaque(params.refreshToken);
 
@@ -544,6 +586,15 @@ export async function refreshOAuthTokenBundle(
     if (consumed.oauthClientId !== params.clientId) {
       throw new RefreshTokenError("invalid_grant", "client_id does not match the refresh token");
     }
+    // RFC 8707 on refresh: the audience is carried forward. The caller has
+    // already normalized the request's resource (refusing an unknown one with
+    // invalid_target before this transaction); a connection bound to some
+    // other identity of this server is not this grant, and throwing here
+    // rolls the consumption back. A row minted before migration 0043 has no
+    // audience and binds to the canonical one now.
+    if (consumed.resource !== null && consumed.resource !== params.resource) {
+      throw new RefreshTokenError("invalid_grant", "the refresh token was not issued for this resource");
+    }
 
     // The grant is carried forward unchanged. Rotation is not where reach is
     // decided (F50): every presented key, this connection's next access token
@@ -561,11 +612,13 @@ export async function refreshOAuthTokenBundle(
       // Whether it is usable is decided at authentication, every time: outside
       // the effective write set it reads as "no default", never a redirect.
       scopeDefaultWriteGroupId: consumed.storedDefaultWriteGroupId,
+      resource: params.resource,
+      oidcScopes: consumed.oidcScopes,
     });
   });
 }
 
-function scopeString(writeIds: string[], readIds: string[]): string {
+function scopeString(writeIds: string[], readIds: string[], oidcScopes: string[]): string {
   // Coarse-scope vocabulary: "read" if any read access, "write" if any write
   // access. Per-recipe-book detail is captured in the row's read_group_ids /
   // write_group_ids arrays and surfaced on the consent screen — claude.ai's
@@ -573,5 +626,6 @@ function scopeString(writeIds: string[], readIds: string[]): string {
   const parts: string[] = [];
   if (readIds.length > 0) parts.push("read");
   if (writeIds.length > 0) parts.push("write");
+  parts.push(...oidcScopes);
   return parts.join(" ");
 }

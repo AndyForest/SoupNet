@@ -21,7 +21,7 @@ You'll need a Soup.net account — signups are free and open: [create one here](
 
 ## Connect via OAuth (chat-style AIs)
 
-The fastest setup. The AI redirects you to Soup.net, you sign in, you pick which recipe books to share, and you're done. All four clients below use the same Soup.net URL:
+The fastest setup. The AI redirects you to Soup.net, you sign in, you pick which recipe books to share, and you're done. Every client below uses the same Soup.net URL:
 
 `https://mcp.soup.net/mcp`
 
@@ -35,15 +35,28 @@ Soup.net is a listed connector in the [Anthropic Connectors Directory](https://c
 
 Adding it manually instead (e.g. a workspace that restricts directory connectors): **Settings → Connectors → Add custom connector** with the URL `https://mcp.soup.net/mcp`, then the same sign-in and book selection. Name it without a domain — "Soup Recipe Checks" works; "Soup.net" does not (a domain-like name can trip the platform's safety filters and silently block the tools; verified 2026-07-06).
 
-### ChatGPT (Developer Mode)
+### ChatGPT
 
-Available on Plus, Pro, Team, Enterprise, and Edu plans. ChatGPT requires OAuth — there's no API-key path. *Free-tier users:* see [Web fallback](#web-fallback-no-mcp-needed) below.
+ChatGPT connects through OAuth; there's no API-key path. A custom MCP server with full access, including the writes a recipe check makes, is available on Business, Enterprise and Edu plans, on the web. On Pro, a custom server is read-only, so the agent can read your recipes but can't record new ones. On other plans, see [Web fallback](#web-fallback-no-mcp-needed) below.
 
-1. Workspace admin enables **Developer Mode** in Workspace Settings → Permissions & Roles → Connected Data.
-2. In ChatGPT, **Settings → Connectors → Create**.
-3. Connector URL: `https://mcp.soup.net/mcp`
-4. Authentication: **OAuth**. Confirm "I trust this application."
-5. Sign in to Soup.net and authorize the scope you want to share.
+1. In ChatGPT, open **Plugins**, select **+**, then **Add custom MCP server**.
+2. URL: `https://mcp.soup.net/mcp`. Authentication: **OAuth**. Accept the warning ChatGPT shows for custom servers.
+3. Sign in to Soup.net, choose which recipe books ChatGPT can read and write, and confirm.
+
+On Business and Enterprise workspaces, an admin can publish the connection to the workspace. ChatGPT keeps a snapshot of Soup.net's tools at that point, so the admin refreshes it when Soup.net adds a tool.
+
+### Codex
+
+Codex (CLI, desktop app and IDE extension) reads MCP servers from `config.toml`. Add Soup.net to `~/.codex/config.toml`, or to `.codex/config.toml` in a trusted project:
+
+```toml
+[mcp_servers.soupnet]
+url = "https://mcp.soup.net/mcp"
+```
+
+Then sign in once with `codex mcp login soupnet`: Codex opens Soup.net in your browser, you choose the recipe books, and Codex keeps the connection refreshed. If you'd rather use an API key, the [API Keys page](/app/keys) has the `config.toml` form with a token environment variable.
+
+**As a plugin, with the recipe-check skill.** This repository is also a Codex plugin marketplace: the plugin bundles the same server with a skill that teaches Codex when to check and how to write a recipe. Add the marketplace with `codex plugin marketplace add AndyForest/SoupNet`, then open `/plugins` in Codex, install **SoupNet**, and start a new session. Working inside a clone of the repository, Codex finds the marketplace on its own.
 
 ### Mistral Le Chat
 
@@ -60,6 +73,10 @@ Custom connectors launched March 2026. Free-tier users: see [Web fallback](#web-
 2. URL: `https://mcp.soup.net/mcp`
 3. Auth method: **OAuth**. Add.
 4. Sign in to Soup.net and authorize.
+
+### For OAuth client developers
+
+Clients that register dynamically get a client secret and use it at the token endpoint; clients that identify themselves with a metadata-document URL (ChatGPT, for example) use no secret (`none`, with PKCE as the proof) or a signed assertion (`private_key_jwt`). That is why the server's metadata lists `none` beside the secret methods.
 
 ## Connect via API key (developer tools)
 
@@ -87,7 +104,7 @@ Add `.mcp.json` to `.gitignore` (each person's copy carries their own key), repl
 
 ## Web fallback (no MCP needed)
 
-If your AI can browse and construct URLs but doesn't support MCP — including ChatGPT free tier, Grok, DeepSeek, and others — you can still use Soup.net by having the AI build URLs against the `/check` endpoint. The dashboard's [API Keys page](/app/keys) has the URL shape; the [recipe-check guide](https://mcp.soup.net/docs/recipe-check-guide) has annotated examples.
+If your AI can browse and construct URLs but doesn't support MCP — including ChatGPT plans without custom servers, Grok, DeepSeek, and others — you can still use Soup.net by having the AI build URLs against the `/check` endpoint. The dashboard's [API Keys page](/app/keys) has the URL shape; the [recipe-check guide](https://mcp.soup.net/docs/recipe-check-guide) has annotated examples.
 
 This path is slower per-check (the user clicks each link rather than the AI calling a tool silently) but works in any AI that can read and write URLs.
 

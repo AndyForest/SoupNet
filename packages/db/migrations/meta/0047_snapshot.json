@@ -1,6 +1,6 @@
 {
-  "id": "3ac123af-a2ee-4177-8789-ac38ebd35fae",
-  "prevId": "17164855-ad1d-4770-bf8b-dacd544ee35e",
+  "id": "14fef70f-da76-40b3-831d-1dea1321b006",
+  "prevId": "761c713f-b50a-44d3-8136-f4a6f8e88e3c",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1981,6 +1981,18 @@
           "primaryKey": false,
           "notNull": false
         },
+        "oauth_resource": {
+          "name": "oauth_resource",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "oauth_oidc_scopes": {
+          "name": "oauth_oidc_scopes",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": false
+        },
         "expires_at": {
           "name": "expires_at",
           "type": "timestamp with time zone",
@@ -3274,6 +3286,18 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true
+        },
+        "resource": {
+          "name": "resource",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "oidc_scopes": {
+          "name": "oidc_scopes",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": false
         },
         "consumed_at": {
           "name": "consumed_at",
