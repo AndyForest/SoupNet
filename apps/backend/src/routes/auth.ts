@@ -4,7 +4,7 @@ import crypto from "crypto";
 import { sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { registerUser, loginUser, requireAuth, requireActiveSession, activeSessionRefusal, requireVerifiedEmail, hashPassword, verifyPassword } from "../auth";
-import { writeAudit } from "../services/audit-log.service";
+import { recordSignIn, writeAudit } from "../services/audit-log.service";
 import { isSignupCapReached, logSignupCapState, mayRegister } from "../services/system-settings.service";
 import { purgeStaleWaitlistedUsers } from "../services/waitlist.service";
 import { deleteUserCascade } from "../services/user-delete.service";
@@ -398,6 +398,9 @@ auth.post("/login", authRateLimit, async (c) => {
   await db.execute(sql`
     UPDATE claimnet.users SET last_login_at = now() WHERE id = ${result.user.id}::uuid
   `);
+  // The sign-in is complete (the session is issued), so record it for the
+  // person's own list of recent sign-ins (CN-T2).
+  await recordSignIn(db, result.user.id, "password");
 
   // Check if email is verified
   const verifiedRows = await db.execute(sql`

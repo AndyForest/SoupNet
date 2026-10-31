@@ -9,8 +9,8 @@ import { orgMembershipDisabled } from "./account-state";
 
 // Layer 1 — the one-body hooks other streams fill (organization accounts
 // round 1). These pin what each answers until its stream fills it: nothing
-// joins on a domain's authority, no session is refused for how it signed in,
-// no membership grant is refused by a sharing policy. A stream that fills a
+// joins on a domain's authority, no session is refused for how it signed in.
+// sharingPolicyAllows is filled (stream Console). A stream that fills a
 // body updates its row here in the same change (Console owns
 // sharing-policy.ts whole, and its row).
 
@@ -25,9 +25,15 @@ describe("the hooks' answers before their streams fill them", () => {
     expect(dialect.sqlToQuery(ssoRequired()).sql).toBe("FALSE");
   });
 
-  it("sharingPolicyAllows is true (stream Console)", async () => {
-    const neverCalled = { execute: () => { throw new Error("the stub reads nothing"); } } as never;
-    expect(await sharingPolicyAllows(neverCalled, { bookId: "b", userId: "u", actorUserId: "a" })).toBe(true);
+  // Filled by stream Console: the policy decision itself is Layer 1 in
+  // @soupnet/domain (sharing-policy.test.ts) and each grant path is Layer 3
+  // (org-console.test.ts). Here: it reads the boundary, and a book it can't
+  // find is refused rather than waved through.
+  it("sharingPolicyAllows reads the boundary and refuses a book it can't find (stream Console)", async () => {
+    let asked = 0;
+    const noBook = { execute: async () => { asked++; return []; } } as never;
+    expect(await sharingPolicyAllows(noBook, { bookId: "b", userId: "u", actorUserId: "a" })).toBe(false);
+    expect(asked).toBe(1);
   });
 
   it("orgMembershipDisabled is the org admin's switch (stream Offboarding extends it)", () => {

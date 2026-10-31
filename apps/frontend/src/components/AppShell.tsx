@@ -42,6 +42,8 @@ export const learnNavItems: readonly LearnItem[] = [
 // Distinct icon from Settings — Admin previously reused the settings gear,
 // which made the two nav items visually indistinguishable at a glance.
 export const adminNavItem: NavItem = { to: "/admin", label: "Admin", icon: "shield" };
+// The org console, for an organization's owners and admins (stream Console).
+export const orgConsoleNavItem: NavItem = { to: "/org", label: "Organization", icon: "users" };
 
 // Mobile bottom bar shows primary items only; everything else (API Keys,
 // Settings, the Learn group, Admin) lives behind "More" so the bar never
@@ -80,7 +82,10 @@ export function AppShell() {
     queryKey: ["auth", "me"],
     queryFn: async () => {
       const res = await authFetch("/auth/me");
-      const json = (await res.json()) as { ok: boolean; data?: { user: { id: string; email: string; role: string } } };
+      const json = (await res.json()) as {
+        ok: boolean;
+        data?: { user: { id: string; email: string; role: string; organization?: { role: string } | null } };
+      };
       if (!json.ok || !json.data) throw new Error("Failed");
       return json.data.user;
     },
@@ -92,6 +97,8 @@ export function AppShell() {
   });
 
   const isSystem = meQuery.data?.role === "system";
+  const orgRole = meQuery.data?.organization?.role;
+  const isOrgManager = orgRole === "owner" || orgRole === "admin";
   const isLearnActive = learnNavItems.some((item) => isNavItemActive(matchRoute, item.to));
 
   // Auto-expand the Learn group's <details> when navigation lands on one of
@@ -208,6 +215,17 @@ export function AppShell() {
             </div>
           </details>
 
+          {isOrgManager && (
+            <Link
+              to={orgConsoleNavItem.to}
+              className={`${styles.navLink} ${isNavItemActive(matchRoute, orgConsoleNavItem.to) ? styles.navLinkActive : ""}`}
+              aria-current={isNavItemActive(matchRoute, orgConsoleNavItem.to) ? "page" : undefined}
+            >
+              <Icon name={orgConsoleNavItem.icon} size={18} />
+              {orgConsoleNavItem.label}
+            </Link>
+          )}
+
           {isSystem && (
             <Link
               to={adminNavItem.to}
@@ -310,6 +328,12 @@ export function AppShell() {
                 <Icon name="settings" size={18} />
                 Settings
               </Link>
+              {isOrgManager && (
+                <Link to={orgConsoleNavItem.to} className={styles.moreSheetLink} onClick={() => setMoreOpen(false)}>
+                  <Icon name={orgConsoleNavItem.icon} size={18} />
+                  {orgConsoleNavItem.label}
+                </Link>
+              )}
               {isSystem && (
                 <Link to={adminNavItem.to} className={styles.moreSheetLink} onClick={() => setMoreOpen(false)}>
                   <Icon name={adminNavItem.icon} size={18} />

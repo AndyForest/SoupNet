@@ -11,7 +11,7 @@
 >
 > **Rule of thumb:** If it's about building or operating the system, put it here. If it's about how the system algorithmically works, put it in search-algorithms.md.
 
-All routes must be protected by auth to only the system admins.
+All `/admin` routes must be protected by auth to only the system admins. The organization admin console at `/org` (below) is a second console for a company organization's owners and admins, built from the same kit.
 
 ## Design philosophy: data-model-driven
 
@@ -20,6 +20,16 @@ Admin pages mirror the underlying data model. Top-level shows table row counts; 
 **Why this matters here:** When investigating "why is this vector stuck?" or "why isn't this job running?", the admin needs to see the actual database state — not a curated executive summary that hides the columns the developer thought weren't important. Real investigation needs unanticipated questions answered, which requires raw data access.
 
 See [engineering-principles.md §12](../engineering-principles.md) for the full principle and what it rules out.
+
+## Navigation: each control lives with the surface it governs
+
+There is no generic "Settings" page in either console: every page is settings. A control sits on the page whose state it changes, so the nav label says what you'll find there and the state is visible beside its control. The signup cap and the waitlist are on Signups, next to Users; the embeddings kill switch is on the Embeddings pipeline page; an organization's sharing policy is on its Books page. (Soup.net recipe `ea5a5dca`.)
+
+## The organization admin console (`/org`)
+
+An organization's owners and admins manage their members at `/org` (Members, Books, Activity, and Domains once domain verification lands). It is built from the site console's kit: `AdminLayout` and `useAdminGate` take a scope (`site`, or the caller's own organization), and both consoles' user lists are one backend service (`services/users-list.service.ts`) and one table (`AdminUsersTable`). Which columns each viewer gets is defined once in `@soupnet/domain` (`admin-columns.ts`), and the backend selects only those.
+
+**A documented exception to "no hiding fields".** §12's data-model-driven rule is about the site operator's vantage point. The org console deliberately shows only what an organization admin is entitled to see: aggregates over the organization's own books, never private book names or contents, never a member's own activity, never what the site operator holds for running the service (Soup.net recipes `57fc1eee`, `2738f7a9`, `1fa21e31`). The member's page "What your organization's admins can see" (`/app/settings/organization`) renders from the same column set, so it can't promise less than the console shows. Rubric: [planning/org-accounts-build/console.md](../planning/org-accounts-build/console.md).
 
 # Worker Queue
 
@@ -39,14 +49,14 @@ The split lets us answer different questions on different pages:
 - "Are the queues healthy?" → `/admin/queues`
 - "Are recipe checks fully embedded?" → `/admin/workers/embeddings`
 
-A landing page at `/admin/workers` lists all worker types with a brief health summary, linking into per-worker pages.
+A landing page at `/admin/workers` listing all worker types with a brief health summary is planned but not built; the console's nav links straight to `/admin/workers/embeddings`.
 
 ### Routes
 
 ```
 /admin                          → landing (cards for sections)
 /admin/queues                   → generic pg-boss dashboard
-/admin/workers                  → list of all worker types with summary
+/admin/workers                  → (planned) list of all worker types with summary
 /admin/workers/embeddings       → embedding pipeline deep-dive
 /admin/workers/<future>         → future worker types
 ```

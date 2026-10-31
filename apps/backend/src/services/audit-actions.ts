@@ -29,6 +29,7 @@ export const ACCOUNT_EVENT_ACTIONS = [
   "user.premium_set",
   "user.suspended",
   "user.unsuspended",
+  "auth.signed_in",
   // Recipe books and the recipes in them
   "group.description_updated",
   "group.name_updated",
@@ -54,6 +55,7 @@ export const ACCOUNT_EVENT_ACTIONS = [
   "organization.member_set_role",
   "organization.owner_handed_over",
   "organization.seat_limit_set",
+  "organization.sharing_changed",
   // Operators
   "integrity.repaired",
 ] as const;

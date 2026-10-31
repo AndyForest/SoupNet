@@ -316,6 +316,13 @@
       "when": 1793025473034,
       "tag": "0044_organization_members",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1793479216605,
+      "tag": "0048_organization_sharing_policy",
+      "breakpoints": true
     }
   ]
 }
