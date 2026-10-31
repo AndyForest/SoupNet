@@ -236,6 +236,9 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Core", ()
       WHERE action = 'organization.member_joined' AND target_id = ${orgId}::uuid AND metadata->>'userId' = ${max.userId}
     `)) as unknown as Array<{ metadata: Json }>;
     expect(audit[0]?.metadata).toMatchObject({ via: "operator", authority: "operator", noticeOwed: true });
+    // The moved book is recorded by slug; its name is the person's own words.
+    const local = max.email.slice(0, max.email.indexOf("@"));
+    expect(audit[0]?.metadata.movedBooks).toEqual([{ previousSlug: "personal", slug: `personal-${local}` }]);
 
     let status: string | undefined;
     for (let i = 0; i < 40 && !status; i++) {
