@@ -197,4 +197,6 @@ Resend-verification runs the account-state check after its Turnstile check, whic
 - The same change swaps `authorityHolds`'s email-domain comparison for Domains' `isAddressOnDomain`, which normalizes an address the way a claim is stored (ASCII/punycode, Domains' OD-V1). Today's `lastIndexOf("@")` slice fails closed on an internationalized address on a verified IDN domain. That's safe, but it disagrees with the claim.
 - Tests: an operator add of an off-domain account is refused unless the unbounded form is asked for explicitly, and an IDN address on its verified domain joins.
 
+**Audit classification, after `main` brought in #163.** Core's actions are all account events (`audit-actions.ts`), listed as SSO's branch lists them, so the branches merge cleanly. The member actions and the org-wide toggle read from named maps (`MEMBER_AUDIT_ACTIONS`, `ORG_WIDE_AUDIT_ACTIONS`), which the source scan can see. `organization.member_joined` records its moved books by slug and previous slug, without the name (recipe `90d30f23`, F122's rule).
+
 **Not built here, by design:** the console pages, the SPA's private or org-wide choice when creating a book, and the member list (Console), and the verified-domain check (Domains).

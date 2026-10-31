@@ -26,6 +26,9 @@ import type { OrgWideRefusal } from "../authz";
 
 const SHARING_BLOCKED_MESSAGE = "An organization's sharing policy doesn't allow this person in this recipe book. Ask one of its admins.";
 
+/** A named map so the audit classification's source scan can read them. */
+const ORG_WIDE_AUDIT_ACTIONS = { orgWide: "group.made_org_wide", private: "group.made_private" } as const;
+
 const ORG_WIDE_MESSAGES: Record<OrgWideRefusal, string> = {
   not_a_company_book: "Only a recipe book in a company organization can be org-wide.",
   default_book_stays_org_wide: "The organization's default recipe book is always org-wide.",
@@ -144,7 +147,7 @@ groupsRouter.put("/:id/org-wide", async (c) => {
   }
   await writeAudit(db, {
     actorUserId: user.id,
-    action: parsed.data.orgWide ? "group.made_org_wide" : "group.made_private",
+    action: parsed.data.orgWide ? ORG_WIDE_AUDIT_ACTIONS.orgWide : ORG_WIDE_AUDIT_ACTIONS.private,
     targetType: "group",
     targetId: groupId,
   });
