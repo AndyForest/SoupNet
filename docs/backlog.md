@@ -238,7 +238,7 @@ Items to put in front of a Canadian lawyer before signups grow materially. None 
 - ToS Section 11 (indemnification) enforceability and scope.
 - ToS Section 13 (governing law) and consumer-protection carve-outs (Quebec, EU consumer rights).
 - Whether listing a postal mail address is jurisdictionally required.
-- Whether to operate Soup.net under Andy personally vs Dimentians Ltd vs Steamlabs (income/liability tradeoffs). The current policy says "operated by Andy Forest, based in Canada" — deliberately silent on legal form so this choice stays open.
+- ~~Whether to operate Soup.net under Andy personally vs Dimentians Ltd vs Steamlabs (income/liability tradeoffs).~~ Ruled 2026-10-26: STEAMLabs, the business identity verified with OpenAI, so the plugin directory listing, the privacy policy and the terms name the same publisher (OpenAI: "Public URLs must be accessible and identify the same publisher as the submission"). The trademark line in the terms (§14) and the LICENSE notice still reserve the name and logo to Andy Forest, who owns the mark.
 
 ### `[IMPL]` Verify privacy policy claims match implementation
 
