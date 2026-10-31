@@ -312,12 +312,15 @@ export async function joinOrganizationInTx(tx: SqlExecutor, input: JoinInput): P
   // audit row is the record that the notice is owed; the logged sender's
   // email_log row is the record of how the send went.
   const noticeOwed = via !== "domain";
+  // Slugs only: account events keep identifiers, and a book's name is the
+  // person's own words, which don't outlive their account (F122's rule).
+  const auditedBooks = movedBooks.map(({ slug, previousSlug }) => ({ slug, previousSlug }));
   await tx.execute(sql`
     INSERT INTO claimnet.audit_log (actor_user_id, action, target_type, target_id, metadata)
     VALUES (
       ${authority.kind === "operator" ? authority.actorUserId : null}::uuid,
       'organization.member_joined', 'organization', ${organizationId}::uuid,
-      ${JSON.stringify({ userId, role, via, authority: authority.kind, movedBooks, noticeOwed })}::jsonb
+      ${JSON.stringify({ userId, role, via, authority: authority.kind, movedBooks: auditedBooks, noticeOwed })}::jsonb
     )
   `);
 
