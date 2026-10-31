@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  bookSlugTakenMessage,
   ACCOUNT_DISABLED_MESSAGE,
   ACCOUNT_SUSPENDED_MESSAGE,
   MANAGED_KEY_MAX_DAYS,
@@ -123,6 +124,11 @@ describe("copy", () => {
   it("the refusals say the cause and the next step", () => {
     expect(ACCOUNT_DISABLED_MESSAGE).toContain("Ask one of its admins");
     expect(ACCOUNT_SUSPENDED_MESSAGE).toContain("suspended");
+  });
+
+  it("a taken slug's message says whose space it was taken in", () => {
+    expect(bookSlugTakenMessage("plans", true)).toBe('Another recipe book in this organization already uses the short name "plans". Choose a different name.');
+    expect(bookSlugTakenMessage("plans", false)).toBe('You already have a recipe book with the short name "plans". Choose a different name.');
   });
 
   it("the join notice names the organization and each moved book, and a changed slug", () => {

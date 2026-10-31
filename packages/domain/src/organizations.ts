@@ -176,6 +176,18 @@ export const ORG_ACTION_MESSAGES: Record<OrgActionRefusal, string> = {
 };
 
 /** A book a join moved under the organization, as the notice names it. */
+/**
+ * The refusal for a new recipe book whose slug is taken. Members of a company
+ * organization share one slug space, so the holder can be a private book of
+ * another member's that this person can't see. Slugs are the "short name" the
+ * join notice already calls them.
+ */
+export function bookSlugTakenMessage(slug: string, inCompany: boolean): string {
+  return inCompany
+    ? `Another recipe book in this organization already uses the short name "${slug}". Choose a different name.`
+    : `You already have a recipe book with the short name "${slug}". Choose a different name.`;
+}
+
 export interface MovedBook {
   name: string;
   slug: string;
