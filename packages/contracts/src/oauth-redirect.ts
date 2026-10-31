@@ -13,6 +13,19 @@
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "[::1]", "localhost"]);
 
 /**
+ * Whether a redirect ends in an app on this computer, over http. The consent
+ * page warns on these (F129): nothing ties that app to the client's name.
+ */
+export function isHttpLoopbackUri(uri: string): boolean {
+  try {
+    const url = new URL(uri);
+    return url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * The URI with its port removed, or null if it can't take the exception. A URI
  * must already be in the form the URL parser writes it, so `127.1`, `:80`,
  * `/a/../callback` and other spellings of a different string stay exact-only.
@@ -25,7 +38,7 @@ function loopbackWithoutPort(uri: string): string | null {
     return null;
   }
   if (url.href !== uri || uri.includes("#")) return null;
-  if (url.protocol !== "http:" || !LOOPBACK_HOSTS.has(url.hostname)) return null;
+  if (!isHttpLoopbackUri(uri)) return null;
   if (url.username || url.password) return null;
   url.port = "";
   return url.href;

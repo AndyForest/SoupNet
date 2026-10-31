@@ -1,5 +1,15 @@
 import { describe, it, expect } from "vitest";
-import { isRegisteredRedirectUri } from "./oauth-redirect";
+import { isHttpLoopbackUri, isRegisteredRedirectUri } from "./oauth-redirect";
+
+describe("isHttpLoopbackUri", () => {
+  it.each(["http://127.0.0.1/callback", "http://127.0.0.1:57687/callback", "http://localhost:5000/cb", "http://[::1]:5000/cb", "http://127.1/cb"])("is true for %s", (uri) => {
+    expect(isHttpLoopbackUri(uri)).toBe(true);
+  });
+
+  it.each(["https://127.0.0.1/cb", "https://claude.ai/api/mcp/auth_callback", "http://example.com/cb", "http://0.0.0.0/cb", "http://127.0.0.2/cb", "http://localhost.evil.example/cb", "", "not a url"])("is false for %s", (uri) => {
+    expect(isHttpLoopbackUri(uri)).toBe(false);
+  });
+});
 
 describe("isRegisteredRedirectUri: exact match (F44, RFC 6749 §3.1.2.3)", () => {
   const registered = ["https://claude.ai/api/mcp/auth_callback", "http://localhost:3000/cb"];
@@ -66,6 +76,18 @@ describe("isRegisteredRedirectUri: any port on a loopback redirect (RFC 8252 §7
     expect(isRegisteredRedirectUri("https://client.example:8443/cb", ["https://client.example/cb"])).toBe(false);
     expect(isRegisteredRedirectUri("https://client.example/cb", ["https://client.example:8443/cb"])).toBe(false);
     expect(isRegisteredRedirectUri("https://127.0.0.1:8443/cb", ["https://127.0.0.1/cb"])).toBe(false);
+  });
+
+  // F131: each pair differs only by the port, so only the host list refuses it.
+  it.each([
+    ["an ordinary host", "http://example.com:5000/cb", "http://example.com/cb"],
+    ["the unspecified address", "http://0.0.0.0:5000/cb", "http://0.0.0.0/cb"],
+    ["another 127/8 address", "http://127.0.0.2:5000/cb", "http://127.0.0.2/cb"],
+    ["a subdomain of localhost", "http://a.localhost:5000/cb", "http://a.localhost/cb"],
+    ["an IPv4-mapped IPv6 address", "http://[::ffff:7f00:1]:5000/cb", "http://[::ffff:7f00:1]/cb"],
+  ])("gives %s no port freedom, even when registered", (_name, requested, registered) => {
+    expect(isRegisteredRedirectUri(requested, [registered])).toBe(false);
+    expect(isRegisteredRedirectUri(registered, [registered])).toBe(true);
   });
 
   it("refuses names that only look like loopback", () => {

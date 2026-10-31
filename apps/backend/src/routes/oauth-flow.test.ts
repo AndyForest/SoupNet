@@ -751,6 +751,8 @@ describe.skipIf(!BASE)("OAuth 2.1 end-to-end flow", () => {
       const pkce = generatePkcePair();
       const https = await grant({ codeChallenge: pkce.challenge, redirectUri: "https://claude.ai:8443/api/mcp/auth_callback" });
       expect(https.error).toBe("invalid_request");
+      const http = await grant({ codeChallenge: pkce.challenge, redirectUri: "http://claude.ai:8443/api/mcp/auth_callback" });
+      expect(http.error).toBe("invalid_request");
       const loopback = await grant({ codeChallenge: pkce.challenge, redirectUri: ON_PORT });
       expect(loopback.error).toBe("invalid_request");
     });
