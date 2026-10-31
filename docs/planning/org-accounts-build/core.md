@@ -200,6 +200,6 @@ Resend-verification runs the account-state check after its Turnstile check, whic
 
 **Audit classification, after `main` brought in #163.** Core's actions are all account events (`audit-actions.ts`), listed as SSO's branch lists them, so the branches merge cleanly. The member actions and the org-wide toggle read from named maps (`MEMBER_AUDIT_ACTIONS`, `ORG_WIDE_AUDIT_ACTIONS`), which the source scan can see. `organization.member_joined` and `recipe_book.moved_into_organization` record a moved book's id and previous slug, without its name (recipe `90d30f23`, F122's rule) or its new slug (F126). The live book's slug is unchanged.
 
-**After a slug changes.** A key reaches a moved book by id and by its new slug. The old slug is refused and stores nothing, since slugs resolve only among the key's own books, so it can't land in a colleague's book that now holds it. `org-core.test.ts` pins this.
+**After a slug changes.** A key reaches a moved book by id and by its new slug. The old slug is refused and stores nothing, since slugs resolve only among the key's own books, so it can't land in a colleague's book that now holds it. `org-core.test.ts` pins this. When a slug changed, the join email says so: an agent naming the book by its old short name needs the new one.
 
 **Not built here, by design:** the console pages, the SPA's private or org-wide choice when creating a book, and the member list (Console), and the verified-domain check (Domains).

@@ -318,6 +318,10 @@ Customer-driven program; the customer's needs are segmented anonymously in [cust
 
 Streams SSO, Domains, Offboarding and Console follow in that merge order.
 
+Slug races Core left as they are, each a small read-then-write gap:
+- `[IMPL]` Book succession's `freeSlugIn` (`services/user-delete.service.ts`) can lose to a book created at the same moment in the successor's personal organization. The account deletion then rolls back and a retry succeeds.
+- `[IMPL]` `createOrganization` (`authz/organizations.ts`) checks the organization slug before inserting, so two operators creating the same slug at once give one a 500 instead of `slug_taken`.
+
 Left open by Core, each for the stream named:
 - the SPA's private or org-wide choice when creating a book, and the members page (Console);
 - `domainVerifiedFor` in `authz/domain-authority.ts`, `FALSE` until Domains fills it;

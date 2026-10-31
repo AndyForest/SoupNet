@@ -141,9 +141,18 @@ describe("copy", () => {
     expect(notice.text).toContain("- Personal (its short name changed from personal to personal-max)");
     expect(notice.text).toContain("- Recipes\n");
     expect(notice.text).not.toContain("http");
+    expect(notice.text).toContain("An agent that names one of these books by its old short name needs the new one.");
+    expect(notice.text).not.toContain("as before");
+  });
+
+  it("with no short name changed, the keys and connections keep working as before", () => {
+    const notice = organizationJoinNotice("Acme", [{ name: "Recipes", slug: "recipes", previousSlug: "recipes" }]);
+    expect(notice.text).toContain("keep working as before.");
+    expect(notice.text).not.toContain("old short name");
   });
 
   it("with no books moved, the notice says nothing about books", () => {
     expect(organizationJoinNotice("Acme", []).text).not.toContain("recipe books moved");
+    expect(organizationJoinNotice("Acme", []).text).toContain("keep working as before.");
   });
 });

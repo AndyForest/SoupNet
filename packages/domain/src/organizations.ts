@@ -211,6 +211,9 @@ export function organizationJoinNotice(organizationName: string, moved: readonly
       lines.push(`- ${book.name}${renamed}`);
     }
   }
-  lines.push("", "Your API keys and your agents' connections keep working as before.");
+  const slugChanged = moved.some((book) => book.slug !== book.previousSlug);
+  lines.push("", slugChanged
+    ? "Your API keys and your agents' connections keep working. An agent that names one of these books by its old short name needs the new one."
+    : "Your API keys and your agents' connections keep working as before.");
   return { subject: `Your Soup.net account joined ${organizationName}`, text: lines.join("\n") };
 }
