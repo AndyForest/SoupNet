@@ -41,31 +41,31 @@
             {
               "description": "Starting a session: the assistant reads the person's Soup.net briefing and reports which recipe books it can use. Read-only; works on any account with at least one recipe book.",
               "prompt": "Connect to Soup.net and tell me which recipe books you can use.",
-              "tools_triggered": ["get_briefing"],
+              "tools_triggered": "get_briefing",
               "expected_behavior": "Calls get_briefing (list_my_recipe_books instead is also correct). The reply names at least one recipe book, such as Directory Review, and says whether the assistant can write to it. No recipe is created."
             },
             {
               "description": "A judgment call before acting: the assistant checks the person's naming taste, then suggests names shaped by what came back. Creates one recipe in the person's default book.",
               "prompt": "I'm naming a new internal project. Recipe check Soup.net for my naming taste, then suggest three names.",
-              "tools_triggered": ["check_recipe"],
+              "tools_triggered": "check_recipe",
               "expected_behavior": "Calls check_recipe once with a recipe sentence of the form \"As a [role] working on [goal], I prefer ... so that ...\" and supporting evidence. The tool returns similar recipes or says none were found. The reply gives three names and, when recipes came back, names at least one that shaped them."
             },
             {
               "description": "Recording a decision the person just made, to a named recipe book. Creates one recipe in Directory Review.",
               "prompt": "I just decided my reports will use headings that state the finding, because my readers skim. Recipe check that to my Directory Review book.",
-              "tools_triggered": ["check_recipe"],
+              "tools_triggered": "check_recipe",
               "expected_behavior": "Calls check_recipe with recipe_book set to the Directory Review book and evidence quoting the person's message. The reply confirms the recipe was recorded and gives its id or a link to it."
             },
             {
               "description": "Reading the person's recipe books and their descriptions. Read-only.",
               "prompt": "List my Soup.net recipe books with their descriptions.",
-              "tools_triggered": ["list_my_recipe_books"],
+              "tools_triggered": "list_my_recipe_books",
               "expected_behavior": "Calls list_my_recipe_books. The reply lists each readable book by name with its description (or says it has none) and whether it is writable. No recipe is created."
             },
             {
               "description": "A check followed by feedback on how useful its results were, in one request. Creates one recipe and one feedback row joined to it.",
               "prompt": "Recipe check whether I prefer short, warm wording for family announcements, then log feedback on whether the results were useful.",
-              "tools_triggered": ["check_recipe", "log_feedback"],
+              "tools_triggered": "check_recipe, log_feedback",
               "expected_behavior": "Calls check_recipe, then log_feedback with the recipe id that check returned and a note on whether the results helped. The reply says the check and the feedback were both recorded."
             }
           ],
