@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import type { IncomingMessage, ClientRequest, RequestOptions } from "node:http";
-import { checkFetchableUrl, guardedFetch, guardedLookup, isPublicAddress } from "./guarded-fetch";
+import { checkFetchableUrl, checkFileUrl, guardedFetch, guardedFetchFile, guardedLookup, isPublicAddress } from "./guarded-fetch";
 import type { RequestFn } from "./guarded-fetch";
 
 /** Rubric O5-2 (docs/planning/openai-plugin-build/oauth.md). */
@@ -13,6 +13,8 @@ describe("isPublicAddress", () => {
     "192.0.0.8", "192.0.2.1", "192.168.1.1", "198.18.0.1", "198.51.100.7", "203.0.113.9", "224.0.0.1", "255.255.255.255",
     "::", "::1", "::ffff:127.0.0.1", "::ffff:10.0.0.1", "::FFFF:169.254.169.254", "64:ff9b::a00:1", "2001:db8::1",
     "2002:a00:1::", "fc00::1", "fd12:3456::1", "fe80::1", "ff02::1", "not-an-ip", "",
+    // F125: IPv4-compatible, IPv4-translated, site-local.
+    "::7f00:1", "::808:808", "::ffff:0:7f00:1", "::ffff:0:a9fe:a9fe", "fec0::1", "feff::1",
   ])("refuses %s", (address) => {
     expect(isPublicAddress(address)).toBe(false);
   });
@@ -159,6 +161,166 @@ describe("guardedFetch", () => {
   it("never sends a request for a URL that fails the static checks", async () => {
     const { fn, seen } = fakeRequest({});
     expect((await guardedFetch("https://10.0.0.1/x.json", OPTS, { request: fn })).ok).toBe(false);
+    expect(seen).toHaveLength(0);
+  });
+});
+
+/** Rubric F1 to F8 (docs/planning/openai-plugin-build/file-url-guard.md). */
+
+describe("checkFileUrl", () => {
+  it.each([
+    ["ftp://example.com/a.png", "not http or https"],
+    ["file:///etc/passwd", "not http or https"],
+    ["https://user:pw@example.com/a.png", "credentials in URL"],
+    ["http://127.0.0.1/a.png", "non-public address"],
+    ["http://2130706433/a.png", "non-public address"],
+    ["http://0177.0.0.1/a.png", "non-public address"],
+    ["http://0x7f000001/a.png", "non-public address"],
+    ["http://127.1/a.png", "non-public address"],
+    ["http://0/a.png", "non-public address"],
+    ["http://[::1]/a.png", "non-public address"],
+    ["http://[0:0:0:0:0:0:0:1]/a.png", "non-public address"],
+    ["http://[::ffff:127.0.0.1]/a.png", "non-public address"],
+    ["http://[::ffff:a9fe:a9fe]/latest/meta-data", "non-public address"],
+    ["http://[::127.0.0.1]/a.png", "non-public address"],
+    ["http://[::ffff:0:7f00:1]/a.png", "non-public address"],
+    ["http://[fec0::1]/a.png", "non-public address"],
+    ["http://169.254.169.254/latest/meta-data", "non-public address"],
+    ["http://10.0.0.5:3101/health", "non-public address"],
+    ["http://localhost/a.png", "non-public address"],
+    ["http://LOCALHOST./a.png", "non-public address"],
+    ["http://api.localhost/a.png", "non-public address"],
+    ["a.png", "not an absolute URL"],
+  ])("refuses %s (%s)", (raw, reason) => {
+    expect(checkFileUrl(raw)).toEqual({ ok: false, reason });
+  });
+
+  it.each(["http://example.com/a.png", "https://cdn.example.com:8443/a.png", "https://example.com/a.png#frag", "http://93.184.216.34/a.png"])(
+    "accepts %s",
+    (raw) => {
+      expect(checkFileUrl(raw).ok).toBe(true);
+    },
+  );
+});
+
+/** Scripted responses, one per request in order. */
+function fakeChain(scripts: Parameters<typeof fakeRequest>[0][]) {
+  const seen: RequestOptions[] = [];
+  const fn: RequestFn = (options, callback) => {
+    const hop = fakeRequest(scripts[seen.length] ?? { status: 500 });
+    seen.push(options);
+    return hop.fn(options, callback);
+  };
+  return { fn, seen };
+}
+
+const FILE_OPTS = { maxBytes: 64, timeoutMs: 200, maxRedirects: 3 };
+const FILE_URL = "https://img.example.com/a.png";
+const PNG = { "content-type": "image/png" };
+
+describe("guardedFetchFile", () => {
+  it("returns the bytes, type and final URL of a 200, through the guarded lookup", async () => {
+    const { fn, seen } = fakeChain([{ headers: PNG, chunks: ["head", "rest"] }]);
+    const result = await guardedFetchFile(FILE_URL, FILE_OPTS, { request: fn });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.body.toString("utf8")).toBe("headrest");
+    expect(result.contentType).toBe("image/png");
+    expect(result.finalUrl.href).toBe(FILE_URL);
+    expect(seen[0]?.port).toBe(443);
+    expect(seen[0]?.headers).toMatchObject({ accept: "*/*" });
+    expect(typeof seen[0]?.lookup).toBe("function");
+  });
+
+  it("uses plain http and the URL's port when it names them", async () => {
+    const { fn, seen } = fakeChain([{ headers: PNG }]);
+    expect((await guardedFetchFile("http://img.example.com:8080/a.png", FILE_OPTS, { request: fn })).ok).toBe(true);
+    expect(seen[0]?.protocol).toBe("http:");
+    expect(seen[0]?.port).toBe(8080);
+  });
+
+  it("follows up to three redirects, resolving relative locations, with every hop guarded", async () => {
+    const { fn, seen } = fakeChain([
+      { status: 301, headers: { location: "https://cdn.example.com/x" } },
+      { status: 302, headers: { location: "/y.png?v=1" } },
+      { status: 307, headers: { location: "https://cdn.example.com:8443/z.png" } },
+      { headers: PNG },
+    ]);
+    const result = await guardedFetchFile("http://img.example.com/a.png", FILE_OPTS, { request: fn });
+    expect(result.ok).toBe(true);
+    expect(seen.map((o) => `${o.protocol}//${o.hostname}:${o.port}${o.path}`)).toEqual([
+      "http://img.example.com:80/a.png",
+      "https://cdn.example.com:443/x",
+      "https://cdn.example.com:443/y.png?v=1",
+      "https://cdn.example.com:8443/z.png",
+    ]);
+    expect(seen.every((o) => typeof o.lookup === "function")).toBe(true);
+    if (result.ok) expect(result.finalUrl.href).toBe("https://cdn.example.com:8443/z.png");
+  });
+
+  it("refuses a fourth redirect", async () => {
+    const hop = { status: 302, headers: { location: "https://cdn.example.com/next" } };
+    const { fn, seen } = fakeChain([hop, hop, hop, hop, { headers: PNG }]);
+    expect(await guardedFetchFile(FILE_URL, FILE_OPTS, { request: fn })).toEqual({ ok: false, reason: "too many redirects" });
+    expect(seen).toHaveLength(4);
+  });
+
+  it.each([
+    ["https://169.254.169.254/latest/meta-data/", "redirect refused: non-public address"],
+    ["https://127.0.0.1:3101/health", "redirect refused: non-public address"],
+    ["https://[::ffff:7f00:1]/", "redirect refused: non-public address"],
+    ["https://2130706433/", "redirect refused: non-public address"],
+    ["https://localhost/", "redirect refused: non-public address"],
+    ["file:///etc/passwd", "redirect refused: not http or https"],
+    ["http://169.254.169.254/latest/meta-data/", "redirect from https to http refused"],
+    ["http://img.example.com/a.png", "redirect from https to http refused"],
+  ])("refuses a redirect to %s and never requests it", async (location, reason) => {
+    const { fn, seen } = fakeChain([{ status: 302, headers: { location } }, { headers: PNG }]);
+    expect(await guardedFetchFile(FILE_URL, FILE_OPTS, { request: fn })).toEqual({ ok: false, reason });
+    expect(seen).toHaveLength(1);
+  });
+
+  it("refuses a redirect from http to a non-public address", async () => {
+    const { fn, seen } = fakeChain([{ status: 302, headers: { location: "http://169.254.169.254/latest/meta-data/" } }, { headers: PNG }]);
+    expect(await guardedFetchFile("http://img.example.com/a.png", FILE_OPTS, { request: fn })).toEqual({
+      ok: false,
+      reason: "redirect refused: non-public address",
+    });
+    expect(seen).toHaveLength(1);
+  });
+
+  it("refuses a redirect with no location", async () => {
+    const { fn } = fakeChain([{ status: 302, headers: {} }]);
+    expect(await guardedFetchFile(FILE_URL, FILE_OPTS, { request: fn })).toEqual({ ok: false, reason: "redirect without a location" });
+  });
+
+  it("refuses a non-200 final status", async () => {
+    const { fn } = fakeChain([{ status: 403, headers: PNG }]);
+    expect(await guardedFetchFile(FILE_URL, FILE_OPTS, { request: fn })).toEqual({ ok: false, reason: "status 403" });
+  });
+
+  it("refuses a body over the cap, declared or chunked without a length", async () => {
+    const declared = fakeChain([{ headers: { ...PNG, "content-length": "65" } }]);
+    expect(await guardedFetchFile(FILE_URL, FILE_OPTS, { request: declared.fn })).toEqual({ ok: false, reason: "too large" });
+    const chunked = fakeChain([{ headers: PNG, chunks: ["x".repeat(40), "x".repeat(40), "x".repeat(40)] }]);
+    expect(await guardedFetchFile(FILE_URL, FILE_OPTS, { request: chunked.fn })).toEqual({ ok: false, reason: "too large" });
+  });
+
+  it("holds one deadline across the whole chain", async () => {
+    const { fn } = fakeChain([{ status: 302, headers: { location: "https://cdn.example.com/x" } }, { hang: true }]);
+    const started = Date.now();
+    expect(await guardedFetchFile(FILE_URL, FILE_OPTS, { request: fn })).toEqual({ ok: false, reason: "timed out" });
+    expect(Date.now() - started).toBeLessThan(FILE_OPTS.timeoutMs + 150);
+  });
+
+  it("reports a refused lookup as a non-public address", async () => {
+    const { fn } = fakeChain([{ error: "EADDRNOTPUBLIC" }]);
+    expect(await guardedFetchFile(FILE_URL, FILE_OPTS, { request: fn })).toEqual({ ok: false, reason: "non-public address" });
+  });
+
+  it("never sends a request for a URL that fails the static checks", async () => {
+    const { fn, seen } = fakeChain([{ headers: PNG }]);
+    expect((await guardedFetchFile("http://0x7f000001/a.png", FILE_OPTS, { request: fn })).ok).toBe(false);
     expect(seen).toHaveLength(0);
   });
 });

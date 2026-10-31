@@ -31,6 +31,7 @@ import {
   slugForMovedBook,
 } from "@soupnet/domain";
 import type { MovedBook, OrgJoinedVia, OrgMemberAction, OrgRole } from "@soupnet/domain";
+import type { AuditAction } from "../services/audit-actions";
 import { domainVerifiedFor } from "./domain-authority";
 import { membershipOf } from "./membership-sql";
 
@@ -507,6 +508,13 @@ export async function setBookOrgWide(db: PostgresJsDatabase, bookId: string, org
 
 // ── The org admin's actions ─────────────────────────────────────────────────
 
+/** A named map so the audit classification's source scan can read them. */
+const MEMBER_AUDIT_ACTIONS: Record<OrgMemberAction["kind"], AuditAction> = {
+  disable: "organization.member_disable",
+  enable: "organization.member_enable",
+  set_role: "organization.member_set_role",
+};
+
 export type MemberActionRefusal =
   /** The actor is not an active manager of the organization, the
    *  organization doesn't exist, or the target isn't a member: one answer,
@@ -588,7 +596,7 @@ export async function actOnMember(db: PostgresJsDatabase, input: MemberActionInp
 
     await tx.execute(sql`
       INSERT INTO claimnet.audit_log (actor_user_id, action, target_type, target_id, metadata)
-      VALUES (${actorUserId}::uuid, ${`organization.member_${action.kind}`}, 'user', ${targetUserId}::uuid,
+      VALUES (${actorUserId}::uuid, ${MEMBER_AUDIT_ACTIONS[action.kind]}, 'user', ${targetUserId}::uuid,
         ${JSON.stringify({ organizationId, ...(action.kind === "set_role" ? { role: action.role, previousRole: target.role } : {}) })}::jsonb)
     `);
     return null;
