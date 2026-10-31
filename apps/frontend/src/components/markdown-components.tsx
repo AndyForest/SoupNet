@@ -80,6 +80,11 @@ export function markdownComponents(InternalLink: ComponentType<{ href: string; c
         </a>
       );
     },
+    // A long command scrolls inside its block rather than widening the page
+    // at phone width.
+    pre: ({ children }) => (
+      <pre style={{ overflowX: "auto", maxWidth: "100%" }}>{children}</pre>
+    ),
     hr: () => (
       <hr style={{
         margin: "var(--space-xl) 0",

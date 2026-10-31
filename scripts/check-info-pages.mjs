@@ -1,9 +1,10 @@
-#!/usr/bin/env node
 // Checks the built static /info pages before they can ship: each must carry
 // its source's text outside any script, in the HTML a client without
 // JavaScript receives. Run after `vite build`, from CI and the deploy job:
 //   node scripts/check-info-pages.mjs apps/frontend/dist
 // See STATIC_INFO_PAGES in apps/frontend/vite.config.ts.
+// No shebang: its test imports this file, and on a Windows CRLF checkout a
+// shebang line ending in \r fails to load there.
 
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";

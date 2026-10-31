@@ -19,6 +19,10 @@ describe("renderInfoPageBody", () => {
     expect(body).toContain("max-width:760px");
   });
 
+  it("lets a code block scroll inside itself, so it can't widen the page at phone width", () => {
+    expect(renderInfoPageBody("```\nsome long command\n```")).toContain('<pre style="overflow-x:auto;max-width:100%">');
+  });
+
   it("keeps internal links on this site and opens external ones in a new tab", () => {
     const body = renderInfoPageBody("[terms](/info/terms) and [mail](https://example.com/x)");
     expect(body).toContain('<a href="/info/terms">terms</a>');

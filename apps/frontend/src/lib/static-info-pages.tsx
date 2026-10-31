@@ -2,7 +2,7 @@
  * Static HTML for the /info pages a plugin directory fetches (privacy, terms,
  * support), so their full text is in the first response, without JavaScript.
  * The rest of the app stays client-rendered. Runs only at build time, from the
- * md-twins plugin in vite.config.ts; the app never imports it.
+ * static-info-pages plugin in vite.config.ts; the app never imports it.
  *
  * Each page goes into the built index.html's #root, so it loads the app like
  * any other route: createRoot replaces this markup with the live page. The
