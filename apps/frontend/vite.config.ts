@@ -3,6 +3,8 @@ import react from "@vitejs/plugin-react";
 import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
+import { injectIntoShell, renderInfoPageBody } from "./src/lib/static-info-pages";
+import { localizeConnectDocs, splitAtPickerMarker } from "./src/lib/localize-connect-docs";
 
 // envDir points at the SoupNet repo root so a single .env at the top of the
 // monorepo configures both backend (BACKEND_URL, PORT, …) and frontend
@@ -35,6 +37,20 @@ const MD_TWINS: Record<string, string> = {
   "readme.md": "README.md",
 };
 
+// The narrow exception to the twins (recipe 26a8b1b3 chose them over
+// prerendering): a plugin directory fetches a listing's privacy, terms and
+// support URLs and needs their text in the first HTML response. Each page in
+// this table is built to dist/<route>.html from its twin's source. The .html
+// extension keeps a self-hoster's static host from serving it as a binary
+// file, and hosts that don't map it fall back to the SPA as before. The hosted
+// deploy copies these to their extensionless routes (.github/workflows/ci.yml).
+// Add a page here only with a matching row in scripts/check-info-pages.mjs.
+const STATIC_INFO_PAGES: Record<string, { twin: string; title: string }> = {
+  "info/privacy": { twin: "info/privacy.md", title: "Privacy Policy — Soup.net" },
+  "info/terms": { twin: "info/terms.md", title: "Terms of Service — Soup.net" },
+  "info/connect": { twin: "info/connect.md", title: "Connect Soup.net to your AI — Soup.net" },
+};
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, ROOT, "");
   // Social preview meta tags (og:url, og:image) need an absolute URL baked
@@ -42,6 +58,8 @@ export default defineConfig(({ mode }) => {
   // FRONTEND_URL (process.env wins so CI can set it without a .env file),
   // defaulting to the canonical deployment.
   const siteUrl = (process.env.FRONTEND_URL ?? env.FRONTEND_URL ?? "https://soup.net").replace(/\/$/, "");
+  // The same value auth.ts reads as API_BASE in a production build.
+  const apiBase = process.env.VITE_API_BASE ?? env.VITE_API_BASE ?? "";
   return {
     plugins: [
       react(),
@@ -71,6 +89,33 @@ export default defineConfig(({ mode }) => {
             res.setHeader("Content-Type", "text/markdown; charset=utf-8");
             res.end(fs.readFileSync(path.resolve(ROOT, twin), "utf8"));
           });
+        },
+      },
+      {
+        name: "static-info-pages",
+        // After Vite's own HTML plugin, so the shell has its hashed asset tags.
+        // Build only: the dev server renders these routes client-side.
+        generateBundle: {
+          order: "post",
+          handler(_options, bundle) {
+            const shell = bundle["index.html"];
+            if (shell?.type !== "asset") throw new Error("static-info-pages: no index.html in the bundle");
+            for (const [route, { twin, title }] of Object.entries(STATIC_INFO_PAGES)) {
+              const source = fs.readFileSync(path.resolve(ROOT, MD_TWINS[twin]!), "utf8");
+              // As the live connect page does, minus the interactive picker:
+              // the sections after its marker remain the full reference.
+              const { before, after } = splitAtPickerMarker(localizeConnectDocs(source, apiBase));
+              this.emitFile({
+                type: "asset",
+                fileName: `${route}.html`,
+                source: injectIntoShell(String(shell.source), {
+                  body: renderInfoPageBody(`${before}\n${after}`),
+                  title,
+                  url: `${siteUrl}/${route}`,
+                }),
+              });
+            }
+          },
         },
       },
     ],
