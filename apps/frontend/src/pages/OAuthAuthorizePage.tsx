@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { authFetch, isLoggedIn, API_BASE } from "../auth.js";
-import { isRegisteredRedirectUri } from "../lib/oauth-redirect.js";
+import { isRegisteredRedirectUri } from "@soupnet/contracts/oauth-redirect";
 import { RecipeBookScopePicker } from "../components/RecipeBookScopePicker.js";
 
 /**
@@ -169,7 +169,7 @@ export function OAuthAuthorizePage() {
 
   async function handleCancel() {
     // F44 (security-audit-2026-06-11): only navigate to a redirect_uri that is
-    // exactly registered for this client. The server builds the access_denied
+    // registered for this client. The server builds the access_denied
     // redirect (RFC 6749 §4.1.2.1) after the same check the grant makes, and
     // adds the RFC 9207 iss; anything it refuses sends the user home.
     if (!isRegisteredRedirectUri(params.redirectUri, clientQuery.data?.redirect_uris ?? [])) {
@@ -235,8 +235,8 @@ export function OAuthAuthorizePage() {
   const client = clientQuery.data;
   const books = booksQuery.data ?? [];
 
-  // F44: refuse up front when the query-string redirect_uri is not exactly
-  // registered for this client. The grant would be rejected server-side
+  // F44: refuse up front when the query-string redirect_uri is not registered
+  // for this client. The grant would be rejected server-side
   // anyway — failing here means we never render a consent screen whose
   // Cancel/Authorize flow involves an attacker-chosen destination.
   if (client && !isRegisteredRedirectUri(params.redirectUri, client.redirect_uris)) {
