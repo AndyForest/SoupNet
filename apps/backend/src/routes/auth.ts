@@ -744,7 +744,7 @@ auth.delete("/me", authRateLimit, requireAuth, requireActiveSession, async (c) =
 
   // A managed account belongs to its company organization (recipe 2301b5eb),
   // so the person can't delete it themselves: the recipes it holds are the
-  // company's (OC-R4, draft 1c7621d2). A personal account keeps self-service
+  // company's (OC-R4, recipe 1c7621d2). A personal account keeps self-service
   // deletion.
   if (await managedOrganizationOf(db, user.id)) {
     return c.json({ ok: false, error: "managed_account", message: MANAGED_ACCOUNT_DELETE_MESSAGE }, 409);
