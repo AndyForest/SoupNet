@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll } from "vitest";
 import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
 import { seedVerifiedUser } from "../test-users";
+import { canonicalResource } from "../lib/oauth-resource";
 
 /**
  * Organization accounts round 1, stream Core (rubric
@@ -235,6 +236,16 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Core", ()
       WHERE action = 'organization.member_joined' AND target_id = ${orgId}::uuid AND metadata->>'userId' = ${max.userId}
     `)) as unknown as Array<{ metadata: Json }>;
     expect(audit[0]?.metadata).toMatchObject({ via: "operator", authority: "operator", noticeOwed: true });
+    // Both rows outlive the account: the book's id and old slug, with no name
+    // and no new slug, which on this collision carries the email's local part.
+    expect(audit[0]?.metadata.movedBooks).toEqual([{ bookId: max.personalBookId, previousSlug: "personal" }]);
+    const movedRows = (await getDb().execute(sql`
+      SELECT metadata FROM claimnet.audit_log
+      WHERE action = 'recipe_book.moved_into_organization' AND target_id = ${max.personalBookId}::uuid
+    `)) as unknown as Array<{ metadata: Json }>;
+    expect(movedRows[0]?.metadata).toEqual({ previousOrganizationId: max.personalOrgId, organizationId: orgId, previousSlug: "personal" });
+    const local = max.email.slice(0, max.email.indexOf("@"));
+    expect((await bookOf(max.personalBookId)).slug).toBe(`personal-${local}`);
 
     let status: string | undefined;
     for (let i = 0; i < 40 && !status; i++) {
@@ -370,6 +381,8 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Core", ()
       scopeReadGroupIds: [max.personalBookId],
       scopeWriteGroupIds: [max.personalBookId],
       scopeDefaultWriteGroupId: max.personalBookId,
+      resource: canonicalResource(),
+      oidcScopes: [],
     });
     const refreshHash = crypto.createHash("sha256").update(bundle.refreshToken).digest("hex");
     const unknownKeyResponse = await fetch(`${BASE}/health/version`, { headers: { Authorization: "Bearer cn_s_not-a-real-key-at-all-000000000" } });

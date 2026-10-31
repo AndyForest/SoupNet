@@ -309,7 +309,7 @@ const TRACE_READS = {
     why: "the reaper: deletes an expired workspace's recipes (RP-38)",
   },
   "apps/backend/src/services/feedback.service.ts": {
-    n: 26, fp: "c7490c2928a4", composes: true,
+    n: 26, fp: "e1e7da957b6a", composes: true,
     why: "feedback target ACL: prefix scan and readable set use traceReadableById (RP-11, RP-18); check_feedback inserts and the per-key budget count are writes and the caller's own rows; search, briefing, and intent-only rows (slice 8a) attach only to the caller's user's own audit rows or intents, with dedup lookups on the caller's key",
   },
   "apps/backend/src/services/import.service.ts": {
@@ -324,16 +324,24 @@ const TRACE_READS = {
     n: 2, fp: "86870d6c04a8", composes: true,
     why: "by-id lookup: prefix scan and main select use traceReadableById (RP-06, RP-08, RP-16); an on-behalf draft's other party is named through onBehalfSideFor and onBehalfPartyFor (S4-L1); the shown state, subject flag and expiry come from draftStateShownTo, viewerIsDraftSubject and draftExpiryReason (slice 10)",
   },
+  "apps/backend/src/services/recipe-list.service.ts": {
+    n: 2, fp: "d8528a95b50e", composes: true,
+    why: "the flat list (slice 8b): a qualifier-only search's rows and total share one statement's conditions, inBooks over the caller's validated books and traceVisibleTo, with the search's structured predicates (RP-03, S8b-L4)",
+  },
   "apps/backend/src/services/result-enricher.ts": {
     n: 4, fp: "1c4f660984be", composes: false,
     why: "loads book, draft label, evidence, and references by id for results a filtered statement already chose (RP-42); names an on-behalf draft's other party through onBehalfSideFor and onBehalfPartyFor (S4-L1)",
+  },
+  "apps/backend/src/services/search-selection.ts": {
+    n: 2, fp: "ddb53678ccb8", composes: false,
+    why: "changed-after: (slice 8b): correlated subqueries read the newest feedback row and reaction on a recipe the enclosing statement already selected under the draft rule; they return a time, never a row",
   },
   "apps/backend/src/services/search-pipeline.ts": {
     n: 5, fp: "27cc9110e6b6", composes: true,
     why: "corpus mode rows and honest total use traceVisibleTo (RP-41); vector loads are by id for filtered results (RP-42)",
   },
   "apps/backend/src/services/trace.service.ts": {
-    n: 10, fp: "729d8ed70563", composes: true,
+    n: 10, fp: "e96154ab5cb8", composes: true,
     why: "deposit INSERT (the on-behalf subject from the module's naming rule, S4-M1; the draft state forced for a headless key by keyForcesDrafts, S5-M3; the intent link from the intent the check resolved to the depositor, S6a-S2), the depositing key's own idempotency row with its subject through onBehalfSubjectOf (RP-04, S4-L4), session ledger ids (RP-05), and zero-result scope counts that use traceVisibleTo (RP-03)",
   },
   "apps/backend/src/services/trace-delete.service.ts": {

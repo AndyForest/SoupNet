@@ -4,6 +4,99 @@ Every PR that touches briefing copy (`packages/domain/src/recipe-guide-content.t
 
 (Renamed from declared-intent-log.md on 2026-08-23: "intent" now names the runtime intent-registration mechanism — cold-start v2 Phase C — so the discipline's log takes an unambiguous name. The discipline itself is unchanged.)
 
+## 2026-10-26 — OpenAI plugin round, stream L: no selection diagnostics in the exemplars, and no /uploads example over OAuth
+
+Plan: [../planning/openai-plugin-directory.md](../planning/openai-plugin-directory.md) item 6 (output minimisation). Build file: [../planning/openai-plugin-build/listing.md](../planning/openai-plugin-build/listing.md), row L13. Both findings came from stream T's audit of every tool's real output against OpenAI's rule ("Do not include diagnostic, telemetry, or internal identifiers … unless they are strictly required", developers.openai.com/plugins/plugin-guidelines.md), sent to stream L because the text is in L's part of `recipe-guide-content.ts`.
+
+### Edits and the scenarios they move
+
+1. **The exemplars section no longer prints "Selection parameters"** (`buildExemplarsSection`, every surface). The block listed the cluster count, map mode, concept axes, filter keywords, the purpose and the embedding strategy: ranking diagnostics no reader acts on. The purpose line went with it; the agent supplied the purpose itself. The function keeps its context parameter (`_context`) so the composer's call doesn't change.
+   → Moves: `briefing-surfaces.feature` "MCP agent opts back into corpus exemplars" gains "And the exemplars carry no selection diagnostics".
+2. **An OAuth connection's briefing leaves out the `/uploads` paragraph** (`BRIEFING.build`, both profiles, `oauthConnection` only). It told the agent to POST files "using your same Bearer token" with a `curl … Authorization: Bearer YOUR_API_KEY` example, which an OAuth client can't follow: it holds no key, and its access token is refreshed by the client. Key-holding sessions keep the paragraph unchanged. The OAuth key, setup and web sections were already credential-free (2026-07-06).
+   → Moves: `briefing-surfaces.feature` new "An agent connected through OAuth gets no instructions that need a key it doesn't hold".
+
+### Scenarios watched, with rationale for holding
+
+- **Every scenario on an API-key briefing:** unchanged. Edit 2 changes only the OAuth composition, and edit 1 only the exemplars, which the capped fixtures don't carry.
+- **`checking-behavior.feature` file-evidence scenarios:** an OAuth agent still has `file_url` (a public URL) and `file_base64` (small files) from the tool's own parameter descriptions; only the upload route, which needs a key, is gone from its briefing.
+
+### Measured
+
+Built with the test file's inputs (`BRIEFING.build`, no exemplars) and one exemplar for the section.
+
+| Measure | Before | After | Cap |
+|---|---|---|---|
+| Thin briefing (API key) | 22,628 characters | 22,628 | 22,800 (unchanged) |
+| Thin briefing (OAuth) | 22,592 | 21,813, −779 | 22,800 |
+| Full briefing (API key) | 28,814 | 28,814 | none |
+| Full briefing (OAuth) | 24,747 | 23,968, −779 | none |
+| Exemplars section, one exemplar | 775 | 591, −184 per briefing with exemplars | none |
+| `tools/list` and shared descriptions | | unchanged (T's blocks, untouched) | |
+
+## 2026-10-26 — OpenAI plugin directory, stream T: tool descriptions in the reviewed shape, server instructions, annotations by one rule, and a profile tool
+
+Plan: [../planning/openai-plugin-directory.md](../planning/openai-plugin-directory.md) items 3 to 7 and 13. Rubric: [../planning/openai-plugin-build/tool-contract.md](../planning/openai-plugin-build/tool-contract.md). Justifications, claim by claim: [../connectors/openai-plugin.md](../connectors/openai-plugin.md). The annotation rule is recipe `3b166817`.
+
+### Edits
+
+1. **Every tool description** (`MCP_TOOL_DESCRIPTIONS`, served on both servers) now says what the tool does, when to use it, and when not to, naming the tool to use instead, as plain statements. Wording that claimed more than the server does was corrected:
+   - `check_recipe` says the same recipe text, book **and key** return the same id (the dedup is per key);
+   - `update_recipe_book_description` says the response shows the earlier text once (an audit row keeps it, so "not kept" would have been untrue);
+   - `check_recipe`'s file attachment says a `file_url` is fetched from the public internet.
+2. **Dropped:** `log_feedback`'s "Null results earn a row.", to fit its not-for clause under the 420-character limit. The briefing keeps the teaching ("results that didn't help are worth a row too"). `check_recipe`'s "Check freely … so future checks get smarter (stigmergy)" gave way to the use and not-for clauses. The briefing's opening and When to check carry that teaching.
+3. **`update_recipe_book_description`'s description** moved into the shared block, and **`get_profile`** (new) has its own.
+4. **`synthesize`:** the description no longer begins "Premium opt-in", and the refusal reads "Synthesis is off for this account; the results below are not synthesised." (it said "a premium feature").
+5. **Server instructions (new)**, 871 characters, the same on both servers, with the cross-tool moves in the first 512.
+6. **Output:** the structured `ranking` block and the stored feedback row's id left the MCP responses; REST keeps both.
+
+### Scenarios watched, with rationale for holding
+
+- **Search vs check** (`checking-behavior.feature`) and **feedback-loop** scenarios: each tool still sends the reader to the same sibling, now in a not-for clause. The search, check and feedback mechanics are unchanged.
+- **Every briefing scenario:** no briefing text changed on this branch. Stream L's two briefing edits from this round's audit are logged under L's entry.
+
+### Measured
+
+| Measure | Before (`main` at `cf6e13e`, with slice 8b's `page`) | After | Cap |
+|---|---|---|---|
+| Remote `tools/list` | 17,904 bytes | 18,930 | 18,200 → 18,950 |
+| Stdio `tools/list` | 14,407 bytes | 14,738 | 14,700 → 14,750 |
+| Shared descriptions | 6,593 characters | 7,434 | 6,600 → 7,450 |
+
+The growth is the same as when this was first measured, before slice 8b merged (+1,026, +331, +841). Stream O's `securitySchemes` move the remote cap again after this, by their own bytes.
+
+## 2026-10-26 — Drafts-and-triage slice 8b items 1 and 2 (stream B): the flat list, and created-after: / changed-after:
+
+Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-and-triage-slices-6-7-revision.md) §Slice 8 items 1 and 2; ruling 51. Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 8b items 1 and 2 rubric. Design checked as recipe `4a517f5b`; qualifier names as recipe `dc8e7d09`.
+
+### Edits
+
+1. **`MCP_PARAM_DESCRIPTIONS.searchQuery`** (the `query` parameter of `search_recipes`, remote and stdio): gains `created-after:/changed-after: (deposit, any change)`. It loses "Qualifier-only: newest first.", which edit 2 replaces, and "(your intent's recipes)" after `intent:int_…`, trimmed under the question 56 rule (untrimmed text in [expanded/slice8b.md](expanded/slice8b.md)). 413 → 412 characters.
+2. **`MCP_PARAM_DESCRIPTIONS.searchPage` (new):** the `page` parameter of `search_recipes` on both servers, saying what a search with no bare text returns: a flat list, 50 per page, and its three orders. 152 characters, trimmed from 189 to fit the shared total (untrimmed text in the same file).
+3. **The response of a search with no bare text** (shared markdown renderer, `/check` JSON and HTML, structured MCP): the flat list. One row per match with its id, a time and its book, then the page line ("Page p of n, 50 per page. Next: page=p+1." or "This is the last page."), and a page past the end that says so. The renderer's header invariant "No 'Page X of Y' pagination text" now applies to ranked results only. JSON gains `listOrder` and `perPage`, and flat rows carry `loggedAt` and `changedAt` (both described in `/schemas/recipe.json` and `check-response.json`).
+
+### Scenarios intended to move
+
+- `drafts-and-triage.feature`: the new rule "An unattended sweep reads every id that arrived or moved since it last looked" (DT-SWP-01, DT-SWP-02).
+
+### Scenarios watched, with rationale for holding
+
+- **Every search with bare text:** unchanged. The flat path is taken only when the parsed query has no semantic text, and the ranked path's code is not edited (the ranking-regression eval and the S6a and slice 3 search tests pass as they stand).
+- **The `intent:` scenarios (DT-OPT-01):** the qualifier's meaning is unchanged. Its listing is now the flat list, which lists every recipe under the intent instead of exemplars.
+- **`is:draft` and `is:expired`:** the same sets, now listed in the review queue's triage order.
+
+### Measured
+
+Slice 6a's method: `createMcpServer` and the stdio server over the in-memory transport. Before is `main` at `5b81097` (PR #147).
+
+| Measure | Before | After | Cap |
+|---|---|---|---|
+| Remote `tools/list` | 17,698 bytes | 17,904 | 18,200 |
+| Stdio `tools/list` | 14,201 bytes | 14,407 | 14,700 |
+| Shared descriptions | 6,442 characters | 6,593 | 6,600 |
+| `searchQuery` | 413 characters | 412 | 420 |
+
+No cap moves.
+
 ## 2026-10-25 — Drafts-and-triage slice 8b item 3 (stream D): a Members line on every book, and pending invites for the books you manage
 
 Plan: [../planning/drafts-and-triage-slices-6-7-revision.md](../planning/drafts-and-triage-slices-6-7-revision.md) §Slice 8 item 3. Rubric: [../planning/drafts-and-triage-build.md](../planning/drafts-and-triage-build.md) §Slice 8b item 3 rubric. Design checked as recipe `173384b3`.

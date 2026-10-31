@@ -135,7 +135,7 @@ Feature: Organization accounts: membership, disable, org-wide books, and joining
   # ─────────────────────────────────────────────────────────────────────────
   Rule: A managed account's books stay with the company
     # Guards: design-thinking.md archetype 6 "Private or org-wide", "Mine to
-    # delete, or the company's"; recipes 2301b5eb, 2e1e4624, draft 1c7621d2.
+    # delete, or the company's"; recipes 2301b5eb, 2e1e4624, 1c7621d2.
 
     @ORG-BOOK-01
     Scenario: New books land in the account's home organization

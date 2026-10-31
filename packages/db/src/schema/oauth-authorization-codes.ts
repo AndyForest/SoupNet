@@ -41,6 +41,14 @@ export const oauthAuthorizationCodes = claimnetSchema.table(
     scopeWriteGroupIds: uuid("scope_write_group_ids").array().notNull(),
     scopeDefaultWriteGroupId: uuid("scope_default_write_group_id").notNull(),
 
+    // The canonical resource the code was granted for (RFC 8707; migration
+    // 0043). The token exchange refuses a `resource` that normalizes to
+    // anything else, and the minted key carries it as its audience.
+    resource: text("resource"),
+    // OpenID scopes granted at consent ('openid', 'email'); copied onto the
+    // minted key for GET /oauth/userinfo.
+    oidcScopes: text("oidc_scopes").array(),
+
     consumedAt: timestamp("consumed_at", { withTimezone: true }),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),

@@ -275,11 +275,55 @@ describe("parseSearchQuery — date qualifiers", () => {
   });
 });
 
+describe("parseSearchQuery — created-after: and changed-after: (S8b-C3)", () => {
+  it("parses a date and a full ISO datetime for each", () => {
+    const q = parsed("created-after:2026-10-01 changed-after:2026-10-20T08:15:00Z");
+    expect(q.createdAfter).toBe("2026-10-01");
+    expect(q.changedAfter).toBe("2026-10-20T08:15:00Z");
+    expect(q.semanticText).toBe("");
+  });
+
+  it("is case-insensitive on the qualifier name and composes with the others", () => {
+    const q = parsed("CHANGED-AFTER:2026-10-01 is:draft author:me cache strategy");
+    expect(q.changedAfter).toBe("2026-10-01");
+    expect(q.isDraft).toBe(true);
+    expect(q.semanticText).toBe("cache strategy");
+  });
+
+  it("leaves both unset when absent, and keeps after: the judgment-date bound", () => {
+    const q = parsed("after:2026-10-01");
+    expect(q.after).toBe("2026-10-01");
+    expect(q.createdAfter).toBeUndefined();
+    expect(q.changedAfter).toBeUndefined();
+  });
+
+  it("rejects a malformed value naming the form", () => {
+    expect(errorOf("created-after:yesterday")).toMatch(/created-after: takes an ISO date/);
+    expect(errorOf("changed-after:2026-13-45")).toMatch(/changed-after: takes an ISO date/);
+    expect(errorOf("changed-after:")).toMatch(/changed-after:/);
+  });
+
+  it("rejects a second value, even the same one", () => {
+    expect(errorOf("created-after:2026-10-01 created-after:2026-10-02")).toMatch(/duplicate created-after:/);
+    expect(errorOf("changed-after:2026-10-01 changed-after:2026-10-01")).toMatch(/duplicate changed-after:/);
+  });
+
+  it("rejects a group and a negation", () => {
+    expect(errorOf("changed-after:(2026-10-01 OR 2026-10-02)")).toMatch(/single date/);
+    expect(errorOf("-changed-after:2026-10-01")).toMatch(/-changed-after: is not supported/);
+    expect(errorOf("-created-after:2026-10-01")).toMatch(/-created-after: is not supported/);
+  });
+
+  it("a parenthetical holding the qualifier keeps the strict group reading, as (author:me) does", () => {
+    expect(errorOf("sweep (changed-after:2026-10-01)")).toMatch(/OR groups apply to lexical terms/);
+  });
+});
+
 describe("parseSearchQuery — unknown qualifiers (loud rejection)", () => {
   it("rejects unknown qualifier-shaped tokens naming the valid set", () => {
     const e = errorOf("athor:jane@x.com");
     expect(e).toMatch(/unknown qualifier "athor:"/);
-    expect(e).toMatch(/author:, after:, before:, is:draft, is:expired, intent: \(an int_… id\), impact: and uncertainty:/);
+    expect(e).toMatch(/author:, after:, before:, created-after:, changed-after:, is:draft, is:expired, intent: \(an int_… id\), impact: and uncertainty:/);
   });
 
   it("suggests quoting for colon-bearing text", () => {

@@ -31,6 +31,7 @@ import {
   slugForMovedBook,
 } from "@soupnet/domain";
 import type { MovedBook, OrgJoinedVia, OrgMemberAction, OrgRole } from "@soupnet/domain";
+import type { AuditAction } from "../services/audit-actions";
 import { domainVerifiedFor } from "./domain-authority";
 import { membershipOf } from "./membership-sql";
 
@@ -293,7 +294,7 @@ export async function joinOrganizationInTx(tx: SqlExecutor, input: JoinInput): P
     VALUES (${organizationId}::uuid, ${userId}::uuid, ${role}, ${via})
   `);
 
-  const movedBooks = await moveOwnBooksInto(tx, userId, account, organizationId);
+  const { movedBooks, auditedBooks } = await moveOwnBooksInto(tx, userId, account, organizationId);
 
   // Every org-wide book of the organization, as an 'org' row; a row the
   // account already holds (a direct invitation) is left exactly as it is.
@@ -316,7 +317,7 @@ export async function joinOrganizationInTx(tx: SqlExecutor, input: JoinInput): P
     VALUES (
       ${authority.kind === "operator" ? authority.actorUserId : null}::uuid,
       'organization.member_joined', 'organization', ${organizationId}::uuid,
-      ${JSON.stringify({ userId, role, via, authority: authority.kind, movedBooks, noticeOwed })}::jsonb
+      ${JSON.stringify({ userId, role, via, authority: authority.kind, movedBooks: auditedBooks, noticeOwed })}::jsonb
     )
   `);
 
@@ -353,8 +354,8 @@ async function moveOwnBooksInto(
   userId: string,
   account: { email: string; personal_organization_id: string | null },
   organizationId: string,
-): Promise<MovedBook[]> {
-  if (!account.personal_organization_id) return [];
+): Promise<{ movedBooks: MovedBook[]; auditedBooks: Array<{ bookId: string; previousSlug: string }> }> {
+  if (!account.personal_organization_id) return { movedBooks: [], auditedBooks: [] };
   const books = (await tx.execute(sql`
     SELECT g.id, g.name, g.slug FROM claimnet.groups g
     JOIN claimnet.organizations o ON o.id = g.organization_id
@@ -363,7 +364,7 @@ async function moveOwnBooksInto(
     ORDER BY g.created_at, g.id
     FOR UPDATE OF g
   `)) as unknown as Array<{ id: string; name: string; slug: string }>;
-  if (books.length === 0) return [];
+  if (books.length === 0) return { movedBooks: [], auditedBooks: [] };
 
   const takenRows = (await tx.execute(sql`
     SELECT slug FROM claimnet.groups WHERE organization_id = ${organizationId}::uuid
@@ -371,7 +372,11 @@ async function moveOwnBooksInto(
   const taken = new Set(takenRows.map((r) => r.slug));
   const localPart = account.email.slice(0, account.email.lastIndexOf("@"));
 
-  const moved: MovedBook[] = [];
+  // The audit rows outlive the account, so they hold the book's id and old
+  // slug: its name is the person's own words (F122's rule), and a new slug
+  // made on a collision carries their email's local part (F126).
+  const movedBooks: MovedBook[] = [];
+  const auditedBooks: Array<{ bookId: string; previousSlug: string }> = [];
   for (const book of books) {
     const slug = slugForMovedBook(book.slug, localPart, taken);
     taken.add(slug);
@@ -382,11 +387,12 @@ async function moveOwnBooksInto(
     await tx.execute(sql`
       INSERT INTO claimnet.audit_log (actor_user_id, action, target_type, target_id, metadata)
       VALUES (${userId}::uuid, 'recipe_book.moved_into_organization', 'group', ${book.id}::uuid,
-        ${JSON.stringify({ previousOrganizationId: account.personal_organization_id, organizationId, previousSlug: book.slug, slug })}::jsonb)
+        ${JSON.stringify({ previousOrganizationId: account.personal_organization_id, organizationId, previousSlug: book.slug })}::jsonb)
     `);
-    moved.push({ name: book.name, slug, previousSlug: book.slug });
+    movedBooks.push({ name: book.name, slug, previousSlug: book.slug });
+    auditedBooks.push({ bookId: book.id, previousSlug: book.slug });
   }
-  return moved;
+  return { movedBooks, auditedBooks };
 }
 
 // ── Creating an organization ────────────────────────────────────────────────
@@ -507,6 +513,13 @@ export async function setBookOrgWide(db: PostgresJsDatabase, bookId: string, org
 
 // ── The org admin's actions ─────────────────────────────────────────────────
 
+/** A named map so the audit classification's source scan can read them. */
+const MEMBER_AUDIT_ACTIONS: Record<OrgMemberAction["kind"], AuditAction> = {
+  disable: "organization.member_disable",
+  enable: "organization.member_enable",
+  set_role: "organization.member_set_role",
+};
+
 export type MemberActionRefusal =
   /** The actor is not an active manager of the organization, the
    *  organization doesn't exist, or the target isn't a member: one answer,
@@ -588,7 +601,7 @@ export async function actOnMember(db: PostgresJsDatabase, input: MemberActionInp
 
     await tx.execute(sql`
       INSERT INTO claimnet.audit_log (actor_user_id, action, target_type, target_id, metadata)
-      VALUES (${actorUserId}::uuid, ${`organization.member_${action.kind}`}, 'user', ${targetUserId}::uuid,
+      VALUES (${actorUserId}::uuid, ${MEMBER_AUDIT_ACTIONS[action.kind]}, 'user', ${targetUserId}::uuid,
         ${JSON.stringify({ organizationId, ...(action.kind === "set_role" ? { role: action.role, previousRole: target.role } : {}) })}::jsonb)
     `);
     return null;

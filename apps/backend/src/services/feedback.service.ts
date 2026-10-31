@@ -892,7 +892,7 @@ export function summarizeFeedbackResults(results: FeedbackRowResult[]): string {
     if (!r.ok) {
       lines.push(`  - row ${r.index + 1} (${target}): ${r.error}`);
     } else if (r.dup) {
-      lines.push(`  - row ${r.index + 1} (${target}): already recorded — feedback id ${r.feedbackId}`);
+      lines.push(`  - row ${r.index + 1} (${target}): already recorded`);
     }
   }
   return lines.join("\n");
