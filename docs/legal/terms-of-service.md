@@ -1,8 +1,8 @@
 # Terms of Service — Soup.net
 
-**Effective date:** 2026-05-12 (connected AI apps added 2026-10-26)
+**Effective date:** 2026-05-12 (connected AI apps added 2026-10-26; operator updated 2026-10-31)
 **Service:** Soup.net
-**Operated by:** Andy Forest, in Canada
+**Operated by:** STEAMLabs, in Canada
 **Contact:** admin@soup.net
 
 ---

@@ -145,6 +145,8 @@ export function validatePackage(dir = PACKAGE_DIR) {
   const mcp = JSON.parse(readFileSync(join(dir, "mcp.json"), "utf-8"));
 
   // Package identity.
+  if (manifest.$schema !== "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json") errors.push("plugin.json needs the portable plugin schema");
+  if (mcp.$schema !== "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json") errors.push("mcp.json needs the portable MCP schema");
   if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(manifest.name ?? "") || manifest.name.length > 64) {
     errors.push("name must be kebab-case, at most 64 characters");
   }
@@ -168,7 +170,7 @@ export function validatePackage(dir = PACKAGE_DIR) {
   }
   if (/\b(mcp|plugin)\b/i.test(ui.displayName ?? "")) errors.push("displayName must not carry MCP or Plugin");
   if (!ui.category) errors.push("category is required");
-  if (!ui.developerName) errors.push("developerName is required");
+  if (typeof ui.developerName !== "string" || !ui.developerName.trim() || ui.developerName.length > 80) errors.push("developerName is required, at most 80 characters");
   if (!Array.isArray(ui.capabilities) || ui.capabilities.length > 20 || ui.capabilities.some((c) => c.length > 120)) {
     errors.push("capabilities must be an array of at most 20 entries, each at most 120 characters");
   }
@@ -205,7 +207,7 @@ export function validatePackage(dir = PACKAGE_DIR) {
     for (const field of ["description", "prompt", "expected_behavior"]) {
       if (typeof c[field] !== "string" || c[field].length === 0) errors.push(`positive case ${i + 1} needs ${field}`);
     }
-    if (!Array.isArray(c.tools_triggered) || c.tools_triggered.length === 0) errors.push(`positive case ${i + 1} needs tools_triggered`);
+    if (typeof c.tools_triggered !== "string" || c.tools_triggered.trim().length === 0) errors.push(`positive case ${i + 1} needs tools_triggered as a nonempty string`);
     if ((c.description ?? "").length > 4000) errors.push(`positive case ${i + 1} description is over 4,000 characters`);
   });
   negative.forEach((c, i) => {

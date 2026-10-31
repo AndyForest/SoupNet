@@ -236,9 +236,16 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Core", ()
       WHERE action = 'organization.member_joined' AND target_id = ${orgId}::uuid AND metadata->>'userId' = ${max.userId}
     `)) as unknown as Array<{ metadata: Json }>;
     expect(audit[0]?.metadata).toMatchObject({ via: "operator", authority: "operator", noticeOwed: true });
-    // The moved book is recorded by slug; its name is the person's own words.
+    // Both rows outlive the account: the book's id and old slug, with no name
+    // and no new slug, which on this collision carries the email's local part.
+    expect(audit[0]?.metadata.movedBooks).toEqual([{ bookId: max.personalBookId, previousSlug: "personal" }]);
+    const movedRows = (await getDb().execute(sql`
+      SELECT metadata FROM claimnet.audit_log
+      WHERE action = 'recipe_book.moved_into_organization' AND target_id = ${max.personalBookId}::uuid
+    `)) as unknown as Array<{ metadata: Json }>;
+    expect(movedRows[0]?.metadata).toEqual({ previousOrganizationId: max.personalOrgId, organizationId: orgId, previousSlug: "personal" });
     const local = max.email.slice(0, max.email.indexOf("@"));
-    expect(audit[0]?.metadata.movedBooks).toEqual([{ previousSlug: "personal", slug: `personal-${local}` }]);
+    expect((await bookOf(max.personalBookId)).slug).toBe(`personal-${local}`);
 
     let status: string | undefined;
     for (let i = 0; i < 40 && !status; i++) {
