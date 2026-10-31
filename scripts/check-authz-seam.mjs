@@ -329,7 +329,7 @@ const TRACE_READS = {
     why: "corpus mode rows and honest total use traceVisibleTo (RP-41); vector loads are by id for filtered results (RP-42)",
   },
   "apps/backend/src/services/trace.service.ts": {
-    n: 10, fp: "8582b9645ff8", composes: true,
+    n: 10, fp: "e96154ab5cb8", composes: true,
     why: "deposit INSERT (the on-behalf subject from the module's naming rule, S4-M1; the draft state forced for a headless key by keyForcesDrafts, S5-M3; the intent link from the intent the check resolved to the depositor, S6a-S2), the depositing key's own idempotency row with its subject through onBehalfSubjectOf (RP-04, S4-L4), session ledger ids (RP-05), and zero-result scope counts that use traceVisibleTo (RP-03)",
   },
   "apps/backend/src/services/trace-delete.service.ts": {

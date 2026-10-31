@@ -119,6 +119,12 @@ describe("BRIEFING.build — OAuth connections", () => {
     expect(oauthText).not.toContain("&key=");
   });
 
+  it("leaves out the /uploads example, which needs a Bearer token an OAuth client doesn't hold (OpenAI plugin round, L13)", () => {
+    expect(oauthText).not.toContain("/uploads");
+    expect(oauthText).not.toContain("Authorization: Bearer");
+    expect(BRIEFING.build(buildInput())).toContain("Authorization: Bearer YOUR_API_KEY");
+  });
+
   it("replaces the key section with a truthful OAuth connection note", () => {
     expect(oauthText).toContain("## Your connection");
     expect(oauthText).not.toContain("## Your API key");
@@ -713,6 +719,13 @@ describe("buildExemplarsSection — the slimming lever (recipe aae000d2, S7-L1)"
     const text = render([entry(1)]);
     expect(text.endsWith(`Evidence:\n${entry(1)}`)).toBe(true);
     expect(text).not.toContain("more evidence");
+  });
+
+  it("prints no selection diagnostics (OpenAI plugin round, L13)", () => {
+    const text = render([entry(1)]);
+    expect(text).not.toContain("Selection parameters");
+    expect(text).not.toContain("Map mode");
+    expect(text).not.toContain("Embedding strategy");
   });
 
   it("renders no Evidence block for an exemplar without evidence (blank entries ignored)", () => {
