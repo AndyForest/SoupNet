@@ -160,6 +160,8 @@ async function main() {
     // used to be built only at deploy, so a Node-only import in the frontend
     // passed every gate and failed in production.
     run("npm run build -w apps/frontend");
+    // Mirrors CI's "Check static info pages" step.
+    run("node scripts/check-info-pages.mjs apps/frontend/dist");
 
     // 3. Typecheck — mirrors CI's separate typecheck step. Clear
     //    tsbuildinfo first so tsc doesn't skip files it thinks are

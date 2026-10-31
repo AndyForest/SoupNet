@@ -97,6 +97,11 @@ jobs:
       - name: Build frontend
         run: npm run build -w apps/frontend
 
+      # The static /info pages a plugin directory fetches must carry their text
+      # without JavaScript. Mirrored in scripts/test-ci-local.mjs.
+      - name: Check static info pages
+        run: node scripts/check-info-pages.mjs apps/frontend/dist
+
       - name: Typecheck
         run: npm run typecheck --workspaces --if-present
 
@@ -358,7 +363,19 @@ jobs:
           npm ci
           npm run build:packages
           cd apps/frontend && npx vite build
-          aws s3 sync dist/ s3://claimnet-dev-frontend --delete
+          node ../../scripts/check-info-pages.mjs dist
+          # Static /info pages go up at their extensionless routes, typed by
+          # hand: S3 would guess no type for the key, and CloudFront serves an
+          # existing key as is (only a missing one falls back to index.html).
+          # Excluded from the sync so --delete leaves those keys alone and the
+          # .html files don't publish a second URL for each page.
+          aws s3 sync dist/ s3://claimnet-dev-frontend --delete \
+            --exclude "info/privacy" --exclude "info/terms" --exclude "info/connect" \
+            --exclude "info/*.html"
+          for page in privacy terms connect; do
+            aws s3 cp "dist/info/$page.html" "s3://claimnet-dev-frontend/info/$page" \
+              --content-type "text/html; charset=utf-8"
+          done
           aws cloudfront create-invalidation \
             --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} \
             --paths "/*"
