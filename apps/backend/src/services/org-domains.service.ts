@@ -46,6 +46,7 @@ import type { JoinResult } from "../authz";
 import { checkDomainRecord, type TxtLookup } from "../lib/dns-txt";
 import { sendJoinNotice } from "./organization.service";
 import { sendOrganizationDomainEmail } from "./email.service";
+import type { AuditAction } from "./audit-actions";
 
 type SqlExecutor = Pick<PostgresJsDatabase, "execute">;
 
@@ -103,7 +104,23 @@ function newToken(): string {
   return crypto.randomBytes(32).toString("base64url");
 }
 
-async function audit(db: SqlExecutor, actorUserId: string | null, action: string, claim: Pick<ClaimRow, "id" | "organization_id" | "domain">, extra: Record<string, unknown> = {}): Promise<void> {
+/** Every audit action this service writes, in a `*_ACTIONS` map because
+ *  audit() binds its action as a parameter, which audit-actions.test.ts's scan
+ *  can't read. */
+const DOMAIN_AUDIT_ACTIONS = {
+  added: "organization_domain.added",
+  token_reissued: "organization_domain.token_reissued",
+  auto_join_on: "organization_domain.auto_join_on",
+  auto_join_off: "organization_domain.auto_join_off",
+  removed: "organization_domain.removed",
+  verified: "organization_domain.verified",
+  failing: "organization_domain.failing",
+  recovered: "organization_domain.recovered",
+  lapsed: "organization_domain.lapsed",
+  migrated: "organization_domain.migrated",
+} as const satisfies Record<string, AuditAction>;
+
+async function audit(db: SqlExecutor, actorUserId: string | null, action: AuditAction, claim: Pick<ClaimRow, "id" | "organization_id" | "domain">, extra: Record<string, unknown> = {}): Promise<void> {
   await db.execute(sql`
     INSERT INTO claimnet.audit_log (actor_user_id, action, target_type, target_id, metadata)
     VALUES (${actorUserId}::uuid, ${action}, 'organization', ${claim.organization_id}::uuid,
@@ -239,7 +256,7 @@ export async function addDomain(db: PostgresJsDatabase, input: { organizationId:
           RETURNING ${CLAIM_COLUMNS}
         `)) as unknown as Array<Record<string, unknown>>;
         row = rowFrom(reissued[0]!);
-        await audit(tx, input.actorUserId, "organization_domain.token_reissued", row);
+        await audit(tx, input.actorUserId, DOMAIN_AUDIT_ACTIONS.token_reissued, row);
       }
       return { ok: true as const, created: false, claim: viewOf(row, now, null) };
     }
@@ -250,7 +267,7 @@ export async function addDomain(db: PostgresJsDatabase, input: { organizationId:
       RETURNING ${CLAIM_COLUMNS}
     `)) as unknown as Array<Record<string, unknown>>;
     const row = rowFrom(inserted[0]!);
-    await audit(tx, input.actorUserId, "organization_domain.added", row);
+    await audit(tx, input.actorUserId, DOMAIN_AUDIT_ACTIONS.added, row);
     return { ok: true as const, created: true, claim: viewOf(row, now, null) };
   });
 }
@@ -274,7 +291,7 @@ export async function setAutoJoin(
     if (!row) return null;
     if (row.auto_join !== input.autoJoin) {
       await tx.execute(sql`UPDATE claimnet.organization_domains SET auto_join = ${input.autoJoin} WHERE id = ${row.id}::uuid`);
-      await audit(tx, input.actorUserId, input.autoJoin ? "organization_domain.auto_join_on" : "organization_domain.auto_join_off", row);
+      await audit(tx, input.actorUserId, input.autoJoin ? DOMAIN_AUDIT_ACTIONS.auto_join_on : DOMAIN_AUDIT_ACTIONS.auto_join_off, row);
     }
     return { row, turnedOn: input.autoJoin && !row.auto_join };
   });
@@ -296,7 +313,7 @@ export async function deleteDomain(db: PostgresJsDatabase, input: { organization
     const row = await claimOf(tx, input.organizationId, input.claimId, true);
     if (!row) return false;
     await tx.execute(sql`DELETE FROM claimnet.organization_domains WHERE id = ${row.id}::uuid`);
-    await audit(tx, input.actorUserId, "organization_domain.removed", row);
+    await audit(tx, input.actorUserId, DOMAIN_AUDIT_ACTIONS.removed, row);
     return true;
   });
 }
@@ -347,8 +364,8 @@ async function applyOutcome(db: PostgresJsDatabase, claimId: string, outcome: "f
         WHERE id = ${row.id}::uuid
         RETURNING ${CLAIM_COLUMNS}
       `)) as unknown as Array<Record<string, unknown>>;
-      if (["verified", "failing", "recovered", "lapsed"].includes(result.event)) {
-        await audit(tx, actorUserId, `organization_domain.${result.event}`, row);
+      if (result.event === "verified" || result.event === "failing" || result.event === "recovered" || result.event === "lapsed") {
+        await audit(tx, actorUserId, DOMAIN_AUDIT_ACTIONS[result.event], row);
       }
       return { row: rowFrom(updated[0]!), event: result.event };
     });
@@ -472,7 +489,7 @@ export async function migrateDomainAccounts(db: PostgresJsDatabase, claimId: str
       });
       if (join.ok) {
         await tx.execute(sql`UPDATE claimnet.users SET waitlisted_at = NULL WHERE id = ${account.id}::uuid`);
-        await audit(tx, null, "organization_domain.migrated", claim, { userId: account.id });
+        await audit(tx, null, DOMAIN_AUDIT_ACTIONS.migrated, claim, { userId: account.id });
       }
       return join;
     });

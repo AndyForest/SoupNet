@@ -714,7 +714,7 @@ Further optional params live in your tool schema, each doing what its one-line d
 
 ${mcpProfile ? "" : `If you auto-compact your context or otherwise no longer hold the recipes you've been shown, refresh your session by omitting \`session_id\` on your next check — a fresh session means full recipe text again.
 
-`}Full field meanings for every response object live at \`GET ${backendUrl}/schemas/recipe.json\` (and \`/schemas/check-response.json\`) — canonical, generated from the same source the server validates against.
+`}Full field meanings for every response object live at \`GET ${backendUrl}/schemas/recipe.json\` (and \`/schemas/check-response.json\`) — canonical, generated from the same source the server validates against.${oauthConnection ? "" : `
 
 For local files that have no public URL (screenshots, generated artifacts, anything on your disk), \`file_base64\` will blow your context window on anything bigger than a thumbnail. Instead, POST the file to the \`/uploads\` REST endpoint first using your same Bearer token, then pass the returned URL as \`file_url\`. The MCP server detects own-hostname URLs and resolves them internally — no second HTTP fetch, no public exposure. Example:
 
@@ -723,7 +723,7 @@ For local files that have no public URL (screenshots, generated artifacts, anyth
       -F "file=@/local/path/to/screenshot.png"
     # → {"ok":true,"file_url":"${backendUrl}/uploads/<uuid>.png", ...}
 
-The returned \`file_url\` is opaque (a GET against it returns 404) and only resolvable by the same key that uploaded it.${mcpProfile ? "" : `
+The returned \`file_url\` is opaque (a GET against it returns 404) and only resolvable by the same key that uploaded it.`}${mcpProfile ? "" : `
 
 Evidence entries follow this shape: your interpretation, then \`> "direct quote"\`, then \`-- source citation\`, separated by blank lines.`}
 
@@ -828,21 +828,16 @@ export interface BriefingExemplar {
   evidenceBlocks?: string[];
 }
 
+// The map context (cluster count, map mode, filter, strategy) used to print
+// as a "Selection parameters" block. It was ranking diagnostics no reader acts
+// on, and the OpenAI plugin review rejects diagnostic output in tool results
+// (OpenAI plugin round, stream L, 2026-10-26), so it no longer renders.
 export function buildExemplarsSection(
   scopeLabel: string,
-  context: Omit<BriefingMapContext, "scopeLabel">,
+  _context: Omit<BriefingMapContext, "scopeLabel">,
   exemplars: BriefingExemplar[],
 ): string {
   if (exemplars.length === 0) return "";
-
-  const paramLines = [
-    `- Clusters: ${context.k}`,
-    `- Map mode: ${context.mode === "concept" ? "Concept Axes" : "Discovery (UMAP over all embeddings)"}`,
-    ...(context.mode === "concept" && context.axes ? [`- Concept axes: ${context.axes}`] : []),
-    `- Filter keywords: ${context.filter ?? "(none)"}`,
-    ...(context.purpose ? [`- Purpose (biased within-cluster exemplar choice): ${context.purpose}`] : []),
-    `- Embedding strategy: ${context.strategy || "(default — best score across all strategies wins)"}`,
-  ].join("\n");
 
   const total = exemplars.length;
   const exemplarLines = exemplars.map((ex, i) => {
@@ -878,9 +873,6 @@ export function buildExemplarsSection(
   return `## Context from ${scopeLabel}
 
 Exemplar recipes from this user's corpus in the scope above. Selected by k-means clustering over multimodal vector embeddings — each one represents a cluster but isn't necessarily representative of it, and may or may not be relevant to your current task. They're context about the shape of accumulated taste in this scope, not templates to copy or evidence to reuse. Recipes can be months old and taste evolves; fresh evidence from the current conversation works best for new recipes.
-
-Selection parameters:
-${paramLines}
 
 ${exemplarLines.join("\n\n")}`;
 }

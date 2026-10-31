@@ -935,7 +935,7 @@ describe.skipIf(!BASE || !canConnect())("drafts on behalf of another person (dra
       expect((await detail(again, rejected)).status).toBe(404);
     });
 
-    it("S4-A4 / DT-OBO-13: the depositor deletes their account: their unresolved deposits go, the subject's verified ones stay, and the audit rows keep the depositor", async () => {
+    it("S4-A4 / DT-OBO-13: the depositor deletes their account: their unresolved deposits go, the subject's verified ones stay, and the verification row keeps the depositor", async () => {
       const pVerified = idOf(await deposit(X, recipe("pat verifies dex"), { on_behalf_of: pat.email }));
       const pUnverified = idOf(await deposit(X, recipe("dex unverified"), { on_behalf_of: pat.email }));
       const pRejected = idOf(await deposit(X, recipe("dex rejected"), { on_behalf_of: pat.email }));
@@ -947,8 +947,14 @@ describe.skipIf(!BASE || !canConnect())("drafts on behalf of another person (dra
       expect(await row(pRejected)).toBeUndefined();
       expect(await row(pVerified)).toMatchObject({ user_id: pat.userId, draft_state: "verified" });
       expect(await queueCount(pat)).toBe(countBefore - 1);
+      // The deposit's check-log row is anonymised with the account (recipe
+      // 1d1531da): the record of the deposit about Pat stays, without Dex.
       const deposited = await auditFor(pVerified, "recipe.checked");
-      expect(deposited[0]!["actor"]).toBe(dex.userId);
+      expect(deposited[0]!["actor"]).toBeNull();
+      expect(deposited[0]!["metadata"]).toMatchObject({ subjectUserId: pat.userId });
+      // S4-S4 still holds through the verification row, an account event
+      // that deletion leaves as it is: the depositor is recoverable from
+      // audit_log alone.
       expect((await auditFor(pVerified, "recipe.draft_verified"))[0]!["metadata"]).toMatchObject({ previousAuthorId: dex.userId });
     });
   });

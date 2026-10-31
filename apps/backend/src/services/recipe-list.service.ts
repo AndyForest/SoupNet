@@ -29,8 +29,6 @@ import { triageOrderSql, changedAtSql } from "./search-selection";
 
 /** Rows per page of the flat list: fixed, so the tool roster takes no size parameter (recipe ded7f5ed). */
 export const FLAT_LIST_PAGE_SIZE = 50;
-/** Highest page served; past it the page is empty, and no page number can overflow the OFFSET. */
-export const FLAT_LIST_MAX_PAGE = 100_000;
 
 export type FlatListOrder = "judgment" | "triage" | "changed";
 
@@ -68,10 +66,15 @@ function orderSql(order: FlatListOrder): SQL {
   }
 }
 
-/** Clamp a requested page into 1..FLAT_LIST_MAX_PAGE; anything unusable is page 1. */
+/**
+ * Normalize a requested page: floored, at least 1, and page 1 for anything
+ * unusable (/check reads `page` leniently). How deep a page may reach is
+ * the caller's check against the listing depth (`pageBeyondReach`, F110),
+ * made before this listing runs.
+ */
 export function clampFlatListPage(requested: number | undefined): number {
   const n = Math.floor(requested ?? 1);
-  return Number.isFinite(n) ? Math.min(Math.max(1, n), FLAT_LIST_MAX_PAGE) : 1;
+  return Number.isFinite(n) ? Math.max(1, n) : 1;
 }
 
 /** One page of the flat list over books the caller already validated. */
