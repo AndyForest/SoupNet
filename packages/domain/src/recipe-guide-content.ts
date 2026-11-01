@@ -29,10 +29,11 @@ This is stigmergy — indirect coordination through environmental traces, like a
  */
 export const ROLE_PATTERNS = `**Role and goal are different things.** The role is who the user is — professionally or contextually (data engineer, product owner, parent volunteer) — abstracted from name and project. The goal is what they're working on right now (authoring options docs, evaluating AI agent outputs, organizing a fundraiser). Both are needed; conflating them into verb-form roles ("As an author authoring docs...") reads weakly and clusters worse than role + separate goal.
 
-**Make the role findable across users and projects.** Four patterns keep it transferable:
+**Make the role findable across users and projects.** Five patterns keep it transferable:
 - **Use the user's role, not yours.** Rather than "As an AI agent, I recommend...", write the user's perspective: "As a [their role], I prefer...". The recipe logs the human's preference, not your reasoning. Practical test: read the recipe with the user's actual name swapped in for "I" — if it becomes false, the voice is wrong.
 - **Use a transferable functional role, not a personal name.** Rather than "As Andy reviewing two AI design briefings...", use "As a product owner evaluating AI agent outputs..." — so the recipe is findable when any other user faces the same kind of call. Personal names collapse the role onto one person.
 - **Replace project-specific proper nouns with their underlying functional equivalent.** Proper nouns (company names, codenames, product names) cluster weakly in vector space compared to descriptive functional roles, and the recipe-book description already supplies project context — restating it in the role bloats the embedding without adding cluster-useful signal. The work is substitution, not deletion: "Soup.net maintainer" written to soup-net-development becomes "MCP server maintainer," not just "maintainer" (too vague to cluster against). "Soup.net developer cleaning up iPhone Safari issues" becomes "front-end React developer cleaning up iPhone Safari mobile issues." "Acme consultant mapping client GL codes" becomes "data engineer mapping client GL codes to a canonical taxonomy." The test: would the substituted role retrieve usefully for an agent working on a different project facing the same kind of call?
+- **Put the actor in the role; "I" tells retrieval nothing.** The embedding has only the words around "I", so anyone the claim relies on belongs in the role. Preferences about an agent are the common miss: write "As a [role] delegating [kind of work] to a coding agent, I prefer...", not "As a [role] doing [task], I prefer the agent to...". Test: if the claim names someone the role doesn't, the role is missing them.
 - **For what the user receives**, the recipient role is the invariant one: name the kind of thing received ("As a reader of weekly status reports..."), keep the goal separate, and use "prefer" or "chose", not "want". Test: it stays true when the same person authors the next one.`;
 
 /**
@@ -121,7 +122,7 @@ export interface RecipeExample {
 export const RECIPE_EXAMPLES: RecipeExample[] = [
   {
     label: "Surfacing an assumption (developer)",
-    recipe: "As a developer working on the Acme API, I prefer strict TypeScript configuration so that type errors are caught at compile time rather than runtime.",
+    recipe: "As a developer working on a public REST API, I prefer strict TypeScript configuration so that type errors are caught at compile time rather than runtime.",
     evidenceFor: "User's tsconfig.json has strict mode enabled with noUncheckedIndexedAccess, suggesting a preference for maximum type safety.",
     quote: '"strict": true, "noUncheckedIndexedAccess": true',
     source: "User's tsconfig.json",
@@ -129,7 +130,7 @@ export const RECIPE_EXAMPLES: RecipeExample[] = [
   },
   {
     label: "Logging a stated preference (non-technical creator)",
-    recipe: "As a parent organizing the Spring Fundraiser, I prefer bold, high-contrast poster layouts so that they're readable on the school bulletin board from a distance.",
+    recipe: "As a parent organizing a school fundraiser, I prefer bold, high-contrast poster layouts so that they're readable on the school bulletin board from a distance.",
     evidenceFor: "User chose Option B (bold layout) over two subtler alternatives after comparing all three.",
     quote: "The bold one — parents walk past the board quickly, it needs to grab attention",
     source: "User conversation, 2026-03-28",
@@ -153,7 +154,7 @@ export const RECIPE_EXAMPLES: RecipeExample[] = [
   },
   {
     label: "Recipe-book collaboration (non-technical)",
-    recipe: "As a volunteer coordinator for the Spring Fundraiser, I chose Google Docs for our shared planning so that everyone can edit from any device, including mobile.",
+    recipe: "As a volunteer coordinator for a school fundraiser, I chose Google Docs for our shared planning so that everyone can edit from any device, including mobile.",
     evidenceFor: "Team consensus reached via Slack discussion. All four members agreed.",
     quote: "fine for the plan, but I'll share design drafts as Figma links",
     source: "Priya on Slack, 2026-03-28",
@@ -445,14 +446,14 @@ A useful question before each check: "Who benefits from knowing this?" Personal 
 
 const FORMAT_EXAMPLE_SURFACING_ASSUMPTION = `**Example — surfacing an assumption.** You notice the user's tsconfig has strict mode enabled; you haven't asked, but the evidence is concrete:
 
-    Recipe: As a developer working on the Acme API, I prefer strict TypeScript configuration so that type errors are caught at compile time rather than runtime.
+    Recipe: As a developer working on a public REST API, I prefer strict TypeScript configuration so that type errors are caught at compile time rather than runtime.
     Evidence: User's tsconfig.json has strict mode enabled with noUncheckedIndexedAccess, suggesting a preference for maximum type safety.
     > "strict": true, "noUncheckedIndexedAccess": true
     -- User's tsconfig.json`;
 
 const FORMAT_EXAMPLE_STATED_PREFERENCE = `**Example — logging a stated preference.** The user told you something directly:
 
-    Recipe: As a parent organizing the Spring Fundraiser, I prefer bold, high-contrast poster layouts so that they're readable on the school bulletin board from a distance.
+    Recipe: As a parent organizing a school fundraiser, I prefer bold, high-contrast poster layouts so that they're readable on the school bulletin board from a distance.
     Evidence: User chose Option B (bold layout) over two subtler alternatives after comparing all three.
     > "The bold one — parents walk past the board quickly, it needs to grab attention"
     -- User conversation, 2026-03-28`;
@@ -716,7 +717,7 @@ ${mcpProfile ? "" : `If you auto-compact your context or otherwise no longer hol
 
 `}Full field meanings for every response object live at \`GET ${backendUrl}/schemas/recipe.json\` (and \`/schemas/check-response.json\`) — canonical, generated from the same source the server validates against.${oauthConnection ? "" : `
 
-For local files that have no public URL (screenshots, generated artifacts, anything on your disk), \`file_base64\` will blow your context window on anything bigger than a thumbnail. Instead, POST the file to the \`/uploads\` REST endpoint first using your same Bearer token, then pass the returned URL as \`file_url\`. The MCP server detects own-hostname URLs and resolves them internally — no second HTTP fetch, no public exposure. Example:
+For local files (screenshots, generated artifacts, anything on your disk), \`file_base64\` will blow your context window on anything bigger than a thumbnail. Instead, POST the file to the \`/uploads\` REST endpoint first using your same Bearer token, then pass the returned URL as \`file_url\`, the only kind of URL it takes. The server resolves it internally, with no public exposure. Example:
 
     curl -X POST ${backendUrl}/uploads \\
       -H "Authorization: Bearer YOUR_API_KEY" \\
@@ -937,8 +938,8 @@ export const MCP_TOOL_DESCRIPTIONS = {
 
   /** HTTP-only — file attachment via file_url or file_base64. */
   checkRecipeFileAttachment:
-    "Attach a reference file (image, PDF, audio, video) via file_url, which the server fetches " +
-    "from the public internet, or file_base64.",
+    "Attach a reference file (image, PDF, audio, video) via file_base64, or file_url for a URL " +
+    "returned by POST /uploads.",
 
   /** Shared trailer — identical across HTTP and stdio MCP. */
   checkRecipeTrailer:

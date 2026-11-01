@@ -1,7 +1,23 @@
 import { describe, it, expect, afterAll } from "vitest";
 import { sql } from "drizzle-orm";
 import { getDb } from "../db";
-import { validateRedirectUri, hashOpaque, cleanupOAuthArtifacts } from "./oauth.service";
+import { validateRedirectUri, hashOpaque, cleanupOAuthArtifacts, requestedScopeForLog } from "./oauth.service";
+
+describe("requestedScopeForLog", () => {
+  it("names known scopes, sorted and without repeats", () => {
+    expect(requestedScopeForLog("write read openid read")).toEqual({ known: ["openid", "read", "write"], other: 0 });
+  });
+
+  it("reports nothing for an empty request", () => {
+    expect(requestedScopeForLog("")).toEqual({ known: [], other: 0 });
+  });
+
+  it("counts unknown values without repeating their text", () => {
+    const logged = requestedScopeForLog("read secret-text\ninjected");
+    expect(logged).toEqual({ known: ["read"], other: 2 });
+    expect(JSON.stringify(logged)).not.toContain("secret-text");
+  });
+});
 
 describe("validateRedirectUri", () => {
   it("accepts https URIs", () => {
