@@ -138,6 +138,21 @@ async function judgeSession(c: Context): Promise<Response | { emailVerified: boo
 }
 
 /**
+ * Does this request carry a live session of `userId`? For a route anyone can
+ * reach that treats its own account's session as proof (POST /auth/verify). A
+ * missing, malformed, expired, cut-off or switched-off session, or another
+ * account's, is simply not proof: this never refuses the request.
+ */
+export async function holdsLiveSessionOf(c: Context, db: PostgresJsDatabase, userId: string): Promise<boolean> {
+  const header = c.req.header("Authorization");
+  if (!header?.startsWith("Bearer ")) return false;
+  const payload = verifyToken(header.slice(7));
+  if (!payload || payload.sub !== userId) return false;
+  const state = await sessionState(db, userId, payload.iat, payload.idp);
+  return state.refusal === null;
+}
+
+/**
  * The account-state half of `requireVerifiedEmail`, for the few routes that
  * must stay reachable before verification (GET /auth/me, resend-verification,
  * DELETE /auth/me). Must be used AFTER requireAuth. A disabled, suspended or

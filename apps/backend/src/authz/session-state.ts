@@ -81,9 +81,9 @@ export async function accountRefusal(db: PostgresJsDatabase, userId: string): Pr
 
 /**
  * Refuse every session issued before now (recipe a8003678). For SSO's account
- * linking, which discards an unverified password: a session the
- * pre-registrant already holds dies with it. Keys are untouched; an
- * unverified account has none.
+ * linking, which discards an unverified password, and for a password reset
+ * (recipe 450a107b): a session the pre-registrant already holds dies with it.
+ * Keys are untouched; an unverified account has none.
  *
  * The cut-off is stamped from this process's clock, not the database's
  * NOW(): it is compared with a JWT's `iat`, which this process's clock
@@ -91,7 +91,7 @@ export async function accountRefusal(db: PostgresJsDatabase, userId: string): Pr
  * 2f40fb9f). With NOW(), a session signed a moment after the cut-off could
  * read as issued before it and be refused.
  */
-export async function invalidateSessions(db: PostgresJsDatabase, userId: string): Promise<void> {
+export async function invalidateSessions(db: Pick<PostgresJsDatabase, "execute">, userId: string): Promise<void> {
   const cutOffSeconds = Math.floor(Date.now() / 1000);
   await db.execute(sql`
     UPDATE claimnet.users SET sessions_valid_after = to_timestamp(${cutOffSeconds}) WHERE id = ${userId}::uuid

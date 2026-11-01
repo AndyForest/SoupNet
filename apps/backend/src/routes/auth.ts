@@ -3,7 +3,7 @@ import { z } from "zod";
 import crypto from "crypto";
 import { sql } from "drizzle-orm";
 import { getDb } from "../db";
-import { registerUser, loginUser, requireAuth, requireActiveSession, activeSessionRefusal, requireVerifiedEmail, hashPassword, verifyPassword } from "../auth";
+import { registerUser, loginUser, requireAuth, requireActiveSession, activeSessionRefusal, requireVerifiedEmail, holdsLiveSessionOf, hashPassword, verifyPassword } from "../auth";
 import { writeAudit } from "../services/audit-log.service";
 import { isSignupCapReached, logSignupCapState, mayRegister } from "../services/system-settings.service";
 import { purgeStaleWaitlistedUsers } from "../services/waitlist.service";
@@ -11,7 +11,7 @@ import { deleteUserCascade } from "../services/user-delete.service";
 import { sendVerificationEmail, sendPasswordResetEmail } from "../services/email.service";
 import { rateLimit } from "../middleware/rate-limit";
 import { normalizeEmail } from "../lib/normalize-email";
-import { onBehalfSubjectOf, feedbackOwnedBy, intentOwnedBy, managedOrganizationOf } from "../authz";
+import { onBehalfSubjectOf, feedbackOwnedBy, intentOwnedBy, invalidateSessions, managedOrganizationOf } from "../authz";
 import { ACCOUNT_DISABLED_MESSAGE, ACCOUNT_SUSPENDED_MESSAGE, MANAGED_ACCOUNT_DELETE_MESSAGE } from "@soupnet/domain";
 import { verifyTurnstile } from "../lib/turnstile";
 import type { AppEnv } from "../types";
@@ -47,9 +47,15 @@ const registerSchema = z.object({
 // Rate limiters for auth endpoints
 const authRateLimit = rateLimit({ max: 5, windowMs: 15 * 60 * 1000 }); // 5 per 15 min per IP
 const verifyRateLimit = rateLimit({ max: 10, windowMs: 15 * 60 * 1000 }); // 10 per 15 min per IP
+const verifyPasswordRateLimit = rateLimit({ max: 5, windowMs: 15 * 60 * 1000 }); // 5 password attempts per 15 min per IP, as sign-in
 const resendRateLimit = rateLimit({ max: 3, windowMs: 15 * 60 * 1000 }); // 3 per 15 min per IP
 const forgotPasswordRateLimit = rateLimit({ max: 3, windowMs: 15 * 60 * 1000 }); // 3 per 15 min per IP
 const resetPasswordRateLimit = rateLimit({ max: 10, windowMs: 15 * 60 * 1000 }); // 10 per 15 min per IP
+
+const verifySchema = z.object({
+  token: z.string().min(1),
+  password: z.string().max(1024).optional(),
+});
 
 const forgotPasswordSchema = z.object({
   email: z.string().email(),
@@ -760,25 +766,59 @@ auth.delete("/me", authRateLimit, requireAuth, requireActiveSession, async (c) =
 
 // POST /auth/verify — verify email with token.
 //
-// Idempotent: calling this with the same token twice (e.g. React StrictMode
-// double-fire, page refresh, email opened in two tabs) returns success both
-// times without changing the verification timestamp. We use COALESCE to
-// preserve the original verified_at, and we deliberately do NOT clear the
+// A link alone doesn't verify an account (recipe 450a107b, F144). Someone can
+// register a password on another person's address, and that person's click
+// used to leave the stranger's password working. So verifying takes the
+// sign-up's own session or the account's password, which separates the two:
+// the person who signed up has one or the other, and the mailbox's owner has
+// neither. The owner's route is forgot-password, which replaces the password,
+// verifies the address and cuts every session. A mail scanner opening the link
+// changes nothing.
+//
+// Idempotent: a repeat click on a verified account (React StrictMode
+// double-fire, page refresh, email opened in two tabs) needs no proof and
+// returns success without changing the verification timestamp. We use COALESCE
+// to preserve the original verified_at, and we deliberately do NOT clear the
 // token in this UPDATE — it expires naturally after 24h. A "used" token
 // can't do anything except re-confirm existing verified state.
 auth.post("/verify", verifyRateLimit, async (c) => {
-  const body = await c.req.json();
-  const token = (body as { token?: string }).token;
-  if (!token) {
+  const parsed = verifySchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) {
     return c.json({ ok: false, error: "Token required" }, 400);
   }
+  const { token, password } = parsed.data;
 
   const db = getDb();
+  const accounts = await db.execute(sql`
+    SELECT id, email, password_hash AS "passwordHash",
+           (email_verified_at IS NOT NULL) AS "verified",
+           (waitlisted_at IS NOT NULL) AS "waitlisted"
+    FROM claimnet.users
+    WHERE email_verification_token = ${token}
+      AND email_verification_token_created_at > now() - interval '24 hours'
+  `);
+  const account = (accounts as unknown as Array<{ id: string; email: string; passwordHash: string; verified: boolean; waitlisted: boolean }>)[0];
+  if (!account) {
+    return c.json({ ok: false, error: "Invalid or expired verification token" }, 400);
+  }
+
+  // Everything that can refuse comes before anything changes.
+  const ownSession = await holdsLiveSessionOf(c, db, account.id);
+  if (!account.verified && !ownSession) {
+    if (!password) {
+      return c.json({ ok: true, data: { verified: false, passwordRequired: true, email: account.email, waitlisted: account.waitlisted } });
+    }
+    const limited = await verifyPasswordRateLimit(c, async () => {});
+    if (limited) return limited;
+    if (!(await verifyPassword(password, account.passwordHash))) {
+      return c.json({ ok: false, error: "wrong_password", message: "That isn't this account's password." }, 401);
+    }
+  }
+
   const result = await db.execute(sql`
     UPDATE claimnet.users
     SET email_verified_at = COALESCE(email_verified_at, now())
-    WHERE email_verification_token = ${token}
-      AND email_verification_token_created_at > now() - interval '24 hours'
+    WHERE id = ${account.id}::uuid
     RETURNING id, email, (waitlisted_at IS NOT NULL) AS "waitlisted"
   `);
 
@@ -818,6 +858,9 @@ auth.post("/verify", verifyRateLimit, async (c) => {
       // Waitlisted accounts get "your place is held" copy instead of
       // "sign in and start" — signing in won't work until promotion.
       waitlisted: updated.waitlisted,
+      // The session on this request was this account's, so the SPA may mark
+      // it verified. Another account's session in the same browser wasn't.
+      ownSession,
     },
   });
 });
@@ -967,6 +1010,13 @@ auth.post("/forgot-password", forgotPasswordRateLimit, async (c) => {
 // POST /auth/reset-password — complete the reset using the emailed token.
 // Validates the token hash, enforces 1-hour expiry and single-use (the token
 // is cleared on success). Updates password_hash via bcrypt.
+//
+// The emailed token proves the mailbox, so this is also how an address's real
+// owner takes it back from someone who registered on it (recipe 450a107b,
+// F144): it replaces the password, cuts every session, and verifies the
+// address. The sessions go on every reset, verified account or not. API keys
+// and OAuth connections stay: an unverified account has none, and a person who
+// forgot a password shouldn't lose their agents.
 auth.post("/reset-password", resetPasswordRateLimit, async (c) => {
   let body: unknown;
   try {
@@ -984,26 +1034,44 @@ auth.post("/reset-password", resetPasswordRateLimit, async (c) => {
   const tokenHash = hashResetToken(token);
   const newHash = await hashPassword(newPassword);
 
-  // Atomic update — only succeeds if the hash matches AND the token is fresh
-  // (≤1 hour). We clear the reset columns in the same statement so the token
-  // cannot be replayed.
-  const result = await db.execute(sql`
-    UPDATE claimnet.users
-    SET password_hash = ${newHash},
-        password_reset_token_hash = NULL,
-        password_reset_token_created_at = NULL,
-        updated_at = NOW()
-    WHERE password_reset_token_hash = ${tokenHash}
-      AND password_reset_token_created_at > NOW() - interval '1 hour'
-    RETURNING id, email
-  `);
+  const outcome = await db.transaction(async (tx) => {
+    // Atomic update — only succeeds if the hash matches AND the token is fresh
+    // (≤1 hour). We clear the reset columns in the same statement so the token
+    // cannot be replayed.
+    const result = await tx.execute(sql`
+      UPDATE claimnet.users
+      SET password_hash = ${newHash},
+          password_reset_token_hash = NULL,
+          password_reset_token_created_at = NULL,
+          updated_at = NOW()
+      WHERE password_reset_token_hash = ${tokenHash}
+        AND password_reset_token_created_at > NOW() - interval '1 hour'
+      RETURNING id, email, (waitlisted_at IS NOT NULL) AS "waitlisted"
+    `);
+    const updated = (result as unknown as Array<{ id: string; email: string; waitlisted: boolean }>)[0];
+    if (!updated) return null;
 
-  const updated = (result as unknown as Array<{ id: string; email: string }>)[0];
-  if (!updated) {
+    await invalidateSessions(tx, updated.id);
+
+    // THE RESET'S VERIFY WRITE. It only takes effect on an unverified account,
+    // so a reset on a verified one changes nothing here. Anything that has to
+    // settle when a mailbox is proved goes directly ahead of it.
+    const verified = await tx.execute(sql`
+      UPDATE claimnet.users SET email_verified_at = now()
+      WHERE id = ${updated.id}::uuid AND email_verified_at IS NULL
+      RETURNING id
+    `);
+    return { ...updated, newlyVerified: (verified as unknown as unknown[]).length > 0 };
+  });
+
+  if (!outcome) {
     return c.json({ ok: false, error: "Invalid or expired reset token" }, 400);
   }
 
-  return c.json({ ok: true, data: { reset: true, email: updated.email } });
+  // A verification can take the last slots, as on POST /auth/verify.
+  if (outcome.newlyVerified && !outcome.waitlisted) void logSignupCapState(db, { waitlisted: false });
+
+  return c.json({ ok: true, data: { reset: true, email: outcome.email } });
 });
 
 export { auth as authRoutes };

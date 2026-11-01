@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useMutation } from "@tanstack/react-query";
-import { API_BASE } from "../auth.js";
+import { API_BASE, clearToken } from "../auth.js";
 
 export function ResetPasswordPage() {
   const navigate = useNavigate();
@@ -23,6 +23,8 @@ export function ResetPasswordPage() {
       if (!json.ok) throw new Error(json.error ?? "Reset failed");
     },
     onSuccess: () => {
+      // The reset ended every session, this browser's included.
+      clearToken();
       // Redirect to login with a success hint
       void navigate({ to: "/auth/login" });
     },

@@ -1,15 +1,67 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { API_BASE, setEmailVerified, isLoggedIn } from "../auth.js";
+import { API_BASE, getToken, setEmailVerified } from "../auth.js";
+
+interface VerifyResponse {
+  ok: boolean;
+  error?: string;
+  message?: string;
+  data?: { verified: boolean; email: string; waitlisted?: boolean; passwordRequired?: boolean; ownSession?: boolean };
+}
+
+async function verifyRequest(body: { token: string; password?: string }): Promise<{ status: number; json: VerifyResponse }> {
+  const session = getToken();
+  const res = await fetch(`${API_BASE}/auth/verify`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(session ? { Authorization: `Bearer ${session}` } : {}) },
+    body: JSON.stringify(body),
+  });
+  return { status: res.status, json: (await res.json()) as VerifyResponse };
+}
 
 export function VerifyPage() {
-  const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
+  const [status, setStatus] = useState<"loading" | "success" | "password" | "error">("loading");
+  const [password, setPassword] = useState("");
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const [email, setEmail] = useState("");
   const [waitlisted, setWaitlisted] = useState(false);
   // Guard against React StrictMode double-invocation in dev. The /auth/verify
   // endpoint is idempotent on the backend, but firing twice would still
   // briefly flash an error before the second response lands. Belt and braces.
   const calledRef = useRef(false);
+
+  function settle({ json }: { status: number; json: VerifyResponse }): boolean {
+    if (!json.ok || !json.data) return false;
+    setEmail(json.data.email);
+    setWaitlisted(json.data.waitlisted === true);
+    if (json.data.passwordRequired) {
+      setStatus("password");
+      return true;
+    }
+    setStatus("success");
+    // The session in this tab was this account's, so update the cached flag:
+    // subsequent navigation no longer redirects to /verify-pending.
+    if (json.data.ownSession) setEmailVerified(true);
+    return true;
+  }
+
+  function submitPassword(e: React.FormEvent) {
+    e.preventDefault();
+    const token = new URLSearchParams(window.location.search).get("token");
+    if (!token) return;
+    setPasswordError(null);
+    setSubmitting(true);
+    verifyRequest({ token, password })
+      .then((res) => {
+        if (settle(res)) return;
+        if (res.status === 429) setPasswordError("Too many tries. Wait 15 minutes and try again, or set a new password below.");
+        else if (res.json.error === "wrong_password") setPasswordError(res.json.message ?? "That isn't this account's password.");
+        else setStatus("error");
+      })
+      .catch(() => setPasswordError("Network error. Check your connection and try again."))
+      .finally(() => setSubmitting(false));
+  }
 
   useEffect(() => {
     if (calledRef.current) return;
@@ -23,23 +75,9 @@ export function VerifyPage() {
       return;
     }
 
-    fetch(`${API_BASE}/auth/verify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token }),
-    })
-      .then((res) => res.json() as Promise<{ ok: boolean; data?: { email: string; waitlisted?: boolean } }>)
-      .then((data) => {
-        if (data.ok && data.data) {
-          setStatus("success");
-          setEmail(data.data.email);
-          setWaitlisted(data.data.waitlisted === true);
-          // If the user is logged in in this tab, update the cached flag so
-          // subsequent navigation no longer redirects to /verify-pending.
-          if (isLoggedIn()) setEmailVerified(true);
-        } else {
-          setStatus("error");
-        }
+    verifyRequest({ token })
+      .then((res) => {
+        if (!settle(res)) setStatus("error");
       })
       .catch(() => setStatus("error"));
   }, []);
@@ -81,6 +119,42 @@ export function VerifyPage() {
                 </button>
               </Link>
             )}
+          </>
+        )}
+
+        {status === "password" && (
+          <>
+            <h1 style={{ color: "var(--color-primary)", fontSize: "1.5rem", marginBottom: "var(--space-md)" }}>
+              Confirm it&apos;s you
+            </h1>
+            <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)" }}>
+              Someone signed up for Soup.net with {email}. Enter the password chosen at sign-up to verify this address.
+            </p>
+            <form onSubmit={submitPassword} style={{ textAlign: "left" }}>
+              <label htmlFor="verify-password">Password</label>
+              <input
+                id="verify-password"
+                type="password"
+                autoComplete="current-password"
+                required
+                autoFocus
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                aria-describedby={passwordError ? "verify-password-error" : undefined}
+              />
+              {passwordError && (
+                <p id="verify-password-error" role="alert" style={{ color: "var(--color-error)", marginTop: "var(--space-sm)" }}>
+                  {passwordError}
+                </p>
+              )}
+              <button type="submit" disabled={submitting} style={{ width: "100%", justifyContent: "center", marginTop: "var(--space-md)" }}>
+                {submitting ? "Verifying..." : "Verify email"}
+              </button>
+            </form>
+            <p style={{ color: "var(--color-on-surface-variant)", marginTop: "var(--space-lg)" }}>
+              Didn&apos;t sign up, or don&apos;t know the password? <Link to="/auth/forgot-password">Set a new password</Link>. That
+              verifies this address, replaces the old password and signs out every session on the account.
+            </p>
           </>
         )}
 
