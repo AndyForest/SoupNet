@@ -23,7 +23,7 @@ The definitions this follows, quoted:
 | Tool | Read-only | Destructive | Open world | Why |
 |---|---|---|---|---|
 | `check_recipe` | false | false | **true** | It stores a new recipe, so it is not read-only. It only adds: a new row, never an overwrite or a delete, and the same recipe text sent again to the same book with the same key returns the same recipe and stores nothing new. Open world because the server fetches a `file_url` attachment from the internet; private and loopback hostnames are refused by name. |
-| `search_recipes` | true | false | false | It returns recipes and logs none. Its writes are the call's own audit row, and the intent when intent text is given (see the rule). It reads only the account's books. |
+| `search_recipes` | true | false | false | It returns recipes and logs none. It takes no feedback rows; those go through `log_feedback`. Its writes are the call's own audit row, and the intent when intent text is given (see the rule). It reads only the account's books. |
 | `get_briefing` | true | false | false | It composes text from the account's books. Its writes are the same bookkeeping as search, plus the `briefing.issued` row whose id the response returns for feedback. |
 | `get_recipes` | true | false | false | It fetches by id. An id the key cannot read gets the same marker as one that does not exist. |
 | `verify_draft` | false | **true** | false | It resolves a draft (verified, rejected or not chosen) and appends the evidence that settled it. The state change is one-way on this surface: a second call is refused, and a verified draft becomes visible to the book's members. Under ChatGPT's default permission, this asks the person to confirm each resolution. |
@@ -52,7 +52,7 @@ Each claim a description makes, and what makes it true:
 | `check_recipe` | The same recipe text, book and key return the same recipe id | unique `(api_key_id, group_id, claim_text_hash)` on `traces`, insert `ON CONFLICT DO NOTHING` |
 | `check_recipe` | `file_url` is fetched from the public internet | the upload service's URL fetch; private and loopback hostnames are refused by name |
 | `search_recipes` | Read-only, includes your own recipes, logs no recipe | `searchWithoutLogging`; the include-own default (recipe `885143c2`) |
-| `search_recipes` | `searchId` closes the loop via `log_feedback` | `log_feedback`'s `search_id` |
+| `search_recipes` | `searchId` closes the loop via `log_feedback` | `log_feedback`'s `search_id`; `search_recipes` declares no `feedback` parameter, and the unknown-parameter guard refuses one by name and names `log_feedback` |
 | `get_briefing` | Returns a briefing id for feedback | the `briefing.issued` row's id; `log_feedback`'s `briefing_id` |
 | `get_recipes` | Up to 20 ids; an id that does not resolve returns a marker, and the rest of the batch still returns | `services/recipe-lookup.service.ts` |
 | `verify_draft` | One-way; a second call is refused, as is evidence that adds nothing new | the draft resolution service (slice 6c) |

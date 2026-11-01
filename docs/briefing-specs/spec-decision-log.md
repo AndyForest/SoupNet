@@ -4,6 +4,17 @@ Every PR that touches briefing copy (`packages/domain/src/recipe-guide-content.t
 
 (Renamed from declared-intent-log.md on 2026-08-23: "intent" now names the runtime intent-registration mechanism — cold-start v2 Phase C — so the discipline's log takes an unambiguous name. The discipline itself is unchanged.)
 
+## 2026-10-31 — OpenAI plugin round: `search_recipes` no longer takes `feedback` (recipe 9dbcfb77)
+
+The directory's tool scan said: "This tool is marked readOnlyHint: true, but its behavior appears to have a user-visible side effect." The tool wrote a feedback row when that parameter was passed, and the annotation rule (recipe `3b166817`) excuses the call's audit row and its intent, not feedback rows. This supersedes the `search_recipes` half of slice 1's item 3 below.
+
+### Edits and the scenarios they move
+
+1. **Remote `search_recipes` loses the `feedback` parameter.** Dropped from its served schema: the pointer description "Feedback rows about PRIOR checks or searches, riding along with this call; each row takes log_feedback's fields. A rejected row never blocks this call." `check_recipe` keeps that description word for word. The stdio tool never declared the parameter. Nothing is lost: `log_feedback` takes `search_id`, and the teaching in the briefing, the tool descriptions and the plugin's skill already named `check_recipe` and `log_feedback`, so no briefing copy changes.
+2. **The refusal steers.** A call that still sends it answers: "Error: search_recipes does not take feedback (send those rows with log_feedback; a row about a search takes search_id). Nothing was run; send it again with the names it takes: …". Both servers, through the shared guard.
+
+Scenario moved: "The read-only search tool takes no feedback rows" (new) and "Ride-along feedback keeps every field while its schema shrinks to a pointer" (now `check_recipe` only), both in `docs/product-specs/drafts-and-triage.feature`. All others hold: an agent taught by the briefing never sent this parameter on search unless it read the schema, and the refusal gives it the retry.
+
 ## 2026-10-26 — OpenAI plugin round, stream L: no selection diagnostics in the exemplars, and no /uploads example over OAuth
 
 Plan: [../planning/openai-plugin-directory.md](../planning/openai-plugin-directory.md) item 6 (output minimisation). Build file: [../planning/openai-plugin-build/listing.md](../planning/openai-plugin-build/listing.md), row L13. Both findings came from stream T's audit of every tool's real output against OpenAI's rule ("Do not include diagnostic, telemetry, or internal identifiers … unless they are strictly required", developers.openai.com/plugins/plugin-guidelines.md), sent to stream L because the text is in L's part of `recipe-guide-content.ts`.

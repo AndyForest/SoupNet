@@ -1125,7 +1125,7 @@ export const MCP_PARAM_DESCRIPTIONS = {
     "to share your known-set. Compacted your context? Omit it next check for full text again.",
 
   /** A pointer, not a schema (slice 1, S1-Z4): the row fields are
-   *  log_feedback's, declared once there instead of inline on two tools. */
+   *  log_feedback's, declared once there instead of inline on check_recipe. */
   feedbackParam:
     "Feedback rows about PRIOR checks or searches, riding along with this call; each row takes " +
     "log_feedback's fields. A rejected row never blocks this call.",
