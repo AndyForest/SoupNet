@@ -47,7 +47,6 @@ const registerSchema = z.object({
 // Rate limiters for auth endpoints
 const authRateLimit = rateLimit({ max: 5, windowMs: 15 * 60 * 1000 }); // 5 per 15 min per IP
 const verifyRateLimit = rateLimit({ max: 10, windowMs: 15 * 60 * 1000 }); // 10 per 15 min per IP
-const verifyPasswordRateLimit = rateLimit({ max: 5, windowMs: 15 * 60 * 1000 }); // 5 password attempts per 15 min per IP, as sign-in
 const resendRateLimit = rateLimit({ max: 3, windowMs: 15 * 60 * 1000 }); // 3 per 15 min per IP
 const forgotPasswordRateLimit = rateLimit({ max: 3, windowMs: 15 * 60 * 1000 }); // 3 per 15 min per IP
 const resetPasswordRateLimit = rateLimit({ max: 10, windowMs: 15 * 60 * 1000 }); // 10 per 15 min per IP
@@ -775,6 +774,13 @@ auth.delete("/me", authRateLimit, requireAuth, requireActiveSession, async (c) =
 // verifies the address and cuts every session. A mail scanner opening the link
 // changes nothing.
 //
+// A correct password at the link also signs the person in, so a new sign-up
+// types it once. It is a real sign-in: the same rate limit as POST /auth/login,
+// and loginUser after the verify, so its waitlist and account-state checks and
+// its session dating apply unchanged. Only a verification does this: a repeat
+// click judges no password and issues no session, so a token isn't a second
+// way to test one.
+//
 // Idempotent: a repeat click on a verified account (React StrictMode
 // double-fire, page refresh, email opened in two tabs) needs no proof and
 // returns success without changing the verification timestamp. We use COALESCE
@@ -804,11 +810,12 @@ auth.post("/verify", verifyRateLimit, async (c) => {
 
   // Everything that can refuse comes before anything changes.
   const ownSession = await holdsLiveSessionOf(c, db, account.id);
-  if (!account.verified && !ownSession) {
+  const signingIn = !account.verified && !ownSession;
+  if (signingIn) {
     if (!password) {
       return c.json({ ok: true, data: { verified: false, passwordRequired: true, email: account.email, waitlisted: account.waitlisted } });
     }
-    const limited = await verifyPasswordRateLimit(c, async () => {});
+    const limited = await authRateLimit(c, async () => {});
     if (limited) return limited;
     if (!(await verifyPassword(password, account.passwordHash))) {
       return c.json({ ok: false, error: "wrong_password", message: "That isn't this account's password." }, 401);
@@ -825,6 +832,18 @@ auth.post("/verify", verifyRateLimit, async (c) => {
   const updated = (result as unknown as Array<{ id: string; email: string; waitlisted: boolean }>)[0];
   if (!updated) {
     return c.json({ ok: false, error: "Invalid or expired verification token" }, 400);
+  }
+
+  // Last, so a session is dated after anything the verify changed. No token
+  // for a waitlisted or switched-off account: the address is verified, and
+  // signing in tells them why not.
+  let sessionToken: string | null = null;
+  if (signingIn && password) {
+    const signedIn = await loginUser(db, updated.email, password);
+    if (signedIn?.token) {
+      sessionToken = signedIn.token;
+      await db.execute(sql`UPDATE claimnet.users SET last_login_at = now() WHERE id = ${updated.id}::uuid`);
+    }
   }
 
   // Verification proves mailbox control. Invitations bound to this email
@@ -861,6 +880,7 @@ auth.post("/verify", verifyRateLimit, async (c) => {
       // The session on this request was this account's, so the SPA may mark
       // it verified. Another account's session in the same browser wasn't.
       ownSession,
+      ...(sessionToken ? { token: sessionToken } : {}),
     },
   });
 });

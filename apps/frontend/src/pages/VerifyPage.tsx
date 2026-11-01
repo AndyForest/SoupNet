@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { API_BASE, getToken, setEmailVerified } from "../auth.js";
+import { useQueryClient } from "@tanstack/react-query";
+import { API_BASE, getToken, setEmailVerified, setToken } from "../auth.js";
 
 interface VerifyResponse {
   ok: boolean;
   error?: string;
   message?: string;
-  data?: { verified: boolean; email: string; waitlisted?: boolean; passwordRequired?: boolean; ownSession?: boolean };
+  data?: { verified: boolean; email: string; waitlisted?: boolean; passwordRequired?: boolean; ownSession?: boolean; token?: string };
 }
 
 async function verifyRequest(body: { token: string; password?: string }): Promise<{ status: number; json: VerifyResponse }> {
@@ -24,6 +25,8 @@ export function VerifyPage() {
   const [password, setPassword] = useState("");
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [signedIn, setSignedIn] = useState(false);
+  const queryClient = useQueryClient();
   const [email, setEmail] = useState("");
   const [waitlisted, setWaitlisted] = useState(false);
   // Guard against React StrictMode double-invocation in dev. The /auth/verify
@@ -40,6 +43,15 @@ export function VerifyPage() {
       return true;
     }
     setStatus("success");
+    if (json.data.token) {
+      // A correct password here is a sign-in. Clear the cache first, as the
+      // login page does, so another account's data can't show under this one.
+      queryClient.clear();
+      setToken(json.data.token);
+      setEmailVerified(true);
+      setSignedIn(true);
+      return true;
+    }
     // The session in this tab was this account's, so update the cached flag:
     // subsequent navigation no longer redirects to /verify-pending.
     if (json.data.ownSession) setEmailVerified(true);
@@ -110,9 +122,18 @@ export function VerifyPage() {
             <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)" }}>
               {waitlisted
                 ? `${email} is verified and your spot on the waitlist is held. We'll email you the moment a spot opens — nothing else to do for now.`
-                : `${email} is now verified. You can sign in and start using Soup.net.`}
+                : signedIn
+                  ? `${email} is now verified, and you're signed in.`
+                  : `${email} is now verified. You can sign in and start using Soup.net.`}
             </p>
-            {!waitlisted && (
+            {signedIn && (
+              <Link to="/app/dashboard" style={{ textDecoration: "none" }}>
+                <button style={{ width: "100%", justifyContent: "center" }}>
+                  Go to your dashboard
+                </button>
+              </Link>
+            )}
+            {!waitlisted && !signedIn && (
               <Link to="/auth/login" style={{ textDecoration: "none" }}>
                 <button style={{ width: "100%", justifyContent: "center" }}>
                   Sign In

@@ -76,6 +76,7 @@ describe.skipIf(!BASE)("POST /auth/verify and /auth/reset-password: proving a ma
     const { status, data } = await post("/auth/verify", { token }, session);
     expect(status).toBe(200);
     expect(data).toMatchObject({ verified: true, email, ownSession: true });
+    expect(data["token"]).toBeUndefined();
     expect((await row(email)).verified).toBe(true);
   });
 
@@ -89,12 +90,28 @@ describe.skipIf(!BASE)("POST /auth/verify and /auth/reset-password: proving a ma
     expect((await row(email)).verified).toBe(false);
   });
 
-  it("ACC-VERIFY-03: on another device, the right password verifies", async () => {
+  it("ACC-VERIFY-03: with no session, the right password verifies and signs the person in", async () => {
     const { email, token } = await register("right-password");
     const { status, data } = await post("/auth/verify", { token, password: PASSWORD });
     expect(status).toBe(200);
     expect(data).toMatchObject({ verified: true, email, ownSession: false });
     expect((await row(email)).verified).toBe(true);
+    // A working session on a verified account, stamped as a sign-in.
+    const res = await fetch(`${BASE}/keys/daily`, { method: "POST", headers: { Authorization: `Bearer ${String(data["token"])}` } });
+    expect(res.status).toBe(200);
+    const rows = await getDb().execute(sql`SELECT last_login_at FROM claimnet.users WHERE email = ${email}`);
+    expect((rows as unknown as Array<{ last_login_at: unknown }>)[0]?.last_login_at).toBeTruthy();
+  });
+
+  it("ACC-VERIFY-13: a suspended or org-disabled account verifies with its password and gets no session, as at sign-in", async () => {
+    const { email, token } = await register("suspended");
+    await getDb().execute(sql`UPDATE claimnet.users SET suspended_at = now() WHERE email = ${email}`);
+    const { status, data } = await post("/auth/verify", { token, password: PASSWORD });
+    expect(status).toBe(200);
+    expect(data).toMatchObject({ verified: true, email });
+    expect(data["token"]).toBeUndefined();
+    expect((await row(email)).verified).toBe(true);
+    expect((await post("/auth/login", { email, password: PASSWORD })).json["error"]).toBe("account_suspended");
   });
 
   it("ACC-VERIFY-04: the wrong password is refused and changes nothing", async () => {
@@ -184,8 +201,10 @@ describe.skipIf(!BASE)("POST /auth/verify and /auth/reset-password: proving a ma
     const { status, data } = await post("/auth/verify", { token });
     expect(status).toBe(200);
     expect(data).toMatchObject({ verified: true, email, ownSession: false });
-    // A wrong password on a repeat click isn't judged at all.
+    expect(data["token"]).toBeUndefined();
+    // A password on a repeat click isn't judged and signs nobody in, so a token isn't a way to test one.
     expect((await post("/auth/verify", { token, password: "not-the-password" })).status).toBe(200);
+    expect((await post("/auth/verify", { token, password: PASSWORD })).data["token"]).toBeUndefined();
     const after = await getDb().execute(sql`SELECT email_verified_at FROM claimnet.users WHERE email = ${email}`);
     expect(after).toEqual(before);
   });
@@ -199,6 +218,7 @@ describe.skipIf(!BASE)("POST /auth/verify and /auth/reset-password: proving a ma
 
     const { data } = await post("/auth/verify", { token, password: PASSWORD });
     expect(data).toMatchObject({ verified: true, waitlisted: true });
+    expect(data["token"]).toBeUndefined();
     expect(await row(email)).toEqual({ verified: true, waitlisted: true });
     expect((await post("/auth/login", { email, password: PASSWORD })).json["error"]).toBe("waitlisted");
   });
@@ -220,7 +240,7 @@ describe.skipIf(!BASE)("POST /auth/verify and /auth/reset-password: proving a ma
   });
 
   // In process, because the gate's backend runs with DISABLE_RATE_LIMIT=true.
-  it("ACC-VERIFY-12: password attempts are limited, and asking for the prompt isn't an attempt", async () => {
+  it("ACC-VERIFY-12: password attempts share sign-in's limit, and asking for the prompt isn't an attempt", async () => {
     const { email, token } = await register("rate-limit");
     vi.stubEnv("DISABLE_RATE_LIMIT", "false");
     try {

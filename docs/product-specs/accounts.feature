@@ -17,9 +17,10 @@ Feature: Proving a mailbox
       And the page asks for the account's password
 
     @ACC-VERIFY-03
-    Scenario: The right password verifies on another device
-      When Pat opens the link on another device and enters the password
-      Then the address is verified
+    Scenario: With no session, the right password verifies and signs the person in
+      When Pat opens the link with no session and enters the password
+      Then the address is verified and the response carries a working session
+      And Pat doesn't type the password again to sign in
 
     @ACC-VERIFY-04
     Scenario: The wrong password is refused
@@ -35,17 +36,26 @@ Feature: Proving a mailbox
     Scenario: A repeat click on a verified account needs no password
       When the link of a verified account is opened again
       Then it reports success and the verification time doesn't change
+      And a password sent with it isn't judged and signs nobody in
 
     @ACC-VERIFY-10
     Scenario: A waitlisted account verifies with its password
       Given Wes is on the waitlist, so sign-in gives Wes no session
       When Wes opens the link and enters the password
       Then the address is verified and Wes's place on the waitlist is held
+      And the response carries no session
+
+    @ACC-VERIFY-13
+    Scenario: A switched-off account verifies with its password and gets no session
+      Given Sam's account is suspended, or disabled by its organization
+      When Sam opens the link and enters the password
+      Then the address is verified and the response carries no session
+      And signing in says why, as it always does
 
     @ACC-VERIFY-12
     Scenario: Password attempts at the link are limited
       When five wrong passwords come from one address within 15 minutes
-      Then further attempts from it are refused as too many
+      Then further attempts from it are refused as too many, under the same limit as sign-in
       And opening the link still shows the prompt
 
   Rule: A password reset proves the mailbox
