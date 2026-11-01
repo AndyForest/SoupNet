@@ -23,16 +23,18 @@ describe("embedding model configuration", () => {
     vi.resetModules();
   });
 
-  it("gemini: reads the id from EMBEDDINGS_MODEL, and there is no default", async () => {
+  it("gemini: reads the id from EMBEDDINGS_MODEL; unset waits for the database, and never defaults", async () => {
     const p = await load({ EMBEDDINGS_PROVIDER: "gemini", EMBEDDINGS_MODEL: "gemini-embedding-2" });
     expect(p.getEmbeddingModelId()).toBe("gemini-embedding-2");
     expect(p.getActiveEmbeddingModelIds()).toEqual(["gemini-embedding-2"]);
 
-    const empty = await load({ EMBEDDINGS_PROVIDER: "gemini" });
-    expect(() => empty.validateEmbeddingConfig()).toThrow(/EMBEDDINGS_MODEL is required/);
-
-    const blank = await load({ EMBEDDINGS_PROVIDER: "gemini", EMBEDDINGS_MODEL: "   " });
-    expect(() => blank.validateEmbeddingConfig()).toThrow(/EMBEDDINGS_MODEL is required/);
+    for (const unset of ["", "   "]) {
+      const empty = await load({ EMBEDDINGS_PROVIDER: "gemini", EMBEDDINGS_MODEL: unset });
+      expect(() => empty.validateEmbeddingConfig()).not.toThrow();
+      expect(() => empty.getEmbeddingModelId()).toThrow(/isn't settled/);
+      empty.setResolvedGeminiReadModel("gemini-embedding-2-preview");
+      expect(empty.getEmbeddingModelId()).toBe("gemini-embedding-2-preview");
+    }
   });
 
   it("gemini: refuses an id it doesn't know, naming the ones it does", async () => {

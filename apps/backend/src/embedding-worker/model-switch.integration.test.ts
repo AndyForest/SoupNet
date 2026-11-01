@@ -330,8 +330,20 @@ describe.skipIf(!HAS_PG)("changing the embedding model", () => {
     expect((await mapStatus(a)).status).toBe(200);
   });
 
-  it("refuses to start on an empty or unknown model, or a bad target", () => {
-    expect(expectBootRefusal({ EMBEDDINGS_MODEL: "" })).toContain("EMBEDDINGS_MODEL is required");
+  it("with no setting, stays on the model the database's vectors are under", async () => {
+    // Preview here, though a fresh database would get GA.
+    const unset = await startBackend({ EMBEDDINGS_MODEL: "", EMBEDDINGS_REBUILD_VECTORS_PER_MINUTE: "0" });
+    try {
+      expect(unset.log()).toContain(`read model=${PREVIEW} source=database`);
+      expect(await searchTotal(unset)).toBe(baseline);
+      expect(unset.log()).not.toContain("READ_MODEL_EMPTY");
+      expect(fake.callsFor(GA)).toHaveLength(0);
+    } finally {
+      await stopBackend(unset);
+    }
+  }, 90_000);
+
+  it("refuses to start on an unknown model or a bad target", () => {
     expect(expectBootRefusal({ EMBEDDINGS_MODEL: "gemini-embedding-9" })).toContain("not a known Gemini embedding model");
     expect(expectBootRefusal({ EMBEDDINGS_MODEL: PREVIEW, EMBEDDINGS_REBUILD_TARGET: "typo" })).toContain("not a known Gemini embedding model");
     expect(expectBootRefusal({ EMBEDDINGS_MODEL: PREVIEW, EMBEDDINGS_REBUILD_TARGET: PREVIEW })).toContain("reads already use");
@@ -424,6 +436,36 @@ describe.skipIf(!HAS_PG)("changing the embedding model", () => {
     expect(lost.cached).toBe(false);
     expect(a.log()).toContain("text_fallback=1");
   });
+
+  it("with no setting and both models present, follows the target and never the counts", async () => {
+    // A rebuild that has overtaken the model reads are on.
+    const held = await sql<Array<{ id: string }>>`
+      UPDATE claimnet.embedding_vectors SET status = 'failed'
+      WHERE id IN (SELECT id FROM claimnet.embedding_vectors WHERE model_id = ${PREVIEW} AND status = 'complete' LIMIT 40)
+      RETURNING id
+    `;
+    try {
+      const preview = await modelCounts(PREVIEW);
+      const ga = await modelCounts(GA);
+      expect(ga.complete).toBeGreaterThan(preview.complete);
+
+      const overtaken = await startBackend({ EMBEDDINGS_MODEL: "", EMBEDDINGS_REBUILD_TARGET: GA, EMBEDDINGS_REBUILD_VECTORS_PER_MINUTE: "0" });
+      expect(overtaken.log()).toContain(`read model=${PREVIEW} source=database`);
+      await stopBackend(overtaken);
+
+      // After a flip, the same rule reads the other way.
+      const flipped = await startBackend({ EMBEDDINGS_MODEL: "", EMBEDDINGS_REBUILD_TARGET: PREVIEW, EMBEDDINGS_REBUILD_VECTORS_PER_MINUTE: "0" });
+      expect(flipped.log()).toContain(`read model=${GA} source=database`);
+      await stopBackend(flipped);
+
+      // No target says nothing about which is the rebuild, so it won't guess.
+      const refusal = expectBootRefusal({ EMBEDDINGS_MODEL: "", EMBEDDINGS_REBUILD_TARGET: "" });
+      expect(refusal).toContain("Refusing to guess");
+      expect(refusal).not.toContain("Soup.net backend running");
+    } finally {
+      await sql`UPDATE claimnet.embedding_vectors SET status = 'complete' WHERE id IN ${sql(held.map((r) => r.id))}`;
+    }
+  }, 180_000);
 
   it("gives an image written during the rebuild a real target vector straight away", async () => {
     fake.calls = [];
@@ -608,4 +650,58 @@ describe.skipIf(!HAS_PG)("changing the embedding model", () => {
     await stopBackend(final);
   }, 180_000);
 
+});
+
+describe.skipIf(!HAS_PG)("settling the read model on a database with no vectors", () => {
+  const FRESH_DB = `model_switch_fresh_${process.pid}`;
+  const unsetOnFresh = { EMBEDDINGS_MODEL: "", PGDATABASE: FRESH_DB };
+  let root: ReturnType<typeof postgres>;
+  let fresh: ReturnType<typeof postgres>;
+
+  beforeAll(async () => {
+    geminiUrl = await fake.start();
+    root = postgres({ ...PG, database: "postgres", max: 1, onnotice: () => {} });
+    await root.unsafe(`CREATE DATABASE ${FRESH_DB}`);
+    fresh = postgres({ ...PG, database: FRESH_DB, max: 1, onnotice: () => {} });
+  }, 60_000);
+
+  afterAll(async () => {
+    await Promise.all([...children].map(stopBackend));
+    await fresh?.end({ timeout: 5 }).catch(() => {});
+    await root?.unsafe(`DROP DATABASE IF EXISTS ${FRESH_DB} WITH (FORCE)`).catch(() => {});
+    await root?.end({ timeout: 5 }).catch(() => {});
+    await fake.stop();
+    for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
+  }, 60_000);
+
+  it("starts a fresh database on the recommended model, and a second task agrees", async () => {
+    const first = await startBackend(unsetOnFresh);
+    expect(first.log()).toContain(`read model=${GA} source=database`);
+    expect(first.log()).toContain("recommended");
+    const second = await startBackend(unsetOnFresh);
+    expect(second.log()).toContain(`read model=${GA} source=database`);
+    await Promise.all([stopBackend(first), stopBackend(second)]);
+  }, 120_000);
+
+  it("keeps a stack that reset its corpus on the model it has cached", async () => {
+    await fresh`
+      INSERT INTO claimnet.vector_cache (content_hash, model_id, task_type, vector)
+      VALUES ('reset-stack', ${PREVIEW}, 'SEMANTIC_SIMILARITY', array_fill(0.1::real, ARRAY[3072])::vector(3072))
+    `;
+    const reset = await startBackend(unsetOnFresh);
+    expect(reset.log()).toContain(`read model=${PREVIEW} source=database`);
+    await stopBackend(reset);
+  }, 60_000);
+
+  it("won't start on a guess when the lookup fails", async () => {
+    await fresh.unsafe("ALTER TABLE claimnet.vector_cache RENAME TO vector_cache_away");
+    try {
+      const refusal = expectBootRefusal(unsetOnFresh);
+      expect(refusal).toContain("could not be read");
+      expect(refusal).not.toContain("source=database");
+      expect(refusal).not.toContain("Soup.net backend running");
+    } finally {
+      await fresh.unsafe("ALTER TABLE claimnet.vector_cache_away RENAME TO vector_cache");
+    }
+  }, 90_000);
 });

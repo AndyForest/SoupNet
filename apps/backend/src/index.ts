@@ -175,6 +175,11 @@ async function start() {
   // Run migrations
   await runMigrations();
 
+  // Unset EMBEDDINGS_MODEL on gemini: settle the read model from what the database
+  // holds, before anything reads or embeds. Throws, so stops this task, if it can't.
+  const { resolveEmbeddingReadModel } = await import("./lib/embeddings/read-model-resolve");
+  await resolveEmbeddingReadModel(getDb());
+
   // Auto-setup dev user if configured
   await autoSetup(getDb());
 

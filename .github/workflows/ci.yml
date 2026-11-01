@@ -55,7 +55,7 @@ jobs:
       DEV_PASSWORD: ci-test-password
       GEMINI_API_KEY: ""
       EMBEDDINGS_PROVIDER: stub  # deterministic fake vectors; no API quota, no flakiness
-      EMBEDDINGS_REBUILD_TARGET: ""  # stub has one model; model-switch.integration.test.ts starts its own gemini backends
+      EMBEDDINGS_REBUILD_TARGET: ""  # stub has one model; model-switch.integration.test.ts boots its own gemini backends, with and without EMBEDDINGS_MODEL
       SYNTHESIS_PROVIDER: stub  # deterministic premium synthesis; no LLM call, no flakiness
       DISABLE_RATE_LIMIT: "true"  # tests make many rapid requests
 

@@ -53,7 +53,7 @@ Consequently **Phase 1 fits every local vector into the existing column and inde
 
 Introduce `getEmbeddingModelId(): string`, replacing the hardcoded const/literal in all four call sites:
 
-- `gemini` → `"gemini-embedding-2-preview"` (since [ADR-0024](0024-embedding-model-switch.md), `EMBEDDINGS_MODEL`, required and checked against a known list)
+- `gemini` → `"gemini-embedding-2-preview"` (since [ADR-0024](0024-embedding-model-switch.md), `EMBEDDINGS_MODEL`, checked against a known list, or if unset the model the database's vectors are under)
 - `stub` → `"stub-embeddings"`
 - `local` → `` `local:${EMBEDDINGS_MODEL}` `` (e.g. `local:bge-small-en-v1.5`)
 - `openai-compatible` → `` `oai:${EMBEDDINGS_MODEL}` ``

@@ -17,9 +17,28 @@ The hosted service runs on `gemini-embedding-2-preview`, which was listed for sh
 
 | Setting | Meaning |
 |---|---|
-| `EMBEDDINGS_MODEL` | The model search reads and `/check` embeds with. Required for `gemini`, and checked against a known list. An empty or unknown value stops the process at start. |
+| `EMBEDDINGS_MODEL` | The model search reads and `/check` embeds with. Optional for `gemini`: see below. A value is checked against a known list, and an unknown one stops the process at start. |
 | `EMBEDDINGS_REBUILD_TARGET` | A second model to keep a complete set of vectors for. Empty means none. |
 | `EMBEDDINGS_REBUILD_VECTORS_PER_MINUTE` | The rebuild's pace across all tasks. Default 600. `0` pauses. |
+
+**Unset, the database says which model.** Upgrading with no new variable has to keep working and can't silently flip. So with `EMBEDDINGS_MODEL` unset on `gemini`, each process decides once, after migrations and before anything reads or embeds, and logs `[embedding-model] read model=<id> source=database reason="<why>"`. It looks only at which `gemini-*` models hold complete vectors, never how many, because a partial rebuild can outnumber the model reads are on:
+
+| Database holds | Target | Reads |
+|---|---|---|
+| Vectors under one model | none | That model |
+| Vectors under two models | one of them | The other one, whichever has more |
+| Vectors under two models | none | **Refuses to start**: either could be a partial rebuild |
+| Vectors only under the target | that model | **Refuses to start** |
+| Vectors only under a model this code doesn't run | any | **Refuses to start** |
+| No vectors, one known model in `vector_cache` | any other | That model, so a stack that reset its corpus keeps its paid-for vectors |
+| No vectors, otherwise | not `gemini-embedding-2` | `gemini-embedding-2`, the recommended model |
+| No vectors, otherwise | `gemini-embedding-2` | **Refuses to start** |
+
+Tasks in a rolling deploy agree. The answer changes only through something an operator did: setting or removing a target, or pruning a model. A task that has started keeps its answer until it exits, and a new task reaching a different answer is the same overlap as an explicit flip, which both tasks answer in full. If two models are present and the target has been removed, the new task refuses and the old ones keep serving. No answer is stored, so there's nothing to drift from the database.
+
+If the lookup fails, the process exits with the cause instead of using a default, since a default after a failed lookup is how reads change model unnoticed. It can't serve without that database anyway. A set value doesn't look anything up.
+
+Flipping needs the setting: reads move only when `EMBEDDINGS_MODEL` names the new model or the target names the old one. Refusing can stop a replacement task on a stack with two models and no target, which is an outage if every old task is gone too. That's the cost of not guessing, it's loud, and the message names the fix. A stack that runs a rebuild should keep `EMBEDDINGS_MODEL` set until the old model is pruned.
 
 **One rule does the rebuild, the catch-up and the flip back.** Every minute, the sweep adds pending rows for chunks missing a row under an active model, the read model first, within the budget. Rows still in flight count against it. New recipes get rows the same way, so vectors written by either side of a deploy are caught up by whichever task runs the sweep.
 
@@ -38,10 +57,8 @@ The hosted service runs on `gemini-embedding-2-preview`, which was listed for sh
 ## Steps
 
 ```
-# 0. Before merging: set EMBEDDINGS_MODEL to the model already in use. Old images ignore it.
-EMBEDDINGS_MODEL=gemini-embedding-2-preview
-
-# 1. Deploy this code, then in a second deploy set the target. Don't set it while
+# 1. Deploy this code, with nothing new set. The log shows the model it found.
+#    Then in a second deploy set the target. Don't set it while
 #    tasks from before this code run: they'd write vectors under the old constant.
 EMBEDDINGS_REBUILD_TARGET=gemini-embedding-2
 
@@ -54,7 +71,8 @@ EMBEDDINGS_REBUILD_TARGET=gemini-embedding-2-preview
 
 # 4. Flip back at any time by deploying the swap again.
 
-# 5. When settled, deploy with the target empty. The old rows stop being written.
+# 5. When settled, deploy with the target empty and EMBEDDINGS_MODEL still set. The
+#    old rows stop being written.
 EMBEDDINGS_REBUILD_TARGET=
 
 # 6. Later, optionally, remove the old rows. Dry run unless --apply.
@@ -117,7 +135,7 @@ One filtered nearest-neighbour query took 14 ms before and after an identical re
 
 ## Outage
 
-None planned. The deploys are ordinary rolling ones. A deploy with a bad value crashes the new task and the old one keeps serving.
+None planned. The deploys are ordinary rolling ones. A deploy with a bad value, or two models and nothing to choose between them, crashes the new task and the old one keeps serving.
 
 ## Rollback
 
@@ -127,6 +145,10 @@ The code itself can be reverted while reads are on the old constant's model. It 
 
 ## Alternatives considered
 
+- **Requiring `EMBEDDINGS_MODEL`**, which was this ADR's first draft. It's the most explicit, and it breaks every existing stack on upgrade until someone sets a variable that says what the database already shows.
+- **A code default for an unset model.** No lookup, and when the default changes, every stack relying on it flips silently, which is how this began.
+- **Choosing the model with the most vectors, or the oldest rows.** Stable-looking, and each picks wrong in a real state: most flips on an overtaking rebuild, and oldest flips back after a flip whose old rows aren't pruned yet.
+- **Recording the chosen model in the database at first start.** It would answer the two-model case, with a second source of truth that disagrees with the setting after an explicit flip.
 - **A pointer in the database that operators flip**, instead of an environment variable. It would flip without a deploy, but every process would need to re-read it, a process's cache and wire would need to agree mid-request, and a wrong value would have no start-time check. Env is what the rest of the configuration uses.
 - **A new column, or a shadow table, for the new model.** The existing key already separates models, and a shadow table doubles the code that reads vectors.
 - **Relabelling rows, on the strength of the identical comparisons.** Free and instant, and it depends on a promise Google hasn't made. It remains as the emergency fallback, as a separate held build.

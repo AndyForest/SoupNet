@@ -65,6 +65,8 @@ async function main(): Promise<void> {
   const { getDb, runMigrations } = await import("../db");
   await runMigrations();
   const db = getDb();
+  const { resolveEmbeddingReadModel } = await import("../lib/embeddings/read-model-resolve");
+  await resolveEmbeddingReadModel(db);
   const { runSearchPipeline } = await import("../services/search-pipeline");
 
   const state = JSON.parse(readFileSync(path.join(datasetDir, ".gradeprep.json"), "utf-8")) as PrepState;

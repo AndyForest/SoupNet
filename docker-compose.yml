@@ -59,9 +59,10 @@ services:
       # vectors for tests, no quota cost), "local" (in-process CPU model, no key),
       # or "openai-compatible" (any /v1/embeddings endpoint).
       EMBEDDINGS_PROVIDER: ${EMBEDDINGS_PROVIDER:-gemini}
-      # Model id search reads — required for "gemini" (the backend won't start
-      # without it), the "local" model (default baked in the image), or the model id
-      # the openai-compatible endpoint reports.
+      # Model id search reads — for "gemini", empty means the model the database's
+      # vectors are under, or gemini-embedding-2 on a new database; the "local" model
+      # (default baked in the image); or the model id the openai-compatible endpoint
+      # reports.
       EMBEDDINGS_MODEL: ${EMBEDDINGS_MODEL:-}
       # Changing model with search working throughout: docs/adr/0024-embedding-model-switch.md
       EMBEDDINGS_REBUILD_TARGET: ${EMBEDDINGS_REBUILD_TARGET:-}

@@ -36,7 +36,8 @@
  * wire, the worker and the cache all resolve here. EMBEDDINGS_MODEL is the id
  * search reads and the sync path writes. EMBEDDINGS_REBUILD_TARGET is a second id
  * the worker keeps a full set of vectors for. validateEmbeddingConfig() fails the
- * process at start on an empty or unknown id.
+ * process at start on an unknown id. With EMBEDDINGS_MODEL unset on gemini, the id
+ * comes from the database once, at start (read-model-resolve.ts).
  *
  * Multimodal support: gemini is multimodal; stub, local, and openai-compatible are
  * text-only and fold multimodal parts into the concatenated text (image bytes are
@@ -72,10 +73,13 @@ export type EmbeddingProviderId = "gemini" | "stub" | "local" | "openai-compatib
  * asked and accepts text and image parts. Listed rather than free-form because a
  * typo as the read id is a silently empty search. A new model is one line here.
  */
-const GEMINI_MODELS: ReadonlySet<string> = new Set([
+export const GEMINI_MODELS: ReadonlySet<string> = new Set([
   "gemini-embedding-2-preview",
   "gemini-embedding-2",
 ]);
+
+/** What a database with no vectors starts on. Never moves one that has them. */
+export const RECOMMENDED_GEMINI_MODEL = "gemini-embedding-2";
 
 const DEFAULT_REBUILD_VECTORS_PER_MINUTE = 600;
 
@@ -92,16 +96,26 @@ function assertKnownGeminiModel(modelId: string, source: string): string {
   return modelId;
 }
 
+let resolvedGeminiReadModel: string | null = null;
+
+/** Called by read-model-resolve.ts, which holds the rule. */
+export function setResolvedGeminiReadModel(modelId: string): void {
+  resolvedGeminiReadModel = assertKnownGeminiModel(modelId, "the model found in the database");
+}
+
 function geminiReadModelId(): string {
   const model = trimmedEnv("EMBEDDINGS_MODEL");
-  if (!model) {
-    throw new Error(
-      'EMBEDDINGS_MODEL is required when EMBEDDINGS_PROVIDER="gemini". Set it to the model your ' +
-        "stored vectors were made with (the model_id on claimnet.embedding_vectors); on a new " +
-        `install, the newest of: ${[...GEMINI_MODELS].join(", ")}.`,
-    );
-  }
-  return assertKnownGeminiModel(model, "EMBEDDINGS_MODEL");
+  if (model) return assertKnownGeminiModel(model, "EMBEDDINGS_MODEL");
+  if (resolvedGeminiReadModel) return resolvedGeminiReadModel;
+  throw new Error(
+    "The embedding read model isn't settled yet. Set EMBEDDINGS_MODEL, or call " +
+      "resolveEmbeddingReadModel() after migrations in this process's entry point.",
+  );
+}
+
+/** False only on gemini with no setting, before the database has been asked. */
+function readModelSettled(): boolean {
+  return selectProvider() !== "gemini" || Boolean(trimmedEnv("EMBEDDINGS_MODEL")) || resolvedGeminiReadModel !== null;
 }
 
 let cachedProvider: EmbeddingProviderId | null = null;
@@ -184,7 +198,8 @@ function bareModelName(model: string): string {
 /**
  * The model_id search reads and the sync path writes. Provider-derived so cache
  * and search are naturally model-scoped:
- *   - gemini            → EMBEDDINGS_MODEL, required, one of GEMINI_MODELS
+ *   - gemini            → EMBEDDINGS_MODEL, one of GEMINI_MODELS, or if unset the
+ *                         id resolveEmbeddingReadModel() settled at start
  *   - stub              → "stub-embeddings"
  *   - local             → `local:${bareModel}` (e.g. "local:bge-small-en-v1.5")
  *   - openai-compatible → `oai:${bareModel}`
@@ -225,7 +240,7 @@ export function getRebuildTargetModelId(): string | null {
         "Unset it and change EMBEDDINGS_MODEL instead; search is empty until the worker catches up.",
     );
   }
-  if (target === getEmbeddingModelId()) {
+  if (readModelSettled() && target === getEmbeddingModelId()) {
     throw new Error(
       `EMBEDDINGS_REBUILD_TARGET="${raw}" is the model reads already use. Unset it, or name a different model.`,
     );
@@ -249,10 +264,14 @@ export function getRebuildVectorsPerMinute(): number {
   return Number(raw);
 }
 
-/** Fail the process at start on an empty or unknown model configuration. */
+/**
+ * Fail the process at start on an unknown model configuration. Runs before the
+ * database is touched, so the unset gemini case is settled later, by
+ * resolveEmbeddingReadModel().
+ */
 export function validateEmbeddingConfig(): void {
   selectProvider();
-  getEmbeddingModelId();
+  if (readModelSettled()) getEmbeddingModelId();
   getRebuildTargetModelId();
   getRebuildVectorsPerMinute();
 }
