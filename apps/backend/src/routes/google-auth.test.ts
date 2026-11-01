@@ -493,18 +493,101 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
   }
 
   async function verifyEmail(token: string, session: string | null = null): Promise<{ email?: string; googleSignInRemoved?: boolean }> {
-    const res = await call(session, "POST", "/auth/verify", { token });
+    const res = await call(session, "POST", "/auth/verify", { token, confirm: true });
     expect(res.status).toBe(200);
     return ((await res.json()) as { data: { email?: string; googleSignInRemoved?: boolean } }).data;
   }
+
+  it("GSI-LINK-08 / SSO-A4b, F146: without the person's confirmation nothing is verified or removed", async () => {
+    const email = address("f146-scanner", `outside-${run}.example`);
+    const cySub = sub();
+    const cy = signedIn(await signIn(consumer(email, cySub)));
+    const token = await verificationTokenOf(cy.userId);
+
+    // What a mail scanner running the page's script sends.
+    const scanned = await call(null, "POST", "/auth/verify", { token });
+    expect(scanned.status).toBe(200);
+    expect(((await scanned.json()) as { data: unknown }).data).toEqual({ verified: false, confirmationRequired: true });
+    expect((await userRow(cy.userId)).email_verified_at).toBeNull();
+    expect((await identitiesOf(cy.userId)).map((i) => i.subject)).toEqual([cySub]);
+    expect((await call(cy.token, "GET", "/auth/me")).status).toBe(200);
+
+    // The link still works in the browser that signed up, with no confirmation asked.
+    const own = await call(cy.token, "POST", "/auth/verify", { token });
+    expect(((await own.json()) as { data: { verified: boolean } }).data.verified).toBe(true);
+    expect((await identitiesOf(cy.userId)).map((i) => i.subject)).toEqual([cySub]);
+  });
+
+  it("GSI-LINK-08 / SSO-A4b: a password account is never asked to confirm", async () => {
+    const email = address("f146-password", `outside-${run}.example`);
+    const registered = await call(null, "POST", "/auth/register", { email, password: PASSWORD, tosAccepted: true });
+    const token = ((await registered.json()) as { data: { verificationToken: string } }).data.verificationToken;
+    const res = await call(null, "POST", "/auth/verify", { token });
+    expect(((await res.json()) as { data: { verified: boolean; confirmationRequired?: boolean } }).data).toMatchObject({ verified: true });
+  });
+
+  /** A callback that has issued its handoff code, not yet exchanged. */
+  async function heldHandoff(claims: FakeIdClaims): Promise<{ handoff: string; secret: string }> {
+    const { started } = await start();
+    if (!started) throw new Error("start failed");
+    const code = google.issue(claims, { nonce: started.nonce, codeChallenge: started.codeChallenge });
+    const cb = await callback({ state: started.state, code });
+    return { handoff: cb.fragment.get("handoff") ?? "", secret: started.secret };
+  }
+
+  async function expectInvalidHandoff(held: { handoff: string; secret: string }): Promise<void> {
+    expect(held.handoff).not.toBe("");
+    const res = await exchange(held.handoff, held.secret);
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe("invalid_handoff");
+  }
+
+  it("SSO-G5b / F143: a handoff code held across the owner's verification produces no session", async () => {
+    const email = address("f143-held", `outside-${run}.example`);
+    const strangerSub = sub();
+    const stranger = signedIn(await signIn(consumer(email, strangerSub)));
+    const held = await heldHandoff(consumer(email, strangerSub));
+    expect((await verifyEmail(await verificationTokenOf(stranger.userId))).googleSignInRemoved).toBe(true);
+    await expectInvalidHandoff(held);
+  });
+
+  it("SSO-G5b / F143: a handoff code held across a takeover produces no session, and the new owner's does", async () => {
+    const email = address("f143-takeover");
+    const gilSub = sub();
+    signedIn(await signIn(consumer(email, gilSub)));
+    const held = await heldHandoff(consumer(email, gilSub));
+    const val = signedIn(await signIn(workspace(email)));
+    await expectInvalidHandoff(held);
+    expect((await call(val.token, "GET", "/auth/me")).status).toBe(200);
+  });
+
+  it("SSO-G5b / F143: a callback that resolved before the removal issues no code after it", async () => {
+    const { issueHandoff } = await import("../services/google-sign-in.service");
+    const email = address("f143-inflight", `outside-${run}.example`);
+    const strangerSub = sub();
+    const stranger = signedIn(await signIn(consumer(email, strangerSub)));
+    const issuer = ((await getDb().execute(sql`SELECT issuer FROM claimnet.user_identities WHERE user_id = ${stranger.userId}::uuid`)) as unknown as Array<{ issuer: string }>)[0]!.issuer;
+    const { started } = await start();
+    const request = ((await getDb().execute(sql`SELECT id FROM claimnet.sso_login_requests WHERE state_hash = ${sha256(started!.state)}`)) as unknown as Array<{ id: string }>)[0]!;
+    const input = {
+      requestId: request.id,
+      userId: stranger.userId,
+      claims: { issuer, subject: strangerSub, email, emailVerified: true, hostedDomain: null, name: null },
+      idp: "google-consumer" as const,
+    };
+    // The same call issues a code while the identity holds the account.
+    expect(await issueHandoff(getDb(), input)).toBeTruthy();
+    expect((await verifyEmail(await verificationTokenOf(stranger.userId))).googleSignInRemoved).toBe(true);
+    expect(await issueHandoff(getDb(), input)).toBeNull();
+  });
 
   it("GSI-LINK-06 / SSO-A4b: the mailbox's owner verifying ends a stranger's Google sign-up, and the owner's Workspace sign-in works", async () => {
     const email = address("victim-f137", `outside-${run}.example`);
     const strangerSub = sub();
     const stranger = signedIn(await signIn(consumer(email, strangerSub)));
     const token = await verificationTokenOf(stranger.userId);
-    await new Promise((r) => setTimeout(r, 1100));
 
+    // No wait: a session from the same second as the click dies too (F145).
     expect((await verifyEmail(token)).googleSignInRemoved).toBe(true);
     expect((await userRow(stranger.userId)).email_verified_at).not.toBeNull();
     expect(await identitiesOf(stranger.userId)).toEqual([]);
@@ -522,6 +605,8 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
     const owner = signedIn(await signIn(workspace(email, ownerSub)));
     expect(owner.userId).toBe(stranger.userId);
     expect((await identitiesOf(owner.userId)).map((i) => i.subject)).toEqual([ownerSub]);
+    // Possibly still inside the cut-off's second: the handoff dates its session at the cut-off.
+    expect((await call(owner.token, "GET", "/auth/me")).status).toBe(200);
   });
 
   it("GSI-LINK-06 / SSO-A4b: only the sign-up's own session keeps its identity; another account's session doesn't", async () => {
@@ -561,10 +646,14 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
 
     const stranger = signedIn(await signIn(consumer(address("f137-full", domain))));
     const token = await verificationTokenOf(stranger.userId);
-    // Past the one-second cut-off, so a removal would end this session.
-    await new Promise((r) => setTimeout(r, 1100));
 
-    const refused = await call(null, "POST", "/auth/verify", { token });
+    // F146: nothing happens until the person confirms.
+    const asked = await call(null, "POST", "/auth/verify", { token });
+    expect(asked.status).toBe(200);
+    expect(((await asked.json()) as { data: unknown }).data).toEqual({ verified: false, confirmationRequired: true });
+    expect(await identitiesOf(stranger.userId)).toHaveLength(1);
+
+    const refused = await call(null, "POST", "/auth/verify", { token, confirm: true });
     expect(refused.status).toBe(409);
     expect(((await refused.json()) as { error: string }).error).toBe("organization_full");
     expect((await userRow(stranger.userId)).email_verified_at).toBeNull();

@@ -847,11 +847,13 @@ auth.post("/verify", verifyRateLimit, async (c) => {
   // the address stays unverified and the same link works once a seat frees
   // (OD-C1). The Google identity settled first (F137) rolls back with them,
   // so that later click settles it instead.
-  const outcome: { updated?: { id: string; email: string; waitlisted: boolean }; joined?: string; googleSignInRemoved?: boolean } = {};
+  const confirmed = (body as { confirm?: unknown }).confirm === true;
+  const outcome: { updated?: { id: string; email: string; waitlisted: boolean }; joined?: string; googleSignIn?: "proceed" | "confirm" | "removed" } = {};
   try {
     await db.transaction(async (tx) => {
       // Before the UPDATE, which is what makes the account verified.
-      outcome.googleSignInRemoved = await settleGoogleIdentityOnVerify(tx, token, session);
+      outcome.googleSignIn = await settleGoogleIdentityOnVerify(tx, token, session, confirmed);
+      if (outcome.googleSignIn === "confirm") return;
       const result = await tx.execute(sql`
         UPDATE claimnet.users
         SET email_verified_at = COALESCE(email_verified_at, now())
@@ -873,8 +875,11 @@ auth.post("/verify", verifyRateLimit, async (c) => {
     throw err;
   }
 
-  const updated = outcome.updated ? { ...outcome.updated, waitlisted: outcome.joined ? false : outcome.updated.waitlisted } : undefined;
+  if (outcome.googleSignIn === "confirm") {
+    return c.json({ ok: true, data: { verified: false, confirmationRequired: true } });
+  }
 
+  const updated = outcome.updated ? { ...outcome.updated, waitlisted: outcome.joined ? false : outcome.updated.waitlisted } : undefined;
   if (!updated) {
     return c.json({ ok: false, error: "Invalid or expired verification token" }, 400);
   }
@@ -912,14 +917,11 @@ auth.post("/verify", verifyRateLimit, async (c) => {
       // Waitlisted accounts get "your place is held" copy instead of
       // "sign in and start" — signing in won't work until promotion.
       waitlisted: updated.waitlisted,
-
       // The organization that manages this account, for the verify page
       // (OD-J1): the one this click joined, and on a later visit of the same
       // link the one it joined then, so a reload still says so.
       organization: managedBy ? { name: managedBy, notice: domainJoinedNotice(managedBy) } : null,
-
-      ...(outcome.googleSignInRemoved ? { googleSignInRemoved: true } : {}),
-
+      ...(outcome.googleSignIn === "removed" ? { googleSignInRemoved: true } : {}),
     },
   });
 });

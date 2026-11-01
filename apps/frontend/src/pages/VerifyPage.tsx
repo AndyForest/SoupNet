@@ -3,7 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { API_BASE, getToken, setEmailVerified, isLoggedIn } from "../auth.js";
 
 export function VerifyPage() {
-  const [status, setStatus] = useState<"loading" | "success" | "full" | "error">("loading");
+  const [status, setStatus] = useState<"loading" | "confirm" | "success" | "full" | "error">("loading");
   const [email, setEmail] = useState("");
   const [waitlisted, setWaitlisted] = useState(false);
   // What the server says when this click joined an organization on a domain
@@ -18,34 +18,25 @@ export function VerifyPage() {
   // briefly flash an error before the second response lands. Belt and braces.
   const calledRef = useRef(false);
 
-  useEffect(() => {
-    if (calledRef.current) return;
-    calledRef.current = true;
-
-    const params = new URLSearchParams(window.location.search);
-    const token = params.get("token");
-
-    if (!token) {
-      setStatus("error");
-      return;
-    }
-
+  const verify = (token: string, confirm: boolean) => {
     // This browser's session, if any, shows a Google sign-up that this click
     // comes from the same person. The backend ignores it otherwise.
     const session = getToken();
     fetch(`${API_BASE}/auth/verify`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(session ? { Authorization: `Bearer ${session}` } : {}) },
-      body: JSON.stringify({ token }),
+      body: JSON.stringify({ token, ...(confirm ? { confirm: true } : {}) }),
     })
-      .then((res) => res.json() as Promise<{ ok: boolean; error?: string; message?: string; detail?: string; data?: { email: string; waitlisted?: boolean; organization?: { name: string; notice: string } | null; googleSignInRemoved?: boolean } }>)
+      .then((res) => res.json() as Promise<{ ok: boolean; error?: string; message?: string; detail?: string; data?: { email: string; waitlisted?: boolean; organization?: { name: string; notice: string } | null; googleSignInRemoved?: boolean; confirmationRequired?: boolean } }>)
       .then((data) => {
         if (!data.ok && data.error === "organization_full") {
           setFullLines([data.message ?? "", data.detail ?? ""].filter(Boolean));
           setStatus("full");
           return;
         }
-        if (data.ok && data.data) {
+        if (data.ok && data.data?.confirmationRequired) {
+          setStatus("confirm");
+        } else if (data.ok && data.data) {
           setStatus("success");
           setEmail(data.data.email);
           setWaitlisted(data.data.waitlisted === true);
@@ -59,6 +50,19 @@ export function VerifyPage() {
         }
       })
       .catch(() => setStatus("error"));
+  };
+
+  useEffect(() => {
+    if (calledRef.current) return;
+    calledRef.current = true;
+
+    const token = new URLSearchParams(window.location.search).get("token");
+
+    if (!token) {
+      setStatus("error");
+      return;
+    }
+    verify(token, false);
   }, []);
 
   return (
@@ -81,6 +85,32 @@ export function VerifyPage() {
           <p style={{ color: "var(--color-on-surface-variant)" }}>Verifying your email...</p>
         )}
 
+        {status === "confirm" && (
+          <>
+            <h1 style={{ color: "var(--color-primary)", fontSize: "1.5rem", marginBottom: "var(--space-md)" }}>
+              One more step
+            </h1>
+            <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)" }}>
+              This sign-up came through a Google account that isn't signed in on this browser. If you started it yourself, open this link in the browser you signed up in, and you'll keep signing in with Google.
+            </p>
+            <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)" }}>
+              If you didn't start it, or can't open it there, verify here. That Google account will be removed from this address.
+            </p>
+            <button
+              style={{ width: "100%", justifyContent: "center" }}
+              onClick={() => {
+                const token = new URLSearchParams(window.location.search).get("token");
+                if (token) {
+                  setStatus("loading");
+                  verify(token, true);
+                }
+              }}
+            >
+              Verify and remove that Google account
+            </button>
+          </>
+        )}
+
         {status === "success" && (
           <>
             <h1 style={{ color: "var(--color-primary)", fontSize: "1.5rem", marginBottom: "var(--space-md)" }}>
@@ -98,7 +128,7 @@ export function VerifyPage() {
             )}
             {googleSignInRemoved && (
               <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)" }}>
-                This address's sign-up came through a Google account that wasn't signed in on this browser, so that Google account has been removed. To sign in, set a password with the forgotten-password link on the next page, or use a Gmail or Google Workspace account on this address.
+                That Google account has been removed. To sign in, set a password with the forgotten-password link on the next page, or use a Google Workspace account on this address.
               </p>
             )}
             {!waitlisted && (
