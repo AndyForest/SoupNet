@@ -271,7 +271,6 @@ export async function resolveAccount(
                   updated_at = now()
               WHERE id = ${decision.userId}::uuid
             `);
-            await cancelHandoffs(tx, decision.userId);
             await invalidateSessions(tx as unknown as PostgresJsDatabase, decision.userId);
           }
           await insertIdentity(tx, decision.userId, claims, email, "email_match");
@@ -295,18 +294,6 @@ export async function resolveAccount(
     console.error("[google-sign-in] account resolution failed:", err);
     return "failed";
   }
-}
-
-/**
- * The account's Google identity changed hands: a handoff code already issued
- * for it must not produce a session (F143). Runs under the lock on the users
- * row that `issueHandoff` also takes.
- */
-async function cancelHandoffs(tx: SqlExecutor, userId: string): Promise<void> {
-  await tx.execute(sql`
-    UPDATE claimnet.sso_login_requests SET handoff_consumed_at = now()
-    WHERE user_id = ${userId}::uuid AND handoff_hash IS NOT NULL AND handoff_consumed_at IS NULL
-  `);
 }
 
 /**
@@ -345,7 +332,6 @@ export async function settleGoogleIdentityOnVerify(tx: Tx, token: string, sessio
   }
   if (!confirmed) return "confirm";
   await tx.execute(sql`DELETE FROM claimnet.user_identities WHERE user_id = ${userId}::uuid AND provider = 'google'`);
-  await cancelHandoffs(tx, userId);
   await invalidateSessions(db, userId);
   return "removed";
 }
@@ -452,8 +438,8 @@ export async function completeGoogleSignIn(
 /**
  * Issue the handoff code, if this Google identity still holds the account
  * (F143): it may have been removed or taken over since the sign-in resolved.
- * The share lock orders this against `cancelHandoffs`, which runs under the
- * row's update lock: either the identity is already gone here, or this code is
+ * The share lock orders this against `invalidateSessions`, which cancels codes
+ * under the row's update lock: either the identity is already gone here, or this code is
  * committed for that cancellation to find. The identity is read in a later
  * statement than the lock, so it sees whatever the lock waited for.
  */
@@ -495,7 +481,7 @@ async function sessionRefusal(db: SqlExecutor, userId: string, idp: GoogleSessio
 // ── 3. Exchange ──────────────────────────────────────────────────────────────
 
 export type HandoffResult =
-  | { ok: true; userId: string; idp: GoogleSessionIdp; target: ReturnTarget; notBeforeSeconds: number | null }
+  | { ok: true; userId: string; idp: GoogleSessionIdp; target: ReturnTarget; issuedAt: number }
   | { ok: false; error: GoogleSignInError | "invalid_handoff" };
 
 /**
@@ -504,13 +490,14 @@ export type HandoffResult =
  * secret's hash are all in the WHERE, so a wrong secret consumes nothing and
  * every kind of refusal is the same `invalid_handoff`.
  *
- * It also reads the account's session cut-off, for a new owner whose takeover
- * set one a moment ago: the session is dated no earlier than that, or it would
- * be refused (F145). Read in this statement, so a code that wins the race
- * against a later cut-off doesn't see that cut-off, and the time the caller
- * took before this call leaves its session behind it.
+ * `issuedAt` is what the session is to be dated. Taken before the statement,
+ * which also reads the account's session cut-off: a new owner whose takeover
+ * set one a moment ago gets a session dated at it, or it would be refused, while
+ * a code that wins the race against a later cut-off doesn't see it and is dated
+ * before it (F145, F147).
  */
 export async function exchangeHandoff(db: PostgresJsDatabase, input: { handoff: string; secret: string }): Promise<HandoffResult> {
+  const startedAt = Math.floor(Date.now() / 1000);
   const rows = await db.execute(sql`
     UPDATE claimnet.sso_login_requests SET handoff_consumed_at = now()
     WHERE handoff_hash = ${hashToken(input.handoff)}
@@ -532,5 +519,5 @@ export async function exchangeHandoff(db: PostgresJsDatabase, input: { handoff: 
     row.return_kind === "oauth_authorize"
       ? { kind: "oauth_authorize", params: params as unknown as AuthorizeParams }
       : { kind: "app", path: typeof params["path"] === "string" ? params["path"] : "/app/dashboard" };
-  return { ok: true, userId: row.user_id, idp, target, notBeforeSeconds: row.not_before === null ? null : Number(row.not_before) };
+  return { ok: true, userId: row.user_id, idp, target, issuedAt: Math.max(startedAt, Number(row.not_before ?? 0)) };
 }

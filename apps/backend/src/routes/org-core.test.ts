@@ -529,7 +529,7 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Core", ()
     expect(refused.status).toBe(401);
     expect(((await refused.json()) as Json)["error"]).toBe("session_expired");
     expect((await call({ jwt: old }, "GET", "/auth/me")).status).toBe(401);
-    await new Promise((r) => setTimeout(r, 1100));
+    // No wait: a sign-in after the cut-off dates its session at it (F147).
     const fresh = await relogin(gus);
     expect((await call(fresh, "GET", "/recipe-books")).status).toBe(200);
   });

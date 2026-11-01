@@ -35,6 +35,7 @@ export function VerifyPage() {
           return;
         }
         if (data.ok && data.data?.confirmationRequired) {
+          setWaitlisted(data.data.waitlisted === true);
           setStatus("confirm");
         } else if (data.ok && data.data) {
           setStatus("success");
@@ -90,12 +91,20 @@ export function VerifyPage() {
             <h1 style={{ color: "var(--color-primary)", fontSize: "1.5rem", marginBottom: "var(--space-md)" }}>
               One more step
             </h1>
-            <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)" }}>
-              This sign-up came through a Google account that isn't signed in on this browser. If you started it yourself, open this link in the browser you signed up in, and you'll keep signing in with Google.
-            </p>
-            <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)" }}>
-              If you didn't start it, or can't open it there, verify here. That Google account will be removed from this address.
-            </p>
+            {waitlisted ? (
+              <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)" }}>
+                This sign-up came through a Google account. Verifying holds your place on the waitlist and removes that Google account from this address. When your spot opens, you can set a password with the forgotten-password link on the sign-in page.
+              </p>
+            ) : (
+              <>
+                <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)" }}>
+                  This sign-up came through a Google account that isn't signed in on this browser. If you started it yourself, open this link in the browser you signed up in, and you'll keep signing in with Google.
+                </p>
+                <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)" }}>
+                  If you didn't start it, or can't open it there, verify here. That Google account will be removed from this address.
+                </p>
+              </>
+            )}
             <button
               style={{ width: "100%", justifyContent: "center" }}
               onClick={() => {
@@ -128,7 +137,9 @@ export function VerifyPage() {
             )}
             {googleSignInRemoved && (
               <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)" }}>
-                That Google account has been removed. To sign in, set a password with the forgotten-password link on the next page, or use a Google Workspace account on this address.
+                {waitlisted
+                  ? "That Google account has been removed. When your spot opens, set a password with the forgotten-password link on the sign-in page, or use a Google Workspace account on this address."
+                  : "That Google account has been removed. To sign in, set a password with the forgotten-password link on the next page, or use a Google Workspace account on this address."}
               </p>
             )}
             {!waitlisted && (

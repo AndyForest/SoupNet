@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
+import { invalidateSessions } from "../authz";
 import { seedVerifiedUser } from "../test-users";
 import { startFakeGoogleIssuer } from "../test-google-issuer";
 import type { FakeGoogleIssuer, FakeIdClaims } from "../test-google-issuer";
@@ -507,7 +508,7 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
     // What a mail scanner running the page's script sends.
     const scanned = await call(null, "POST", "/auth/verify", { token });
     expect(scanned.status).toBe(200);
-    expect(((await scanned.json()) as { data: unknown }).data).toEqual({ verified: false, confirmationRequired: true });
+    expect(((await scanned.json()) as { data: unknown }).data).toEqual({ verified: false, confirmationRequired: true, waitlisted: false });
     expect((await userRow(cy.userId)).email_verified_at).toBeNull();
     expect((await identitiesOf(cy.userId)).map((i) => i.subject)).toEqual([cySub]);
     expect((await call(cy.token, "GET", "/auth/me")).status).toBe(200);
@@ -516,6 +517,20 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
     const own = await call(cy.token, "POST", "/auth/verify", { token });
     expect(((await own.json()) as { data: { verified: boolean } }).data.verified).toBe(true);
     expect((await identitiesOf(cy.userId)).map((i) => i.subject)).toEqual([cySub]);
+  });
+
+  it("GSI-LINK-08 / SSO-A4b, F148: the confirmation says when the sign-up is waitlisted, which has no browser to go back to", async () => {
+    const email = address("f148", `outside-${run}.example`);
+    const cy = signedIn(await signIn(consumer(email)));
+    const token = await verificationTokenOf(cy.userId);
+    await getDb().execute(sql`UPDATE claimnet.users SET waitlisted_at = now() WHERE id = ${cy.userId}::uuid`);
+    try {
+      const res = await call(null, "POST", "/auth/verify", { token });
+      expect(((await res.json()) as { data: unknown }).data).toEqual({ verified: false, confirmationRequired: true, waitlisted: true });
+    } finally {
+      // waitlist.service.test.ts promotes verified waitlisted accounts across the whole table.
+      await getDb().execute(sql`UPDATE claimnet.users SET waitlisted_at = NULL WHERE id = ${cy.userId}::uuid`);
+    }
   });
 
   it("GSI-LINK-08 / SSO-A4b: a password account is never asked to confirm", async () => {
@@ -561,6 +576,15 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
     expect((await call(val.token, "GET", "/auth/me")).status).toBe(200);
   });
 
+  it("SSO-G5b / F149: any session cut-off ends a held handoff code, whoever calls it", async () => {
+    const email = address("f149", "gmail.com");
+    const subject = sub();
+    const pat = signedIn(await signIn(consumer(email, subject)));
+    const held = await heldHandoff(consumer(email, subject));
+    await invalidateSessions(getDb(), pat.userId);
+    await expectInvalidHandoff(held);
+  });
+
   it("SSO-G5b / F143: a callback that resolved before the removal issues no code after it", async () => {
     const { issueHandoff } = await import("../services/google-sign-in.service");
     const email = address("f143-inflight", `outside-${run}.example`);
@@ -577,7 +601,16 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
     };
     // The same call issues a code while the identity holds the account.
     expect(await issueHandoff(getDb(), input)).toBeTruthy();
-    expect((await verifyEmail(await verificationTokenOf(stranger.userId))).googleSignInRemoved).toBe(true);
+
+    // A removal in flight: the issue waits for its row lock, then finds the identity gone.
+    let issuing: Promise<string | null> | undefined;
+    await getDb().transaction(async (tx) => {
+      await tx.execute(sql`SELECT 1 FROM claimnet.users WHERE id = ${stranger.userId}::uuid FOR UPDATE`);
+      issuing = issueHandoff(getDb(), input);
+      await new Promise((r) => setTimeout(r, 300));
+      await tx.execute(sql`DELETE FROM claimnet.user_identities WHERE user_id = ${stranger.userId}::uuid`);
+    });
+    expect(await issuing).toBeNull();
     expect(await issueHandoff(getDb(), input)).toBeNull();
   });
 
@@ -650,8 +683,14 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
     // F146: nothing happens until the person confirms.
     const asked = await call(null, "POST", "/auth/verify", { token });
     expect(asked.status).toBe(200);
-    expect(((await asked.json()) as { data: unknown }).data).toEqual({ verified: false, confirmationRequired: true });
+    expect(((await asked.json()) as { data: unknown }).data).toEqual({ verified: false, confirmationRequired: true, waitlisted: false });
     expect(await identitiesOf(stranger.userId)).toHaveLength(1);
+
+    // On a captured domain a waitlisted account joins, so it isn't told it stays waitlisted.
+    await getDb().execute(sql`UPDATE claimnet.users SET waitlisted_at = now() WHERE id = ${stranger.userId}::uuid`);
+    const askedWaitlisted = await call(null, "POST", "/auth/verify", { token });
+    expect(((await askedWaitlisted.json()) as { data: { waitlisted: boolean } }).data.waitlisted).toBe(false);
+    await getDb().execute(sql`UPDATE claimnet.users SET waitlisted_at = NULL WHERE id = ${stranger.userId}::uuid`);
 
     const refused = await call(null, "POST", "/auth/verify", { token, confirm: true });
     expect(refused.status).toBe(409);

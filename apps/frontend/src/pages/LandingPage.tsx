@@ -41,7 +41,7 @@ export function LandingPage() {
           marginBottom: "var(--space-md)",
           fontFamily: "var(--font-headline)",
         }}>
-          Your taste and judgment, in every AI agent you use.
+          Teach one, teach all your AIs.
         </p>
         <p style={{
           fontSize: "1rem",
@@ -50,9 +50,9 @@ export function LandingPage() {
           maxWidth: 580,
           margin: "0 auto var(--space-xl)",
         }}>
-          You make the calls. Your AI agents capture them as they work, then bring them back
-          in your next session, on a different tool, or to a collaborator joining the project.
-          The recipe book builds itself.
+          You make the calls. Tell your AI to &ldquo;use Soup.net throughout&rdquo; and it records
+          them as it works, then brings them back in your next session, on a different tool, or
+          to a collaborator joining the project.
         </p>
         <div style={{ display: "flex", gap: "var(--space-md)", justifyContent: "center", flexWrap: "wrap" }}>
           <Link to="/auth/register" style={{ textDecoration: "none" }}>

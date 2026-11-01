@@ -876,7 +876,12 @@ auth.post("/verify", verifyRateLimit, async (c) => {
   }
 
   if (outcome.googleSignIn === "confirm") {
-    return c.json({ ok: true, data: { verified: false, confirmationRequired: true } });
+    // A waitlisted account on a captured domain leaves the waitlist by joining
+    // (OD-C4), so the page's waitlist copy (F148) isn't for it.
+    const rows = await db.execute(sql`SELECT email, waitlisted_at IS NOT NULL AS waitlisted FROM claimnet.users WHERE email_verification_token = ${token}`);
+    const account = (rows as unknown as Array<{ email: string; waitlisted: boolean }>)[0];
+    const waitlisted = account?.waitlisted === true && !(await capturingOrganizationName(db, account.email));
+    return c.json({ ok: true, data: { verified: false, confirmationRequired: true, waitlisted } });
   }
 
   const updated = outcome.updated ? { ...outcome.updated, waitlisted: outcome.joined ? false : outcome.updated.waitlisted } : undefined;

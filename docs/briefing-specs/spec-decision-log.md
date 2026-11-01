@@ -41,7 +41,7 @@ Plan: [../planning/openai-plugin-directory.md](../planning/openai-plugin-directo
 ### Scenarios watched, with rationale for holding
 
 - **Every scenario on an API-key briefing:** unchanged. Edit 2 changes only the OAuth composition, and edit 1 only the exemplars, which the capped fixtures don't carry.
-- **`checking-behavior.feature` file-evidence scenarios:** an OAuth agent still has `file_url` (a public URL) and `file_base64` (small files) from the tool's own parameter descriptions; only the upload route, which needs a key, is gone from its briefing.
+- **`checking-behavior.feature` file-evidence scenarios:** an OAuth agent still has `file_base64` (small files) from the tool's own parameter descriptions; the upload route, which needs a key, is gone from its briefing. Superseded on `file_url`, 2026-11-01: it no longer takes a public URL, only a URL from that route.
 
 ### Measured
 
