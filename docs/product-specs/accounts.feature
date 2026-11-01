@@ -70,6 +70,20 @@ Feature: Proving a mailbox
       Then it reports success and the verification time doesn't change
       And a password sent with it isn't judged and signs nobody in
       And the page says the address is already verified, the same for every account
+      And the response tells someone with no session nothing the link doesn't already tell
+
+    @ACC-VERIFY-21
+    Scenario: A repeat click reads the same for a waitlisted, invited or suspended account
+      Given four verified accounts, one plain, one waitlisted, one invited and one suspended
+      When each link is opened again with no session
+      Then the four responses are the same apart from the address
+      And someone holding the account's own session is told they're signed in
+
+    @ACC-VERIFY-23
+    Scenario: Signing out ends the sign-up proof
+      Given someone signed up in this browser and signed in
+      When they sign out, and the link is opened here
+      Then the password is asked for
 
     @ACC-VERIFY-10
     Scenario: A waitlisted account verifies with its password
@@ -107,6 +121,12 @@ Feature: Proving a mailbox
       When Olive resets the password
       Then the page says they still work and why, with a way to review them
       And after signing in Olive can see and end both, including an app between access tokens
+
+    @ACC-VERIFY-22
+    Scenario: A reset ends the account's pending OAuth codes
+      Given Olive's account has an app part way through connecting
+      When Olive resets the password
+      Then that code can't become a connected app, and nobody else's is touched
 
     @ACC-VERIFY-19
     Scenario: After the owner resets, the stranger's proof and session are worth nothing

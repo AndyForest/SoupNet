@@ -7,7 +7,7 @@ interface VerifyResponse {
   ok: boolean;
   error?: string;
   message?: string;
-  data?: { verified: boolean; email: string; waitlisted?: boolean; passwordRequired?: boolean; ownSession?: boolean; token?: string; signInRefusal?: string };
+  data?: { verified: boolean; email: string; waitlisted?: boolean; passwordRequired?: boolean; ownSession?: boolean; alreadyVerified?: boolean; token?: string; signInRefusal?: string };
 }
 
 async function verifyRequest(body: { token: string; password?: string }): Promise<{ status: number; json: VerifyResponse }> {
@@ -28,6 +28,7 @@ export function VerifyPage() {
   const [submitting, setSubmitting] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
   const [signInRefusal, setSignInRefusal] = useState<string | null>(null);
+  const [alreadyVerified, setAlreadyVerified] = useState(false);
   const queryClient = useQueryClient();
   const [email, setEmail] = useState("");
   const [waitlisted, setWaitlisted] = useState(false);
@@ -40,6 +41,7 @@ export function VerifyPage() {
     if (!json.ok || !json.data) return false;
     setEmail(json.data.email);
     setWaitlisted(json.data.waitlisted === true);
+    setAlreadyVerified(json.data.alreadyVerified === true);
     if (json.data.passwordRequired) {
       setStatus("password");
       return true;
@@ -130,7 +132,7 @@ export function VerifyPage() {
               {waitlisted
                 ? `${email} is verified and your spot on the waitlist is held. We'll email you the moment a spot opens — nothing else to do for now.`
                 : signedIn
-                  ? `${email} is now verified, and you're signed in.`
+                  ? `${email} is ${alreadyVerified ? "already" : "now"} verified, and you're signed in.`
                   // Reached only by a repeat click, which proves nothing, so it says the
                   // same for every account. Signing in is where a person learns more.
                   : signInRefusal

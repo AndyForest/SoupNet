@@ -801,8 +801,7 @@ auth.post("/verify", verifyRateLimit, async (c) => {
   const db = getDb();
   const accounts = await db.execute(sql`
     SELECT id, email, password_hash AS "passwordHash",
-           (email_verified_at IS NOT NULL) AS "verified",
-           (waitlisted_at IS NOT NULL) AS "waitlisted"
+           (email_verified_at IS NOT NULL) AS "verified"
     FROM claimnet.users
     WHERE email_verification_token = ${token}
       AND email_verification_token_created_at > now() - interval '24 hours'
@@ -814,11 +813,16 @@ auth.post("/verify", verifyRateLimit, async (c) => {
 
   // Everything that can refuse comes before anything changes.
   const ownSession = await holdsLiveSessionOf(c, db, account.id);
+  // A repeat click proves nothing, so it says only what anyone holding the link
+  // already knows, the same for every account (F158). Signing in tells the rest.
+  if (account.verified && !ownSession) {
+    return c.json({ ok: true, data: { verified: true, alreadyVerified: true, email: account.email, ownSession: false } });
+  }
   const signingIn = !account.verified && !ownSession;
   const proved = signingIn && signupProof !== undefined && isSignupProofOf(signupProof, account.id);
   if (signingIn && !proved) {
     if (!password) {
-      return c.json({ ok: true, data: { verified: false, passwordRequired: true, email: account.email, waitlisted: account.waitlisted } });
+      return c.json({ ok: true, data: { verified: false, passwordRequired: true, email: account.email } });
     }
     const limited = await authRateLimit(c, async () => {});
     if (limited) return limited;
@@ -880,6 +884,7 @@ auth.post("/verify", verifyRateLimit, async (c) => {
     ok: true,
     data: {
       verified: true,
+      ...(account.verified ? { alreadyVerified: true } : {}),
       email: updated.email,
       pendingInvitations: pendingCount,
       // Waitlisted accounts get "your place is held" copy instead of

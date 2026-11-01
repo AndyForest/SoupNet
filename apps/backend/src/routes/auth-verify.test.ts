@@ -86,7 +86,7 @@ describe.skipIf(!BASE)("POST /auth/verify and /auth/reset-password: proving a ma
     for (let click = 0; click < 2; click += 1) {
       const { status, data } = await post("/auth/verify", { token });
       expect(status).toBe(200);
-      expect(data).toEqual({ verified: false, passwordRequired: true, email, waitlisted: false });
+      expect(data).toEqual({ verified: false, passwordRequired: true, email });
     }
     expect((await row(email)).verified).toBe(false);
   });
@@ -104,7 +104,7 @@ describe.skipIf(!BASE)("POST /auth/verify and /auth/reset-password: proving a ma
     expect((rows as unknown as Array<{ last_login_at: unknown }>)[0]?.last_login_at).toBeTruthy();
   });
 
-  it("ACC-VERIFY-13: a suspended or org-disabled account verifies with its password and gets no session, as at sign-in", async () => {
+  it("ACC-VERIFY-13: a suspended account verifies with its password and gets no session, as at sign-in (org-disabled: org-core.test.ts)", async () => {
     const { email, token } = await register("suspended");
     await getDb().execute(sql`UPDATE claimnet.users SET suspended_at = now() WHERE email = ${email}`);
     const { status, data } = await post("/auth/verify", { token, password: PASSWORD });
@@ -214,7 +214,7 @@ describe.skipIf(!BASE)("POST /auth/verify and /auth/reset-password: proving a ma
     const { email, token } = await register("waitlisted");
     await getDb().execute(sql`UPDATE claimnet.users SET waitlisted_at = now() WHERE email = ${email}`);
 
-    expect((await post("/auth/verify", { token })).data).toEqual({ verified: false, passwordRequired: true, email, waitlisted: true });
+    expect((await post("/auth/verify", { token })).data).toEqual({ verified: false, passwordRequired: true, email });
     expect((await row(email)).verified).toBe(false);
 
     const { data } = await post("/auth/verify", { token, password: PASSWORD });
@@ -342,6 +342,67 @@ describe.skipIf(!BASE)("POST /auth/verify and /auth/reset-password: proving a ma
     expect((await fetch(`${BASE}/keys/${connected.id}`, { method: "DELETE", headers })).status).toBe(200);
     const after = (await (await fetch(`${BASE}/keys`, { headers })).json()) as { data: unknown[] };
     expect(after.data).toHaveLength(1);
+
+    // Another person can't end what's left.
+    const [remaining] = listed.data.filter((k) => k.keyType !== "oauth");
+    const other = await register("reset-review-other");
+    const otherSession = String((await post("/auth/verify", { token: other.token, signupProof: other.proof })).data["token"]);
+    const refused = await fetch(`${BASE}/keys/${remaining!.id}`, { method: "DELETE", headers: { Authorization: `Bearer ${otherSession}` } });
+    expect(((await refused.json()) as { data: { deleted: boolean } }).data.deleted).toBe(false);
+    const kept = (await (await fetch(`${BASE}/keys`, { headers })).json()) as { data: unknown[] };
+    expect(kept.data).toHaveLength(1);
+  });
+
+  it("ACC-VERIFY-21: a repeat click reads the same for every account, and a session holder learns only about their own", async () => {
+    const plain = await register("repeat-plain");
+    const held = await register("repeat-waitlisted");
+    const invited = await register("repeat-invited");
+    const off = await register("repeat-suspended");
+    for (const a of [plain, held, invited, off]) await post("/auth/verify", { token: a.token, password: PASSWORD });
+    const inviter = await getDb().execute(sql`SELECT id FROM claimnet.users WHERE email = ${plain.email}`);
+    const inviterId = (inviter as unknown as Array<{ id: string }>)[0]!.id;
+    await getDb().execute(sql`
+      INSERT INTO claimnet.invitations (inviter_id, email, token, bypass_cap, expires_at)
+      VALUES (${inviterId}::uuid, ${invited.email}, ${`repeat-${invited.token}`}, false, now() + interval '1 day')
+    `);
+    const session = await signIn(plain.email);
+    await getDb().execute(sql`UPDATE claimnet.users SET waitlisted_at = now() WHERE email = ${held.email}`);
+    await getDb().execute(sql`UPDATE claimnet.users SET suspended_at = now() WHERE email = ${off.email}`);
+
+    for (const a of [plain, held, invited, off]) {
+      const { status, data } = await post("/auth/verify", { token: a.token });
+      expect(status).toBe(200);
+      expect(data).toEqual({ verified: true, alreadyVerified: true, email: a.email, ownSession: false });
+    }
+    // The proof and a password change nothing on a repeat.
+    expect((await post("/auth/verify", { token: held.token, signupProof: held.proof, password: PASSWORD })).data).toEqual({ verified: true, alreadyVerified: true, email: held.email, ownSession: false });
+
+    const own = await post("/auth/verify", { token: plain.token }, session);
+    expect(own.data).toMatchObject({ verified: true, alreadyVerified: true, ownSession: true });
+    expect(own.data["token"]).toBeUndefined();
+  });
+
+  it("ACC-VERIFY-22: a reset ends the account's pending OAuth codes and nobody else's", async () => {
+    const owner = await register("reset-codes");
+    const other = await register("reset-codes-other");
+    for (const a of [owner, other]) {
+      await getDb().execute(sql`
+        INSERT INTO claimnet.oauth_authorization_codes
+          (code_hash, client_id, user_id, redirect_uri, code_challenge, code_challenge_method, scope_read_group_ids, scope_write_group_ids, scope_default_write_group_id, expires_at)
+        SELECT ${`hash-${a.token}`}, 'test-client', u.id, 'http://127.0.0.1/cb', 'c', 'S256', ARRAY[]::uuid[], ARRAY[]::uuid[], gen_random_uuid(), now() + interval '5 minutes'
+        FROM claimnet.users u WHERE u.email = ${a.email}
+      `);
+    }
+    const codes = async (email: string) => {
+      const rows = await getDb().execute(sql`
+        SELECT count(*)::int AS n FROM claimnet.oauth_authorization_codes c JOIN claimnet.users u ON u.id = c.user_id WHERE u.email = ${email}
+      `);
+      return (rows as unknown as Array<{ n: number }>)[0]!.n;
+    };
+    expect(await codes(owner.email)).toBe(1);
+    expect((await post("/auth/reset-password", { token: await resetToken(owner.email), newPassword: "owner-new-password-5" })).status).toBe(200);
+    expect(await codes(owner.email)).toBe(0);
+    expect(await codes(other.email)).toBe(1);
   });
 
   it("refuses a malformed request and an unknown token", async () => {

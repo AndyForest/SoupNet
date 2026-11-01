@@ -578,6 +578,37 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Core", ()
     expect((await call(olive, "DELETE", `/recipe-books/${defaultBookId}/members/${max.userId}`)).status).toBe(200);
     expect((await call(olive, "PATCH", `/organizations/${orgId}/members/${max.userId}`, { role: "owner" })).status).toBe(200);
     expect(await membershipRow(defaultBookId, max.userId)).toMatchObject({ role: "owner", via: "org", daily_read: true });
+
+    // Only the default book: on another org-wide book its owner can still remove an org owner's row.
+    const created = await call(olive, "POST", "/recipe-books", { name: "Keep team", slug: `keep-team-${run}`, orgWide: true });
+    expect(created.status).toBe(201);
+    const team = ((await created.json()) as { data: { id: string } }).data.id;
+    expect((await membershipRow(team, max.userId))?.role).toBe("admin");
+    expect((await call(olive, "DELETE", `/recipe-books/${team}/members/${max.userId}`)).status).toBe(200);
+    expect(await membershipRow(team, max.userId)).toBeUndefined();
+  });
+
+  it("ACC-VERIFY-13: an org-disabled account verifies with its password, gets no session, and hears why", async () => {
+    const olive = await actor("olive-disabled");
+    const { orgId } = await createOrg(olive);
+    const sam = await actor("sam-disabled");
+    await mustAdd(orgId, sam);
+    expect((await call(olive, "POST", `/organizations/${orgId}/members/${sam.userId}/disable`)).status).toBe(200);
+    const token = `disabled-${run}-${++n}`;
+    await getDb().execute(sql`
+      UPDATE claimnet.users SET email_verified_at = NULL, email_verification_token = ${token}, email_verification_token_created_at = now()
+      WHERE id = ${sam.userId}::uuid
+    `);
+    const verify = (body: Json) =>
+      fetch(`${BASE}/auth/verify`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
+    const first = ((await (await verify({ token, password: PASSWORD })).json()) as { data: Json }).data;
+    expect(first).toMatchObject({ verified: true, email: sam.email });
+    expect(first["token"]).toBeUndefined();
+    expect(String(first["signInRefusal"])).toMatch(/disabled/i);
+
+    const repeat = ((await (await verify({ token })).json()) as { data: Json }).data;
+    expect(repeat).toEqual({ verified: true, alreadyVerified: true, email: sam.email, ownSession: false });
   });
 
   it("ORG-ROLE-06 / F153: owner_id moves off a demoted owner to a current one, on the audit trail", async () => {
@@ -599,6 +630,18 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Core", ()
     // Demoting someone who doesn't hold owner_id leaves it alone.
     expect((await call(max, "PATCH", `/organizations/${orgId}/members/${olive.userId}`, { role: "member" })).status).toBe(200);
     expect(await ownerId()).toBe(max.userId);
+
+    // It goes to an active owner ahead of a longer-standing disabled one.
+    const nia = await actor("nia-owner-id");
+    const { orgId: second } = await createOrg(nia);
+    const dan = await actor("dan-owner-id");
+    const una = await actor("una-owner-id");
+    await mustAdd(second, dan, "owner");
+    await mustAdd(second, una, "owner");
+    expect((await call(una, "POST", `/organizations/${second}/members/${dan.userId}/disable`)).status).toBe(200);
+    expect((await call(una, "PATCH", `/organizations/${second}/members/${nia.userId}`, { role: "member" })).status).toBe(200);
+    const moved = (await getDb().execute(sql`SELECT owner_id FROM claimnet.organizations WHERE id = ${second}::uuid`)) as unknown as Array<{ owner_id: string }>;
+    expect(moved[0]?.owner_id).toBe(una.userId);
   });
 
   it("ORG-ROLE-07 / F155: a hand-over gives the successor the default book's owner role", async () => {

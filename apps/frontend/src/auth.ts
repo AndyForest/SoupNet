@@ -27,6 +27,9 @@ export function setToken(token: string): void {
 export function clearToken(): void {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(EMAIL_VERIFIED_KEY);
+  // Signing out ends the sign-up proof too, so the next person at this browser
+  // can't be verified into an account they didn't make (F159).
+  clearSignupProof();
 }
 
 // The sign-up proof from POST /auth/register: with the emailed link, it verifies

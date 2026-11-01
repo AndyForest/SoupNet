@@ -96,6 +96,9 @@ export async function invalidateSessions(db: Pick<PostgresJsDatabase, "execute">
   await db.execute(sql`
     UPDATE claimnet.users SET sessions_valid_after = to_timestamp(${cutOffSeconds}) WHERE id = ${userId}::uuid
   `);
+  // A pending authorization code is a session's consent not yet redeemed, and
+  // could otherwise become a connected app after the reset counted them (F160).
+  await db.execute(sql`DELETE FROM claimnet.oauth_authorization_codes WHERE user_id = ${userId}::uuid`);
 }
 
 /**
