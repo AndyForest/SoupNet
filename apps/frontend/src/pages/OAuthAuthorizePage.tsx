@@ -2,7 +2,8 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { authFetch, isLoggedIn, API_BASE } from "../auth.js";
-import { isRegisteredRedirectUri } from "../lib/oauth-redirect.js";
+import { isRegisteredRedirectUri } from "@soupnet/contracts/oauth-redirect";
+import { consentIdentityCopy } from "../lib/consent-identity.js";
 import { RecipeBookScopePicker } from "../components/RecipeBookScopePicker.js";
 
 /**
@@ -169,7 +170,7 @@ export function OAuthAuthorizePage() {
 
   async function handleCancel() {
     // F44 (security-audit-2026-06-11): only navigate to a redirect_uri that is
-    // exactly registered for this client. The server builds the access_denied
+    // registered for this client. The server builds the access_denied
     // redirect (RFC 6749 §4.1.2.1) after the same check the grant makes, and
     // adds the RFC 9207 iss; anything it refuses sends the user home.
     if (!isRegisteredRedirectUri(params.redirectUri, clientQuery.data?.redirect_uris ?? [])) {
@@ -235,8 +236,8 @@ export function OAuthAuthorizePage() {
   const client = clientQuery.data;
   const books = booksQuery.data ?? [];
 
-  // F44: refuse up front when the query-string redirect_uri is not exactly
-  // registered for this client. The grant would be rejected server-side
+  // F44: refuse up front when the query-string redirect_uri is not registered
+  // for this client. The grant would be rejected server-side
   // anyway — failing here means we never render a consent screen whose
   // Cancel/Authorize flow involves an attacker-chosen destination.
   if (client && !isRegisteredRedirectUri(params.redirectUri, client.redirect_uris)) {
@@ -255,7 +256,7 @@ export function OAuthAuthorizePage() {
   }
 
   const asksEmail = params.scope.split(/\s+/).includes("email");
-  const verifiedDomain = client?.verified_domain ?? null;
+  const identity = consentIdentityCopy(client?.verified_domain ?? null, params.redirectUri);
 
   const canSubmit =
     readIds.length > 0 &&
@@ -274,26 +275,14 @@ export function OAuthAuthorizePage() {
         {asksEmail && <> It also asks to see your email address.</>}
       </p>
 
-      {/* F44: a dynamically registered client's name is self-reported (anonymous
-          DCR), so an attacker can register as any name. A client identified by
-          a metadata document is vouched for by the domain that published it.
-          Either way, surface the actual destination so the user can judge. */}
+      {/* F44 and F129: see consent-identity.ts. Whatever the copy says, surface
+          the actual destination so the user can judge. */}
       <div style={warningBoxStyle} data-testid="oauth-client-identity">
-        {verifiedDomain ? (
-          <>
-            <strong>Published by {verifiedDomain}.</strong> The name above comes from a document on{" "}
-            {verifiedDomain}. After you authorize (or cancel), your browser will be sent to:
-          </>
-        ) : (
-          <>
-            <strong>Unverified app.</strong> The name above is self-reported by the connector, not
-            verified by Soup.net. After you authorize (or cancel), your browser will be sent to:
-          </>
-        )}
+        <strong>{identity.lead}</strong> {identity.detail}
         <div style={{ fontFamily: "monospace", fontSize: "0.85em", marginTop: "var(--space-xs)", wordBreak: "break-all" }}>
           {params.redirectUri}
         </div>
-        Only continue if you started this connection yourself from that app.
+        {identity.closing}
       </div>
 
       <h2 style={h2Style}>Choose recipe books</h2>
