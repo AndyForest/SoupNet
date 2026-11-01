@@ -305,6 +305,7 @@ export async function joinOrganizationInTx(tx: SqlExecutor, input: JoinInput): P
     WHERE g.organization_id = ${organizationId}::uuid AND g.org_wide
     ON CONFLICT (group_id, user_id) DO NOTHING
   `);
+  if (role === "owner") await syncDefaultBookOwners(tx, organizationId);
 
   // A new account on a verified domain was just made by the sign-up it
   // arrived through; every other arrival is an account that existed, and is
@@ -600,6 +601,7 @@ export async function actOnMember(db: PostgresJsDatabase, input: MemberActionInp
           -- is held by being the organization's owner, so it follows the role.
           AND (gm.via = 'org' OR g.org_default)
       `);
+      await syncDefaultBookOwners(tx, organizationId);
     }
 
     await tx.execute(sql`
@@ -612,6 +614,22 @@ export async function actOnMember(db: PostgresJsDatabase, input: MemberActionInp
 }
 
 // ── Account deletion ────────────────────────────────────────────────────────
+
+/**
+ * Every owner of the organization holds the owner role on its default book
+ * (F141). Org owners otherwise hold a book's admin role, and renaming a book
+ * or removing a member takes its owner, so without this a demoted creator
+ * would leave the default book with nobody who can do either. Nobody changes
+ * their own role, so a demotion always leaves another owner to hold it.
+ */
+async function syncDefaultBookOwners(tx: SqlExecutor, organizationId: string): Promise<void> {
+  await tx.execute(sql`
+    UPDATE claimnet.group_members gm SET role = 'owner'
+    FROM claimnet.groups g, claimnet.organization_members om
+    WHERE gm.group_id = g.id AND g.organization_id = ${organizationId}::uuid AND g.org_default
+      AND om.organization_id = ${organizationId}::uuid AND om.user_id = gm.user_id AND om.role = 'owner'
+  `);
+}
 
 /**
  * The deletion cascade's first step for company organizations the departing
@@ -654,6 +672,7 @@ export async function handOverOrganizationsOwnedBy(tx: SqlExecutor, userId: stri
           AND ${membershipOf("gm", successor.user_id)} AND gm.via = 'org'
       `);
     }
+    await syncDefaultBookOwners(tx, id);
     await tx.execute(sql`
       INSERT INTO claimnet.audit_log (actor_user_id, action, target_type, target_id, metadata)
       VALUES (${userId}::uuid, 'organization.owner_handed_over', 'organization', ${id}::uuid,

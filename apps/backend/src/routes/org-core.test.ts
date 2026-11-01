@@ -537,18 +537,28 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Core", ()
     const max = await actor("max-promoted");
     await mustAdd(orgId, max, "owner");
     expect(await membershipRow(defaultBookId, olive.userId)).toMatchObject({ role: "owner", via: "direct" });
+    // Every org owner holds the default book's owner role, however they became one.
+    expect(await membershipRow(defaultBookId, max.userId)).toMatchObject({ role: "owner", via: "org" });
+    const ada = await actor("ada-promoted");
+    await mustAdd(orgId, ada, "admin");
+    expect((await membershipRow(defaultBookId, ada.userId))?.role).toBe("admin");
+    expect((await call(max, "PATCH", `/organizations/${orgId}/members/${ada.userId}`, { role: "owner" })).status).toBe(200);
+    expect((await membershipRow(defaultBookId, ada.userId))?.role).toBe("owner");
+    expect((await call(max, "PATCH", `/organizations/${orgId}/members/${ada.userId}`, { role: "admin" })).status).toBe(200);
+    expect((await membershipRow(defaultBookId, ada.userId))?.role).toBe("admin");
 
     expect((await call(max, "PATCH", `/organizations/${orgId}/members/${olive.userId}`, { role: "member" })).status).toBe(200);
     expect((await membershipRow(defaultBookId, olive.userId))?.role).toBe("member");
     // A book in the creator's personal organization stays theirs.
     expect(await membershipRow(olive.personalBookId, olive.userId)).toMatchObject({ role: "owner", via: "direct" });
 
-    expect((await call(olive, "PATCH", `/recipe-books/${defaultBookId}`, { name: `renamed-${run}` })).status).toBe(403);
+    expect((await call(olive, "PUT", `/recipe-books/${defaultBookId}`, { name: `renamed-${run}` })).status).toBe(403);
     expect((await call(olive, "DELETE", `/recipe-books/${defaultBookId}/members/${max.userId}`)).status).toBe(403);
     expect((await membershipRow(defaultBookId, max.userId))?.role).toBe("owner");
 
     expect((await call(max, "DELETE", `/recipe-books/${defaultBookId}/members/${olive.userId}`)).status).toBe(200);
     expect(await membershipRow(defaultBookId, olive.userId)).toBeUndefined();
+    expect((await call(max, "PUT", `/recipe-books/${defaultBookId}`, { name: `renamed-${run}` })).status).toBe(200);
   });
 
   it("ORG-ROLE-01, ORG-ROLE-02 / OC-R1, OC-R2, OC-B4: role rules, org-row roles, and one 404 for everything outside", async () => {

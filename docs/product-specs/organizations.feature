@@ -126,7 +126,8 @@ Feature: Organization accounts: membership, disable, org-wide books, and joining
       When Max makes Olive a member
       Then Olive holds the member role on Acme's default book
       And Olive can't rename it or remove Max from it
-      And Max can remove Olive from it
+      And Max can remove Olive from it, and rename it
+      And every owner of Acme holds the owner role on its default book
 
     @ORG-ROLE-02
     Scenario: The role rules
