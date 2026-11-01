@@ -45,10 +45,10 @@
               "expected_behavior": "Calls get_briefing (list_my_recipe_books instead is also correct). The reply names at least one recipe book, such as Directory Review, and says whether the assistant can write to it. No recipe is created."
             },
             {
-              "description": "A judgment call before acting: the assistant checks the person's naming taste, then suggests names shaped by what came back. Creates one recipe in the person's default book.",
-              "prompt": "I'm naming a new internal project. Recipe check Soup.net for my naming taste, then suggest three names.",
-              "tools_triggered": "check_recipe",
-              "expected_behavior": "Calls check_recipe once with a recipe sentence of the form \"As a [role] working on [goal], I prefer ... so that ...\" and supporting evidence. The tool returns similar recipes or says none were found. The reply gives three names and, when recipes came back, names at least one that shaped them."
+              "description": "A read-only lookup of the person's naming taste: the assistant calls search_recipes, creates no recipe, and suggests three names shaped by what came back, or says it found nothing.",
+              "prompt": "I'm naming a new internal project. Search Soup.net for my naming taste, then suggest three names.",
+              "tools_triggered": "search_recipes",
+              "expected_behavior": "Calls search_recipes and creates no recipe. When relevant recipes come back, the reply suggests three names shaped by those results and names at least one recipe that informed them. If nothing relevant is found, the reply says so."
             },
             {
               "description": "Recording a decision the person just made, to a named recipe book. Creates one recipe in Directory Review.",
