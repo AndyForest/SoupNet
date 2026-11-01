@@ -69,6 +69,7 @@ Feature: Proving a mailbox
       When the link of a verified account is opened again
       Then it reports success and the verification time doesn't change
       And a password sent with it isn't judged and signs nobody in
+      And the page says the address is already verified, the same for every account
 
     @ACC-VERIFY-10
     Scenario: A waitlisted account verifies with its password

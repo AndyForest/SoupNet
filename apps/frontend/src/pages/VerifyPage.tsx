@@ -131,9 +131,11 @@ export function VerifyPage() {
                 ? `${email} is verified and your spot on the waitlist is held. We'll email you the moment a spot opens — nothing else to do for now.`
                 : signedIn
                   ? `${email} is now verified, and you're signed in.`
+                  // Reached only by a repeat click, which proves nothing, so it says the
+                  // same for every account. Signing in is where a person learns more.
                   : signInRefusal
                     ? `${email} is now verified. ${signInRefusal}`
-                    : `${email} is now verified. You can sign in and start using Soup.net.`}
+                    : `${email} is already verified.`}
             </p>
             {signedIn && (
               <Link to="/app/dashboard" style={{ textDecoration: "none" }}>
