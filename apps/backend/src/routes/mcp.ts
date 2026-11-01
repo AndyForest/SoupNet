@@ -417,7 +417,7 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
       ),
       file_url: z.string().optional().describe(
         "URL returned by POST /uploads, for attaching a reference file (image, PDF, audio, video) too big " +
-        "for file_base64. Other URLs are refused: the server doesn't fetch from the internet. " +
+        "for file_base64. Other URLs are refused: the server doesn't fetch them. " +
         "Mutually exclusive with file_base64."
       ),
       file_base64: z.string().optional().describe(

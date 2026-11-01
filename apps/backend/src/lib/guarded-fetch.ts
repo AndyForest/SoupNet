@@ -18,7 +18,6 @@
  * them to a client error. The transport is a parameter so tests can exercise
  * the response handling without a network.
  */
-import http from "node:http";
 import https from "node:https";
 import dns from "node:dns";
 import net from "node:net";
@@ -167,8 +166,7 @@ type FetchDeps = { request?: RequestFn; lookup?: ReturnType<typeof guardedLookup
 /** One GET through the public-address lookup. A 3xx comes back as a redirect
  *  for the caller to judge; it is never followed here. */
 function getOnce(url: URL, opts: HopOptions, deps: FetchDeps): Promise<Hop> {
-  const secure = url.protocol === "https:";
-  const request = deps.request ?? ((secure ? https.request : http.request) as unknown as RequestFn);
+  const request = deps.request ?? (https.request as unknown as RequestFn);
 
   return new Promise((resolve) => {
     let settled = false;
@@ -190,7 +188,7 @@ function getOnce(url: URL, opts: HopOptions, deps: FetchDeps): Promise<Hop> {
         {
           protocol: url.protocol,
           hostname: url.hostname.replace(/^\[|\]$/g, ""),
-          port: url.port !== "" ? Number(url.port) : secure ? 443 : 80,
+          port: 443,
           path: `${url.pathname}${url.search}`,
           method: "GET",
           headers: { accept: opts.accept, "user-agent": opts.userAgent },
