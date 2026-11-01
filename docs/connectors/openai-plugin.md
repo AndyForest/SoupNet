@@ -8,7 +8,7 @@ Soup.net is a log of judgment calls ("recipes": a claim about a person's taste a
 
 One rule decides every flag on every tool, so a reviewer can check each value against one sentence, and a new tool inherits the rule rather than a precedent (recipe `3b166817`).
 
-- **`readOnlyHint` is true when the tool changes no state that the person or their collaborators can see.** Two kinds of write don't count. Every call writes its own audit row, the person's check log. A call that passes intent text registers that intent, which is session bookkeeping the caller asked for.
+- **`readOnlyHint` is true when the tool changes no state that the person or their collaborators can see.** Two kinds of write don't count. One is a tool's own call record: `search_recipes` and `get_briefing` write an audit row, while `get_recipes`, `list_my_recipe_books` and `get_profile` write none, and authenticating any call updates the key's last-used time. The other is session bookkeeping: an intent registered from intent text, an intent's last-used time, and the record of what a session or intent was shown. One effect goes beyond bookkeeping about the call. A draft's review window is computed from its intent's last-used time, so a `search_recipes` or `get_briefing` call carrying the id of an intent idle for over a day returns that intent's expired drafts to the review queue. Nothing is written to the draft itself. An on-behalf draft lives on its depositor's intent, so the depositor's call can return it to the queue of the person it is about.
 - **`destructiveHint` is true when the tool does more than add.** That covers overwriting something, or moving it to a state the same surface cannot undo.
 - **`openWorldHint` is true only when the tool reaches the public internet.** Everything else is bounded to the recipe books the account can read or write.
 
@@ -23,8 +23,8 @@ The definitions this follows, quoted:
 | Tool | Read-only | Destructive | Open world | Why |
 |---|---|---|---|---|
 | `check_recipe` | false | false | **true** | It stores a new recipe, so it is not read-only. It only adds: a new row, never an overwrite or a delete, and the same recipe text sent again to the same book with the same key returns the same recipe and stores nothing new. Open world because the server fetches a `file_url` attachment from the internet; private and loopback hostnames are refused by name. |
-| `search_recipes` | true | false | false | It returns recipes and logs none. It takes no feedback rows; those go through `log_feedback`. Its writes are the call's own audit row, and the intent when intent text is given (see the rule). It reads only the account's books. |
-| `get_briefing` | true | false | false | It composes text from the account's books. Its writes are the same bookkeeping as search, plus the `briefing.issued` row whose id the response returns for feedback. |
+| `search_recipes` | true | false | false | It returns recipes and logs none. It takes no feedback rows; those go through `log_feedback`. Its writes are the call's own audit row; `session_shown` and `intent_shown`, the record of what was shown; and the intent: registered from text, or `last_used_at` updated from an id, which can return expired drafts to the review queue (see the rule). It reads only the account's books. |
+| `get_briefing` | true | false | false | It composes text from the account's books. Its writes are the `briefing.issued` row whose id the response returns for feedback, and the intent, handled as in search, including the effect on expired drafts. |
 | `get_recipes` | true | false | false | It fetches by id. An id the key cannot read gets the same marker as one that does not exist. |
 | `verify_draft` | false | **true** | false | It resolves a draft (verified, rejected or not chosen) and appends the evidence that settled it. The state change is one-way on this surface: a second call is refused, and a verified draft becomes visible to the book's members. Under ChatGPT's default permission, this asks the person to confirm each resolution. |
 | `list_my_recipe_books` | true | false | false | It returns the account's books and their members. |
@@ -64,6 +64,7 @@ Each claim a description makes, and what makes it true:
 The tests also check the wording itself. Every description carries a use clause and a not-for clause. No description, and no other text in `tools/list`, uses promotional, comparative or plan wording. Any `snake_case` name in a description is a tool or one of that tool's parameters.
 
 Things this round dropped or changed, so nothing goes unnoted:
+- **`search_recipes`** lost its `feedback` parameter after the directory's tool scan questioned its read-only flag (recipe `9dbcfb77`). `check_recipe` keeps the parameter, and `log_feedback` takes `search_id`.
 - **`log_feedback`** lost "Null results earn a row." to fit its not-for clause under the 420-character limit. The briefing still teaches it: "results that didn't help are worth a row too".
 - **`synthesize`'s description** no longer begins "Premium opt-in".
 

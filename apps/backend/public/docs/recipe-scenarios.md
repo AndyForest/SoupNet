@@ -363,7 +363,7 @@ Quoted filenames match lexically — including against the file citations inside
 
 The results are the teammates' logged reasoning for exactly the code under review. The reviewer's agent weighs the change against them — and when the PR *contradicts* a logged decision, that's not automatically a defect: it may be a deliberate reversal. Surface the tension, cite the recipe, and let the humans decide.
 
-**Why search and not check:** the reviewing agent isn't holding a hypothesis about its own user's taste — it's retrieving *other people's* decisions. That's precisely what the read-only search is for, and why its results exclude your own recipes by default (`author:me` / `author:anyone` override). After the review, close the loop: the search response's `searchId` takes a feedback row (`search_id`) recording whether the surfaced judgment shaped the review.
+**Why search and not check:** the reviewing agent isn't holding a hypothesis about its own user's taste — it's retrieving *other people's* decisions. That's precisely what the read-only search is for. Its results include your own recipes by default; add `-author:me` to leave them out. After the review, close the loop: the search response's `searchId` takes a feedback row (`search_id`) recording whether the surfaced judgment shaped the review.
 
 ### Principles illustrated
 

@@ -6,7 +6,7 @@ Two narrower logs exist beside this one: [`docs/architecture/ranking-changelog.m
 
 ## In review, not yet deployed
 
-- **`search_recipes` no longer takes `feedback`.** Search now changes nothing a person can see on any input. A call that still sends it is refused and told to use `log_feedback`, which takes `search_id`; `check_recipe` keeps its `feedback` parameter.
+- **`search_recipes` no longer takes `feedback`.** Search can no longer write a feedback row. A call that still sends it is refused and told to use `log_feedback`, which takes `search_id`; `check_recipe` keeps its `feedback` parameter.
 - **Intent link** (#6a, stream B): a recipe records the task it was deposited under (`traces.intent_id`), and search gains an `intent:` qualifier, so a task's whole lineage is one query.
 - **Report read paths** (#140): `GET /intents`, `GET /intents/:id` (what a task's checks were shown, deposited and concluded) and `GET /feedback/rows`, under the API key, scoped to the caller's own fleet. Built for the behaviour-change figure the README's field-data section still quotes from July.
 - **Briefing rewrite** (#138 and a second commit): a Drafts section, "a returned recipe is a call someone made in their context, not a rule", evidence standards, and the explicit over-caution line (drafts are for calls the context does not settle, not for every call).

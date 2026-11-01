@@ -738,11 +738,13 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
     },
     {
       title: "Recipe search",
-      // Read-only by the annotation rule (recipe 3b166817): no input changes
-      // anything a person or their collaborators see. It writes no trace and
-      // takes no feedback rows, which go through log_feedback (recipe
-      // 9dbcfb77). Its writes are about the call: the check.searched audit
-      // row, and the intent when intent text is given.
+      // Marked read-only under the annotation rule (recipe 3b166817): it writes
+      // no trace and takes no feedback rows, which go through log_feedback
+      // (recipe 9dbcfb77). Its writes are the check.searched audit row, the
+      // shown-recipe ledgers (session_shown, intent_shown) and the intent:
+      // registered from text, or its last_used_at updated from an id. That
+      // update can return the intent's expired drafts to the review queue
+      // (DT-BUS-03), which docs/connectors/openai-plugin.md states.
       // Closed-world: it reads only the account's own books.
       readOnlyHint: true,
       destructiveHint: false,

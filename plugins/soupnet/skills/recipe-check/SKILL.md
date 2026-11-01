@@ -37,7 +37,7 @@ When a call is high-impact and you can't settle it from the context you hold, ch
 
 ## Search versus check
 
-Use `search_recipes` when you need calls already logged, the person's or their collaborators', without a hypothesis of your own: it is read-only and records nothing. Use `get_recipes` to read recipes by id. Use `check_recipe` when you hold a genuine hypothesis about the person's position.
+Use `search_recipes` when you need calls already logged, the person's or their collaborators', without a hypothesis of your own: it logs no recipe. Soup.net records the call and what it showed, and an intent you pass is registered or marked as used. Use `get_recipes` to read recipes by id. Use `check_recipe` when you hold a genuine hypothesis about the person's position.
 
 ## Close the loop
 

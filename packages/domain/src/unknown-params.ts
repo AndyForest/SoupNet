@@ -87,8 +87,8 @@ export function nearMissParam(name: string, accepted: readonly string[], sent: r
 }
 
 /** Names that belong on another tool, keyed `tool.param`: the refusal says
- *  where to send them, in place of a near miss. search_recipes is read-only
- *  for every input, so feedback rows go through log_feedback (recipe 9dbcfb77). */
+ *  where to send them, in place of a near miss. search_recipes writes no
+ *  feedback rows; they go through log_feedback (recipe 9dbcfb77). */
 const PARAM_STEERS: ReadonlyMap<string, string> = new Map([
   ["search_recipes.feedback", "send those rows with log_feedback; a row about a search takes search_id"],
 ]);
