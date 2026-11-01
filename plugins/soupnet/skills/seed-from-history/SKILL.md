@@ -1,22 +1,22 @@
 ---
 name: seed-from-history
-description: Optional idea for giving a Soup.net recipe book a start from decisions already made, when the person asks to bring in past calls from notes, documents, commits or old conversations, or has a thin book and such material to hand. Covers dating, evidence and whose material it is. Not for logging a decision made now; check that as usual.
+description: Optional idea for giving a Soup.net recipe book a start from decisions already made, when a person wants past calls brought in from notes, documents, commits or old conversations. The briefing covers format and dates; this covers what's worth bringing and whose it is to bring.
 ---
 
 # Seeding a recipe book from history
 
-A suggestion, for you and the person to weigh. Which sources, how much and how you go through them are yours to work out. An empty book returns nothing, so a few real past calls can make the next check useful straight away.
+A suggestion, for you and the person to weigh. Which sources, how much and how you go through them are yours to work out. The briefing has the recipe format and `decided_at`.
 
-**Worth the person's say first.** Each check logs a real recipe, and everyone who reads that book can see it, so which book it goes to and what's in bounds are their call.
+**Why it can help.** An empty book returns nothing; a handful of real past calls makes the next check useful.
 
-**What tends to be worth bringing in.** Dated choices with a reason, wherever they turn up: commit messages, decision records, review comments, notes. Facts and status belong in their own home; Soup.net holds the judgment about them.
+**Why it deserves care.** A later agent reads a backfilled recipe as this person's judgment, with no memory of how thin the source was, and everyone who reads that book sees it. So which book, and what's in bounds, are worth their say first. Showing them a few early catches voice and scope problems cheaply.
 
-**What makes a backfilled recipe hold up.**
-- `decided_at` set to the artifact's date, so it reads as a past call. Left off, a recipe counts as decided now.
-- The artifact quoted verbatim, with its date, hash or location as the citation, so a reader can check it.
-- A reconstructed reason named as your inference. If you wouldn't act on the reading, `draft: true` leaves it for the person to settle.
-- A later change of mind kept as its own recipe with its own reason, rather than merged into the old one.
+**Where it went well**
+- A person changing jobs brought past calls into their personal book. The role and the technique stayed. The evidence kept their own words, with the former employer's code, data, customers and other people's names taken out. The role was public; the employer's material wasn't theirs to carry.
+- Going through old commits, an agent dated each call from its commit and left live calls undated. Later agents could then tell a past call from a current one, and the person valued that difference.
+- When a view had changed, the newer call went in as its own recipe with its own reason, so the log shows how the judgment moved.
 
-**Other people's material.** A person's own words and choices are theirs to carry. A former employer's or client's code, data and internal details, and other people's names, usually aren't. Keeping the transferable role and technique, and asking where the line sits, tends to protect both.
-
-**Trying a few first.** Showing the person a handful catches voice and scope problems cheaply. The same recipe text, book and key return the recipe already recorded, so re-running a source won't duplicate it.
+**Where it needed fixing, or is worth watching**
+- A private reflection about a colleague sat in a project book until the book opened to the team, then had to move. A book's future readers matter as much as its current ones.
+- Facts and status can look like decisions. Soup.net holds the judgment about them; the facts have their own home.
+- A commit often says what changed and not why. A reason you reconstruct is yours, so name it as inference. If you wouldn't act on it, ask the person, or leave a draft saying what would settle it.

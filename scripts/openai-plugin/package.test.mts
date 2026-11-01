@@ -100,8 +100,8 @@ describe("the recipe-check skill (L5)", () => {
 
 describe("the optional skills", () => {
   for (const [name, parts] of [
-    ["options", ["full recipe", "not_chosen"]],
-    ["seed-from-history", ["decided_at", "Other people's material"]],
+    ["options", ["too thin to act on", "check it"]],
+    ["seed-from-history", ["decided_at", "The briefing"]],
     ["agent-team", ["is:draft intent:", "verify_draft"]],
   ] as const) {
     const skill = readFileSync(join(PACKAGE_DIR, `skills/${name}/SKILL.md`), "utf-8");
