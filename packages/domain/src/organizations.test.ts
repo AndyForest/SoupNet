@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  bookSlugTakenMessage,
   ACCOUNT_DISABLED_MESSAGE,
   ACCOUNT_SUSPENDED_MESSAGE,
   MANAGED_KEY_MAX_DAYS,
@@ -125,6 +126,11 @@ describe("copy", () => {
     expect(ACCOUNT_SUSPENDED_MESSAGE).toContain("suspended");
   });
 
+  it("a taken slug's message says whose space it was taken in", () => {
+    expect(bookSlugTakenMessage("plans", true)).toBe('Another recipe book in this organization already uses the short name "plans". Choose a different name.');
+    expect(bookSlugTakenMessage("plans", false)).toBe('You already have a recipe book with the short name "plans". Choose a different name.');
+  });
+
   it("the join notice names the organization and each moved book, and a changed slug", () => {
     const notice = organizationJoinNotice("Acme", [
       { name: "Personal", slug: "personal-max", previousSlug: "personal" },
@@ -135,9 +141,18 @@ describe("copy", () => {
     expect(notice.text).toContain("- Personal (its short name changed from personal to personal-max)");
     expect(notice.text).toContain("- Recipes\n");
     expect(notice.text).not.toContain("http");
+    expect(notice.text).toContain("An agent that names one of these books by its old short name needs the new one.");
+    expect(notice.text).not.toContain("as before");
+  });
+
+  it("with no short name changed, the keys and connections keep working as before", () => {
+    const notice = organizationJoinNotice("Acme", [{ name: "Recipes", slug: "recipes", previousSlug: "recipes" }]);
+    expect(notice.text).toContain("keep working as before.");
+    expect(notice.text).not.toContain("old short name");
   });
 
   it("with no books moved, the notice says nothing about books", () => {
     expect(organizationJoinNotice("Acme", []).text).not.toContain("recipe books moved");
+    expect(organizationJoinNotice("Acme", []).text).toContain("keep working as before.");
   });
 });

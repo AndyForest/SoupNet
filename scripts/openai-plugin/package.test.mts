@@ -2,7 +2,8 @@
 // rows L5 to L9 and L11): the source in plugins/soupnet/ meets every
 // submission limit, the ZIP is reproducible, the skill carries no vendor
 // wording, and the Codex marketplace points at the package.
-import { existsSync, readFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { PACKAGE_DIR, buildPackage, contrastRatio, pngSize, scanForSecrets, validatePackage, zipFiles } from "./package.mjs";
@@ -11,6 +12,19 @@ const manifest = JSON.parse(readFileSync(join(PACKAGE_DIR, "plugin.json"), "utf-
 const ui = manifest.extensions["com.openai"].interface;
 
 describe("the OpenAI plugin package", () => {
+  it("rejects the array shape refused by the portal", () => {
+    const dir = mkdtempSync(join(tmpdir(), "soupnet-plugin-"));
+    try {
+      cpSync(PACKAGE_DIR, dir, { recursive: true });
+      const copy = structuredClone(manifest);
+      copy.extensions["com.openai"].review.test_cases.positive[0].tools_triggered = ["get_briefing"];
+      writeFileSync(join(dir, "plugin.json"), JSON.stringify(copy));
+      expect(validatePackage(dir)).toContain("positive case 1 needs tools_triggered as a nonempty string");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("validates against the submission limits", () => {
     expect(validatePackage()).toEqual([]);
   });
@@ -38,7 +52,10 @@ describe("the OpenAI plugin package", () => {
 
   it("names the test cases' tools from the server's real tool roster (L11)", () => {
     const roster = ["check_recipe", "get_briefing", "get_recipes", "list_my_recipe_books", "log_feedback", "search_recipes", "update_recipe_book_description", "verify_draft"];
-    const triggered = manifest.extensions["com.openai"].review.test_cases.positive.flatMap((c: { tools_triggered: string[] }) => c.tools_triggered);
+    const triggered = manifest.extensions["com.openai"].review.test_cases.positive.flatMap((c: { tools_triggered: string }) => {
+      expect(typeof c.tools_triggered).toBe("string");
+      return c.tools_triggered.split(",").map((tool) => tool.trim());
+    });
     for (const tool of triggered) expect(roster).toContain(tool);
   });
 

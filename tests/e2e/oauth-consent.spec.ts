@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { expect, test, type APIRequestContext, type Page, type Route } from "@playwright/test";
 import { BACKEND_URL } from "../../playwright.config";
 import { asUser, seedUser, signIn, type SeededUser } from "./helpers/accounts";
-import { shot } from "./helpers/evidence";
+import { assertNoHorizontalScroll, shot } from "./helpers/evidence";
 import { axeBeyondKnown } from "./drafts-known-issues";
 
 // OAuth consent page, OpenAI plugin directory round, stream O (PR #152;
@@ -256,6 +256,107 @@ test.describe("OAuth consent page (stream O)", () => {
       expect(attacker, "nothing should be requested from attacker.example").toEqual([]);
       expect(client, "nothing should be requested from the client either").toEqual([]);
       await shot(page, testInfo, "E7-01-unregistered-redirect");
+    });
+  });
+
+  test.describe("loopback redirects (RFC 8252 section 7.3, F129)", () => {
+    const CODEX_ID = "https://chatgpt.com/oauth/codex/client.json";
+    const ON_PORT = "http://127.0.0.1:57687/callback";
+    const COPY_WARNING = "Never copy the address of the next page into anything";
+
+    test("L1 Codex's real document on an ephemeral port: the warning, Authorize, and the token request", async ({ page, request }, testInfo) => {
+      const user = await seeded(request, "oauth-l1");
+      const iss = await issuer(request);
+      const book = await firstBook(request, user);
+      await stubHost(page, "http://127.0.0.1:57687/**", "local app");
+      const verifier = randomBytes(32).toString("base64url");
+      const challenge = createHash("sha256").update(verifier).digest("base64url");
+
+      await test.step("open the consent URL Codex sends", async () => {
+        await openConsent(page, user, consentPath(CODEX_ID, { resource: iss, code_challenge: challenge }, ON_PORT), "Authorize Codex");
+      });
+
+      await test.step("the page warns and doesn't vouch", async () => {
+        const box = page.getByTestId("oauth-client-identity");
+        await expect(box, "the box should say the sign-in finishes in an app on this computer").toContainText("This sign-in finishes in an app on this computer.");
+        await expect(box, "the box should name the document's domain").toContainText("comes from a document on chatgpt.com");
+        await expect(box, "the box should show the full redirect, port included").toContainText(ON_PORT);
+        await expect(box, "the box should warn against copying the next page's address").toContainText(COPY_WARNING);
+        await expect(box, 'the box should not say "Published by" on a loopback redirect').not.toContainText("Published by");
+        await shot(page, testInfo, "L1-01-consent-codex-loopback");
+      });
+
+      await test.step("Authorize lands on the port Codex listens on", async () => {
+        await page.getByRole("checkbox", { name: `Read access to ${book.name}` }).check();
+        await page.getByRole("checkbox", { name: `Write access to ${book.name}` }).check();
+        await page.getByRole("radio", { name: `Default write to ${book.name}` }).check();
+        await page.getByRole("button", { name: "Authorize" }).click();
+        await page.waitForURL(/^http:\/\/127\.0\.0\.1:57687\//);
+      });
+
+      const code = new URL(page.url()).searchParams.get("code") ?? "";
+      const redeem = (redirectUri: string, codeToUse = code) =>
+        request.post(`${BACKEND_URL}/oauth/token`, {
+          form: { grant_type: "authorization_code", code: codeToUse, code_verifier: verifier, client_id: CODEX_ID, redirect_uri: redirectUri, resource: iss },
+        });
+
+      await test.step("the token request succeeds with no credential and the same URI", async () => {
+        expect(code, "the redirect should carry a code").not.toBe("");
+        const res = await redeem(ON_PORT);
+        const body = await res.json();
+        expect(res.status(), `redeeming as a public client should return 200; got ${res.status()} ${JSON.stringify(body.error ?? "")}`).toBe(200);
+        expect(body.access_token, "the response should carry an access token").toBeTruthy();
+      });
+    });
+
+    test("L2 Cancel on Codex's document reaches the port with access_denied", async ({ page, request }, testInfo) => {
+      const user = await seeded(request, "oauth-l2");
+      await stubHost(page, "http://127.0.0.1:57687/**", "local app");
+      await openConsent(page, user, consentPath(CODEX_ID, {}, ON_PORT), "Authorize Codex");
+      await page.getByRole("button", { name: "Cancel" }).click();
+      await page.waitForURL(/^http:\/\/127\.0\.0\.1:57687\//);
+      expect(new URL(page.url()).searchParams.get("error"), "the redirect should carry error=access_denied").toBe("access_denied");
+      await shot(page, testInfo, "L2-01-cancel-landed");
+    });
+
+    test("L3 a dynamically registered client on loopback stays unverified and gets the same warning", async ({ page, request }, testInfo) => {
+      const user = await seeded(request, "oauth-l3");
+      const clientId = await registerClient(request, "L3 Client", ["http://127.0.0.1/callback"]);
+      await openConsent(page, user, consentPath(clientId, {}, ON_PORT), "Authorize L3 Client");
+      const box = page.getByTestId("oauth-client-identity");
+      const text = (await box.innerText()).trim();
+      expect(text.startsWith("Unverified app."), `the identity box should start "Unverified app."; got: ${text}`).toBe(true);
+      await expect(box, "the box should say the sign-in finishes in an app on this computer").toContainText("finishes in an app on this computer");
+      await expect(box, "the box should warn against copying the next page's address").toContainText(COPY_WARNING);
+      await expect(box, "the box should show the full redirect, port included").toContainText(ON_PORT);
+      await shot(page, testInfo, "L3-01-consent-dcr-loopback");
+    });
+
+    test("L4 Codex's document with a different path is refused up front", async ({ page, request }, testInfo) => {
+      const user = await seeded(request, "oauth-l4");
+      await signIn(page, user, consentPath(CODEX_ID, {}, "http://127.0.0.1:57687/other"));
+      await expect(page.getByRole("heading", { level: 1 }), "the page should refuse a path the document doesn't register").toHaveText("Invalid OAuth request", { timeout: 20_000 });
+      await expect(page.getByRole("button", { name: "Authorize" }), "the refusal should offer no Authorize button").toHaveCount(0);
+      await shot(page, testInfo, "L4-01-refused");
+    });
+
+    test("L5 https keeps its copy: E1's wording has no loopback warning", async ({ page, request }, testInfo) => {
+      const user = await seeded(request, "oauth-l5");
+      const clientId = await registerClient(request, "L5 Client");
+      await openConsent(page, user, consentPath(clientId), "Authorize L5 Client");
+      const box = page.getByTestId("oauth-client-identity");
+      await expect(box, "an https redirect should keep the original closing line").toContainText("Only continue if you started this connection yourself from that app.");
+      await expect(box, "an https redirect should not get the loopback warning").not.toContainText(COPY_WARNING);
+      await shot(page, testInfo, "L5-01-https-unchanged");
+    });
+
+    test("L6 @mobile the warning fits on a phone, and axe finds nothing new", async ({ page, request }, testInfo) => {
+      const user = await seeded(request, "oauth-l6");
+      await openConsent(page, user, consentPath(CODEX_ID, {}, ON_PORT), "Authorize Codex");
+      await assertNoHorizontalScroll(page, testInfo, "consent page with the loopback warning");
+      const r = await axeBeyondKnown(page, testInfo, "L6-axe-loopback");
+      expect.soft(r.blocking, "the loopback consent page should have no serious or critical axe violations beyond the known list").toEqual([]);
+      await shot(page, testInfo, "L6-01-loopback-layout");
     });
   });
 

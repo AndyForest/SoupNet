@@ -7,7 +7,9 @@
  *   - A value matching INTENT_ID_RE joins that intent (ownership-checked;
  *     a cross-user or unknown id resolves to notFound — uniform, no
  *     existence oracle — and the call PROCEEDS untracked, capture-only
- *     leniency like session/feedback tokens).
+ *     leniency like session/feedback tokens). Only a check marks the intent
+ *     used; a read joins it for its ledger and leaves last_used_at alone, so
+ *     a read never revives a draft (recipe ac453630).
  *   - Any other non-empty text ALWAYS registers a brand-new intent — even
  *     byte-identical text. Never dedup: two sessions phrasing an intent
  *     identically must not merge ledgers and cross-stub each other. An agent
@@ -88,18 +90,26 @@ export async function resolveIntent(
     userId: string;
     apiKeyId?: string | undefined;
     agentId?: string | undefined;
+    /** True on a check, which marks a joined intent used and so can revive
+     *  its drafts; false on a read. Required so a new caller has to choose. */
+    markUsed: boolean;
   },
 ): Promise<IntentResolution> {
   const value = input.value?.trim();
   if (!value) return { intentId: null, registered: false };
 
   if (INTENT_ID_RE.test(value)) {
-    const rows = await db.execute(sql`
-      UPDATE claimnet.intents
-      SET last_used_at = NOW()
-      WHERE id = ${value} AND user_id = ${input.userId}::uuid
-      RETURNING id
-    `);
+    const rows = await db.execute(input.markUsed
+      ? sql`
+        UPDATE claimnet.intents
+        SET last_used_at = NOW()
+        WHERE id = ${value} AND user_id = ${input.userId}::uuid
+        RETURNING id
+      `
+      : sql`
+        SELECT id FROM claimnet.intents
+        WHERE id = ${value} AND user_id = ${input.userId}::uuid
+      `);
     const row = (rows as unknown as Array<{ id: string }>)[0];
     if (row) return { intentId: row.id, registered: false };
     return { intentId: null, registered: false, notFound: true };
@@ -143,9 +153,9 @@ export async function resolveIntent(
 /**
  * Which of `ids` name intents this user owns (drafts-and-triage slice 6a):
  * the read-only ownership test behind the `intent:` search qualifier and
- * import's restore of a recipe's intent link. Unlike resolveIntent it never
- * touches last_used_at, since selecting by an intent or restoring a link is
- * not a use of it, and an id that is unknown and one that is someone else's
+ * import's restore of a recipe's intent link. It never touches last_used_at,
+ * since selecting by an intent or restoring a link is not a use of it, and
+ * an id that is unknown and one that is someone else's
  * are both simply absent from the result.
  */
 export async function ownedIntentIds(

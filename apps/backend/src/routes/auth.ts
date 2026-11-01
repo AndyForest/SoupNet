@@ -3,7 +3,7 @@ import { z } from "zod";
 import crypto from "crypto";
 import { sql } from "drizzle-orm";
 import { getDb } from "../db";
-import { registerUser, loginUser, requireAuth, requireActiveSession, activeSessionRefusal, requireVerifiedEmail, hashPassword, verifyPassword } from "../auth";
+import { registerUser, loginUser, requireAuth, requireActiveSession, activeSessionRefusal, requireVerifiedEmail, hashPassword, verifyPassword, verifyToken } from "../auth";
 import { writeAudit } from "../services/audit-log.service";
 import { isSignupCapReached, logSignupCapState, mayRegister } from "../services/system-settings.service";
 import { purgeStaleWaitlistedUsers } from "../services/waitlist.service";
@@ -14,6 +14,7 @@ import { normalizeEmail } from "../lib/normalize-email";
 import { onBehalfSubjectOf, feedbackOwnedBy, intentOwnedBy, managedOrganizationOf, ssoRequired, ssoRequiredFor } from "../authz";
 import { ACCOUNT_DISABLED_MESSAGE, ACCOUNT_SUSPENDED_MESSAGE, MANAGED_ACCOUNT_DELETE_MESSAGE, SSO_REQUIRED_MESSAGE, googleSignInErrorMessage, directoryDisabledMessage, ORGANIZATION_FULL_MESSAGE, DOMAIN_JOIN_FULL_RETRY, domainJoinedNotice } from "@soupnet/domain";
 import { googleOidcConfig } from "../services/google-oidc.service";
+import { settleGoogleIdentityOnVerify } from "../services/google-sign-in.service";
 import { verifyTurnstile } from "../lib/turnstile";
 import { capturingOrganizationName, joinOnVerification } from "../services/org-domains.service";
 import type { AppEnv } from "../types";
@@ -805,14 +806,7 @@ auth.delete("/me", authRateLimit, requireAuth, requireActiveSession, async (c) =
   return c.json({ ok: true });
 });
 
-// POST /auth/verify — verify email with token.
-//
-// Idempotent: calling this with the same token twice (e.g. React StrictMode
-// double-fire, page refresh, email opened in two tabs) returns success both
-// times without changing the verification timestamp. We use COALESCE to
-// preserve the original verified_at, and we deliberately do NOT clear the
-// token in this UPDATE — it expires naturally after 24h. A "used" token
-// can't do anything except re-confirm existing verified state.
+
 /**
  * Send the verification email. For an address on a domain an organization
  * has captured, the email says the click will add the account to that
@@ -828,6 +822,18 @@ async function sendVerification(email: string, token: string, waitlisted: boolea
 /** Thrown inside the verify transaction to roll the verification back at the seat limit. */
 class OrganizationFull extends Error {}
 
+// POST /auth/verify — verify email with token.
+//
+// Idempotent: calling this with the same token twice (e.g. React StrictMode
+// double-fire, page refresh, email opened in two tabs) returns success both
+// times without changing the verification timestamp. We use COALESCE to
+// preserve the original verified_at, and we deliberately do NOT clear the
+// token in this UPDATE — it expires naturally after 24h. A "used" token
+// can't do anything except re-confirm existing verified state.
+//
+// The route needs no session, but one may be presented: it is how the Google
+// sign-up that started this verification shows it's the same person
+// (settleGoogleIdentityOnVerify, F137).
 auth.post("/verify", verifyRateLimit, async (c) => {
   const body = await c.req.json();
   const token = (body as { token?: string }).token;
@@ -835,14 +841,22 @@ auth.post("/verify", verifyRateLimit, async (c) => {
     return c.json({ ok: false, error: "Token required" }, 400);
   }
 
+  const bearer = c.req.header("Authorization");
+  const session = bearer?.startsWith("Bearer ") ? verifyToken(bearer.slice(7)) : null;
+
   const db = getDb();
   // The verification and an organization join on a captured domain commit
   // together (stream Domains, OD-J1). At the seat limit both roll back, so
   // the address stays unverified and the same link works once a seat frees
-  // (OD-C1).
-  const outcome: { updated?: { id: string; email: string; waitlisted: boolean }; joined?: string } = {};
+  // (OD-C1). The Google identity settled first (F137) rolls back with them,
+  // so that later click settles it instead.
+  const confirmed = (body as { confirm?: unknown }).confirm === true;
+  const outcome: { updated?: { id: string; email: string; waitlisted: boolean }; joined?: string; googleSignIn?: "proceed" | "confirm" | "removed" } = {};
   try {
     await db.transaction(async (tx) => {
+      // Before the UPDATE, which is what makes the account verified.
+      outcome.googleSignIn = await settleGoogleIdentityOnVerify(tx, token, session, confirmed);
+      if (outcome.googleSignIn === "confirm") return;
       const result = await tx.execute(sql`
         UPDATE claimnet.users
         SET email_verified_at = COALESCE(email_verified_at, now())
@@ -862,6 +876,10 @@ auth.post("/verify", verifyRateLimit, async (c) => {
       return c.json({ ok: false, error: "organization_full", message: ORGANIZATION_FULL_MESSAGE, detail: DOMAIN_JOIN_FULL_RETRY }, 409);
     }
     throw err;
+  }
+
+  if (outcome.googleSignIn === "confirm") {
+    return c.json({ ok: true, data: { verified: false, confirmationRequired: true } });
   }
 
   const updated = outcome.updated ? { ...outcome.updated, waitlisted: outcome.joined ? false : outcome.updated.waitlisted } : undefined;
@@ -906,6 +924,7 @@ auth.post("/verify", verifyRateLimit, async (c) => {
       // (OD-J1): the one this click joined, and on a later visit of the same
       // link the one it joined then, so a reload still says so.
       organization: managedBy ? { name: managedBy, notice: domainJoinedNotice(managedBy) } : null,
+      ...(outcome.googleSignIn === "removed" ? { googleSignInRemoved: true } : {}),
     },
   });
 });

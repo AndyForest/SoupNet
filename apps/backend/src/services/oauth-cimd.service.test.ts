@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import crypto from "node:crypto";
+import { readFileSync } from "node:fs";
 import jwt from "jsonwebtoken";
+import { isRegisteredRedirectUri } from "@soupnet/contracts/oauth-redirect";
 import {
   checkClientIdUrl,
   isCimdClientId,
@@ -160,6 +162,31 @@ describe("resolveCimdClient", () => {
     const { fetch } = servingFetcher({ [CLIENT_ID]: doc(), [second]: doc({ client_id: second, jwks_uri: undefined, token_endpoint_auth_method: "none" }) });
     expect(await resolveCimdClient(CLIENT_ID, { fetch, ip: "5.5.5.5" })).not.toBeNull();
     expect(await resolveCimdClient(second, { fetch, ip: "5.5.5.5" })).toBeNull();
+  });
+});
+
+describe("Codex's published document", () => {
+  // Saved byte for byte from the URL below on 2026-10-31. Codex listens on an
+  // ephemeral port (seen: http://127.0.0.1:57687/callback).
+  const CODEX_ID = "https://chatgpt.com/oauth/codex/client.json";
+  const codex: unknown = JSON.parse(readFileSync(new URL("../test-fixtures/codex-client-metadata.json", import.meta.url), "utf8"));
+
+  it("resolves as a public client, and its ephemeral port matches", async () => {
+    const { fetch } = servingFetcher({ [CODEX_ID]: codex });
+    const client = await resolveCimdClient(CODEX_ID, { fetch, ip: "1.2.3.4" });
+    expect(client).toMatchObject({ authMethod: "none", domain: "chatgpt.com", clientName: "Codex" });
+    expect(client?.redirectUris).toEqual(["http://127.0.0.1/callback", "http://localhost/callback"]);
+    expect(isRegisteredRedirectUri("http://127.0.0.1:57687/callback", client!.redirectUris)).toBe(true);
+    expect(isRegisteredRedirectUri("http://localhost:57687/callback", client!.redirectUris)).toBe(true);
+  });
+
+  it("refuses what the document doesn't register", async () => {
+    const { fetch } = servingFetcher({ [CODEX_ID]: codex });
+    const uris = (await resolveCimdClient(CODEX_ID, { fetch, ip: "1.2.3.4" }))!.redirectUris;
+    expect(isRegisteredRedirectUri("http://127.0.0.1:57687/other", uris)).toBe(false);
+    expect(isRegisteredRedirectUri("http://[::1]:57687/callback", uris)).toBe(false);
+    expect(isRegisteredRedirectUri("https://127.0.0.1:57687/callback", uris)).toBe(false);
+    expect(isRegisteredRedirectUri("https://evil.example/callback", uris)).toBe(false);
   });
 });
 

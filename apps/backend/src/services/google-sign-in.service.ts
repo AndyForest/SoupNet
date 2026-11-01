@@ -25,6 +25,7 @@
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import crypto from "node:crypto";
+import { isRegisteredRedirectUri } from "@soupnet/contracts/oauth-redirect";
 import {
   googleIsAuthoritative,
   googleSessionIdp,
@@ -33,8 +34,9 @@ import {
 } from "@soupnet/domain";
 import type { GoogleSessionIdp, GoogleSignInError } from "@soupnet/domain";
 import { createAccount } from "../auth";
+import type { JwtPayload } from "../auth";
 import { normalizeEmail } from "../lib/normalize-email";
-import { accountRefusal, invalidateSessions, ssoRequiredFor } from "../authz";
+import { accountRefusal, invalidateSessions, sessionState, ssoRequiredFor } from "../authz";
 import { mayRegister, logSignupCapState } from "./system-settings.service";
 import { sendVerificationEmail } from "./email.service";
 import { resolveOAuthClient } from "./oauth-cimd.service";
@@ -89,14 +91,14 @@ const DEFAULT_RETURN: ReturnTarget = { kind: "app", path: "/app/dashboard" };
  * Would the consent page's grant accept this client, redirect URI and
  * resource? The client through stream O's resolver, as the grant resolves
  * it: a dynamically registered client, or a client ID metadata document
- * fetched under the requester's per-IP cap (ChatGPT's). The redirect URI
- * exactly as registered (F44), and the resource one the grant would bind a
- * token to (RFC 8707; SSO-G8).
+ * fetched under the requester's per-IP cap (ChatGPT's). The redirect URI by
+ * the grant's and the page's one rule (F44, F130), and the resource one the
+ * grant would bind a token to (RFC 8707; SSO-G8).
  */
 async function authorizeTargetAllowed(db: SqlExecutor, params: AuthorizeParams, deps: CimdDeps): Promise<boolean> {
   if (!normalizeResource(params.resource).ok) return false;
   const client = await resolveOAuthClient(db as PostgresJsDatabase, params.client_id, deps);
-  return !!client && client.redirectUris.includes(params.redirect_uri);
+  return !!client && isRegisteredRedirectUri(params.redirect_uri, client.redirectUris);
 }
 
 /**
@@ -270,6 +272,7 @@ export async function resolveAccount(
                   updated_at = now()
               WHERE id = ${decision.userId}::uuid
             `);
+            await cancelHandoffs(tx, decision.userId);
             await invalidateSessions(tx as unknown as PostgresJsDatabase, decision.userId);
           }
           await insertIdentity(tx, decision.userId, claims, email, "email_match");
@@ -293,6 +296,59 @@ export async function resolveAccount(
     console.error("[google-sign-in] account resolution failed:", err);
     return "failed";
   }
+}
+
+/**
+ * The account's Google identity changed hands: a handoff code already issued
+ * for it must not produce a session (F143). Runs under the lock on the users
+ * row that `issueHandoff` also takes.
+ */
+async function cancelHandoffs(tx: SqlExecutor, userId: string): Promise<void> {
+  await tx.execute(sql`
+    UPDATE claimnet.sso_login_requests SET handoff_consumed_at = now()
+    WHERE user_id = ${userId}::uuid AND handoff_hash IS NOT NULL AND handoff_consumed_at IS NULL
+  `);
+}
+
+/**
+ * The mailbox is being proved for an account a non-authoritative Google
+ * sign-up created (SSO-A4b, F137). Only that sign-up can hold an identity on
+ * an unverified account, and nothing yet ties that Google account to the
+ * mailbox. It stays only if the click comes from its own session; otherwise
+ * the mailbox's owner may not be who signed up, so the identity and its
+ * sessions go, leaving the owner free to sign in with Google or set a
+ * password.
+ *
+ * Removing takes the person's explicit `confirmed`: the page asks first, so a
+ * mail scanner running the page's script takes nothing away, and someone who
+ * signed up on another device can open the link there instead (F146).
+ *
+ * Run inside the verification's transaction, before it sets
+ * `email_verified_at`: a repeat click finds a verified account and removes
+ * nothing. On `confirm`, the caller verifies nothing yet.
+ */
+export async function settleGoogleIdentityOnVerify(tx: Tx, token: string, session: JwtPayload | null, confirmed: boolean): Promise<"proceed" | "confirm" | "removed"> {
+  const rows = await tx.execute(sql`
+    SELECT u.id FROM claimnet.users u
+    WHERE u.email_verification_token = ${token}
+      AND u.email_verification_token_created_at > now() - interval '24 hours'
+      AND u.email_verified_at IS NULL
+      AND EXISTS (SELECT 1 FROM claimnet.user_identities i WHERE i.user_id = u.id AND i.provider = 'google')
+    FOR UPDATE OF u
+  `);
+  const userId = (rows as unknown as Array<{ id: string }>)[0]?.id;
+  if (!userId) return "proceed";
+
+  const db = tx as unknown as PostgresJsDatabase;
+  if (session?.sub === userId && session.idp === "google-consumer") {
+    const { refusal } = await sessionState(db, userId, session.iat, session.idp);
+    if (!refusal) return "proceed";
+  }
+  if (!confirmed) return "confirm";
+  await tx.execute(sql`DELETE FROM claimnet.user_identities WHERE user_id = ${userId}::uuid AND provider = 'google'`);
+  await cancelHandoffs(tx, userId);
+  await invalidateSessions(db, userId);
+  return "removed";
 }
 
 async function insertIdentity(tx: SqlExecutor, userId: string, claims: GoogleIdClaims, email: string, linkedVia: "signup" | "email_match"): Promise<void> {
@@ -404,16 +460,41 @@ export async function completeGoogleSignIn(
   const refusal = await sessionRefusal(db, resolved.userId, idp);
   if (refusal) return { ok: false, error: refusal };
 
-  const handoff = randomToken();
-  await db.execute(sql`
-    UPDATE claimnet.sso_login_requests
-    SET user_id = ${resolved.userId}::uuid,
-        session_idp = ${idp},
-        handoff_hash = ${hashToken(handoff)},
-        handoff_expires_at = now() + make_interval(secs => ${HANDOFF_TTL_SECONDS})
-    WHERE id = ${request.id}::uuid
-  `);
+  const handoff = await issueHandoff(db, { requestId: request.id, userId: resolved.userId, claims, idp });
+  if (!handoff) return { ok: false, error: "failed" };
   return { ok: true, handoff };
+}
+
+/**
+ * Issue the handoff code, if this Google identity still holds the account
+ * (F143): it may have been removed or taken over since the sign-in resolved.
+ * The share lock orders this against `cancelHandoffs`, which runs under the
+ * row's update lock: either the identity is already gone here, or this code is
+ * committed for that cancellation to find. The identity is read in a later
+ * statement than the lock, so it sees whatever the lock waited for.
+ */
+export async function issueHandoff(
+  db: PostgresJsDatabase,
+  input: { requestId: string; userId: string; claims: GoogleIdClaims; idp: GoogleSessionIdp },
+): Promise<string | null> {
+  const handoff = randomToken();
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT 1 FROM claimnet.users WHERE id = ${input.userId}::uuid FOR SHARE`);
+    const identity = await tx.execute(sql`
+      SELECT 1 FROM claimnet.user_identities
+      WHERE user_id = ${input.userId}::uuid AND issuer = ${input.claims.issuer} AND subject = ${input.claims.subject}
+    `);
+    if ((identity as unknown as unknown[]).length === 0) return null;
+    await tx.execute(sql`
+      UPDATE claimnet.sso_login_requests
+      SET user_id = ${input.userId}::uuid,
+          session_idp = ${input.idp},
+          handoff_hash = ${hashToken(handoff)},
+          handoff_expires_at = now() + make_interval(secs => ${HANDOFF_TTL_SECONDS})
+      WHERE id = ${input.requestId}::uuid
+    `);
+    return handoff;
+  });
 }
 
 /** May this account get a session from this Google sign-in? (SSO-A7, SSO-R4) */
@@ -431,7 +512,7 @@ async function sessionRefusal(db: SqlExecutor, userId: string, idp: GoogleSessio
 // ── 3. Exchange ──────────────────────────────────────────────────────────────
 
 export type HandoffResult =
-  | { ok: true; userId: string; idp: GoogleSessionIdp; target: ReturnTarget }
+  | { ok: true; userId: string; idp: GoogleSessionIdp; target: ReturnTarget; notBeforeSeconds: number | null }
   | { ok: false; error: GoogleSignInError | "invalid_handoff" };
 
 /**
@@ -439,6 +520,12 @@ export type HandoffResult =
  * (SSO-G5). One statement: the code, its expiry, its single use and the
  * secret's hash are all in the WHERE, so a wrong secret consumes nothing and
  * every kind of refusal is the same `invalid_handoff`.
+ *
+ * It also reads the account's session cut-off, for a new owner whose takeover
+ * set one a moment ago: the session is dated no earlier than that, or it would
+ * be refused (F145). Read in this statement, so a code that wins the race
+ * against a later cut-off doesn't see that cut-off, and the time the caller
+ * took before this call leaves its session behind it.
  */
 export async function exchangeHandoff(db: PostgresJsDatabase, input: { handoff: string; secret: string }): Promise<HandoffResult> {
   const rows = await db.execute(sql`
@@ -448,9 +535,10 @@ export async function exchangeHandoff(db: PostgresJsDatabase, input: { handoff: 
       AND handoff_consumed_at IS NULL
       AND handoff_expires_at > now()
       AND user_id IS NOT NULL
-    RETURNING user_id, session_idp, return_kind, return_params
+    RETURNING user_id, session_idp, return_kind, return_params,
+      (SELECT floor(extract(epoch FROM u.sessions_valid_after))::bigint FROM claimnet.users u WHERE u.id = user_id) AS not_before
   `);
-  const row = (rows as unknown as Array<{ user_id: string; session_idp: string; return_kind: string; return_params: unknown }>)[0];
+  const row = (rows as unknown as Array<{ user_id: string; session_idp: string; return_kind: string; return_params: unknown; not_before: string | number | null }>)[0];
   if (!row) return { ok: false, error: "invalid_handoff" };
   // The account could have been switched off in the seconds since the callback.
   const idp: GoogleSessionIdp = row.session_idp === "google" ? "google" : "google-consumer";
@@ -461,5 +549,5 @@ export async function exchangeHandoff(db: PostgresJsDatabase, input: { handoff: 
     row.return_kind === "oauth_authorize"
       ? { kind: "oauth_authorize", params: params as unknown as AuthorizeParams }
       : { kind: "app", path: typeof params["path"] === "string" ? params["path"] : "/app/dashboard" };
-  return { ok: true, userId: row.user_id, idp, target };
+  return { ok: true, userId: row.user_id, idp, target, notBeforeSeconds: row.not_before === null ? null : Number(row.not_before) };
 }

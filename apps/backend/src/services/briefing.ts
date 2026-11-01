@@ -135,9 +135,11 @@ export async function composeBriefing(input: BriefingComposeInput): Promise<Brie
   // Declared intent (cold-start v2 Phase C): registration at briefing time
   // is the canonical cold-start move — the returned id seeds the session's
   // checks, searches, and feedback. Same always-new/join semantics as the
-  // check path; never fails the briefing.
+  // check path; never fails the briefing. A briefing doesn't mark a joined
+  // intent used, so it can't revive a draft.
   const intent = scope.options.intent !== undefined
     ? await resolveIntent(input.db, {
+        markUsed: false,
         value: scope.options.intent,
         userId: scope.userId,
         apiKeyId: scope.keyId,

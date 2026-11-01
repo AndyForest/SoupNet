@@ -297,7 +297,7 @@ export async function joinOrganizationInTx(tx: SqlExecutor, input: JoinInput): P
     VALUES (${organizationId}::uuid, ${userId}::uuid, ${role}, ${via})
   `);
 
-  const movedBooks = await moveOwnBooksInto(tx, userId, account, organizationId);
+  const { movedBooks, auditedBooks } = await moveOwnBooksInto(tx, userId, account, organizationId);
 
   // Every org-wide book of the organization, as an 'org' row; a row the
   // account already holds (a direct invitation) is left exactly as it is.
@@ -315,9 +315,6 @@ export async function joinOrganizationInTx(tx: SqlExecutor, input: JoinInput): P
   // audit row is the record that the notice is owed; the logged sender's
   // email_log row is the record of how the send went.
   const noticeOwed = via !== "domain";
-  // Slugs only: account events keep identifiers, and a book's name is the
-  // person's own words, which don't outlive their account (F122's rule).
-  const auditedBooks = movedBooks.map(({ slug, previousSlug }) => ({ slug, previousSlug }));
   await tx.execute(sql`
     INSERT INTO claimnet.audit_log (actor_user_id, action, target_type, target_id, metadata)
     VALUES (
@@ -360,8 +357,8 @@ async function moveOwnBooksInto(
   userId: string,
   account: { email: string; personal_organization_id: string | null },
   organizationId: string,
-): Promise<MovedBook[]> {
-  if (!account.personal_organization_id) return [];
+): Promise<{ movedBooks: MovedBook[]; auditedBooks: Array<{ bookId: string; previousSlug: string }> }> {
+  if (!account.personal_organization_id) return { movedBooks: [], auditedBooks: [] };
   const books = (await tx.execute(sql`
     SELECT g.id, g.name, g.slug FROM claimnet.groups g
     JOIN claimnet.organizations o ON o.id = g.organization_id
@@ -370,7 +367,7 @@ async function moveOwnBooksInto(
     ORDER BY g.created_at, g.id
     FOR UPDATE OF g
   `)) as unknown as Array<{ id: string; name: string; slug: string }>;
-  if (books.length === 0) return [];
+  if (books.length === 0) return { movedBooks: [], auditedBooks: [] };
 
   const takenRows = (await tx.execute(sql`
     SELECT slug FROM claimnet.groups WHERE organization_id = ${organizationId}::uuid
@@ -378,7 +375,11 @@ async function moveOwnBooksInto(
   const taken = new Set(takenRows.map((r) => r.slug));
   const localPart = account.email.slice(0, account.email.lastIndexOf("@"));
 
-  const moved: MovedBook[] = [];
+  // The audit rows outlive the account, so they hold the book's id and old
+  // slug: its name is the person's own words (F122's rule), and a new slug
+  // made on a collision carries their email's local part (F126).
+  const movedBooks: MovedBook[] = [];
+  const auditedBooks: Array<{ bookId: string; previousSlug: string }> = [];
   for (const book of books) {
     const slug = slugForMovedBook(book.slug, localPart, taken);
     taken.add(slug);
@@ -389,11 +390,12 @@ async function moveOwnBooksInto(
     await tx.execute(sql`
       INSERT INTO claimnet.audit_log (actor_user_id, action, target_type, target_id, metadata)
       VALUES (${userId}::uuid, 'recipe_book.moved_into_organization', 'group', ${book.id}::uuid,
-        ${JSON.stringify({ previousOrganizationId: account.personal_organization_id, organizationId, previousSlug: book.slug, slug })}::jsonb)
+        ${JSON.stringify({ previousOrganizationId: account.personal_organization_id, organizationId, previousSlug: book.slug })}::jsonb)
     `);
-    moved.push({ name: book.name, slug, previousSlug: book.slug });
+    movedBooks.push({ name: book.name, slug, previousSlug: book.slug });
+    auditedBooks.push({ bookId: book.id, previousSlug: book.slug });
   }
-  return moved;
+  return { movedBooks, auditedBooks };
 }
 
 // ── Creating an organization ────────────────────────────────────────────────
