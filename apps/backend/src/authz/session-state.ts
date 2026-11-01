@@ -81,9 +81,9 @@ export async function accountRefusal(db: PostgresJsDatabase, userId: string): Pr
 
 /**
  * Refuse every session issued before now (recipe a8003678). For SSO's account
- * linking, which discards an unverified password: a session the
- * pre-registrant already holds dies with it. Keys are untouched; an
- * unverified account has none.
+ * linking, which discards an unverified password, and for a password reset
+ * (recipe 450a107b): a session the pre-registrant already holds dies with it.
+ * Keys are untouched; an unverified account has none.
  *
  * The cut-off is stamped from this process's clock, not the database's
  * NOW(): it is compared with a JWT's `iat`, which this process's clock
@@ -91,9 +91,32 @@ export async function accountRefusal(db: PostgresJsDatabase, userId: string): Pr
  * 2f40fb9f). With NOW(), a session signed a moment after the cut-off could
  * read as issued before it and be refused.
  */
-export async function invalidateSessions(db: PostgresJsDatabase, userId: string): Promise<void> {
+export async function invalidateSessions(db: Pick<PostgresJsDatabase, "execute">, userId: string): Promise<void> {
   const cutOffSeconds = Math.floor(Date.now() / 1000);
   await db.execute(sql`
     UPDATE claimnet.users SET sessions_valid_after = to_timestamp(${cutOffSeconds}) WHERE id = ${userId}::uuid
   `);
+  // A pending authorization code is a session's consent not yet redeemed, and
+  // could otherwise become a connected app after the reset counted them (F160).
+  await db.execute(sql`DELETE FROM claimnet.oauth_authorization_codes WHERE user_id = ${userId}::uuid`);
+}
+
+/**
+ * What outlives a session cut-off. Keys and connected apps survive a reset,
+ * because a person who only forgot a password shouldn't lose them and the two
+ * cases can't be told apart. So whoever just proved the mailbox is told what's
+ * running, to review and end (F151). A connected app counts while its refresh
+ * token can still renew it.
+ */
+export async function credentialsStillRunning(
+  db: Pick<PostgresJsDatabase, "execute">,
+  userId: string,
+): Promise<{ apiKeys: number; connectedApps: number }> {
+  const rows = await db.execute(sql`
+    SELECT
+      count(*) FILTER (WHERE key_type <> 'oauth' AND expires_at > now())::int AS "apiKeys",
+      count(*) FILTER (WHERE key_type = 'oauth' AND (expires_at > now() OR refresh_token_expires_at > now()))::int AS "connectedApps"
+    FROM claimnet.api_keys WHERE user_id = ${userId}::uuid
+  `);
+  return (rows as unknown as Array<{ apiKeys: number; connectedApps: number }>)[0] ?? { apiKeys: 0, connectedApps: 0 };
 }

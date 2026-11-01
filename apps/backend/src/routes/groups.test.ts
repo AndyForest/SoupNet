@@ -260,7 +260,7 @@ describe.skipIf(!BASE)("group invitations (spam-safe)", () => {
     await fetch(`${BASE}/auth/verify`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: vtok }),
+      body: JSON.stringify({ token: vtok, password }),
     });
     // F30: /auth/register no longer returns a JWT — log in to get one.
     const login = await fetch(`${BASE}/auth/login`, {
@@ -653,7 +653,7 @@ describe.skipIf(!BASE)("daily-link group preferences", () => {
     await fetch(`${BASE}/auth/verify`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: vtok }),
+      body: JSON.stringify({ token: vtok, password }),
     });
     // F30: /auth/register no longer returns a JWT — log in for the token.
     const login = await fetch(`${BASE}/auth/login`, {

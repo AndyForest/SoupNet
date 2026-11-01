@@ -27,6 +27,8 @@ export const organizations = claimnetSchema.table(
 
     name: text("name").notNull(),
     slug: text("slug").notNull(),
+    // A personal organization's account; a company organization's accountable
+    // owner, always a current owner (it moves on demotion and on deletion).
     ownerId: uuid("owner_id").notNull().references(() => users.id),
 
     isPersonal: boolean("is_personal").notNull().default(false),

@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { sql } from "drizzle-orm";
@@ -138,6 +139,21 @@ async function judgeSession(c: Context): Promise<Response | { emailVerified: boo
 }
 
 /**
+ * Does this request carry a live session of `userId`? For a route anyone can
+ * reach that treats its own account's session as proof (POST /auth/verify). A
+ * missing, malformed, expired, cut-off or switched-off session, or another
+ * account's, is simply not proof: this never refuses the request.
+ */
+export async function holdsLiveSessionOf(c: Context, db: PostgresJsDatabase, userId: string): Promise<boolean> {
+  const header = c.req.header("Authorization");
+  if (!header?.startsWith("Bearer ")) return false;
+  const payload = verifyToken(header.slice(7));
+  if (!payload || payload.sub !== userId) return false;
+  const state = await sessionState(db, userId, payload.iat, payload.idp);
+  return state.refusal === null;
+}
+
+/**
  * The account-state half of `requireVerifiedEmail`, for the few routes that
  * must stay reachable before verification (GET /auth/me, resend-verification,
  * DELETE /auth/me). Must be used AFTER requireAuth. A disabled, suspended or
@@ -271,32 +287,47 @@ export async function registerUser(
 }
 
 /**
- * Login user. Returns JWT token if credentials match.
+ * The sign-up proof: what lets a person who just registered verify in the same
+ * browser with nothing typed (recipe 450a107b's goal, without its extra step).
  *
- * waitlistedAt is surfaced so the route can block waitlisted accounts with
- * a "you're on the waitlist" message INSTEAD of issuing a token. Telling
- * the caller their waitlist status is privileged-but-safe: only someone
- * holding the correct password gets this far. No token is signed for
- * waitlisted accounts — without a JWT, every other surface (dashboard,
- * keys, MCP, OAuth) stays blocked with zero additional checks.
+ * POST /auth/register returns one on every branch, so it says nothing about
+ * whether the address already had an account (F30): a new account's is an HMAC
+ * of its id, and any other is random bytes of the same length, which can't be
+ * told apart without the secret. It proves nothing alone. POST /auth/verify
+ * takes it beside the emailed token: the person who registered holds the
+ * proof, the mailbox's owner holds the token, and only someone who is both has
+ * the two. Nothing is stored, so it survives a resend, which replaces the
+ * token, and it stops mattering once the account is verified.
  */
-export async function loginUser(
-  db: PostgresJsDatabase,
-  email: string,
-  password: string,
-): Promise<
+export function signupProofFor(userId: string): string {
+  return crypto.createHmac("sha256", JWT_SECRET()).update(`signup-proof:${userId}`).digest("hex");
+}
+
+/** What register returns when no account was created. */
+export function unusableSignupProof(): string {
+  return crypto.randomBytes(32).toString("hex");
+}
+
+export function isSignupProofOf(proof: string, userId: string): boolean {
+  const expected = Buffer.from(signupProofFor(userId));
+  const given = Buffer.from(proof);
+  return given.length === expected.length && crypto.timingSafeEqual(given, expected);
+}
+
+type SignInResult =
   | { user: { id: string; email: string; role: string }; token: string; waitlistedAt: null; disabled: null }
   | { user: { id: string; email: string; role: string }; token: null; waitlistedAt: Date; disabled: null }
-  | { user: { id: string; email: string; role: string }; token: null; waitlistedAt: null; disabled: AccountDisabledReason }
-  | null
-> {
-  const rows = await db.select().from(users).where(sql`${users.email} = ${normalizeEmail(email)}`).limit(1);
-  const user = rows[0];
-  if (!user) return null;
+  | { user: { id: string; email: string; role: string }; token: null; waitlistedAt: null; disabled: AccountDisabledReason };
 
-  const valid = await verifyPassword(password, user.passwordHash);
-  if (!valid) return null;
-
+/**
+ * The checks every sign-in passes once the person is proved, and the session
+ * they get. No token for a waitlisted or switched-off account: without a JWT,
+ * every other surface stays blocked with zero additional checks.
+ */
+async function signInProved(
+  db: PostgresJsDatabase,
+  user: { id: string; email: string; role: string; waitlistedAt: Date | null },
+): Promise<SignInResult> {
   if (user.waitlistedAt) {
     return {
       user: { id: user.id, email: user.email, role: user.role },
@@ -315,6 +346,38 @@ export async function loginUser(
 
   const token = signToken({ sub: user.id, email: user.email, role: user.role });
   return { user: { id: user.id, email: user.email, role: user.role }, token, waitlistedAt: null, disabled: null };
+}
+
+/** Sign in an account already proved some other way (POST /auth/verify). */
+export async function signInAccount(db: PostgresJsDatabase, userId: string): Promise<SignInResult | null> {
+  const rows = await db.select().from(users).where(sql`${users.id} = ${userId}::uuid`).limit(1);
+  const user = rows[0];
+  return user ? signInProved(db, user) : null;
+}
+
+/**
+ * Login user. Returns JWT token if credentials match.
+ *
+ * waitlistedAt is surfaced so the route can block waitlisted accounts with
+ * a "you're on the waitlist" message INSTEAD of issuing a token. Telling
+ * the caller their waitlist status is privileged-but-safe: only someone
+ * holding the correct password gets this far. No token is signed for
+ * waitlisted accounts — without a JWT, every other surface (dashboard,
+ * keys, MCP, OAuth) stays blocked with zero additional checks.
+ */
+export async function loginUser(
+  db: PostgresJsDatabase,
+  email: string,
+  password: string,
+): Promise<SignInResult | null> {
+  const rows = await db.select().from(users).where(sql`${users.email} = ${normalizeEmail(email)}`).limit(1);
+  const user = rows[0];
+  if (!user) return null;
+
+  const valid = await verifyPassword(password, user.passwordHash);
+  if (!valid) return null;
+
+  return signInProved(db, user);
 }
 
 /**
