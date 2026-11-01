@@ -529,7 +529,7 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
   async function heldHandoff(claims: FakeIdClaims): Promise<{ handoff: string; secret: string }> {
     const { started } = await start();
     if (!started) throw new Error("start failed");
-    const code = google.issue(claims, { nonce: started.nonce, codeChallenge: started.codeChallenge });
+    const code = await google.issue(claims, { nonce: started.nonce, codeChallenge: started.codeChallenge });
     const cb = await callback({ state: started.state, code });
     return { handoff: cb.fragment.get("handoff") ?? "", secret: started.secret };
   }
