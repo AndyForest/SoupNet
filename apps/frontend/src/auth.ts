@@ -29,6 +29,23 @@ export function clearToken(): void {
   localStorage.removeItem(EMAIL_VERIFIED_KEY);
 }
 
+// The sign-up proof from POST /auth/register: with the emailed link, it verifies
+// and signs in the person who registered in this browser, with nothing typed.
+// It proves nothing alone. localStorage, because the link opens in a new tab.
+const SIGNUP_PROOF_KEY = "soupnet_signup_proof";
+
+export function getSignupProof(): string | null {
+  return localStorage.getItem(SIGNUP_PROOF_KEY);
+}
+
+export function setSignupProof(proof: string): void {
+  localStorage.setItem(SIGNUP_PROOF_KEY, proof);
+}
+
+export function clearSignupProof(): void {
+  localStorage.removeItem(SIGNUP_PROOF_KEY);
+}
+
 export function isLoggedIn(): boolean {
   return !!getToken();
 }

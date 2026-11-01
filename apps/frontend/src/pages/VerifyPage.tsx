@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { API_BASE, getToken, setEmailVerified, setToken } from "../auth.js";
+import { API_BASE, clearSignupProof, getSignupProof, getToken, setEmailVerified, setToken } from "../auth.js";
 
 interface VerifyResponse {
   ok: boolean;
@@ -12,10 +12,11 @@ interface VerifyResponse {
 
 async function verifyRequest(body: { token: string; password?: string }): Promise<{ status: number; json: VerifyResponse }> {
   const session = getToken();
+  const signupProof = getSignupProof();
   const res = await fetch(`${API_BASE}/auth/verify`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...(session ? { Authorization: `Bearer ${session}` } : {}) },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ ...body, ...(signupProof ? { signupProof } : {}) }),
   });
   return { status: res.status, json: (await res.json()) as VerifyResponse };
 }
@@ -43,6 +44,7 @@ export function VerifyPage() {
       return true;
     }
     setStatus("success");
+    clearSignupProof();
     if (json.data.token) {
       // A correct password here is a sign-in. Clear the cache first, as the
       // login page does, so another account's data can't show under this one.

@@ -30,12 +30,13 @@ async function post(path: string, body: Json, session?: string): Promise<{ statu
   return { status: res.status, json, data: (json["data"] ?? {}) as Json };
 }
 
-async function register(label: string): Promise<{ email: string; token: string }> {
+async function register(label: string): Promise<{ email: string; token: string; proof: string }> {
   const email = nextEmail(label);
   const { data } = await post("/auth/register", { email, password: PASSWORD, tosAccepted: true });
   const token = data["verificationToken"];
-  if (typeof token !== "string") throw new Error(`register returned no verification token for ${email}`);
-  return { email, token };
+  const proof = data["signupProof"];
+  if (typeof token !== "string" || typeof proof !== "string") throw new Error(`register returned no token or proof for ${email}`);
+  return { email, token, proof };
 }
 
 /** An unverified account's session: sign-in issues one so verify-pending can work. */
@@ -228,6 +229,90 @@ describe.skipIf(!BASE)("POST /auth/verify and /auth/reset-password: proving a ma
     await getDb().execute(sql`UPDATE claimnet.users SET waitlisted_at = now() WHERE email = ${email}`);
     expect((await post("/auth/reset-password", { token: await resetToken(email), newPassword: "waitlist-new-pw-1" })).status).toBe(200);
     expect(await row(email)).toEqual({ verified: true, waitlisted: true });
+  });
+
+  it("ACC-VERIFY-14: the same browser's sign-up proof verifies and signs in, with nothing typed", async () => {
+    const { email, token, proof } = await register("proof");
+    const { status, data } = await post("/auth/verify", { token, signupProof: proof });
+    expect(status).toBe(200);
+    expect(data).toMatchObject({ verified: true, email, ownSession: false });
+    expect((await row(email)).verified).toBe(true);
+    const res = await fetch(`${BASE}/keys/daily`, { method: "POST", headers: { Authorization: `Bearer ${String(data["token"])}` } });
+    expect(res.status).toBe(200);
+    // Spent once verified: a repeat click with it signs nobody in.
+    expect((await post("/auth/verify", { token, signupProof: proof })).data["token"]).toBeUndefined();
+  });
+
+  it("ACC-VERIFY-15: the proof says nothing about whether the address already has an account (F30)", async () => {
+    const first = await register("f30");
+    const again = await post("/auth/register", { email: first.email, password: "someone-else-pw-1", tosAccepted: true });
+    expect(again.status).toBe(200);
+    const proof = String(again.data["signupProof"]);
+    expect(first.proof).toMatch(/^[0-9a-f]{64}$/);
+    expect(proof).toMatch(/^[0-9a-f]{64}$/);
+    const { verificationToken: _token, signupProof: _first, ...newBody } = (await post("/auth/register", { email: nextEmail("f30-new"), password: PASSWORD, tosAccepted: true })).data;
+    const { signupProof: _second, ...existingBody } = again.data;
+    expect(existingBody).toEqual(newBody);
+    // And the existing-address proof verifies nothing, for that account.
+    expect((await post("/auth/verify", { token: first.token, signupProof: proof })).data).toMatchObject({ verified: false, passwordRequired: true });
+    expect((await row(first.email)).verified).toBe(false);
+  });
+
+  it("ACC-VERIFY-16: a stranger's proof needs the emailed token, and the owner's token needs the proof", async () => {
+    const stranger = await register("proof-stranger");
+    const other = await register("proof-other");
+    // Proof with no real token.
+    expect((await post("/auth/verify", { token: "no-such-token", signupProof: stranger.proof })).status).toBe(400);
+    // The owner's token with no proof, or with another account's proof, or junk.
+    for (const signupProof of [undefined, other.proof, "0".repeat(64), "short"]) {
+      const { status, data } = await post("/auth/verify", { token: stranger.token, ...(signupProof ? { signupProof } : {}) });
+      expect(status).toBe(200);
+      expect(data).toMatchObject({ verified: false, passwordRequired: true });
+    }
+    expect((await row(stranger.email)).verified).toBe(false);
+    expect((await post("/auth/verify", { token: stranger.token, signupProof: "x".repeat(129) })).status).toBe(400);
+  });
+
+  it("ACC-VERIFY-17: the proof survives a resend, and needs a token that hasn't expired", async () => {
+    const { email, token, proof } = await register("proof-resend");
+    const session = await signIn(email);
+    const resent = await fetch(`${BASE}/auth/resend-verification`, { method: "POST", headers: { ...JSON_HEADERS, Authorization: `Bearer ${session}` }, body: "{}" });
+    expect(resent.status).toBe(200);
+    const rows = await getDb().execute(sql`SELECT email_verification_token AS t FROM claimnet.users WHERE email = ${email}`);
+    const fresh = (rows as unknown as Array<{ t: string }>)[0]!.t;
+    expect(fresh).not.toBe(token);
+    expect((await post("/auth/verify", { token, signupProof: proof })).status).toBe(400);
+
+    await getDb().execute(sql`UPDATE claimnet.users SET email_verification_token_created_at = now() - interval '25 hours' WHERE email = ${email}`);
+    expect((await post("/auth/verify", { token: fresh, signupProof: proof })).status).toBe(400);
+    expect((await row(email)).verified).toBe(false);
+
+    await getDb().execute(sql`UPDATE claimnet.users SET email_verification_token_created_at = now() WHERE email = ${email}`);
+    expect((await post("/auth/verify", { token: fresh, signupProof: proof })).data).toMatchObject({ verified: true });
+  });
+
+  it("ACC-VERIFY-18: the proof passes sign-in's checks: a waitlisted or switched-off account verifies and gets no session", async () => {
+    const held = await register("proof-waitlisted");
+    await getDb().execute(sql`UPDATE claimnet.users SET waitlisted_at = now() WHERE email = ${held.email}`);
+    const waitlisted = (await post("/auth/verify", { token: held.token, signupProof: held.proof })).data;
+    expect(waitlisted).toMatchObject({ verified: true, waitlisted: true });
+    expect(waitlisted["token"]).toBeUndefined();
+    expect(await row(held.email)).toEqual({ verified: true, waitlisted: true });
+
+    const off = await register("proof-suspended");
+    await getDb().execute(sql`UPDATE claimnet.users SET suspended_at = now() WHERE email = ${off.email}`);
+    const suspended = (await post("/auth/verify", { token: off.token, signupProof: off.proof })).data;
+    expect(suspended).toMatchObject({ verified: true });
+    expect(suspended["token"]).toBeUndefined();
+  });
+
+  it("ACC-VERIFY-19: after the owner resets, the stranger's proof and session are worth nothing", async () => {
+    const { email, token, proof } = await register("proof-takeover");
+    const strangerSession = await signIn(email);
+    await waitPastCurrentSecond();
+    expect((await post("/auth/reset-password", { token: await resetToken(email), newPassword: "owner-new-password-3" })).status).toBe(200);
+    expect(await meStatus(strangerSession)).toBe(401);
+    expect((await post("/auth/verify", { token, signupProof: proof })).data["token"]).toBeUndefined();
   });
 
   it("refuses a malformed request and an unknown token", async () => {

@@ -3,7 +3,7 @@ import { z } from "zod";
 import crypto from "crypto";
 import { sql } from "drizzle-orm";
 import { getDb } from "../db";
-import { registerUser, loginUser, requireAuth, requireActiveSession, activeSessionRefusal, requireVerifiedEmail, holdsLiveSessionOf, hashPassword, verifyPassword } from "../auth";
+import { registerUser, loginUser, requireAuth, requireActiveSession, activeSessionRefusal, requireVerifiedEmail, holdsLiveSessionOf, hashPassword, verifyPassword, isSignupProofOf, signInAccount, signupProofFor, unusableSignupProof } from "../auth";
 import { writeAudit } from "../services/audit-log.service";
 import { isSignupCapReached, logSignupCapState, mayRegister } from "../services/system-settings.service";
 import { purgeStaleWaitlistedUsers } from "../services/waitlist.service";
@@ -54,6 +54,7 @@ const resetPasswordRateLimit = rateLimit({ max: 10, windowMs: 15 * 60 * 1000 });
 const verifySchema = z.object({
   token: z.string().min(1),
   password: z.string().max(1024).optional(),
+  signupProof: z.string().max(128).optional(),
 });
 
 const forgotPasswordSchema = z.object({
@@ -111,7 +112,9 @@ async function turnstileRefusal(c: Context<AppEnv>, token: string | undefined, r
 //   3. For the genuinely-new branch, we asynchronously send a verification
 //      email (waitlist-variant copy on the cap-full branch) and, in dev
 //      only (ALLOW_AUTO_SETUP), surface the token for integration tests.
-//   4. The user is NOT auto-logged-in. They must verify, then call /login.
+//   4. The user is NOT auto-logged-in here. Every branch returns a sign-up
+//      proof, a new account's real and any other's random (see signupProofFor
+//      in auth.ts), which signs them in at /auth/verify beside the emailed token.
 auth.post("/register", authRateLimit, async (c) => {
   const body = await c.req.json();
   const parsed = registerSchema.safeParse(body);
@@ -162,6 +165,7 @@ auth.post("/register", authRateLimit, async (c) => {
         waitlisted: false,
         message:
           "If the email is eligible for registration, you'll receive a verification email shortly.",
+        signupProof: unusableSignupProof(),
         ...(extra ?? {}),
       },
     });
@@ -170,6 +174,7 @@ auth.post("/register", authRateLimit, async (c) => {
       ok: true,
       data: {
         waitlisted: true,
+        signupProof: unusableSignupProof(),
         message:
           "You're on the waitlist. Confirm your email via the link we just sent to hold your place — we'll email you when a spot opens. First come, first served.",
         ...(extra ?? {}),
@@ -241,10 +246,11 @@ auth.post("/register", authRateLimit, async (c) => {
     // Test-mode convenience: surface the verification token in the response
     // when ALLOW_AUTO_SETUP=true so integration tests can call /auth/verify
     // without scraping Mailpit. Never enabled in production.
+    const signupProof = signupProofFor(result.user.id);
     if (process.env["ALLOW_AUTO_SETUP"] === "true") {
-      return respond({ verificationToken });
+      return respond({ signupProof, verificationToken });
     }
-    return respond();
+    return respond({ signupProof });
   } catch (err: unknown) {
     const cause = err instanceof Error && err.cause instanceof Error ? err.cause : null;
     const msg = err instanceof Error ? err.message : String(err);
@@ -767,19 +773,17 @@ auth.delete("/me", authRateLimit, requireAuth, requireActiveSession, async (c) =
 //
 // A link alone doesn't verify an account (recipe 450a107b, F144). Someone can
 // register a password on another person's address, and that person's click
-// used to leave the stranger's password working. So verifying takes the
-// sign-up's own session or the account's password, which separates the two:
-// the person who signed up has one or the other, and the mailbox's owner has
-// neither. The owner's route is forgot-password, which replaces the password,
-// verifies the address and cuts every session. A mail scanner opening the link
-// changes nothing.
+// used to leave the stranger's password working. So verifying also takes one
+// thing only the person who signed up has: the sign-up proof from their
+// browser (nothing to type, see signupProofFor), the account's own session, or
+// its password. The mailbox's owner has none of them. Their route is
+// forgot-password, which replaces the password, verifies the address and cuts
+// every session. A mail scanner opening the link changes nothing.
 //
-// A correct password at the link also signs the person in, so a new sign-up
-// types it once. It is a real sign-in: the same rate limit as POST /auth/login,
-// and loginUser after the verify, so its waitlist and account-state checks and
-// its session dating apply unchanged. Only a verification does this: a repeat
-// click judges no password and issues no session, so a token isn't a second
-// way to test one.
+// The proof or the password also signs the person in, through the same checks
+// as POST /auth/login (signInAccount) and, for the password, its rate limit.
+// Only a verification does this: a repeat click judges nothing and issues no
+// session, so a token isn't a second way to test a password.
 //
 // Idempotent: a repeat click on a verified account (React StrictMode
 // double-fire, page refresh, email opened in two tabs) needs no proof and
@@ -792,7 +796,7 @@ auth.post("/verify", verifyRateLimit, async (c) => {
   if (!parsed.success) {
     return c.json({ ok: false, error: "Token required" }, 400);
   }
-  const { token, password } = parsed.data;
+  const { token, password, signupProof } = parsed.data;
 
   const db = getDb();
   const accounts = await db.execute(sql`
@@ -811,7 +815,8 @@ auth.post("/verify", verifyRateLimit, async (c) => {
   // Everything that can refuse comes before anything changes.
   const ownSession = await holdsLiveSessionOf(c, db, account.id);
   const signingIn = !account.verified && !ownSession;
-  if (signingIn) {
+  const proved = signingIn && signupProof !== undefined && isSignupProofOf(signupProof, account.id);
+  if (signingIn && !proved) {
     if (!password) {
       return c.json({ ok: true, data: { verified: false, passwordRequired: true, email: account.email, waitlisted: account.waitlisted } });
     }
@@ -838,8 +843,8 @@ auth.post("/verify", verifyRateLimit, async (c) => {
   // for a waitlisted or switched-off account: the address is verified, and
   // signing in tells them why not.
   let sessionToken: string | null = null;
-  if (signingIn && password) {
-    const signedIn = await loginUser(db, updated.email, password);
+  if (signingIn) {
+    const signedIn = await signInAccount(db, updated.id);
     if (signedIn?.token) {
       sessionToken = signedIn.token;
       await db.execute(sql`UPDATE claimnet.users SET last_login_at = now() WHERE id = ${updated.id}::uuid`);

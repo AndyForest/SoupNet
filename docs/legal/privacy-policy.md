@@ -11,7 +11,7 @@
 
 - We collect the minimum needed to run the service: your email, your password (hashed), the recipes you check, and the evidence you attach.
 - We use Google Gemini to generate vector embeddings of your text. Your text is sent to Google for processing. We don't send your email or identity with it.
-- We don't sell your data. We don't advertise. We don't use third-party trackers. We use localStorage only to keep you signed in.
+- We don't sell your data. We don't advertise. We don't use third-party trackers. We use localStorage only to finish your sign-up and keep you signed in.
 - When you connect an AI app (ChatGPT, Codex, Claude, or any other app that speaks MCP), it sends us the recipes and evidence its agent writes and reads back recipes from the books you chose. That app's own policy covers your conversation on its side.
 - You can see every check made through your account in the check log, export everything we have on you (`Settings → Export my data`), and delete your account from `Settings → Account`. If your account is suspended, disabled or belongs to a company, Section 7 says how to do these. Section 8 says how long each kind of data is kept.
 - If anything material about how we handle your data changes, we'll notify you by reasonable means before the change takes effect.
@@ -65,7 +65,7 @@ When you delete your account, the recipe-keyed embeddings are deleted along with
 ### 2.5 Technical data
 
 - **IP address and user agent** — used for rate limiting and abuse detection. Rate limiting holds them in memory only. The load balancer's access logs record your IP address and user agent, and our application logs record the user agent of the app calling the MCP server; both are deleted automatically after a short period (Section 8). Neither is stored in the database.
-- **localStorage** — we store your authentication token in your browser's localStorage. This storage is strictly necessary to keep you signed in to the service you requested. We do not use cookies for tracking, third-party analytics, or tag managers.
+- **localStorage** — we store your authentication token in your browser's localStorage, and a sign-up proof until you verify your email. This storage is strictly necessary to sign you up and keep you signed in to the service you requested. We do not use cookies for tracking, third-party analytics, or tag managers.
 
 ### 2.6 Connected AI apps
 

@@ -1,5 +1,5 @@
 Feature: Proving a mailbox
-  Someone can register a password on another person's address. Verifying an account takes the sign-up's own session or the account's password, so that person can't keep access once the real owner proves the mailbox. The owner's route is forgot-password.
+  Someone can register a password on another person's address. Verifying an account takes something only the person who signed up has: the sign-up proof in their browser, their session, or the password. So that person can't keep access once the real owner proves the mailbox, whose route is forgot-password.
   # Guards: recipe 450a107b; realized in apps/backend/src/routes/auth-verify.test.ts.
 
   Rule: A verification link alone verifies nothing
@@ -9,6 +9,38 @@ Feature: Proving a mailbox
       Given Pat signed in after signing up
       When Pat opens the verification link in that browser
       Then the address is verified with no password asked
+
+    @ACC-VERIFY-14
+    Scenario: Signing up and clicking the link in the same browser takes nothing typed
+      Given Pat signed up in this browser, so it holds the sign-up proof
+      When Pat opens the verification link here
+      Then the address is verified and Pat is signed in, with no password asked
+
+    @ACC-VERIFY-15
+    Scenario: The proof says nothing about whether an address has an account
+      When someone registers an address that already has an account
+      Then the response has the same shape, with a proof of the same form
+      And that proof verifies nothing
+
+    @ACC-VERIFY-16
+    Scenario: The proof and the token only work together
+      Given Sal registered on Olive's address, so Sal holds a proof and Olive gets the link
+      When Sal sends the proof with no real token
+      Then it is refused
+      When Olive opens the link with no proof, or another account's
+      Then the password is asked for and nothing changes
+
+    @ACC-VERIFY-17
+    Scenario: The proof survives a resend and needs a live token
+      When Pat asks for a new link and opens it in the same browser
+      Then the address is verified with nothing typed
+      And an expired or replaced link is refused, proof or not
+
+    @ACC-VERIFY-18
+    Scenario: The proof passes sign-in's checks
+      Given Wes is on the waitlist, or Sam's account is switched off
+      When they open the link in the browser they signed up in
+      Then the address is verified and the response carries no session
 
     @ACC-VERIFY-02
     Scenario: With no session, the link asks for the password and changes nothing
@@ -67,6 +99,12 @@ Feature: Proving a mailbox
       Then the address is verified
       And Sal's password and session no longer work
       And Olive can sign in with the new password
+
+    @ACC-VERIFY-19
+    Scenario: After the owner resets, the stranger's proof and session are worth nothing
+      Given Sal holds a proof and a session on the address Olive took back
+      When Sal uses them
+      Then the session is refused, and the proof signs nobody in
 
     @ACC-VERIFY-07
     Scenario: Every reset ends the account's sessions
