@@ -561,6 +561,59 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Core", ()
     expect((await call(max, "PUT", `/recipe-books/${defaultBookId}`, { name: `renamed-${run}` })).status).toBe(200);
   });
 
+  it("ORG-ROLE-05 / F150: the default book keeps its owners, and an org owner can't be locked out of it", async () => {
+    const olive = await actor("olive-keep");
+    const { orgId, defaultBookId } = await createOrg(olive);
+    const max = await actor("max-keep");
+    await mustAdd(orgId, max, "owner");
+
+    // The probe: Max removes Olive's row, then Olive demotes Max.
+    expect((await call(max, "DELETE", `/recipe-books/${defaultBookId}/members/${olive.userId}`)).status).toBe(400);
+    expect((await membershipRow(defaultBookId, olive.userId))?.role).toBe("owner");
+    expect((await call(olive, "PATCH", `/organizations/${orgId}/members/${max.userId}`, { role: "member" })).status).toBe(200);
+    expect((await call(olive, "PUT", `/recipe-books/${defaultBookId}`, { name: `kept-${run}` })).status).toBe(200);
+    expect((await call(max, "PUT", `/recipe-books/${defaultBookId}`, { name: `kept2-${run}` })).status).toBe(403);
+
+    // Once demoted, the row can go. And a row already missing comes back on the next role action.
+    expect((await call(olive, "DELETE", `/recipe-books/${defaultBookId}/members/${max.userId}`)).status).toBe(200);
+    expect((await call(olive, "PATCH", `/organizations/${orgId}/members/${max.userId}`, { role: "owner" })).status).toBe(200);
+    expect(await membershipRow(defaultBookId, max.userId)).toMatchObject({ role: "owner", via: "org", daily_read: true });
+  });
+
+  it("ORG-ROLE-06 / F153: owner_id moves off a demoted owner to a current one, on the audit trail", async () => {
+    const olive = await actor("olive-owner-id");
+    const { orgId } = await createOrg(olive);
+    const max = await actor("max-owner-id");
+    await mustAdd(orgId, max, "owner");
+    const ownerId = async () =>
+      ((await getDb().execute(sql`SELECT owner_id FROM claimnet.organizations WHERE id = ${orgId}::uuid`)) as unknown as Array<{ owner_id: string }>)[0]?.owner_id;
+    expect(await ownerId()).toBe(olive.userId);
+
+    expect((await call(max, "PATCH", `/organizations/${orgId}/members/${olive.userId}`, { role: "admin" })).status).toBe(200);
+    expect(await ownerId()).toBe(max.userId);
+    const audit = (await getDb().execute(sql`
+      SELECT metadata FROM claimnet.audit_log WHERE action = 'organization.owner_handed_over' AND target_id = ${orgId}::uuid
+    `)) as unknown as Array<{ metadata: Json }>;
+    expect(audit[0]?.metadata).toMatchObject({ reason: "owner_demoted", newOwnerUserId: max.userId });
+
+    // Demoting someone who doesn't hold owner_id leaves it alone.
+    expect((await call(max, "PATCH", `/organizations/${orgId}/members/${olive.userId}`, { role: "member" })).status).toBe(200);
+    expect(await ownerId()).toBe(max.userId);
+  });
+
+  it("ORG-ROLE-07 / F155: a hand-over gives the successor the default book's owner role", async () => {
+    const olive = await actor("olive-handover");
+    const { orgId, defaultBookId } = await createOrg(olive);
+    const ada = await actor("ada-handover");
+    await mustAdd(orgId, ada, "admin");
+    expect((await membershipRow(defaultBookId, ada.userId))?.role).toBe("admin");
+
+    const { handOverOrganizationsOwnedBy } = await import("../authz/organizations");
+    await getDb().transaction((tx) => handOverOrganizationsOwnedBy(tx, olive.userId));
+    expect((await membershipRow(defaultBookId, ada.userId))?.role).toBe("owner");
+    expect((await call(ada, "PUT", `/recipe-books/${defaultBookId}`, { name: `handed-${run}` })).status).toBe(200);
+  });
+
   it("ORG-ROLE-01, ORG-ROLE-02 / OC-R1, OC-R2, OC-B4: role rules, org-row roles, and one 404 for everything outside", async () => {
     const olive = await actor("olive");
     const { orgId, defaultBookId } = await createOrg(olive);
