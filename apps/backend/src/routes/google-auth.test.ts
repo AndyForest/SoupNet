@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
+import { invalidateSessions } from "../authz";
 import { seedVerifiedUser } from "../test-users";
 import { startFakeGoogleIssuer } from "../test-google-issuer";
 import type { FakeGoogleIssuer, FakeIdClaims } from "../test-google-issuer";
@@ -561,6 +562,15 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
     expect((await call(val.token, "GET", "/auth/me")).status).toBe(200);
   });
 
+  it("SSO-G5b / F149: any session cut-off ends a held handoff code, whoever calls it", async () => {
+    const email = address("f149", "gmail.com");
+    const subject = sub();
+    const pat = signedIn(await signIn(consumer(email, subject)));
+    const held = await heldHandoff(consumer(email, subject));
+    await invalidateSessions(getDb(), pat.userId);
+    await expectInvalidHandoff(held);
+  });
+
   it("SSO-G5b / F143: a callback that resolved before the removal issues no code after it", async () => {
     const { issueHandoff } = await import("../services/google-sign-in.service");
     const email = address("f143-inflight", `outside-${run}.example`);
@@ -577,7 +587,16 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
     };
     // The same call issues a code while the identity holds the account.
     expect(await issueHandoff(getDb(), input)).toBeTruthy();
-    expect((await verifyEmail(await verificationTokenOf(stranger.userId))).googleSignInRemoved).toBe(true);
+
+    // A removal in flight: the issue waits for its row lock, then finds the identity gone.
+    let issuing: Promise<string | null> | undefined;
+    await getDb().transaction(async (tx) => {
+      await tx.execute(sql`SELECT 1 FROM claimnet.users WHERE id = ${stranger.userId}::uuid FOR UPDATE`);
+      issuing = issueHandoff(getDb(), input);
+      await new Promise((r) => setTimeout(r, 300));
+      await tx.execute(sql`DELETE FROM claimnet.user_identities WHERE user_id = ${stranger.userId}::uuid`);
+    });
+    expect(await issuing).toBeNull();
     expect(await issueHandoff(getDb(), input)).toBeNull();
   });
 

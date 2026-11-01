@@ -83,7 +83,9 @@ export async function accountRefusal(db: PostgresJsDatabase, userId: string): Pr
  * Refuse every session issued before now (recipe a8003678). For SSO's account
  * linking, which discards an unverified password: a session the
  * pre-registrant already holds dies with it. Keys are untouched; an
- * unverified account has none.
+ * unverified account has none. A Google handoff code already issued for the
+ * account goes too, since it would otherwise produce a session past the
+ * cut-off (F143, F149).
  *
  * The cut-off is the next whole second, since `iat` can't tell the two parts
  * of this one apart: a session someone was minting as this ran would otherwise
@@ -100,7 +102,16 @@ export async function accountRefusal(db: PostgresJsDatabase, userId: string): Pr
  */
 export async function invalidateSessions(db: PostgresJsDatabase, userId: string): Promise<void> {
   const cutOffSeconds = Math.floor(Date.now() / 1000) + 1;
-  await db.execute(sql`
-    UPDATE claimnet.users SET sessions_valid_after = to_timestamp(${cutOffSeconds}) WHERE id = ${userId}::uuid
-  `);
+  // Two statements, in this order: the first takes the row lock `issueHandoff`
+  // waits on, so the second's fresh snapshot finds any code it just committed.
+  // The transaction holds that lock across both (a savepoint, inside a caller's).
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`
+      UPDATE claimnet.users SET sessions_valid_after = to_timestamp(${cutOffSeconds}) WHERE id = ${userId}::uuid
+    `);
+    await tx.execute(sql`
+      UPDATE claimnet.sso_login_requests SET handoff_consumed_at = now()
+      WHERE user_id = ${userId}::uuid AND handoff_hash IS NOT NULL AND handoff_consumed_at IS NULL
+    `);
+  });
 }
