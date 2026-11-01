@@ -20,7 +20,10 @@ import { getDb } from "../db";
 import { getSetting } from "../services/system-settings.service";
 
 const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models";
-const MODEL = "gemini-embedding-2-preview";
+// HELD EMERGENCY FALLBACK: every embedding call goes to GA while stored rows and the
+// cache keep their gemini-embedding-2-preview label. It relies on GA and preview
+// vectors matching, which Google doesn't promise. Deploy only if preview stops serving.
+const MODEL = "gemini-embedding-2";
 const BATCH_MAX = 100;
 const OUTPUT_DIM = 3072;
 
@@ -55,7 +58,7 @@ export async function embedMultimodal(
 /** Shared implementation for text-only and multimodal embedding calls. */
 async function embedParts(
   parts: ContentPart[],
-  taskType: string,
+  _taskType: string,
 ): Promise<number[] | null> {
   const apiKey = process.env["GEMINI_API_KEY"];
   if (!apiKey) return null; // graceful fallback — no API key means lexical-only search
@@ -80,7 +83,6 @@ async function embedParts(
       body: JSON.stringify({
         model: `models/${MODEL}`,
         content: { parts },
-        taskType,
         outputDimensionality: 3072,
       }),
       signal: AbortSignal.timeout(30_000),
@@ -109,12 +111,12 @@ async function embedParts(
  *
  * @param texts up to BATCH_MAX text strings
  * @param taskType Gemini task type (RETRIEVAL_DOCUMENT, SEMANTIC_SIMILARITY, ...)
- * @param modelId model identifier (defaults to gemini-embedding-2-preview)
+ * @param _modelId the row's label, not sent: see MODEL above
  */
 export async function batchEmbed(
   texts: string[],
-  taskType: string,
-  modelId: string = MODEL,
+  _taskType: string,
+  _modelId: string = MODEL,
 ): Promise<number[][]> {
   if (texts.length === 0) return [];
   if (texts.length > BATCH_MAX) {
@@ -124,13 +126,12 @@ export async function batchEmbed(
   const apiKey = process.env["GEMINI_API_KEY"];
   if (!apiKey) throw new Error("GEMINI_API_KEY is required for batch embedding");
 
-  const modelPath = `models/${modelId}`;
+  const modelPath = `models/${MODEL}`;
   const url = `https://generativelanguage.googleapis.com/v1beta/${modelPath}:batchEmbedContents`;
 
   const requests = texts.map((text) => ({
     model: modelPath,
     content: { parts: [{ text }] },
-    taskType,
     outputDimensionality: OUTPUT_DIM,
   }));
 
