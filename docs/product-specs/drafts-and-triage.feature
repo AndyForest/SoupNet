@@ -149,12 +149,17 @@ Feature: Drafts, triage ratings, and deciding by building both
     @DT-TOOL-03 @slice-1
     Scenario: Ride-along feedback keeps every field while its schema shrinks to a pointer
       When a client calls tools/list
-      Then the feedback parameter on check_recipe and search_recipes no longer repeats log_feedback's per-field schema
+      Then the feedback parameter on check_recipe no longer repeats log_feedback's per-field schema
       And its description points to log_feedback for the row fields
-      When a client sends a feedback row with every field log_feedback accepts on check_recipe, and again on search_recipes
+      When a client sends a feedback row with every field log_feedback accepts on check_recipe
       Then every field is stored exactly as it would be through log_feedback
       # This is the guard for the pointer's item schema: a bare object item
       # schema would let the SDK strip every row field before the handler sees it.
+
+    Scenario: The read-only search tool takes no feedback rows
+      When a client sends a feedback row on search_recipes
+      Then nothing runs and no feedback row is stored
+      And the refusal names log_feedback, which takes the same row
 
     @DT-TOOL-04 @slice-1
     Scenario: The shared-copy budget test moves down, not up

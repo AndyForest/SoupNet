@@ -332,8 +332,8 @@ function imageFromBase64(base64: string, filename: string, mimeTypeHint?: string
 
 // Ride-along feedback rows: an open object per row. The row's fields are
 // log_feedback's, and the feedback param's description points there rather
-// than repeating the per-field schema on two tools (drafts-and-triage slice
-// 1, S1-Z4: ~570 bytes of item schema per tool). The item schema must still
+// than repeating the per-field schema on check_recipe (drafts-and-triage slice
+// 1, S1-Z4: ~570 bytes of item schema). The item schema must still
 // admit every field — a bare z.object({}) would let the SDK strip them all
 // before the handler — so it is a record of unknown values. Validation was
 // already per-row in the feedback service (strict enums, uuids, types), so
@@ -732,22 +732,26 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
       session_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.sessionId),
       intent: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.intent),
       agent_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.agentId),
-      feedback: z.array(feedbackRowSchema).optional().describe(MCP_PARAM_DESCRIPTIONS.feedbackParam),
       read_recipe_books: z.string().optional().describe(
         "Comma-separated recipe-book slugs to restrict result scope. Default: all readable books."
       ),
     },
     {
       title: "Recipe search",
-      // Genuinely read-only: no trace row, no corpus write. The check.searched
-      // audit row is call bookkeeping, same as every read surface's accounting.
+      // Marked read-only under the annotation rule (recipe 3b166817): it writes
+      // no trace and takes no feedback rows, which go through log_feedback
+      // (recipe 9dbcfb77). Its writes are the check.searched audit row, the
+      // shown-recipe ledgers (session_shown, intent_shown) and the intent:
+      // registered from text, or its last_used_at updated from an id. That
+      // update can return the intent's expired drafts to the review queue
+      // (DT-BUS-03), which docs/connectors/openai-plugin.md states.
       // Closed-world: it reads only the account's own books.
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
       openWorldHint: false,
     },
-    async ({ query, page, verbosity, response_format, known_recipes, session_id, intent, agent_id, feedback, read_recipe_books }) => {
+    async ({ query, page, verbosity, response_format, known_recipes, session_id, intent, agent_id, read_recipe_books }) => {
       const knownRecipeIds = new Set(
         (known_recipes ?? "").split(",").map((s) => s.trim()).filter(Boolean),
       );
@@ -803,32 +807,8 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
         }
         console.warn(`[mcp] search_recipes: success — ${result.results.length} results (${response_format ?? "markdown"})`);
 
-        // Ride-along feedback about PRIOR checks/searches — same assembly as
-        // check_recipe's feedback param.
-        let feedbackSummary = "";
-        let feedbackResults: unknown;
-        if (feedback && feedback.length > 0) {
-          const rows: unknown[] = feedback.map((row) => !isFeedbackRowObject(row) ? row :
-            withCheckDefaults(row, {
-              agentId: agent_id,
-              sessionId: session_id,
-              intentId: result.intent?.intentId ?? undefined,
-            }),
-          );
-          const results = await ingestFeedback({
-            db,
-            apiKeyId: principal.keyId,
-            userId: principal.userId,
-            readGroupIds: principal.readGroupIds,
-            rows,
-          });
-          feedbackSummary = summarizeFeedbackResults(results);
-          feedbackResults = results;
-        }
-
         if (response_format === "structured") {
           const data = jsonResponse["data"] as Record<string, unknown>;
-          if (feedbackResults !== undefined) data["feedbackResults"] = withoutFeedbackIds(feedbackResults);
           const stub = `Read-only search — ${String(data["totalResults"])} result(s)${result.searchId ? `, searchId ${result.searchId}` : ""}. See structuredContent.`;
           return {
             content: [{ type: "text" as const, text: stub }],
@@ -836,10 +816,9 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
           };
         }
 
-        let text = renderCheckResponseMarkdown(jsonResponse as unknown as CheckResponseJson, {
+        const text = renderCheckResponseMarkdown(jsonResponse as unknown as CheckResponseJson, {
           knownRecipeIds: [...knownRecipeIds],
         });
-        if (feedbackSummary) text += `\n\n${feedbackSummary}`;
         return { content: [{ type: "text" as const, text }] };
       } catch (err) {
         return { content: [{ type: "text" as const, text: toolErrorText(err, "search_recipes") }] };
