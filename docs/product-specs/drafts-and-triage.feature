@@ -791,9 +791,11 @@ Feature: Drafts, triage ratings, and deciding by building both
       And a draft whose intent no longer exists is judged by its week
 
     @DT-BUS-03 @slice-10
-    Scenario: Using the intent again revives its drafts
+    Scenario: A check under the intent revives its drafts, and a read does not
       Given an expired draft under an intent
-      When an agent searches carrying that intent
+      When an agent searches or fetches a briefing carrying that intent
+      Then the draft stays expired and the intent's last use is unchanged
+      When an agent checks a recipe carrying that intent
       Then the draft is back in Pat's queue, and nothing was written to it
 
     @DT-BUS-04 @slice-10

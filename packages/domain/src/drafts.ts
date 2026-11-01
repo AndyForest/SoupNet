@@ -222,7 +222,7 @@ export function onlySubjectReviewsReason(subjectEmail: string | null, queueUrl?:
  * with no intent, for a week from its deposit (recipe fd614c86). A headless
  * key's drafts never expire: the person's queue is their listener. Liveness
  * is computed at read time from these (authz/draft-sql.ts `draftLive`) and
- * never stored, so a draft revives when its intent is used again.
+ * never stored, so a draft revives when a check carries its intent again.
  */
 export const DRAFT_INTENT_IDLE_HOURS = 24;
 export const DRAFT_NO_INTENT_LIVE_DAYS = 7;

@@ -688,6 +688,7 @@ export async function submitAndSearch(
   // response notices instead (capture-only leniency, recipe abddb65d's
   // posture applied to the carrying call).
   const intent = await resolveIntent(db, {
+    markUsed: true,
     value: params.intent,
     userId,
     apiKeyId: keyId,
@@ -1355,8 +1356,10 @@ export async function searchWithoutLogging(
     }
   }
   // Declared intent (Phase C): resolve + union its delivery ledger into the
-  // known-set — same rendering-only stub semantics as the check path.
+  // known-set — same rendering-only stub semantics as the check path. A
+  // search doesn't mark the intent used, so it can't revive a draft.
   const intent = await resolveIntent(db, {
+    markUsed: false,
     value: params.intent,
     userId: keyResult.userId,
     apiKeyId: keyResult.keyId,
