@@ -15,6 +15,7 @@ import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { QUEUES } from "../queues";
 import type { VectorCheckItem } from "../queues";
+import { embeddingJobPriority } from "./vector-api-call";
 
 export async function handleVectorCheck(
   job: { data: { items: VectorCheckItem[] } },
@@ -53,7 +54,7 @@ export async function handleVectorCheck(
         SET vector = ${cached.vector_str}::halfvec(3072),
             status = 'complete',
             updated_at = now()
-        WHERE id = ${item.vectorId}::uuid
+        WHERE id = ${item.vectorId}::uuid AND model_id = ${item.modelId}
       `);
       cacheHits++;
     } else {
@@ -61,15 +62,21 @@ export async function handleVectorCheck(
     }
   }
 
-  if (cacheMisses.length > 0) {
+  // One API job per model: a batch calls one model and labels its rows with it.
+  const byModel = new Map<string, VectorCheckItem[]>();
+  for (const item of cacheMisses) {
+    const key = `${item.modelId}\0${item.taskType}`;
+    byModel.set(key, [...(byModel.get(key) ?? []), item]);
+  }
+  for (const group of byModel.values()) {
     await boss.send(QUEUES.VECTOR_API_CALL, {
-      items: cacheMisses,
+      items: group,
     }, {
       retryLimit: 2,
       retryDelay: 5,
       retryBackoff: true,
       expireInMinutes: 10,
-      priority: 1,
+      priority: embeddingJobPriority(group[0]!.modelId),
     });
   }
 

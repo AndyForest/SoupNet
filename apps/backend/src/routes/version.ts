@@ -39,8 +39,9 @@ import type { AppEnv } from "../types";
 import { authenticateKey } from "../authz";
 import {
   getEmbeddingProviderId,
-  getEmbeddingModelId,
+  getEmbeddingModelId, getRebuildTargetModelId,
 } from "../lib/embeddings/provider";
+import { getReadVectorsState } from "../lib/embeddings/read-model-watch";
 import { rateLimit, getClientIp, hashApiKey } from "../middleware/rate-limit";
 
 /** Pull the raw api key from a Bearer header or the `?key=` query param —
@@ -132,6 +133,9 @@ version.get("/", versionIpRateLimit, versionPerKeyRateLimit, async (c) => {
       embeddings: {
         provider: getEmbeddingProviderId(),
         modelId: getEmbeddingModelId(),
+        rebuildTargetModelId: getRebuildTargetModelId(),
+        // "empty" means search returns 200 with nothing: see ADR-0024.
+        readVectors: getReadVectorsState(),
       },
       // The PRESENTING key's own runway — surfaced only because this caller
       // holds a currently-valid key (see the indistinguishability boundary

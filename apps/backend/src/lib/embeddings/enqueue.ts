@@ -19,7 +19,7 @@
 import crypto from "node:crypto";
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { embedQuery, embedMultimodal, getEmbeddingModelId } from "./provider";
+import { embedQuery, embedMultimodal, getEmbeddingModelId, getRebuildTargetModelId } from "./provider";
 import type { ContentPart } from "../gemini-client";
 
 // KNOWN BUG (2026-03-29): gemini-embedding-2-preview ignores task_type — all types produce
@@ -51,8 +51,8 @@ export async function getOrCreateCachedVector(
   sourceText: string,
   taskType: string,
   multimodalParts?: ContentPart[],
+  modelId: string = getEmbeddingModelId(),
 ): Promise<string | null> {
-  const modelId = getEmbeddingModelId();
   // Check cache first
   const cached = await db.execute(sql`
     SELECT vector::text AS vector_str
@@ -70,8 +70,8 @@ export async function getOrCreateCachedVector(
 
   // Cache miss — call Gemini API (multimodal or text-only)
   const vector = multimodalParts
-    ? await embedMultimodal(multimodalParts, taskType)
-    : await embedQuery(sourceText, taskType);
+    ? await embedMultimodal(multimodalParts, taskType, modelId)
+    : await embedQuery(sourceText, taskType, modelId);
   if (!vector) return null;
 
   const vectorStr = `[${vector.join(",")}]`;
@@ -237,6 +237,26 @@ export async function enqueueEmbedding(
         VALUES
           (${chunkRow.id}::uuid, ${modelId}, ${taskType}, 'pending', NULL)
       `);
+    }
+
+    // During a rebuild, text rows reach the target through the sweep. An image is
+    // the exception: its bytes are in hand now and may not exist on disk by the
+    // time the sweep runs, so it is embedded for the target here. If that fails the
+    // row falls to the sweep, which uses bytes on disk or embeds text only.
+    const rebuildTarget = multimodalParts ? getRebuildTargetModelId() : null;
+    if (rebuildTarget) {
+      const targetVector = await getOrCreateCachedVector(
+        db, chunkHash, params.sourceText, taskType, multimodalParts, rebuildTarget,
+      );
+      if (targetVector) {
+        await db.execute(sql`
+          INSERT INTO claimnet.embedding_vectors
+            (embedding_chunk_id, model_id, task_type, status, vector)
+          VALUES
+            (${chunkRow.id}::uuid, ${rebuildTarget}, ${taskType}, 'complete', ${targetVector}::vector(3072)::halfvec(3072))
+          ON CONFLICT (embedding_chunk_id, model_id, task_type) DO NOTHING
+        `);
+      }
     }
   }
 }

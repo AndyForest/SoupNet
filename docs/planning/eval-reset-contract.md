@@ -18,6 +18,8 @@ Residue to be healed: the gate store (`soupnet-freplay-gate`, :3104) currently h
 
 **(d) Version introspection on `/health`** (or a sibling) — git commit, `RANKING_ALGORITHM_VERSION`, migration head (count + latest id), embeddings provider + model id. Rationale: the operator's direct concern — *"is this a real bug or an old bug in a stale postgres db? … that's hard for me to verify."* One GET should answer "is this stack stale" for humans and agents alike. (Checks already echo `data.ranking`; this extends the same self-description to the infra level.)
 
+**Pinned stacks and the embedding model (2026-11-01).** A pinned stack past ADR-0024 must set `EMBEDDINGS_MODEL` or the backend refuses to start; to keep its cached vectors valid, set it to the `model_id` they carry. Moving a pin to a new model starts with no cached vectors for it, and every comparison across that move compares two embeddings runs.
+
 **(e) Vector-cache sync** — export/import of `vector_cache` rows keyed by `(content_hash, model_id, task_type)`, dedup on conflict — a CLI or endpoint contract replacing ad-hoc `pg_dump` (mechanism proven by the ~511 MB `rankeval_p6` dump; the paid gemini vectors are an asset both sides reuse). Rationale: one shared benchmark stack still needs cheap re-warming from the dev db's cache after resets or fresh imports.
 
 **(f) Headless key lifecycle** — mint/renew scoped api keys via CLI or admin API (no browser login), and expiry visibility (expiresAt in auth-probe responses; a 4xx that names expiry as the cause). Rationale: a silently expired key cost a full stack-provisioning round before anyone learned expiry was the issue; renewal required operator SQL — the class of intervention this contract exists to end.

@@ -16,7 +16,8 @@ import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { buildStrategyText } from "@soupnet/domain";
 import type { EvidenceEntry } from "@soupnet/domain";
-import { getEmbeddingModelId } from "../../lib/embeddings/provider";
+import { getActiveEmbeddingModelIds, getEmbeddingModelId } from "../../lib/embeddings/provider";
+import { cooldownRemainingMs } from "../../lib/embeddings/provider-cooldown";
 import { QUEUES } from "../queues";
 import type { VectorCheckItem } from "../queues";
 
@@ -25,6 +26,8 @@ import type { VectorCheckItem } from "../queues";
 const TASK_TYPES = ["SEMANTIC_SIMILARITY"] as const;
 const MAX_TRACES_PER_JOB = 200;
 const VECTOR_BATCH_SIZE = 64;
+/** Rebuild batches spread across the sweep's minute, so it doesn't arrive as a burst. */
+const REBUILD_SPREAD_SECONDS = 55;
 
 export async function handleStrategyCheck(
   job: { data: { strategyId: string } },
@@ -138,6 +141,14 @@ export async function handleStrategyCheck(
   }
 
   // ── Step 2: Find pending vectors for this strategy → fan out vector.check ──
+  // Only the models this process runs, and not one the provider is pushing back on.
+  // A row under any other model (say one retired after a flip) is left alone.
+  const models: string[] = [];
+  for (const id of getActiveEmbeddingModelIds()) {
+    if ((await cooldownRemainingMs(db, id)) === 0) models.push(id);
+  }
+  if (models.length === 0) return;
+
   const pendingRows = await db.execute(sql`
     SELECT ev.id AS vector_id, ec.id AS chunk_id, ec.chunk_text, ec.chunk_hash,
            ev.task_type, ev.model_id
@@ -146,7 +157,8 @@ export async function handleStrategyCheck(
     JOIN claimnet.embedding_chunk_strategies ecs ON ecs.id = ec.chunk_strategy_id
     WHERE ecs.strategy_id = ${strategyId}
       AND ev.status = 'pending'
-    ORDER BY ev.task_type, ev.created_at
+      AND ev.model_id IN (${sql.join(models.map((m) => sql`${m}`), sql`, `)})
+    ORDER BY (ev.model_id = ${modelId}) DESC, ev.model_id, ev.task_type, ev.created_at
     LIMIT ${VECTOR_BATCH_SIZE * 10}
   `);
 
@@ -157,24 +169,50 @@ export async function handleStrategyCheck(
 
   if (pending.length === 0) return;
 
-  for (let i = 0; i < pending.length; i += VECTOR_BATCH_SIZE) {
-    const batch = pending.slice(i, i + VECTOR_BATCH_SIZE);
-    const items: VectorCheckItem[] = batch.map((r) => ({
-      vectorId: r.vector_id,
-      chunkId: r.chunk_id,
-      chunkText: r.chunk_text,
-      chunkHash: r.chunk_hash,
-      taskType: r.task_type,
-      modelId: r.model_id,
-    }));
-
-    await boss.send(QUEUES.VECTOR_CHECK, { items }, {
-      singletonKey: `vector-check-${items[0]!.vectorId}`,
-      priority: 1,
-    });
+  // One model per batch, so nothing downstream can label a row with another's id.
+  const byModel = new Map<string, typeof pending>();
+  for (const row of pending) {
+    byModel.set(row.model_id, [...(byModel.get(row.model_id) ?? []), row]);
   }
 
-  const batchCount = Math.ceil(pending.length / VECTOR_BATCH_SIZE);
+  let batchCount = 0;
+  for (const [rowModelId, rows] of byModel) {
+    const isRead = rowModelId === modelId;
+    const batches = Math.ceil(rows.length / VECTOR_BATCH_SIZE);
+    for (let b = 0; b < batches; b++) {
+      const batch = rows.slice(b * VECTOR_BATCH_SIZE, (b + 1) * VECTOR_BATCH_SIZE);
+
+      // Claim before sending. A delayed job's rows would otherwise still read as
+      // pending at the next sweep and be sent, and paid for, twice.
+      const claimed = await db.execute(sql`
+        UPDATE claimnet.embedding_vectors
+        SET status = 'processing', updated_at = now()
+        WHERE id IN (${sql.join(batch.map((r) => sql`${r.vector_id}::uuid`), sql`, `)})
+          AND status = 'pending'
+        RETURNING id
+      `);
+      const claimedIds = new Set((claimed as unknown as Array<{ id: string }>).map((r) => r.id));
+      const items: VectorCheckItem[] = batch
+        .filter((r) => claimedIds.has(r.vector_id))
+        .map((r) => ({
+          vectorId: r.vector_id,
+          chunkId: r.chunk_id,
+          chunkText: r.chunk_text,
+          chunkHash: r.chunk_hash,
+          taskType: r.task_type,
+          modelId: r.model_id,
+        }));
+      if (items.length === 0) continue;
+
+      await boss.send(QUEUES.VECTOR_CHECK, { items }, {
+        singletonKey: `vector-check-${items[0]!.vectorId}`,
+        priority: isRead ? 1 : 0,
+        ...(isRead ? {} : { startAfter: Math.floor((b * REBUILD_SPREAD_SECONDS) / batches) }),
+      });
+      batchCount++;
+    }
+  }
+
   console.warn(
     `[strategy-check] strategy=${strategyId}: ${missingTraces.length} traces backfilled, ${pending.length} pending vectors → ${batchCount} vector-check jobs`,
   );

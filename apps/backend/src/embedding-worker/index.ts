@@ -144,9 +144,10 @@ export async function startEmbeddingWorker(
   );
 
   // Tier 4: Vector API Call
+  // includeMetadata: the handler's split-on-second-failure reads retryCount.
   await boss.work<VectorApiCallJob>(
     QUEUES.VECTOR_API_CALL,
-    { batchSize: Math.max(1, Math.floor(concurrency / 2)) },
+    { batchSize: Math.max(1, Math.floor(concurrency / 2)), includeMetadata: true },
     async (jobs) => {
       for (const job of jobs) {
         await handleVectorApiCall(job, boss, db);

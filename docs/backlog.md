@@ -66,6 +66,9 @@ Operator, 2026-10-25: a basic replacement for a hosted vector database, wanted f
 
 ### `[IMPL]` Deleting a recipe while the embedding worker is on it answers 500 (2026-10-31)
 
+Addressed on `feat/embedding-model-switch`: the delete now locks the source's chunks first, because a rebuild makes the worker's fill far more likely to collide with a delete. Close this when that merges.
+
+
 `deleteEmbeddingChainForSource` (`services/trace-delete.service.ts:157`) deletes a source's strategies and then the source, as separate statements. If `embedding-worker/jobs/strategy-check.ts:107` inserts a strategy row between them, the source delete fails its foreign key: `update or delete on table "embedding_sources" violates foreign key constraint ... is still referenced from table "embedding_chunk_strategies"`. The transaction rolls back, so nothing is lost and a retry works, but `DELETE /traces/:id` answers 500, and it failed unrelated CI once (`audit-anonymise.test.ts:125`, run 41244673560, in the same second as that error). Likely fix, untested: lock the source rows with `SELECT ... FOR UPDATE` first, which makes the worker's insert wait and then fail on the missing source, and check the worker tolerates that.
 
 ### `[IMPL]` Static /info pages: follow-ups from the independent check of #173 (2026-10-31)
@@ -94,6 +97,10 @@ Status (2026-07-08): ~~ADR written — [`docs/adr/0023-local-embedding-providers
 ---
 
 ## Data portability
+
+### `[IMPL]` Keep uploaded files somewhere a replaced task can read them (2026-11-01)
+
+Uploads live on the task's local disk, so a redeploy loses them. Text survives in the database, but a model rebuild can't re-embed an image it can't read: that source falls back to a text-only vector labelled `text_fallback` (ADR-0024), and removing the old model removes the only vector that saw the image. Object storage would let every future rebuild use the real bytes. Nothing else in this repo needs it yet.
 
 ### `[DESIGN]` Point a dev backend's cache queries at the local embedding cache archive
 

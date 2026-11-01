@@ -9,7 +9,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { mkdir, writeFile, access } from "node:fs/promises";
+import { mkdir, writeFile, access, readFile } from "node:fs/promises";
 import { resolve, extname } from "node:path";
 import { ALLOWED_MIME_TYPES, MIME_TO_EXT, MAX_UPLOAD_BYTES } from "@soupnet/domain";
 import { ClientSafeError } from "./client-safe-error";
@@ -77,4 +77,20 @@ export async function storeFile(
   await writeFile(fullPath, buffer);
 
   return { filePath, contentHash, publicUrl };
+}
+
+/**
+ * Read back stored bytes by content hash, or null when they aren't on this disk.
+ * The store is task-local on a host with ephemeral disks, so absence is normal.
+ * The hash is checked, so a caller holding bytes knows they are the original ones.
+ */
+export async function readStoredFile(contentHash: string, mimeType: string): Promise<Buffer | null> {
+  if (!/^[0-9a-f]{64}$/.test(contentHash)) return null;
+  const ext = MIME_TO_EXT[mimeType] ?? extname(mimeType);
+  try {
+    const buffer = await readFile(resolve(UPLOADS_DIR, `${contentHash}${ext}`));
+    return createHash("sha256").update(buffer).digest("hex") === contentHash ? buffer : null;
+  } catch {
+    return null;
+  }
 }

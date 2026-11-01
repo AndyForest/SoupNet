@@ -16,8 +16,9 @@ import type PgBoss from "pg-boss";
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { ALL_STRATEGY_IDS } from "@soupnet/domain";
-import { getEmbeddingProviderId } from "../../lib/embeddings/provider";
+import { getActiveEmbeddingModelIds, getEmbeddingProviderId } from "../../lib/embeddings/provider";
 import { QUEUES } from "../queues";
+import { handleModelRebuildTick } from "./model-rebuild";
 
 const STALE_PROCESSING_MINUTES = 10;
 const AUTO_RETRY_LIMIT = 3;
@@ -68,7 +69,17 @@ export async function handleStrategySweep(
     );
   }
 
+  // ── Model rebuild: add missing rows under the active models, at a set pace ──
+  // Before discovery, so the rows it adds go out on this sweep. A failure here must
+  // not stop ordinary embedding work.
+  try {
+    await handleModelRebuildTick(db);
+  } catch (err) {
+    console.warn(`[embedding-rebuild] Tick skipped: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
   // ── Discovery: find strategies with pending vectors ────────────────
+  const activeModels = getActiveEmbeddingModelIds();
   const pendingRows = await db.execute(sql`
     SELECT DISTINCT ecs.strategy_id
     FROM claimnet.embedding_chunk_strategies ecs
@@ -76,6 +87,7 @@ export async function handleStrategySweep(
     JOIN claimnet.embedding_vectors ev ON ev.embedding_chunk_id = ec.id
     WHERE ecs.status = 'complete'
       AND ev.status = 'pending'
+      AND ev.model_id IN (${sql.join(activeModels.map((m) => sql`${m}`), sql`, `)})
   `);
 
   const pendingStrategies = new Set(
