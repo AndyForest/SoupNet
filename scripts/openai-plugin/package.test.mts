@@ -98,6 +98,32 @@ describe("the recipe-check skill (L5)", () => {
   });
 });
 
+describe("the optional skills", () => {
+  for (const [name, parts] of [
+    ["options", ["full recipe", "not_chosen"]],
+    ["seed-from-history", ["decided_at", "Other people's material"]],
+    ["agent-team", ["is:draft intent:", "verify_draft"]],
+  ] as const) {
+    const skill = readFileSync(join(PACKAGE_DIR, `skills/${name}/SKILL.md`), "utf-8");
+
+    it(`${name} has frontmatter that calls itself optional`, () => {
+      expect(skill).toMatch(new RegExp(`^---\\r?\\nname: ${name}\\r?\\ndescription: Optional .+\\r?\\n---`));
+    });
+
+    it(`${name} carries no vendor or harness names`, () => {
+      expect(skill).not.toMatch(/\b(Claude|Anthropic|ChatGPT|OpenAI|Codex|Cursor|Gemini|Copilot|Windsurf|CLAUDE\.md|AGENTS\.md)\b/);
+    });
+
+    it(`${name} gives no orders`, () => {
+      expect(skill).not.toMatch(/\b(must|always|never|required|you should)\b/i);
+    });
+
+    it(`${name} keeps to what it is for`, () => {
+      for (const part of parts) expect(skill).toContain(part);
+    });
+  }
+});
+
 describe("the Codex marketplace file (L6)", () => {
   const marketplace = JSON.parse(readFileSync(".agents/plugins/marketplace.json", "utf-8"));
 
