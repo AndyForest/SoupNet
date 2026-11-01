@@ -1,6 +1,6 @@
 # Privacy Policy — Soup.net
 
-**Effective date:** 2026-05-12 (retention wording clarified 2026-06-11; third parties updated 2026-09-27; retention, connected AI apps and the check log added 2026-10-26; operator updated 2026-10-31; suspended, disabled and company accounts added 2026-11-01)
+**Effective date:** 2026-05-12 (retention wording clarified 2026-06-11; third parties updated 2026-09-27; retention, connected AI apps and the check log added 2026-10-26; operator updated 2026-10-31; suspended, disabled and company accounts and the sign-up proof added 2026-11-01)
 **Service:** Soup.net — a stigmergic search engine for taste and judgment
 **Operated by:** STEAMLabs, in Canada
 **Contact:** admin@soup.net
