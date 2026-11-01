@@ -85,6 +85,11 @@ describe("embedding model configuration", () => {
     expect(p.getActiveEmbeddingModelIds()).toEqual(["oai:old-model", "oai:new-model"]);
   });
 
+  it("local with an empty model gets the default, not the id local:", async () => {
+    const p = await load({ EMBEDDINGS_PROVIDER: "local", EMBEDDINGS_MODEL: "" });
+    expect(p.getEmbeddingModelId()).toBe("local:bge-small-en-v1.5");
+  });
+
   it("stub still needs no model, and ignores EMBEDDINGS_MODEL", async () => {
     const p = await load({ EMBEDDINGS_PROVIDER: "stub", EMBEDDINGS_MODEL: "ignored" });
     p.validateEmbeddingConfig();

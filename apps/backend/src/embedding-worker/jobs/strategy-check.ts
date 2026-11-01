@@ -150,8 +150,7 @@ export async function handleStrategyCheck(
   if (models.length === 0) return;
 
   const pendingRows = await db.execute(sql`
-    SELECT ev.id AS vector_id, ec.id AS chunk_id, ec.chunk_text, ec.chunk_hash,
-           ev.task_type, ev.model_id
+    SELECT ev.id AS vector_id, ev.task_type, ev.model_id
     FROM claimnet.embedding_vectors ev
     JOIN claimnet.embedding_chunks ec ON ec.id = ev.embedding_chunk_id
     JOIN claimnet.embedding_chunk_strategies ecs ON ecs.id = ec.chunk_strategy_id
@@ -163,8 +162,7 @@ export async function handleStrategyCheck(
   `);
 
   const pending = pendingRows as unknown as Array<{
-    vector_id: string; chunk_id: string; chunk_text: string; chunk_hash: string;
-    task_type: string; model_id: string;
+    vector_id: string; task_type: string; model_id: string;
   }>;
 
   if (pending.length === 0) return;
@@ -196,9 +194,6 @@ export async function handleStrategyCheck(
         .filter((r) => claimedIds.has(r.vector_id))
         .map((r) => ({
           vectorId: r.vector_id,
-          chunkId: r.chunk_id,
-          chunkText: r.chunk_text,
-          chunkHash: r.chunk_hash,
           taskType: r.task_type,
           modelId: r.model_id,
         }));

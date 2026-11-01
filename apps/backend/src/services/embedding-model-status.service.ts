@@ -9,6 +9,7 @@
 
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
+import { PRODUCTION_SEARCH_STRATEGY_IDS } from "@soupnet/domain";
 
 export interface ModelCounts {
   complete: number;
@@ -79,24 +80,113 @@ export async function readFlipGap(
   return (rows as unknown as Array<{ n: number }>)[0]?.n ?? 0;
 }
 
+/** Of a flip gap, the chunks the target's provider refused, which no wait will close. */
+export async function readRefusedGap(
+  db: PostgresJsDatabase,
+  fromModel: string,
+  toModel: string,
+): Promise<number> {
+  const rows = await db.execute(sql`
+    SELECT count(*)::int AS n
+    FROM claimnet.embedding_vectors f
+    JOIN claimnet.embedding_vectors t
+      ON t.embedding_chunk_id = f.embedding_chunk_id AND t.model_id = ${toModel} AND t.task_type = f.task_type
+    WHERE f.model_id = ${fromModel}
+      AND f.task_type = 'SEMANTIC_SIMILARITY'
+      AND f.status = 'complete'
+      AND t.status = 'failed'
+  `);
+  return (rows as unknown as Array<{ n: number }>)[0]?.n ?? 0;
+}
+
 export type ReadVectorsState = "ok" | "partial" | "empty";
 
+export interface ReadCoverage {
+  /** Chunks of the strategies search reads. */
+  total: number;
+  /** Searchable under this model. */
+  covered: number;
+  /** The provider refused this chunk's row. Reported by the rebuild line and status. */
+  refused: number;
+  /** No searchable vector and none refused, and old enough that it isn't normal lag. */
+  missing: number;
+}
+
+// New evidence waits for the next sweep, so a chunk this young hasn't missed anything.
+const NORMAL_LAG = sql`interval '5 minutes'`;
+
+/** What search can actually reach under a model, whatever other models hold. */
+export async function readCoverage(db: PostgresJsDatabase, modelId: string): Promise<ReadCoverage> {
+  const rows = await db.execute(sql`
+    SELECT count(*)::int AS total,
+           count(*) FILTER (WHERE ev.status = 'complete')::int AS covered,
+           count(*) FILTER (WHERE ev.status = 'failed')::int AS refused,
+           count(*) FILTER (
+             WHERE (ev.status IS NULL OR ev.status NOT IN ('complete', 'failed'))
+               AND ec.created_at < now() - ${NORMAL_LAG}
+           )::int AS missing
+    FROM claimnet.embedding_chunks ec
+    JOIN claimnet.embedding_chunk_strategies ecs ON ecs.id = ec.chunk_strategy_id
+    LEFT JOIN claimnet.embedding_vectors ev
+      ON ev.embedding_chunk_id = ec.id
+     AND ev.model_id = ${modelId}
+     AND ev.task_type = 'SEMANTIC_SIMILARITY'
+    WHERE ecs.strategy_id IN (${sql.join(PRODUCTION_SEARCH_STRATEGY_IDS.map((id) => sql`${id}`), sql`, `)})
+  `);
+  return (rows as unknown as ReadCoverage[])[0] ?? { total: 0, covered: 0, refused: 0, missing: 0 };
+}
+
 /**
- * Whether the read id can serve the corpus. `empty`: other models hold vectors and
- * this one holds none, which is search returning 200 with nothing. `partial`: some
- * other model holds over 1% more, which a catch-up in progress doesn't reach. An
- * empty corpus is `ok`: there is nothing to lose.
+ * `empty`: search reaches nothing while chunks exist, which is 200 with no results.
+ * `partial`: over 1% of chunks are out of search with no refusal to explain them.
+ * Failed rows and other models' counts don't enter into it. An empty corpus is `ok`.
  */
-export function readVectorsState(
-  counts: Map<string, ModelCounts>,
-  readModelId: string,
-): ReadVectorsState {
-  const readComplete = countsFor(counts, readModelId).complete;
-  let otherComplete = 0;
-  for (const [id, c] of counts) {
-    if (id !== readModelId) otherComplete = Math.max(otherComplete, c.complete);
-  }
-  if (readComplete === 0 && otherComplete > 0) return "empty";
-  if (readComplete < otherComplete * 0.99) return "partial";
+export function readVectorsState(coverage: ReadCoverage): ReadVectorsState {
+  if (coverage.total === 0) return "ok";
+  if (coverage.covered === 0) return "empty";
+  if (coverage.missing > coverage.total * 0.01) return "partial";
   return "ok";
+}
+
+// ── What running tasks read ────────────────────────────────────────────────
+
+const TASK_KEY_PREFIX = "embeddingTask:";
+
+export interface LiveTask {
+  read: string;
+  target: string | null;
+  secondsAgo: number;
+}
+
+/** Tell the fleet what this process reads and rebuilds. Stale entries get swept here too. */
+export async function recordTaskHeartbeat(
+  db: PostgresJsDatabase,
+  taskId: string,
+  read: string,
+  target: string | null,
+): Promise<void> {
+  const key = `${TASK_KEY_PREFIX}${taskId}`;
+  const value = JSON.stringify({ read, target });
+  await db.execute(sql`
+    INSERT INTO claimnet.system_settings (key, value, updated_at)
+    VALUES (${key}, ${value}, now())
+    ON CONFLICT (key) DO UPDATE SET value = ${value}, updated_at = now()
+  `);
+  await db.execute(sql`
+    DELETE FROM claimnet.system_settings
+    WHERE key LIKE ${`${TASK_KEY_PREFIX}%`} AND updated_at < now() - interval '10 minutes'
+  `);
+}
+
+/** Tasks heard from in the last three minutes. They report once a minute. */
+export async function readLiveTasks(db: PostgresJsDatabase): Promise<LiveTask[]> {
+  const rows = await db.execute(sql`
+    SELECT value, extract(epoch FROM now() - updated_at)::int AS seconds_ago
+    FROM claimnet.system_settings
+    WHERE key LIKE ${`${TASK_KEY_PREFIX}%`} AND updated_at > now() - interval '3 minutes'
+  `);
+  return (rows as unknown as Array<{ value: string; seconds_ago: number }>).map((r) => {
+    const { read, target } = JSON.parse(r.value) as { read: string; target: string | null };
+    return { read, target, secondsAgo: r.seconds_ago };
+  });
 }

@@ -47,6 +47,7 @@ import { cooldownRemainingMs, recordProviderPushback } from "../../lib/embedding
 import { readStoredFile } from "../../lib/file-store";
 import { QUEUES } from "../queues";
 import type { VectorCheckItem } from "../queues";
+import { loadVectorItems, type LoadedVectorItem } from "./load-vector-items";
 
 interface ImageSource {
   fileHash: string | null;
@@ -71,18 +72,21 @@ export async function handleVectorApiCall(
   boss: PgBoss,
   db: PostgresJsDatabase,
 ): Promise<void> {
-  const { items } = job.data;
+  // Read fresh: a row deleted since this job was queued sends nothing to the provider.
+  const items = await loadVectorItems(db, job.data.items);
   if (items.length === 0) return;
+  const idsOnly = (list: LoadedVectorItem[]): VectorCheckItem[] =>
+    list.map(({ vectorId, taskType, modelId }) => ({ vectorId, taskType, modelId }));
 
   // A batch calls one model. Anything else goes back on the queue, one job per model.
-  const groups = new Map<string, VectorCheckItem[]>();
+  const groups = new Map<string, LoadedVectorItem[]>();
   for (const item of items) {
     const key = `${item.modelId}\0${item.taskType}`;
     groups.set(key, [...(groups.get(key) ?? []), item]);
   }
   if (groups.size > 1) {
     for (const group of groups.values()) {
-      await boss.send(QUEUES.VECTOR_API_CALL, { items: group }, {
+      await boss.send(QUEUES.VECTOR_API_CALL, { items: idsOnly(group) }, {
         ...API_CALL_JOB_OPTIONS,
         priority: embeddingJobPriority(group[0]!.modelId),
       });
@@ -101,8 +105,8 @@ export async function handleVectorApiCall(
 
   try {
     const imageSources = await readImageSources(db, items);
-    const textOnly: VectorCheckItem[] = [];
-    const fallback: VectorCheckItem[] = [];
+    const textOnly: LoadedVectorItem[] = [];
+    const fallback: LoadedVectorItem[] = [];
     for (const item of items) {
       if (!imageSources.has(item.chunkId)) textOnly.push(item);
       else if (!(await embedRealImage(db, item, imageSources.get(item.chunkId)!, taskType, modelId))) {
@@ -120,8 +124,10 @@ export async function handleVectorApiCall(
           continue;
         }
         const vectorStr = `[${embedding.join(",")}]`;
-        await writeVector(db, item.vectorId, modelId, vectorStr, "server");
-        await writeCache(db, item.chunkHash, modelId, taskType, vectorStr);
+        // No cache row for a recipe deleted during the call.
+        if (await writeVector(db, item.vectorId, modelId, vectorStr, "server")) {
+          await writeCache(db, item.chunkHash, modelId, taskType, vectorStr);
+        }
       }
     }
 
@@ -178,12 +184,12 @@ export async function handleVectorApiCall(
         `[vector-api-call] Batch of ${items.length} failed twice — splitting to ${left.length} + ${right.length}`,
       );
 
-      await boss.send(QUEUES.VECTOR_API_CALL, { items: left }, {
+      await boss.send(QUEUES.VECTOR_API_CALL, { items: idsOnly(left) }, {
         ...API_CALL_JOB_OPTIONS,
         priority: embeddingJobPriority(modelId),
       });
 
-      await boss.send(QUEUES.VECTOR_API_CALL, { items: right }, {
+      await boss.send(QUEUES.VECTOR_API_CALL, { items: idsOnly(right) }, {
         ...API_CALL_JOB_OPTIONS,
         priority: embeddingJobPriority(modelId),
       });
@@ -199,7 +205,7 @@ export async function handleVectorApiCall(
 /** Which of these chunks are image sources, and where their bytes would be. */
 async function readImageSources(
   db: PostgresJsDatabase,
-  items: VectorCheckItem[],
+  items: LoadedVectorItem[],
 ): Promise<Map<string, ImageSource>> {
   const chunkIds = sql.join(items.map((i) => sql`${i.chunkId}::uuid`), sql`, `);
   const rows = await db.execute(sql`
@@ -227,7 +233,7 @@ async function readImageSources(
  */
 async function embedRealImage(
   db: PostgresJsDatabase,
-  item: VectorCheckItem,
+  item: LoadedVectorItem,
   source: ImageSource,
   taskType: string,
   modelId: string,
@@ -262,9 +268,9 @@ async function embedRealImage(
   }
 
   const vectorStr = `[${embedding.join(",")}]`;
-  await writeVector(db, item.vectorId, modelId, vectorStr, "server");
+  const written = await writeVector(db, item.vectorId, modelId, vectorStr, "server");
   // Cache only under a key that proves these are the bytes it was hashed from.
-  if (computeChunkHash(item.chunkText, bytes) === item.chunkHash) {
+  if (written && computeChunkHash(item.chunkText, bytes) === item.chunkHash) {
     await writeCache(db, item.chunkHash, modelId, taskType, vectorStr);
   }
   return true;
@@ -276,15 +282,17 @@ async function writeVector(
   modelId: string,
   vectorStr: string,
   vectorSource: "server" | "text_fallback",
-): Promise<void> {
-  await db.execute(sql`
+): Promise<boolean> {
+  const rows = await db.execute(sql`
     UPDATE claimnet.embedding_vectors
     SET vector = ${vectorStr}::halfvec(3072),
         vector_source = ${vectorSource},
         status = 'complete',
         updated_at = now()
     WHERE id = ${vectorId}::uuid AND model_id = ${modelId}
+    RETURNING id
   `);
+  return (rows as unknown as unknown[]).length > 0;
 }
 
 async function writeCache(

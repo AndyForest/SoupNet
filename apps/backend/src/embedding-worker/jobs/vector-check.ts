@@ -16,13 +16,14 @@ import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { QUEUES } from "../queues";
 import type { VectorCheckItem } from "../queues";
 import { embeddingJobPriority } from "./vector-api-call";
+import { loadVectorItems } from "./load-vector-items";
 
 export async function handleVectorCheck(
   job: { data: { items: VectorCheckItem[] } },
   boss: PgBoss,
   db: PostgresJsDatabase,
 ): Promise<void> {
-  const { items } = job.data;
+  const items = await loadVectorItems(db, job.data.items);
   if (items.length === 0) return;
 
   const vectorIds = items.map((i) => i.vectorId);
@@ -33,7 +34,7 @@ export async function handleVectorCheck(
       AND status = 'pending'
   `);
 
-  const cacheMisses: VectorCheckItem[] = [];
+  const cacheMisses: typeof items = [];
   let cacheHits = 0;
 
   for (const item of items) {
@@ -70,7 +71,7 @@ export async function handleVectorCheck(
   }
   for (const group of byModel.values()) {
     await boss.send(QUEUES.VECTOR_API_CALL, {
-      items: group,
+      items: group.map(({ vectorId, taskType, modelId }) => ({ vectorId, taskType, modelId })),
     }, {
       retryLimit: 2,
       retryDelay: 5,

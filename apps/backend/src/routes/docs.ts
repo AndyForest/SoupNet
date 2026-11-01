@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { Hono } from "hono";
+import { getEmbeddingModelId } from "../lib/embeddings/provider";
 import {
   HOW_THIS_WORKS,
   FOR_AI_AGENTS,
@@ -143,7 +144,7 @@ Next evidence entry (interpretation of the next reference).
 
   <h2>Technical details</h2>
   <ul>
-    <li>Search: pure semantic &mdash; <a href="https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-embedding-2/">Gemini Embedding 2</a> vectors, cosine similarity (raw scores near zero are normal &mdash; ranking is relative, not a percentage). "Quoted terms" in the read-only <code>filter</code> search match exact substrings across recipe, evidence, and reference text; <code>author:</code> / <code>after:</code> / <code>before:</code> qualifiers filter structurally</li>
+    <li>Search: pure semantic &mdash; <a href="https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-embedding-2/">${getEmbeddingModelId()}</a> vectors, cosine similarity (raw scores near zero are normal &mdash; ranking is relative, not a percentage). "Quoted terms" in the read-only <code>filter</code> search match exact substrings across recipe, evidence, and reference text; <code>author:</code> / <code>after:</code> / <code>before:</code> qualifiers filter structurally</li>
     <li>Include file links in references &mdash; no upload needed, our system can fetch them</li>
     <li>Markdown encouraged in all text fields</li>
     <li><strong>MCP tools available:</strong> <a href="/docs/mcp-setup${kq}">Set up check_recipe and get_briefing</a> for Codex, Claude Code, Claude Desktop, and other MCP-compatible agents</li>

@@ -232,6 +232,10 @@ const TRACE_READS = {
     n: 2, fp: "fe29f5d17c57", composes: false,
     why: "embedding worker: embeds every recipe, drafts included, so verification needs no re-embed (RP-43); returns nothing to a caller",
   },
+  "apps/backend/src/embedding-worker/jobs/load-vector-items.ts": {
+    n: 1, fp: "d60bb3907738", composes: false,
+    why: "embedding worker: loads the text of rows a job names by id, to embed them; returns nothing to a caller",
+  },
   "apps/backend/src/embedding-worker/jobs/strategy-check.ts": {
     n: 8, fp: "20f5edd1ae57", composes: false,
     why: "embedding worker: strategy coverage bookkeeping (RP-43)",
@@ -333,7 +337,7 @@ const TRACE_READS = {
     why: "corpus mode rows and honest total use traceVisibleTo (RP-41); vector loads are by id for filtered results (RP-42)",
   },
   "apps/backend/src/services/trace.service.ts": {
-    n: 10, fp: "e96154ab5cb8", composes: true,
+    n: 10, fp: "4761bfb20775", composes: true,
     why: "deposit INSERT (the on-behalf subject from the module's naming rule, S4-M1; the draft state forced for a headless key by keyForcesDrafts, S5-M3; the intent link from the intent the check resolved to the depositor, S6a-S2), the depositing key's own idempotency row with its subject through onBehalfSubjectOf (RP-04, S4-L4), session ledger ids (RP-05), and zero-result scope counts that use traceVisibleTo (RP-03)",
   },
   "apps/backend/src/services/trace-delete.service.ts": {
@@ -360,8 +364,12 @@ const TRACE_READS = {
     n: 2, fp: "3581836380cd", composes: false,
     why: "dev-only cleanup of seeded test users: counts their own recipes by user id before deleting the accounts",
   },
-  "scripts/embedding-model.mts": {
-    n: 2, fp: "40dd34ff8096", composes: false,
+  "apps/backend/src/services/embedding-model-status.service.ts": {
+    n: 1, fp: "c2a2e9d9edce", composes: false,
+    why: "operator counts of a model's search coverage across the whole corpus: numbers only, no recipe content, no caller",
+  },
+  "apps/backend/src/cli/embedding-model.ts": {
+    n: 2, fp: "2069d34b1159", composes: false,
     why: "operator script: counts image sources and removes a retired model's vectors; no recipe content, no caller",
   },
   "scripts/repair-orphaned-user-data.mjs": {

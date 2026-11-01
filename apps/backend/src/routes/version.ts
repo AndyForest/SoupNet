@@ -135,7 +135,7 @@ version.get("/", versionIpRateLimit, versionPerKeyRateLimit, async (c) => {
         modelId: getEmbeddingModelId(),
         rebuildTargetModelId: getRebuildTargetModelId(),
         // "empty" means search returns 200 with nothing: see ADR-0024.
-        readVectors: getReadVectorsState(),
+        readVectors: await getReadVectorsState(db),
       },
       // The PRESENTING key's own runway — surfaced only because this caller
       // holds a currently-valid key (see the indistinguishability boundary

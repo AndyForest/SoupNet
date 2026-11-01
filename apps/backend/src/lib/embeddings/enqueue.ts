@@ -95,6 +95,9 @@ export function computeChunkHash(sourceText: string, fileBuffer?: Buffer): strin
   return hasher.digest("hex");
 }
 
+/** Work to run once the caller's transaction has committed, outside it. */
+export type AfterCommitWork = (db: PostgresJsDatabase) => Promise<void>;
+
 export interface EnqueueEmbeddingParams {
   sourceType: string;
   sourceId: string;
@@ -121,6 +124,8 @@ export interface EnqueueEmbeddingParams {
    * a 'pending' stub is inserted without retrying the API inline.
    */
   precomputedVectors?: Partial<Record<(typeof TASK_TYPES)[number], string | null>>;
+  /** Collects work that shouldn't hold the caller's transaction open. */
+  afterCommit?: AfterCommitWork[];
 }
 
 export async function enqueueEmbedding(
@@ -239,23 +244,35 @@ export async function enqueueEmbedding(
       `);
     }
 
-    // During a rebuild, text rows reach the target through the sweep. An image is
-    // the exception: its bytes are in hand now and may not exist on disk by the
-    // time the sweep runs, so it is embedded for the target here. If that fails the
-    // row falls to the sweep, which uses bytes on disk or embeds text only.
+    // During a rebuild, text rows reach the target through the sweep. An image is the
+    // exception: its bytes are in hand now, and on another task's disk the sweep
+    // couldn't read them. But this is often inside the caller's transaction, so the
+    // call waits for afterCommit. Until it lands, or if it fails, the row is the sweep's.
     const rebuildTarget = multimodalParts ? getRebuildTargetModelId() : null;
     if (rebuildTarget) {
-      const targetVector = await getOrCreateCachedVector(
-        db, chunkHash, params.sourceText, taskType, multimodalParts, rebuildTarget,
-      );
-      if (targetVector) {
-        await db.execute(sql`
-          INSERT INTO claimnet.embedding_vectors
-            (embedding_chunk_id, model_id, task_type, status, vector)
-          VALUES
-            (${chunkRow.id}::uuid, ${rebuildTarget}, ${taskType}, 'complete', ${targetVector}::vector(3072)::halfvec(3072))
-          ON CONFLICT (embedding_chunk_id, model_id, task_type) DO NOTHING
-        `);
+      const targetRows = await db.execute(sql`
+        INSERT INTO claimnet.embedding_vectors
+          (embedding_chunk_id, model_id, task_type, status, vector)
+        VALUES
+          (${chunkRow.id}::uuid, ${rebuildTarget}, ${taskType}, 'pending', NULL)
+        ON CONFLICT (embedding_chunk_id, model_id, task_type) DO NOTHING
+        RETURNING id
+      `);
+      const targetRowId = (targetRows as unknown as Array<{ id: string }>)[0]?.id;
+      if (targetRowId) {
+        params.afterCommit?.push(async (outsideTx) => {
+          const targetVector = await getOrCreateCachedVector(
+            outsideTx, chunkHash, params.sourceText, taskType, multimodalParts, rebuildTarget,
+          );
+          if (!targetVector) return;
+          await outsideTx.execute(sql`
+            UPDATE claimnet.embedding_vectors
+            SET vector = ${targetVector}::vector(3072)::halfvec(3072), vector_source = 'server',
+                status = 'complete', updated_at = now()
+            WHERE id = ${targetRowId}::uuid
+              AND (status IN ('pending', 'processing') OR vector_source = 'text_fallback')
+          `);
+        });
       }
     }
   }

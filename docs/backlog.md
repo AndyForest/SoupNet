@@ -66,7 +66,7 @@ Operator, 2026-10-25: a basic replacement for a hosted vector database, wanted f
 
 ### `[IMPL]` Deleting a recipe while the embedding worker is on it answers 500 (2026-10-31)
 
-Addressed on `feat/embedding-model-switch`: the delete now locks the source's chunks first, because a rebuild makes the worker's fill far more likely to collide with a delete. Close this when that merges.
+Partly addressed on `feat/embedding-model-switch`: the delete now locks the source's chunks first, which stops the rebuild's vector rows colliding with it. That doesn't touch this race. The strategy row is inserted before there is a chunk to lock, so this stays open.
 
 
 `deleteEmbeddingChainForSource` (`services/trace-delete.service.ts:157`) deletes a source's strategies and then the source, as separate statements. If `embedding-worker/jobs/strategy-check.ts:107` inserts a strategy row between them, the source delete fails its foreign key: `update or delete on table "embedding_sources" violates foreign key constraint ... is still referenced from table "embedding_chunk_strategies"`. The transaction rolls back, so nothing is lost and a retry works, but `DELETE /traces/:id` answers 500, and it failed unrelated CI once (`audit-anonymise.test.ts:125`, run 41244673560, in the same second as that error). Likely fix, untested: lock the source rows with `SELECT ... FOR UPDATE` first, which makes the worker's insert wait and then fail on the missing source, and check the worker tolerates that.

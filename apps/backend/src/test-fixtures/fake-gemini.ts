@@ -52,6 +52,8 @@ export class FakeGemini {
   poison: { model: string; text: string } | null = null;
   /** Models answering 404, like one the provider has stopped serving. */
   gone = new Set<string>();
+  /** Calls to a model take this long to answer, in milliseconds. */
+  delay = new Map<string, number>();
   private server: Server | null = null;
 
   async start(): Promise<string> {
@@ -102,7 +104,9 @@ export class FakeGemini {
     });
 
     const send = (status: number, payload: unknown, headers: Record<string, string> = {}) => {
-      res.writeHead(status, { "Content-Type": "application/json", ...headers }).end(JSON.stringify(payload));
+      setTimeout(() => {
+        res.writeHead(status, { "Content-Type": "application/json", ...headers }).end(JSON.stringify(payload));
+      }, this.delay.get(model) ?? 0);
     };
 
     if (this.gone.has(model)) {

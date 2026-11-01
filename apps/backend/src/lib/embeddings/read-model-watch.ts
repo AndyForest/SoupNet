@@ -7,32 +7,50 @@
  * Runs in every process, whether or not it runs the worker. See ADR-0024.
  */
 
+import { randomUUID } from "node:crypto";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import {
   countsFor,
+  readCoverage,
   readModelCounts,
   readVectorsState,
+  recordTaskHeartbeat,
   type ReadVectorsState,
 } from "../../services/embedding-model-status.service";
-import { getEmbeddingModelId } from "./provider";
+import { getEmbeddingModelId, getRebuildTargetModelId } from "./provider";
 
 const WATCH_INTERVAL_MS = 60_000;
+const LIVE_STATE_MEMO_MS = 5_000;
+const TASK_ID = randomUUID();
 
-let lastState: ReadVectorsState | "unknown" = "unknown";
+let live: { state: ReadVectorsState; atMs: number } | null = null;
 
-/** The read id's state as of the last check; `unknown` before the first one. */
-export function getReadVectorsState(): ReadVectorsState | "unknown" {
-  return lastState;
+/**
+ * The read id's state now, for /health/version: rows can leave between watch ticks.
+ * Held briefly, since any key holder can ask.
+ */
+export async function getReadVectorsState(db: PostgresJsDatabase): Promise<ReadVectorsState | "unknown"> {
+  if (live && Date.now() - live.atMs < LIVE_STATE_MEMO_MS) return live.state;
+  try {
+    const state = readVectorsState(await readCoverage(db, getEmbeddingModelId()));
+    live = { state, atMs: Date.now() };
+    return state;
+  } catch {
+    return "unknown";
+  }
 }
 
 /** One check. Exported for start-up, where it runs before the port opens. */
 export async function checkReadModel(db: PostgresJsDatabase): Promise<void> {
   try {
-    const counts = await readModelCounts(db);
     const readModelId = getEmbeddingModelId();
-    const state = readVectorsState(counts, readModelId);
-    lastState = state;
+    // Before anything that can return: a prune needs to know what this task reads.
+    await recordTaskHeartbeat(db, TASK_ID, readModelId, getRebuildTargetModelId());
+    const coverage = await readCoverage(db, readModelId);
+    const state = readVectorsState(coverage);
+    live = { state, atMs: Date.now() };
     if (state === "ok") return;
+    const counts = await readModelCounts(db);
     const others = [...counts]
       .filter(([id]) => id !== readModelId)
       .map(([id, c]) => `${id}=${c.complete}`)
@@ -45,7 +63,8 @@ export async function checkReadModel(db: PostgresJsDatabase): Promise<void> {
       );
     } else {
       console.error(
-        `[embedding-model] READ_MODEL_PARTIAL: search is missing sources. Complete vectors: ${read} ${others}.`,
+        `[embedding-model] READ_MODEL_PARTIAL: ${coverage.missing} of ${coverage.total} chunks are out of search under ${readModelId}. ` +
+          `Refused by the provider, and not counted here: ${coverage.refused}. Complete vectors: ${read} ${others}.`,
       );
     }
   } catch (err) {
