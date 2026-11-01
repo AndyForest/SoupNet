@@ -10,8 +10,9 @@ The operator ruled that only a further recipe revives a draft, so a search or br
 
 ### Edits and the scenarios they move
 
-1. **The briefing's "## Drafts" section:** "A draft is a question on a bus: it stays live while your intent is in use, and expires once your task goes quiet." becomes "A draft is a question on a bus: it lives while you check under your intent; reads alone let it expire in a day." It is three characters shorter, so the thin and headless ceilings hold, and it avoids the words the section's voice test refuses. Dropped: "goes quiet" as the wording here; the expired-draft label still says "its task has been quiet", which is still true. "poll `is:draft intent:<id>`" stays, because polling remains how an orchestrator reads its sub-agents' drafts.
+1. **The briefing's "## Drafts" section:** "A draft is a question on a bus: it stays live while your intent is in use, and expires once your task goes quiet." becomes "A draft is a question on a bus: it lives while you check under your intent; reads alone let it expire in a day." It is three characters shorter, so the thin and headless ceilings hold, and it avoids the words the section's voice test refuses. Dropped: "goes quiet" as the wording here; the expired-draft label still says "its task has been quiet". "poll `is:draft intent:<id>`" stays, because polling remains how an orchestrator reads its sub-agents' drafts.
 2. **The plugin's skill** describes a search's writes without "marked as used". It ships in the package.
+3. **An empty `is:draft` search** (not briefing copy, listed because it answers the poll this section teaches) reads "No open drafts match among the N recipes in scope. Expired drafts aren't listed here; is:expired finds them." in place of the thin-corpus line, in markdown and in the JSON notice.
 
 Scenario moved: "A draft lives while its task does…" in `checking-behavior.feature`, whose guard quotes this sentence. DT-BUS-03 in `docs/product-specs/drafts-and-triage.feature` now has a read leave the draft expired and a check revive it. All others hold: nothing else in the briefing mentions how long a draft lives.
 

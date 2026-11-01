@@ -794,7 +794,7 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
           jsonResponse["data"] = {
             searchOnly: true,
             filter: query,
-            notice: buildSearchOnlyNotice(result),
+            notice: buildSearchOnlyNotice({ ...result, filter: query }),
             ...(result.searchId ? { searchId: result.searchId } : {}),
             ...(result.searchedCorpusSize !== undefined ? { searchedCorpusSize: result.searchedCorpusSize } : {}),
             ...(result.searchedOwnExcluded !== undefined ? { searchedOwnExcluded: result.searchedOwnExcluded } : {}),

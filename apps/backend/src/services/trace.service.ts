@@ -327,6 +327,7 @@ export interface FlatListMeta {
  */
 export function buildSearchOnlyNotice(result: {
   totalResults: number;
+  filter?: string | undefined;
   searchedCorpusSize?: number | undefined;
   searchedOwnExcluded?: number | undefined;
   intentNotRecognized?: boolean | undefined;

@@ -381,6 +381,18 @@ describe.skipIf(!BASE || !canConnect())("drafts as a bus (drafts-and-triage slic
     expect(shown.length, `a search under ${intentId} should record what it showed, ${id} among the candidates`).toBeGreaterThan(0);
   });
 
+  it("recipe ac453630: a depositor's read leaves an on-behalf draft expired in the subject's queue, and the depositor's check revives it", async () => {
+    const text = recipe("obo revive");
+    const { id, intentId } = await draftUnderIntent(danaKey, text, { on_behalf_of: pat.email });
+    await idleIntent(intentId, 25);
+    expect((await queue(pat, tag(text))).ids).toEqual([]);
+    await mcp(danaKey, "search_recipes", { query: "obo revive", intent: intentId });
+    await mcp(danaKey, "get_briefing", { intent: intentId });
+    expect((await queue(pat, tag(text))).ids).toEqual([]);
+    await mcp(danaKey, "check_recipe", { recipe: recipe("obo revive by check"), supporting_evidence: evidence("obo revive by check"), intent: intentId });
+    expect((await queue(pat, tag(text))).ids).toEqual([id]);
+  });
+
   it("S10-L5: an on-behalf draft lives on its depositor's intent", async () => {
     const text = recipe("obo intent");
     const { id, intentId } = await draftUnderIntent(danaKey, text, { on_behalf_of: pat.email });
