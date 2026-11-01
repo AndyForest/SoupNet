@@ -336,16 +336,61 @@ describe.skipIf(!BASE || !canConnect())("drafts as a bus (drafts-and-triage slic
     expect((await queue(pat, tag(quietText))).ids).toEqual([quiet.id]);
   });
 
-  it("S10-L3 / DT-BUS-03: using the intent again revives its drafts, and nothing is written to them", async () => {
+  it("S10-L3 / DT-BUS-03: reads carrying the intent leave it and the queue unchanged; a check revives, and nothing is written to the draft", async () => {
     const text = recipe("intent revives");
     const { id, intentId } = await draftUnderIntent(K1, text);
     await idleIntent(intentId, 30);
     expect((await queue(pat, tag(text))).ids).toEqual([]);
+    const lastUsed = async () => (await sql`SELECT last_used_at FROM claimnet.intents WHERE id = ${intentId}`)[0]?.["last_used_at"];
+    const stamp = await lastUsed();
     const [before] = await sql`SELECT updated_at, created_at, draft_state FROM claimnet.traces WHERE id = ${id}::uuid`;
-    await mcp(K2, "search_recipes", { query: "is:draft", intent: intentId });
+
+    // The read still joins the intent: each one echoes it back.
+    const search = await mcp(K2, "search_recipes", { query: "intent revives", intent: intentId });
+    expect(search.text).toContain(`Intent: ${intentId}`);
+    const listing = await mcp(K2, "search_recipes", { query: "is:draft", intent: intentId });
+    expect(listing.text).toContain(`Intent: ${intentId}`);
+    const briefing = await mcp(K2, "get_briefing", { intent: intentId });
+    expect(briefing.text).toContain(`Intent: ${intentId}`);
+    const web = await fetch(`${BASE}/check?${new URLSearchParams({ key: K2, format: "json", filter: "intent revives", intent: intentId }).toString()}`);
+    expect(web.status).toBe(200);
+    expect((await lastUsed())).toEqual(stamp);
+    expect((await queue(pat, tag(text))).ids).toEqual([]);
+
+    await mcp(K2, "check_recipe", { recipe: recipe("intent revives by check"), supporting_evidence: evidence("revive by check"), intent: intentId });
+    expect((await lastUsed()) as Date > (stamp as Date)).toBe(true);
     expect((await queue(pat, tag(text))).ids).toEqual([id]);
     const [after] = await sql`SELECT updated_at, created_at, draft_state FROM claimnet.traces WHERE id = ${id}::uuid`;
     expect(after).toEqual(before);
+  });
+
+  it("recipe ac453630: a read carrying an unknown or another person's intent id says so the same way", async () => {
+    const { intentId } = await draftUnderIntent(K1, recipe("not recognized"));
+    const line = "Intent id not recognized (unknown or not yours";
+    for (const id of [intentId, "int_000000000000000000000000"]) {
+      expect((await mcp(danaKey, "search_recipes", { query: "not recognized", intent: id })).text).toContain(line);
+      expect((await mcp(danaKey, "get_briefing", { intent: id })).text).toContain(line);
+    }
+  });
+
+  it("recipe ac453630: a read's results still go in the intent's ledger", async () => {
+    const { id, intentId } = await draftUnderIntent(K1, recipe("ledger stays"));
+    await sql`DELETE FROM claimnet.intent_shown WHERE intent_id = ${intentId}`;
+    await mcp(K1, "search_recipes", { query: "ledger stays", intent: intentId });
+    const shown = await sql`SELECT trace_id FROM claimnet.intent_shown WHERE intent_id = ${intentId}`;
+    expect(shown.length, `a search under ${intentId} should record what it showed, ${id} among the candidates`).toBeGreaterThan(0);
+  });
+
+  it("recipe ac453630: a depositor's read leaves an on-behalf draft expired in the subject's queue, and the depositor's check revives it", async () => {
+    const text = recipe("obo revive");
+    const { id, intentId } = await draftUnderIntent(danaKey, text, { on_behalf_of: pat.email });
+    await idleIntent(intentId, 25);
+    expect((await queue(pat, tag(text))).ids).toEqual([]);
+    await mcp(danaKey, "search_recipes", { query: "obo revive", intent: intentId });
+    await mcp(danaKey, "get_briefing", { intent: intentId });
+    expect((await queue(pat, tag(text))).ids).toEqual([]);
+    await mcp(danaKey, "check_recipe", { recipe: recipe("obo revive by check"), supporting_evidence: evidence("obo revive by check"), intent: intentId });
+    expect((await queue(pat, tag(text))).ids).toEqual([id]);
   });
 
   it("S10-L5: an on-behalf draft lives on its depositor's intent", async () => {

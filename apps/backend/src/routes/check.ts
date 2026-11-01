@@ -461,7 +461,7 @@ function buildSearchOnlyJsonResponse(
   response["data"] = {
     searchOnly: true,
     filter,
-    notice: buildSearchOnlyNotice(result),
+    notice: buildSearchOnlyNotice({ ...result, filter }),
     ...(result.searchId ? { searchId: result.searchId } : {}),
     ...(result.searchedCorpusSize !== undefined ? { searchedCorpusSize: result.searchedCorpusSize } : {}),
     ...(result.searchedOwnExcluded !== undefined ? { searchedOwnExcluded: result.searchedOwnExcluded } : {}),

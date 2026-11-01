@@ -741,10 +741,9 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
       // Marked read-only under the annotation rule (recipe 3b166817): it writes
       // no trace and takes no feedback rows, which go through log_feedback
       // (recipe 9dbcfb77). Its writes are the check.searched audit row, the
-      // shown-recipe ledgers (session_shown, intent_shown) and the intent:
-      // registered from text, or its last_used_at updated from an id. That
-      // update can return the intent's expired drafts to the review queue
-      // (DT-BUS-03), which docs/connectors/openai-plugin.md states.
+      // shown-recipe ledgers (session_shown, intent_shown) and a new intent
+      // when intent text is given. An intent id doesn't mark that intent used,
+      // so a search can't revive a draft (recipe ac453630).
       // Closed-world: it reads only the account's own books.
       readOnlyHint: true,
       destructiveHint: false,
@@ -795,7 +794,7 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
           jsonResponse["data"] = {
             searchOnly: true,
             filter: query,
-            notice: buildSearchOnlyNotice(result),
+            notice: buildSearchOnlyNotice({ ...result, filter: query }),
             ...(result.searchId ? { searchId: result.searchId } : {}),
             ...(result.searchedCorpusSize !== undefined ? { searchedCorpusSize: result.searchedCorpusSize } : {}),
             ...(result.searchedOwnExcluded !== undefined ? { searchedOwnExcluded: result.searchedOwnExcluded } : {}),
