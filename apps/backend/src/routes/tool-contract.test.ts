@@ -63,7 +63,7 @@ const remote = () => served(createMcpServer("http://localhost:0", principal) as 
 /** [readOnlyHint, destructiveHint, openWorldHint] per tool, by the rule in
  *  docs/connectors/openai-plugin.md. A change here is a reviewed edit. */
 const REMOTE_FLAGS: Record<string, [boolean, boolean, boolean]> = {
-  check_recipe: [false, false, true],
+  check_recipe: [false, false, false],
   search_recipes: [true, false, false],
   get_briefing: [true, false, false],
   get_recipes: [true, false, false],

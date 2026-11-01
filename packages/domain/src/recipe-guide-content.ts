@@ -717,7 +717,7 @@ ${mcpProfile ? "" : `If you auto-compact your context or otherwise no longer hol
 
 `}Full field meanings for every response object live at \`GET ${backendUrl}/schemas/recipe.json\` (and \`/schemas/check-response.json\`) — canonical, generated from the same source the server validates against.${oauthConnection ? "" : `
 
-For local files that have no public URL (screenshots, generated artifacts, anything on your disk), \`file_base64\` will blow your context window on anything bigger than a thumbnail. Instead, POST the file to the \`/uploads\` REST endpoint first using your same Bearer token, then pass the returned URL as \`file_url\`. The MCP server detects own-hostname URLs and resolves them internally — no second HTTP fetch, no public exposure. Example:
+For local files (screenshots, generated artifacts, anything on your disk), \`file_base64\` will blow your context window on anything bigger than a thumbnail. Instead, POST the file to the \`/uploads\` REST endpoint first using your same Bearer token, then pass the returned URL as \`file_url\`, the only kind of URL it takes. The server resolves it internally, with no public exposure. Example:
 
     curl -X POST ${backendUrl}/uploads \\
       -H "Authorization: Bearer YOUR_API_KEY" \\
@@ -938,8 +938,8 @@ export const MCP_TOOL_DESCRIPTIONS = {
 
   /** HTTP-only — file attachment via file_url or file_base64. */
   checkRecipeFileAttachment:
-    "Attach a reference file (image, PDF, audio, video) via file_url, which the server fetches " +
-    "from the public internet, or file_base64.",
+    "Attach a reference file (image, PDF, audio, video) via file_base64, or file_url for a URL " +
+    "returned by POST /uploads.",
 
   /** Shared trailer — identical across HTTP and stdio MCP. */
   checkRecipeTrailer:

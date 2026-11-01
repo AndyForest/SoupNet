@@ -10,7 +10,7 @@ One rule decides every flag on every tool, so a reviewer can check each value ag
 
 - **`readOnlyHint` is true when the tool changes no state that the person or their collaborators can see.** Two kinds of write don't count. One is a tool's own call record: `search_recipes` and `get_briefing` write an audit row, while `get_recipes`, `list_my_recipe_books` and `get_profile` write none, and authenticating any call updates the key's last-used time. The other is session bookkeeping: an intent registered from intent text, and the record of what a session or intent was shown. An intent id on a read doesn't mark that intent used, so a read can't return an expired draft to the review queue; only a `check_recipe` carrying the intent does (recipe `ac453630`). Two effects of this bookkeeping show on the intent's own pages, which only its owner can see. A ranked search carrying an intent id adds to that intent's "shown" count. Intent text registers a new intent on every call, even with identical text, so repeating such a call adds another intent. `idempotentHint` is `true` on `search_recipes` and `get_briefing` all the same: the [MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/schema#toolannotations) says of it, "This property is meaningful only when `readOnlyHint == false`", and both tools are read-only, so the hint promises nothing about these repeats.
 - **`destructiveHint` is true when the tool does more than add.** That covers overwriting something, or moving it to a state the same surface cannot undo.
-- **`openWorldHint` is true only when the tool reaches the public internet.** Everything else is bounded to the recipe books the account can read or write.
+- **`openWorldHint` is true only when the tool reaches the public internet.** No tool does today: everything is bounded to the recipe books the account can read or write.
 
 The definitions this follows, quoted:
 
@@ -22,7 +22,7 @@ The definitions this follows, quoted:
 
 | Tool | Read-only | Destructive | Open world | Why |
 |---|---|---|---|---|
-| `check_recipe` | false | false | **true** | It stores a new recipe, so it is not read-only. It only adds: a new row, never an overwrite or a delete, and the same recipe text sent again to the same book with the same key returns the same recipe and stores nothing new. Open world because the server fetches a `file_url` attachment from the internet; private and loopback hostnames are refused by name. |
+| `check_recipe` | false | false | false | It stores a new recipe, so it is not read-only. It only adds: a new row, never an overwrite or a delete, and the same recipe text sent again to the same book with the same key returns the same recipe and stores nothing new. Closed world: a `file_url` resolves only to the caller's own upload, and the server fetches nothing from the internet. |
 | `search_recipes` | true | false | false | It returns recipes and logs none. It takes no feedback rows; those go through `log_feedback`. Its writes are the call's own audit row; `session_shown` and `intent_shown`, the record of what was shown; and a new intent when intent text is given (see the rule). It reads only the account's books. |
 | `get_briefing` | true | false | false | It composes text from the account's books. Its writes are the `briefing.issued` row whose id the response returns for feedback, and a new intent when intent text is given. |
 | `get_recipes` | true | false | false | It fetches by id. An id the key cannot read gets the same marker as one that does not exist. |
@@ -50,7 +50,7 @@ Each claim a description makes, and what makes it true:
 |---|---|---|
 | `check_recipe` | Logs the recipe to a book and returns similar recipes from readable books | `submitAndSearch` in `services/trace.service.ts` |
 | `check_recipe` | The same recipe text, book and key return the same recipe id | unique `(api_key_id, group_id, claim_text_hash)` on `traces`, insert `ON CONFLICT DO NOTHING` |
-| `check_recipe` | `file_url` is fetched from the public internet | the upload service's URL fetch; private and loopback hostnames are refused by name |
+| `check_recipe` | `file_url` takes only the caller's own upload; any other URL is refused without a fetch | `parseOwnHostnameUpload` and `resolveUpload` in `routes/mcp.ts` |
 | `search_recipes` | Read-only, includes your own recipes, logs no recipe | `searchWithoutLogging`; the include-own default (recipe `885143c2`) |
 | `search_recipes` | `searchId` closes the loop via `log_feedback` | `log_feedback`'s `search_id`; `search_recipes` declares no `feedback` parameter, and the unknown-parameter guard refuses one by name and names `log_feedback` |
 | `get_briefing` | Returns a briefing id for feedback | the `briefing.issued` row's id; `log_feedback`'s `briefing_id` |
