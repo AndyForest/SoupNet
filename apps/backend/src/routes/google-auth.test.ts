@@ -572,7 +572,7 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
     const input = {
       requestId: request.id,
       userId: stranger.userId,
-      claims: { issuer, subject: strangerSub, email, emailVerified: true, hostedDomain: null },
+      claims: { issuer, subject: strangerSub, email, emailVerified: true, hostedDomain: null, name: null },
       idp: "google-consumer" as const,
     };
     // The same call issues a code while the identity holds the account.
