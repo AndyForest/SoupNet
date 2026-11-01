@@ -12,6 +12,10 @@ Three tools become available to the AI:
 
 You can phrase prompts naturally — the AI handles the structured recipe formulation behind the scenes.
 
+## Getting your AI to use it
+
+Some AIs won't reach for Soup.net unless asked. Start a session by telling yours to "use Soup.net throughout", and say it again if it stops, for example after a long conversation is compacted. A line in your AI's memory or rules file does the same job every session.
+
 You'll need a Soup.net account — signups are free and open: [create one here](/auth/register).
 
 <!-- agent-type-picker: the live /info/connect page (ConnectPage.tsx) splices

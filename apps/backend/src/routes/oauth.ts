@@ -35,6 +35,7 @@ import {
   verifyClientCredentials,
   maybeCleanupOAuthArtifacts,
   requestedOidcScopes,
+  requestedScopeForLog,
   OIDC_SCOPES,
   ACCESS_TOKEN_TTL_SECONDS,
 } from "../services/oauth.service";
@@ -308,6 +309,13 @@ oauthRoutes.post(
       resource: resource.resource,
       oidcScopes: requestedOidcScopes(scopeRaw),
     });
+
+    // What each kind of client actually requests, so that enforcing scope=read
+    // (F132) can't silently turn a real client read-only. No user or book ids.
+    console.log(`[oauth-grant] ${JSON.stringify({
+      client: client.domain ?? "dcr",
+      scope: requestedScopeForLog(scopeRaw),
+    })}`);
 
     return c.json({ redirect_url: authorizationRedirect(redirectUri, { code }, state) });
   },
