@@ -79,6 +79,9 @@ export async function accountRefusal(db: PostgresJsDatabase, userId: string): Pr
   return (rows as unknown as Array<{ disabled: AccountDisabledReason | null }>)[0]?.disabled ?? null;
 }
 
+/** Well beyond the clock skew expected between backend tasks; unmeasured on Fargate. */
+const CUT_OFF_MARGIN_SECONDS = 5;
+
 /**
  * Refuse every session issued before now (recipe a8003678). For SSO's account
  * linking, which discards an unverified password: a session the
@@ -87,12 +90,13 @@ export async function accountRefusal(db: PostgresJsDatabase, userId: string): Pr
  * account goes too, since it would otherwise produce a session past the
  * cut-off (F143, F149).
  *
- * The cut-off is the next whole second, since `iat` can't tell the two parts
- * of this one apart: a session someone was minting as this ran would otherwise
- * survive for its seven days (F145). The cost is that a sign-in in the rest of
- * this second is refused and has to be retried; Google's handoff, the one
- * sign-in that follows a cut-off straight away, dates its session at the
- * cut-off instead (`exchangeHandoff`).
+ * The cut-off sits a few seconds ahead: a session someone was minting as this
+ * ran would otherwise survive for its seven days. `iat` can't tell the two
+ * parts of this second apart (F145), and the task minting it may have a clock
+ * ahead of this one (F147). A sign-in that follows the cut-off dates its session
+ * no earlier than it, so it isn't refused: `exchangeHandoff` and `loginUser`.
+ * Each reads the cut-off with what it checks, so one that won the race against
+ * this doesn't see it.
  *
  * The cut-off is stamped from this process's clock, not the database's
  * NOW(): it is compared with a JWT's `iat`, which this process's clock
@@ -101,7 +105,7 @@ export async function accountRefusal(db: PostgresJsDatabase, userId: string): Pr
  * read as issued before it and be refused.
  */
 export async function invalidateSessions(db: PostgresJsDatabase, userId: string): Promise<void> {
-  const cutOffSeconds = Math.floor(Date.now() / 1000) + 1;
+  const cutOffSeconds = Math.floor(Date.now() / 1000) + CUT_OFF_MARGIN_SECONDS;
   // Two statements, in this order: the first takes the row lock `issueHandoff`
   // waits on, so the second's fresh snapshot finds any code it just committed.
   // The transaction holds that lock across both (a savepoint, inside a caller's).

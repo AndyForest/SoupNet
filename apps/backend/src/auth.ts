@@ -330,6 +330,8 @@ export async function loginUser(
   | { user: { id: string; email: string; role: string }; token: null; waitlistedAt: null; disabled: AccountDisabledReason }
   | null
 > {
+  // Before the read: see invalidateSessions (F145, F147).
+  const issuedAt = Math.floor(Date.now() / 1000);
   const rows = await db.select().from(users).where(sql`${users.email} = ${normalizeEmail(email)}`).limit(1);
   const user = rows[0];
   if (!user) return null;
@@ -353,7 +355,8 @@ export async function loginUser(
     return { user: { id: user.id, email: user.email, role: user.role }, token: null, waitlistedAt: null, disabled };
   }
 
-  const token = signToken({ sub: user.id, email: user.email, role: user.role });
+  const notBefore = user.sessionsValidAfter ? Math.floor(user.sessionsValidAfter.getTime() / 1000) : 0;
+  const token = signToken({ sub: user.id, email: user.email, role: user.role, iat: Math.max(issuedAt, notBefore) });
   return { user: { id: user.id, email: user.email, role: user.role }, token, waitlistedAt: null, disabled: null };
 }
 
