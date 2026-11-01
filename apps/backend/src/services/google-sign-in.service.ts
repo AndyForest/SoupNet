@@ -25,6 +25,7 @@
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import crypto from "node:crypto";
+import { isRegisteredRedirectUri } from "@soupnet/contracts/oauth-redirect";
 import {
   googleIsAuthoritative,
   googleSessionIdp,
@@ -87,14 +88,14 @@ const DEFAULT_RETURN: ReturnTarget = { kind: "app", path: "/app/dashboard" };
  * Would the consent page's grant accept this client, redirect URI and
  * resource? The client through stream O's resolver, as the grant resolves
  * it: a dynamically registered client, or a client ID metadata document
- * fetched under the requester's per-IP cap (ChatGPT's). The redirect URI
- * exactly as registered (F44), and the resource one the grant would bind a
- * token to (RFC 8707; SSO-G8).
+ * fetched under the requester's per-IP cap (ChatGPT's). The redirect URI by
+ * the grant's and the page's one rule (F44, F130), and the resource one the
+ * grant would bind a token to (RFC 8707; SSO-G8).
  */
 async function authorizeTargetAllowed(db: SqlExecutor, params: AuthorizeParams, deps: CimdDeps): Promise<boolean> {
   if (!normalizeResource(params.resource).ok) return false;
   const client = await resolveOAuthClient(db as PostgresJsDatabase, params.client_id, deps);
-  return !!client && client.redirectUris.includes(params.redirect_uri);
+  return !!client && isRegisteredRedirectUri(params.redirect_uri, client.redirectUris);
 }
 
 /**
