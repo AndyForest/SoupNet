@@ -503,13 +503,16 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
     const strangerSub = sub();
     const stranger = signedIn(await signIn(consumer(email, strangerSub)));
     const token = await verificationTokenOf(stranger.userId);
+    await new Promise((r) => setTimeout(r, 1100));
 
     expect((await verifyEmail(token)).googleSignInRemoved).toBe(true);
     expect((await userRow(stranger.userId)).email_verified_at).not.toBeNull();
     expect(await identitiesOf(stranger.userId)).toEqual([]);
 
     // The verified account is no longer the stranger's, by session or by sign-in.
-    expect((await call(stranger.token, "GET", "/auth/me")).status).toBe(401);
+    const strangerMe = await call(stranger.token, "GET", "/auth/me");
+    expect(strangerMe.status).toBe(401);
+    expect(((await strangerMe.json()) as { error: string }).error).toBe("session_expired");
     expect(await signIn(consumer(email, strangerSub))).toEqual({ error: "not_authoritative" });
 
     // A repeat click changes nothing.
