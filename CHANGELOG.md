@@ -7,7 +7,7 @@ Two narrower logs exist beside this one: [`docs/architecture/ranking-changelog.m
 ## In review, not yet deployed
 
 - **The briefing asks for the actor in the role.** A preference about an agent names the agent in the role, because "I" tells retrieval nothing about who acts. Two worked examples lose their project names.
-
+- **Three optional plugin skills.** `options`, `seed-from-history` and `agent-team` join `recipe-check` in the plugin package, each worded as a suggestion an agent can weigh against its own setup.
 - **Reads no longer revive drafts.** A search or briefing carrying an intent id leaves the intent's last use alone, so an expired draft under it stays expired until an agent checks a recipe under that intent again. An intent's "last used" time now reflects its registration or its last check.
 - **`search_recipes` no longer takes `feedback`.** The MCP tool can no longer write a feedback row. A call that still sends it is refused and told to use `log_feedback`, which takes `search_id`. `check_recipe` keeps its `feedback` parameter, and the `feedback_*` URL parameters on the web `/check` page are unchanged, on a search too.
 - **Intent link** (#6a, stream B): a recipe records the task it was deposited under (`traces.intent_id`), and search gains an `intent:` qualifier, so a task's whole lineage is one query.
