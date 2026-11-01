@@ -22,7 +22,7 @@ The definitions this follows, quoted:
 
 | Tool | Read-only | Destructive | Open world | Why |
 |---|---|---|---|---|
-| `check_recipe` | false | false | false | It stores a new recipe, so it is not read-only. It only adds: a new row, never an overwrite or a delete, and the same recipe text sent again to the same book with the same key returns the same recipe and stores nothing new. Closed world: a `file_url` resolves only to the caller's own upload, and the server fetches nothing from the internet. |
+| `check_recipe` | false | false | false | It stores a new recipe, so it is not read-only. It only adds: a new row, never an overwrite or a delete, and the same recipe text sent again to the same book with the same key returns the same recipe and stores nothing new. Closed world: a `file_url` resolves only to the caller's own upload, and the tool fetches nothing from the internet. |
 | `search_recipes` | true | false | false | It returns recipes and logs none. It takes no feedback rows; those go through `log_feedback`. Its writes are the call's own audit row; `session_shown` and `intent_shown`, the record of what was shown; and a new intent when intent text is given (see the rule). It reads only the account's books. |
 | `get_briefing` | true | false | false | It composes text from the account's books. Its writes are the `briefing.issued` row whose id the response returns for feedback, and a new intent when intent text is given. |
 | `get_recipes` | true | false | false | It fetches by id. An id the key cannot read gets the same marker as one that does not exist. |

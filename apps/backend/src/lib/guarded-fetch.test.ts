@@ -38,6 +38,10 @@ describe("checkFetchableUrl", () => {
     ["https://169.254.169.254/latest/meta-data", "non-public address"],
     ["https://localhost/doc.json", "non-public address"],
     ["https://api.localhost/doc.json", "non-public address"],
+    ["https://2130706433/doc.json", "non-public address"],
+    ["https://0177.0.0.1/doc.json", "non-public address"],
+    ["https://[::ffff:127.0.0.1]/doc.json", "non-public address"],
+    ["https://LOCALHOST./doc.json", "non-public address"],
     ["doc.json", "not an absolute URL"],
   ])("refuses %s (%s)", (raw, reason) => {
     expect(checkFetchableUrl(raw)).toEqual({ ok: false, reason });
