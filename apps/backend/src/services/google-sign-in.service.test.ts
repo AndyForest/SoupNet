@@ -63,4 +63,13 @@ describe("validateReturnTarget with a client ID metadata document client (SSO-G8
     expect(await validateReturnTarget(noDb, target(), "1.2.3.4", { fetch: serving(null) })).toBeNull();
     expect(await validateReturnTarget(noDb, target({ resource: "https://elsewhere.example.com" }), "1.2.3.4", { fetch: serving(document) })).toBeNull();
   });
+
+  // F130: the same shared rule as the grant and the page, so Codex can choose Google too.
+  it("accepts a loopback redirect on the port a native client listens on, and refuses a different path", async () => {
+    const codex = { ...document, redirect_uris: ["http://127.0.0.1/callback", "http://localhost/callback"] };
+    const params = { redirect_uri: "http://127.0.0.1:57687/callback" };
+    const result = await validateReturnTarget(noDb, target(params), "1.2.3.4", { fetch: serving(codex) });
+    expect(result).toEqual({ kind: "oauth_authorize", params: target(params).params });
+    expect(await validateReturnTarget(noDb, target({ redirect_uri: "http://127.0.0.1:57687/other" }), "1.2.3.4", { fetch: serving(codex) })).toBeNull();
+  });
 });

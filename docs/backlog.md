@@ -64,6 +64,19 @@ Operator, 2026-10-25: a basic replacement for a hosted vector database, wanted f
 
 ## Infrastructure
 
+### `[IMPL]` Deleting a recipe while the embedding worker is on it answers 500 (2026-10-31)
+
+`deleteEmbeddingChainForSource` (`services/trace-delete.service.ts:157`) deletes a source's strategies and then the source, as separate statements. If `embedding-worker/jobs/strategy-check.ts:107` inserts a strategy row between them, the source delete fails its foreign key: `update or delete on table "embedding_sources" violates foreign key constraint ... is still referenced from table "embedding_chunk_strategies"`. The transaction rolls back, so nothing is lost and a retry works, but `DELETE /traces/:id` answers 500, and it failed unrelated CI once (`audit-anonymise.test.ts:125`, run 41244673560, in the same second as that error). Likely fix, untested: lock the source rows with `SELECT ... FOR UPDATE` first, which makes the worker's insert wait and then fail on the missing source, and check the worker tolerates that.
+
+### `[IMPL]` Static /info pages: follow-ups from the independent check of #173 (2026-10-31)
+
+None of these can break the live site, and the realistic failures are caught today.
+
+- `scripts/check-info-pages.mjs` still passes raw markdown in a `<pre>`, dropped paragraphs (it requires headings and the last line, not the body), a body inside `<template>` or `<noscript>`, a missing script asset, and a fourth page with no row. A check parsing the source with mdast and requiring every block in the DOM found 106, 80 and 63 blocks with none missing, so that method works if this one needs tightening.
+- `#web-fallback-no-mcp-needed` on `/info/connect` is dead (2 links, `docs/connectors/index.md:40` and `:70`): headings have no ids, in the live app as well as the static page.
+- Nothing fetches these URLs after a deploy: the smoke test only checks `mcp.soup.net/health`. Automate the manual `curl`.
+- `/info/privacy` at phone width has a layout shift of 0.1445 from the Google Fonts swap, unrelated to #173.
+
 ### `[IMPL]` LiteLLM router for per-user LLM quota tracking (deferred by design)
 
 Operator decision (2026-07-06, with the premium-LLM-features brief in `docs/planning/premium-llm-features.md`): the first server-side LLM features ship WITHOUT quota/rate tracking because the user base is the operator plus manually-assigned trusted users. When premium widens, deploy a LiteLLM router/proxy in front of the provider key for per-user quota, spend tracking, and model routing — rather than hand-rolling quota in the app. Until then, implementing agents must NOT build ad-hoc quota logic into LLM features.
@@ -308,6 +321,10 @@ Customer-driven program; the customer's needs are segmented anonymously in [cust
 - The site operator's create, seats, add-member and suspend routes, and the org admin's disable, enable and role routes.
 
 Streams SSO, Domains, Offboarding and Console follow in that merge order.
+
+Slug races Core left as they are, each a small read-then-write gap:
+- `[IMPL]` Book succession's `freeSlugIn` (`services/user-delete.service.ts`) can lose to a book created at the same moment in the successor's personal organization. The account deletion then rolls back and a retry succeeds.
+- `[IMPL]` `createOrganization` (`authz/organizations.ts`) checks the organization slug before inserting, so two operators creating the same slug at once give one a 500 instead of `slug_taken`.
 
 Left open by Core, each for the stream named:
 - the SPA's private or org-wide choice when creating a book, and the members page (Console);

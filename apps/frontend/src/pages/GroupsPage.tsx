@@ -142,8 +142,9 @@ export function GroupsPage() {
         method: "POST",
         body: JSON.stringify({ name, slug, description: description || undefined }),
       });
-      const json = (await res.json()) as { ok: boolean; error?: string };
-      if (!json.ok) throw new Error(json.error ?? "Failed to create recipe book");
+      // A server failure's body isn't JSON, and the person sees this message.
+      const json = (await res.json().catch(() => null)) as { ok: boolean; error?: string; message?: string } | null;
+      if (!json?.ok) throw new Error(json?.message ?? json?.error ?? "Failed to create recipe book");
       return json;
     },
     onSuccess: () => {

@@ -6,6 +6,8 @@ import type { AppEnv } from "../types";
 import { sql } from "drizzle-orm";
 import { groups } from "@soupnet/db";
 import { writeAudit } from "../services/audit-log.service";
+import { isUniqueViolationOn } from "../lib/pg-errors";
+import { bookSlugTakenMessage } from "@soupnet/domain";
 import { normalizeEmail } from "../lib/normalize-email";
 import {
   roleIn,
@@ -103,9 +105,17 @@ groupsRouter.post("/", async (c) => {
     }
   }
 
-  const groupRows = await db.insert(groups).values({
-    name, slug, organizationId, description,
-  }).returning({ id: groups.id });
+  let groupRows: Array<{ id: string }>;
+  try {
+    groupRows = await db.insert(groups).values({
+      name, slug, organizationId, description,
+    }).returning({ id: groups.id });
+  } catch (err) {
+    if (!isUniqueViolationOn(err, "groups_org_slug_unique")) throw err;
+    const orgRows = await db.execute(sql`SELECT is_personal FROM claimnet.organizations WHERE id = ${organizationId}::uuid`);
+    const inCompany = (orgRows as unknown as Array<{ is_personal: boolean }>)[0]?.is_personal === false;
+    return c.json({ ok: false, error: "slug_taken", message: bookSlugTakenMessage(slug, inCompany) }, 409);
+  }
 
   const group = groupRows[0];
   if (!group) return c.json({ ok: false, error: "Failed to create recipe book" }, 500);
