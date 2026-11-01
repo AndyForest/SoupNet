@@ -493,10 +493,38 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
   }
 
   async function verifyEmail(token: string, session: string | null = null): Promise<{ email?: string; googleSignInRemoved?: boolean }> {
-    const res = await call(session, "POST", "/auth/verify", { token });
+    const res = await call(session, "POST", "/auth/verify", { token, confirm: true });
     expect(res.status).toBe(200);
     return ((await res.json()) as { data: { email?: string; googleSignInRemoved?: boolean } }).data;
   }
+
+  it("GSI-LINK-08 / SSO-A4b, F146: without the person's confirmation nothing is verified or removed", async () => {
+    const email = address("f146-scanner", `outside-${run}.example`);
+    const cySub = sub();
+    const cy = signedIn(await signIn(consumer(email, cySub)));
+    const token = await verificationTokenOf(cy.userId);
+
+    // What a mail scanner running the page's script sends.
+    const scanned = await call(null, "POST", "/auth/verify", { token });
+    expect(scanned.status).toBe(200);
+    expect(((await scanned.json()) as { data: unknown }).data).toEqual({ verified: false, confirmationRequired: true });
+    expect((await userRow(cy.userId)).email_verified_at).toBeNull();
+    expect((await identitiesOf(cy.userId)).map((i) => i.subject)).toEqual([cySub]);
+    expect((await call(cy.token, "GET", "/auth/me")).status).toBe(200);
+
+    // The link still works in the browser that signed up, with no confirmation asked.
+    const own = await call(cy.token, "POST", "/auth/verify", { token });
+    expect(((await own.json()) as { data: { verified: boolean } }).data.verified).toBe(true);
+    expect((await identitiesOf(cy.userId)).map((i) => i.subject)).toEqual([cySub]);
+  });
+
+  it("GSI-LINK-08 / SSO-A4b: a password account is never asked to confirm", async () => {
+    const email = address("f146-password", `outside-${run}.example`);
+    const registered = await call(null, "POST", "/auth/register", { email, password: PASSWORD, tosAccepted: true });
+    const token = ((await registered.json()) as { data: { verificationToken: string } }).data.verificationToken;
+    const res = await call(null, "POST", "/auth/verify", { token });
+    expect(((await res.json()) as { data: { verified: boolean; confirmationRequired?: boolean } }).data).toMatchObject({ verified: true });
+  });
 
   /** A callback that has issued its handoff code, not yet exchanged. */
   async function heldHandoff(claims: FakeIdClaims): Promise<{ handoff: string; secret: string }> {

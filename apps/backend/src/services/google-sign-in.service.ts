@@ -315,11 +315,17 @@ async function cancelHandoffs(tx: SqlExecutor, userId: string): Promise<void> {
  * mailbox. It stays only if the click comes from its own session; otherwise
  * the mailbox's owner may not be who signed up, so the identity and its
  * sessions go, leaving the owner free to sign in with Google or set a
- * password. Run inside the verification's transaction, before it sets
+ * password.
+ *
+ * Removing takes the person's explicit `confirmed`: the page asks first, so a
+ * mail scanner running the page's script takes nothing away, and someone who
+ * signed up on another device can open the link there instead (F146).
+ *
+ * Run inside the verification's transaction, before it sets
  * `email_verified_at`: a repeat click finds a verified account and removes
- * nothing. Returns whether it removed the identity.
+ * nothing. On `confirm`, the caller verifies nothing yet.
  */
-export async function settleGoogleIdentityOnVerify(tx: Tx, token: string, session: JwtPayload | null): Promise<boolean> {
+export async function settleGoogleIdentityOnVerify(tx: Tx, token: string, session: JwtPayload | null, confirmed: boolean): Promise<"proceed" | "confirm" | "removed"> {
   const rows = await tx.execute(sql`
     SELECT u.id FROM claimnet.users u
     WHERE u.email_verification_token = ${token}
@@ -329,17 +335,18 @@ export async function settleGoogleIdentityOnVerify(tx: Tx, token: string, sessio
     FOR UPDATE OF u
   `);
   const userId = (rows as unknown as Array<{ id: string }>)[0]?.id;
-  if (!userId) return false;
+  if (!userId) return "proceed";
 
   const db = tx as unknown as PostgresJsDatabase;
   if (session?.sub === userId && session.idp === "google-consumer") {
     const { refusal } = await sessionState(db, userId, session.iat, session.idp);
-    if (!refusal) return false;
+    if (!refusal) return "proceed";
   }
+  if (!confirmed) return "confirm";
   await tx.execute(sql`DELETE FROM claimnet.user_identities WHERE user_id = ${userId}::uuid AND provider = 'google'`);
   await cancelHandoffs(tx, userId);
   await invalidateSessions(db, userId);
-  return true;
+  return "removed";
 }
 
 async function insertIdentity(tx: SqlExecutor, userId: string, claims: GoogleIdClaims, email: string, linkedVia: "signup" | "email_match"): Promise<void> {

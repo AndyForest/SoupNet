@@ -112,6 +112,7 @@ Feature: Sign in with Google, account linking, and require_sso
     Scenario: The address's owner verifying ends a stranger's Google sign-up
       Given someone signed up with a consumer Google account on Vic's address
       When Vic opens the verification email in a browser without that sign-up's session
+      And Vic confirms verifying there
       Then the address is verified, that Google account is unlinked and its session has ended
       And Vic can sign in with Google Workspace on that address
 
@@ -120,6 +121,13 @@ Feature: Sign in with Google, account linking, and require_sso
       Given Cy signed up with a consumer Google account on Cy's own address
       When Cy opens the verification email in the same browser
       Then the address is verified and Cy still signs in with that Google account
+
+    @GSI-LINK-08
+    Scenario: Opening the link elsewhere asks first
+      Given Cy signed up with a consumer Google account on Cy's own address
+      When a mail scanner or another device opens the verification link
+      Then nothing is verified or removed until the person confirms
+      And Cy can open the link in the browser that signed up and keep Google sign-in
 
     @GSI-LINK-04
     Scenario: A verified account linked to another Google account isn't relinked by email

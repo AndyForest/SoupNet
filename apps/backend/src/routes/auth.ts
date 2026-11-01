@@ -825,8 +825,10 @@ auth.post("/verify", verifyRateLimit, async (c) => {
   const session = bearer?.startsWith("Bearer ") ? verifyToken(bearer.slice(7)) : null;
 
   const db = getDb();
-  const { updated, googleSignInRemoved } = await db.transaction(async (tx) => {
-    const googleSignInRemoved = await settleGoogleIdentityOnVerify(tx, token, session);
+  const confirmed = (body as { confirm?: unknown }).confirm === true;
+  const { updated, googleSignIn } = await db.transaction(async (tx) => {
+    const googleSignIn = await settleGoogleIdentityOnVerify(tx, token, session, confirmed);
+    if (googleSignIn === "confirm") return { updated: undefined, googleSignIn };
     const result = await tx.execute(sql`
       UPDATE claimnet.users
       SET email_verified_at = COALESCE(email_verified_at, now())
@@ -834,8 +836,11 @@ auth.post("/verify", verifyRateLimit, async (c) => {
         AND email_verification_token_created_at > now() - interval '24 hours'
       RETURNING id, email, (waitlisted_at IS NOT NULL) AS "waitlisted"
     `);
-    return { updated: (result as unknown as Array<{ id: string; email: string; waitlisted: boolean }>)[0], googleSignInRemoved };
+    return { updated: (result as unknown as Array<{ id: string; email: string; waitlisted: boolean }>)[0], googleSignIn };
   });
+  if (googleSignIn === "confirm") {
+    return c.json({ ok: true, data: { verified: false, confirmationRequired: true } });
+  }
   if (!updated) {
     return c.json({ ok: false, error: "Invalid or expired verification token" }, 400);
   }
@@ -871,7 +876,7 @@ auth.post("/verify", verifyRateLimit, async (c) => {
       // Waitlisted accounts get "your place is held" copy instead of
       // "sign in and start" — signing in won't work until promotion.
       waitlisted: updated.waitlisted,
-      ...(googleSignInRemoved ? { googleSignInRemoved: true } : {}),
+      ...(googleSignIn === "removed" ? { googleSignInRemoved: true } : {}),
     },
   });
 });
