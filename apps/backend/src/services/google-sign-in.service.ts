@@ -270,6 +270,7 @@ export async function resolveAccount(
                   updated_at = now()
               WHERE id = ${decision.userId}::uuid
             `);
+            await cancelHandoffs(tx, decision.userId);
             await invalidateSessions(tx as unknown as PostgresJsDatabase, decision.userId);
           }
           await insertIdentity(tx, decision.userId, claims, email, "email_match");
@@ -293,6 +294,18 @@ export async function resolveAccount(
     console.error("[google-sign-in] account resolution failed:", err);
     return "failed";
   }
+}
+
+/**
+ * The account's Google identity changed hands: a handoff code already issued
+ * for it must not produce a session (F143). Runs under the lock on the users
+ * row that `issueHandoff` also takes.
+ */
+async function cancelHandoffs(tx: SqlExecutor, userId: string): Promise<void> {
+  await tx.execute(sql`
+    UPDATE claimnet.sso_login_requests SET handoff_consumed_at = now()
+    WHERE user_id = ${userId}::uuid AND handoff_hash IS NOT NULL AND handoff_consumed_at IS NULL
+  `);
 }
 
 /**
@@ -324,6 +337,7 @@ export async function settleGoogleIdentityOnVerify(tx: Tx, token: string, sessio
     if (!refusal) return false;
   }
   await tx.execute(sql`DELETE FROM claimnet.user_identities WHERE user_id = ${userId}::uuid AND provider = 'google'`);
+  await cancelHandoffs(tx, userId);
   await invalidateSessions(db, userId);
   return true;
 }
@@ -422,16 +436,41 @@ export async function completeGoogleSignIn(
   const refusal = await sessionRefusal(db, resolved.userId, idp);
   if (refusal) return { ok: false, error: refusal };
 
-  const handoff = randomToken();
-  await db.execute(sql`
-    UPDATE claimnet.sso_login_requests
-    SET user_id = ${resolved.userId}::uuid,
-        session_idp = ${idp},
-        handoff_hash = ${hashToken(handoff)},
-        handoff_expires_at = now() + make_interval(secs => ${HANDOFF_TTL_SECONDS})
-    WHERE id = ${request.id}::uuid
-  `);
+  const handoff = await issueHandoff(db, { requestId: request.id, userId: resolved.userId, claims, idp });
+  if (!handoff) return { ok: false, error: "failed" };
   return { ok: true, handoff };
+}
+
+/**
+ * Issue the handoff code, if this Google identity still holds the account
+ * (F143): it may have been removed or taken over since the sign-in resolved.
+ * The share lock orders this against `cancelHandoffs`, which runs under the
+ * row's update lock: either the identity is already gone here, or this code is
+ * committed for that cancellation to find. The identity is read in a later
+ * statement than the lock, so it sees whatever the lock waited for.
+ */
+export async function issueHandoff(
+  db: PostgresJsDatabase,
+  input: { requestId: string; userId: string; claims: GoogleIdClaims; idp: GoogleSessionIdp },
+): Promise<string | null> {
+  const handoff = randomToken();
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT 1 FROM claimnet.users WHERE id = ${input.userId}::uuid FOR SHARE`);
+    const identity = await tx.execute(sql`
+      SELECT 1 FROM claimnet.user_identities
+      WHERE user_id = ${input.userId}::uuid AND issuer = ${input.claims.issuer} AND subject = ${input.claims.subject}
+    `);
+    if ((identity as unknown as unknown[]).length === 0) return null;
+    await tx.execute(sql`
+      UPDATE claimnet.sso_login_requests
+      SET user_id = ${input.userId}::uuid,
+          session_idp = ${input.idp},
+          handoff_hash = ${hashToken(handoff)},
+          handoff_expires_at = now() + make_interval(secs => ${HANDOFF_TTL_SECONDS})
+      WHERE id = ${input.requestId}::uuid
+    `);
+    return handoff;
+  });
 }
 
 /** May this account get a session from this Google sign-in? (SSO-A7, SSO-R4) */

@@ -498,6 +498,61 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
     return ((await res.json()) as { data: { email?: string; googleSignInRemoved?: boolean } }).data;
   }
 
+  /** A callback that has issued its handoff code, not yet exchanged. */
+  async function heldHandoff(claims: FakeIdClaims): Promise<{ handoff: string; secret: string }> {
+    const { started } = await start();
+    if (!started) throw new Error("start failed");
+    const code = google.issue(claims, { nonce: started.nonce, codeChallenge: started.codeChallenge });
+    const cb = await callback({ state: started.state, code });
+    return { handoff: cb.fragment.get("handoff") ?? "", secret: started.secret };
+  }
+
+  async function expectInvalidHandoff(held: { handoff: string; secret: string }): Promise<void> {
+    expect(held.handoff).not.toBe("");
+    const res = await exchange(held.handoff, held.secret);
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe("invalid_handoff");
+  }
+
+  it("SSO-G5b / F143: a handoff code held across the owner's verification produces no session", async () => {
+    const email = address("f143-held", `outside-${run}.example`);
+    const strangerSub = sub();
+    const stranger = signedIn(await signIn(consumer(email, strangerSub)));
+    const held = await heldHandoff(consumer(email, strangerSub));
+    expect((await verifyEmail(await verificationTokenOf(stranger.userId))).googleSignInRemoved).toBe(true);
+    await expectInvalidHandoff(held);
+  });
+
+  it("SSO-G5b / F143: a handoff code held across a takeover produces no session, and the new owner's does", async () => {
+    const email = address("f143-takeover");
+    const gilSub = sub();
+    signedIn(await signIn(consumer(email, gilSub)));
+    const held = await heldHandoff(consumer(email, gilSub));
+    const val = signedIn(await signIn(workspace(email)));
+    await expectInvalidHandoff(held);
+    expect((await call(val.token, "GET", "/auth/me")).status).toBe(200);
+  });
+
+  it("SSO-G5b / F143: a callback that resolved before the removal issues no code after it", async () => {
+    const { issueHandoff } = await import("../services/google-sign-in.service");
+    const email = address("f143-inflight", `outside-${run}.example`);
+    const strangerSub = sub();
+    const stranger = signedIn(await signIn(consumer(email, strangerSub)));
+    const issuer = ((await getDb().execute(sql`SELECT issuer FROM claimnet.user_identities WHERE user_id = ${stranger.userId}::uuid`)) as unknown as Array<{ issuer: string }>)[0]!.issuer;
+    const { started } = await start();
+    const request = ((await getDb().execute(sql`SELECT id FROM claimnet.sso_login_requests WHERE state_hash = ${sha256(started!.state)}`)) as unknown as Array<{ id: string }>)[0]!;
+    const input = {
+      requestId: request.id,
+      userId: stranger.userId,
+      claims: { issuer, subject: strangerSub, email, emailVerified: true, hostedDomain: null },
+      idp: "google-consumer" as const,
+    };
+    // The same call issues a code while the identity holds the account.
+    expect(await issueHandoff(getDb(), input)).toBeTruthy();
+    expect((await verifyEmail(await verificationTokenOf(stranger.userId))).googleSignInRemoved).toBe(true);
+    expect(await issueHandoff(getDb(), input)).toBeNull();
+  });
+
   it("GSI-LINK-06 / SSO-A4b: the mailbox's owner verifying ends a stranger's Google sign-up, and the owner's Workspace sign-in works", async () => {
     const email = address("victim-f137", `outside-${run}.example`);
     const strangerSub = sub();
