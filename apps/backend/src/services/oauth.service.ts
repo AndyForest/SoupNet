@@ -291,6 +291,18 @@ export function requestedOidcScopes(scope: string): string[] {
   return OIDC_SCOPES.filter((s) => asked.has(s));
 }
 
+const LOGGED_SCOPES = new Set(["read", "write", ...OIDC_SCOPES, "offline_access"]);
+
+/**
+ * What a client asked for, safe to log: known scope names, and only a count of
+ * anything else, because the value is caller-supplied text.
+ */
+export function requestedScopeForLog(scope: string): { known: string[]; other: number } {
+  const asked = [...new Set(scope.split(/\s+/).filter(Boolean))];
+  const known = asked.filter((s) => LOGGED_SCOPES.has(s)).sort();
+  return { known, other: asked.length - known.length };
+}
+
 /** A text[] literal for a list of plain strings (an empty list included). */
 function textArray(values: string[]) {
   return sql`ARRAY[${sql.join(values.map((v) => sql`${v}`), sql`,`)}]::text[]`;
