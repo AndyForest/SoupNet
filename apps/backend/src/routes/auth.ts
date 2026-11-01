@@ -839,7 +839,9 @@ auth.post("/verify", verifyRateLimit, async (c) => {
     return { updated: (result as unknown as Array<{ id: string; email: string; waitlisted: boolean }>)[0], googleSignIn };
   });
   if (googleSignIn === "confirm") {
-    return c.json({ ok: true, data: { verified: false, confirmationRequired: true } });
+    const rows = await db.execute(sql`SELECT waitlisted_at IS NOT NULL AS waitlisted FROM claimnet.users WHERE email_verification_token = ${token}`);
+    const waitlisted = (rows as unknown as Array<{ waitlisted: boolean }>)[0]?.waitlisted === true;
+    return c.json({ ok: true, data: { verified: false, confirmationRequired: true, waitlisted } });
   }
   if (!updated) {
     return c.json({ ok: false, error: "Invalid or expired verification token" }, 400);

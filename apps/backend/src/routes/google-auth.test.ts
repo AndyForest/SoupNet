@@ -508,7 +508,7 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
     // What a mail scanner running the page's script sends.
     const scanned = await call(null, "POST", "/auth/verify", { token });
     expect(scanned.status).toBe(200);
-    expect(((await scanned.json()) as { data: unknown }).data).toEqual({ verified: false, confirmationRequired: true });
+    expect(((await scanned.json()) as { data: unknown }).data).toEqual({ verified: false, confirmationRequired: true, waitlisted: false });
     expect((await userRow(cy.userId)).email_verified_at).toBeNull();
     expect((await identitiesOf(cy.userId)).map((i) => i.subject)).toEqual([cySub]);
     expect((await call(cy.token, "GET", "/auth/me")).status).toBe(200);
@@ -517,6 +517,20 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
     const own = await call(cy.token, "POST", "/auth/verify", { token });
     expect(((await own.json()) as { data: { verified: boolean } }).data.verified).toBe(true);
     expect((await identitiesOf(cy.userId)).map((i) => i.subject)).toEqual([cySub]);
+  });
+
+  it("GSI-LINK-08 / SSO-A4b, F148: the confirmation says when the sign-up is waitlisted, which has no browser to go back to", async () => {
+    const email = address("f148", `outside-${run}.example`);
+    const cy = signedIn(await signIn(consumer(email)));
+    const token = await verificationTokenOf(cy.userId);
+    await getDb().execute(sql`UPDATE claimnet.users SET waitlisted_at = now() WHERE id = ${cy.userId}::uuid`);
+    try {
+      const res = await call(null, "POST", "/auth/verify", { token });
+      expect(((await res.json()) as { data: unknown }).data).toEqual({ verified: false, confirmationRequired: true, waitlisted: true });
+    } finally {
+      // waitlist.service.test.ts promotes verified waitlisted accounts across the whole table.
+      await getDb().execute(sql`UPDATE claimnet.users SET waitlisted_at = NULL WHERE id = ${cy.userId}::uuid`);
+    }
   });
 
   it("GSI-LINK-08 / SSO-A4b: a password account is never asked to confirm", async () => {
