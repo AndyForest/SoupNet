@@ -6,7 +6,7 @@ Two narrower logs exist beside this one: [`docs/architecture/ranking-changelog.m
 
 ## In review, not yet deployed
 
-- **`check_recipe` no longer fetches outside URLs.** `file_url` takes only a URL returned by `POST /uploads`, and any other URL is refused with a message naming the two ways to attach a file. Those are uploads and `file_base64`, and both still work. `check_recipe` is no longer marked open-world, so no tool reaches the public internet.
+- **`check_recipe` no longer fetches outside URLs.** `file_url` takes only a URL returned by `POST /uploads`, and any other URL is refused with a message naming the two ways to attach a file. Those are uploads and `file_base64`, and both still work. The stdio server's `file` parameter takes only a local path for the same reason. `check_recipe` is no longer marked open-world, so no tool reaches the public internet.
 - **The briefing asks for the actor in the role.** A preference about an agent names the agent in the role, because "I" tells retrieval nothing about who acts. Two worked examples lose their project names.
 - **Three optional plugin skills.** `options`, `seed-from-history` and `agent-team` join `recipe-check` in the plugin package, each worded as a suggestion an agent can weigh against its own setup.
 - **Reads no longer revive drafts.** A search or briefing carrying an intent id leaves the intent's last use alone, so an expired draft under it stays expired until an agent checks a recipe under that intent again. An intent's "last used" time now reflects its registration or its last check.
