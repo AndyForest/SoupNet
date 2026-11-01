@@ -487,6 +487,67 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
     expect((await call(s.token, "GET", "/keys")).status).toBe(403);
   });
 
+  async function verificationTokenOf(userId: string): Promise<string> {
+    const rows = (await getDb().execute(sql`SELECT email_verification_token FROM claimnet.users WHERE id = ${userId}::uuid`)) as unknown as Array<{ email_verification_token: string }>;
+    return rows[0]!.email_verification_token;
+  }
+
+  async function verifyEmail(token: string, session: string | null = null): Promise<{ email?: string; googleSignInRemoved?: boolean }> {
+    const res = await call(session, "POST", "/auth/verify", { token });
+    expect(res.status).toBe(200);
+    return ((await res.json()) as { data: { email?: string; googleSignInRemoved?: boolean } }).data;
+  }
+
+  it("GSI-LINK-06 / SSO-A4b: the mailbox's owner verifying ends a stranger's Google sign-up, and the owner's Workspace sign-in works", async () => {
+    const email = address("victim-f137", `outside-${run}.example`);
+    const strangerSub = sub();
+    const stranger = signedIn(await signIn(consumer(email, strangerSub)));
+    const token = await verificationTokenOf(stranger.userId);
+    await new Promise((r) => setTimeout(r, 1100));
+
+    expect((await verifyEmail(token)).googleSignInRemoved).toBe(true);
+    expect((await userRow(stranger.userId)).email_verified_at).not.toBeNull();
+    expect(await identitiesOf(stranger.userId)).toEqual([]);
+
+    // The verified account is no longer the stranger's, by session or by sign-in.
+    const strangerMe = await call(stranger.token, "GET", "/auth/me");
+    expect(strangerMe.status).toBe(401);
+    expect(((await strangerMe.json()) as { error: string }).error).toBe("session_expired");
+    expect(await signIn(consumer(email, strangerSub))).toEqual({ error: "not_authoritative" });
+
+    // A repeat click changes nothing.
+    expect((await verifyEmail(token)).googleSignInRemoved).toBeUndefined();
+
+    const ownerSub = sub();
+    const owner = signedIn(await signIn(workspace(email, ownerSub)));
+    expect(owner.userId).toBe(stranger.userId);
+    expect((await identitiesOf(owner.userId)).map((i) => i.subject)).toEqual([ownerSub]);
+  });
+
+  it("GSI-LINK-06 / SSO-A4b: only the sign-up's own session keeps its identity; another account's session doesn't", async () => {
+    const other = await seeded("f137-other");
+    const email = address("f137-shared", `outside-${run}.example`);
+    const stranger = signedIn(await signIn(consumer(email)));
+    expect((await verifyEmail(await verificationTokenOf(stranger.userId), other.token)).googleSignInRemoved).toBe(true);
+    expect(await identitiesOf(stranger.userId)).toEqual([]);
+    expect((await call(other.token, "GET", "/auth/me")).status).toBe(200);
+  });
+
+  it("GSI-LINK-07 / SSO-A4b: verifying in the browser that signed up keeps Google sign-in", async () => {
+    const email = address("cy-f137", `outside-${run}.example`);
+    const cySub = sub();
+    const cy = signedIn(await signIn(consumer(email, cySub)));
+    const token = await verificationTokenOf(cy.userId);
+
+    expect((await verifyEmail(token, cy.token)).googleSignInRemoved).toBeUndefined();
+    expect((await identitiesOf(cy.userId)).map((i) => i.subject)).toEqual([cySub]);
+    expect((await call(cy.token, "GET", "/keys")).status).toBe(200);
+
+    // Clicking again elsewhere, once verified, takes nothing away.
+    expect((await verifyEmail(token)).googleSignInRemoved).toBeUndefined();
+    expect(signedIn(await signIn(consumer(email, cySub))).userId).toBe(cy.userId);
+  });
+
   it("GSI-LINK-04 / SSO-A5: a verified account linked to another Google sub is not relinked by email", async () => {
     const max = await seeded("max2");
     signedIn(await signIn(workspace(max.email)));

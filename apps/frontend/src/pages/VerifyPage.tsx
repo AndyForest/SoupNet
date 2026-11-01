@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { API_BASE, setEmailVerified, isLoggedIn } from "../auth.js";
+import { API_BASE, getToken, setEmailVerified, isLoggedIn } from "../auth.js";
 
 export function VerifyPage() {
   const [status, setStatus] = useState<"loading" | "success" | "full" | "error">("loading");
@@ -12,6 +12,7 @@ export function VerifyPage() {
   // depend on @soupnet/domain.
   const [joinedNotice, setJoinedNotice] = useState<string | null>(null);
   const [fullLines, setFullLines] = useState<string[]>([]);
+  const [googleSignInRemoved, setGoogleSignInRemoved] = useState(false);
   // Guard against React StrictMode double-invocation in dev. The /auth/verify
   // endpoint is idempotent on the backend, but firing twice would still
   // briefly flash an error before the second response lands. Belt and braces.
@@ -29,12 +30,15 @@ export function VerifyPage() {
       return;
     }
 
+    // This browser's session, if any, shows a Google sign-up that this click
+    // comes from the same person. The backend ignores it otherwise.
+    const session = getToken();
     fetch(`${API_BASE}/auth/verify`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(session ? { Authorization: `Bearer ${session}` } : {}) },
       body: JSON.stringify({ token }),
     })
-      .then((res) => res.json() as Promise<{ ok: boolean; error?: string; message?: string; detail?: string; data?: { email: string; waitlisted?: boolean; organization?: { name: string; notice: string } | null } }>)
+      .then((res) => res.json() as Promise<{ ok: boolean; error?: string; message?: string; detail?: string; data?: { email: string; waitlisted?: boolean; organization?: { name: string; notice: string } | null; googleSignInRemoved?: boolean } }>)
       .then((data) => {
         if (!data.ok && data.error === "organization_full") {
           setFullLines([data.message ?? "", data.detail ?? ""].filter(Boolean));
@@ -46,6 +50,7 @@ export function VerifyPage() {
           setEmail(data.data.email);
           setWaitlisted(data.data.waitlisted === true);
           setJoinedNotice(data.data.organization?.notice ?? null);
+          setGoogleSignInRemoved(data.data.googleSignInRemoved === true);
           // If the user is logged in in this tab, update the cached flag so
           // subsequent navigation no longer redirects to /verify-pending.
           if (isLoggedIn()) setEmailVerified(true);
@@ -89,6 +94,11 @@ export function VerifyPage() {
             {joinedNotice && (
               <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)" }}>
                 {joinedNotice}
+              </p>
+            )}
+            {googleSignInRemoved && (
+              <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)" }}>
+                This address's sign-up came through a Google account that wasn't signed in on this browser, so that Google account has been removed. To sign in, set a password with the forgotten-password link on the next page, or use a Gmail or Google Workspace account on this address.
               </p>
             )}
             {!waitlisted && (
