@@ -1,6 +1,6 @@
 # Privacy Policy — Soup.net
 
-**Effective date:** 2026-05-12 (retention wording clarified 2026-06-11; third parties updated 2026-09-27; retention, connected AI apps and the check log added 2026-10-26; operator updated 2026-10-31)
+**Effective date:** 2026-05-12 (retention wording clarified 2026-06-11; third parties updated 2026-09-27; retention, connected AI apps and the check log added 2026-10-26; operator updated 2026-10-31; suspended, disabled and company accounts added 2026-11-01)
 **Service:** Soup.net — a stigmergic search engine for taste and judgment
 **Operated by:** STEAMLabs, in Canada
 **Contact:** admin@soup.net
@@ -13,7 +13,7 @@
 - We use Google Gemini to generate vector embeddings of your text. Your text is sent to Google for processing. We don't send your email or identity with it.
 - We don't sell your data. We don't advertise. We don't use third-party trackers. We use localStorage only to keep you signed in.
 - When you connect an AI app (ChatGPT, Codex, Claude, or any other app that speaks MCP), it sends us the recipes and evidence its agent writes and reads back recipes from the books you chose. That app's own policy covers your conversation on its side.
-- You can see every check made through your account in the check log, export everything we have on you at any time (`Settings → Export my data`), and delete your account from `Settings → Account`. Section 8 says how long each kind of data is kept.
+- You can see every check made through your account in the check log, export everything we have on you (`Settings → Export my data`), and delete your account from `Settings → Account`. If your account is suspended, disabled or belongs to a company, Section 7 says how to do these. Section 8 says how long each kind of data is kept.
 - If anything material about how we handle your data changes, we'll notify you by reasonable means before the change takes effect.
 
 ---
@@ -126,6 +126,11 @@ Wherever you are, you can:
 - **Review drafts** your agents left in the review queue (`/app/drafts`): confirm, reject, or mark not chosen.
 - **End a connection** from an AI app at any time, on the API Keys page (`/app/keys`) or in the app's own settings. Revoking it stops the app's access at once.
 - **Choose what an app can reach** when you connect it: which recipe books, and whether each is read-only or writable.
+
+Some accounts can't do all of this from Settings:
+
+- **A suspended or disabled account** can't sign in, so it can't use these pages. Email admin@soup.net from your registered address to ask for your export or your deletion.
+- **An account that belongs to a company organization** can export its data from Settings but can't be deleted there, because the account and its recipes belong to the company. Ask your organization's admin, or email admin@soup.net from your registered address.
 - **Withdraw consent** to data processing — by requesting account deletion as above.
 
 We aim to respond to all requests within the time required by applicable law and as soon as we reasonably can.
