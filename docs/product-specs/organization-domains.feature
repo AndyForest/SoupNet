@@ -243,6 +243,19 @@ Feature: Verified domains, automatic joining, and existing accounts on a claimed
     # Guards: round plan "Seat exhaustion: block with a clear message in round
     # 1"; Core OC-J5; recipes 5406ed04, 15b767de.
 
+    @ORG-SEAT-D05
+    Scenario: A click refused at the seat limit leaves a stranger's Google sign-up in place
+      Given acme.example is captured
+      And Acme has no free seat
+      And a stranger holds a Google session for an unverified account on nia@acme.example
+      When Nia clicks her verification link
+      Then the response is 409 with error "organization_full"
+      And the Google identity and the stranger's session are still there
+      When a seat frees
+      And Nia clicks the same link again
+      Then the address is verified and she joins Acme
+      And the Google identity and the stranger's session are gone
+
     @ORG-SEAT-D01
     Scenario: A verification click at the seat limit is refused and can be retried
       Given acme.example is captured

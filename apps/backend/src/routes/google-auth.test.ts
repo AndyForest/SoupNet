@@ -548,6 +548,38 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
     expect(signedIn(await signIn(consumer(email, cySub))).userId).toBe(cy.userId);
   });
 
+  it("ORG-SEAT-D05 / OD-C6, SSO-A4b: a click refused at the seat limit leaves a stranger's Google sign-up in place, and the retried click ends it", async () => {
+    const olive = await seeded("olive-f137");
+    const created = await call(sysToken, "POST", "/admin/organizations", { name: `Acme ${n}`, slug: `acme-sso-${run}-${++n}`, ownerEmail: olive.email, seatLimit: 1 });
+    const orgId = ((await created.json()) as { data: { organizationId: string } }).data.organizationId;
+    // `dns-ok` is the backend's test-mode stub for a domain publishing its record.
+    const domain = `dns-ok-${run}-${++n}.test`;
+    const added = await call(olive.token, "POST", `/organizations/${orgId}/domains`, { domain });
+    const claimId = ((await added.json()) as { data: { id: string } }).data.id;
+    expect((await call(olive.token, "POST", `/organizations/${orgId}/domains/${claimId}/check`)).status).toBe(200);
+    expect((await call(olive.token, "PATCH", `/organizations/${orgId}/domains/${claimId}`, { autoJoin: true })).status).toBe(200);
+
+    const stranger = signedIn(await signIn(consumer(address("f137-full", domain))));
+    const token = await verificationTokenOf(stranger.userId);
+    // Past the one-second cut-off, so a removal would end this session.
+    await new Promise((r) => setTimeout(r, 1100));
+
+    const refused = await call(null, "POST", "/auth/verify", { token });
+    expect(refused.status).toBe(409);
+    expect(((await refused.json()) as { error: string }).error).toBe("organization_full");
+    expect((await userRow(stranger.userId)).email_verified_at).toBeNull();
+    expect(await identitiesOf(stranger.userId)).toHaveLength(1);
+    expect((await call(stranger.token, "GET", "/auth/me")).status).toBe(200);
+
+    expect((await call(sysToken, "PATCH", `/admin/organizations/${orgId}`, { seatLimit: 2 })).status).toBe(200);
+    expect((await verifyEmail(token)).googleSignInRemoved).toBe(true);
+    expect((await userRow(stranger.userId)).email_verified_at).not.toBeNull();
+    expect(await identitiesOf(stranger.userId)).toEqual([]);
+    expect((await call(stranger.token, "GET", "/auth/me")).status).toBe(401);
+    const seat = (await getDb().execute(sql`SELECT organization_id FROM claimnet.organization_members WHERE user_id = ${stranger.userId}::uuid`)) as unknown as Array<{ organization_id: string }>;
+    expect(seat.map((row) => row.organization_id)).toEqual([orgId]);
+  });
+
   it("GSI-LINK-04 / SSO-A5: a verified account linked to another Google sub is not relinked by email", async () => {
     const max = await seeded("max2");
     signedIn(await signIn(workspace(max.email)));
