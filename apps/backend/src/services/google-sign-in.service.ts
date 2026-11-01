@@ -34,8 +34,9 @@ import {
 } from "@soupnet/domain";
 import type { GoogleSessionIdp, GoogleSignInError } from "@soupnet/domain";
 import { createAccount } from "../auth";
+import type { JwtPayload } from "../auth";
 import { normalizeEmail } from "../lib/normalize-email";
-import { accountRefusal, invalidateSessions, ssoRequiredFor } from "../authz";
+import { accountRefusal, invalidateSessions, sessionState, ssoRequiredFor } from "../authz";
 import { mayRegister, logSignupCapState } from "./system-settings.service";
 import { sendVerificationEmail } from "./email.service";
 import { resolveOAuthClient } from "./oauth-cimd.service";
@@ -292,6 +293,39 @@ export async function resolveAccount(
     console.error("[google-sign-in] account resolution failed:", err);
     return "failed";
   }
+}
+
+/**
+ * The mailbox is being proved for an account a non-authoritative Google
+ * sign-up created (SSO-A4b, F137). Only that sign-up can hold an identity on
+ * an unverified account, and nothing yet ties that Google account to the
+ * mailbox. It stays only if the click comes from its own session; otherwise
+ * the mailbox's owner may not be who signed up, so the identity and its
+ * sessions go, leaving the owner free to sign in with Google or set a
+ * password. Run inside the verification's transaction, before it sets
+ * `email_verified_at`: a repeat click finds a verified account and removes
+ * nothing. Returns whether it removed the identity.
+ */
+export async function settleGoogleIdentityOnVerify(tx: Tx, token: string, session: JwtPayload | null): Promise<boolean> {
+  const rows = await tx.execute(sql`
+    SELECT u.id FROM claimnet.users u
+    WHERE u.email_verification_token = ${token}
+      AND u.email_verification_token_created_at > now() - interval '24 hours'
+      AND u.email_verified_at IS NULL
+      AND EXISTS (SELECT 1 FROM claimnet.user_identities i WHERE i.user_id = u.id AND i.provider = 'google')
+    FOR UPDATE OF u
+  `);
+  const userId = (rows as unknown as Array<{ id: string }>)[0]?.id;
+  if (!userId) return false;
+
+  const db = tx as unknown as PostgresJsDatabase;
+  if (session?.sub === userId && session.idp === "google-consumer") {
+    const { refusal } = await sessionState(db, userId, session.iat, session.idp);
+    if (!refusal) return false;
+  }
+  await tx.execute(sql`DELETE FROM claimnet.user_identities WHERE user_id = ${userId}::uuid AND provider = 'google'`);
+  await invalidateSessions(db, userId);
+  return true;
 }
 
 async function insertIdentity(tx: SqlExecutor, userId: string, claims: GoogleIdClaims, email: string, linkedVia: "signup" | "email_match"): Promise<void> {

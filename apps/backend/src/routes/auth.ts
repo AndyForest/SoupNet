@@ -3,7 +3,7 @@ import { z } from "zod";
 import crypto from "crypto";
 import { sql } from "drizzle-orm";
 import { getDb } from "../db";
-import { registerUser, loginUser, requireAuth, requireActiveSession, activeSessionRefusal, requireVerifiedEmail, hashPassword, verifyPassword } from "../auth";
+import { registerUser, loginUser, requireAuth, requireActiveSession, activeSessionRefusal, requireVerifiedEmail, hashPassword, verifyPassword, verifyToken } from "../auth";
 import { writeAudit } from "../services/audit-log.service";
 import { isSignupCapReached, logSignupCapState, mayRegister } from "../services/system-settings.service";
 import { purgeStaleWaitlistedUsers } from "../services/waitlist.service";
@@ -14,6 +14,7 @@ import { normalizeEmail } from "../lib/normalize-email";
 import { onBehalfSubjectOf, feedbackOwnedBy, intentOwnedBy, managedOrganizationOf, ssoRequired, ssoRequiredFor } from "../authz";
 import { ACCOUNT_DISABLED_MESSAGE, ACCOUNT_SUSPENDED_MESSAGE, MANAGED_ACCOUNT_DELETE_MESSAGE, SSO_REQUIRED_MESSAGE, googleSignInErrorMessage } from "@soupnet/domain";
 import { googleOidcConfig } from "../services/google-oidc.service";
+import { settleGoogleIdentityOnVerify } from "../services/google-sign-in.service";
 import { verifyTurnstile } from "../lib/turnstile";
 import type { AppEnv } from "../types";
 
@@ -809,6 +810,10 @@ auth.delete("/me", authRateLimit, requireAuth, requireActiveSession, async (c) =
 // preserve the original verified_at, and we deliberately do NOT clear the
 // token in this UPDATE — it expires naturally after 24h. A "used" token
 // can't do anything except re-confirm existing verified state.
+//
+// The route needs no session, but one may be presented: it is how the Google
+// sign-up that started this verification shows it's the same person
+// (settleGoogleIdentityOnVerify, F137).
 auth.post("/verify", verifyRateLimit, async (c) => {
   const body = await c.req.json();
   const token = (body as { token?: string }).token;
@@ -816,16 +821,21 @@ auth.post("/verify", verifyRateLimit, async (c) => {
     return c.json({ ok: false, error: "Token required" }, 400);
   }
 
-  const db = getDb();
-  const result = await db.execute(sql`
-    UPDATE claimnet.users
-    SET email_verified_at = COALESCE(email_verified_at, now())
-    WHERE email_verification_token = ${token}
-      AND email_verification_token_created_at > now() - interval '24 hours'
-    RETURNING id, email, (waitlisted_at IS NOT NULL) AS "waitlisted"
-  `);
+  const bearer = c.req.header("Authorization");
+  const session = bearer?.startsWith("Bearer ") ? verifyToken(bearer.slice(7)) : null;
 
-  const updated = (result as unknown as Array<{ id: string; email: string; waitlisted: boolean }>)[0];
+  const db = getDb();
+  const { updated, googleSignInRemoved } = await db.transaction(async (tx) => {
+    const googleSignInRemoved = await settleGoogleIdentityOnVerify(tx, token, session);
+    const result = await tx.execute(sql`
+      UPDATE claimnet.users
+      SET email_verified_at = COALESCE(email_verified_at, now())
+      WHERE email_verification_token = ${token}
+        AND email_verification_token_created_at > now() - interval '24 hours'
+      RETURNING id, email, (waitlisted_at IS NOT NULL) AS "waitlisted"
+    `);
+    return { updated: (result as unknown as Array<{ id: string; email: string; waitlisted: boolean }>)[0], googleSignInRemoved };
+  });
   if (!updated) {
     return c.json({ ok: false, error: "Invalid or expired verification token" }, 400);
   }
@@ -861,6 +871,7 @@ auth.post("/verify", verifyRateLimit, async (c) => {
       // Waitlisted accounts get "your place is held" copy instead of
       // "sign in and start" — signing in won't work until promotion.
       waitlisted: updated.waitlisted,
+      ...(googleSignInRemoved ? { googleSignInRemoved: true } : {}),
     },
   });
 });

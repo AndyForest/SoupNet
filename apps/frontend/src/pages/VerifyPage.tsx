@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { API_BASE, setEmailVerified, isLoggedIn } from "../auth.js";
+import { API_BASE, getToken, setEmailVerified, isLoggedIn } from "../auth.js";
 
 export function VerifyPage() {
   const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
   const [email, setEmail] = useState("");
   const [waitlisted, setWaitlisted] = useState(false);
+  const [googleSignInRemoved, setGoogleSignInRemoved] = useState(false);
   // Guard against React StrictMode double-invocation in dev. The /auth/verify
   // endpoint is idempotent on the backend, but firing twice would still
   // briefly flash an error before the second response lands. Belt and braces.
@@ -23,17 +24,21 @@ export function VerifyPage() {
       return;
     }
 
+    // This browser's session, if any, shows a Google sign-up that this click
+    // comes from the same person. The backend ignores it otherwise.
+    const session = getToken();
     fetch(`${API_BASE}/auth/verify`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(session ? { Authorization: `Bearer ${session}` } : {}) },
       body: JSON.stringify({ token }),
     })
-      .then((res) => res.json() as Promise<{ ok: boolean; data?: { email: string; waitlisted?: boolean } }>)
+      .then((res) => res.json() as Promise<{ ok: boolean; data?: { email: string; waitlisted?: boolean; googleSignInRemoved?: boolean } }>)
       .then((data) => {
         if (data.ok && data.data) {
           setStatus("success");
           setEmail(data.data.email);
           setWaitlisted(data.data.waitlisted === true);
+          setGoogleSignInRemoved(data.data.googleSignInRemoved === true);
           // If the user is logged in in this tab, update the cached flag so
           // subsequent navigation no longer redirects to /verify-pending.
           if (isLoggedIn()) setEmailVerified(true);
@@ -74,6 +79,11 @@ export function VerifyPage() {
                 ? `${email} is verified and your spot on the waitlist is held. We'll email you the moment a spot opens — nothing else to do for now.`
                 : `${email} is now verified. You can sign in and start using Soup.net.`}
             </p>
+            {googleSignInRemoved && (
+              <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)" }}>
+                This address's sign-up came through a Google account that wasn't signed in on this browser, so that Google account has been removed. To sign in, set a password with the forgotten-password link on the next page, or use a Gmail or Google Workspace account on this address.
+              </p>
+            )}
             {!waitlisted && (
               <Link to="/auth/login" style={{ textDecoration: "none" }}>
                 <button style={{ width: "100%", justifyContent: "center" }}>
