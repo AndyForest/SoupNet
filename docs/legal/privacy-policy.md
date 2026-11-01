@@ -126,12 +126,12 @@ Wherever you are, you can:
 - **Review drafts** your agents left in the review queue (`/app/drafts`): confirm, reject, or mark not chosen.
 - **End a connection** from an AI app at any time, on the API Keys page (`/app/keys`) or in the app's own settings. Revoking it stops the app's access at once.
 - **Choose what an app can reach** when you connect it: which recipe books, and whether each is read-only or writable.
+- **Withdraw consent** to data processing — by requesting account deletion as above.
 
 Some accounts can't do all of this from Settings:
 
 - **A suspended or disabled account** can't sign in, so it can't use these pages. Email admin@soup.net from your registered address to ask for your export or your deletion.
 - **An account that belongs to a company organization** can export its data from Settings but can't be deleted there, because the account and its recipes belong to the company. Ask your organization's admin, or email admin@soup.net from your registered address.
-- **Withdraw consent** to data processing — by requesting account deletion as above.
 
 We aim to respond to all requests within the time required by applicable law and as soon as we reasonably can.
 
