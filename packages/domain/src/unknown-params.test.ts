@@ -73,6 +73,20 @@ describe("unknownParamsMessage", () => {
     );
   });
 
+  it("a name that belongs on another tool says where to send it, in both modes", () => {
+    expect(unknownParamsMessage("search_recipes", ["feedback"], ["query"], "refuse")).toBe(
+      "Error: search_recipes does not take feedback (send those rows with log_feedback; a row about a search takes search_id). Nothing was run; send it again with the names it takes: query.",
+    );
+    expect(unknownParamsMessage("search_recipes", ["feedback"], ["query"], "warn")).toContain("search_recipes ignored feedback (send those rows with log_feedback");
+  });
+
+  it("a steer belongs to its tool, and a name off Object.prototype finds none", () => {
+    expect(unknownParamsMessage("get_recipes", ["feedback"], ["recipe_ids"], "refuse")).not.toContain("log_feedback");
+    expect(unknownParamsMessage("search_recipes", ["constructor"], ["query"], "refuse")).toBe(
+      "Error: search_recipes does not take constructor. Nothing was run; send it again with the names it takes: query.",
+    );
+  });
+
   it("a tool with no parameters says so", () => {
     expect(unknownParamsMessage("list_my_recipe_books", ["book"], [], "refuse")).toBe(
       "Error: list_my_recipe_books does not take book. Nothing was run; send it again with no parameters (it takes none).",

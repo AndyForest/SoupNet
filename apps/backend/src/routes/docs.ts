@@ -352,9 +352,9 @@ http_headers = { Authorization = "Bearer ${escKey}" }</pre>
 
   <h2>Uploading private files</h2>
   <p>The <code>check_recipe</code> tool accepts a <code>file_url</code> parameter for multimodal evidence
-  (images, PDFs, audio, video). For files already public on the web, just pass the URL. For private local
-  files &mdash; screenshots, generated artifacts, anything that lives only on your disk &mdash; upload them
-  first via the <code>POST /uploads</code> REST endpoint, then pass the returned URL.</p>
+  (images, PDFs, audio, video). It takes only a URL from <code>POST /uploads</code>: the server doesn't fetch
+  any other URL. Upload your file &mdash; a screenshot, a generated artifact, anything on your disk &mdash;
+  through that REST endpoint, then pass the returned URL.</p>
 
   <p>Why this two-step? MCP tool calls pass JSON arguments; binary content has to be base64-encoded inline,
   which blows the agent's context window on any meaningful image. The upload endpoint sidesteps this with a

@@ -4,6 +4,29 @@ Every PR that touches briefing copy (`packages/domain/src/recipe-guide-content.t
 
 (Renamed from declared-intent-log.md on 2026-08-23: "intent" now names the runtime intent-registration mechanism — cold-start v2 Phase C — so the discipline's log takes an unambiguous name. The discipline itself is unchanged.)
 
+## 2026-10-31 — OpenAI plugin round: reads no longer revive drafts (recipe ac453630)
+
+The operator ruled that only a further recipe revives a draft, so a search or briefing carrying an intent id no longer marks the intent used. The briefing's bus sentence said a draft "stays live while your intent is in use", which an agent polling by search would read as keeping its draft alive.
+
+### Edits and the scenarios they move
+
+1. **The briefing's "## Drafts" section:** "A draft is a question on a bus: it stays live while your intent is in use, and expires once your task goes quiet." becomes "A draft is a question on a bus: it lives while you check under your intent; reads alone let it expire in a day." It is three characters shorter, so the thin and headless ceilings hold, and it avoids the words the section's voice test refuses. Dropped: "goes quiet" as the wording here; the expired-draft label still says "its task has been quiet". "poll `is:draft intent:<id>`" stays, because polling remains how an orchestrator reads its sub-agents' drafts.
+2. **The plugin's skill** describes a search's writes without "marked as used". It ships in the package.
+3. **An empty `is:draft` search** (not briefing copy, listed because it answers the poll this section teaches) reads "No open drafts match among the N recipes in scope. Expired drafts aren't listed here; is:expired finds them." in place of the thin-corpus line, in markdown and in the JSON notice.
+
+Scenario moved: "A draft lives while its task does…" in `checking-behavior.feature`, whose guard quotes this sentence. DT-BUS-03 in `docs/product-specs/drafts-and-triage.feature` now has a read leave the draft expired and a check revive it. All others hold: nothing else in the briefing mentions how long a draft lives.
+
+## 2026-10-31 — OpenAI plugin round: `search_recipes` no longer takes `feedback` (recipe 9dbcfb77)
+
+The directory's tool scan said: "This tool is marked readOnlyHint: true, but its behavior appears to have a user-visible side effect." The tool wrote a feedback row when that parameter was passed, and the annotation rule (recipe `3b166817`) excuses the call's audit row and its intent, not feedback rows. This supersedes the `search_recipes` half of slice 1's item 3 below.
+
+### Edits and the scenarios they move
+
+1. **Remote `search_recipes` loses the `feedback` parameter.** Dropped from its served schema: the pointer description "Feedback rows about PRIOR checks or searches, riding along with this call; each row takes log_feedback's fields. A rejected row never blocks this call." `check_recipe` keeps that description word for word. The stdio tool never declared the parameter. Nothing is lost: `log_feedback` takes `search_id`, and the teaching in the briefing, the tool descriptions and the plugin's skill already named `check_recipe` and `log_feedback`, so no briefing copy changes.
+2. **The refusal steers.** A call that still sends it answers: "Error: search_recipes does not take feedback (send those rows with log_feedback; a row about a search takes search_id). Nothing was run; send it again with the names it takes: …". Both servers, through the shared guard.
+
+Scenario moved: "The read-only search tool takes no feedback rows" (new) and "Ride-along feedback keeps every field while its schema shrinks to a pointer" (now `check_recipe` only), both in `docs/product-specs/drafts-and-triage.feature`. All others hold: an agent taught by the briefing never sent this parameter on search unless it read the schema, and the refusal gives it the retry.
+
 ## 2026-10-26 — OpenAI plugin round, stream L: no selection diagnostics in the exemplars, and no /uploads example over OAuth
 
 Plan: [../planning/openai-plugin-directory.md](../planning/openai-plugin-directory.md) item 6 (output minimisation). Build file: [../planning/openai-plugin-build/listing.md](../planning/openai-plugin-build/listing.md), row L13. Both findings came from stream T's audit of every tool's real output against OpenAI's rule ("Do not include diagnostic, telemetry, or internal identifiers … unless they are strictly required", developers.openai.com/plugins/plugin-guidelines.md), sent to stream L because the text is in L's part of `recipe-guide-content.ts`.
@@ -18,7 +41,7 @@ Plan: [../planning/openai-plugin-directory.md](../planning/openai-plugin-directo
 ### Scenarios watched, with rationale for holding
 
 - **Every scenario on an API-key briefing:** unchanged. Edit 2 changes only the OAuth composition, and edit 1 only the exemplars, which the capped fixtures don't carry.
-- **`checking-behavior.feature` file-evidence scenarios:** an OAuth agent still has `file_url` (a public URL) and `file_base64` (small files) from the tool's own parameter descriptions; only the upload route, which needs a key, is gone from its briefing.
+- **`checking-behavior.feature` file-evidence scenarios:** an OAuth agent still has `file_base64` (small files) from the tool's own parameter descriptions; the upload route, which needs a key, is gone from its briefing. Superseded on `file_url`, 2026-11-01: it no longer takes a public URL, only a URL from that route.
 
 ### Measured
 

@@ -161,17 +161,20 @@ describe("remote MCP tools/list as served (drafts-and-triage slice 1)", () => {
     }
   });
 
-  it("S1-Z4 / DT-TOOL-03: feedback on check_recipe and search_recipes points to log_feedback instead of inlining the row schema", async () => {
+  it("S1-Z4 / DT-TOOL-03: feedback on check_recipe points to log_feedback instead of inlining the row schema", async () => {
     const { tools } = await servedToolsList();
-    for (const name of ["check_recipe", "search_recipes"]) {
-      const feedback = tool(tools, name).inputSchema.properties?.["feedback"] ?? {};
-      const items = feedback["items"] as { properties?: unknown; additionalProperties?: unknown };
-      expect(items.properties, `${name} feedback items repeat no per-field schema`).toBeUndefined();
-      // Open item schema: every row field reaches the handler (the SDK would
-      // strip undeclared keys from a closed object).
-      expect(items.additionalProperties, `${name} feedback items stay open`).not.toBe(false);
-      expect(String(feedback["description"])).toContain("log_feedback");
-    }
+    const feedback = tool(tools, "check_recipe").inputSchema.properties?.["feedback"] ?? {};
+    const items = feedback["items"] as { properties?: unknown; additionalProperties?: unknown };
+    expect(items.properties, "feedback items repeat no per-field schema").toBeUndefined();
+    // Open item schema: every row field reaches the handler (the SDK would
+    // strip undeclared keys from a closed object).
+    expect(items.additionalProperties, "feedback items stay open").not.toBe(false);
+    expect(String(feedback["description"])).toContain("log_feedback");
+  });
+
+  it("recipe 9dbcfb77: search_recipes declares no feedback parameter", async () => {
+    const { tools } = await servedToolsList();
+    expect(tool(tools, "search_recipes").inputSchema.properties).not.toHaveProperty("feedback");
   });
 
   // briefing_id joined the row fields in slice 8a (a briefing as a feedback

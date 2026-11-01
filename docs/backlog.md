@@ -64,6 +64,10 @@ Operator, 2026-10-25: a basic replacement for a hosted vector database, wanted f
 
 ## Infrastructure
 
+### `[IMPL]` Deleting a recipe while the embedding worker is on it answers 500 (2026-10-31)
+
+`deleteEmbeddingChainForSource` (`services/trace-delete.service.ts:157`) deletes a source's strategies and then the source, as separate statements. If `embedding-worker/jobs/strategy-check.ts:107` inserts a strategy row between them, the source delete fails its foreign key: `update or delete on table "embedding_sources" violates foreign key constraint ... is still referenced from table "embedding_chunk_strategies"`. The transaction rolls back, so nothing is lost and a retry works, but `DELETE /traces/:id` answers 500, and it failed unrelated CI once (`audit-anonymise.test.ts:125`, run 41244673560, in the same second as that error). Likely fix, untested: lock the source rows with `SELECT ... FOR UPDATE` first, which makes the worker's insert wait and then fail on the missing source, and check the worker tolerates that.
+
 ### `[IMPL]` Static /info pages: follow-ups from the independent check of #173 (2026-10-31)
 
 None of these can break the live site, and the realistic failures are caught today.

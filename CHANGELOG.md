@@ -6,6 +6,11 @@ Two narrower logs exist beside this one: [`docs/architecture/ranking-changelog.m
 
 ## In review, not yet deployed
 
+- **`check_recipe` no longer fetches outside URLs.** `file_url` takes only a URL returned by `POST /uploads`, and any other URL is refused with a message naming the two ways to attach a file. Those are uploads and `file_base64`, and both still work. The stdio server's `file` parameter takes only a local path for the same reason. `check_recipe` is no longer marked open-world, so no tool reaches the public internet.
+- **The briefing asks for the actor in the role.** A preference about an agent names the agent in the role, because "I" tells retrieval nothing about who acts. Two worked examples lose their project names.
+- **Three optional plugin skills.** `options`, `seed-from-history` and `agent-team` join `recipe-check` in the plugin package, each worded as a suggestion an agent can weigh against its own setup.
+- **Reads no longer revive drafts.** A search or briefing carrying an intent id leaves the intent's last use alone, so an expired draft under it stays expired until an agent checks a recipe under that intent again. An intent's "last used" time now reflects its registration or its last check.
+- **`search_recipes` no longer takes `feedback`.** The MCP tool can no longer write a feedback row. A call that still sends it is refused and told to use `log_feedback`, which takes `search_id`. `check_recipe` keeps its `feedback` parameter, and the `feedback_*` URL parameters on the web `/check` page are unchanged, on a search too.
 - **Intent link** (#6a, stream B): a recipe records the task it was deposited under (`traces.intent_id`), and search gains an `intent:` qualifier, so a task's whole lineage is one query.
 - **Report read paths** (#140): `GET /intents`, `GET /intents/:id` (what a task's checks were shown, deposited and concluded) and `GET /feedback/rows`, under the API key, scoped to the caller's own fleet. Built for the behaviour-change figure the README's field-data section still quotes from July.
 - **Briefing rewrite** (#138 and a second commit): a Drafts section, "a returned recipe is a call someone made in their context, not a rule", evidence standards, and the explicit over-caution line (drafts are for calls the context does not settle, not for every call).

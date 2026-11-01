@@ -688,6 +688,76 @@ describe.skipIf(!BASE)("OAuth 2.1 end-to-end flow", () => {
     expect(grantBody.redirect_url).toBeFalsy();
   });
 
+  describe("loopback redirect URIs (RFC 8252 §7.3)", () => {
+    const LOOPBACK = "http://127.0.0.1/callback";
+    const ON_PORT = "http://127.0.0.1:57687/callback";
+    let native: DcrResponse;
+
+    beforeAll(async () => {
+      const res = await postJson("/oauth/register", { redirect_uris: [LOOPBACK], client_name: `oauth-native-${uid}` });
+      native = (await res.json()) as DcrResponse;
+    });
+
+    const redeem = (code: string, verifier: string, redirectUri: string) =>
+      postForm("/oauth/token", {
+        grant_type: "authorization_code",
+        code,
+        code_verifier: verifier,
+        client_id: native.client_id,
+        client_secret: native.client_secret,
+        redirect_uri: redirectUri,
+      });
+
+    it("grants on the port the client listens on, and redeems with that exact URI", async () => {
+      const pkce = generatePkcePair();
+      const grantBody = await grant({ codeChallenge: pkce.challenge, clientId: native.client_id, redirectUri: ON_PORT });
+      expect(grantBody.redirect_url).toContain("http://127.0.0.1:57687/callback?code=");
+      const res = await redeem(extractCode(grantBody.redirect_url!), pkce.verifier, ON_PORT);
+      expect(res.status).toBe(200);
+      expect(((await res.json()) as TokenResponse).access_token).toBeTruthy();
+    });
+
+    it.each([
+      ["a different port", "http://127.0.0.1:57688/callback"],
+      ["the registered URI without the port", LOOPBACK],
+    ])("refuses to redeem a code with %s", async (_name, redirectUri) => {
+      const pkce = generatePkcePair();
+      const grantBody = await grant({ codeChallenge: pkce.challenge, clientId: native.client_id, redirectUri: ON_PORT });
+      const res = await redeem(extractCode(grantBody.redirect_url!), pkce.verifier, redirectUri);
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as TokenResponse).error).toBe("invalid_grant");
+    });
+
+    it.each([
+      ["a different path", "http://127.0.0.1:57687/other"],
+      ["a different loopback host", "http://localhost:57687/callback"],
+      ["https", "https://127.0.0.1:57687/callback"],
+    ])("refuses a grant and a deny on %s", async (_name, redirectUri) => {
+      const pkce = generatePkcePair();
+      const grantBody = await grant({ codeChallenge: pkce.challenge, clientId: native.client_id, redirectUri });
+      expect(grantBody.error).toBe("invalid_request");
+      expect(grantBody.redirect_url).toBeFalsy();
+      const deny = await postJson("/oauth/authorize/deny", { client_id: native.client_id, redirect_uri: redirectUri }, userToken);
+      expect(deny.status).toBe(400);
+    });
+
+    it("sends a Cancel to the port the client listens on", async () => {
+      const deny = await postJson("/oauth/authorize/deny", { client_id: native.client_id, redirect_uri: ON_PORT, state: "s" }, userToken);
+      expect(deny.status).toBe(200);
+      expect(((await deny.json()) as GrantResponse).redirect_url).toContain("http://127.0.0.1:57687/callback?error=access_denied");
+    });
+
+    it("gives an https or non-loopback registration no port freedom", async () => {
+      const pkce = generatePkcePair();
+      const https = await grant({ codeChallenge: pkce.challenge, redirectUri: "https://claude.ai:8443/api/mcp/auth_callback" });
+      expect(https.error).toBe("invalid_request");
+      const http = await grant({ codeChallenge: pkce.challenge, redirectUri: "http://claude.ai:8443/api/mcp/auth_callback" });
+      expect(http.error).toBe("invalid_request");
+      const loopback = await grant({ codeChallenge: pkce.challenge, redirectUri: ON_PORT });
+      expect(loopback.error).toBe("invalid_request");
+    });
+  });
+
   it("rejects unsupported response_type", async () => {
     const pkce = generatePkcePair();
     const res = await postJson(

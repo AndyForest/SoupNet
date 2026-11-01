@@ -55,7 +55,8 @@ export const intents = claimnetSchema.table(
     story: text("story").notNull(),
 
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-    /** Touched on every join — the recency signal for future TTL sweeps. */
+    /** Set at registration and by each check carrying the intent; reads leave
+     *  it alone (recipe ac453630). A draft's liveness is computed from it. */
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [

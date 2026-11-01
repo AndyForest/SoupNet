@@ -187,7 +187,7 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
       feedback: z.array(z.record(z.unknown()).catch((ctx) => ctx.input as Record<string, unknown>)).optional().describe(MCP_PARAM_DESCRIPTIONS.feedbackParam),
       file: z.string().optional().describe(
         "Optional file to attach as reference evidence (multimodal embedding). " +
-        "Local file path (e.g., 'docs/screenshot.png') or URL. " +
+        "Local file path (e.g., 'docs/screenshot.png'). URLs are refused. " +
         "Supports: images (PNG/JPEG/WebP), video (MP4/MOV ≤120s), audio (MP3/WAV/FLAC/OGG), PDF (≤6 pages)."
       ),
     },
@@ -218,21 +218,14 @@ export function createStdioServer({ backendUrl, apiKey }: StdioServerOptions): M
           const { resolve } = await import("node:path");
           const { basename } = await import("node:path");
 
-          let fileBuffer: Buffer;
-          let fileName: string;
-
-          if (file.startsWith("http://") || file.startsWith("https://")) {
-            // URL — fetch the file
-            const fileRes = await fetch(file);
-            if (!fileRes.ok) throw new Error(`Failed to fetch file: ${fileRes.status}`);
-            fileBuffer = Buffer.from(await fileRes.arrayBuffer());
-            fileName = file.split("/").pop() ?? "attachment";
-          } else {
-            // Local file path — resolve relative to cwd
-            const filePath = resolve(process.cwd(), file);
-            fileBuffer = await readFile(filePath);
-            fileName = basename(filePath);
+          if (/^[a-z][a-z0-9+.-]*:\/\//i.test(file)) {
+            return { content: [{ type: "text" as const, text: "Error: file takes a local path, not a URL. This server doesn't fetch URLs." }] };
           }
+
+          // Local file path — resolve relative to cwd
+          const filePath = resolve(process.cwd(), file);
+          const fileBuffer = await readFile(filePath);
+          const fileName = basename(filePath);
 
           // Detect MIME type from extension (shared definition in @soupnet/domain)
           const ext = fileName.split(".").pop()?.toLowerCase() ?? "";

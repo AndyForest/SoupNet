@@ -69,7 +69,6 @@ import { sql } from "drizzle-orm";
 import type { AppEnv } from "../types";
 import { writeAudit } from "../services/audit-log.service";
 import { ClientSafeError, publicErrorMessage } from "../lib/client-safe-error";
-import { guardedFetchFile } from "../lib/guarded-fetch";
 import { invalidKeyMessage } from "../lib/key-remediation";
 import { applyToolSecuritySchemes, toolCallAuthErrorBody, toolCallId } from "../lib/mcp-auth-meta";
 import type { FeedbackRowResult, RawFeedbackRow } from "../services/feedback.service";
@@ -245,57 +244,10 @@ mcpRouter.use("/*", async (c, next) => {
 // ── File input helpers (check_recipe multimodal support) ───────────────────
 //
 // The HTTP MCP server accepts reference-evidence files via two mutually
-// exclusive inputs: `file_base64` (bytes inline) or `file_url` (public URL the
-// server fetches on the agent's behalf). Both produce an ImageAttachment the
-// existing submitAndSearch pipeline already understands.
-//
-// SSRF risk model (F37): file_url asks the server to fetch a URL an agent
-// names. lib/guarded-fetch.ts's guardedFetchFile connects only to public
-// addresses, judged in the socket's own lookup and on IP literals in any
-// spelling; it follows at most URL_FETCH_MAX_REDIRECTS redirects, checking
-// each hop again and refusing an https-to-http downgrade; and it stops reading
-// at MAX_UPLOAD_BYTES under one deadline. The MIME allowlist applies after.
-// Recipe 78731e77.
-
-const URL_FETCH_TIMEOUT_MS = 10_000;
-const URL_FETCH_MAX_REDIRECTS = 3;
-
-async function imageFromUrl(url: string): Promise<ImageAttachment> {
-  const fetched = await guardedFetchFile(url, {
-    maxBytes: MAX_UPLOAD_BYTES,
-    timeoutMs: URL_FETCH_TIMEOUT_MS,
-    maxRedirects: URL_FETCH_MAX_REDIRECTS,
-  });
-  if (!fetched.ok) {
-    // A name that resolves to a private address and one that does not
-    // connect at all read the same, so file_url cannot map which internal
-    // names exist (the uniform-error precedent of recipe 72737049).
-    const reason =
-      fetched.reason === "too large"
-        ? `larger than ${MAX_UPLOAD_BYTES} bytes`
-        : fetched.reason === "non-public address" || fetched.reason === "request failed"
-          ? "not reachable at a public address"
-          : fetched.reason;
-    throw new ClientSafeError(`Could not fetch ${url}: ${reason}`);
-  }
-  const original = new URL(url);
-  const rawContentType = fetched.contentType.split(";")[0]?.trim() ?? "";
-
-  // Determine MIME: Content-Type header if allowed, else the extension of the
-  // URL the agent sent, then of the URL the redirects ended at.
-  let mimeType = rawContentType;
-  for (const pathname of [original.pathname, fetched.finalUrl.pathname]) {
-    if (ALLOWED_MIME_TYPES.has(mimeType)) break;
-    const extMime = EXT_TO_MIME[pathname.split(".").pop()?.toLowerCase() ?? ""];
-    if (extMime) mimeType = extMime;
-  }
-  if (!ALLOWED_MIME_TYPES.has(mimeType)) {
-    throw new ClientSafeError(`Unsupported or undetectable MIME type (got '${rawContentType || "none"}'). Allowed: ${[...ALLOWED_MIME_TYPES].join(", ")}`);
-  }
-
-  const filename = original.pathname.split("/").pop() || "attachment";
-  return { buffer: fetched.body, mimeType, filename };
-}
+// exclusive inputs: `file_base64` (bytes inline) or `file_url`, which takes only
+// a URL returned by POST /uploads. Both produce an ImageAttachment the existing
+// submitAndSearch pipeline already understands. The server never fetches a URL
+// an agent names.
 
 function imageFromBase64(base64: string, filename: string, mimeTypeHint?: string): ImageAttachment {
   // Accept either raw base64 or a data-URL form (data:image/png;base64,...).
@@ -332,8 +284,8 @@ function imageFromBase64(base64: string, filename: string, mimeTypeHint?: string
 
 // Ride-along feedback rows: an open object per row. The row's fields are
 // log_feedback's, and the feedback param's description points there rather
-// than repeating the per-field schema on two tools (drafts-and-triage slice
-// 1, S1-Z4: ~570 bytes of item schema per tool). The item schema must still
+// than repeating the per-field schema on check_recipe (drafts-and-triage slice
+// 1, S1-Z4: ~570 bytes of item schema). The item schema must still
 // admit every field — a bare z.object({}) would let the SDK strip them all
 // before the handler — so it is a record of unknown values. Validation was
 // already per-row in the feedback service (strict enums, uuids, types), so
@@ -464,9 +416,9 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
         "Comma-separated recipe-book slugs to restrict result scope. Default: all readable books."
       ),
       file_url: z.string().optional().describe(
-        "Public URL the server fetches as reference evidence (image, PDF, audio, video); http(s) only, " +
-        "private hostnames rejected. For local files, POST to /uploads with your Bearer token first and " +
-        "pass the returned URL. Mutually exclusive with file_base64."
+        "URL returned by POST /uploads, for attaching a reference file (image, PDF, audio, video) too big " +
+        "for file_base64. Other URLs are refused: the server doesn't fetch them. " +
+        "Mutually exclusive with file_base64."
       ),
       file_base64: z.string().optional().describe(
         "Base64 file bytes (raw or data-URL form). Requires file_name or file_mime_type. Mutually exclusive with file_url."
@@ -506,16 +458,15 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
       // row, no bumped timestamp. This documents double-fire/preview/retry safety.
       // The one thing that still appends per call is the recipe.checked audit row
       // (rate-budget accounting), which is bookkeeping about the call, not domain
-      // state. Open-world: results pull from a corpus other agents write to between
-      // calls, and idempotentHint concerns only identical-argument re-fires, so it
+      // state. idempotentHint concerns only identical-argument re-fires, so it
       // never suppresses distinct checks (stigmergy is unaffected).
-      // Open-world (annotation rule, docs/connectors/openai-plugin.md): a
-      // file_url is fetched from the public internet. Every other tool is
-      // bounded to the books the account can read or write.
+      // Closed world (annotation rule, docs/connectors/openai-plugin.md): bounded
+      // to the books the account can read or write, and a file_url resolves only
+      // to the caller's own upload.
       readOnlyHint: false,
       destructiveHint: false,
       idempotentHint: true,
-      openWorldHint: true,
+      openWorldHint: false,
     },
     async ({ recipe, supporting_evidence, verbosity, clusters, max_chars, decided_at, axes, recipe_book, read_recipe_books, file_url, file_base64, file_name, file_mime_type, region, response_format, known_recipes, session_id, intent, agent_id, synthesize, impact, uncertainty, draft, on_behalf_of, feedback }) => {
       // Size steer: explicit verbosity wins; with NO steer at all, the
@@ -558,7 +509,7 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
               throw err;
             }
           } else {
-            image = await imageFromUrl(file_url);
+            return { content: [{ type: "text" as const, text: "File input error: file_url takes only a URL returned by POST /uploads. To attach another file, send its bytes as file_base64." }] };
           }
         } else if (file_base64) {
           if (!file_name && !file_mime_type) {
@@ -732,22 +683,25 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
       session_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.sessionId),
       intent: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.intent),
       agent_id: z.string().optional().describe(MCP_PARAM_DESCRIPTIONS.agentId),
-      feedback: z.array(feedbackRowSchema).optional().describe(MCP_PARAM_DESCRIPTIONS.feedbackParam),
       read_recipe_books: z.string().optional().describe(
         "Comma-separated recipe-book slugs to restrict result scope. Default: all readable books."
       ),
     },
     {
       title: "Recipe search",
-      // Genuinely read-only: no trace row, no corpus write. The check.searched
-      // audit row is call bookkeeping, same as every read surface's accounting.
+      // Marked read-only under the annotation rule (recipe 3b166817): it writes
+      // no trace and takes no feedback rows, which go through log_feedback
+      // (recipe 9dbcfb77). Its writes are the check.searched audit row, the
+      // shown-recipe ledgers (session_shown, intent_shown) and a new intent
+      // when intent text is given. An intent id doesn't mark that intent used,
+      // so a search can't revive a draft (recipe ac453630).
       // Closed-world: it reads only the account's own books.
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
       openWorldHint: false,
     },
-    async ({ query, page, verbosity, response_format, known_recipes, session_id, intent, agent_id, feedback, read_recipe_books }) => {
+    async ({ query, page, verbosity, response_format, known_recipes, session_id, intent, agent_id, read_recipe_books }) => {
       const knownRecipeIds = new Set(
         (known_recipes ?? "").split(",").map((s) => s.trim()).filter(Boolean),
       );
@@ -791,7 +745,7 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
           jsonResponse["data"] = {
             searchOnly: true,
             filter: query,
-            notice: buildSearchOnlyNotice(result),
+            notice: buildSearchOnlyNotice({ ...result, filter: query }),
             ...(result.searchId ? { searchId: result.searchId } : {}),
             ...(result.searchedCorpusSize !== undefined ? { searchedCorpusSize: result.searchedCorpusSize } : {}),
             ...(result.searchedOwnExcluded !== undefined ? { searchedOwnExcluded: result.searchedOwnExcluded } : {}),
@@ -803,32 +757,8 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
         }
         console.warn(`[mcp] search_recipes: success — ${result.results.length} results (${response_format ?? "markdown"})`);
 
-        // Ride-along feedback about PRIOR checks/searches — same assembly as
-        // check_recipe's feedback param.
-        let feedbackSummary = "";
-        let feedbackResults: unknown;
-        if (feedback && feedback.length > 0) {
-          const rows: unknown[] = feedback.map((row) => !isFeedbackRowObject(row) ? row :
-            withCheckDefaults(row, {
-              agentId: agent_id,
-              sessionId: session_id,
-              intentId: result.intent?.intentId ?? undefined,
-            }),
-          );
-          const results = await ingestFeedback({
-            db,
-            apiKeyId: principal.keyId,
-            userId: principal.userId,
-            readGroupIds: principal.readGroupIds,
-            rows,
-          });
-          feedbackSummary = summarizeFeedbackResults(results);
-          feedbackResults = results;
-        }
-
         if (response_format === "structured") {
           const data = jsonResponse["data"] as Record<string, unknown>;
-          if (feedbackResults !== undefined) data["feedbackResults"] = withoutFeedbackIds(feedbackResults);
           const stub = `Read-only search — ${String(data["totalResults"])} result(s)${result.searchId ? `, searchId ${result.searchId}` : ""}. See structuredContent.`;
           return {
             content: [{ type: "text" as const, text: stub }],
@@ -836,10 +766,9 @@ export function createMcpServer(backendUrl: string, principal: Principal): McpSe
           };
         }
 
-        let text = renderCheckResponseMarkdown(jsonResponse as unknown as CheckResponseJson, {
+        const text = renderCheckResponseMarkdown(jsonResponse as unknown as CheckResponseJson, {
           knownRecipeIds: [...knownRecipeIds],
         });
-        if (feedbackSummary) text += `\n\n${feedbackSummary}`;
         return { content: [{ type: "text" as const, text }] };
       } catch (err) {
         return { content: [{ type: "text" as const, text: toolErrorText(err, "search_recipes") }] };
