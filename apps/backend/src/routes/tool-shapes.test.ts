@@ -333,6 +333,28 @@ describe.skipIf(!BASE)("slice 8a tool shapes", () => {
     expect(await counts()).toEqual(before);
   });
 
+  it("recipe 9dbcfb77: search_recipes refuses feedback by name, steers to log_feedback and writes no row", async () => {
+    const userId = (await authenticateKey(getDb(), a.apiKey))!.userId;
+    const note = `search refuses feedback ${RUN}`;
+    const row = { kind: "check-feedback", trace_id: traceA, impact: "none", disposition: "proceeded", story_fulfilled: "yes", story: "As a tester, I wanted a read-only search.", note };
+    const counts = async () => ((await getDb().execute(sql`
+      SELECT
+        (SELECT count(*)::int FROM claimnet.check_feedback WHERE note = ${note}) AS rows,
+        (SELECT count(*)::int FROM claimnet.audit_log WHERE action = 'check.searched' AND actor_user_id = ${userId}::uuid) AS searches
+    `)) as unknown as Array<{ rows: number; searches: number }>)[0]!;
+    const before = await counts();
+    const r = await mcp(a.apiKey, "search_recipes", { query: "unknown names", feedback: [row] });
+    expect(r.isError).toBe(true);
+    expect(r.text).toMatch(/^Error: search_recipes does not take feedback \(send those rows with log_feedback; a row about a search takes search_id\)\. Nothing was run;/);
+    expect(await counts()).toEqual(before);
+    // The same row where the refusal sends it lands, so the count above can see one.
+    const logged = await mcp(a.apiKey, "log_feedback", row);
+    expect(logged.text).toContain("Feedback recorded");
+    // And a plain search leaves its audit row, so the search count can see one.
+    await mcp(a.apiKey, "search_recipes", { query: "unknown names" });
+    expect(await counts()).toEqual({ rows: before.rows + 1, searches: before.searches + 1 });
+  });
+
   it("S8a-U2: the near miss is offered when the intended name was not also sent", async () => {
     const r = await mcp(a.apiKey, "get_recipes", { recipe_id: traceA });
     expect(r.isError).toBe(true);

@@ -11,10 +11,14 @@
     "./openapi": {
       "import": "./dist/openapi-registry.js",
       "types": "./dist/openapi-registry.d.ts"
+    },
+    "./oauth-redirect": {
+      "import": "./dist/oauth-redirect.js",
+      "types": "./dist/oauth-redirect.d.ts"
     }
   },
   "scripts": {
-    "build": "tsc --build tsconfig.json && tsup src/index.ts src/openapi-registry.ts --format esm --no-splitting",
+    "build": "tsc --build tsconfig.json && tsup src/index.ts src/openapi-registry.ts src/oauth-redirect.ts --format esm --no-splitting",
     "typecheck": "tsc --noEmit",
     "lint": "eslint -c ../../eslint.config.js src/",
     "generate": "tsx scripts/generate-openapi.ts"

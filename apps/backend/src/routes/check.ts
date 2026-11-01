@@ -461,7 +461,7 @@ function buildSearchOnlyJsonResponse(
   response["data"] = {
     searchOnly: true,
     filter,
-    notice: buildSearchOnlyNotice(result),
+    notice: buildSearchOnlyNotice({ ...result, filter }),
     ...(result.searchId ? { searchId: result.searchId } : {}),
     ...(result.searchedCorpusSize !== undefined ? { searchedCorpusSize: result.searchedCorpusSize } : {}),
     ...(result.searchedOwnExcluded !== undefined ? { searchedOwnExcluded: result.searchedOwnExcluded } : {}),
@@ -1430,7 +1430,7 @@ async function handleCheck(
         ok: false,
         error:
           `Missing required parameter${missing.length > 1 ? "s" : ""}: ${missing.join(", ")}. ` +
-          "To check a recipe, provide both. Just looking for something? Use filter=<keywords> (alias f) for a read-only search that logs nothing.",
+          "To check a recipe, provide both. Just looking for something? Use filter=<keywords> (alias f) for a search that logs no recipe.",
       }, feedbackResults), 400);
     }
     if (result.error) {

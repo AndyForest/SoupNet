@@ -190,7 +190,7 @@ Per-client config blocks (Codex, VS Code, Google Antigravity, Claude Desktop via
 | Tool | What it does |
 |---|---|
 | `check_recipe` | The recipe check: search with a hypothesis about your taste, get back prior decisions with evidence, and leave the hypothesis as a trace. Optional `draft: true` parks a call the agent could not settle; `impact` and `uncertainty` ratings triage it. |
-| `search_recipes` | Read-only search with the same ranking and a Gmail-shaped query grammar (`author:`, `after:`, `is:draft`, quoted phrases). Logs nothing. Includes your own recipes by default; `-author:me` excludes them. |
+| `search_recipes` | Read-only search with the same ranking and a Gmail-shaped query grammar (`author:`, `after:`, `is:draft`, quoted phrases). Logs no recipe. Includes your own recipes by default; `-author:me` excludes them. |
 | `get_recipes` | Fetch recipes by id, one or a JSON array. |
 | `get_briefing` | The session briefing: principles, format, your recipe books and their current state. |
 | `log_feedback` | Close the loop on an earlier check, search or briefing: what it surfaced and what the agent did with it. |

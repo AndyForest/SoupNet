@@ -5,6 +5,7 @@ import {
   buildOwnExcludedNote,
   flatListPageLine,
   FLAT_LIST_CLAIM_CHARS,
+  searchZeroResultLine,
 } from "./check-response-renderer";
 import type { CheckResponseJson } from "./check-response-renderer";
 
@@ -378,6 +379,25 @@ describe("buildOwnExcludedNote (cold-start v2 Phase A)", () => {
     const note = buildOwnExcludedNote(10, 10);
     expect(note).toContain("all 10 are your own recipes");
     expect(note).toContain("author:anyone");
+  });
+
+  it("an empty is:draft search points at is:expired and is not a thin-corpus signal", () => {
+    for (const filter of ["is:draft", "is:draft intent:int_abcdefghijklmnopqrstuvwx", "wording is:draft"]) {
+      const line = searchZeroResultLine({ filter, searchedCorpusSize: 7 });
+      expect(line).toBe("No open drafts match among the 7 recipes in scope. Expired drafts aren't listed here; is:expired finds them.");
+    }
+    // Not a poll for open drafts: the ordinary line.
+    for (const filter of ["-is:draft wording", "is:expired", "wording"]) {
+      expect(searchZeroResultLine({ filter, searchedCorpusSize: 7 }), filter).toContain("thin-corpus signal");
+    }
+    expect(searchZeroResultLine({ searchedCorpusSize: 7 })).toContain("thin-corpus signal");
+    // An unrecognized intent: id still says so first.
+    expect(searchZeroResultLine({ filter: "is:draft intent:int_abcdefghijklmnopqrstuvwx", intentNotRecognized: true })).toContain("not recognized");
+    // Both markdown paths carry it.
+    for (const extra of [{}, { listOrder: "triage" as const }]) {
+      const text = renderCheckResponseMarkdown({ ok: true, data: { searchOnly: true, filter: "is:draft", results: [], totalResults: 0, ...extra } });
+      expect(text).toContain("is:expired finds them");
+    }
   });
 
   it("renders inside the zero-result search markdown", () => {
