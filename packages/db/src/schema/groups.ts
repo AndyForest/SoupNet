@@ -18,6 +18,8 @@ import {
   index,
   unique,
   boolean,
+  check,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { claimnetSchema } from "./traces";
@@ -36,12 +38,21 @@ export const groups = claimnetSchema.table(
     organizationId: uuid("organization_id").notNull().references(() => organizations.id),
     description: text("description"),
 
+    // Org-wide: every member of the (company) organization holds a membership
+    // row on this book, written with via = 'org' (program §3.5, recipe
+    // 2e1e4624). The organization's default book is org-wide and is the one
+    // every member has from their first minute; at most one per organization.
+    orgWide: boolean("org_wide").notNull().default(false),
+    orgDefault: boolean("org_default").notNull().default(false),
+
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
     unique("groups_org_slug_unique").on(t.organizationId, t.slug),
     index("groups_organization_id_idx").on(t.organizationId),
+    uniqueIndex("groups_one_org_default_idx").on(t.organizationId).where(sql`${t.orgDefault}`),
+    check("groups_org_default_is_org_wide", sql`NOT ${t.orgDefault} OR ${t.orgWide}`),
   ]
 );
 
@@ -72,12 +83,20 @@ export const groupMembers = claimnetSchema.table(
     dailyRead: boolean("daily_read").notNull().default(false),
     dailyWrite: boolean("daily_write").notNull().default(false),
 
+    // Provenance: 'direct' (an invitation, the creator, an explicit add) or
+    // 'org' (written because the book is org-wide and the user is a member of
+    // its organization). Making a book private again or changing someone's org
+    // role touches 'org' rows only, so a membership granted directly is never
+    // removed or re-roled by an org change.
+    via: text("via").notNull().default("direct"),
+
     joinedAt: timestamp("joined_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
     unique("group_members_group_user_unique").on(t.groupId, t.userId),
     index("group_members_group_id_idx").on(t.groupId),
     index("group_members_user_id_idx").on(t.userId),
+    check("group_members_via_check", sql`${t.via} IN ('direct', 'org')`),
   ]
 );
 

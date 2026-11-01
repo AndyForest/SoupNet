@@ -364,6 +364,21 @@ describe.skipIf(!BASE || !canConnect())("drafts as a bus (drafts-and-triage slic
     expect(after).toEqual(before);
   });
 
+  it("S10-L3: a check carrying the intent revives every draft under it; a feedback row alone does not", async () => {
+    const firstText = recipe("intent revives first");
+    const first = await draftUnderIntent(K1, firstText);
+    const secondText = recipe("intent revives second");
+    const second = (await mcp(K1, "check_recipe", { recipe: secondText, supporting_evidence: evidence("intent revives second"), draft: true, intent: first.intentId, response_format: "structured" })).structured;
+    const secondId = (second?.["checked"] as { recipeId?: string } | undefined)?.recipeId ?? "";
+    await idleIntent(first.intentId, 30);
+    expect((await queue(pat, `(${tag(firstText)} OR ${tag(secondText)})`)).ids).toEqual([]);
+    // Feedback rows join an intent and never register or touch it (join-only), so one alone revives nothing.
+    await mcp(K2, "log_feedback", { trace_id: first.id, intent_id: first.intentId, kind: "check-feedback", impact: "none", disposition: "deferred", story_fulfilled: "unknown", story: "liveness probe" });
+    expect((await queue(pat, `(${tag(firstText)} OR ${tag(secondText)})`)).ids).toEqual([]);
+    await mcp(K2, "check_recipe", { recipe: recipe("intent revives probe"), supporting_evidence: evidence("intent revives probe"), intent: first.intentId });
+    expect((await queue(pat, `(${tag(firstText)} OR ${tag(secondText)})`)).ids.sort()).toEqual([first.id, secondId].sort());
+  });
+
   it("recipe ac453630: a read carrying an unknown or another person's intent id says so the same way", async () => {
     const { intentId } = await draftUnderIntent(K1, recipe("not recognized"));
     const line = "Intent id not recognized (unknown or not yours";
@@ -406,7 +421,7 @@ describe.skipIf(!BASE || !canConnect())("drafts as a bus (drafts-and-triage slic
   it("S10-K3: an intent's lineage counts its drafts that are live, expired, and resolved", async () => {
     const live = await draftUnderIntent(K1, recipe("lineage live"));
     const intentId = live.intentId;
-    // Two more drafts under the same intent: one resolved, one aged past the week with the intent idle.
+    // A second draft under the same intent, resolved; then the intent goes idle, which expires the live one.
     const resolved = (await mcp(K1, "check_recipe", { recipe: recipe("lineage resolved"), supporting_evidence: evidence("lineage resolved"), draft: true, intent: intentId, response_format: "structured" })).structured;
     const resolvedId = (resolved?.["checked"] as { recipeId?: string } | undefined)?.recipeId ?? "";
     await mcp(K2, "verify_draft", { recipe_id: resolvedId, outcome: "rejected", supporting_evidence: settling("lineage") });

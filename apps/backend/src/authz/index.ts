@@ -24,6 +24,19 @@
  *                        on their behalf (slice 4)
  *   report-scope.ts    — whose feedback row it is, and whether a report's
  *                        viewer may read the recipe a row names (slice 9)
+ *   account-state.ts   — may this account act at all: the site operator's
+ *                        suspension and an org admin's disable, composed by
+ *                        every credential check (org round 1)
+ *   session-state.ts   — the per-request session (JWT) judgment and login's
+ *                        account check; the session cut-off
+ *   organizations.ts   — company organizations: membership, the join,
+ *                        org-wide books, the org admin's actions
+ *   domain-authority.ts — whether an organization has verified a domain
+ *                        (stream Domains fills it)
+ *   sso-policy.ts      — whether an account must sign in through its
+ *                        organization's SSO (stream SSO fills it)
+ *   sharing-policy.ts  — whether a membership grant crosses an
+ *                        organization's sharing policy (stream Console fills it)
  *
  * Import from here. See docs/engineering-principles.md §7.
  */
@@ -61,3 +74,8 @@ export type { DraftAudience, SharedAudience, TraceAlias } from "./draft-sql";
 export * from "./draft-resolution";
 export * from "./naming";
 export * from "./report-scope";
+export * from "./account-state";
+export * from "./session-state";
+export * from "./organizations";
+export * from "./sharing-policy";
+export * from "./domain-authority";

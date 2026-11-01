@@ -27,6 +27,8 @@ export const ACCOUNT_EVENT_ACTIONS = [
   "user.self_delete",
   "user.waitlist_approved",
   "user.premium_set",
+  "user.suspended",
+  "user.unsuspended",
   // Recipe books and the recipes in them
   "group.description_updated",
   "group.name_updated",
@@ -42,6 +44,16 @@ export const ACCOUNT_EVENT_ACTIONS = [
   "recipe.draft_rejected",
   "recipe.draft_not_chosen",
   "corpus.imported",
+  "group.made_org_wide",
+  "group.made_private",
+  "recipe_book.moved_into_organization",
+  // Company organizations
+  "organization.member_joined",
+  "organization.member_disable",
+  "organization.member_enable",
+  "organization.member_set_role",
+  "organization.owner_handed_over",
+  "organization.seat_limit_set",
   // Operators
   "integrity.repaired",
 ] as const;
