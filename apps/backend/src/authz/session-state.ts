@@ -85,6 +85,13 @@ export async function accountRefusal(db: PostgresJsDatabase, userId: string): Pr
  * pre-registrant already holds dies with it. Keys are untouched; an
  * unverified account has none.
  *
+ * The cut-off is the next whole second, since `iat` can't tell the two parts
+ * of this one apart: a session someone was minting as this ran would otherwise
+ * survive for its seven days (F145). The cost is that a sign-in in the rest of
+ * this second is refused and has to be retried; Google's handoff, the one
+ * sign-in that follows a cut-off straight away, dates its session at the
+ * cut-off instead (`exchangeHandoff`).
+ *
  * The cut-off is stamped from this process's clock, not the database's
  * NOW(): it is compared with a JWT's `iat`, which this process's clock
  * signed, and the database host's clock can run ahead of it (recipe
@@ -92,7 +99,7 @@ export async function accountRefusal(db: PostgresJsDatabase, userId: string): Pr
  * read as issued before it and be refused.
  */
 export async function invalidateSessions(db: PostgresJsDatabase, userId: string): Promise<void> {
-  const cutOffSeconds = Math.floor(Date.now() / 1000);
+  const cutOffSeconds = Math.floor(Date.now() / 1000) + 1;
   await db.execute(sql`
     UPDATE claimnet.users SET sessions_valid_after = to_timestamp(${cutOffSeconds}) WHERE id = ${userId}::uuid
   `);

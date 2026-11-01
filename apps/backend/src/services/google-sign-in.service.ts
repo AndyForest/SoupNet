@@ -487,7 +487,7 @@ async function sessionRefusal(db: SqlExecutor, userId: string, idp: GoogleSessio
 // ── 3. Exchange ──────────────────────────────────────────────────────────────
 
 export type HandoffResult =
-  | { ok: true; userId: string; idp: GoogleSessionIdp; target: ReturnTarget }
+  | { ok: true; userId: string; idp: GoogleSessionIdp; target: ReturnTarget; notBeforeSeconds: number | null }
   | { ok: false; error: GoogleSignInError | "invalid_handoff" };
 
 /**
@@ -495,6 +495,12 @@ export type HandoffResult =
  * (SSO-G5). One statement: the code, its expiry, its single use and the
  * secret's hash are all in the WHERE, so a wrong secret consumes nothing and
  * every kind of refusal is the same `invalid_handoff`.
+ *
+ * It also reads the account's session cut-off, for a new owner whose takeover
+ * set one a moment ago: the session is dated no earlier than that, or it would
+ * be refused (F145). Read in this statement, so a code that wins the race
+ * against a later cut-off doesn't see that cut-off, and the time the caller
+ * took before this call leaves its session behind it.
  */
 export async function exchangeHandoff(db: PostgresJsDatabase, input: { handoff: string; secret: string }): Promise<HandoffResult> {
   const rows = await db.execute(sql`
@@ -504,9 +510,10 @@ export async function exchangeHandoff(db: PostgresJsDatabase, input: { handoff: 
       AND handoff_consumed_at IS NULL
       AND handoff_expires_at > now()
       AND user_id IS NOT NULL
-    RETURNING user_id, session_idp, return_kind, return_params
+    RETURNING user_id, session_idp, return_kind, return_params,
+      (SELECT floor(extract(epoch FROM u.sessions_valid_after))::bigint FROM claimnet.users u WHERE u.id = user_id) AS not_before
   `);
-  const row = (rows as unknown as Array<{ user_id: string; session_idp: string; return_kind: string; return_params: unknown }>)[0];
+  const row = (rows as unknown as Array<{ user_id: string; session_idp: string; return_kind: string; return_params: unknown; not_before: string | number | null }>)[0];
   if (!row) return { ok: false, error: "invalid_handoff" };
   // The account could have been switched off in the seconds since the callback.
   const idp: GoogleSessionIdp = row.session_idp === "google" ? "google" : "google-consumer";
@@ -517,5 +524,5 @@ export async function exchangeHandoff(db: PostgresJsDatabase, input: { handoff: 
     row.return_kind === "oauth_authorize"
       ? { kind: "oauth_authorize", params: params as unknown as AuthorizeParams }
       : { kind: "app", path: typeof params["path"] === "string" ? params["path"] : "/app/dashboard" };
-  return { ok: true, userId: row.user_id, idp, target };
+  return { ok: true, userId: row.user_id, idp, target, notBeforeSeconds: row.not_before === null ? null : Number(row.not_before) };
 }

@@ -117,6 +117,8 @@ googleAuthRoutes.post("/exchange", exchangeIpRateLimit, async (c) => {
     return invalid();
   }
   const db = getDb();
+  // Before the exchange, not after: see exchangeHandoff (F145).
+  const issuedAt = Math.floor(Date.now() / 1000);
   const result = await exchangeHandoff(db, { handoff, secret });
   if (!result.ok) {
     if (result.error === "invalid_handoff") return invalid();
@@ -129,7 +131,7 @@ googleAuthRoutes.post("/exchange", exchangeIpRateLimit, async (c) => {
   `);
   const user = (rows as unknown as Array<{ id: string; email: string; role: string; emailVerified: boolean }>)[0];
   if (!user) return invalid();
-  const token = signToken({ sub: user.id, email: user.email, role: user.role, idp: result.idp });
+  const token = signToken({ sub: user.id, email: user.email, role: user.role, idp: result.idp, iat: Math.max(issuedAt, result.notBeforeSeconds ?? 0) });
   await recordSignIn(db, user.id, "google");
   return c.json({
     ok: true,

@@ -558,8 +558,8 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
     const strangerSub = sub();
     const stranger = signedIn(await signIn(consumer(email, strangerSub)));
     const token = await verificationTokenOf(stranger.userId);
-    await new Promise((r) => setTimeout(r, 1100));
 
+    // No wait: a session from the same second as the click dies too (F145).
     expect((await verifyEmail(token)).googleSignInRemoved).toBe(true);
     expect((await userRow(stranger.userId)).email_verified_at).not.toBeNull();
     expect(await identitiesOf(stranger.userId)).toEqual([]);
@@ -577,6 +577,8 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
     const owner = signedIn(await signIn(workspace(email, ownerSub)));
     expect(owner.userId).toBe(stranger.userId);
     expect((await identitiesOf(owner.userId)).map((i) => i.subject)).toEqual([ownerSub]);
+    // Possibly still inside the cut-off's second: the handoff dates its session at the cut-off.
+    expect((await call(owner.token, "GET", "/auth/me")).status).toBe(200);
   });
 
   it("GSI-LINK-06 / SSO-A4b: only the sign-up's own session keeps its identity; another account's session doesn't", async () => {
