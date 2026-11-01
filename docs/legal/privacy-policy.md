@@ -131,7 +131,7 @@ Wherever you are, you can:
 Some accounts can't do all of this from Settings:
 
 - **A suspended or disabled account** can't sign in, so it can't use these pages. Email admin@soup.net from your registered address to ask for your export or your deletion.
-- **An account that belongs to a company organization** can export its data from Settings but can't be deleted there, because the account and its recipes belong to the company. Ask your organization's admin, or email admin@soup.net from your registered address.
+- **An account that belongs to a company organization** can export its data from Settings but can't be deleted there, because the account and its recipes belong to the company. Email admin@soup.net from your registered address, and we'll work with your organization's admin.
 
 We aim to respond to all requests within the time required by applicable law and as soon as we reasonably can.
 
