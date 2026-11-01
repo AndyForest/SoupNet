@@ -2,7 +2,7 @@
 
 This document explains, for a reviewer and for contributors, why each tool on Soup.net's remote MCP server (`https://mcp.soup.net/mcp`) is annotated, described and shaped the way it is. The same server serves every MCP client, and nothing here forks it for one vendor. The code is the source of truth, and tests pin each value stated here: `apps/backend/src/routes/tool-contract.test.ts` and `tool-contract-outputs.test.ts` for the remote server, and `apps/mcp-server/src/tool-contract.test.ts` for stdio. Plan: [openai-plugin-directory.md](../planning/openai-plugin-directory.md), items 3 to 7 and 13.
 
-Soup.net is a log of judgment calls ("recipes": a claim about a person's taste and judgment, with the evidence it rests on), kept in recipe books that a person owns or shares. Agents check a position against the log, which records it, search the log without recording, and close the loop with feedback.
+Soup.net is a log of judgment calls ("recipes": a claim about a person's taste and judgment, with the evidence it rests on), kept in recipe books that a person owns or shares. Agents check a position against the log, which records it, search the log without adding a recipe, and close the loop with feedback.
 
 ## The annotation rule
 

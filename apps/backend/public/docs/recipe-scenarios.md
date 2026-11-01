@@ -40,7 +40,7 @@ supporting_evidence: "User explicitly described a mixed, contextual approach —
 
 This checks in the user's *actual* preference while also surfacing any related recipes about theme preferences. The search and the log are both useful.
 
-**Since 2026-08: when the intent really is lookup, there's a sanctioned tool.** The read-only search (`search_recipes` on MCP; the `filter` param on the check page) returns matches without logging anything — the agent above could have searched `"dark mode"` and found the recipes the user meant without polluting the corpus. That doesn't weaken the principle: a fabricated check is still the anti-pattern, and search doesn't replace forming a genuine hypothesis — it's for finding judgment that isn't yours to hypothesize (see Scenario G).
+**Since 2026-08: when the intent really is lookup, there's a sanctioned tool.** The read-only search (`search_recipes` on MCP; the `filter` param on the check page) returns matches without logging a recipe — the agent above could have searched `"dark mode"` and found the recipes the user meant without polluting the corpus. That doesn't weaken the principle: a fabricated check is still the anti-pattern, and search doesn't replace forming a genuine hypothesis — it's for finding judgment that isn't yours to hypothesize (see Scenario G).
 
 ---
 
