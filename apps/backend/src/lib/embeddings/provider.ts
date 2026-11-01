@@ -160,7 +160,7 @@ export function getEmbeddingModelId(): string {
 }
 
 /**
- * Embed a single text. Returns null on failure for graceful lexical fallback.
+ * Embed a single text. Returns null on failure; search then returns no results.
  * Stub provider never returns null. Local/openai vectors are fit to halfvec(3072)
  * centrally here; gemini/stub already emit 3072-dim.
  */

@@ -6,8 +6,10 @@
  *   - embedMultimodal(parts, taskType) — text + inline image parts, returns null on error
  *   - batchEmbed(texts, taskType, modelId?) — batch endpoint for async pipeline, throws on error
  *
- * The sync check path (enqueue.ts) uses the null-returning variants so search
- * degrades to lexical. The async pipeline (embedding-worker/jobs/vector-api-call.ts)
+ * The sync check path (enqueue.ts) uses the null-returning variants so a check
+ * still succeeds when embedding fails: its vector stays 'pending' for the worker
+ * and search returns no results, because there is no lexical path to fall back
+ * to. The async pipeline (embedding-worker/jobs/vector-api-call.ts)
  * uses batchEmbed because it explicitly wants failures surfaced for its
  * binary-split retry policy.
  *
@@ -31,7 +33,7 @@ export type ContentPart =
 
 /**
  * Generate an embedding for a text string.
- * Returns null on any error so search falls back to lexical-only.
+ * Returns null on any error; search then returns no results for this query.
  */
 export async function embedQuery(
   text: string,
@@ -43,7 +45,7 @@ export async function embedQuery(
 /**
  * Generate a multimodal embedding from mixed text + image parts.
  * Accepts the same parts format as the Gemini embedContent API.
- * Returns null on any error for graceful fallback.
+ * Returns null on any error; see embedQuery.
  */
 export async function embedMultimodal(
   parts: ContentPart[],
@@ -58,13 +60,13 @@ async function embedParts(
   taskType: string,
 ): Promise<number[] | null> {
   const apiKey = process.env["GEMINI_API_KEY"];
-  if (!apiKey) return null; // graceful fallback — no API key means lexical-only search
+  if (!apiKey) return null; // no API key means no vector, so search returns no results
 
   // Kill-switch: check system setting
   try {
     const enabled = await getSetting(getDb(), "embeddingsEnabled");
     if (!enabled) {
-      console.warn("[gemini] Embeddings disabled via system settings — falling back to lexical");
+      console.warn("[gemini] Embeddings disabled via system settings — search returns no results");
       return null;
     }
   } catch {
@@ -90,7 +92,7 @@ async function embedParts(
       console.error(
         `[gemini] Embedding failed: ${response.status} ${await response.text()}`,
       );
-      return null; // fallback to lexical
+      return null;
     }
 
     const data = (await response.json()) as {
@@ -99,7 +101,7 @@ async function embedParts(
     return data.embedding?.values ?? null;
   } catch (err) {
     console.error("[gemini] Embedding request error:", err);
-    return null; // fallback to lexical
+    return null;
   }
 }
 

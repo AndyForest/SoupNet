@@ -188,7 +188,7 @@ async function start() {
     // Warm the in-process ONNX model so the ~0.5-2s load happens now, not on the
     // first real check. Non-fatal: warmup() already swallows its own errors, but
     // wrap defensively so a boot-time model-load hiccup can never crash startup —
-    // the first real embedQuery retries (and degrades to lexical if it truly fails).
+    // the first real embedQuery retries (and returns null if it truly fails).
     console.warn(`[backend] Local embedding model: ${embeddingModel()}`);
     try {
       const { warmup } = await import("./lib/embeddings/local-client");
