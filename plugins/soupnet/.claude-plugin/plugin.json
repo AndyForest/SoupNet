@@ -1,0 +1,25 @@
+{
+  "name": "soupnet",
+  "version": "1.0.0",
+  "description": "A shared record of your taste and judgment for your AI agents: the Soup.net connection plus its skills.",
+  "author": {
+    "name": "STEAMLabs",
+    "email": "admin@soup.net",
+    "url": "https://www.soup.net"
+  },
+  "homepage": "https://www.soup.net",
+  "repository": "https://github.com/AndyForest/SoupNet",
+  "license": "MIT",
+  "keywords": [
+    "taste and judgment",
+    "recipe check",
+    "decision log",
+    "shared memory"
+  ],
+  "mcpServers": {
+    "soupnet": {
+      "type": "http",
+      "url": "https://mcp.soup.net/mcp"
+    }
+  }
+}
