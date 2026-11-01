@@ -100,6 +100,13 @@ Feature: Proving a mailbox
       And Sal's password and session no longer work
       And Olive can sign in with the new password
 
+    @ACC-VERIFY-20
+    Scenario: A reset says what's still running
+      Given Olive's account has an API key and a connected app
+      When Olive resets the password
+      Then the page says they still work and why, with a way to review them
+      And after signing in Olive can see and end both, including an app between access tokens
+
     @ACC-VERIFY-19
     Scenario: After the owner resets, the stranger's proof and session are worth nothing
       Given Sal holds a proof and a session on the address Olive took back

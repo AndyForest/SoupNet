@@ -7,7 +7,7 @@ interface VerifyResponse {
   ok: boolean;
   error?: string;
   message?: string;
-  data?: { verified: boolean; email: string; waitlisted?: boolean; passwordRequired?: boolean; ownSession?: boolean; token?: string };
+  data?: { verified: boolean; email: string; waitlisted?: boolean; passwordRequired?: boolean; ownSession?: boolean; token?: string; signInRefusal?: string };
 }
 
 async function verifyRequest(body: { token: string; password?: string }): Promise<{ status: number; json: VerifyResponse }> {
@@ -27,6 +27,7 @@ export function VerifyPage() {
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
+  const [signInRefusal, setSignInRefusal] = useState<string | null>(null);
   const queryClient = useQueryClient();
   const [email, setEmail] = useState("");
   const [waitlisted, setWaitlisted] = useState(false);
@@ -56,7 +57,11 @@ export function VerifyPage() {
     }
     // The session in this tab was this account's, so update the cached flag:
     // subsequent navigation no longer redirects to /verify-pending.
-    if (json.data.ownSession) setEmailVerified(true);
+    if (json.data.ownSession) {
+      setEmailVerified(true);
+      setSignedIn(true);
+    }
+    if (json.data.signInRefusal) setSignInRefusal(json.data.signInRefusal);
     return true;
   }
 
@@ -126,7 +131,9 @@ export function VerifyPage() {
                 ? `${email} is verified and your spot on the waitlist is held. We'll email you the moment a spot opens — nothing else to do for now.`
                 : signedIn
                   ? `${email} is now verified, and you're signed in.`
-                  : `${email} is now verified. You can sign in and start using Soup.net.`}
+                  : signInRefusal
+                    ? `${email} is now verified. ${signInRefusal}`
+                    : `${email} is now verified. You can sign in and start using Soup.net.`}
             </p>
             {signedIn && (
               <Link to="/app/dashboard" style={{ textDecoration: "none" }}>
@@ -135,7 +142,7 @@ export function VerifyPage() {
                 </button>
               </Link>
             )}
-            {!waitlisted && !signedIn && (
+            {!waitlisted && !signedIn && !signInRefusal && (
               <Link to="/auth/login" style={{ textDecoration: "none" }}>
                 <button style={{ width: "100%", justifyContent: "center" }}>
                   Sign In

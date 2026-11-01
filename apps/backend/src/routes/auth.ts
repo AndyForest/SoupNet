@@ -11,7 +11,7 @@ import { deleteUserCascade } from "../services/user-delete.service";
 import { sendVerificationEmail, sendPasswordResetEmail } from "../services/email.service";
 import { rateLimit } from "../middleware/rate-limit";
 import { normalizeEmail } from "../lib/normalize-email";
-import { onBehalfSubjectOf, feedbackOwnedBy, intentOwnedBy, invalidateSessions, managedOrganizationOf } from "../authz";
+import { credentialsStillRunning, onBehalfSubjectOf, feedbackOwnedBy, intentOwnedBy, invalidateSessions, managedOrganizationOf } from "../authz";
 import { ACCOUNT_DISABLED_MESSAGE, ACCOUNT_SUSPENDED_MESSAGE, MANAGED_ACCOUNT_DELETE_MESSAGE } from "@soupnet/domain";
 import { verifyTurnstile } from "../lib/turnstile";
 import type { AppEnv } from "../types";
@@ -843,8 +843,11 @@ auth.post("/verify", verifyRateLimit, async (c) => {
   // for a waitlisted or switched-off account: the address is verified, and
   // signing in tells them why not.
   let sessionToken: string | null = null;
+  let signInRefusal: string | null = null;
   if (signingIn) {
     const signedIn = await signInAccount(db, updated.id);
+    // Only someone who just proved themselves reads this, as at sign-in.
+    if (signedIn?.disabled) signInRefusal = signedIn.disabled === "suspended" ? ACCOUNT_SUSPENDED_MESSAGE : ACCOUNT_DISABLED_MESSAGE;
     if (signedIn?.token) {
       sessionToken = signedIn.token;
       await db.execute(sql`UPDATE claimnet.users SET last_login_at = now() WHERE id = ${updated.id}::uuid`);
@@ -886,6 +889,7 @@ auth.post("/verify", verifyRateLimit, async (c) => {
       // it verified. Another account's session in the same browser wasn't.
       ownSession,
       ...(sessionToken ? { token: sessionToken } : {}),
+      ...(signInRefusal ? { signInRefusal } : {}),
     },
   });
 });
@@ -1086,7 +1090,9 @@ auth.post("/reset-password", resetPasswordRateLimit, async (c) => {
       WHERE id = ${updated.id}::uuid AND email_verified_at IS NULL
       RETURNING id
     `);
-    return { ...updated, newlyVerified: (verified as unknown as unknown[]).length > 0 };
+
+    const stillRunning = await credentialsStillRunning(tx, updated.id);
+    return { ...updated, newlyVerified: (verified as unknown as unknown[]).length > 0, stillRunning };
   });
 
   if (!outcome) {
@@ -1096,7 +1102,7 @@ auth.post("/reset-password", resetPasswordRateLimit, async (c) => {
   // A verification can take the last slots, as on POST /auth/verify.
   if (outcome.newlyVerified && !outcome.waitlisted) void logSignupCapState(db, { waitlisted: false });
 
-  return c.json({ ok: true, data: { reset: true, email: outcome.email } });
+  return c.json({ ok: true, data: { reset: true, email: outcome.email, stillRunning: outcome.stillRunning } });
 });
 
 export { auth as authRoutes };

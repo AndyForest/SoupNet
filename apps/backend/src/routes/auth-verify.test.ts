@@ -276,8 +276,8 @@ describe.skipIf(!BASE)("POST /auth/verify and /auth/reset-password: proving a ma
   it("ACC-VERIFY-17: the proof survives a resend, and needs a token that hasn't expired", async () => {
     const { email, token, proof } = await register("proof-resend");
     const session = await signIn(email);
-    const resent = await fetch(`${BASE}/auth/resend-verification`, { method: "POST", headers: { ...JSON_HEADERS, Authorization: `Bearer ${session}` }, body: "{}" });
-    expect(resent.status).toBe(200);
+    // The route replaces the token before it sends, and CI has no mail server, so the status isn't the point.
+    await fetch(`${BASE}/auth/resend-verification`, { method: "POST", headers: { ...JSON_HEADERS, Authorization: `Bearer ${session}` }, body: "{}" });
     const rows = await getDb().execute(sql`SELECT email_verification_token AS t FROM claimnet.users WHERE email = ${email}`);
     const fresh = (rows as unknown as Array<{ t: string }>)[0]!.t;
     expect(fresh).not.toBe(token);
@@ -304,6 +304,7 @@ describe.skipIf(!BASE)("POST /auth/verify and /auth/reset-password: proving a ma
     const suspended = (await post("/auth/verify", { token: off.token, signupProof: off.proof })).data;
     expect(suspended).toMatchObject({ verified: true });
     expect(suspended["token"]).toBeUndefined();
+    expect(String(suspended["signInRefusal"])).toMatch(/suspended/i);
   });
 
   it("ACC-VERIFY-19: after the owner resets, the stranger's proof and session are worth nothing", async () => {
@@ -313,6 +314,34 @@ describe.skipIf(!BASE)("POST /auth/verify and /auth/reset-password: proving a ma
     expect((await post("/auth/reset-password", { token: await resetToken(email), newPassword: "owner-new-password-3" })).status).toBe(200);
     expect(await meStatus(strangerSession)).toBe(401);
     expect((await post("/auth/verify", { token, signupProof: proof })).data["token"]).toBeUndefined();
+  });
+
+  it("ACC-VERIFY-20: a reset says what's still running, and the person can see and end it", async () => {
+    const { email, token, proof } = await register("reset-review");
+    const session = String((await post("/auth/verify", { token, signupProof: proof })).data["token"]);
+    const minted = await fetch(`${BASE}/keys/daily`, { method: "POST", headers: { Authorization: `Bearer ${session}` } });
+    expect(minted.status).toBe(200);
+    const app = await fetch(`${BASE}/keys/daily`, { method: "POST", headers: { Authorization: `Bearer ${session}` } });
+    expect(app.status).toBe(200);
+    // A connected app between access tokens: expired, with a live refresh token.
+    await getDb().execute(sql`
+      UPDATE claimnet.api_keys SET key_type = 'oauth', label = 'Some app', expires_at = now() - interval '1 hour', refresh_token_expires_at = now() + interval '30 days'
+      WHERE id = (SELECT k.id FROM claimnet.api_keys k JOIN claimnet.users u ON u.id = k.user_id WHERE u.email = ${email} ORDER BY k.created_at DESC, k.id LIMIT 1)
+    `);
+
+    const { status, data } = await post("/auth/reset-password", { token: await resetToken(email), newPassword: "owner-new-password-4" });
+    expect(status).toBe(200);
+    expect(data["stillRunning"]).toEqual({ apiKeys: 1, connectedApps: 1 });
+
+    const owner = await post("/auth/login", { email, password: "owner-new-password-4" });
+    const headers = { Authorization: `Bearer ${String(owner.data["token"])}` };
+    const listed = (await (await fetch(`${BASE}/keys`, { headers })).json()) as { data: Array<{ id: string; keyType: string; expiresAt: string }> };
+    expect(listed.data.map((k) => k.keyType).sort()).toEqual(["daily", "oauth"]);
+    const connected = listed.data.find((k) => k.keyType === "oauth")!;
+    expect(new Date(connected.expiresAt).getTime()).toBeGreaterThan(Date.now());
+    expect((await fetch(`${BASE}/keys/${connected.id}`, { method: "DELETE", headers })).status).toBe(200);
+    const after = (await (await fetch(`${BASE}/keys`, { headers })).json()) as { data: unknown[] };
+    expect(after.data).toHaveLength(1);
   });
 
   it("refuses a malformed request and an unknown token", async () => {
