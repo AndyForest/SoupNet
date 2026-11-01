@@ -1,14 +1,20 @@
 {
   "name": "soupnet",
+  "displayName": "Soup.net",
   "version": "1.0.0",
-  "description": "A shared record of your taste and judgment for your AI agents: the Soup.net connection plus its skills.",
+  "description": "Teach one, teach all your AIs. A shared record of your taste and judgment for your AI agents: the Soup.net connection plus its skills.",
   "author": {
     "name": "STEAMLabs",
     "email": "admin@soup.net",
     "url": "https://www.soup.net"
   },
+  "icon": "./assets/soupnet-icon.png",
   "homepage": "https://www.soup.net",
   "repository": "https://github.com/AndyForest/SoupNet",
+  "documentationUrl": "https://www.soup.net/info/connect",
+  "supportUrl": "https://www.soup.net/info/connect",
+  "privacyPolicyUrl": "https://www.soup.net/info/privacy",
+  "termsOfServiceUrl": "https://www.soup.net/info/terms",
   "license": "MIT",
   "keywords": [
     "taste and judgment",

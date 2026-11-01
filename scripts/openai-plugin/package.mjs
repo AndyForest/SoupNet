@@ -74,8 +74,8 @@ export function pngSize(buf) {
   return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
 }
 
-// Claude Code's plugin files share this directory but aren't part of OpenAI's package.
-const NOT_PACKAGED = new Set([".claude-plugin"]);
+// Claude's plugin files share this directory but aren't part of OpenAI's package.
+const NOT_PACKAGED = new Set([".claude-plugin", "README.md"]);
 
 /** Every packaged file under dir as a sorted list of posix paths relative to dir. */
 export function listFiles(dir) {
