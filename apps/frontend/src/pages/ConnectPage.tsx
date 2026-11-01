@@ -1,9 +1,10 @@
 import { Link } from "@tanstack/react-router";
 import { MarkdownContent } from "../components/LegalPage.js";
+import { INFO_PAGE_STYLE } from "../components/markdown-components.js";
 import { AgentTypePicker } from "../components/AgentTypePicker.js";
 import { CopyBriefingButton } from "../components/CopyBriefingButton.js";
 import { isLoggedIn, API_BASE } from "../auth.js";
-import { localizeConnectDocs } from "../lib/localize-connect-docs.js";
+import { localizeConnectDocs, splitAtPickerMarker } from "../lib/localize-connect-docs.js";
 // Source of truth: docs/connectors/index.md. Vite's ?raw query inlines
 // the file content as a string at build time. Editing the .md file is
 // the only way to change the live page prose.
@@ -14,30 +15,11 @@ import { localizeConnectDocs } from "../lib/localize-connect-docs.js";
 // curates those sections; it doesn't replace them.
 import connectContent from "../../../../docs/connectors/index.md?raw";
 
-const PICKER_MARKER = "<!-- agent-type-picker";
-const COMMENT_CLOSE = "-->";
-
 export function ConnectPage() {
-  const localizedContent = localizeConnectDocs(connectContent, API_BASE);
-  const markerIndex = localizedContent.indexOf(PICKER_MARKER);
-  const closeIndex = markerIndex >= 0
-    ? localizedContent.indexOf(COMMENT_CLOSE, markerIndex)
-    : -1;
-  // If the marker ever disappears from the .md, degrade to prose-then-picker
-  // rather than losing either. The marker comment itself is stripped so no
-  // raw HTML reaches react-markdown.
-  const hasMarker = markerIndex >= 0 && closeIndex >= 0;
-  const before = hasMarker ? localizedContent.slice(0, markerIndex) : localizedContent;
-  const after = hasMarker ? localizedContent.slice(closeIndex + COMMENT_CLOSE.length) : "";
+  const { before, after } = splitAtPickerMarker(localizeConnectDocs(connectContent, API_BASE));
 
   return (
-    <div style={{
-      maxWidth: 760,
-      margin: "0 auto",
-      padding: "var(--space-2xl) var(--space-xl)",
-      lineHeight: 1.65,
-      color: "var(--color-on-surface)",
-    }}>
+    <div style={INFO_PAGE_STYLE}>
       <p style={{ marginBottom: "var(--space-lg)", fontSize: "0.9rem" }}>
         <Link to="/">← Back to soup.net</Link>
       </p>

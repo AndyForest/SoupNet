@@ -137,6 +137,13 @@ Feature: Organization accounts: membership, disable, org-wide books, and joining
     # Guards: design-thinking.md archetype 6 "Private or org-wide", "Mine to
     # delete, or the company's"; recipes 2301b5eb, 2e1e4624, 1c7621d2.
 
+    @ORG-JOIN-05
+    Scenario: A key names a moved book by its new short name or its id
+      Given Max's book changed its short name when he joined Acme
+      When his agent names the book by its old short name
+      Then it is refused and nothing is stored
+      And the new short name and the book's id both reach the book
+
     @ORG-BOOK-01
     Scenario: New books land in the account's home organization
       # Requirement: C01-R07
@@ -158,6 +165,19 @@ Feature: Organization accounts: membership, disable, org-wide books, and joining
       When Ada makes it private
       Then Gus and Max keep their access and Ada's org-provenance row is gone
       And the default book can't be made private, and a personal organization's book can't be org-wide
+
+    @ORG-BOOK-04
+    Scenario: A book's short name taken in the organization is refused with a clear message
+      Given Olive has a private book with the short name "plans" in Acme
+      When Max creates a book with the short name "plans"
+      Then it is refused as a conflict, saying another book in this organization uses that short name
+      And the same short name is free in another organization, and a different one is free in Acme
+
+    @ORG-BOOK-05
+    Scenario: Moving books into an organization steers around a taken short name
+      Given Max has a book whose short name another book in Acme already uses
+      When Max joins Acme
+      Then the join succeeds and his book takes a free short name
 
     @ORG-KEY-01
     Scenario: A managed account's scoped keys last at most 90 days

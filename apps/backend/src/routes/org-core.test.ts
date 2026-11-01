@@ -226,6 +226,80 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Core", ()
     expect(await authz.managedOrganizationOf(getDb(), max.userId)).toMatchObject({ organizationId: orgId, role: "member", joinedVia: "operator" });
   });
 
+  it("ORG-BOOK-04 / OC-B6: a slug taken in the organization is a 409 naming it, with controls for where the slug is free", async () => {
+    const olive = await actor("olive");
+    const { orgId } = await createOrg(olive);
+    const max = await actor("max");
+    await mustAdd(orgId, max);
+    const slug = `shared-${run}-${++n}`;
+    expect((await call(olive, "POST", "/recipe-books", { name: "A private book", slug })).status).toBe(201);
+
+    const refused = await call(max, "POST", "/recipe-books", { name: "Another book", slug });
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toEqual({
+      ok: false,
+      error: "slug_taken",
+      message: `Another recipe book in this organization already uses the short name "${slug}". Choose a different name.`,
+    });
+
+    // The same slug is free in someone else's organization, and another slug is free in this one.
+    const gus = await actor("gus");
+    expect((await call(gus, "POST", "/recipe-books", { name: "A book", slug })).status).toBe(201);
+    expect((await call(max, "POST", "/recipe-books", { name: "Another book", slug: `${slug}-2` })).status).toBe(201);
+
+    // A personal account repeating its own slug hears about its own book.
+    const again = await call(gus, "POST", "/recipe-books", { name: "A book again", slug });
+    expect(again.status).toBe(409);
+    expect(((await again.json()) as { message: string }).message).toBe(`You already have a recipe book with the short name "${slug}". Choose a different name.`);
+  });
+
+  it("ORG-BOOK-05 / OC-B6: moving books in steers around a slug the default book or a member's book holds", async () => {
+    const olive = await actor("olive");
+    const orgSlug = `acme-${run}-${++n}`;
+    const oliveBook = ((await (await call(olive, "POST", "/recipe-books", { name: "Same as the org", slug: orgSlug })).json()) as { data: { id: string } }).data.id;
+    const created = await call(sys, "POST", "/admin/organizations", { name: "Acme", slug: orgSlug, ownerEmail: olive.email });
+    expect(created.status).toBe(201);
+    const { organizationId } = ((await created.json()) as { data: { organizationId: string } }).data;
+    expect((await bookOf(oliveBook)).slug).toBe(`${orgSlug}-${olive.email.slice(0, olive.email.indexOf("@"))}`);
+
+    const max = await actor("max");
+    expect((await call(max, "POST", "/recipe-books", { name: "Same as the org", slug: orgSlug })).status).toBe(201);
+    expect((await addToOrg(organizationId, max)).status).toBe(201);
+  });
+
+  it("ORG-JOIN-05 / OC-J2: after a slug changes, the key reaches the book by its new slug and by id; the old slug is refused and stores nothing", async () => {
+    const olive = await actor("olive");
+    const { orgId } = await createOrg(olive);
+    const max = await actor("max");
+    await mustAdd(orgId, max);
+    const key = await scopedKey(max, [max.personalBookId]);
+    const newSlug = (await bookOf(max.personalBookId)).slug;
+    expect(newSlug).not.toBe("personal");
+
+    const check = async (recipeBook: string, marker: string) => {
+      const params = new URLSearchParams({
+        key,
+        trace: `As a person checking a short name ${marker} ${run}, I prefer one book so that my recipes stay together.`,
+        ef: `Asked the person.\n> "${marker}"\n-- org-core.test.ts`,
+        recipe_book: recipeBook,
+        format: "json",
+      });
+      return fetch(`${BASE}/check?${params.toString()}`, { headers: { Accept: "application/json" } });
+    };
+    const booksHolding = async (marker: string) =>
+      ((await getDb().execute(sql`SELECT group_id FROM claimnet.traces WHERE claim_text LIKE ${`%${marker} ${run}%`}`)) as unknown as Array<{ group_id: string }>).map((r) => r.group_id);
+
+    const stale = await check("personal", "old-slug");
+    expect(stale.status).toBeGreaterThanOrEqual(400);
+    expect(stale.status).toBeLessThan(500);
+    expect(await booksHolding("old-slug")).toEqual([]);
+
+    expect((await check(newSlug, "new-slug")).status).toBe(200);
+    expect(await booksHolding("new-slug")).toEqual([max.personalBookId]);
+    expect((await check(max.personalBookId, "by-id")).status).toBe(200);
+    expect(await booksHolding("by-id")).toEqual([max.personalBookId]);
+  });
+
   it("ORG-JOIN-02 / OC-J4: the join's audit row records the notice as owed, and the logged sender records the send", async () => {
     const olive = await actor("olive");
     const { orgId } = await createOrg(olive);
