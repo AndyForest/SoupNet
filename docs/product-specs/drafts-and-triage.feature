@@ -149,12 +149,17 @@ Feature: Drafts, triage ratings, and deciding by building both
     @DT-TOOL-03 @slice-1
     Scenario: Ride-along feedback keeps every field while its schema shrinks to a pointer
       When a client calls tools/list
-      Then the feedback parameter on check_recipe and search_recipes no longer repeats log_feedback's per-field schema
+      Then the feedback parameter on check_recipe no longer repeats log_feedback's per-field schema
       And its description points to log_feedback for the row fields
-      When a client sends a feedback row with every field log_feedback accepts on check_recipe, and again on search_recipes
+      When a client sends a feedback row with every field log_feedback accepts on check_recipe
       Then every field is stored exactly as it would be through log_feedback
       # This is the guard for the pointer's item schema: a bare object item
       # schema would let the SDK strip every row field before the handler sees it.
+
+    Scenario: The read-only search tool takes no feedback rows
+      When a client sends a feedback row on search_recipes
+      Then nothing runs and no feedback row is stored
+      And the refusal names log_feedback, which takes the same row
 
     @DT-TOOL-04 @slice-1
     Scenario: The shared-copy budget test moves down, not up
@@ -786,9 +791,11 @@ Feature: Drafts, triage ratings, and deciding by building both
       And a draft whose intent no longer exists is judged by its week
 
     @DT-BUS-03 @slice-10
-    Scenario: Using the intent again revives its drafts
+    Scenario: A check under the intent revives its drafts, and a read does not
       Given an expired draft under an intent
-      When an agent searches carrying that intent
+      When an agent searches or fetches a briefing carrying that intent
+      Then the draft stays expired and the intent's last use is unchanged
+      When an agent checks a recipe carrying that intent
       Then the draft is back in Pat's queue, and nothing was written to it
 
     @DT-BUS-04 @slice-10
