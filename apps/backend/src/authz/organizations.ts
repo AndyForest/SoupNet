@@ -595,7 +595,10 @@ export async function actOnMember(db: PostgresJsDatabase, input: MemberActionInp
         UPDATE claimnet.group_members gm SET role = ${bookRoleForOrgRole(action.role)}
         FROM claimnet.groups g
         WHERE gm.group_id = g.id AND g.organization_id = ${organizationId}::uuid
-          AND ${membershipOf("gm", targetUserId)} AND gm.via = 'org'
+          AND ${membershipOf("gm", targetUserId)}
+          -- The creator's row on the default book is written 'direct', but it
+          -- is held by being the organization's owner, so it follows the role.
+          AND (gm.via = 'org' OR g.org_default)
       `);
     }
 

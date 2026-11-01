@@ -531,6 +531,26 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Core", ()
 
   // ── The org admin's actions ───────────────────────────────────────────────
 
+  it("ORG-ROLE-04 / F141: a demoted creator keeps no owner powers over the default book", async () => {
+    const olive = await actor("olive-demoted");
+    const { orgId, defaultBookId } = await createOrg(olive);
+    const max = await actor("max-promoted");
+    await mustAdd(orgId, max, "owner");
+    expect(await membershipRow(defaultBookId, olive.userId)).toMatchObject({ role: "owner", via: "direct" });
+
+    expect((await call(max, "PATCH", `/organizations/${orgId}/members/${olive.userId}`, { role: "member" })).status).toBe(200);
+    expect((await membershipRow(defaultBookId, olive.userId))?.role).toBe("member");
+    // A book in the creator's personal organization stays theirs.
+    expect(await membershipRow(olive.personalBookId, olive.userId)).toMatchObject({ role: "owner", via: "direct" });
+
+    expect((await call(olive, "PATCH", `/recipe-books/${defaultBookId}`, { name: `renamed-${run}` })).status).toBe(403);
+    expect((await call(olive, "DELETE", `/recipe-books/${defaultBookId}/members/${max.userId}`)).status).toBe(403);
+    expect((await membershipRow(defaultBookId, max.userId))?.role).toBe("owner");
+
+    expect((await call(max, "DELETE", `/recipe-books/${defaultBookId}/members/${olive.userId}`)).status).toBe(200);
+    expect(await membershipRow(defaultBookId, olive.userId)).toBeUndefined();
+  });
+
   it("ORG-ROLE-01, ORG-ROLE-02 / OC-R1, OC-R2, OC-B4: role rules, org-row roles, and one 404 for everything outside", async () => {
     const olive = await actor("olive");
     const { orgId, defaultBookId } = await createOrg(olive);

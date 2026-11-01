@@ -120,6 +120,14 @@ Feature: Organization accounts: membership, disable, org-wide books, and joining
       Then Max holds the admin role on Acme's org-wide books
       And a book role Max was granted directly is unchanged
 
+    @ORG-ROLE-04
+    Scenario: A demoted owner keeps no owner powers over the default book
+      Given Olive created Acme, and Max is now an owner too
+      When Max makes Olive a member
+      Then Olive holds the member role on Acme's default book
+      And Olive can't rename it or remove Max from it
+      And Max can remove Olive from it
+
     @ORG-ROLE-02
     Scenario: The role rules
       Then an admin can't disable or re-role an owner, or make someone an owner
