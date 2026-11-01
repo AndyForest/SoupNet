@@ -1,4 +1,4 @@
-import { describe, it, expect, afterAll, vi } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { authRoutes } from "./auth";
@@ -70,10 +70,6 @@ async function resetToken(email: string): Promise<string> {
 }
 
 describe.skipIf(!BASE)("POST /auth/verify and /auth/reset-password: proving a mailbox (F144)", () => {
-  afterAll(async () => {
-    await getDb().execute(sql`DELETE FROM claimnet.users WHERE email LIKE ${`test-verify-%-${run}-%`}`);
-  });
-
   it("ACC-VERIFY-01: a link opened with the sign-up's own session verifies with no password", async () => {
     const { email, token } = await register("own-session");
     const session = await signIn(email);
@@ -157,11 +153,17 @@ describe.skipIf(!BASE)("POST /auth/verify and /auth/reset-password: proving a ma
     const before = await getDb().execute(sql`SELECT email_verified_at FROM claimnet.users WHERE email = ${email}`);
     const session = await signIn(email);
     expect(await meStatus(session)).toBe(200);
+    const minted = await fetch(`${BASE}/keys/daily`, { method: "POST", headers: { Authorization: `Bearer ${session}` } });
+    expect(minted.status).toBe(200);
+    const key = ((await minted.json()) as { data?: { key?: string } }).data?.key;
+    expect(key).toBeTruthy();
 
     await waitPastCurrentSecond();
     expect((await post("/auth/reset-password", { token: await resetToken(email), newPassword: "next-password-345" })).status).toBe(200);
 
     expect(await meStatus(session)).toBe(401);
+    // A person who forgot a password keeps their agents.
+    expect((await fetch(`${BASE}/health/version`, { headers: { Authorization: `Bearer ${key}` } })).status).toBe(200);
     const after = await getDb().execute(sql`SELECT email_verified_at FROM claimnet.users WHERE email = ${email}`);
     expect(after).toEqual(before);
   });
