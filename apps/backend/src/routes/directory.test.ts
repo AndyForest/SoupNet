@@ -1,8 +1,11 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import crypto from "node:crypto";
+import { spawn } from "node:child_process";
 import { appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import jwt from "jsonwebtoken";
 import { directoryDisabledMessage } from "@soupnet/domain";
 import { seedVerifiedUser } from "../test-users";
 import { fakeGoogle } from "../test-google-issuer";
@@ -1215,6 +1218,79 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
       process.env["DIRECTORY_CREDENTIALS_KEY"] = saved;
     }
   });
+
+  it("F200: /auth/verify runs a due check before its transaction, for a session on the account", async () => {
+    const org = await acme();
+    const max = await member(org, "verify-due");
+    await google.setDirectoryUser(max.email, {});
+    const linked = await linkGoogle(max, `verify-${run}-${++n}`, org.domain);
+    expect((await memberRow(max.userId)).directory_status).toBe("active");
+    // The Google sign-up's own session, as a consumer account would hold it: the settle judges it.
+    const session = jwt.sign({ ...(jwt.decode(linked) as Json), idp: "google-consumer" }, process.env["JWT_SECRET"]!);
+    const token = crypto.randomBytes(32).toString("hex");
+    await getDb().execute(sql`
+      UPDATE claimnet.users SET email_verified_at = NULL, email_verification_token = ${token}, email_verification_token_created_at = NOW()
+      WHERE id = ${max.userId}::uuid
+    `);
+    await google.setDirectoryUser(max.email, { suspended: true });
+    await makeDue(max.userId);
+    // Judged on a stale "active" this would proceed; the check before the transaction changes the answer.
+    const res = await call(session, "POST", "/auth/verify", { token });
+    expect(((await res.json()) as { data: Json }).data["confirmationRequired"]).toBe(true);
+    expect((await memberRow(max.userId)).directory_status).toBe("suspended");
+  });
+
+  it("F200: settling a Google identity inside verify's transaction makes no Google call", async () => {
+    const org = await acme();
+    const max = await member(org, "settle-due");
+    await google.setDirectoryUser(max.email, {});
+    await linkGoogle(max, `settle-${run}-${++n}`, org.domain);
+    await getDb().execute(sql`UPDATE claimnet.users SET email_verified_at = NULL WHERE id = ${max.userId}::uuid`);
+    await makeDue(max.userId);
+    const { installDirectoryChecker, checkDirectoryIfDue } = await import("../authz");
+    const { secretBoxKey } = await import("../lib/secret-box");
+    const { settleGoogleIdentityOnVerify } = await import("../services/google-sign-in.service");
+    const asked: string[] = [];
+    installDirectoryChecker(
+      secretBoxKey()!,
+      (input) => {
+        asked.push(input.member.email);
+        return Promise.resolve({ answer: { kind: "unreachable" }, renamed: false });
+      },
+      () => Promise.resolve(),
+      () => Promise.resolve(),
+    );
+    const session = { sub: max.userId, idp: "google-consumer", iat: Math.floor(Date.now() / 1000) } as Parameters<typeof settleGoogleIdentityOnVerify>[2];
+    await getDb().transaction((tx) => settleGoogleIdentityOnVerify(tx, max.userId, session, false));
+    expect(asked).toEqual([]);
+    // Due all along: the same member's check, outside, does ask.
+    await checkDirectoryIfDue(getDb(), max.userId);
+    expect(asked).toEqual([max.email]);
+  });
+
+  it("F200: index.ts stops the server when the check is off and a company is connected", async () => {
+    await acme();
+    const root = fileURLToPath(new URL("../../../../", import.meta.url));
+    const child = spawn(process.execPath, ["--import", "tsx", "apps/backend/src/index.ts"], {
+      cwd: root,
+      env: { ...process.env, DIRECTORY_CREDENTIALS_KEY: "", PORT: "3197" },
+    });
+    let output = "";
+    child.stdout.on("data", (d: Buffer) => (output += d.toString()));
+    child.stderr.on("data", (d: Buffer) => (output += d.toString()));
+    const code = await new Promise<number | null>((resolve) => {
+      const timer = setTimeout(() => {
+        child.kill("SIGKILL");
+        resolve(null);
+      }, 60_000);
+      child.on("exit", (c) => {
+        clearTimeout(timer);
+        resolve(c);
+      });
+    });
+    expect(output).toContain("a directory connection:");
+    expect(code).toBe(1);
+  }, 90_000);
 
   it("OFF-DIR-10 / OB-C10: disconnecting stops the checks and lifts the directory's refusals", async () => {
     const org = await acme();
