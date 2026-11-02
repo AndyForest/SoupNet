@@ -38,7 +38,7 @@ describe("migrationSummaryMessage", () => {
 
   it("doesn't tell a manager a failure needs nothing from them", () => {
     expect(migrationSummaryMessage({ joined: 0, awaitingSeat: 0, failed: 1 })).not.toContain("don't need to do anything");
-    expect(migrationSummaryMessage({ joined: 0, awaitingSeat: 0, failed: 1 })).toContain("contact Soup.net support");
+    expect(migrationSummaryMessage({ joined: 0, awaitingSeat: 0, failed: 1 })).toContain("your own server's operator if you host Soup.net yourselves");
   });
 
   it("says the daily job retries a failed or stopped run", () => {

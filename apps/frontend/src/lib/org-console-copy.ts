@@ -36,7 +36,7 @@ export function migrationSummaryMessage(summary: { joined: number; awaitingSeat:
   if (summary.failed > 0) parts.push(`${accounts(summary.failed)} couldn't join on this try.`);
   if (summary.stopped) parts.push("This run stopped early.");
   if (parts.length === 0) return null;
-  if (summary.failed > 0 || summary.stopped) parts.push("We try again every day. If this keeps happening, contact Soup.net support.");
+  if (summary.failed > 0 || summary.stopped) parts.push("We try again every day. If this keeps happening, contact Soup.net support, or your own server's operator if you host Soup.net yourselves.");
   return parts.join(" ");
 }
 
