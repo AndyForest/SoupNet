@@ -157,6 +157,12 @@ Feature: Organization accounts: the org admin console, sharing policy, and what 
       When she turns it on and confirms
       Then automatic joining is on and the account joins
 
+    @ORG-CON-08c
+    Scenario: A signed-out manager follows an email's link to the console
+      Given Ada is signed out
+      When she opens the directory link from an email and signs in, with a password or with Google
+      Then she lands on the directory section of the console
+
     @ORG-CON-09
     Scenario: The directory's refusals read as the directory's
       Given Acme has a Google Workspace directory connected

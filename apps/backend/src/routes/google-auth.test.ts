@@ -279,6 +279,11 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
     }
   });
 
+  it("GSI-START-03: a Google sign-in from an email's console link returns to it, hash included", async () => {
+    const s = signedIn(await signIn(consumer(address("console-link", "gmail.com")), { kind: "app", path: "/org#directory" }));
+    expect(s.returnTo).toBe("/org#directory");
+  });
+
   it("GSI-CB-03 / SSO-G3b: a replayed callback ends exactly like an unknown state, without reaching Google", async () => {
     const email = address("replay", "gmail.com");
     const { started } = await start();

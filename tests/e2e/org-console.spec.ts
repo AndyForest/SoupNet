@@ -1199,6 +1199,23 @@ test("E23 a signed-out manager following an email's link lands back on the direc
   await expect(page.locator("#directory").getByRole("heading", { name: "Google Workspace directory" }), "the section should be on screen").toBeInViewport();
 });
 
+// Needs a fake Google the backend points at (GOOGLE_OIDC_TEST_ISSUER): E2E_FAKE_GOOGLE is its address.
+test("E24 a Google sign-in from an email's link lands back on the directory section", async ({ page, request }) => {
+  const fakeGoogle = process.env["E2E_FAKE_GOOGLE"];
+  test.skip(!fakeGoogle, "needs E2E_FAKE_GOOGLE");
+  const email = `${tag("e24")}@gmail.com`.toLowerCase();
+  const next = await request.post(`${fakeGoogle}/__fake/next-identity`, { data: { claims: { sub: `sub-${email}`, email, email_verified: true } } });
+  expect(next.ok(), "the fake Google should take the identity").toBe(true);
+
+  await page.addInitScript(() => localStorage.setItem("cookie_notice_dismissed", "true"));
+  await page.goto("/org#directory");
+  await expect(page, "signing out should lead to sign-in, carrying the link").toHaveURL(/\/auth\/login\?next=/);
+  await page.getByRole("button", { name: "Continue with Google" }).click();
+  await expect(page, "Google sign-in should return to the link, hash included").toHaveURL(/\/org#directory$/);
+  // A new Google account manages no organization, so the console refuses it: the landing is what this tests.
+  await expect(page.getByRole("heading", { level: 1 }), "the console's own page should answer").toBeVisible();
+});
+
 test("E20 the directory section, the status labels, last checked and Activity", async ({ page, request }, testInfo) => {
   const acme = await setupAcme(request, "e20");
   const domain = `${tag("e20")}.example`.toLowerCase();

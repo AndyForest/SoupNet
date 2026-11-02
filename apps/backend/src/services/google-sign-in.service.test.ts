@@ -81,6 +81,26 @@ describe("exchangeHandoff's date for the session (F145, F147)", () => {
   });
 });
 
+describe("validateReturnTarget with an in-app path", () => {
+  it("accepts the app and the org console, hash and query kept", async () => {
+    for (const path of ["/app/dashboard", "/org", "/org#directory", "/org/domains", "/org?x=1"]) {
+      expect(await validateReturnTarget(noDb, { kind: "app", path }, "1.2.3.4"), path).toEqual({ kind: "app", path });
+    }
+  });
+
+  it("refuses the consent page sent as an in-app path, so it can't skip the consent checks", async () => {
+    for (const path of ["/oauth/authorize", "/oauth/authorize?client_id=x", "/oauth/authorize#org"]) {
+      expect(await validateReturnTarget(noDb, { kind: "app", path }, "1.2.3.4"), path).toBeNull();
+    }
+  });
+
+  it("refuses what only looks like the org console", async () => {
+    for (const path of ["/organic", "/org.evil", "/org/../admin", "/org/..%2Fadmin", "//org", "https://evil.example/org"]) {
+      expect(await validateReturnTarget(noDb, { kind: "app", path }, "1.2.3.4"), path).toBeNull();
+    }
+  });
+});
+
 describe("validateReturnTarget with a client ID metadata document client (SSO-G8)", () => {
   it("accepts the client, its registered redirect and an accepted resource, keeping the parameters as sent", async () => {
     const result = await validateReturnTarget(noDb, target(), "1.2.3.4", { fetch: serving(document) });

@@ -112,7 +112,12 @@ export async function validateReturnTarget(db: SqlExecutor, raw: unknown, ip: st
   const r = raw as Record<string, unknown>;
   if (r["kind"] === "app") {
     const path = typeof r["path"] === "string" ? safeAppReturnPath(r["path"]) : null;
-    return path && path.startsWith("/app/") ? { kind: "app", path } : null;
+    if (!path) return null;
+    // Narrower than the rule above on purpose: the consent page passes that
+    // rule, and sent as "app" it would skip the parameter checks below.
+    const pathname = path.split(/[?#]/, 1)[0] ?? "";
+    const inApp = pathname.startsWith("/app/") || pathname === "/org" || pathname.startsWith("/org/");
+    return inApp ? { kind: "app", path } : null;
   }
   if (r["kind"] !== "oauth_authorize") return null;
   const given = r["params"];
