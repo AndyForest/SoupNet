@@ -18,8 +18,8 @@ import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { domainToUnicode } from "node:url";
 import {
   DIRECTORY_INACTIVE_MESSAGE,
+  DIRECTORY_HOLD_HOURS,
   DIRECTORY_SCOPE,
-  DIRECTORY_WARNING_HOURS,
   directoryChangedEmail,
   directoryOffProblem,
   directoryStatusRefuses,
@@ -68,7 +68,7 @@ export function installDirectoryChecking(): "on" | "off" {
   installDirectoryChecker(
     key,
     (input) => checkDirectoryMember(config, { organizationId: input.organizationId, kind: input.kind, adminEmail: input.adminEmail, secret: input.secret }, input.member),
-    (organizationId) => warnOrganization(organizationId),
+    (organizationId, memberEmail) => warnOrganization(organizationId, memberEmail),
   );
   return "on";
 }
@@ -92,7 +92,7 @@ export function directoryConnectAvailable(): boolean {
   return secretBoxKey() !== null && googleOidcConfig() !== null;
 }
 
-async function warnOrganization(organizationId: string): Promise<void> {
+async function warnOrganization(organizationId: string, memberEmail: string): Promise<void> {
   const { getDb } = await import("../db");
   const db = getDb();
   const rows = (await db.execute(sql`
@@ -101,11 +101,11 @@ async function warnOrganization(organizationId: string): Promise<void> {
   `)) as unknown as Array<{ since: string }>;
   if (!rows[0]) return;
   const managers = await directoryManagersOf(db, organizationId);
-  const mail = directoryWarningEmail(managers.name || "your organization", new Date(rows[0].since));
+  const mail = directoryWarningEmail(managers.name || "your organization", new Date(rows[0].since), memberEmail);
   for (const email of managers.emails) {
     await sendOrganizationDirectoryEmail(email, mail).catch(() => undefined);
   }
-  console.warn(`[directory] org ${organizationId}: warned ${managers.emails.length} managers after ${DIRECTORY_WARNING_HOURS}h`);
+  console.warn(`[directory] org ${organizationId}: warned ${managers.emails.length} managers`);
 }
 
 const liftedBy = (cleared: DirectoryStatusesCleared) => cleared.suspended + cleared.archived + cleared.deleted;
@@ -127,21 +127,21 @@ function tellOtherManagers(db: PostgresJsDatabase, organizationId: string, chang
  * still inside their hour, mustn't be able to do it (F185): the directory is
  * asked about them first.
  *
- * When it can't answer, the disconnect waits until the connection has gone
- * DIRECTORY_WARNING_HOURS without a success. An admin's consent token dies when
- * they are suspended, so "the connection is broken" is exactly what that admin
- * would see. A genuine manager's ways out are reconnecting, which proves itself
- * with a new credential, the wait, and the site operator's DELETE (recipe
- * aa8dd085).
+ * When it can't answer, the disconnect waits DIRECTORY_HOLD_HOURS from the
+ * warning to the other managers (F196). An admin's consent token dies when they
+ * are suspended, so "the connection is broken" is exactly what that admin would
+ * see. That admin can still go ahead after the hold, but not before the others
+ * have had the time to act. A genuine manager's ways out are reconnecting, which
+ * proves itself with a new credential, and the site operator's DELETE.
  */
 export async function directoryDisconnectRefusal(db: PostgresJsDatabase, organizationId: string, userId: string): Promise<{ status: 403 | 409; error: string; message: string } | null> {
   const asked = await askDirectoryAboutActor(db, organizationId, userId);
   if (asked === "refused") return { status: 403, error: "directory_inactive", message: DIRECTORY_INACTIVE_MESSAGE };
-  if (asked === "unanswered") {
+  if (asked === "held") {
     return {
       status: 409,
       error: "directory_disconnect_held",
-      message: `Soup.net couldn't confirm your account with Google Workspace just now, so the directory stays connected. Try again shortly. If the connection is broken, reconnect it. You can also disconnect once it has gone ${DIRECTORY_WARNING_HOURS} hours without a successful check, or ask Soup.net support to remove it.`,
+      message: `Soup.net couldn't confirm your account with Google Workspace just now, so the directory stays connected, and your organization's owners and admins have been told. Try again shortly. If the connection is broken, reconnect it now, or ask Soup.net support to remove it. Otherwise you can disconnect ${DIRECTORY_HOLD_HOURS} hours after that warning.`,
     };
   }
   return null;

@@ -623,7 +623,12 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     };
     const outage = async () => {
       await google.setDirectoryUser(max.email, { httpStatus: 503 });
-      await getDb().execute(sql`UPDATE claimnet.organization_directory_connections SET last_success_at = NOW() - interval '7 hours' WHERE organization_id = ${org.orgId}::uuid`);
+      // Time passes: the last success, and any earlier warning, move back together.
+      await getDb().execute(sql`
+        UPDATE claimnet.organization_directory_connections
+        SET last_success_at = NOW() - interval '7 hours', warned_at = warned_at - interval '7 hours'
+        WHERE organization_id = ${org.orgId}::uuid
+      `);
       await failingCheck();
     };
     await outage();
@@ -930,7 +935,7 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     expect(await stillConnected(org)).toBe(true);
   });
 
-  it("OFF-CON-07 / F185: when the directory can't answer, a disconnect waits for six hours without a success; the other managers are told", async () => {
+  it("OFF-CON-07 / F185, F196: when the directory can't answer, a disconnect waits six hours from a warning to the managers, however long since the last success", async () => {
     const org = await acme();
     const ann = await adminMember(org, "ann-stuck");
     const victim = await member(org, "off-stuck");
@@ -944,8 +949,15 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     expect(body.error).toBe("directory_disconnect_held");
     expect(body.message).toContain("reconnect");
     expect(await stillConnected(org)).toBe(true);
+    expect(await warningsTo(org.olive.email, 1)).toBe(1);
 
-    await getDb().execute(sql`UPDATE claimnet.organization_directory_connections SET last_success_at = NOW() - interval '7 hours' WHERE organization_id = ${org.orgId}::uuid`);
+    // A quiet spell before the failures buys nothing, and asking again doesn't warn again.
+    await getDb().execute(sql`UPDATE claimnet.organization_directory_connections SET last_success_at = NOW() - interval '16 hours' WHERE organization_id = ${org.orgId}::uuid`);
+    expect((await call(ann.token, "DELETE", `/organizations/${org.orgId}/directory`)).status).toBe(409);
+    expect((await useKey(victim.key)).status).toBe(401);
+    expect(await warningsTo(org.olive.email, 2)).toBe(1);
+
+    await getDb().execute(sql`UPDATE claimnet.organization_directory_connections SET warned_at = NOW() - interval '7 hours' WHERE organization_id = ${org.orgId}::uuid`);
     expect((await call(ann.token, "DELETE", `/organizations/${org.orgId}/directory`)).status).toBe(200);
     expect(await stillConnected(org)).toBe(false);
     expect(await changeMailsTo(org.olive.email, "was disconnected", 1)).toBe(1);
@@ -1049,6 +1061,41 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
       expect(raced.filter((r) => r.status === "rejected").map((r) => String((r as PromiseRejectedResult).reason)), `round ${i}`).toEqual([]);
     }
     await call(org.olive.token, "PUT", `/organizations/${org.orgId}/directory/service-account`, { key: org.serviceAccount.key, adminEmail: org.olive.email });
+  });
+
+  it("F196: with the last check hours ago and the token dead this minute, a suspended admin's first disconnect is held and the others are warned", async () => {
+    const org = await acme();
+    const ann = await adminMember(org, "ann-night");
+    const annSub = `ann-night-${run}-${++n}`;
+    await linkGoogle(ann, annSub, org.domain);
+    const finish = await startConsent(ann, org, { sub: annSub, email: ann.email, email_verified: true, hd: org.domain });
+    expect(await finish()).toBe(`${FRONTEND}/auth/google/complete#directory=connected`);
+    const victim = await member(org, "night-off");
+    await google.setDirectoryUser(victim.email, { suspended: true });
+    expect((await useKey(victim.key)).status).toBe(401);
+    await getDb().execute(sql`UPDATE claimnet.organization_directory_connections SET last_success_at = NOW() - interval '16 hours' WHERE organization_id = ${org.orgId}::uuid`);
+    await google.setDirectoryUser(ann.email, { suspended: true });
+    await google.revokeAll();
+
+    const first = await call(ann.token, "DELETE", `/organizations/${org.orgId}/directory`);
+    expect(first.status).toBe(409);
+    expect(await stillConnected(org)).toBe(true);
+    expect((await useKey(victim.key)).status).toBe(401);
+    expect(await warningsTo(org.olive.email, 1)).toBe(1);
+  });
+
+  it("OFF-DIR-10, F196: after a disconnect and a reconnect, the next check refuses the same people again", async () => {
+    const org = await acme();
+    const off = await member(org, "off-again");
+    await google.setDirectoryUser(off.email, { suspended: true });
+    expect((await useKey(off.key)).status).toBe(401);
+    expect((await call(org.olive.token, "DELETE", `/organizations/${org.orgId}/directory`)).status).toBe(200);
+    expect((await useKey(off.key)).status).toBe(200);
+    expect((await memberRow(off.userId)).directory_status).toBeNull();
+    const again = await call(org.olive.token, "PUT", `/organizations/${org.orgId}/directory/service-account`, { key: org.serviceAccount.key, adminEmail: org.olive.email });
+    expect(again.status).toBe(200);
+    expect((await useKey(off.key)).status).toBe(401);
+    expect((await memberRow(off.userId)).directory_status).toBe("suspended");
   });
 
   it("OFF-DIR-10 / OB-C10: disconnecting stops the checks and lifts the directory's refusals", async () => {

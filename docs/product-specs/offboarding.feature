@@ -164,8 +164,8 @@ Feature: Offboarding through the company's Google Workspace directory
 
     @OFF-CON-07
     Scenario: Disconnecting when the directory can't answer
-      # Guards: audit F185.
-      Given Google can't answer about Ann
+      # Guards: audit F185, F196.
+      Given Google can't answer about Ann, whether the last success was minutes or hours ago
       When Ann disconnects the directory
-      Then Ann is told it stays connected, and can reconnect, ask support, or disconnect once it has gone six hours without a successful check
-      And after those six hours the disconnect goes through and the others are told
+      Then it stays connected, Acme's owners and admins are warned now if they haven't been already, and Ann is told to reconnect, ask support, or wait six hours from that warning
+      And six hours after the warning the disconnect goes through and the others are told

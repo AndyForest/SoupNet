@@ -18,8 +18,10 @@ export const DIRECTORY_STALE_HOURS = 24;
 export const DIRECTORY_TIMEOUT_MS = 2_000;
 /** A claim on a check older than this may be taken over (the task holding it died). */
 export const DIRECTORY_CLAIM_SECONDS = 30;
-/** A connection failing this long warns the organization's owners and admins once. */
+/** With nothing but no answers from Google for this long, the owners and admins are warned once. Google refusing the credential warns at once. */
 export const DIRECTORY_WARNING_HOURS = 6;
+/** How long a disconnect or a replacement waits, once the owners and admins have been warned, when the directory can't answer about the person doing it. */
+export const DIRECTORY_HOLD_HOURS = 6;
 
 export const DIRECTORY_SCOPE = "https://www.googleapis.com/auth/admin.directory.user.readonly";
 
@@ -196,16 +198,17 @@ export function directoryChangedEmail(
  * stale a day after their own last check, so the hour named is the latest
  * anyone keeps access, not the first (verification O1, O2).
  */
-export function directoryWarningEmail(organizationName: string, lastSuccessAt: Date): { subject: string; text: string } {
+export function directoryWarningEmail(organizationName: string, lastSuccessAt: Date, memberEmail: string): { subject: string; text: string } {
   const utc = (d: Date) => d.toISOString().replace("T", " ").slice(0, 16) + " UTC";
   const everyoneBy = new Date(lastSuccessAt.getTime() + DIRECTORY_STALE_HOURS * 3600_000);
   return {
     subject: `Soup.net can't reach ${organizationName}'s Google Workspace directory`,
     text:
-      `Soup.net just failed to check one of ${organizationName}'s members against your Google Workspace directory, and its last successful check was at ${utc(lastSuccessAt)}. ` +
+      `Soup.net just failed to check ${memberEmail} against your Google Workspace directory, and its last successful check of anyone was at ${utc(lastSuccessAt)}. ` +
       `A member whose status hasn't been confirmed for ${DIRECTORY_STALE_HOURS} hours is signed out of Soup.net, and their agents' keys stop working until a check succeeds. ` +
       `Members who haven't used Soup.net recently may be signed out already, and unless a check succeeds, everyone on your domain will be by ${utc(everyoneBy)}. ` +
       `To fix it, an owner or admin can reconnect the directory from your organization's console in Soup.net (or switch to a service account). ` +
+      `While the directory can't answer, an owner or admin can disconnect it ${DIRECTORY_HOLD_HOURS} hours after this email, which stops the checks and lets back in anyone it had switched off, so if you aren't expecting that, reconnect it first. ` +
       `If nobody in your organization can sign in any more, contact Soup.net support.`,
   };
 }

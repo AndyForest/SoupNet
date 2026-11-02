@@ -149,9 +149,11 @@ describe("directoryChangedEmail (F185)", () => {
 
 describe("directoryWarningEmail (OB-C8; verification O1, O2)", () => {
   it("names the last success and the hour everyone is signed out by, a day later, without claiming hours of failure", () => {
-    const mail = directoryWarningEmail("Acme", new Date("2026-10-26T09:15:00Z"));
+    const mail = directoryWarningEmail("Acme", new Date("2026-10-26T09:15:00Z"), "max@acme.example");
     expect(mail.subject).toBe("Soup.net can't reach Acme's Google Workspace directory");
-    expect(mail.text).toContain("its last successful check was at 2026-10-26 09:15 UTC");
+    expect(mail.text).toContain("failed to check max@acme.example");
+    expect(mail.text).toContain("its last successful check of anyone was at 2026-10-26 09:15 UTC");
+    expect(mail.text).toContain("can disconnect it 6 hours after this email");
     expect(mail.text).toContain("everyone on your domain will be by 2026-10-27 09:15 UTC");
     expect(mail.text).toContain("may be signed out already");
     expect(mail.text).not.toContain("For the last");
