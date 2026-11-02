@@ -317,6 +317,17 @@ label {
   }
 }
 
+/* ── Admin consoles ─────────────────────────────────────────────── */
+.admin-layout { display: grid; grid-template-columns: 200px minmax(0, 1fr); }
+.admin-layout-inspector { grid-template-columns: 200px minmax(0, 1fr) 320px; }
+.admin-layout-nav { display: flex; flex-direction: column; }
+/* On a phone the nav is a row above the page, not half of its width. */
+@media (max-width: 720px) {
+  .admin-layout, .admin-layout-inspector { grid-template-columns: minmax(0, 1fr); align-content: start; }
+  .admin-layout-nav { flex-direction: row; flex-wrap: wrap; align-items: center; }
+  .admin-layout-heading { flex: 1 1 100%; margin-bottom: 0 !important; }
+}
+
 /* ── Scrollbar ──────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }

@@ -55,24 +55,23 @@ export function AdminLayout({ children, inspector, scope = "site", heading }: Ad
 
   return (
     <div
+      className={inspector ? "admin-layout admin-layout-inspector" : "admin-layout"}
       style={{
-        display: "grid",
-        gridTemplateColumns: inspector ? "200px 1fr 320px" : "200px 1fr",
         minHeight: "calc(100vh - 56px)",
         background: "var(--color-surface)",
         fontFamily: "Inter, system-ui, sans-serif",
       }}
     >
       <nav
+        className="admin-layout-nav"
         style={{
           background: "var(--color-surface-container-low)",
           padding: "var(--space-md) var(--space-sm)",
-          display: "flex",
-          flexDirection: "column",
           gap: "2px",
         }}
       >
         <div
+          className="admin-layout-heading"
           style={{
             fontFamily: "'Space Grotesk', sans-serif",
             fontSize: "0.7rem",
