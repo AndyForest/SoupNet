@@ -27,7 +27,7 @@ import { sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { decideMembershipSharing, decideRefileSharing, emailDomain, storedSharingPolicy } from "@soupnet/domain";
-import type { SharingDecision, SharingPolicy } from "@soupnet/domain";
+import type { SharingDecision } from "@soupnet/domain";
 import { orgMembershipDisabled } from "./account-state";
 import { domainVerifiedFor } from "./domain-authority";
 import { countsAsMembership } from "./membership-sql";
