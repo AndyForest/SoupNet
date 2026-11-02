@@ -120,6 +120,10 @@ Found 2026-07-12 while implementing import: the columns were added to `reference
 
 The worker sweep backfills ~200 traces/strategy/minute, so a 40k-trace import takes hours to full searchability. The import response reports `tracesPendingBackfill` and the admin workers page shows queue depth, but there is no per-import progress surface. Consider a bulk lane (batched import-side stubs for `full_document`) and/or a `GET /import/status`-style pending-vectors-per-book count. Follow-on from the 2026-07-12 corpus-import ship.
 
+### `[IMPL]` Limit how many imports run at once (2026-11-02)
+
+Nothing limits concurrent `POST /import` runs. Each one holds a database connection for its whole run, and the pool has 10, so a handful of large overlapping files slows everyone's requests (the #158 delta audit, F176; on `main` already, and not caused by the org round). A small in-process limit per account and overall, answering 429 with a retry hint, is the likely shape.
+
 ### `[DESIGN]` Keys minted before an import don't see the new book
 
 API keys freeze their read scope at mint time, so a key created before an import cannot search the imported book — confusing exactly when a user imports then immediately asks their agent about it. Surface a "mint a fresh key" hint in the import response and/or dashboard. Found during 2026-07-12 import acceptance testing. Still true after the 2026-09-19 authz change: a key's effective scope is its grant *intersected* with live membership, so membership can take a book away from a key but never adds one.

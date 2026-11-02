@@ -96,7 +96,8 @@ groupsRouter.post("/", async (c) => {
   // create there (they own it, or they are an active member of the company
   // organization that manages their account; a guest of one of a company's
   // books is neither), else their home organization (OC-B2). One transaction
-  // under the account's lock, so a join can't leave the book behind (F169).
+  // under the account's lock, so a join can't leave the book behind (F169). It
+  // is a fixed handful of single-row statements, so the hold is short.
   let organizationId: string | null = null;
   let created: { group: { id: string } | undefined } | { refusal: "forbidden" | "not_a_company_book" };
   try {

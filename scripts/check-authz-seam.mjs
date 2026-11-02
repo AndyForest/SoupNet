@@ -309,7 +309,7 @@ const TRACE_READS = {
     why: "feedback target ACL: prefix scan and readable set use traceReadableById (RP-11, RP-18); check_feedback inserts and the per-key budget count are writes and the caller's own rows; search, briefing, and intent-only rows (slice 8a) attach only to the caller's user's own audit rows or intents, with dedup lookups on the caller's key",
   },
   "apps/backend/src/services/import.service.ts": {
-    n: 14, fp: "5a6c16b97782", composes: false,
+    n: 14, fp: "ed8da1283778", composes: false,
     why: "import only creates rows: it reads rows by id to decide skip / conflict / fresh id (RP-35), keeps a trace only when it is the importer's own and not a draft about someone else (onBehalfSubjectOf, [F92] [F97]), writes links only between rows it created (recipe 5d541d2c), and an on-behalf row's subject goes through the module's naming rule (S4-E2); a row's intent link is restored only onto the importer's own intents (slice 6a, S6a-E2)",
   },
   "apps/backend/src/services/integrity-repair.service.ts": {

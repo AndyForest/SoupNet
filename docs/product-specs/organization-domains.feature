@@ -319,6 +319,60 @@ Feature: Verified domains, automatic joining, and existing accounts on a claimed
       When Nia's join starts while her new book is in progress
       Then the join waits and moves the book into Acme
 
+    @ORG-JOIN-D12
+    Scenario: Nothing waits on an import into a new book
+      Given Max's import into a new book is running
+      Then Max can sign in, ask for a reset link, and be suspended without waiting for it
+      And Olive's switch answers and joins Max without waiting for it
+      When the import finishes
+      Then its book is in Acme
+
+    @ORG-JOIN-D13
+    Scenario: An import finishing during a join
+      Given Max's join is in progress
+      When Max's import reaches its end
+      Then it waits for the join, and its book lands in Acme
+
+    @ORG-JOIN-D14
+    Scenario: A member's import into a new company book
+      Given a member's import into a new Acme book is running
+      Then an operator can add someone to Acme, and Olive can change a role, without waiting for it
+
+    @ORG-JOIN-D16
+    Scenario: A switch beside an import into an existing book
+      Given Max's import into his personal book is running
+      When Olive switches automatic joining on
+      Then the switch answers without waiting for it, and Max's book moves into Acme
+
+    @ORG-JOIN-D15
+    Scenario: A workspace beside a join for the same account
+      When Max creates a workspace while his join is in progress
+      Then the workspace waits and lands in Acme
+      When Nia's join starts while her workspace is being created
+      Then the join waits and moves the workspace into Acme
+
+    @ORG-MIG-10
+    Scenario: The retry promise is true whenever it shows
+      Given a migration left a failure on record
+      When the switch is off, the claim is failing, or no seat is free
+      Then the domain list shows the count waiting and no promise of a retry
+      When that changes back
+      Then the failure shows again
+
+    @ORG-MIG-11
+    Scenario: A run that stopped at the seat limit recovers nothing
+      Given a migration left a failure on record
+      When the next run stops at the seat limit without an error
+      Then no recovery is recorded
+      When a seat frees and a run tries everyone without an error
+      Then the recovery is recorded
+
+    @ORG-MIG-12
+    Scenario: A recovered failure stops showing
+      Given a failure was recovered
+      When someone new is waiting on the domain
+      Then the domain list shows the count and no failure
+
     @ORG-MIG-08
     Scenario: A checked, unverified claim joins nobody with the switch on
       Given Ada has added acme.example, the record is missing, and a check has run

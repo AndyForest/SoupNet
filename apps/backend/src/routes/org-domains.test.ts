@@ -28,6 +28,10 @@ let domains: typeof import("../services/org-domains.service");
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 let authz: typeof import("../authz");
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+let workspaces: typeof import("../services/ephemeral-workspace.service");
+// eslint-disable-next-line @typescript-eslint/consistent-type-imports
+let googleSignIn: typeof import("../services/google-sign-in.service");
+// eslint-disable-next-line @typescript-eslint/consistent-type-imports
 let authority: typeof import("../authz/domain-authority");
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 let settings: typeof import("../services/system-settings.service");
@@ -187,6 +191,8 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
   beforeAll(async () => {
     domains = await import("../services/org-domains.service");
     authz = await import("../authz");
+    workspaces = await import("../services/ephemeral-workspace.service");
+    googleSignIn = await import("../services/google-sign-in.service");
     authority = await import("../authz/domain-authority");
     settings = await import("../services/system-settings.service");
     getDb = (await import("../db")).getDb;
@@ -746,8 +752,9 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
   }
 
   /**
-   * A real deadlock on the migration's first join, in an account deletion's
-   * order (F170): the default book's row, then the organization's. Postgres
+   * A real deadlock on the migration's first join (F170): the default book's
+   * row, then the organization's, which is taken here as an account deletion's
+   * hand-over takes it. Postgres
    * aborts whichever backend's check first finds the cycle, and each backend
    * checks once per wait. This transaction's check is pushed out of the test,
    * and the join is held at an earlier lock (its own personal book) until this
@@ -779,7 +786,7 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
       running = start();
       await waitForBlocked(pid);
       const self = await backendPid(tx as never);
-      const asking = tx.execute(sql`SELECT 1 FROM claimnet.organizations WHERE id = ${orgId}::uuid FOR KEY SHARE`);
+      const asking = tx.execute(sql`SELECT 1 FROM claimnet.organizations WHERE id = ${orgId}::uuid FOR UPDATE`);
       for (let i = 0; i < 300; i++) {
         const rows = (await getDb().execute(sql`SELECT wait_event_type AS w FROM pg_stat_activity WHERE pid = ${self}::int`)) as unknown as Array<{ w: string | null }>;
         if (rows[0]?.w === "Lock") break;
@@ -818,8 +825,8 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
 
     const audited = await migrationAudit(orgId);
     expect(audited).toHaveLength(1);
-    expect(audited[0]).toMatchObject({ action: "organization_domain.migration_failed", metadata: { claimId, accounts: 1, joined: 2, errorCodes: ["40P01"] } });
-    expect(audited[0]!.metadata).not.toHaveProperty("userId");
+    // Exactly these fields: no address, account id or error text (F177).
+    expect(audited[0]).toEqual({ action: "organization_domain.migration_failed", metadata: { claimId, domain, accounts: 1, joined: 2, errorCodes: ["40P01"] } });
 
     // It stays visible until a run clears it.
     const listed = ((await (await call(olive, "GET", `/organizations/${orgId}/domains`)).json()) as { data: Json[] }).data[0]!;
@@ -831,7 +838,9 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
     const after = ((await (await call(olive, "GET", `/organizations/${orgId}/domains`)).json()) as { data: Json[] }).data[0]!;
     expect(after["accountsAwaitingJoin"]).toBe(0);
     expect(after).not.toHaveProperty("migrationFailure");
-    expect((await migrationAudit(orgId)).map((r) => r.action)).toEqual(["organization_domain.migration_failed", "organization_domain.migration_recovered"]);
+    const recorded = await migrationAudit(orgId);
+    expect(recorded.map((r) => r.action)).toEqual(["organization_domain.migration_failed", "organization_domain.migration_recovered"]);
+    expect(recorded[1]!.metadata).toEqual({ claimId, domain, joined: 1 });
   });
 
   it("ORG-MIG-06 / OD-X6, F171: a re-check or a join that errors doesn't stop the next claim, and re-checks still run first", async () => {
@@ -971,6 +980,295 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
     });
     expect(await migration).toEqual({ joined: 1, awaitingSeat: 0, failed: 0 });
     expect(await bookOrg(bookId)).toBe(orgId);
+  });
+
+  /** A migration whose first join errors, leaving a failure on record for a test to read. */
+  async function failedMigration(claimId: string): Promise<void> {
+    const real = getDb();
+    let calls = 0;
+    const flaky = new Proxy(real, {
+      get(target, prop) {
+        if (prop === "transaction") {
+          return (...args: Parameters<typeof real.transaction>) => (calls++ === 0 ? Promise.reject(Object.assign(new Error("boom"), { code: "40P01" })) : target.transaction(...args));
+        }
+        const value = Reflect.get(target, prop) as unknown;
+        return typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+      },
+    });
+    expect((await domains.migrateDomainAccounts(flaky, claimId)).failed).toBe(1);
+  }
+
+  async function domainView(manager: Actor, orgId: string): Promise<Json> {
+    return ((await (await call(manager, "GET", `/organizations/${orgId}/domains`)).json()) as { data: Json[] }).data[0]!;
+  }
+
+  it("ORG-MIG-10 / OD-X6, F173: the retry promise shows only while the daily run would retry", async () => {
+    const olive = await actor("olive");
+    const { orgId } = await createOrg(olive);
+    const domain = testDomain();
+    const claimId = (await addDomain(olive, orgId, domain))["id"] as string;
+    expect((await checkNow(olive, orgId, claimId)).status).toBe(200);
+    await actor("max", `test-orgdom-max-${run}-${++n}@${domain}`);
+    await getDb().execute(sql`UPDATE claimnet.organization_domains SET auto_join = true WHERE id = ${claimId}::uuid`);
+    await failedMigration(claimId);
+    expect(await domainView(olive, orgId)).toHaveProperty("migrationFailure");
+
+    // The switch off: the daily run moves nobody, so it promises nothing and clears nothing.
+    await getDb().execute(sql`UPDATE claimnet.organization_domains SET auto_join = false WHERE id = ${claimId}::uuid`);
+    expect(await domainView(olive, orgId)).not.toHaveProperty("migrationFailure");
+    await domains.recheckDomains(getDb(), { lookup: found, organizationId: orgId });
+    await getDb().execute(sql`UPDATE claimnet.organization_domains SET auto_join = true WHERE id = ${claimId}::uuid`);
+    expect(await domainView(olive, orgId)).toHaveProperty("migrationFailure");
+
+    // The claim failing: the same.
+    await getDb().execute(sql`UPDATE claimnet.organization_domains SET failing_since = NOW() WHERE id = ${claimId}::uuid`);
+    expect(await domainView(olive, orgId)).not.toHaveProperty("migrationFailure");
+    await getDb().execute(sql`UPDATE claimnet.organization_domains SET failing_since = NULL WHERE id = ${claimId}::uuid`);
+
+    // No free seat: the manager does need to do something.
+    await getDb().execute(sql`UPDATE claimnet.organizations SET seat_limit = 1 WHERE id = ${orgId}::uuid`);
+    const full = await domainView(olive, orgId);
+    expect(full["accountsAwaitingJoin"]).toBe(1);
+    expect(full).not.toHaveProperty("migrationFailure");
+    await getDb().execute(sql`UPDATE claimnet.organizations SET seat_limit = NULL WHERE id = ${orgId}::uuid`);
+    expect(await domainView(olive, orgId)).toHaveProperty("migrationFailure");
+    expect((await migrationAudit(orgId)).map((r) => r.action)).toEqual(["organization_domain.migration_failed"]);
+  });
+
+  it("ORG-MIG-11 / OD-X6, F173: a run that stopped at the seat limit hasn't recovered anything", async () => {
+    const olive = await actor("olive");
+    const { orgId } = await createOrg(olive, 2);
+    const domain = testDomain();
+    const claimId = (await addDomain(olive, orgId, domain))["id"] as string;
+    expect((await checkNow(olive, orgId, claimId)).status).toBe(200);
+    const people = [];
+    for (let i = 0; i < 2; i++) people.push(await actor(`p${i}`, `test-orgdom-p${i}-${run}-${++n}@${domain}`));
+    await getDb().execute(sql`UPDATE claimnet.organization_domains SET auto_join = true WHERE id = ${claimId}::uuid`);
+    await failedMigration(claimId);
+
+    // The failed run seated the second account, which took the last seat, so
+    // this one stops without an error and never tries the account that failed.
+    expect(await domains.migrateDomainAccounts(getDb(), claimId)).toEqual({ joined: 0, awaitingSeat: 1, failed: 0 });
+    expect((await migrationAudit(orgId)).map((r) => r.action)).toEqual(["organization_domain.migration_failed"]);
+
+    await getDb().execute(sql`UPDATE claimnet.organizations SET seat_limit = NULL WHERE id = ${orgId}::uuid`);
+    expect(await domainView(olive, orgId)).toHaveProperty("migrationFailure");
+    expect(await domains.migrateDomainAccounts(getDb(), claimId)).toEqual({ joined: 1, awaitingSeat: 0, failed: 0 });
+    expect((await migrationAudit(orgId)).map((r) => r.action)).toEqual(["organization_domain.migration_failed", "organization_domain.migration_recovered"]);
+  });
+
+  it("ORG-MIG-12 / OD-X6, F177: a recovered failure stops showing while someone else is waiting", async () => {
+    const olive = await actor("olive");
+    const { orgId } = await createOrg(olive);
+    const domain = testDomain();
+    const claimId = (await addDomain(olive, orgId, domain))["id"] as string;
+    expect((await checkNow(olive, orgId, claimId)).status).toBe(200);
+    await actor("max", `test-orgdom-max-${run}-${++n}@${domain}`);
+    await getDb().execute(sql`UPDATE claimnet.organization_domains SET auto_join = true WHERE id = ${claimId}::uuid`);
+    await failedMigration(claimId);
+    expect(await domains.migrateDomainAccounts(getDb(), claimId)).toEqual({ joined: 1, awaitingSeat: 0, failed: 0 });
+
+    // Someone new is waiting, so the count alone can't hide the failure.
+    await getDb().execute(sql`UPDATE claimnet.organization_domains SET auto_join = false WHERE id = ${claimId}::uuid`);
+    await actor("nia", `test-orgdom-nia-${run}-${++n}@${domain}`);
+    await getDb().execute(sql`UPDATE claimnet.organization_domains SET auto_join = true WHERE id = ${claimId}::uuid`);
+    const view = await domainView(olive, orgId);
+    expect(view["accountsAwaitingJoin"]).toBe(1);
+    expect(view).not.toHaveProperty("migrationFailure");
+  });
+
+  /** A one-recipe export whose recipe and evidence an import will try to create. */
+  function exportFile(evidenceId = crypto.randomUUID()): string {
+    const now = new Date().toISOString();
+    const id = crypto.randomUUID();
+    const keyId = crypto.randomUUID();
+    const groupId = crypto.randomUUID();
+    return JSON.stringify({
+      schemaVersion: 1,
+      traces: [{ id, groupId, apiKeyId: keyId, claimText: `As a person moving a corpus (${id.slice(0, 8)}), I prefer an import that lands where my books live so that nothing is left behind.`, claimTextHash: null, formatAdherenceScore: 0.8, decidedAt: null, createdAt: now, updatedAt: now }],
+      evidence: [{ id: evidenceId, content: "Imported with the account's other books.", createdAt: now, updatedAt: now }],
+      references: [],
+      traceEvidence: [{ id: crypto.randomUUID(), traceId: id, evidenceId, stance: "for", apiKeyId: keyId, createdAt: now }],
+      traceReferences: [],
+      evidenceReferences: [],
+      groupMemberships: [],
+    });
+  }
+
+  function postImport(who: Actor, file: string, query = ""): Promise<Response> {
+    return fetch(`${BASE}/import${query}`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${who.jwt}` }, body: file });
+  }
+
+  /**
+   * Run `during` while `who`'s import is open: its book and recipes are written
+   * and it is stopped at its evidence, on a row this transaction holds with the
+   * same id. Rolling back lets it finish.
+   */
+  async function whileImportRuns<T>(who: Actor, query: string, during: () => Promise<T>): Promise<{ result: T; status: number; book: { id: string; slug: string; created: boolean } }> {
+    const evidenceId = crypto.randomUUID();
+    const rollback = new Error("let the import finish");
+    let response!: Promise<Response>;
+    let result!: T;
+    await getDb().transaction(async (tx) => {
+      await tx.execute(sql`INSERT INTO claimnet.evidence (id, content) VALUES (${evidenceId}::uuid, 'held')`);
+      response = postImport(who, exportFile(evidenceId), query);
+      await waitForBlocked(await backendPid(tx as never));
+      result = await during();
+      throw rollback;
+    }).catch((err: unknown) => {
+      if (err !== rollback) throw err;
+    });
+    const res = await response;
+    const body = (await res.json()) as { data?: { book: { id: string; slug: string; created: boolean } } };
+    return { result, status: res.status, book: body.data!.book };
+  }
+
+  /** Fails the test if the action is still waiting well after it should have answered. */
+  async function promptly<T>(what: string, action: Promise<T>): Promise<T> {
+    let timer!: ReturnType<typeof setTimeout>;
+    const late = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`${what} waited on the import`)), 8000); });
+    try {
+      return await Promise.race([action, late]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async function bookRow(bookId: string): Promise<{ organization_id: string; slug: string }> {
+    return ((await getDb().execute(sql`SELECT organization_id, slug FROM claimnet.groups WHERE id = ${bookId}::uuid`)) as unknown as Array<{ organization_id: string; slug: string }>)[0]!;
+  }
+
+  it("ORG-JOIN-D12 / OD-X8, F174: nothing waits on an import into a new book, and a join during it still brings the book along", async () => {
+    const olive = await actor("olive");
+    const { orgId } = await createOrg(olive);
+    const domain = testDomain();
+    const claimId = (await addDomain(olive, orgId, domain))["id"] as string;
+    expect((await checkNow(olive, orgId, claimId)).status).toBe(200);
+    const max = await actor("max", `test-orgdom-max-${run}-${++n}@${domain}`);
+    const nia = await actor("nia", `test-orgdom-nia-${run}-${++n}@${domain}`);
+
+    const { status, book, result } = await whileImportRuns(max, "", async () => {
+      expect((await promptly("a password sign-in", fetch(`${BASE}/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: max.email, password: PASSWORD }) }))).status).toBe(200);
+      expect((await promptly("a reset request", call(null, "POST", "/auth/forgot-password", { email: max.email }))).status).toBe(200);
+      expect((await promptly("a suspension", call(sys, "POST", `/admin/users/${max.userId}/suspend`, {}))).status).toBe(200);
+      expect((await promptly("an unsuspension", call(sys, "POST", `/admin/users/${max.userId}/unsuspend`, {}))).status).toBe(200);
+      await promptly("a Google sign-in", googleSignIn.resolveAccount(getDb(), { issuer: "https://accounts.google.com", subject: `sub-${run}-${++n}`, email: max.email, emailVerified: true, hostedDomain: null, name: null }, (async () => "none") as never));
+      // The importer is first in line for the migration.
+      const on = await promptly("the manager's switch", setAutoJoin(olive, orgId, claimId, true));
+      expect(on.status).toBe(200);
+      return ((await on.json()) as { data: Json }).data["migration"];
+    });
+    expect(result).toEqual({ joined: 2, awaitingSeat: 0, failed: 0 });
+    expect((await orgOf(nia.userId))?.organization_id).toBe(orgId);
+
+    // The join couldn't see the import's book; the import moved it as it finished.
+    expect(status).toBe(200);
+    expect(book.created).toBe(true);
+    expect(await bookRow(book.id)).toEqual({ organization_id: orgId, slug: book.slug });
+    const moved = (await getDb().execute(sql`
+      SELECT 1 FROM claimnet.audit_log WHERE action = 'recipe_book.moved_into_organization' AND target_id = ${book.id}::uuid
+    `)) as unknown as unknown[];
+    expect(moved).toHaveLength(1);
+  });
+
+  it("ORG-JOIN-D13 / OD-X8, F174: an import finishing during a join waits for it, and its book lands in the company", async () => {
+    const olive = await actor("olive");
+    const { orgId } = await createOrg(olive);
+    const domain = testDomain();
+    const claimId = (await addDomain(olive, orgId, domain))["id"] as string;
+    expect((await checkNow(olive, orgId, claimId)).status).toBe(200);
+    const max = await actor("max", `test-orgdom-max-${run}-${++n}@${domain}`);
+    await getDb().execute(sql`UPDATE claimnet.organization_domains SET auto_join = true WHERE id = ${claimId}::uuid`);
+
+    let imported!: Promise<Response>;
+    await getDb().transaction(async (tx) => {
+      const join = await authz.joinOrganizationInTx(tx, { organizationId: orgId, userId: max.userId, role: "member", via: "migrated", authority: { kind: "domain", domain } });
+      expect(join.ok).toBe(true);
+      imported = postImport(max, exportFile());
+      await waitForBlocked(await backendPid(tx as never));
+    });
+    const res = await imported;
+    expect(res.status).toBe(200);
+    const { book } = ((await res.json()) as { data: { book: { id: string; slug: string } } }).data;
+    expect(await bookRow(book.id)).toEqual({ organization_id: orgId, slug: book.slug });
+  });
+
+  it("ORG-JOIN-D14 / OD-X9, F174: a member importing into a new company book holds up nobody else's join or role change", async () => {
+    const olive = await actor("olive");
+    const { orgId } = await createOrg(olive);
+    const member = await actor("member");
+    await addToOrg(orgId, member);
+    const other = await actor("other");
+    await addToOrg(orgId, other);
+    const newcomer = await actor("newcomer");
+
+    const { status, book } = await whileImportRuns(member, "", async () => {
+      expect((await promptly("an operator's add", call(sys, "POST", `/admin/organizations/${orgId}/members`, { email: newcomer.email, role: "member" }))).status).toBe(201);
+      expect((await promptly("a role change", call(olive, "PATCH", `/organizations/${orgId}/members/${other.userId}`, { role: "admin" }))).status).toBe(200);
+    });
+    expect(status).toBe(200);
+    expect((await bookRow(book.id)).organization_id).toBe(orgId);
+  });
+
+  it("ORG-JOIN-D16 / OD-X9, F174: an import into an account's existing book holds nothing, so the join moves the book during it", async () => {
+    const olive = await actor("olive");
+    const { orgId } = await createOrg(olive);
+    const domain = testDomain();
+    const claimId = (await addDomain(olive, orgId, domain))["id"] as string;
+    expect((await checkNow(olive, orgId, claimId)).status).toBe(200);
+    const max = await actor("max", `test-orgdom-max-${run}-${++n}@${domain}`);
+
+    const { status, book, result } = await whileImportRuns(max, `?book=${max.personalBookId}`, async () => {
+      const on = await promptly("the manager's switch", setAutoJoin(olive, orgId, claimId, true));
+      expect(on.status).toBe(200);
+      return ((await on.json()) as { data: Json }).data["migration"];
+    });
+    expect(result).toEqual({ joined: 1, awaitingSeat: 0, failed: 0 });
+    expect(status).toBe(200);
+    expect(book.id).toBe(max.personalBookId);
+    expect((await bookRow(book.id)).organization_id).toBe(orgId);
+  });
+
+  it("ORG-JOIN-D15 / OD-X8, F177: a workspace and a join for the same account wait for each other, so the workspace is never left behind", async () => {
+    const olive = await actor("olive");
+    const { orgId } = await createOrg(olive);
+    const domain = testDomain();
+    const claimId = (await addDomain(olive, orgId, domain))["id"] as string;
+    expect((await checkNow(olive, orgId, claimId)).status).toBe(200);
+    await getDb().execute(sql`UPDATE claimnet.organization_domains SET auto_join = true WHERE id = ${claimId}::uuid`);
+    const keyOf = async (who: Actor): Promise<string> => {
+      const made = await call(who, "POST", "/keys/scoped", { readRecipeBookIds: [who.personalBookId], writeRecipeBookIds: [who.personalBookId], defaultWriteRecipeBookId: who.personalBookId, expiresAt: new Date(Date.now() + 864e5).toISOString() });
+      expect(made.status).toBe(200);
+      return ((await getDb().execute(sql`SELECT id FROM claimnet.api_keys WHERE user_id = ${who.userId}::uuid ORDER BY created_at DESC LIMIT 1`)) as unknown as Array<{ id: string }>)[0]!.id;
+    };
+
+    // A join in progress, then the workspace: it waits, and lands in the company.
+    const max = await actor("max", `test-orgdom-max-${run}-${++n}@${domain}`);
+    const maxKey = await keyOf(max);
+    let during!: ReturnType<typeof workspaces.createEphemeralWorkspace>;
+    await getDb().transaction(async (tx) => {
+      const join = await authz.joinOrganizationInTx(tx, { organizationId: orgId, userId: max.userId, role: "member", via: "migrated", authority: { kind: "domain", domain } });
+      expect(join.ok).toBe(true);
+      during = workspaces.createEphemeralWorkspace({ db: getDb(), keyId: maxKey, userId: max.userId });
+      await waitForBlocked(await backendPid(tx as never));
+    });
+    expect((await bookRow((await during).recipeBookId)).organization_id).toBe(orgId);
+
+    // A workspace in progress, stopped at its key's row, then the join: the join waits, and moves it.
+    const nia = await actor("nia", `test-orgdom-nia-${run}-${++n}@${domain}`);
+    const niaKey = await keyOf(nia);
+    let before!: ReturnType<typeof workspaces.createEphemeralWorkspace>;
+    let migration!: ReturnType<typeof domains.migrateDomainAccounts>;
+    await getDb().transaction(async (tx) => {
+      await tx.execute(sql`SELECT 1 FROM claimnet.api_keys WHERE id = ${niaKey}::uuid FOR UPDATE`);
+      const pid = await backendPid(tx as never);
+      before = workspaces.createEphemeralWorkspace({ db: getDb(), keyId: niaKey, userId: nia.userId });
+      await waitForBlocked(pid, 1);
+      migration = domains.migrateDomainAccounts(getDb(), claimId);
+      await waitForBlocked(pid, 2);
+    });
+    expect((await migration).joined).toBe(1);
+    expect((await bookRow((await before).recipeBookId)).organization_id).toBe(orgId);
   });
 
   it("ORG-MIG-08 / OD-X2, F172: a claim that was checked but never verified joins nobody, with the switch on", async () => {
