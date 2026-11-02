@@ -37,12 +37,13 @@ import {
   domainFailingEmail,
   domainLapsedEmail,
   domainMigrationRetryMessage,
+  hasFreeSeat,
   DOMAIN_RECHECK_HOURS,
   DOMAIN_GRACE_DAYS,
   DOMAIN_CHALLENGE_TTL_DAYS,
 } from "@soupnet/domain";
 import type { DomainClaimState, DomainClaimStatus, DomainCheckEvent, DomainRefusal } from "@soupnet/domain";
-import { accountIsManaged, domainVerifiedFor, joinOrganizationInTx, orgMembersOf } from "../authz";
+import { accountIsManaged, domainVerifiedFor, joinOrganizationInTx, orgMemberCount, orgMembersOf } from "../authz";
 import type { JoinResult } from "../authz";
 import { checkDomainRecord, type TxtLookup } from "../lib/dns-txt";
 import { sendJoinNotice } from "./organization.service";
@@ -336,7 +337,24 @@ export async function setAutoJoin(
 async function listDomainView(db: SqlExecutor, row: ClaimRow, now: Date): Promise<DomainClaimView> {
   if (row.verified_at === null) return viewOf(row, now, null);
   const awaiting = (await eligibleAccounts(db, row.domain, Number.MAX_SAFE_INTEGER)).length;
-  return viewOf(row, now, awaiting, awaiting > 0 ? await openMigrationFailure(db, row) : null);
+  const failure = awaiting > 0 && (await dailyRunWouldRetry(db, row)) ? await openMigrationFailure(db, row) : null;
+  return viewOf(row, now, awaiting, failure);
+}
+
+/**
+ * Is "we try again, you don't need to do anything" true of this claim now (F173)?
+ * Only when the daily run would migrate on it, the same check its joins make,
+ * and a seat is free for the run to use. Otherwise the failure stays on record
+ * and shows again once it is true.
+ */
+async function dailyRunWouldRetry(db: SqlExecutor, row: Pick<ClaimRow, "organization_id" | "domain">): Promise<boolean> {
+  const rows = (await db.execute(sql`
+    SELECT ${domainVerifiedFor(row.organization_id, row.domain)} AS captured, o.seat_limit,
+           ${orgMemberCount(sql`o.id`, { activeOnly: true })} AS active
+    FROM claimnet.organizations o WHERE o.id = ${row.organization_id}::uuid
+  `)) as unknown as Array<{ captured: boolean; seat_limit: number | null; active: number }>;
+  const org = rows[0];
+  return !!org && org.captured && hasFreeSeat(org.seat_limit, org.active);
 }
 
 /** Remove a claim (OD-A3). Joining stops at once; no member is touched. */
@@ -516,12 +534,15 @@ export async function recheckDomains(
  * beside an account deletion for one (F170), is counted and the run moves on;
  * an error outside any one join ends the run, marked `stopped`. Either writes a
  * `migration_failed` audit row, which is what the domain list reads to explain
- * the accounts still waiting. The daily job is the retry, and its first clean
- * run writes `migration_recovered`.
+ * the accounts still waiting. The daily job is the retry, and the first run that
+ * tries everyone waiting without an error writes `migration_recovered` (F173): a
+ * run that stopped at the seat limit or the batch size may never have reached
+ * the account that failed.
  */
 export async function migrateDomainAccounts(db: PostgresJsDatabase, claimId: string, batch = MIGRATION_BATCH): Promise<MigrationSummary> {
   const summary: MigrationSummary = { joined: 0, awaitingSeat: 0, failed: 0 };
   const errorCodes = new Set<string>();
+  let triedEveryone = true;
   const failedWith = (err: unknown, what: string): void => {
     const code = pgErrorCode(err) ?? "no code";
     errorCodes.add(code);
@@ -540,7 +561,10 @@ export async function migrateDomainAccounts(db: PostgresJsDatabase, claimId: str
 
     const accounts = await eligibleAccounts(db, found.domain, Number.MAX_SAFE_INTEGER);
     for (const [i, account] of accounts.entries()) {
-      if (i >= batch) break;
+      if (i >= batch) {
+        triedEveryone = false;
+        break;
+      }
       let result: JoinResult;
       try {
         result = await db.transaction(async (tx) => {
@@ -567,8 +591,10 @@ export async function migrateDomainAccounts(db: PostgresJsDatabase, claimId: str
         sendJoinNotice(result);
       } else if (result.refusal === "organization_full") {
         summary.awaitingSeat = accounts.length - summary.joined - summary.failed;
+        triedEveryone = false;
         break;
       } else if (result.refusal === "not_authorized") {
+        triedEveryone = false;
         break;
       }
     }
@@ -576,12 +602,12 @@ export async function migrateDomainAccounts(db: PostgresJsDatabase, claimId: str
     summary.stopped = true;
     failedWith(err, "the run");
   }
-  if (claim) await recordMigrationOutcome(db, claim, summary, [...errorCodes]);
+  if (claim) await recordMigrationOutcome(db, claim, summary, [...errorCodes], triedEveryone);
   return summary;
 }
 
-/** The record of a failed run, and of the first clean one after it. A failure here is only logged: the run's counts still go back to the caller. */
-async function recordMigrationOutcome(db: PostgresJsDatabase, claim: ClaimRow, summary: MigrationSummary, errorCodes: string[]): Promise<void> {
+/** The record of a failed run, and of the first clean one after it that tried everyone. A failure here is only logged: the run's counts still go back to the caller. */
+async function recordMigrationOutcome(db: PostgresJsDatabase, claim: ClaimRow, summary: MigrationSummary, errorCodes: string[], triedEveryone: boolean): Promise<void> {
   try {
     if (summary.failed > 0 || summary.stopped) {
       await audit(db, null, DOMAIN_AUDIT_ACTIONS.migration_failed, claim, {
@@ -590,7 +616,7 @@ async function recordMigrationOutcome(db: PostgresJsDatabase, claim: ClaimRow, s
         ...(summary.stopped ? { stopped: true } : {}),
         errorCodes,
       });
-    } else if (await openMigrationFailure(db, claim)) {
+    } else if (triedEveryone && (await openMigrationFailure(db, claim))) {
       await audit(db, null, DOMAIN_AUDIT_ACTIONS.migration_recovered, claim, { joined: summary.joined });
     }
   } catch (err) {

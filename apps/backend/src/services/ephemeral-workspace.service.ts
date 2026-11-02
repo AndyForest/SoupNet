@@ -125,7 +125,8 @@ export async function createEphemeralWorkspace(
     // organization when it is managed, else the pinned personal org, falling
     // back to the oldest owned org for a user whose pointer was never
     // backfilled), the same resolver new books and imports use. Under the
-    // account's lock, so a join can't leave the workspace behind (F169).
+    // account's lock, so a join can't leave the workspace behind (F169): this
+    // transaction is a fixed handful of single-row writes, so the hold is short.
     await holdAccountForNewBook(tx, userId);
     const orgId = await homeOrganizationOf(tx, userId);
     if (!orgId) {

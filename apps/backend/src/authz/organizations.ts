@@ -170,13 +170,39 @@ export async function homeOrganizationOf(db: SqlExecutor, userId: string): Promi
 }
 
 /**
- * Call first in the transaction that creates someone's new recipe book, before
- * reading their home organization. It waits for a join in progress, so the book
- * lands in the company, and a join waits for it, so the join's move finds the
- * book. Neither can leave a book behind in the personal organization (F169).
+ * Call first in a short transaction that creates someone's new recipe book,
+ * before reading their home organization. It waits for a join in progress, so
+ * the book lands in the company, and a join waits for it, so the join's move
+ * finds the book. Neither can leave a book behind in the personal organization
+ * (F169). Sign-ins, resets and suspensions wait on this lock, so a transaction
+ * whose length depends on its input uses `settleNewBookInHome` instead (F174).
  */
 export async function holdAccountForNewBook(tx: SqlExecutor, userId: string): Promise<void> {
   await tx.execute(sql`SELECT 1 FROM claimnet.users WHERE id = ${userId}::uuid FOR SHARE`);
+}
+
+/**
+ * The last step before commit of a long transaction that created this book
+ * (F174): an import holds nothing of the account's while it runs, then comes
+ * here. A join that finished while it ran couldn't see the uncommitted book, so
+ * the book moves now, the way the join would have moved it. One in progress is
+ * waited for, and one that starts after this lock waits for the commit and finds
+ * the book itself. Returns the book's slug, which a move can change.
+ */
+export async function settleNewBookInHome(tx: SqlExecutor, userId: string, bookId: string): Promise<string> {
+  await holdAccountForNewBook(tx, userId);
+  const rows = (await tx.execute(sql`
+    SELECT u.email, u.personal_organization_id, g.organization_id, g.slug
+    FROM claimnet.users u, claimnet.groups g
+    WHERE u.id = ${userId}::uuid AND g.id = ${bookId}::uuid
+  `)) as unknown as Array<{ email: string; personal_organization_id: string | null; organization_id: string; slug: string }>;
+  const row = rows[0];
+  if (!row) throw new Error("settleNewBookInHome: no such account or book");
+  const home = await homeOrganizationOf(tx, userId);
+  if (!home || home === row.organization_id || row.organization_id !== row.personal_organization_id) return row.slug;
+  await moveOwnBooksInto(tx, userId, row, home);
+  const moved = (await tx.execute(sql`SELECT slug FROM claimnet.groups WHERE id = ${bookId}::uuid`)) as unknown as Array<{ slug: string }>;
+  return moved[0]?.slug ?? row.slug;
 }
 
 /**
@@ -278,11 +304,13 @@ export async function joinOrganizationInTx(tx: SqlExecutor, input: JoinInput): P
   const account = (userRows as unknown as Array<{ email: string; personal_organization_id: string | null }>)[0];
 
   // The organization row lock serializes joins and re-enables, so two of them
-  // racing for the last seat can't both see it free.
+  // racing for the last seat can't both see it free. NO KEY UPDATE, so a book
+  // being created in the organization, whose foreign key checks this row for as
+  // long as its transaction runs, doesn't hold up everyone's joins (F174).
   const orgRows = await tx.execute(sql`
     SELECT id, name, seat_limit FROM claimnet.organizations
     WHERE id = ${organizationId}::uuid AND NOT is_personal
-    FOR UPDATE
+    FOR NO KEY UPDATE
   `);
   const org = (orgRows as unknown as Array<{ id: string; name: string; seat_limit: number | null }>)[0];
   if (!org) return { ok: false, refusal: "organization_not_found" };
@@ -564,7 +592,7 @@ export async function actOnMember(db: PostgresJsDatabase, input: MemberActionInp
   const { organizationId, actorUserId, targetUserId, action } = input;
   return db.transaction(async (tx) => {
     const orgRows = await tx.execute(sql`
-      SELECT seat_limit FROM claimnet.organizations WHERE id = ${organizationId}::uuid AND NOT is_personal FOR UPDATE
+      SELECT seat_limit FROM claimnet.organizations WHERE id = ${organizationId}::uuid AND NOT is_personal FOR NO KEY UPDATE
     `);
     const org = (orgRows as unknown as Array<{ seat_limit: number | null }>)[0];
     if (!org) return "not_found";

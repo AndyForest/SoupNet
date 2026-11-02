@@ -68,7 +68,7 @@ import {
   embeddingVectors as embeddingVectorsTable,
 } from "@soupnet/db";
 import { getEmbeddingModelId } from "../lib/embeddings/provider";
-import { normalizeOnBehalfOf, resolveNameableSubject, onBehalfSubjectOf, holdAccountForNewBook, homeOrganizationOf } from "../authz";
+import { normalizeOnBehalfOf, resolveNameableSubject, onBehalfSubjectOf, homeOrganizationOf, settleNewBookInHome } from "../authz";
 import { ownedIntentIds } from "./intent.service";
 import { onBehalfRefusal } from "@soupnet/domain";
 import type {
@@ -614,6 +614,11 @@ export async function importCorpus(
         })
       : 0;
 
+    // ── 8. A new book's home, last: this takes the account's lock, and a file
+    // can keep this transaction open for minutes (F174). Nothing but the commit
+    // may follow it.
+    if (dest?.created) dest = { ...dest, slug: await settleNewBookInHome(tx, userId, dest.id) };
+
     return {
       dest,
       traceCounts: {
@@ -704,8 +709,8 @@ async function createImportBook(
 ): Promise<{ id: string; name: string; slug: string; created: boolean }> {
   // The account's home organization: its company organization when it is
   // managed, else its personal one (the resolver new books and workspaces use).
-  // Under the account's lock, so a join can't leave the book behind (F169).
-  await holdAccountForNewBook(db, userId);
+  // A join can still happen while the import runs; the import's last step,
+  // settleNewBookInHome, moves the book if one did.
   const homeId = await homeOrganizationOf(db, userId);
   const org = homeId ? { id: homeId } : undefined;
   if (!org) {
