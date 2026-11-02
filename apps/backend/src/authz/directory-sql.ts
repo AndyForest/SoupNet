@@ -43,11 +43,16 @@ import { domainClaimCurrentAt } from "./domain-authority";
 export function checkedUnder(): SQL {
   return sql`(dc.organization_id = om.organization_id
     AND ${domainClaimCurrentAt(sql`dc.organization_id`, sql`dc.domain`)}
-    AND (lower(substring(du.email from '@([^@]+)$')) IN (dc.domain, dc.domain_unicode)
+    AND ${onDomain(sql`dc.domain`, sql`dc.domain_unicode`)})`;
+}
+
+/** Is the member in `om` (`du`, their users row) on exactly this domain, by address or linked identity? */
+export function onDomain(domain: SQL, domainUnicode: SQL): SQL {
+  return sql`(lower(substring(du.email from '@([^@]+)$')) IN (${domain}, ${domainUnicode})
       OR EXISTS (
         SELECT 1 FROM claimnet.user_identities di
-        WHERE di.user_id = om.user_id AND di.provider = 'google' AND lower(di.hosted_domain) IN (dc.domain, dc.domain_unicode)
-      )))`;
+        WHERE di.user_id = om.user_id AND di.provider = 'google' AND lower(di.hosted_domain) IN (${domain}, ${domainUnicode})
+      ))`;
 }
 
 function whenChecked(condition: SQL): SQL {

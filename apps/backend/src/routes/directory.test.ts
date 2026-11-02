@@ -839,6 +839,97 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     expect(p99(withCheck)).toBeLessThan(2_500);
   });
 
+  /** Mail about the connection changing reaches a manager after the request: wait for it. */
+  async function changeMailsTo(email: string, subjectPart: string, wanted: number): Promise<number> {
+    let sent = 0;
+    for (let i = 0; i < 30; i++) {
+      const rows = (await getDb().execute(sql`
+        SELECT count(*)::int AS n FROM claimnet.email_log WHERE kind = 'organization_directory' AND to_email = ${email} AND subject LIKE ${`%${subjectPart}%`}
+      `)) as unknown as Array<{ n: number }>;
+      sent = rows[0]!.n;
+      if (sent >= wanted) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return sent;
+  }
+
+  const stillConnected = async (org: Org) => ((await (await call(org.olive.token, "GET", `/organizations/${org.orgId}/directory`)).json()) as { data: Json }).data["connected"];
+
+  it("OFF-CON-06 / F185: an admin suspended in Google, inside their hour, can't disconnect or replace the directory", async () => {
+    const org = await acme();
+    const ann = await adminMember(org, "ann-gone");
+    const victim = await member(org, "held-off");
+    await google.setDirectoryUser(victim.email, { suspended: true });
+    expect((await useKey(victim.key)).status).toBe(401);
+    // Her status was just recorded active, so nothing else would ask for an hour.
+    expect((await useKey(ann.key)).status).toBe(200);
+    expect((await memberRow(ann.userId)).directory_status).toBe("active");
+    await google.setDirectoryUser(ann.email, { suspended: true });
+
+    const res = await call(ann.token, "DELETE", `/organizations/${org.orgId}/directory`);
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error: string }).error).toBe("directory_inactive");
+    expect(await stillConnected(org)).toBe(true);
+    expect((await useKey(victim.key)).status).toBe(401);
+    expect((await memberRow(ann.userId)).directory_status).toBe("suspended");
+    expect(await auditRows("organization.directory_disconnected", org.orgId)).toEqual([]);
+
+    // A key in hand doesn't get round it, and a paused claim doesn't either.
+    const bea = await adminMember(org, "bea-gone");
+    expect((await useKey(bea.key)).status).toBe(200);
+    await google.setDirectoryUser(bea.email, { suspended: true });
+    const replacing = await call(bea.token, "PUT", `/organizations/${org.orgId}/directory/service-account`, { key: org.serviceAccount.key, adminEmail: org.olive.email });
+    expect(replacing.status).toBe(403);
+    expect((await memberRow(victim.userId)).directory_status).toBe("suspended");
+
+    const cam = await adminMember(org, "cam-gone");
+    expect((await useKey(cam.key)).status).toBe(200);
+    await google.setDirectoryUser(cam.email, { suspended: true });
+    await setClaim(org.orgId, "failing");
+    expect((await call(cam.token, "DELETE", `/organizations/${org.orgId}/directory`)).status).toBe(403);
+    expect(await stillConnected(org)).toBe(true);
+  });
+
+  it("OFF-CON-07 / F185: when the directory can't answer, a disconnect waits for six hours without a success; the other managers are told", async () => {
+    const org = await acme();
+    const ann = await adminMember(org, "ann-stuck");
+    const victim = await member(org, "off-stuck");
+    await google.setDirectoryUser(victim.email, { suspended: true });
+    expect((await useKey(victim.key)).status).toBe(401);
+    await google.setDirectoryUser(ann.email, { httpStatus: 503 });
+
+    const held = await call(ann.token, "DELETE", `/organizations/${org.orgId}/directory`);
+    expect(held.status).toBe(409);
+    const body = (await held.json()) as { error: string; message: string };
+    expect(body.error).toBe("directory_disconnect_held");
+    expect(body.message).toContain("reconnect");
+    expect(await stillConnected(org)).toBe(true);
+
+    await getDb().execute(sql`UPDATE claimnet.organization_directory_connections SET last_success_at = NOW() - interval '7 hours' WHERE organization_id = ${org.orgId}::uuid`);
+    expect((await call(ann.token, "DELETE", `/organizations/${org.orgId}/directory`)).status).toBe(200);
+    expect(await stillConnected(org)).toBe(false);
+    expect(await changeMailsTo(org.olive.email, "was disconnected", 1)).toBe(1);
+    expect(await changeMailsTo(ann.email, "was disconnected", 1)).toBe(0);
+  });
+
+  it("F185: a manager on another address has no directory to answer to; replacing a connection that lifted refusals tells the others", async () => {
+    const org = await acme();
+    const ann = await adminMember(org, "ann-told");
+    const off = await member(org, "off-told");
+    await google.setDirectoryUser(off.email, { archived: true });
+    expect((await useKey(off.key)).status).toBe(401);
+    const again = await call(org.olive.token, "PUT", `/organizations/${org.orgId}/directory/service-account`, { key: org.serviceAccount.key, adminEmail: org.olive.email });
+    expect(again.status).toBe(200);
+    expect(await changeMailsTo(ann.email, "was replaced", 1)).toBe(1);
+    expect(await changeMailsTo(org.olive.email, "was replaced", 1)).toBe(0);
+
+    const rae = await member(org, "rae-admin", `consultancy-${run}.test`);
+    expect((await call(org.olive.token, "PATCH", `/organizations/${org.orgId}/members/${rae.userId}`, { role: "admin" })).status).toBe(200);
+    expect((await call(rae.token, "DELETE", `/organizations/${org.orgId}/directory`)).status).toBe(200);
+    expect(await requestsFor(rae.email)).toBe(0);
+    expect(await changeMailsTo(ann.email, "was disconnected", 1)).toBe(1);
+  });
+
   it("OFF-DIR-10 / OB-C10: disconnecting stops the checks and lifts the directory's refusals", async () => {
     const org = await acme();
     const max = await member(org, "freed");
@@ -875,6 +966,8 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     expect((await useKey(max.key)).status).toBe(200);
     expect((await memberRow(max.userId)).directory_status).toBeNull();
     expect(await auditRows("organization.directory_disconnected", org.orgId)).toEqual([{ by: "operator", cleared: { suspended: 1, archived: 0, deleted: 0 } }]);
+    // F185: the company is told, the owner included, since the operator isn't one of its managers.
+    expect(await changeMailsTo(org.olive.email, "was disconnected", 1)).toBe(1);
   });
 
   it("OB-K5: in process, with DIRECTORY_CREDENTIALS_KEY unset, the routes answer 503 directory_not_configured and no checker is installed", async () => {

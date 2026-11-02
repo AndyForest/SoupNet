@@ -8,6 +8,7 @@ import {
   DIRECTORY_UNCONFIRMED_MESSAGE,
   parseServiceAccountKey,
   directoryWarningEmail,
+  directoryChangedEmail,
 } from "./directory";
 
 describe("classifyDirectoryAnswer (OB-M3)", () => {
@@ -117,6 +118,20 @@ describe("parseServiceAccountKey (OB-K3)", () => {
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.message).not.toContain("BEGIN");
     }
+  });
+});
+
+describe("directoryChangedEmail (F185)", () => {
+  it("says who did what, and how many it let back in", () => {
+    const gone = directoryChangedEmail("Acme", "disconnected", "ann@acme.example", 2);
+    expect(gone.subject).toBe("Acme's Google Workspace directory was disconnected from Soup.net");
+    expect(gone.text).toContain("ann@acme.example disconnected Acme's Google Workspace directory");
+    expect(gone.text).toContain("2 people the directory had switched off can use Soup.net again.");
+    expect(directoryChangedEmail("Acme", "disconnected", "ann@acme.example", 1).text).toContain("1 person the directory had switched off");
+    expect(directoryChangedEmail("Acme", "disconnected", "ann@acme.example", 0).text).not.toContain("switched off");
+    const replaced = directoryChangedEmail("Acme", "replaced", "ann@acme.example", 1);
+    expect(replaced.subject).toBe("Acme's Google Workspace directory connection was replaced");
+    expect(replaced.text).toContain("can use Soup.net again until their next check.");
   });
 });
 

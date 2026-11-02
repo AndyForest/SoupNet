@@ -32,7 +32,7 @@ import { DIRECTORY_WARNING_HOURS, directoryStatusRefuses } from "@soupnet/domain
 import type { DirectoryAnswer, DirectoryStatus } from "@soupnet/domain";
 import { open, seal } from "../lib/secret-box";
 import type { SealedSecret } from "../lib/secret-box";
-import { checkedUnder, directoryCheckDue, directoryInactive } from "./directory-sql";
+import { checkedUnder, directoryCheckDue, directoryInactive, onDomain } from "./directory-sql";
 import { domainClaimCurrentAt } from "./domain-authority";
 
 type SqlExecutor = Pick<PostgresJsDatabase, "execute">;
@@ -101,6 +101,10 @@ interface ClaimedRow {
   key_version: number;
 }
 
+const CLAIMED_COLUMNS = sql`om.id AS member_id, om.organization_id, om.directory_status AS previous_status, du.email,
+      (SELECT i.subject FROM claimnet.user_identities i WHERE i.user_id = du.id AND i.provider = 'google') AS google_subject,
+      dc.kind, dc.admin_email, dc.credential_ciphertext, dc.credential_iv, dc.credential_tag, dc.key_version`;
+
 async function runCheck(db: PostgresJsDatabase, userId: string): Promise<boolean> {
   const current = installed;
   if (!current) return false;
@@ -110,19 +114,55 @@ async function runCheck(db: PostgresJsDatabase, userId: string): Promise<boolean
     FROM claimnet.organization_directory_connections dc, claimnet.users du
     WHERE om.user_id = ${userId}::uuid AND du.id = om.user_id
       AND ${checkedUnder()} AND ${directoryCheckDue()}
-    RETURNING om.id AS member_id, om.organization_id, om.directory_status AS previous_status, du.email,
-      (SELECT i.subject FROM claimnet.user_identities i WHERE i.user_id = du.id AND i.provider = 'google') AS google_subject,
-      dc.kind, dc.admin_email, dc.credential_ciphertext, dc.credential_iv, dc.credential_tag, dc.key_version
+    RETURNING ${CLAIMED_COLUMNS}
   `)) as unknown as ClaimedRow[];
   const row = claimed[0];
   if (!row) return false;
+  return (await askAndRecord(db, current, userId, row)) !== null;
+}
 
+/**
+ * What the directory says about someone about to end the connection, asked
+ * now rather than within the hour. The domain claim doesn't matter here: this
+ * is the company's own directory, and a paused claim is no reason to take
+ * their word for it (F185).
+ *   - `not_on_domain`: the directory was never theirs to answer to;
+ *   - `unanswered`: it couldn't say, and the connection last worked recently;
+ *   - `unanswered_long`: it couldn't say, and the connection hasn't worked for
+ *     DIRECTORY_WARNING_HOURS, so its managers have already been told.
+ */
+export async function askDirectoryAboutActor(
+  db: PostgresJsDatabase,
+  organizationId: string,
+  userId: string,
+): Promise<"not_on_domain" | "active" | "refused" | "unanswered" | "unanswered_long"> {
+  const claimed = (await db.execute(sql`
+    UPDATE claimnet.organization_members AS om
+    SET directory_check_claimed_at = NOW()
+    FROM claimnet.organization_directory_connections dc, claimnet.users du
+    WHERE om.user_id = ${userId}::uuid AND om.organization_id = ${organizationId}::uuid AND du.id = om.user_id
+      AND dc.organization_id = om.organization_id AND ${onDomain(sql`dc.domain`, sql`dc.domain_unicode`)}
+    RETURNING ${CLAIMED_COLUMNS}
+  `)) as unknown as ClaimedRow[];
+  const row = claimed[0];
+  if (!row) return "not_on_domain";
+  const status = installed ? await askAndRecord(db, installed, userId, row) : null;
+  if (status) return directoryStatusRefuses(status) ? "refused" : "active";
+  const rows = (await db.execute(sql`
+    SELECT COALESCE(last_success_at, connected_at) < NOW() - make_interval(hours => ${DIRECTORY_WARNING_HOURS}) AS long_failing
+    FROM claimnet.organization_directory_connections WHERE organization_id = ${organizationId}::uuid
+  `)) as unknown as Array<{ long_failing: boolean }>;
+  return rows[0]?.long_failing ? "unanswered_long" : "unanswered";
+}
+
+/** Ask Google about a claimed member and record what it said. The status, or null when it couldn't say. */
+async function askAndRecord(db: PostgresJsDatabase, current: NonNullable<typeof installed>, userId: string, row: ClaimedRow): Promise<DirectoryStatus | null> {
   let secret: string;
   try {
     secret = open(current.key, { ciphertext: row.credential_ciphertext, iv: row.credential_iv, tag: row.credential_tag, keyVersion: row.key_version }, row.organization_id);
   } catch {
     await recordConnectionTrouble(db, row, "decrypt_failed");
-    return false;
+    return null;
   }
 
   const result = await current.check({
@@ -135,7 +175,7 @@ async function runCheck(db: PostgresJsDatabase, userId: string): Promise<boolean
 
   if (result.answer.kind !== "status") {
     await recordConnectionTrouble(db, row, result.answer.kind === "connection_error" ? result.answer.code : "unreachable");
-    return false;
+    return null;
   }
 
   const status = result.answer.status;
@@ -161,7 +201,7 @@ async function runCheck(db: PostgresJsDatabase, userId: string): Promise<boolean
   if (directoryStatusRefuses(status) !== directoryStatusRefuses(row.previous_status)) {
     console.warn(`[directory] org ${row.organization_id}: member ${userId} ${status}`);
   }
-  return true;
+  return status;
 }
 
 /**
@@ -361,13 +401,37 @@ async function resetMemberStatuses(tx: SqlExecutor, organizationId: string): Pro
   return cleared;
 }
 
-/** Owners' and admins' addresses, for the six-hour warning (OB-C8). */
-export async function directoryManagersOf(db: SqlExecutor, organizationId: string): Promise<{ name: string; emails: string[] }> {
+/**
+ * The member as the directory would be asked about them, when they are on this
+ * domain (a domain that needn't be connected yet), for a person replacing the
+ * connection with a new credential (F185).
+ */
+export async function directoryMemberOnDomain(
+  db: SqlExecutor,
+  organizationId: string,
+  userId: string,
+  domain: string,
+  domainUnicode: string,
+): Promise<{ email: string; googleSubject: string | null } | null> {
   const rows = (await db.execute(sql`
-    SELECT o.name, u.email FROM claimnet.organization_members om
+    SELECT du.email, (SELECT i.subject FROM claimnet.user_identities i WHERE i.user_id = du.id AND i.provider = 'google') AS google_subject
+    FROM claimnet.organization_members om
+    JOIN claimnet.users du ON du.id = om.user_id
+    WHERE om.organization_id = ${organizationId}::uuid AND om.user_id = ${userId}::uuid AND ${onDomain(sql`${domain}`, sql`${domainUnicode}`)}
+  `)) as unknown as Array<{ email: string; google_subject: string | null }>;
+  return rows[0] ? { email: rows[0].email, googleSubject: rows[0].google_subject } : null;
+}
+
+/**
+ * Owners' and admins' addresses: for the six-hour warning (OB-C8), and, leaving
+ * out whoever did it, to tell them the connection was removed or replaced (F185).
+ */
+export async function directoryManagersOf(db: SqlExecutor, organizationId: string, exceptUserId?: string): Promise<{ name: string; emails: string[] }> {
+  const rows = (await db.execute(sql`
+    SELECT o.name, u.email, om.user_id FROM claimnet.organization_members om
     JOIN claimnet.users u ON u.id = om.user_id
     JOIN claimnet.organizations o ON o.id = om.organization_id
     WHERE om.organization_id = ${organizationId}::uuid AND om.role IN ('owner', 'admin') AND om.disabled_at IS NULL
-  `)) as unknown as Array<{ name: string; email: string }>;
-  return { name: rows[0]?.name ?? "", emails: rows.map((r) => r.email) };
+  `)) as unknown as Array<{ name: string; email: string; user_id: string }>;
+  return { name: rows[0]?.name ?? "", emails: rows.filter((r) => r.user_id !== exceptUserId).map((r) => r.email) };
 }

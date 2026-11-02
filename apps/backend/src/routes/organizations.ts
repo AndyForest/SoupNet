@@ -27,8 +27,8 @@ import { requireAuth, requireVerifiedEmail } from "../auth";
 import type { AppEnv } from "../types";
 import { actOnMember, activeOrgManagerRole } from "../authz";
 import { writeAudit } from "../services/audit-log.service";
-import { directoryConnectionOf, deleteDirectoryConnection } from "../authz";
-import { connectServiceAccount, directoryConnectAvailable, startDirectoryConnect } from "../services/directory-connection.service";
+import { directoryConnectionOf } from "../authz";
+import { connectServiceAccount, directoryConnectAvailable, directoryDisconnectRefusal, removeDirectoryConnection, startDirectoryConnect } from "../services/directory-connection.service";
 import { forgetDirectoryTokens } from "../services/google-directory.service";
 import type { MemberActionRefusal } from "../authz";
 import { ORG_ACTION_MESSAGES, ORGANIZATION_FULL_MESSAGE, ORGANIZATION_NOT_FOUND, isOrgRole } from "@soupnet/domain";
@@ -175,12 +175,10 @@ organizationsRouter.delete("/:id/directory", async (c) => {
   const gate = await directoryGate(c);
   if (gate instanceof Response) return gate;
   const db = getDb();
-  const { removed, cleared } = await deleteDirectoryConnection(db, gate.organizationId);
-  forgetDirectoryTokens(gate.organizationId);
-  if (removed) {
-    await writeAudit(db, { actorUserId: c.get("user").id, action: "organization.directory_disconnected", targetType: "organization", targetId: gate.organizationId, metadata: { cleared } });
-  }
-  return c.json({ ok: true, data: { removed } });
+  const userId = c.get("user").id;
+  const refused = await directoryDisconnectRefusal(db, gate.organizationId, userId);
+  if (refused) return c.json({ ok: false, error: refused.error, message: refused.message }, refused.status);
+  return c.json({ ok: true, data: { removed: await removeDirectoryConnection(db, gate.organizationId, { userId }) } });
 });
 
 export default organizationsRouter;

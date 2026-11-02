@@ -138,6 +138,37 @@ export function parseServiceAccountKey(raw: unknown): { ok: true; key: ServiceAc
   return { ok: true, key: { clientEmail, privateKey } };
 }
 
+/** "2 people", "1 person", "nobody", for the emails below. */
+function peopleCount(n: number): string {
+  return n === 0 ? "nobody" : n === 1 ? "1 person" : `${n} people`;
+}
+
+/**
+ * Tells an organization's other owners and admins that someone removed or
+ * replaced its directory connection, so ending offboarding is never quiet
+ * (F185). `liftedRefusals` is how many members the directory had switched off
+ * and who work again because of it.
+ */
+export function directoryChangedEmail(
+  organizationName: string,
+  change: "disconnected" | "replaced",
+  by: string,
+  liftedRefusals: number,
+): { subject: string; text: string } {
+  const lifted = liftedRefusals === 0 ? "" : ` ${peopleCount(liftedRefusals)} the directory had switched off can use Soup.net again${change === "replaced" ? " until their next check" : ""}.`;
+  const unexpected = "If you didn't expect this, an owner or admin can reconnect the directory from your organization's console, and your organization's activity shows what happened.";
+  if (change === "disconnected") {
+    return {
+      subject: `${organizationName}'s Google Workspace directory was disconnected from Soup.net`,
+      text: `${by} disconnected ${organizationName}'s Google Workspace directory from Soup.net, so Soup.net has stopped checking members against it.${lifted} ${unexpected}`,
+    };
+  }
+  return {
+    subject: `${organizationName}'s Google Workspace directory connection was replaced`,
+    text: `${by} replaced ${organizationName}'s Google Workspace directory connection in Soup.net. Members are checked through the new connection from now on.${lifted} ${unexpected}`,
+  };
+}
+
 /**
  * The one warning an organization's owners and admins get when a check fails
  * and the connection's last success is over DIRECTORY_WARNING_HOURS old

@@ -34,13 +34,14 @@ Feature: Offboarding through the company's Google Workspace directory
       When the consent comes back for another Google account, another domain, or without lasting access
       Then nothing is stored and Olive is told which
 
-    @OFF-CON-03
+    @OFF-CON-05
     Scenario: A consent that outlasts its starter's role
       # Guards: audit F182.
       Given Ann, an admin, started a consent
       When Olive demotes or disables Ann before it completes
       Then nothing is stored, the connection stays as it was, and Ann is told why
 
+    @OFF-CON-03
     Scenario: An owner connects with the company's own service account
       When Olive gives Acme's service-account key and her admin address on acme.example
       Then the connection is stored once a test lookup through it succeeds
@@ -136,3 +137,20 @@ Feature: Offboarding through the company's Google Workspace directory
     Scenario: Disconnecting
       When Olive disconnects the directory
       Then no one is checked, and anyone the directory switched off works again
+      And Acme's other owners and admins are told by email
+
+    @OFF-CON-06
+    Scenario: Someone suspended in Google tries to end the checks
+      # Guards: audit F185.
+      Given Ann, an admin, is suspended in Google, and her status was last checked minutes ago
+      When Ann disconnects the directory, or replaces it with a service-account key she holds
+      Then the directory is asked about Ann first, and she is refused
+      And the connection and everyone's status stay as they were
+
+    @OFF-CON-07
+    Scenario: Disconnecting when the directory can't answer
+      # Guards: audit F185.
+      Given Google can't answer about Ann
+      When Ann disconnects the directory
+      Then she is told it stays connected, and that she can reconnect, ask support, or disconnect once it has gone six hours without a successful check
+      And after those six hours the disconnect goes through and the others are told

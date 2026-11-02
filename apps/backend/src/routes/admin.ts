@@ -12,8 +12,8 @@ import {
   getPendingInvitationCount,
 } from "../services/system-settings.service";
 import { QUEUE_DESCRIPTIONS, getQueueDescription, ORGANIZATION_FULL_MESSAGE } from "@soupnet/domain";
-import { orgMemberCount, deleteDirectoryConnection } from "../authz";
-import { forgetDirectoryTokens } from "../services/google-directory.service";
+import { orgMemberCount } from "../authz";
+import { removeDirectoryConnection } from "../services/directory-connection.service";
 import type { JoinRefusal } from "../authz";
 import { createOrganizationAndNotify, joinOrganizationAndNotify } from "../services/organization.service";
 import { approveWaitlistedUser, promoteTopWaitlisted } from "../services/waitlist.service";
@@ -156,12 +156,7 @@ admin.patch("/organizations/:id", async (c) => {
 admin.delete("/organizations/:id/directory", async (c) => {
   const id = c.req.param("id");
   if (!z.string().uuid().safeParse(id).success) return c.json({ ok: false, error: "Invalid input" }, 400);
-  const { removed, cleared } = await deleteDirectoryConnection(getDb(), id);
-  forgetDirectoryTokens(id);
-  if (removed) {
-    await writeAudit(getDb(), { actorUserId: c.get("user").id, action: "organization.directory_disconnected", targetType: "organization", targetId: id, metadata: { by: "operator", cleared } });
-  }
-  return c.json({ ok: true, data: { removed } });
+  return c.json({ ok: true, data: { removed: await removeDirectoryConnection(getDb(), id, { userId: c.get("user").id, operator: true }) } });
 });
 
 const addOrganizationMemberSchema = z.object({
