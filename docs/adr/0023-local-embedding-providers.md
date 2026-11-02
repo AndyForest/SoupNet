@@ -53,7 +53,7 @@ Consequently **Phase 1 fits every local vector into the existing column and inde
 
 Introduce `getEmbeddingModelId(): string`, replacing the hardcoded const/literal in all four call sites:
 
-- `gemini` → `"gemini-embedding-2-preview"`
+- `gemini` → `"gemini-embedding-2-preview"` (since [ADR-0024](0024-embedding-model-switch.md), `EMBEDDINGS_MODEL`, checked against a known list, or if unset the model the database's vectors are under)
 - `stub` → `"stub-embeddings"`
 - `local` → `` `local:${EMBEDDINGS_MODEL}` `` (e.g. `local:bge-small-en-v1.5`)
 - `openai-compatible` → `` `oai:${EMBEDDINGS_MODEL}` ``
@@ -62,7 +62,7 @@ Introduce `getEmbeddingModelId(): string`, replacing the hardcoded const/literal
 
 ### 4. One embedding provider per deployment
 
-Vectors from different models occupy different semantic spaces and are never mixed within one corpus. Switching provider or model requires re-embedding the corpus. This was already true conceptually for `stub`→`gemini`, is enforced row-wise by the `model_id` unique-key component, and the corpus-import backlog item already assumes re-embedding on import.
+Vectors from different models occupy different semantic spaces and are never mixed within one corpus. Switching provider or model requires re-embedding the corpus. ([ADR-0024](0024-embedding-model-switch.md) makes that a rebuild with search working throughout: a model change within a provider that can run two models, which is `gemini` and `openai-compatible`. Moving between providers, or changing a `local` model, still means an outage while the corpus re-embeds.) This was already true conceptually for `stub`→`gemini`, is enforced row-wise by the `model_id` unique-key component, and the corpus-import backlog item already assumes re-embedding on import.
 
 ---
 

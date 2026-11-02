@@ -72,7 +72,7 @@ erDiagram
 
 ## Embedding model
 
-**Model:** `gemini-embedding-2-preview`
+**Model:** `EMBEDDINGS_MODEL`, currently `gemini-embedding-2-preview` on the hosted service; changing it is covered in [ADR-0024](../adr/0024-embedding-model-switch.md)
 
 **Source:** https://ai.google.dev/gemini-api/docs/embeddings — check periodically; this changed materially in early 2026.
 
