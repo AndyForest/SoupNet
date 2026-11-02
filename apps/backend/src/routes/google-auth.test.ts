@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
 import { invalidateSessions } from "../authz";
 import { seedVerifiedUser } from "../test-users";
+import { untilBlockedBy } from "../test-locks";
 import { startFakeGoogleIssuer } from "../test-google-issuer";
 import type { FakeGoogleIssuer, FakeIdClaims } from "../test-google-issuer";
 import { readFileSync, readdirSync } from "node:fs";
@@ -709,6 +710,28 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
     });
     expect(await issuing).toBeNull();
     expect(await issueHandoff(getDb(), input)).toBeNull();
+  });
+
+  it("SSO-G5b / F163: a sign-in racing a reset waits on the account's row, holding nothing the reset goes on to need", async () => {
+    const { resolveAccount } = await import("../services/google-sign-in.service");
+    const email = address("f163-race", `outside-${run}.example`);
+    const strangerSub = sub();
+    const stranger = signedIn(await signIn(consumer(email, strangerSub)));
+    const issuer = ((await getDb().execute(sql`SELECT issuer FROM claimnet.user_identities WHERE user_id = ${stranger.userId}::uuid`)) as unknown as Array<{ issuer: string }>)[0]!.issuer;
+    const claims = { issuer, subject: strangerSub, email, emailVerified: true, hostedDomain: null, name: null };
+
+    let signingIn: ReturnType<typeof resolveAccount> | undefined;
+    await getDb().transaction(async (tx) => {
+      // The reset's first write, then the sign-in arriving behind it.
+      await tx.execute(sql`UPDATE claimnet.users SET updated_at = now() WHERE id = ${stranger.userId}::uuid`);
+      signingIn = resolveAccount(getDb(), claims);
+      await untilBlockedBy(getDb(), tx);
+      // The reset's settling. With the sign-in holding this row, it's a deadlock.
+      await tx.execute(sql`DELETE FROM claimnet.user_identities WHERE user_id = ${stranger.userId}::uuid`);
+    });
+
+    expect(await signingIn).not.toBe("failed");
+    expect(await identitiesOf(stranger.userId)).toEqual([]);
   });
 
   it("GSI-LINK-06 / SSO-A4b: the mailbox's owner verifying ends a stranger's Google sign-up, and the owner's Workspace sign-in works", async () => {

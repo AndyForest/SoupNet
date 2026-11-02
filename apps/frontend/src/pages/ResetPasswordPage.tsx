@@ -2,11 +2,8 @@ import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { useMutation } from "@tanstack/react-query";
 import { API_BASE, clearToken } from "../auth.js";
-
-interface StillRunning {
-  apiKeys: number;
-  connectedApps: number;
-}
+import { readResetAnswer } from "../lib/reset-password.js";
+import type { StillRunning } from "../lib/reset-password.js";
 
 function runningList({ apiKeys, connectedApps }: StillRunning): string {
   const parts: string[] = [];
@@ -26,14 +23,12 @@ export function ResetPasswordPage() {
 
   const mutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`${API_BASE}/auth/reset-password`, {
+      const { stillRunning } = await readResetAnswer(fetch(`${API_BASE}/auth/reset-password`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token, newPassword: password }),
-      });
-      const json = (await res.json()) as { ok: boolean; error?: string; data?: { stillRunning?: StillRunning } };
-      if (!json.ok) throw new Error(json.error ?? "Reset failed");
-      return json.data?.stillRunning ?? { apiKeys: 0, connectedApps: 0 };
+      }));
+      return stillRunning;
     },
     onSuccess: (running) => {
       // The reset ended every session, this browser's included.
