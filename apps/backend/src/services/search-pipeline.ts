@@ -222,6 +222,7 @@ export async function fetchTraceVectors(
       AND vc.model_id = ${getEmbeddingModelId()}
     LEFT JOIN claimnet.embedding_vectors ev ON ev.embedding_chunk_id = ec.id
       AND ev.task_type = 'SEMANTIC_SIMILARITY'
+      AND ev.model_id = ${getEmbeddingModelId()}
       AND ev.status = 'complete'
       AND ev.vector IS NOT NULL
     WHERE es.source_id IN (${sql.join(traceIds.map((id) => sql`${id}::uuid`), sql`, `)})

@@ -281,7 +281,10 @@ describe("BRIEFING.build — surface profiles (cold-start v2 Phase B)", () => {
     // slice 10 left 5 under the cap; the fixture grew by the 50
     // characters those lines cost, measured 22,845. Raised by the
     // measured growth, not trimmed copy.
-    expect(mcpText.length).toBeLessThanOrEqual(22_850);
+    // 22,850 → 23,270 (2026-11-01): the actor-in-role pattern, as tested by
+    // the evals repo; measured 22,845 before and 23,265 after. Raised by the
+    // measured growth, because trimming it would change the tested wording.
+    expect(mcpText.length).toBeLessThanOrEqual(23_270);
     expect(mcpText.length).toBeLessThan(fullText.length);
   });
 
@@ -471,7 +474,9 @@ describe("BRIEFING.build — the headless key section (drafts-and-triage slice 5
     // measured 21,393 before and 23,081 after.
     // 23,200 → 23,250 (2026-10-25, slice 8b item 3): moves with it again for
     // the membership lines; measured 23,195 before and 23,245 after.
-    expect(BRIEFING.build({ ...thinInput(), headless: true }).length).toBeLessThanOrEqual(23_250);
+    // 23,250 → 23,670 (2026-11-01): moves with it for the actor-in-role
+    // pattern; measured 23,245 before and 23,665 after.
+    expect(BRIEFING.build({ ...thinInput(), headless: true }).length).toBeLessThanOrEqual(23_670);
   });
 });
 
@@ -588,7 +593,8 @@ describe("BRIEFING.build — slice 7: the field additions (7d)", () => {
       expect(text).toContain("Granularity and generality are separate axes");
       expect(text).toContain("with the specifics in the evidence, where they stay checkable");
       // S7-D4: the fourth role pattern.
-      expect(text).toContain("Four patterns keep it transferable");
+      expect(text).toContain("Five patterns keep it transferable");
+      expect(text).toContain("Put the actor in the role");
       expect(text).toContain("- **For what the user receives**");
       // Stream D (8a): an outcome row may join the intent alone; the headless
       // section's closing outcome row needs this target.

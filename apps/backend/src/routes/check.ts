@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { getEmbeddingModelId } from "../lib/embeddings/provider";
 import { ownDraftFields } from "../lib/own-draft-fields";
 import { flatListFields } from "../lib/flat-list-fields";
 import type { Context } from "hono";
@@ -461,7 +462,7 @@ function buildSearchOnlyJsonResponse(
   response["data"] = {
     searchOnly: true,
     filter,
-    notice: buildSearchOnlyNotice(result),
+    notice: buildSearchOnlyNotice({ ...result, filter }),
     ...(result.searchId ? { searchId: result.searchId } : {}),
     ...(result.searchedCorpusSize !== undefined ? { searchedCorpusSize: result.searchedCorpusSize } : {}),
     ...(result.searchedOwnExcluded !== undefined ? { searchedOwnExcluded: result.searchedOwnExcluded } : {}),
@@ -977,7 +978,7 @@ export function renderPage(
       resultsHtml += `
   <section id="related-evidence">
     <h2>Related evidence from other recipes</h2>
-    <p><small>Surfaced via cosine-similarity search over gemini-embedding-2-preview vectors &mdash;
+    <p><small>Surfaced via cosine-similarity search over ${esc(getEmbeddingModelId())} vectors &mdash;
     evidence from other recipes that is topically related to yours. The system makes no stance assertion;
     you decide if it supports, contradicts, or adds context.</small></p>
     <ul>
@@ -1430,7 +1431,7 @@ async function handleCheck(
         ok: false,
         error:
           `Missing required parameter${missing.length > 1 ? "s" : ""}: ${missing.join(", ")}. ` +
-          "To check a recipe, provide both. Just looking for something? Use filter=<keywords> (alias f) for a read-only search that logs nothing.",
+          "To check a recipe, provide both. Just looking for something? Use filter=<keywords> (alias f) for a search that logs no recipe.",
       }, feedbackResults), 400);
     }
     if (result.error) {

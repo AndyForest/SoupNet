@@ -5,9 +5,30 @@
  */
 export const ACCOUNT_DELETED_SEARCH = "account=deleted";
 
+/**
+ * Why the person was signed out, by the server's code (stream SSO, SSO-U4).
+ * The sentences are the backend's word for word (@soupnet/domain; the
+ * backend's suite checks them). An unknown code shows nothing.
+ */
+const SIGNED_OUT_NOTICES: Record<string, string> = {
+  session_expired: "This session has ended. Sign in again.",
+  account_disabled: "Your organization has disabled this account. Ask one of its admins to turn it back on.",
+  account_suspended: "This account is suspended. Contact Soup.net support.",
+  sso_required: "Your organization signs in with Google. Sign in with Google to continue.",
+  directory_inactive: "Your organization's Google Workspace doesn't list this account as active. Ask one of your organization's admins.",
+  directory_unconfirmed: "Soup.net couldn't confirm this account with your organization's Google Workspace. Ask one of your organization's admins to check the directory connection.",
+};
+
+/** Where to land after the server ended the session: sign-in, with the reason when it is a known one. */
+export function loginPathAfterSignOut(reason: string | null): string {
+  return reason && Object.hasOwn(SIGNED_OUT_NOTICES, reason) ? `/auth/login?signedOut=${encodeURIComponent(reason)}` : "/auth/login";
+}
+
 export function loginNoticeFromSearch(search: string): string | null {
   const params = new URLSearchParams(search);
   if (params.get("account") === "deleted") return "Your account has been deleted.";
+  const signedOut = params.get("signedOut");
+  if (signedOut && Object.hasOwn(SIGNED_OUT_NOTICES, signedOut)) return SIGNED_OUT_NOTICES[signedOut] ?? null;
   return null;
 }
 
@@ -19,8 +40,9 @@ export function loginNoticeFromSearch(search: string): string | null {
  */
 export function searchWithoutLoginNotice(search: string): string {
   const params = new URLSearchParams(search);
-  if (!params.has("account")) return search;
+  if (!params.has("account") && !params.has("signedOut")) return search;
   params.delete("account");
+  params.delete("signedOut");
   const rest = params.toString();
   return rest ? `?${rest}` : "";
 }

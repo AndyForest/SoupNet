@@ -381,6 +381,27 @@ describe("slice 8a tool shapes (stdio)", () => {
     expect((r.content as Array<{ text: string }>)[0]!.text).toBe("Feedback recorded for intent int_AbCdEfGhIjKlMnOpQrStUvWx (feedback id f1).");
   });
 
+  it("recipe 9dbcfb77: search_recipes declares no feedback, and the guard steers such a call to log_feedback", async () => {
+    const urls = recordFetch({ ok: true, data: { recipes: [] } });
+    const server = newServer();
+    const { tools } = await servedToolsList(newServer());
+    expect(tools.find((t) => t.name === "search_recipes")?.inputSchema.properties).not.toHaveProperty("feedback");
+    const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "stdio-guard-test", version: "0" });
+    await server.connect(serverSide);
+    guardUnknownParams(serverSide as unknown as McpTransportLike, toolParamsFromRegistry(server), "refuse");
+    await client.connect(clientSide);
+    try {
+      const r = await client.callTool({ name: "search_recipes", arguments: { query: "q", feedback: [{ kind: "outcome" }] } });
+      expect(r.isError).toBe(true);
+      expect((r.content as Array<{ text: string }>)[0]!.text).toMatch(/^Error: search_recipes does not take feedback \(send those rows with log_feedback; a row about a search takes search_id\)\. Nothing was run;/);
+      expect(urls).toEqual([]);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
   it("S8a-U1/U2: the guard the stdio entry installs refuses an undeclared name on this server's tools", async () => {
     const urls = recordFetch({ ok: true, data: { recipes: [] } });
     const server = newServer();

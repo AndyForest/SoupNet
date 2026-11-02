@@ -188,10 +188,10 @@ describe.skipIf(!BASE)("/mcp stateless behavior", () => {
     expect(callText.toLowerCase()).toContain("not found in your key's write recipe books");
   });
 
-  // F37 (rubric F1, F9 in docs/planning/openai-plugin-build/file-url-guard.md):
-  // check_recipe's file_url never reaches a non-public address, whatever the
-  // spelling, and the refusal comes back as a file input error, not a deposit.
+  // The server fetches no URL an agent names (F37's surface is gone): only an
+  // own upload resolves, and a refusal is a file input error, not a deposit.
   it.each([
+    "https://example.com/picture.png",
     "http://169.254.169.254/latest/meta-data/",
     "http://2130706433/",
     "http://[::ffff:127.0.0.1]:3101/health",
@@ -205,14 +205,14 @@ describe.skipIf(!BASE)("/mcp stateless behavior", () => {
         method: "tools/call",
         params: {
           name: "check_recipe",
-          arguments: { recipe: "As a tester, I chose a private file_url so that it is refused.", supporting_evidence: "x", file_url: fileUrl },
+          arguments: { recipe: "As a tester, I chose an outside file_url so that it is refused.", supporting_evidence: "x", file_url: fileUrl },
         },
         id: 3,
       }),
     });
     expect(res.status).toBe(200);
     const text = await res.text();
-    expect(text).toContain(`File input error: Could not fetch ${fileUrl}: not reachable at a public address`);
+    expect(text).toContain("File input error: file_url takes only a URL returned by POST /uploads");
     expect(text).not.toContain("Recipe checked as");
   });
 

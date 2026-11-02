@@ -3,7 +3,7 @@ import { z } from "zod";
 import crypto from "crypto";
 import { sql } from "drizzle-orm";
 import { getDb } from "../db";
-import { registerUser, loginUser, requireAuth, requireActiveSession, activeSessionRefusal, requireVerifiedEmail, hashPassword, verifyPassword } from "../auth";
+import { registerUser, loginUser, requireAuth, requireActiveSession, activeSessionRefusal, requireVerifiedEmail, holdsLiveSessionOf, hashPassword, verifyPassword, verifyToken, isSignupProofOf, signInAccount, signupProofFor, unusableSignupProof } from "../auth";
 import { recordSignIn, writeAudit } from "../services/audit-log.service";
 import { isSignupCapReached, logSignupCapState, mayRegister } from "../services/system-settings.service";
 import { purgeStaleWaitlistedUsers } from "../services/waitlist.service";
@@ -11,9 +11,13 @@ import { deleteUserCascade } from "../services/user-delete.service";
 import { sendVerificationEmail, sendPasswordResetEmail } from "../services/email.service";
 import { rateLimit } from "../middleware/rate-limit";
 import { normalizeEmail } from "../lib/normalize-email";
-import { onBehalfSubjectOf, feedbackOwnedBy, intentOwnedBy, managedOrganizationOf } from "../authz";
-import { ACCOUNT_DISABLED_MESSAGE, ACCOUNT_SUSPENDED_MESSAGE, MANAGED_ACCOUNT_DELETE_MESSAGE } from "@soupnet/domain";
+import type { AccountDisabledReason } from "../authz/account-state";
+import { credentialsStillRunning, onBehalfSubjectOf, feedbackOwnedBy, intentOwnedBy, invalidateSessions, managedOrganizationOf, ssoRequired } from "../authz";
+import { ACCOUNT_DISABLED_MESSAGE, ACCOUNT_SUSPENDED_MESSAGE, MANAGED_ACCOUNT_DELETE_MESSAGE, SSO_REQUIRED_MESSAGE, googleSignInErrorMessage, ORGANIZATION_FULL_MESSAGE, DOMAIN_JOIN_FULL_RETRY, DOMAIN_RESET_FULL_RETRY, domainJoinedNotice, directoryDisabledMessage } from "@soupnet/domain";
+import { googleOidcConfig } from "../services/google-oidc.service";
+import { settleGoogleIdentityOnVerify } from "../services/google-sign-in.service";
 import { verifyTurnstile } from "../lib/turnstile";
+import { capturingOrganizationName, joinOnVerification } from "../services/org-domains.service";
 import type { AppEnv } from "../types";
 
 const loginSchema = z.object({
@@ -50,6 +54,13 @@ const verifyRateLimit = rateLimit({ max: 10, windowMs: 15 * 60 * 1000 }); // 10 
 const resendRateLimit = rateLimit({ max: 3, windowMs: 15 * 60 * 1000 }); // 3 per 15 min per IP
 const forgotPasswordRateLimit = rateLimit({ max: 3, windowMs: 15 * 60 * 1000 }); // 3 per 15 min per IP
 const resetPasswordRateLimit = rateLimit({ max: 10, windowMs: 15 * 60 * 1000 }); // 10 per 15 min per IP
+
+const verifySchema = z.object({
+  token: z.string().min(1),
+  password: z.string().max(1024).optional(),
+  signupProof: z.string().max(128).optional(),
+  confirm: z.boolean().optional(),
+});
 
 const forgotPasswordSchema = z.object({
   email: z.string().email(),
@@ -106,7 +117,9 @@ async function turnstileRefusal(c: Context<AppEnv>, token: string | undefined, r
 //   3. For the genuinely-new branch, we asynchronously send a verification
 //      email (waitlist-variant copy on the cap-full branch) and, in dev
 //      only (ALLOW_AUTO_SETUP), surface the token for integration tests.
-//   4. The user is NOT auto-logged-in. They must verify, then call /login.
+//   4. The user is NOT auto-logged-in here. Every branch returns a sign-up
+//      proof, a new account's real and any other's random (see signupProofFor
+//      in auth.ts), which signs them in at /auth/verify beside the emailed token.
 auth.post("/register", authRateLimit, async (c) => {
   const body = await c.req.json();
   const parsed = registerSchema.safeParse(body);
@@ -157,6 +170,7 @@ auth.post("/register", authRateLimit, async (c) => {
         waitlisted: false,
         message:
           "If the email is eligible for registration, you'll receive a verification email shortly.",
+        signupProof: unusableSignupProof(),
         ...(extra ?? {}),
       },
     });
@@ -165,6 +179,7 @@ auth.post("/register", authRateLimit, async (c) => {
       ok: true,
       data: {
         waitlisted: true,
+        signupProof: unusableSignupProof(),
         message:
           "You're on the waitlist. Confirm your email via the link we just sent to hold your place — we'll email you when a spot opens. First come, first served.",
         ...(extra ?? {}),
@@ -212,7 +227,7 @@ auth.post("/register", authRateLimit, async (c) => {
     // Fire-and-forget the email send so the response timing on the
     // genuinely-new branch is dominated by DB ops (which both branches do)
     // rather than SMTP latency (which only the new branch does).
-    void sendVerificationEmail(email, verificationToken, { waitlisted }).catch((err) => {
+    void sendVerification(email, verificationToken, waitlisted).catch((err) => {
       console.error("[auth/register] Failed to send verification email:", err);
     });
     // Operator alerting: "[signup-cap] reached/near" lines. Fire-and-forget,
@@ -236,10 +251,11 @@ auth.post("/register", authRateLimit, async (c) => {
     // Test-mode convenience: surface the verification token in the response
     // when ALLOW_AUTO_SETUP=true so integration tests can call /auth/verify
     // without scraping Mailpit. Never enabled in production.
+    const signupProof = signupProofFor(result.user.id);
     if (process.env["ALLOW_AUTO_SETUP"] === "true") {
-      return respond({ verificationToken });
+      return respond({ signupProof, verificationToken });
     }
-    return respond();
+    return respond({ signupProof });
   } catch (err: unknown) {
     const cause = err instanceof Error && err.cause instanceof Error ? err.cause : null;
     const msg = err instanceof Error ? err.message : String(err);
@@ -267,7 +283,8 @@ auth.post("/register", authRateLimit, async (c) => {
 auth.get("/signup-status", async (c) => {
   const db = getDb();
   const capReached = await isSignupCapReached(db);
-  return c.json({ ok: true, data: { signupsOpen: !capReached } });
+  // google: whether "Continue with Google" is offered (stream SSO, SSO-G7).
+  return c.json({ ok: true, data: { signupsOpen: !capReached, google: googleOidcConfig() !== null } });
 });
 
 // GET /auth/invite-status?token=... — public. Lets the register page decide
@@ -364,7 +381,7 @@ auth.post("/login", authRateLimit, async (c) => {
             email_verification_token_created_at = now()
         WHERE id = ${result.user.id}::uuid
       `);
-      void sendVerificationEmail(result.user.email, freshToken, { waitlisted: true }).catch((err) => {
+      void sendVerification(result.user.email, freshToken, true).catch((err) => {
         console.error("[auth/login] Failed to resend waitlist verification email:", err);
       });
       resent = true;
@@ -390,6 +407,12 @@ auth.post("/login", authRateLimit, async (c) => {
   }
   if (result.disabled === "org_disabled") {
     return c.json({ ok: false, error: "account_disabled", message: ACCOUNT_DISABLED_MESSAGE }, 403);
+  }
+  if (result.disabled === "directory_inactive" || result.disabled === "directory_unconfirmed") {
+    return c.json({ ok: false, error: result.disabled, message: directoryDisabledMessage(result.disabled) }, 403);
+  }
+  if (result.disabled === "sso_required") {
+    return c.json({ ok: false, error: "sso_required", message: SSO_REQUIRED_MESSAGE }, 403);
   }
 
   const db = getDb();
@@ -431,11 +454,24 @@ auth.get("/me", requireAuth, requireActiveSession, async (c) => {
   // the SPA and the SSO and console streams tell a managed account.
   const managed = await managedOrganizationOf(db, user.id);
   const rows = await db.execute(sql`
-    SELECT email_verified_at AS "emailVerifiedAt",
-           premium_at AS "premiumAt"
-    FROM claimnet.users WHERE id = ${user.id}::uuid
+    SELECT u.email_verified_at AS "emailVerifiedAt",
+           u.premium_at AS "premiumAt",
+           u.password_hash IS NOT NULL AS "hasPassword",
+           i.email AS "googleEmail",
+           i.hosted_domain AS "googleHostedDomain",
+           i.id IS NOT NULL AS "hasGoogle"
+    FROM claimnet.users u
+    LEFT JOIN claimnet.user_identities i ON i.user_id = u.id AND i.provider = 'google'
+    WHERE u.id = ${user.id}::uuid
   `);
-  const row = (rows as unknown as Array<{ emailVerifiedAt: string | null; premiumAt: string | null }>)[0];
+  const row = (rows as unknown as Array<{
+    emailVerifiedAt: string | null;
+    premiumAt: string | null;
+    hasPassword: boolean;
+    googleEmail: string | null;
+    googleHostedDomain: string | null;
+    hasGoogle: boolean;
+  }>)[0];
 
   // premium ⇔ premium_at IS NOT NULL (admin-assigned; see premium-llm-features.md).
   return c.json({
@@ -448,6 +484,11 @@ auth.get("/me", requireAuth, requireActiveSession, async (c) => {
         emailVerified: !!row?.emailVerifiedAt,
         premium: !!row?.premiumAt,
         organization: managed ? { id: managed.organizationId, name: managed.name, role: managed.role } : null,
+        // How this account can sign in (stream SSO, SSO-A11).
+        signInMethods: {
+          password: !!row?.hasPassword,
+          google: row?.hasGoogle ? { email: row.googleEmail, hostedDomain: row.googleHostedDomain } : null,
+        },
       },
     },
   });
@@ -675,32 +716,49 @@ auth.get("/me/export", requireAuth, requireVerifiedEmail, async (c) => {
 // token leaks, an attacker can't burn an account list quickly.
 auth.delete("/me", authRateLimit, requireAuth, requireActiveSession, async (c) => {
   const user = c.get("user");
-  let body: Record<string, unknown>;
+  // No body is fine for an account with no password; one with a password is
+  // asked for it below.
+  let body: Record<string, unknown> = {};
   try {
-    body = (await c.req.json()) as Record<string, unknown>;
+    const parsed: unknown = await c.req.json();
+    if (parsed && typeof parsed === "object") body = parsed as Record<string, unknown>;
   } catch {
-    return c.json({ ok: false, error: "password is required to confirm deletion" }, 400);
+    body = {};
   }
   const password = typeof body["password"] === "string" ? body["password"] : "";
-  if (!password) {
-    return c.json({ ok: false, error: "password is required to confirm deletion" }, 400);
-  }
 
   const db = getDb();
 
   // Re-fetch the password hash and verify the supplied password. Don't trust
   // any cached state — the user could have changed their password since the
-  // JWT was issued, and we want the canonical hash for this check.
+  // JWT was issued, and we want the canonical hash for this check. An account
+  // with no password (Google only) confirms instead with a Google sign-in
+  // completed in the last ten minutes, measured from the Google leg's
+  // completion, not the session's issue time (stream SSO, SSO-A9b).
   const userRows = await db.execute(sql`
-    SELECT password_hash FROM claimnet.users WHERE id = ${user.id}::uuid LIMIT 1
+    SELECT u.password_hash,
+           EXISTS (SELECT 1 FROM claimnet.user_identities i
+                   WHERE i.user_id = u.id AND i.provider = 'google'
+                     AND i.last_sign_in_at > now() - interval '10 minutes') AS "recentGoogle"
+    FROM claimnet.users u WHERE u.id = ${user.id}::uuid LIMIT 1
   `);
-  const userRow = (userRows as unknown as Array<{ password_hash: string }>)[0];
+  const userRow = (userRows as unknown as Array<{ password_hash: string | null; recentGoogle: boolean }>)[0];
   if (!userRow) {
     return c.json({ ok: false, error: "account not found" }, 404);
   }
-  const passwordOk = await verifyPassword(password, userRow.password_hash);
-  if (!passwordOk) {
-    return c.json({ ok: false, error: "incorrect password" }, 401);
+  if (userRow.password_hash === null) {
+    const googleSession = user.identityProvider === "google" || user.identityProvider === "google-consumer";
+    if (!googleSession || !userRow.recentGoogle) {
+      return c.json({ ok: false, error: "reauthenticate", message: googleSignInErrorMessage("reauthenticate") }, 403);
+    }
+  } else {
+    if (!password) {
+      return c.json({ ok: false, error: "password is required to confirm deletion" }, 400);
+    }
+    const passwordOk = await verifyPassword(password, userRow.password_hash);
+    if (!passwordOk) {
+      return c.json({ ok: false, error: "incorrect password" }, 401);
+    }
   }
 
   // A managed account belongs to its company organization (recipe 2301b5eb),
@@ -761,33 +819,172 @@ auth.delete("/me", authRateLimit, requireAuth, requireActiveSession, async (c) =
   return c.json({ ok: true });
 });
 
+/**
+ * Send the verification email. For an address on a domain an organization
+ * has captured, the email says the click will add the account to that
+ * organization (stream Domains, recipe 43b6aac9): the notice reaches only the
+ * mailbox, so the register form stays identical for every address (F30). The
+ * join takes the account off the waitlist, so its waitlist copy is dropped.
+ */
+async function sendVerification(email: string, token: string, waitlisted: boolean): Promise<void> {
+  const joiningOrganization = await capturingOrganizationName(getDb(), email).catch(() => null);
+  await sendVerificationEmail(email, token, { waitlisted: waitlisted && !joiningOrganization, joiningOrganization });
+}
+
+/** Thrown inside the verify transaction to roll the verification back at the seat limit. */
+class OrganizationFull extends Error {}
+
+function signInRefusalMessage(refusal: AccountDisabledReason | "sso_required"): string {
+  switch (refusal) {
+    case "suspended":
+      return ACCOUNT_SUSPENDED_MESSAGE;
+    case "org_disabled":
+      return ACCOUNT_DISABLED_MESSAGE;
+    case "sso_required":
+      return SSO_REQUIRED_MESSAGE;
+    case "directory_inactive":
+    case "directory_unconfirmed":
+      return directoryDisabledMessage(refusal);
+  }
+}
+
 // POST /auth/verify — verify email with token.
 //
-// Idempotent: calling this with the same token twice (e.g. React StrictMode
-// double-fire, page refresh, email opened in two tabs) returns success both
-// times without changing the verification timestamp. We use COALESCE to
-// preserve the original verified_at, and we deliberately do NOT clear the
+// A link alone doesn't verify an account (recipe 450a107b, F144). Someone can
+// register a password on another person's address, and that person's click
+// used to leave the stranger's password working. So verifying also takes one
+// thing only the person who signed up has: the sign-up proof from their
+// browser (nothing to type, see signupProofFor), the account's own session, or
+// its password. The mailbox's owner has none of them. Their route is
+// forgot-password, which replaces the password, verifies the address and cuts
+// every session. A mail scanner opening the link changes nothing.
+//
+// The proof or the password also signs the person in, through the same checks
+// as POST /auth/login (signInAccount) and, for the password, its rate limit.
+// Only a verification does this: a repeat click judges nothing and issues no
+// session, so a token isn't a second way to test a password.
+//
+// Idempotent: a repeat click on a verified account (React StrictMode
+// double-fire, page refresh, email opened in two tabs) needs no proof and
+// returns success without changing the verification timestamp. We use COALESCE
+// to preserve the original verified_at, and we deliberately do NOT clear the
 // token in this UPDATE — it expires naturally after 24h. A "used" token
 // can't do anything except re-confirm existing verified state.
+//
+// The route needs no session, but one may be presented: it is how the Google
+// sign-up that started this verification shows it's the same person
+// (settleGoogleIdentityOnVerify, F137).
 auth.post("/verify", verifyRateLimit, async (c) => {
-  const body = await c.req.json();
-  const token = (body as { token?: string }).token;
-  if (!token) {
+  const parsed = verifySchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) {
     return c.json({ ok: false, error: "Token required" }, 400);
   }
+  const { token, password, signupProof, confirm } = parsed.data;
 
   const db = getDb();
-  const result = await db.execute(sql`
-    UPDATE claimnet.users
-    SET email_verified_at = COALESCE(email_verified_at, now())
+  // Before the read: see SessionDating.
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const accounts = await db.execute(sql`
+    SELECT id, email, password_hash AS "passwordHash",
+           (email_verified_at IS NOT NULL) AS "verified",
+           (waitlisted_at IS NOT NULL) AS "waitlisted",
+           floor(extract(epoch FROM sessions_valid_after))::bigint AS "notBefore"
+    FROM claimnet.users
     WHERE email_verification_token = ${token}
       AND email_verification_token_created_at > now() - interval '24 hours'
-    RETURNING id, email, (waitlisted_at IS NOT NULL) AS "waitlisted"
   `);
+  const account = (accounts as unknown as Array<{ id: string; email: string; passwordHash: string | null; verified: boolean; waitlisted: boolean; notBefore: string | null }>)[0];
+  if (!account) {
+    return c.json({ ok: false, error: "Invalid or expired verification token" }, 400);
+  }
 
-  const updated = (result as unknown as Array<{ id: string; email: string; waitlisted: boolean }>)[0];
+  // Everything that can refuse comes before anything changes.
+  const ownSession = await holdsLiveSessionOf(c, db, account.id);
+  // A repeat click proves nothing, so it says only what anyone holding the link
+  // already knows, the same for every account (F158). Signing in tells the rest.
+  if (account.verified && !ownSession) {
+    return c.json({ ok: true, data: { verified: true, alreadyVerified: true, email: account.email, ownSession: false } });
+  }
+  const signingIn = !account.verified && !ownSession;
+  let proved = signingIn && signupProof !== undefined && isSignupProofOf(signupProof, account.id);
+  // A Google-only account has no password to ask for: the settling below asks
+  // its question, and that click never signs anyone in.
+  if (signingIn && !proved && account.passwordHash !== null) {
+    if (!password) {
+      return c.json({ ok: true, data: { verified: false, passwordRequired: true, email: account.email } });
+    }
+    const limited = await authRateLimit(c, async () => {});
+    if (limited) return limited;
+    if (!(await verifyPassword(password, account.passwordHash))) {
+      return c.json({ ok: false, error: "wrong_password", message: "That isn't this account's password." }, 401);
+    }
+    proved = true;
+  }
+
+  const bearer = c.req.header("Authorization");
+  const session = bearer?.startsWith("Bearer ") ? verifyToken(bearer.slice(7)) : null;
+
+  // The verification and an organization join on a captured domain commit
+  // together (stream Domains, OD-J1). At the seat limit both roll back, so
+  // the address stays unverified and the same link works once a seat frees
+  // (OD-C1). The Google identity settled first (F137) rolls back with them,
+  // so that later click settles it instead.
+  const outcome: { updated?: { id: string; email: string; waitlisted: boolean; cutOff: string | null }; joined?: string; googleSignIn?: "proceed" | "confirm" | "removed" } = {};
+  try {
+    await db.transaction(async (tx) => {
+      // Proving who registered also answers the question, but it isn't the Google
+      // sign-up's own session, so the identity goes.
+      outcome.googleSignIn = await settleGoogleIdentityOnVerify(tx, account.id, session, confirm === true || proved);
+      if (outcome.googleSignIn === "confirm") return;
+      const result = await tx.execute(sql`
+        UPDATE claimnet.users
+        SET email_verified_at = COALESCE(email_verified_at, now())
+        WHERE id = ${account.id}::uuid
+        RETURNING id, email, (waitlisted_at IS NOT NULL) AS "waitlisted",
+                  floor(extract(epoch FROM sessions_valid_after))::bigint AS "cutOff"
+      `);
+      const row = (result as unknown as Array<{ id: string; email: string; waitlisted: boolean; cutOff: string | null }>)[0];
+      if (!row) return;
+      outcome.updated = row;
+      const join = await joinOnVerification(tx, { userId: row.id, email: row.email });
+      if (join.kind === "full") throw new OrganizationFull();
+      if (join.kind === "joined") outcome.joined = join.organizationName;
+    });
+  } catch (err) {
+    if (err instanceof OrganizationFull) {
+      return c.json({ ok: false, error: "organization_full", message: ORGANIZATION_FULL_MESSAGE, detail: DOMAIN_JOIN_FULL_RETRY }, 409);
+    }
+    throw err;
+  }
+  const googleSignIn = outcome.googleSignIn;
+  if (googleSignIn === "confirm") {
+    // A waitlisted account on a captured domain leaves the waitlist by joining
+    // (OD-C4), so the page's waitlist copy (F148) isn't for it.
+    const waitlisted = account.waitlisted && !(await capturingOrganizationName(db, account.email));
+    return c.json({ ok: true, data: { verified: false, confirmationRequired: true, email: account.email, waitlisted } });
+  }
+
+  const updated = outcome.updated ? { ...outcome.updated, waitlisted: outcome.joined ? false : outcome.updated.waitlisted } : undefined;
   if (!updated) {
     return c.json({ ok: false, error: "Invalid or expired verification token" }, 400);
+  }
+
+  // Only for someone who proved who they are: the confirmation's button never
+  // signs anyone in. No token for a waitlisted or switched-off account, or a
+  // member whose organization requires SSO: the address is verified, and signing
+  // in tells them why not.
+  let sessionToken: string | null = null;
+  let signInRefusal: string | null = null;
+  if (proved) {
+    // Past a cut-off this verify set itself, and only that one: see SessionDating.
+    const notBefore = Number((googleSignIn === "removed" ? updated.cutOff : account.notBefore) ?? 0);
+    const signedIn = await signInAccount(db, updated.id, { issuedAt, notBefore });
+    // Only someone who just proved themselves reads this, as at sign-in.
+    if (signedIn?.disabled) signInRefusal = signInRefusalMessage(signedIn.disabled);
+    if (signedIn?.token) {
+      sessionToken = signedIn.token;
+      await db.execute(sql`UPDATE claimnet.users SET last_login_at = now() WHERE id = ${updated.id}::uuid`);
+    }
   }
 
   // Verification proves mailbox control. Invitations bound to this email
@@ -807,6 +1004,8 @@ auth.post("/verify", verifyRateLimit, async (c) => {
   `);
   const pendingCount = ((pendingInviteCount as unknown as Array<{ total: number }>)[0]?.total) ?? 0;
 
+  const managedBy = outcome.joined ?? (await managedOrganizationOf(db, updated.id))?.name ?? null;
+
   // A verification can take the last slots (verified users count against
   // the cap), so check for "near" here too. Waitlisted verifications don't
   // consume a slot and are reported at registration, not again here.
@@ -816,11 +1015,24 @@ auth.post("/verify", verifyRateLimit, async (c) => {
     ok: true,
     data: {
       verified: true,
+      ...(account.verified ? { alreadyVerified: true } : {}),
       email: updated.email,
       pendingInvitations: pendingCount,
       // Waitlisted accounts get "your place is held" copy instead of
       // "sign in and start" — signing in won't work until promotion.
       waitlisted: updated.waitlisted,
+      // The organization that manages this account, for the verify page
+      // (OD-J1): the one this click joined, and later the one it joined then,
+      // for the account's own session. A repeat click with no session returned
+      // above, and says nothing about it (F158).
+      organization: managedBy ? { name: managedBy, notice: domainJoinedNotice(managedBy) } : null,
+      ...(googleSignIn === "removed" ? { googleSignInRemoved: true } : {}),
+      // The session on this request was this account's, so the SPA may mark
+      // it verified. Another account's session in the same browser wasn't.
+      ownSession,
+      ...(sessionToken ? { token: sessionToken } : {}),
+      ...(signInRefusal ? { signInRefusal } : {}),
+      ...(signInRefusal === SSO_REQUIRED_MESSAGE ? { ssoRequired: true } : {}),
     },
   });
 });
@@ -862,7 +1074,7 @@ auth.post("/resend-verification", resendRateLimit, requireAuth, async (c) => {
   `);
 
   try {
-    await sendVerificationEmail(user.email, token);
+    await sendVerification(user.email, token, false);
     return c.json({ ok: true, data: { message: "Verification email sent" } });
   } catch {
     return c.json({ ok: false, error: "Failed to send email" }, 500);
@@ -898,10 +1110,13 @@ auth.post("/forgot-password", forgotPasswordRateLimit, async (c) => {
   const db = getDb();
 
   // Look up the user — but never reveal whether they exist.
+  // The require_sso test rides the same lookup, so the exists branch does no
+  // extra round trip (F45) and a member of such an organization gets no
+  // reset email (SSO-R3).
   const userRows = await db.execute(sql`
-    SELECT id FROM claimnet.users WHERE email = ${email} LIMIT 1
+    SELECT u.id, ${ssoRequired()} AS "ssoRequired" FROM claimnet.users u WHERE u.email = ${email} LIMIT 1
   `);
-  const user = (userRows as unknown as Array<{ id: string }>)[0];
+  const user = (userRows as unknown as Array<{ id: string; ssoRequired: boolean }>)[0];
 
   // F45 residual (security-audit-2026-06-11): equalize the work both branches
   // do, so response latency can't be used as an account-enumeration oracle.
@@ -931,10 +1146,12 @@ auth.post("/forgot-password", forgotPasswordRateLimit, async (c) => {
     // Fire-and-forget the SMTP roundtrip (original F45 fix): awaiting it only
     // on the account-exists branch was itself a timing oracle. Errors are
     // swallowed for the same reason — the user can request again.
-    void sendPasswordResetEmail(email, rawToken).catch((err) => {
-      console.error("[auth/forgot-password] Failed to send reset email:", err);
-    });
-    if (process.env["ALLOW_AUTO_SETUP"] === "true") {
+    if (!user.ssoRequired) {
+      void sendPasswordResetEmail(email, rawToken).catch((err) => {
+        console.error("[auth/forgot-password] Failed to send reset email:", err);
+      });
+    }
+    if (process.env["ALLOW_AUTO_SETUP"] === "true" && !user.ssoRequired) {
       devOnlyResetToken = rawToken;
     }
   } else {
@@ -970,6 +1187,13 @@ auth.post("/forgot-password", forgotPasswordRateLimit, async (c) => {
 // POST /auth/reset-password — complete the reset using the emailed token.
 // Validates the token hash, enforces 1-hour expiry and single-use (the token
 // is cleared on success). Updates password_hash via bcrypt.
+//
+// The emailed token proves the mailbox, so this is also how an address's real
+// owner takes it back from someone who registered on it (recipe 450a107b,
+// F144): it replaces the password, cuts every session, and verifies the
+// address. The sessions go on every reset, verified account or not. API keys
+// and OAuth connections stay: an unverified account has none, and a person who
+// forgot a password shouldn't lose their agents.
 auth.post("/reset-password", resetPasswordRateLimit, async (c) => {
   let body: unknown;
   try {
@@ -987,26 +1211,87 @@ auth.post("/reset-password", resetPasswordRateLimit, async (c) => {
   const tokenHash = hashResetToken(token);
   const newHash = await hashPassword(newPassword);
 
-  // Atomic update — only succeeds if the hash matches AND the token is fresh
-  // (≤1 hour). We clear the reset columns in the same statement so the token
-  // cannot be replayed.
-  const result = await db.execute(sql`
-    UPDATE claimnet.users
-    SET password_hash = ${newHash},
-        password_reset_token_hash = NULL,
-        password_reset_token_created_at = NULL,
-        updated_at = NOW()
-    WHERE password_reset_token_hash = ${tokenHash}
-      AND password_reset_token_created_at > NOW() - interval '1 hour'
-    RETURNING id, email
-  `);
+  const outcome = await db.transaction(async (tx) => {
+    // Atomic update — only succeeds if the hash matches AND the token is fresh
+    // (≤1 hour). We clear the reset columns in the same statement so the token
+    // cannot be replayed.
+    const result = await tx.execute(sql`
+      UPDATE claimnet.users u
+      SET password_hash = ${newHash},
+          password_reset_token_hash = NULL,
+          password_reset_token_created_at = NULL,
+          updated_at = NOW()
+      WHERE u.password_reset_token_hash = ${tokenHash}
+        AND u.password_reset_token_created_at > NOW() - interval '1 hour'
+        AND NOT ${ssoRequired()}
+      RETURNING u.id, u.email, (u.waitlisted_at IS NOT NULL) AS "waitlisted",
+                (u.email_verified_at IS NULL) AS "unverified"
+    `);
+    const updated = (result as unknown as Array<{ id: string; email: string; waitlisted: boolean; unverified: boolean }>)[0];
+    if (!updated) return null;
 
-  const updated = (result as unknown as Array<{ id: string; email: string }>)[0];
-  if (!updated) {
+    await invalidateSessions(tx, updated.id);
+
+    // A reset proves the mailbox as a verification does, and nothing here ties
+    // an unverified Google sign-up to it.
+    const googleSignIn = await settleGoogleIdentityOnVerify(tx, updated.id, null, true);
+
+    // Proving the mailbox joins a captured domain's organization here too
+    // (OD-J9). With no free seat the address stays unverified, as on a refused
+    // click (OD-C1), but the reset still stands: undoing it would leave a
+    // stranger's password working on the owner's address (F144).
+    const join = updated.unverified ? await joinOnVerification(tx, { userId: updated.id, email: updated.email }) : null;
+    if (join?.kind === "full") {
+      return { ...updated, newlyVerified: false, stillRunning: await credentialsStillRunning(tx, updated.id), googleSignInRemoved: googleSignIn === "removed", joined: null, organizationFull: true };
+    }
+    const joined = join?.kind === "joined" ? join.organizationName : null;
+
+    // THE RESET'S VERIFY WRITE. It only takes effect on an unverified account,
+    // so a reset on a verified one changes nothing here. Anything that has to
+    // settle when a mailbox is proved goes directly ahead of it.
+    const verified = await tx.execute(sql`
+      UPDATE claimnet.users SET email_verified_at = now()
+      WHERE id = ${updated.id}::uuid AND email_verified_at IS NULL
+      RETURNING id
+    `);
+
+    const stillRunning = await credentialsStillRunning(tx, updated.id);
+    return { ...updated, waitlisted: joined ? false : updated.waitlisted, newlyVerified: (verified as unknown as unknown[]).length > 0, stillRunning, googleSignInRemoved: googleSignIn === "removed", joined, organizationFull: false };
+  });
+
+  if (!outcome) {
+    // A valid token for a member of an organization that requires SSO gets
+    // the reason, since only the mailbox holder has it (SSO-R3).
+    const blocked = await db.execute(sql`
+      SELECT 1 FROM claimnet.users u
+      WHERE u.password_reset_token_hash = ${tokenHash}
+        AND u.password_reset_token_created_at > NOW() - interval '1 hour'
+        AND ${ssoRequired()}
+    `);
+    if ((blocked as unknown as unknown[]).length > 0) {
+      return c.json({ ok: false, error: "sso_required", message: SSO_REQUIRED_MESSAGE }, 403);
+    }
     return c.json({ ok: false, error: "Invalid or expired reset token" }, 400);
   }
 
-  return c.json({ ok: true, data: { reset: true, email: updated.email } });
+  // A verification can take the last slots, as on POST /auth/verify.
+  if (outcome.newlyVerified && !outcome.waitlisted) void logSignupCapState(db, { waitlisted: false });
+
+  const organizationLines = outcome.organizationFull
+    ? [ORGANIZATION_FULL_MESSAGE, DOMAIN_RESET_FULL_RETRY]
+    : outcome.joined
+      ? [domainJoinedNotice(outcome.joined)]
+      : [];
+  return c.json({
+    ok: true,
+    data: {
+      reset: true,
+      email: outcome.email,
+      stillRunning: outcome.stillRunning,
+      ...(outcome.googleSignInRemoved ? { googleSignInRemoved: true } : {}),
+      ...(organizationLines.length > 0 ? { organizationLines } : {}),
+    },
+  });
 });
 
 export { auth as authRoutes };

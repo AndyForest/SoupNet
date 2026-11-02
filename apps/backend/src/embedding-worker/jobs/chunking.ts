@@ -5,8 +5,8 @@
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { getChunkingStrategy } from "../lib/chunking";
+import { getEmbeddingModelId } from "../../lib/embeddings/provider";
 
-const DEFAULT_MODEL_ID = "gemini-embedding-2-preview";
 const DEFAULT_TASK_TYPE = "RETRIEVAL_DOCUMENT";
 
 export async function handleChunkingJob(
@@ -79,7 +79,7 @@ export async function handleChunkingJob(
         INSERT INTO claimnet.embedding_vectors
           (embedding_chunk_id, model_id, task_type, vector_source, status)
         VALUES
-          (${chunkRow.id}, ${DEFAULT_MODEL_ID}, ${DEFAULT_TASK_TYPE}, 'server', 'pending')
+          (${chunkRow.id}, ${getEmbeddingModelId()}, ${DEFAULT_TASK_TYPE}, 'server', 'pending')
       `);
     }
 

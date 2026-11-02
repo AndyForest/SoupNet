@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { Hono } from "hono";
+import { getEmbeddingModelId } from "../lib/embeddings/provider";
 import {
   HOW_THIS_WORKS,
   FOR_AI_AGENTS,
@@ -143,7 +144,7 @@ Next evidence entry (interpretation of the next reference).
 
   <h2>Technical details</h2>
   <ul>
-    <li>Search: pure semantic &mdash; <a href="https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-embedding-2/">gemini-embedding-2-preview</a> vectors, cosine similarity (raw scores near zero are normal &mdash; ranking is relative, not a percentage). "Quoted terms" in the read-only <code>filter</code> search match exact substrings across recipe, evidence, and reference text; <code>author:</code> / <code>after:</code> / <code>before:</code> qualifiers filter structurally</li>
+    <li>Search: pure semantic &mdash; <a href="https://blog.google/innovation-and-ai/models-and-research/gemini-models/gemini-embedding-2/">${getEmbeddingModelId()}</a> vectors, cosine similarity (raw scores near zero are normal &mdash; ranking is relative, not a percentage). "Quoted terms" in the read-only <code>filter</code> search match exact substrings across recipe, evidence, and reference text; <code>author:</code> / <code>after:</code> / <code>before:</code> qualifiers filter structurally</li>
     <li>Include file links in references &mdash; no upload needed, our system can fetch them</li>
     <li>Markdown encouraged in all text fields</li>
     <li><strong>MCP tools available:</strong> <a href="/docs/mcp-setup${kq}">Set up check_recipe and get_briefing</a> for Codex, Claude Code, Claude Desktop, and other MCP-compatible agents</li>
@@ -352,9 +353,9 @@ http_headers = { Authorization = "Bearer ${escKey}" }</pre>
 
   <h2>Uploading private files</h2>
   <p>The <code>check_recipe</code> tool accepts a <code>file_url</code> parameter for multimodal evidence
-  (images, PDFs, audio, video). For files already public on the web, just pass the URL. For private local
-  files &mdash; screenshots, generated artifacts, anything that lives only on your disk &mdash; upload them
-  first via the <code>POST /uploads</code> REST endpoint, then pass the returned URL.</p>
+  (images, PDFs, audio, video). It takes only a URL from <code>POST /uploads</code>: the server doesn't fetch
+  any other URL. Upload your file &mdash; a screenshot, a generated artifact, anything on your disk &mdash;
+  through that REST endpoint, then pass the returned URL.</p>
 
   <p>Why this two-step? MCP tool calls pass JSON arguments; binary content has to be base64-encoded inline,
   which blows the agent's context window on any meaningful image. The upload endpoint sidesteps this with a

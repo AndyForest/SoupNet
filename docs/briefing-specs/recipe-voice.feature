@@ -61,3 +61,9 @@ Feature: Recipe voice — the user's perspective in a transferable role
     Then the recipe's role names the person as the recipient of that kind of thing (e.g. "As a reader of weekly status reports")
     And the goal is a separate clause
     And the claim uses "prefer" or "chose", not "want"
+
+  Scenario: A preference about an agent names the agent in the role
+    # Guards: ROLE_PATTERNS, "Put the actor in the role"; SoupNet-evals notes/briefs/2026-11-01-briefing-actor-in-role.md
+    When the agent logs the person's preference about how a coding agent should work
+    Then the recipe's role names the agent (e.g. "As a developer delegating feature work to a coding agent")
+    And the claim's "I" is the person, not the actor the claim relies on

@@ -26,6 +26,10 @@ const router = createRouter({ routeTree });
 const rootEl = document.getElementById("root");
 if (!rootEl) throw new Error("Root element not found");
 
+// A static /info page (static-info-pages.tsx) arrives with its own title, and
+// no route sets one, so it would otherwise stay on every page navigated to.
+document.title = "Soup.net";
+
 createRoot(rootEl).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>

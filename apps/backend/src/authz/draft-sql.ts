@@ -227,7 +227,7 @@ export function draftAwaitingReviewBy(alias: TraceAlias, personUserId: string): 
 
 /**
  * When the intent a draft was deposited under was last used (slice 6a's link;
- * any check, search or feedback row carrying the intent touches it), or NULL
+ * only a check carrying the intent updates it, recipe ac453630), or NULL
  * when the draft has no intent or its intent row is gone. Joined on the id
  * alone, for the timestamp: the story never leaves this expression, so
  * another person's intent is never shown (stream B's contract, 2026-10-25).
@@ -241,8 +241,8 @@ function intentLastUsed(alias: TraceAlias): SQL {
  * Whether a draft's window is still open, by the database's clock in the
  * calling statement: under an intent, while that intent was used within the
  * last day; with no intent, or one whose row is gone, for a week from its
- * deposit (recipe fd614c86). Using the intent again reopens the window, so a
- * draft revives with nothing written to it (S10-L1 to S10-L3).
+ * deposit (recipe fd614c86). A check carrying the intent reopens the window,
+ * so a draft revives with nothing written to it (S10-L1 to S10-L3).
  */
 function draftWindowOpen(alias: TraceAlias): SQL {
   const a = aliasSql(alias);
@@ -272,8 +272,8 @@ function depositedHeadless(alias: TraceAlias): SQL {
 /**
  * An unverified draft that is still live (slice 10, ruled 2026-10-25, recipe
  * 053c9b97): deposited by a headless key, or within its window. Computed at
- * read time and never stored or swept, so a draft revives when its intent is
- * used again (after 6a). Viewer-independent: both parties of an on-behalf
+ * read time and never stored or swept, so a draft revives when a check carries
+ * its intent again (after 6a). Viewer-independent: both parties of an on-behalf
  * draft see the same liveness, the depositor's (S10-L5).
  */
 export function draftLive(alias: TraceAlias): SQL {

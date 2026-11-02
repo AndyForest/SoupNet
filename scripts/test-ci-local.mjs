@@ -77,6 +77,16 @@ const CI_BACKEND = `http://localhost:${CI_PORT}`;
 // FRONTEND_URL still needs a deterministic value to assert against.
 const CI_FRONTEND = "http://localhost:5273";
 
+// Sign in with Google against the fake issuer the Layer 3 suite starts
+// (mirrors ci.yml's job env). The issuer's port follows the backend's, so
+// parallel gates on distinct TESTCI_PGPORT values don't collide.
+const CI_GOOGLE = {
+  GOOGLE_OAUTH_CLIENT_ID: "ci-google-client.apps.googleusercontent.com",
+  GOOGLE_OAUTH_CLIENT_SECRET: "ci-google-secret",
+  GOOGLE_OIDC_TEST_ISSUER: `http://127.0.0.1:${CI_PORT + 900}`,
+  // Seals Workspace directory credentials (stream Offboarding).
+  DIRECTORY_CREDENTIALS_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+};
 function run(cmd, opts = {}) {
   console.log(`\n> ${cmd}`);
   execSync(cmd, { stdio: "inherit", ...opts });
@@ -160,6 +170,8 @@ async function main() {
     // used to be built only at deploy, so a Node-only import in the frontend
     // passed every gate and failed in production.
     run("npm run build -w apps/frontend");
+    // Mirrors CI's "Check static info pages" step.
+    run("node scripts/check-info-pages.mjs apps/frontend/dist");
 
     // 3. Typecheck — mirrors CI's separate typecheck step. Clear
     //    tsbuildinfo first so tsc doesn't skip files it thinks are
@@ -205,6 +217,7 @@ async function main() {
         JWT_SECRET: "ci-test-secret-64-char-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         GEMINI_API_KEY: "",
         EMBEDDINGS_PROVIDER: "stub",
+        EMBEDDINGS_REBUILD_TARGET: "",
         SYNTHESIS_PROVIDER: "stub",
         DEV_USERNAME: "ci@test.local",
         DEV_PASSWORD: "ci-test-password",
@@ -219,6 +232,7 @@ async function main() {
         // match what tests fetch via BASE = CI_BACKEND.
         BACKEND_URL: CI_BACKEND,
         FRONTEND_URL: CI_FRONTEND,
+        ...CI_GOOGLE,
       },
       stdio: "inherit",
     });
@@ -270,10 +284,12 @@ async function main() {
         JWT_SECRET: "ci-test-secret-64-char-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         GEMINI_API_KEY: "",
         EMBEDDINGS_PROVIDER: "stub",
+        EMBEDDINGS_REBUILD_TARGET: "",
         SYNTHESIS_PROVIDER: "stub",
         DISABLE_RATE_LIMIT: "true",
         DEV_USERNAME: "ci@test.local",
         DEV_PASSWORD: "ci-test-password",
+        ...CI_GOOGLE,
       },
     });
 

@@ -4,7 +4,7 @@
   </a>
 </p>
 
-<p align="center"><strong>Your taste and judgment, in every AI agent you use.</strong></p>
+<p align="center"><strong>Teach one, teach all your AIs.</strong></p>
 
 <p align="center">
   <a href="https://github.com/AndyForest/SoupNet/actions/workflows/ci.yml"><img src="https://github.com/AndyForest/SoupNet/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
@@ -48,6 +48,8 @@ Known failure modes, from the same evaluation: the self-reporting never once sai
 ## Try it
 
 - **Hosted** — free, open to new signups: [soup.net](https://www.soup.net). The site generates a one-click briefing for whatever agent you use, from web-only chatbots to full MCP clients. On claude.ai, connect in one click from the [Connectors Directory listing](https://claude.ai/directory/soupnet) (all plans, including Free).
+
+  Once connected, tell your AI to "use Soup.net throughout" at the start of a session, and again if it stops, for example after compaction. Some agents won't reach for it unless asked. A line in your agent's memory or rules file does the same job every session.
 
   The web-chatbot path is a first-class interface, not a fallback: agents without MCP participate through generated links — the recipe check is a URL the agent constructs or the human clicks. Tested working with ChatGPT (web), Gemini, and Claude, free tiers included.
 - **Self-host** — MIT-licensed, deliberately boring stack (Postgres 17 + pgvector, Hono, React). No LLM runs on the server for the core check path: agents do the reasoning wherever they already run; the server does storage and vector search. (Optional premium features — off by default, opt-in per user — use one server-side LLM call; see `docs/planning/premium-llm-features.md`.) Embeddings default to Google's Gemini API (an [AI Studio key](https://aistudio.google.com/apikey) works; a deterministic stub provider covers dev and tests with zero API calls), but self-hosters can run them **fully locally with no key** — in-process on CPU, or against any local `/v1/embeddings` server ([Local / offline embeddings](#local--offline-embeddings) below). Gemini is then needed only for the optional premium features. Quick start below. Either way your corpus exports as a single JSON file (`GET /auth/me/export`, signed in) — and imports back: `POST /import` accepts that same file as the raw request body (signed-in humans only), so a corpus can move between instances, restore from backup, or rebuild into a fresh recipe book. By default import creates a new recipe book (name it with `?book_name=`); pass `?book=<slug|id>` to import into an existing one. Re-importing your own corpus is idempotent (exact-id upsert — re-uploading skips what already landed); importing a corpus whose ids belong to someone else on the instance mints fresh ids and reports the old→new mapping, so it's a portability tool, not a byte-identical restore (a row can even arrive without an id and still import). Import re-embeds asynchronously through the content-addressed vector cache, so text the instance has embedded before costs zero provider calls — and deleting an account preserves that shared cache, so re-provisioning the same corpus stays free.
@@ -97,7 +99,7 @@ Mailpit Web UI for local dev: http://localhost:8625
 
 ## Local / offline embeddings
 
-Semantic search needs an embedding provider, selected process-wide by `EMBEDDINGS_PROVIDER`. The default (`gemini`) calls Google; `stub` returns deterministic fake vectors for dev/tests. Two more providers let a self-hoster run real semantic search with **no external API and no key**:
+Semantic search needs an embedding provider, selected process-wide by `EMBEDDINGS_PROVIDER`. The default (`gemini`) calls Google, on `EMBEDDINGS_MODEL` if you set it, otherwise on the model your stored vectors are under, or `gemini-embedding-2` on a new database; `stub` returns deterministic fake vectors for dev/tests. Two more providers let a self-hoster run real semantic search with **no external API and no key**:
 
 - **`local`** — an in-process CPU model via `@huggingface/transformers` (default `bge-small-en-v1.5`). Set `EMBEDDINGS_PROVIDER=local` and go — the model (~23 MB) downloads once. Lowest friction; good for tire-kicking and CI.
 - **`openai-compatible`** — points at any local OpenAI-style `/v1/embeddings` server, so you can serve a stronger model through tooling you already run:
@@ -111,7 +113,7 @@ Semantic search needs an embedding provider, selected process-wide by `EMBEDDING
 
   LM Studio (`http://localhost:1234/v1`), Ollama (`ollama pull nomic-embed-text` → `http://localhost:11434/v1`), and Hugging Face TEI work identically — any `/v1/embeddings` endpoint. If Soup.net runs in its own container, `localhost` means the container: use `host.docker.internal` or the host IP.
 
-**Two caveats.** One embedding provider per deployment — vectors from different models live in different semantic spaces and are never mixed, so switching provider or model means re-embedding the corpus (search fail-safes to empty results until you do). And a model's native dimension must be ≤ 3072 (or MRL-capable). Under the hood, sub-3072 vectors are zero-padded into the existing `halfvec(3072)` column, which is provably lossless for cosine — the design, the math, and the exit criterion are in **[ADR-0023](docs/adr/0023-local-embedding-providers.md)** and **[`docs/planning/local-embedding-provider.md`](docs/planning/local-embedding-provider.md)**.
+**Two caveats.** One embedding provider per deployment — vectors from different models live in different semantic spaces and are never mixed, so switching means re-embedding the corpus. A model change on `gemini` or `openai-compatible` can do that with search working throughout: set `EMBEDDINGS_REBUILD_TARGET`, wait, then set both values, swapped ([ADR-0024](docs/adr/0024-embedding-model-switch.md)). Changing provider, or a `local` model, leaves search empty until the worker finishes, and the backend logs `READ_MODEL_EMPTY` until then. And a model's native dimension must be ≤ 3072 (or MRL-capable). Under the hood, sub-3072 vectors are zero-padded into the existing `halfvec(3072)` column, which is provably lossless for cosine — the design, the math, and the exit criterion are in **[ADR-0023](docs/adr/0023-local-embedding-providers.md)** and **[`docs/planning/local-embedding-provider.md`](docs/planning/local-embedding-provider.md)**.
 
 ---
 
@@ -190,7 +192,7 @@ Per-client config blocks (Codex, VS Code, Google Antigravity, Claude Desktop via
 | Tool | What it does |
 |---|---|
 | `check_recipe` | The recipe check: search with a hypothesis about your taste, get back prior decisions with evidence, and leave the hypothesis as a trace. Optional `draft: true` parks a call the agent could not settle; `impact` and `uncertainty` ratings triage it. |
-| `search_recipes` | Read-only search with the same ranking and a Gmail-shaped query grammar (`author:`, `after:`, `is:draft`, quoted phrases). Logs nothing. Includes your own recipes by default; `-author:me` excludes them. |
+| `search_recipes` | Read-only search with the same ranking and a Gmail-shaped query grammar (`author:`, `after:`, `is:draft`, quoted phrases). Logs no recipe. Includes your own recipes by default; `-author:me` excludes them. |
 | `get_recipes` | Fetch recipes by id, one or a JSON array. |
 | `get_briefing` | The session briefing: principles, format, your recipe books and their current state. |
 | `log_feedback` | Close the loop on an earlier check, search or briefing: what it surfaced and what the agent did with it. |

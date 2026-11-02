@@ -185,7 +185,7 @@ export async function countOwners(db: PostgresJsDatabase, bookId: string): Promi
  *   - `not_a_member` — there was no row; nothing changed
  *   - `last_owner`   — refused: the user is the book's only owner; nothing changed
  */
-export type RemoveMemberResult = "removed" | "not_a_member" | "last_owner";
+export type RemoveMemberResult = "removed" | "not_a_member" | "last_owner" | "org_owner";
 
 /**
  * Remove a user's membership row — unless that would leave the book with no
@@ -230,6 +230,15 @@ export async function removeMember(
     const owners = ownerRows as unknown as Array<{ isTarget: boolean }>;
     const targetIsOwner = owners.some((o) => o.isTarget === true);
     if (targetIsOwner && owners.length <= 1) return "last_owner";
+
+    // An org owner holds the default book by being an owner (F150), so nobody
+    // can take the row and lock them out of it. Changing their role comes first.
+    const orgOwner = await tx.execute(sql`
+      SELECT 1 FROM claimnet.groups g
+      JOIN claimnet.organization_members om ON om.organization_id = g.organization_id
+      WHERE g.id = ${bookId}::uuid AND g.org_default AND om.user_id = ${userId}::uuid AND om.role = 'owner'
+    `);
+    if ((orgOwner as unknown as unknown[]).length > 0) return "org_owner";
 
     const deleted = await tx.execute(sql`
       DELETE FROM claimnet.group_members

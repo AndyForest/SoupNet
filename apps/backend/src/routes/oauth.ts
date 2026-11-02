@@ -13,13 +13,15 @@
  * CORS-open (server-to-server fetch from claude.ai's cloud + browser-side
  * fetches from MCP-aware clients).
  *
- * See ADR-pending and docs/connectors/claude.md for the integration context.
+ * See ADR-0022 (docs/adr/0022-oauth-connector-and-google-sign-in.md) and
+ * docs/connectors/claude.md for the integration context.
  */
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { cors } from "hono/cors";
 import { sql } from "drizzle-orm";
 import jwt from "jsonwebtoken";
+import { isRegisteredRedirectUri } from "@soupnet/contracts/oauth-redirect";
 import { getDb } from "../db";
 import { requireAuth, requireVerifiedEmail } from "../auth";
 import {
@@ -34,6 +36,7 @@ import {
   verifyClientCredentials,
   maybeCleanupOAuthArtifacts,
   requestedOidcScopes,
+  requestedScopeForLog,
   OIDC_SCOPES,
   ACCESS_TOKEN_TTL_SECONDS,
 } from "../services/oauth.service";
@@ -136,8 +139,8 @@ const grantRateLimit = rateLimit({ max: 60, windowMs: 60 * 60 * 1000 });
 const clientInfoRateLimit = rateLimit({ max: 300, windowMs: 60 * 60 * 1000 });
 const userinfoRateLimit = rateLimit({ max: 600, windowMs: 60 * 60 * 1000 });
 
-/** An authorization response's redirect: the client's exact registered URI
- *  with the given parameters, `state` echoed when sent, and RFC 9207 `iss`. */
+/** An authorization response's redirect: the client's registered URI, as
+ *  requested, with the given parameters, `state` echoed when sent, and RFC 9207 `iss`. */
 function authorizationRedirect(redirectUri: string, params: Record<string, string>, state: string): string {
   const url = new URL(redirectUri);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
@@ -276,7 +279,9 @@ oauthRoutes.post(
     if (!client) {
       return c.json({ error: "invalid_client", error_description: "no such client" }, 400);
     }
-    if (!client.redirectUris.includes(redirectUri)) {
+    // The code stays bound to the exact URI requested here, port included, and
+    // /oauth/token requires that same string.
+    if (!isRegisteredRedirectUri(redirectUri, client.redirectUris)) {
       return c.json({ error: "invalid_request", error_description: "redirect_uri is not registered for this client" }, 400);
     }
 
@@ -306,6 +311,13 @@ oauthRoutes.post(
       oidcScopes: requestedOidcScopes(scopeRaw),
     });
 
+    // What each kind of client actually requests, so that enforcing scope=read
+    // (F132) can't silently turn a real client read-only. No user or book ids.
+    console.log(`[oauth-grant] ${JSON.stringify({
+      client: client.domain ?? "dcr",
+      scope: requestedScopeForLog(scopeRaw),
+    })}`);
+
     return c.json({ redirect_url: authorizationRedirect(redirectUri, { code }, state) });
   },
 );
@@ -314,10 +326,10 @@ oauthRoutes.post(
 // The consent page's Cancel (RFC 6749 §4.1.2.1 access_denied). Built here,
 // not in the browser, so the error response carries RFC 9207 `iss` like the
 // success one, and the redirect target is checked server-side against the
-// client's exact registered URIs (F44's Cancel check, moved from the page).
+// client's registered URIs (F44's Cancel check, moved from the page).
 // It carries the grant's request binding: a signed-in, verified session sent
 // as a Bearer header (no cookie, so a cross-site form cannot submit it) and
-// an exactly registered redirect_uri.
+// a registered redirect_uri.
 oauthRoutes.post(
   "/authorize/deny",
   grantRateLimit,
@@ -338,7 +350,7 @@ oauthRoutes.post(
     if (!client) {
       return c.json({ error: "invalid_client", error_description: "no such client" }, 400);
     }
-    if (!client.redirectUris.includes(redirectUri)) {
+    if (!isRegisteredRedirectUri(redirectUri, client.redirectUris)) {
       return c.json({ error: "invalid_request", error_description: "redirect_uri is not registered for this client" }, 400);
     }
     return c.json({ redirect_url: authorizationRedirect(redirectUri, { error: "access_denied" }, state) });

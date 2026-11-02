@@ -55,8 +55,19 @@ jobs:
       DEV_PASSWORD: ci-test-password
       GEMINI_API_KEY: ""
       EMBEDDINGS_PROVIDER: stub  # deterministic fake vectors; no API quota, no flakiness
+      EMBEDDINGS_REBUILD_TARGET: ""  # stub has one model; model-switch.integration.test.ts boots its own gemini backends, with and without EMBEDDINGS_MODEL
       SYNTHESIS_PROVIDER: stub  # deterministic premium synthesis; no LLM call, no flakiness
       DISABLE_RATE_LIMIT: "true"  # tests make many rapid requests
+      # Sign in with Google against a fake issuer the Layer 3 suite starts
+      # (routes/google-auth.test.ts, apps/backend/src/test-google-issuer.ts).
+      # The backend honours a test issuer only outside production. Mirrors
+      # scripts/test-ci-local.mjs.
+      GOOGLE_OAUTH_CLIENT_ID: ci-google-client.apps.googleusercontent.com
+      GOOGLE_OAUTH_CLIENT_SECRET: ci-google-secret
+      GOOGLE_OIDC_TEST_ISSUER: http://127.0.0.1:3998
+      # Seals Workspace directory credentials (stream Offboarding); a fixed
+      # test key. Mirrors scripts/test-ci-local.mjs.
+      DIRECTORY_CREDENTIALS_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
     steps:
       # Actions pinned to commit SHAs (not tags) so the actions' own GitHub
@@ -96,6 +107,11 @@ jobs:
       # this step (scripts/test-ci-local.mjs).
       - name: Build frontend
         run: npm run build -w apps/frontend
+
+      # The static /info pages a plugin directory fetches must carry their text
+      # without JavaScript. Mirrored in scripts/test-ci-local.mjs.
+      - name: Check static info pages
+        run: node scripts/check-info-pages.mjs apps/frontend/dist
 
       - name: Typecheck
         run: npm run typecheck --workspaces --if-present
@@ -193,8 +209,8 @@ jobs:
       # Same cache step as ranking-eval (keep the two in sync): a cache hit
       # skips the HF Hub download entirely, which is also this job's main
       # flake source — 2026-07-21, PR #53: the hub reset the ~23 MB model
-      # download mid-stream (ECONNRESET), embedQuery fell back to lexical
-      # (null), and both assertions failed on an unrelated diff. Restore runs
+      # download mid-stream (ECONNRESET), embedQuery returned null,
+      # and both assertions failed on an unrelated diff. Restore runs
       # AFTER npm ci (which would wipe node_modules contents).
       - name: Cache HF embedding model
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
@@ -358,7 +374,19 @@ jobs:
           npm ci
           npm run build:packages
           cd apps/frontend && npx vite build
-          aws s3 sync dist/ s3://claimnet-dev-frontend --delete
+          node ../../scripts/check-info-pages.mjs dist
+          # Static /info pages go up at their extensionless routes, typed by
+          # hand: S3 would guess no type for the key, and CloudFront serves an
+          # existing key as is (only a missing one falls back to index.html).
+          # Excluded from the sync so --delete leaves those keys alone and the
+          # .html files don't publish a second URL for each page.
+          aws s3 sync dist/ s3://claimnet-dev-frontend --delete \
+            --exclude "info/privacy" --exclude "info/terms" --exclude "info/connect" \
+            --exclude "info/*.html"
+          for page in privacy terms connect; do
+            aws s3 cp "dist/info/$page.html" "s3://claimnet-dev-frontend/info/$page" \
+              --content-type "text/html; charset=utf-8"
+          done
           aws cloudfront create-invalidation \
             --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} \
             --paths "/*"

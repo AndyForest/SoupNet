@@ -50,12 +50,15 @@ type SqlExecutor = Pick<PostgresJsDatabase, "execute">;
 
 /**
  * An organization's members as a derived table: (user_id, role, joined_via,
- * disabled_at, joined_at). For the console's member list, which joins its
- * aggregates onto it by user id rather than naming the table.
+ * disabled_at, joined_at, directory_status, directory_checked_at). For the
+ * console's member list, which joins its aggregates onto it by user id rather
+ * than naming the table. The directory columns are stream Offboarding's (the
+ * Workspace directory's word on the member, and when it was last confirmed).
  */
 export function orgMembersOf(organizationId: string): SQL {
   return sql`(
-    SELECT om.user_id, om.role, om.joined_via, om.disabled_at, om.joined_at
+    SELECT om.user_id, om.role, om.joined_via, om.disabled_at, om.joined_at,
+           om.directory_status, om.directory_checked_at
     FROM claimnet.organization_members om
     WHERE om.organization_id = ${organizationId}::uuid
   )`;
@@ -170,6 +173,42 @@ export async function homeOrganizationOf(db: SqlExecutor, userId: string): Promi
 }
 
 /**
+ * Call first in a short transaction that creates someone's new recipe book,
+ * before reading their home organization. It waits for a join in progress, so
+ * the book lands in the company, and a join waits for it, so the join's move
+ * finds the book. Neither can leave a book behind in the personal organization
+ * (F169). Sign-ins, resets and suspensions wait on this lock, so a transaction
+ * whose length depends on its input uses `settleNewBookInHome` instead (F174).
+ */
+export async function holdAccountForNewBook(tx: SqlExecutor, userId: string): Promise<void> {
+  await tx.execute(sql`SELECT 1 FROM claimnet.users WHERE id = ${userId}::uuid FOR SHARE`);
+}
+
+/**
+ * The last step before commit of a long transaction that created this book
+ * (F174): an import holds nothing of the account's while it runs, then comes
+ * here. A join that finished while it ran couldn't see the uncommitted book, so
+ * the book moves now, the way the join would have moved it. One in progress is
+ * waited for, and one that starts after this lock waits for the commit and finds
+ * the book itself. Returns the book's slug, which a move can change.
+ */
+export async function settleNewBookInHome(tx: SqlExecutor, userId: string, bookId: string): Promise<string> {
+  await holdAccountForNewBook(tx, userId);
+  const rows = (await tx.execute(sql`
+    SELECT u.email, u.personal_organization_id, g.organization_id, g.slug
+    FROM claimnet.users u, claimnet.groups g
+    WHERE u.id = ${userId}::uuid AND g.id = ${bookId}::uuid
+  `)) as unknown as Array<{ email: string; personal_organization_id: string | null; organization_id: string; slug: string }>;
+  const row = rows[0];
+  if (!row) throw new Error("settleNewBookInHome: no such account or book");
+  const home = await homeOrganizationOf(tx, userId);
+  if (!home || home === row.organization_id || row.organization_id !== row.personal_organization_id) return row.slug;
+  await moveOwnBooksInto(tx, userId, row, home);
+  const moved = (await tx.execute(sql`SELECT slug FROM claimnet.groups WHERE id = ${bookId}::uuid`)) as unknown as Array<{ slug: string }>;
+  return moved[0]?.slug ?? row.slug;
+}
+
+/**
  * May this account create a recipe book in this organization? A managed
  * account only in its company organization, as an active member (a disabled
  * one never gets this far); any other account only in an organization it
@@ -245,8 +284,13 @@ export async function joinOrganization(db: PostgresJsDatabase, input: JoinInput)
 /**
  * The join inside a caller's transaction, for a caller whose own writes must
  * roll back with it (Domains' verification click, SSO's Google sign-up). It
- * takes the organization row lock first, so call it before anything else in
- * the transaction that could wait on that row. A refusal is returned, not
+ * locks the account's row, then the organization's: a proof step already holds
+ * the account's row when it gets here, and the opposite order deadlocks with it
+ * (F168). The account's lock is NO KEY UPDATE because a transaction holding the
+ * organization's row may still check a foreign key to the account: the owner
+ * hand-over in `actOnMember` names its successor, and FOR UPDATE would block
+ * that check and deadlock (F169). Holding an organization's row and then taking
+ * a row lock on an account is still out. A refusal is returned, not
  * thrown: the caller's transaction decides whether to roll back. After the
  * caller commits, it sends the notice with `sendJoinNotice`
  * (services/organization.service.ts).
@@ -255,22 +299,24 @@ export async function joinOrganizationInTx(tx: SqlExecutor, input: JoinInput): P
   const { organizationId, userId, role, via, authority } = input;
   if (!VIA_FOR_AUTHORITY[authority.kind].includes(via)) return { ok: false, refusal: "not_authorized" };
 
-  // The organization row lock serializes joins and re-enables, so two of them
-  // racing for the last seat can't both see it free.
-  const orgRows = await tx.execute(sql`
-    SELECT id, name, seat_limit FROM claimnet.organizations
-    WHERE id = ${organizationId}::uuid AND NOT is_personal
-    FOR UPDATE
-  `);
-  const org = (orgRows as unknown as Array<{ id: string; name: string; seat_limit: number | null }>)[0];
-  if (!org) return { ok: false, refusal: "organization_not_found" };
-
   const userRows = await tx.execute(sql`
     SELECT u.email, u.personal_organization_id FROM claimnet.users u
     WHERE u.id = ${userId}::uuid
-    FOR UPDATE
+    FOR NO KEY UPDATE
   `);
   const account = (userRows as unknown as Array<{ email: string; personal_organization_id: string | null }>)[0];
+
+  // The organization row lock serializes joins and re-enables, so two of them
+  // racing for the last seat can't both see it free. NO KEY UPDATE, so a book
+  // being created in the organization, whose foreign key checks this row for as
+  // long as its transaction runs, doesn't hold up everyone's joins (F174).
+  const orgRows = await tx.execute(sql`
+    SELECT id, name, seat_limit FROM claimnet.organizations
+    WHERE id = ${organizationId}::uuid AND NOT is_personal
+    FOR NO KEY UPDATE
+  `);
+  const org = (orgRows as unknown as Array<{ id: string; name: string; seat_limit: number | null }>)[0];
+  if (!org) return { ok: false, refusal: "organization_not_found" };
   if (!account) return { ok: false, refusal: "unknown_account" };
 
   if (!(await authorityHolds(tx, authority, organizationId, account.email))) {
@@ -305,6 +351,7 @@ export async function joinOrganizationInTx(tx: SqlExecutor, input: JoinInput): P
     WHERE g.organization_id = ${organizationId}::uuid AND g.org_wide
     ON CONFLICT (group_id, user_id) DO NOTHING
   `);
+  if (role === "owner") await syncDefaultBookOwners(tx, organizationId);
 
   // A new account on a verified domain was just made by the sign-up it
   // arrived through; every other arrival is an account that existed, and is
@@ -548,7 +595,7 @@ export async function actOnMember(db: PostgresJsDatabase, input: MemberActionInp
   const { organizationId, actorUserId, targetUserId, action } = input;
   return db.transaction(async (tx) => {
     const orgRows = await tx.execute(sql`
-      SELECT seat_limit FROM claimnet.organizations WHERE id = ${organizationId}::uuid AND NOT is_personal FOR UPDATE
+      SELECT seat_limit FROM claimnet.organizations WHERE id = ${organizationId}::uuid AND NOT is_personal FOR NO KEY UPDATE
     `);
     const org = (orgRows as unknown as Array<{ seat_limit: number | null }>)[0];
     if (!org) return "not_found";
@@ -595,8 +642,34 @@ export async function actOnMember(db: PostgresJsDatabase, input: MemberActionInp
         UPDATE claimnet.group_members gm SET role = ${bookRoleForOrgRole(action.role)}
         FROM claimnet.groups g
         WHERE gm.group_id = g.id AND g.organization_id = ${organizationId}::uuid
-          AND ${membershipOf("gm", targetUserId)} AND gm.via = 'org'
+          AND ${membershipOf("gm", targetUserId)}
+          -- The creator's row on the default book is written 'direct', but it
+          -- is held by being the organization's owner, so it follows the role.
+          AND (gm.via = 'org' OR g.org_default)
       `);
+      await syncDefaultBookOwners(tx, organizationId);
+      // owner_id is always a current owner (F153): account deletion and the
+      // operator's list both read it as the organization's accountable owner.
+      // The actor is an active owner, so there's always someone to take it.
+      if (action.role !== "owner") {
+        const moved = (await tx.execute(sql`
+          UPDATE claimnet.organizations o SET owner_id = (
+            SELECT om.user_id FROM claimnet.organization_members om
+            WHERE om.organization_id = o.id AND om.role = 'owner'
+            ORDER BY om.disabled_at IS NOT NULL, om.joined_at, om.user_id
+            LIMIT 1
+          ), updated_at = NOW()
+          WHERE o.id = ${organizationId}::uuid AND o.owner_id = ${targetUserId}::uuid
+          RETURNING o.owner_id
+        `)) as unknown as Array<{ owner_id: string }>;
+        if (moved[0]) {
+          await tx.execute(sql`
+            INSERT INTO claimnet.audit_log (actor_user_id, action, target_type, target_id, metadata)
+            VALUES (${actorUserId}::uuid, 'organization.owner_handed_over', 'organization', ${organizationId}::uuid,
+              ${JSON.stringify({ reason: "owner_demoted", newOwnerUserId: moved[0].owner_id })}::jsonb)
+          `);
+        }
+      }
     }
 
     await tx.execute(sql`
@@ -609,6 +682,26 @@ export async function actOnMember(db: PostgresJsDatabase, input: MemberActionInp
 }
 
 // ── Account deletion ────────────────────────────────────────────────────────
+
+/**
+ * Every owner of the organization holds the owner role on its default book
+ * (F141). Org owners otherwise hold a book's admin role, and renaming a book
+ * or removing a member takes its owner, so without this a demoted creator
+ * would leave the default book with nobody who can do either. Nobody changes
+ * their own role, so a demotion always leaves another owner to hold it, and
+ * removeMember refuses to take an org owner's row (F150). It writes a missing
+ * row as well as a lower one, so any role action repairs the whole organization.
+ */
+async function syncDefaultBookOwners(tx: SqlExecutor, organizationId: string): Promise<void> {
+  await tx.execute(sql`
+    INSERT INTO claimnet.group_members (group_id, user_id, role, daily_read, daily_write, via)
+    SELECT g.id, om.user_id, 'owner', true, true, 'org'
+    FROM claimnet.groups g
+    JOIN claimnet.organization_members om ON om.organization_id = g.organization_id
+    WHERE g.organization_id = ${organizationId}::uuid AND g.org_default AND om.role = 'owner'
+    ON CONFLICT (group_id, user_id) DO UPDATE SET role = 'owner'
+  `);
+}
 
 /**
  * The deletion cascade's first step for company organizations the departing
@@ -651,6 +744,7 @@ export async function handOverOrganizationsOwnedBy(tx: SqlExecutor, userId: stri
           AND ${membershipOf("gm", successor.user_id)} AND gm.via = 'org'
       `);
     }
+    await syncDefaultBookOwners(tx, id);
     await tx.execute(sql`
       INSERT INTO claimnet.audit_log (actor_user_id, action, target_type, target_id, metadata)
       VALUES (${userId}::uuid, 'organization.owner_handed_over', 'organization', ${id}::uuid,

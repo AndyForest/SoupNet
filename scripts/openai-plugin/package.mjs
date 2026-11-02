@@ -74,11 +74,15 @@ export function pngSize(buf) {
   return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
 }
 
-/** Every file under dir as a sorted list of posix paths relative to dir. */
+// Claude's plugin files share this directory but aren't part of OpenAI's package.
+const NOT_PACKAGED = new Set([".claude-plugin", "README.md"]);
+
+/** Every packaged file under dir as a sorted list of posix paths relative to dir. */
 export function listFiles(dir) {
   const out = [];
   const walk = (current) => {
     for (const entry of readdirSync(current, { withFileTypes: true })) {
+      if (current === dir && NOT_PACKAGED.has(entry.name)) continue;
       const full = join(current, entry.name);
       if (entry.isDirectory()) walk(full);
       else out.push(relative(dir, full).split(sep).join(posix.sep));

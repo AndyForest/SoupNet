@@ -34,6 +34,7 @@ import { renderRatingsMarkdown } from "./triage-ratings";
 import { draftLabel, openQuestionLine } from "./drafts";
 import type { DraftExpiry, OpenQuestion } from "./drafts";
 import { LISTING_DEPTH_MAX, lastReachablePage, FLAT_LIST_NARROWING } from "./listing-depth";
+import { parseSearchQuery } from "./search-query";
 
 // ── Response shape (tolerant — both builders' outputs satisfy it) ───────────
 
@@ -538,9 +539,12 @@ export const INTENT_QUALIFIER_NOT_RECOGNIZED =
  * The zero-result line of a read-only search: ONE phrasing for the JSON
  * notice builder (trace.service.buildSearchOnlyNotice) and the markdown
  * renderer above. An unrecognized intent: id replaces the thin-corpus
- * pointer, since the corpus is not thin; the id selected nothing.
+ * pointer, since the corpus is not thin; the id selected nothing. So does an
+ * empty is:draft search: expired drafts aren't listed, so an empty poll doesn't
+ * mean nothing was left open.
  */
 export function searchZeroResultLine(data: {
+  filter?: string | undefined;
   searchedCorpusSize?: number | undefined;
   searchedOwnExcluded?: number | undefined;
   intentNotRecognized?: boolean | undefined;
@@ -549,6 +553,10 @@ export function searchZeroResultLine(data: {
     ? ` among the ${data.searchedCorpusSize} recipes in scope`
     : "";
   if (data.intentNotRecognized) return `No matches${scope}: ${INTENT_QUALIFIER_NOT_RECOGNIZED}.`;
+  const parsed = data.filter !== undefined ? parseSearchQuery(data.filter) : undefined;
+  if (parsed?.ok && parsed.query.isDraft === true) {
+    return `No open drafts match${scope}. Expired drafts aren't listed here; is:expired finds them.`;
+  }
   return `No matches${scope}${buildOwnExcludedNote(data.searchedOwnExcluded, data.searchedCorpusSize)} — a thin-corpus signal worth a feedback row (story_fulfilled: no).`;
 }
 

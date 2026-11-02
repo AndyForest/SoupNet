@@ -12,6 +12,10 @@ Three tools become available to the AI:
 
 You can phrase prompts naturally — the AI handles the structured recipe formulation behind the scenes.
 
+## Getting your AI to use it
+
+Some AIs won't reach for Soup.net unless asked. Start a session by telling yours to "use Soup.net throughout", and say it again if it stops, for example after a long conversation is compacted. A line in your AI's memory or rules file does the same job every session.
+
 You'll need a Soup.net account — signups are free and open: [create one here](/auth/register).
 
 <!-- agent-type-picker: the live /info/connect page (ConnectPage.tsx) splices
@@ -83,6 +87,15 @@ Clients that register dynamically get a client secret and use it at the token en
 For Claude Code, Claude Desktop, VS Code (Copilot), Google Antigravity, Cursor, Windsurf, and Zed. The Soup.net dashboard's **[API Keys page](/app/keys)** has copy-paste configs for each — sign in first, then copy the one-line config into your client's MCP file.
 
 Cursor, Windsurf, Zed, and VS Code Copilot also accept the OAuth flow above if you'd rather sign in via the browser than paste a key — point them at `https://mcp.soup.net/mcp` and let their built-in OAuth client handle the rest.
+
+### Claude Code, as a plugin with skills
+
+The plugin brings the Soup.net connection and its skills, which teach recipe checks and a few ways of working with them. You sign in through your browser the first time Claude Code connects:
+
+```
+claude plugin marketplace add AndyForest/SoupNet
+claude plugin install soupnet@soupnet
+```
 
 ### Claude Code, spelled out
 

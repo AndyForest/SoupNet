@@ -6,6 +6,7 @@ import {
 import type { createRouter } from "@tanstack/react-router";
 import { AppShell } from "./components/AppShell.js";
 import { LoginPage } from "./pages/LoginPage.js";
+import { GoogleCompletePage } from "./pages/GoogleCompletePage.js";
 import { DashboardPage } from "./pages/DashboardPage.js";
 import { CheckRecipePage } from "./pages/CheckRecipePage.js";
 import { TraceDetailPage } from "./pages/TraceDetailPage.js";
@@ -180,6 +181,14 @@ const registerRoute = createRoute({
   getParentRoute: () => authRoute,
   path: "register",
   component: LoginPage,
+});
+
+// Where the backend's Google callback lands (stream SSO); public, since the
+// session is made here.
+const googleCompleteRoute = createRoute({
+  getParentRoute: () => authRoute,
+  path: "google/complete",
+  component: GoogleCompletePage,
 });
 
 const verifyRoute = createRoute({
@@ -432,6 +441,7 @@ export const routeTree = rootRoute.addChildren([
   authRoute.addChildren([
     loginRoute,
     registerRoute,
+    googleCompleteRoute,
     verifyRoute,
     verifyPendingRoute,
     forgotPasswordRoute,

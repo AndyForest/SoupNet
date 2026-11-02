@@ -20,11 +20,15 @@ import { batchEmbed } from "./gemini-client";
 
 const HAS_KEY = Boolean(process.env["GEMINI_API_KEY"]);
 
+// The smoke test names the model itself: it checks the API contract, not this
+// deployment's configuration.
+const MODEL = "gemini-embedding-2";
+
 describe.skipIf(!HAS_KEY)("gemini-client real API smoke test", () => {
   it("batchEmbed returns a 3072-dim numeric vector for a single text", async () => {
     const out = await batchEmbed(
       ["ClaimNet smoke test — verify Gemini embedding API integration."],
-      "RETRIEVAL_DOCUMENT",
+      MODEL,
     );
 
     expect(out).toHaveLength(1);
@@ -37,7 +41,7 @@ describe.skipIf(!HAS_KEY)("gemini-client real API smoke test", () => {
   }, 30_000);
 
   it("batchEmbed returns one vector per input", async () => {
-    const out = await batchEmbed(["one", "two"], "RETRIEVAL_DOCUMENT");
+    const out = await batchEmbed(["one", "two"], MODEL);
     expect(out).toHaveLength(2);
     expect(out[0]).toHaveLength(3072);
     expect(out[1]).toHaveLength(3072);

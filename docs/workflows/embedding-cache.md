@@ -54,6 +54,7 @@ The connection settings and their defaults are listed at the top of `scripts/emb
 ## Things to know
 
 - **The model is part of the key.** A vector is only reused for the same `model_id`. If a provider changes a model's output without changing its id, cached and fresh vectors stop agreeing, and nothing here can detect it.
+- **A rebuild reuses this by model.** Changing model (ADR-0024) adds a second set of rows under the new `model_id`, so the table holds both models' vectors until the old ones are pruned, at about 13.5 KB per vector. The archive harvests whichever models are present. A stack reading the new model starts with no cached vectors for it, however many the old one has, and pays for them once.
 - **The hash is part of the key.** The key is a sha256 of the exact text (plus file bytes for images). Changing how text is normalised before hashing makes the archive unreachable, though not wrong.
 - **Size and time.** About 13.5 KB per vector in the table and about 15 KB per vector in a backup, because pg_dump writes vectors as compressed text. Measured on 472,644 vectors: 6.4 GB in the table, a 7.2 GB backup taking about 12 minutes, and a first harvest taking about 10 minutes.
 - **Not yet: reading the cache directly.** A development backend still uses its own database's `vector_cache`. Harvest copies vectors out; nothing copies them back in. Pointing the app's cache queries at this database is a separate change (see the backlog).

@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { sql } from "drizzle-orm";
@@ -5,9 +6,10 @@ import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import type { Context, Next } from "hono";
 import { users, organizations, groups, groupMembers } from "@soupnet/db";
 import { normalizeEmail } from "./lib/normalize-email";
-import { ACCOUNT_DISABLED_MESSAGE, ACCOUNT_SUSPENDED_MESSAGE, SESSION_EXPIRED_MESSAGE, SSO_REQUIRED_MESSAGE } from "@soupnet/domain";
+import { ACCOUNT_DISABLED_MESSAGE, ACCOUNT_SUSPENDED_MESSAGE, SESSION_EXPIRED_MESSAGE, SSO_REQUIRED_MESSAGE, directoryDisabledMessage } from "@soupnet/domain";
 import type { AccountDisabledReason } from "./authz/account-state";
 import { accountRefusal, sessionState } from "./authz/session-state";
+import { ssoRequiredFor } from "./authz/sso-policy";
 
 const JWT_SECRET = () => {
   const secret = process.env["JWT_SECRET"];
@@ -51,7 +53,21 @@ export async function hashPassword(password: string): Promise<string> {
   return bcrypt.hash(password, SALT_ROUNDS);
 }
 
-export async function verifyPassword(password: string, hash: string): Promise<boolean> {
+let dummyHash: Promise<string> | null = null;
+
+/**
+ * Check a password against a stored hash. An account with no password (one
+ * that signs in only with Google, or whose unverified password was discarded
+ * at link time) has a null hash: it is compared against a fixed dummy hash and
+ * refused, so it costs the same bcrypt work as a wrong password and the two
+ * can't be told apart (organization accounts round 1, stream SSO, SSO-A9).
+ */
+export async function verifyPassword(password: string, hash: string | null): Promise<boolean> {
+  if (hash === null) {
+    dummyHash ??= bcrypt.hash("no password on this account", SALT_ROUNDS);
+    await bcrypt.compare(password, await dummyHash);
+    return false;
+  }
   return bcrypt.compare(password, hash);
 }
 
@@ -114,6 +130,9 @@ export async function requireSystem(c: Context, next: Next): Promise<Response | 
  *     (or the account is gone). The SPA treats a 401 as signed out.
  *   - 403 account_suspended / account_disabled: switched off by the site
  *     operator or by the person's organization, with copy saying which.
+ *   - 403 directory_inactive / directory_unconfirmed: the company's Google
+ *     Workspace directory says the person isn't active, or hasn't confirmed
+ *     them for a day (stream Offboarding), each with its own copy.
  *   - 403 sso_required: the person's organization requires its identity
  *     provider and this session wasn't signed in through it (sso-policy.ts).
  */
@@ -132,9 +151,27 @@ async function judgeSession(c: Context): Promise<Response | { emailVerified: boo
       return c.json({ ok: false, error: "account_suspended", message: ACCOUNT_SUSPENDED_MESSAGE }, 403);
     case "org_disabled":
       return c.json({ ok: false, error: "account_disabled", message: ACCOUNT_DISABLED_MESSAGE }, 403);
+    case "directory_inactive":
+    case "directory_unconfirmed":
+      return c.json({ ok: false, error: state.refusal, message: directoryDisabledMessage(state.refusal) }, 403);
     case "sso_required":
       return c.json({ ok: false, error: "sso_required", message: SSO_REQUIRED_MESSAGE }, 403);
   }
+}
+
+/**
+ * Does this request carry a live session of `userId`? For a route anyone can
+ * reach that treats its own account's session as proof (POST /auth/verify). A
+ * missing, malformed, expired, cut-off or switched-off session, or another
+ * account's, is simply not proof: this never refuses the request.
+ */
+export async function holdsLiveSessionOf(c: Context, db: PostgresJsDatabase, userId: string): Promise<boolean> {
+  const header = c.req.header("Authorization");
+  if (!header?.startsWith("Bearer ")) return false;
+  const payload = verifyToken(header.slice(7));
+  if (!payload || payload.sub !== userId) return false;
+  const state = await sessionState(db, userId, payload.iat, payload.idp);
+  return state.refusal === null;
 }
 
 /**
@@ -209,16 +246,44 @@ export async function registerUser(
     signupReason?: string | null;
   },
 ): Promise<{ user: { id: string; email: string; role: string }; token: string }> {
-  email = normalizeEmail(email);
-  const passwordHash = await hashPassword(password);
+  const user = await createAccount(db, {
+    email,
+    passwordHash: await hashPassword(password),
+    role,
+    waitlisted: opts?.waitlisted ?? false,
+    signupReason: opts?.signupReason ?? null,
+  });
+  const token = signToken({ sub: user.id, email: user.email, role: user.role });
+  return { user, token };
+}
+
+type AccountExecutor = Pick<PostgresJsDatabase, "insert" | "execute">;
+
+/**
+ * Create an account with its personal organization and default book: the
+ * setup every way in shares (password registration, a Google sign-up). The
+ * password hash is null for an account that signs in only with Google
+ * (stream SSO). Runs on the root connection or inside a transaction.
+ */
+export async function createAccount(
+  db: AccountExecutor,
+  input: {
+    email: string;
+    passwordHash: string | null;
+    role?: string;
+    waitlisted?: boolean;
+    signupReason?: string | null;
+  },
+): Promise<{ id: string; email: string; role: string }> {
+  const email = normalizeEmail(input.email);
 
   // Insert user
   const userRows = await db.insert(users).values({
     email,
-    passwordHash,
-    role,
-    waitlistedAt: opts?.waitlisted ? new Date() : null,
-    signupReason: opts?.signupReason ?? null,
+    passwordHash: input.passwordHash,
+    role: input.role ?? "tenant",
+    waitlistedAt: input.waitlisted ? new Date() : null,
+    signupReason: input.signupReason ?? null,
   }).returning({ id: users.id, email: users.email, role: users.role });
 
   const user = userRows[0];
@@ -265,38 +330,65 @@ export async function registerUser(
     });
   }
 
-  const token = signToken({ sub: user.id, email: user.email, role: user.role });
-
-  return { user: { id: user.id, email: user.email, role: user.role }, token };
+  return { id: user.id, email: user.email, role: user.role };
 }
 
 /**
- * Login user. Returns JWT token if credentials match.
+ * The sign-up proof: what lets a person who just registered verify in the same
+ * browser with nothing typed (recipe 450a107b's goal, without its extra step).
  *
- * waitlistedAt is surfaced so the route can block waitlisted accounts with
- * a "you're on the waitlist" message INSTEAD of issuing a token. Telling
- * the caller their waitlist status is privileged-but-safe: only someone
- * holding the correct password gets this far. No token is signed for
- * waitlisted accounts — without a JWT, every other surface (dashboard,
- * keys, MCP, OAuth) stays blocked with zero additional checks.
+ * POST /auth/register returns one on every branch, so it says nothing about
+ * whether the address already had an account (F30): a new account's is an HMAC
+ * of its id, and any other is random bytes of the same length, which can't be
+ * told apart without the secret. It proves nothing alone. POST /auth/verify
+ * takes it beside the emailed token: the person who registered holds the
+ * proof, the mailbox's owner holds the token, and only someone who is both has
+ * the two. Nothing is stored, so it survives a resend, which replaces the
+ * token, and it stops mattering once the account is verified.
  */
-export async function loginUser(
-  db: PostgresJsDatabase,
-  email: string,
-  password: string,
-): Promise<
+export function signupProofFor(userId: string): string {
+  return crypto.createHmac("sha256", JWT_SECRET()).update(`signup-proof:${userId}`).digest("hex");
+}
+
+/** What register returns when no account was created. */
+export function unusableSignupProof(): string {
+  return crypto.randomBytes(32).toString("hex");
+}
+
+export function isSignupProofOf(proof: string, userId: string): boolean {
+  const expected = Buffer.from(signupProofFor(userId));
+  const given = Buffer.from(proof);
+  return given.length === expected.length && crypto.timingSafeEqual(given, expected);
+}
+
+type SignInResult =
   | { user: { id: string; email: string; role: string }; token: string; waitlistedAt: null; disabled: null }
   | { user: { id: string; email: string; role: string }; token: null; waitlistedAt: Date; disabled: null }
-  | { user: { id: string; email: string; role: string }; token: null; waitlistedAt: null; disabled: AccountDisabledReason }
-  | null
-> {
-  const rows = await db.select().from(users).where(sql`${users.email} = ${normalizeEmail(email)}`).limit(1);
-  const user = rows[0];
-  if (!user) return null;
+  | { user: { id: string; email: string; role: string }; token: null; waitlistedAt: null; disabled: AccountDisabledReason | "sso_required" };
 
-  const valid = await verifyPassword(password, user.passwordHash);
-  if (!valid) return null;
+/**
+ * When a session may say it was issued (F145, F147): `issuedAt` is taken before
+ * the read that proved the person, and `notBefore` is the cut-off that read saw,
+ * or one this request set itself. A cut-off arriving later isn't in it, so a
+ * sign-in that won the race stays behind it, as invalidateSessions intends.
+ */
+export interface SessionDating {
+  issuedAt: number;
+  notBefore: number;
+}
 
+/**
+ * The checks every sign-in passes once the person is proved, and the session
+ * they get. No token for a waitlisted or switched-off account, or for a member
+ * of an organization that requires SSO, whose session here would carry no `idp`
+ * and be refused on every request: without a JWT, every other surface stays
+ * blocked with zero additional checks.
+ */
+async function signInProved(
+  db: PostgresJsDatabase,
+  user: { id: string; email: string; role: string; waitlistedAt: Date | null },
+  dating: SessionDating,
+): Promise<SignInResult> {
   if (user.waitlistedAt) {
     return {
       user: { id: user.id, email: user.email, role: user.role },
@@ -313,8 +405,47 @@ export async function loginUser(
     return { user: { id: user.id, email: user.email, role: user.role }, token: null, waitlistedAt: null, disabled };
   }
 
-  const token = signToken({ sub: user.id, email: user.email, role: user.role });
+  // Likewise after the password checks, so only the password holder learns it (SSO-R2).
+  if (await ssoRequiredFor(db, user.id)) {
+    return { user: { id: user.id, email: user.email, role: user.role }, token: null, waitlistedAt: null, disabled: "sso_required" };
+  }
+
+  const token = signToken({ sub: user.id, email: user.email, role: user.role, iat: Math.max(dating.issuedAt, dating.notBefore) });
   return { user: { id: user.id, email: user.email, role: user.role }, token, waitlistedAt: null, disabled: null };
+}
+
+/** Sign in an account already proved some other way (POST /auth/verify). */
+export async function signInAccount(db: PostgresJsDatabase, userId: string, dating: SessionDating): Promise<SignInResult | null> {
+  const rows = await db.select().from(users).where(sql`${users.id} = ${userId}::uuid`).limit(1);
+  const user = rows[0];
+  return user ? signInProved(db, user, dating) : null;
+}
+
+/**
+ * Login user. Returns JWT token if credentials match.
+ *
+ * waitlistedAt is surfaced so the route can block waitlisted accounts with
+ * a "you're on the waitlist" message INSTEAD of issuing a token. Telling
+ * the caller their waitlist status is privileged-but-safe: only someone
+ * holding the correct password gets this far. No token is signed for
+ * waitlisted accounts — without a JWT, every other surface (dashboard,
+ * keys, MCP, OAuth) stays blocked with zero additional checks.
+ */
+export async function loginUser(
+  db: PostgresJsDatabase,
+  email: string,
+  password: string,
+): Promise<SignInResult | null> {
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const rows = await db.select().from(users).where(sql`${users.email} = ${normalizeEmail(email)}`).limit(1);
+  const user = rows[0];
+  if (!user) return null;
+
+  const valid = await verifyPassword(password, user.passwordHash);
+  if (!valid) return null;
+
+  const notBefore = user.sessionsValidAfter ? Math.floor(user.sessionsValidAfter.getTime() / 1000) : 0;
+  return signInProved(db, user, { issuedAt, notBefore });
 }
 
 /**

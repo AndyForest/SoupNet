@@ -4,9 +4,11 @@ import { useState } from "react";
 import { safeReturnTarget } from "../lib/return-target.js";
 import { useNavigate, useLocation, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { setToken, setEmailVerified } from "../auth.js";
+import { setSignupProof, setToken, setEmailVerified } from "../auth.js";
 import soupnetLogo from "../assets/soupnet-logo.png";
 import { loginNoticeFromSearch, searchWithoutLoginNotice } from "../lib/login-notice.js";
+import { GoogleSignInButton } from "../components/GoogleSignInButton.js";
+import { returnTargetFor } from "../lib/google-sign-in.js";
 
 interface AuthResponse {
   ok: boolean;
@@ -20,6 +22,7 @@ interface AuthResponse {
     emailVerified?: boolean;
     message?: string;
     waitlisted?: boolean;
+    signupProof?: string;
   };
   error?: string;
   message?: string;
@@ -100,8 +103,9 @@ export function LoginPage() {
     queryKey: ["signup-status"],
     queryFn: async () => {
       const res = await fetch(`${API_BASE}/auth/signup-status`);
-      const json = (await res.json()) as { ok: boolean; data: { signupsOpen: boolean } };
-      return json.ok ? json.data.signupsOpen : true; // default open if endpoint fails
+      const json = (await res.json()) as { ok: boolean; data: { signupsOpen: boolean; google?: boolean } };
+      // Default open, and no Google button, if the endpoint fails.
+      return json.ok ? { signupsOpen: json.data.signupsOpen, google: json.data.google === true } : { signupsOpen: true, google: false };
     },
     staleTime: 1000 * 60 * 5, // cache 5 min
   });
@@ -137,7 +141,7 @@ export function LoginPage() {
   // form stays the same, only the messaging changes. An invalid/expired
   // invite behaves like no invite.
   const signupsClosed =
-    signupStatusQuery.data === false && (!inviteToken || inviteInvalid);
+    signupStatusQuery.data?.signupsOpen === false && (!inviteToken || inviteInvalid);
 
   const mutation = useMutation({
     mutationFn: (body: { email: string; password: string }) =>
@@ -157,6 +161,7 @@ export function LoginPage() {
           // existing emails within a branch (F30). `waitlisted` picks which
           // post-submit screen to show — it derives from the public cap
           // state, so it leaks nothing about the email.
+          if (data.data.signupProof) setSignupProof(data.data.signupProof);
           setPostSubmit(data.data.waitlisted ? "waitlisted" : "verify");
           return;
         }
@@ -199,10 +204,14 @@ export function LoginPage() {
           setLoginNeedsTurnstile(false);
           setNotice(data.message ?? "You're on the waitlist — we'll email you when a spot opens.");
         }
-      } else if (data.error === "account_disabled" || data.error === "account_suspended") {
+      } else if (
+        data.error === "account_disabled" || data.error === "account_suspended" || data.error === "sso_required" ||
+        data.error === "directory_inactive" || data.error === "directory_unconfirmed"
+      ) {
         // Right password, but the account is switched off (by the person's
-        // organization, or by the site operator): say which, so they ask the
-        // right person instead of resetting a password that was never the problem.
+        // organization, or by the site operator), or its organization signs in
+        // with Google: say which, so they ask the right person or use the
+        // Google button instead of resetting a password that was never the problem.
         setError(data.message ?? "This account can't sign in right now.");
       } else {
         setError(data.error ?? "Authentication failed");
@@ -262,11 +271,12 @@ export function LoginPage() {
               We sent a verification link to <strong>{email}</strong>. Confirm
               your email to hold your place — we'll email you when a spot
               opens. First come, first served. Your account (this email and
-              password) is ready the moment you're in.
+              password) is ready the moment you're in. Open the link in this
+              browser and you won&apos;t need your password to confirm.
             </p>
           ) : (
             <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)", lineHeight: 1.5 }}>
-              We sent a verification link to <strong>{email}</strong>. Click it to activate your account.
+              We sent a verification link to <strong>{email}</strong>. Open it in this browser to activate your account and sign in. Anywhere else, you&apos;ll need your password.
             </p>
           )}
           <button
@@ -356,7 +366,7 @@ export function LoginPage() {
         {/* Open-signups reassurance — only when the status endpoint has
             confirmed signups are open. Skipped in the invite flow, where
             "no invitation needed" would clash with the invited greeting. */}
-        {isRegister && !inviteToken && signupStatusQuery.data === true && (
+        {isRegister && !inviteToken && signupStatusQuery.data?.signupsOpen === true && (
           <p style={{
             textAlign: "center",
             color: "var(--color-on-surface-variant)",
@@ -400,6 +410,23 @@ export function LoginPage() {
             the waitlist — your invitation puts you at the top of it. Create
             your account below and we'll email you when your spot opens.
           </p>
+        )}
+
+        {signupStatusQuery.data?.google && (
+          <>
+            <GoogleSignInButton target={returnTargetFor(new URLSearchParams(window.location.search).get("next"))} />
+            {isRegister && (
+              <p style={{ fontSize: "0.8rem", color: "var(--color-on-surface-variant)", marginTop: "calc(-1 * var(--space-sm))", marginBottom: "var(--space-md)" }}>
+                By continuing with Google, you accept the{" "}
+                <Link to="/info/terms" target="_blank">Terms of Service</Link>
+                {" "}and the{" "}
+                <Link to="/info/privacy" target="_blank">Privacy Policy</Link>.
+              </p>
+            )}
+            <p aria-hidden="true" style={{ textAlign: "center", fontSize: "0.8rem", color: "var(--color-on-surface-variant)", margin: "0 0 var(--space-md)" }}>
+              or
+            </p>
+          </>
         )}
 
         <form onSubmit={handleSubmit}>

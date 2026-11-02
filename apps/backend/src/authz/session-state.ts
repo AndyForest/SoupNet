@@ -17,6 +17,8 @@ import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { accountDisabledReason } from "./account-state";
 import type { AccountDisabledReason } from "./account-state";
 import { ssoRequired } from "./sso-policy";
+import { directoryCheckDueFor } from "./directory-sql";
+import { checkDirectoryIfDue } from "./directory-check";
 
 /** Why a presented session can't be used, or null when it can. */
 export type SessionRefusal =
@@ -49,6 +51,7 @@ export async function sessionState(
   userId: string,
   issuedAtSeconds: number | undefined,
   identityProvider?: string | undefined,
+  directoryChecked = false,
 ): Promise<SessionState> {
   const iat = typeof issuedAtSeconds === "number" && Number.isFinite(issuedAtSeconds) ? Math.floor(issuedAtSeconds) : null;
   const rows = await db.execute(sql`
@@ -56,12 +59,18 @@ export async function sessionState(
            ${accountDisabledReason()} AS disabled,
            (u.sessions_valid_after IS NOT NULL
              AND (${iat}::bigint IS NULL OR ${iat}::bigint < floor(extract(epoch FROM u.sessions_valid_after))::bigint)) AS expired,
-           (${identityProvider ?? null}::text IS DISTINCT FROM 'google' AND ${ssoRequired()}) AS sso_required
+           (${identityProvider ?? null}::text IS DISTINCT FROM 'google' AND ${ssoRequired()}) AS sso_required,
+           ${directoryCheckDueFor(sql`u.id`)} AS directory_due
     FROM claimnet.users u
     WHERE u.id = ${userId}::uuid
   `);
-  const row = (rows as unknown as Array<{ verified: boolean; disabled: AccountDisabledReason | null; expired: boolean; sso_required: boolean }>)[0];
+  const row = (rows as unknown as Array<{ verified: boolean; disabled: AccountDisabledReason | null; expired: boolean; sso_required: boolean; directory_due: boolean }>)[0];
   if (!row) return { refusal: "unknown_account", emailVerified: false };
+  // A Workspace directory check that is due runs before the answer (stream
+  // Offboarding); when it recorded a status, judge again, once.
+  if (row.directory_due && !directoryChecked && (await checkDirectoryIfDue(db, userId))) {
+    return sessionState(db, userId, issuedAtSeconds, identityProvider, true);
+  }
   if (row.expired) return { refusal: "session_expired", emailVerified: row.verified };
   if (row.disabled) return { refusal: row.disabled, emailVerified: row.verified };
   if (row.sso_required) return { refusal: "sso_required", emailVerified: row.verified };
@@ -73,17 +82,32 @@ export async function sessionState(
  * Login issues no session to one that is (the waitlist precedent).
  */
 export async function accountRefusal(db: PostgresJsDatabase, userId: string): Promise<AccountDisabledReason | null> {
+  // Sign-in is a credential use too: a due directory check runs first.
+  await checkDirectoryIfDue(db, userId);
   const rows = await db.execute(sql`
     SELECT ${accountDisabledReason()} AS disabled FROM claimnet.users u WHERE u.id = ${userId}::uuid
   `);
   return (rows as unknown as Array<{ disabled: AccountDisabledReason | null }>)[0]?.disabled ?? null;
 }
 
+/** Well beyond the clock skew expected between backend tasks; unmeasured on Fargate. */
+const CUT_OFF_MARGIN_SECONDS = 5;
+
 /**
  * Refuse every session issued before now (recipe a8003678). For SSO's account
- * linking, which discards an unverified password: a session the
- * pre-registrant already holds dies with it. Keys are untouched; an
- * unverified account has none.
+ * linking, which discards an unverified password, and for a password reset
+ * (recipe 450a107b): a session the pre-registrant already holds dies with it.
+ * Keys are untouched; an unverified account has none. A Google handoff code
+ * already issued for the account goes too, since it would otherwise produce a
+ * session past the cut-off (F143, F149).
+ *
+ * The cut-off sits a few seconds ahead: a session someone was minting as this
+ * ran would otherwise survive for its seven days. `iat` can't tell the two
+ * parts of this second apart (F145), and the task minting it may have a clock
+ * ahead of this one (F147). A sign-in that follows the cut-off dates its session
+ * no earlier than it, so it isn't refused: `exchangeHandoff` and `signInProved`.
+ * Each reads the cut-off with what it checks, so one that won the race against
+ * this doesn't see it.
  *
  * The cut-off is stamped from this process's clock, not the database's
  * NOW(): it is compared with a JWT's `iat`, which this process's clock
@@ -91,9 +115,39 @@ export async function accountRefusal(db: PostgresJsDatabase, userId: string): Pr
  * 2f40fb9f). With NOW(), a session signed a moment after the cut-off could
  * read as issued before it and be refused.
  */
-export async function invalidateSessions(db: PostgresJsDatabase, userId: string): Promise<void> {
-  const cutOffSeconds = Math.floor(Date.now() / 1000);
+export async function invalidateSessions(db: Pick<PostgresJsDatabase, "execute">, userId: string): Promise<void> {
+  const cutOffSeconds = Math.floor(Date.now() / 1000) + CUT_OFF_MARGIN_SECONDS;
+  // In this order, on the caller's transaction: the first statement takes the
+  // row lock `issueHandoff` waits on, and holds it, so the second's fresh
+  // snapshot finds any code it just committed.
   await db.execute(sql`
     UPDATE claimnet.users SET sessions_valid_after = to_timestamp(${cutOffSeconds}) WHERE id = ${userId}::uuid
   `);
+  await db.execute(sql`
+    UPDATE claimnet.sso_login_requests SET handoff_consumed_at = now()
+    WHERE user_id = ${userId}::uuid AND handoff_hash IS NOT NULL AND handoff_consumed_at IS NULL
+  `);
+  // A pending authorization code is a session's consent not yet redeemed, and
+  // could otherwise become a connected app after the reset counted them (F160).
+  await db.execute(sql`DELETE FROM claimnet.oauth_authorization_codes WHERE user_id = ${userId}::uuid`);
+}
+
+/**
+ * What outlives a session cut-off. Keys and connected apps survive a reset,
+ * because a person who only forgot a password shouldn't lose them and the two
+ * cases can't be told apart. So whoever just proved the mailbox is told what's
+ * running, to review and end (F151). A connected app counts while its refresh
+ * token can still renew it.
+ */
+export async function credentialsStillRunning(
+  db: Pick<PostgresJsDatabase, "execute">,
+  userId: string,
+): Promise<{ apiKeys: number; connectedApps: number }> {
+  const rows = await db.execute(sql`
+    SELECT
+      count(*) FILTER (WHERE key_type <> 'oauth' AND expires_at > now())::int AS "apiKeys",
+      count(*) FILTER (WHERE key_type = 'oauth' AND (expires_at > now() OR refresh_token_expires_at > now()))::int AS "connectedApps"
+    FROM claimnet.api_keys WHERE user_id = ${userId}::uuid
+  `);
+  return (rows as unknown as Array<{ apiKeys: number; connectedApps: number }>)[0] ?? { apiKeys: 0, connectedApps: 0 };
 }

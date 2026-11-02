@@ -28,8 +28,8 @@
  * every other recipe a report names.
  *
  * Reads only. Nothing here writes, audits, or touches `last_used_at` (that
- * stamp is the join recency signal of intent.service.ts, and a report
- * reading an intent is not a join).
+ * stamp is set by checks, in intent.service.ts, and a report reading an
+ * intent is not a check).
  */
 
 import { sql } from "drizzle-orm";

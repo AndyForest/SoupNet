@@ -213,10 +213,13 @@ export async function listKeys(
   userId: string,
 ): Promise<ApiKeyListItem[]> {
   const rows = await db.execute(sql`
-    SELECT id, key_prefix, key_type, deposit_level, read_group_ids, write_group_ids, default_write_group_id, label, expires_at, created_at
+    SELECT id, key_prefix, key_type, deposit_level, read_group_ids, write_group_ids, default_write_group_id, label,
+      -- A connected app between one-hour access tokens is still connected, so
+      -- it's listed until its refresh token ends, and can be ended here (F151).
+      GREATEST(expires_at, COALESCE(refresh_token_expires_at, expires_at)) AS expires_at, created_at
     FROM claimnet.api_keys
     WHERE user_id = ${userId}
-      AND expires_at > NOW()
+      AND (expires_at > NOW() OR refresh_token_expires_at > NOW())
     ORDER BY created_at DESC
   `);
 

@@ -120,6 +120,35 @@ Feature: Organization accounts: membership, disable, org-wide books, and joining
       Then Max holds the admin role on Acme's org-wide books
       And a book role Max was granted directly is unchanged
 
+    @ORG-ROLE-04
+    Scenario: A demoted owner keeps no owner powers over the default book
+      Given Olive created Acme, and Max is now an owner too
+      When Max makes Olive a member
+      Then Olive holds the member role on Acme's default book
+      And Olive can't rename it or remove Max from it
+      And Max can remove Olive from it, and rename it
+      And every owner of Acme holds the owner role on its default book
+
+    @ORG-ROLE-05
+    Scenario: The default book keeps its owners
+      Given Olive and Max both own Acme
+      When Max tries to remove Olive from Acme's default book
+      Then it is refused, and Olive still holds the owner role
+      And once someone is no longer an owner, their row can be removed
+      And a row already missing comes back on the next role change
+
+    @ORG-ROLE-06
+    Scenario: The organization's accountable owner is always a current owner
+      Given Olive created Acme, and Max is now an owner too
+      When Max makes Olive an admin
+      Then Max becomes Acme's accountable owner, and the audit trail says so
+
+    @ORG-ROLE-07
+    Scenario: A hand-over gives the successor the default book's owner role
+      Given Olive created Acme, and Ada is its only other member, an admin
+      When Olive's account is removed
+      Then Ada owns Acme, and can rename its default book
+
     @ORG-ROLE-02
     Scenario: The role rules
       Then an admin can't disable or re-role an owner, or make someone an owner
@@ -136,6 +165,13 @@ Feature: Organization accounts: membership, disable, org-wide books, and joining
   Rule: A managed account's books stay with the company
     # Guards: design-thinking.md archetype 6 "Private or org-wide", "Mine to
     # delete, or the company's"; recipes 2301b5eb, 2e1e4624, 1c7621d2.
+
+    @ORG-JOIN-05
+    Scenario: A key names a moved book by its new short name or its id
+      Given Max's book changed its short name when he joined Acme
+      When his agent names the book by its old short name
+      Then it is refused and nothing is stored
+      And the new short name and the book's id both reach the book
 
     @ORG-BOOK-01
     Scenario: New books land in the account's home organization
@@ -158,6 +194,19 @@ Feature: Organization accounts: membership, disable, org-wide books, and joining
       When Ada makes it private
       Then Gus and Max keep their access and Ada's org-provenance row is gone
       And the default book can't be made private, and a personal organization's book can't be org-wide
+
+    @ORG-BOOK-04
+    Scenario: A book's short name taken in the organization is refused with a clear message
+      Given Olive has a private book with the short name "plans" in Acme
+      When Max creates a book with the short name "plans"
+      Then it is refused as a conflict, saying another book in this organization uses that short name
+      And the same short name is free in another organization, and a different one is free in Acme
+
+    @ORG-BOOK-05
+    Scenario: Moving books into an organization steers around a taken short name
+      Given Max has a book whose short name another book in Acme already uses
+      When Max joins Acme
+      Then the join succeeds and his book takes a free short name
 
     @ORG-KEY-01
     Scenario: A managed account's scoped keys last at most 90 days

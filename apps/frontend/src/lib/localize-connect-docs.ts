@@ -24,3 +24,19 @@ export function localizeConnectDocs(markdown: string, apiBase: string | undefine
   if (!apiBase || apiBase === HOSTED_MCP_HOST) return markdown;
   return markdown.split(HOSTED_MCP_HOST).join(apiBase);
 }
+
+const PICKER_MARKER = "<!-- agent-type-picker";
+const COMMENT_CLOSE = "-->";
+
+/**
+ * Splits the connect prose at the <!-- agent-type-picker --> marker, dropping
+ * the marker so no raw HTML reaches react-markdown. If the marker ever
+ * disappears from the .md, everything is `before`: prose-then-picker rather
+ * than losing either.
+ */
+export function splitAtPickerMarker(markdown: string): { before: string; after: string } {
+  const markerIndex = markdown.indexOf(PICKER_MARKER);
+  const closeIndex = markerIndex >= 0 ? markdown.indexOf(COMMENT_CLOSE, markerIndex) : -1;
+  if (markerIndex < 0 || closeIndex < 0) return { before: markdown, after: "" };
+  return { before: markdown.slice(0, markerIndex), after: markdown.slice(closeIndex + COMMENT_CLOSE.length) };
+}

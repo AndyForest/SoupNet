@@ -75,7 +75,7 @@ describe.skipIf(!BASE || !canConnect())("headless keys (drafts-and-triage slice 
     });
     const vtok = ((await reg.json()) as { data?: { verificationToken?: string } }).data?.verificationToken;
     if (!vtok) throw new Error(`register failed for ${email}`);
-    await fetch(`${BASE}/auth/verify`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: vtok }) });
+    await fetch(`${BASE}/auth/verify`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: vtok, password: PASSWORD }) });
     const jwt = await login(email, PASSWORD);
     const me = (await (await call({ jwt }, "GET", "/auth/me")).json()) as { data?: { id?: string; user?: { id: string } } };
     const books = ((await (await call({ jwt }, "GET", "/recipe-books")).json()) as { data?: Array<{ id: string; organization_id: string }> }).data ?? [];

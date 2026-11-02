@@ -123,7 +123,7 @@ uploadsRouter.post("/", uploadBodyLimit, uploadRateLimit, async (c) => {
   }
 
   // Resolve MIME: trust the form field's type if it's in our allowlist; else
-  // fall back to the filename extension. This mirrors the existing imageFromUrl
+  // fall back to the filename extension. This mirrors the former imageFromUrl
   // / imageFromBase64 logic in routes/mcp.ts.
   let mimeType = fileField.type || "";
   if (!ALLOWED_MIME_TYPES.has(mimeType)) {

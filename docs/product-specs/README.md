@@ -23,4 +23,5 @@ Gherkin-style specs for Soup.net's deterministic product behavior: what the serv
 
 | File | Concern |
 |---|---|
+| [accounts.feature](accounts.feature) | Proving a mailbox: what a verification link and a password reset each take and do. |
 | [drafts-and-triage.feature](drafts-and-triage.feature) | Triage ratings and the tool-roster trim (slice 1), draft visibility and verification (slice 2), the review queue (slice 3), drafts on behalf of another person (slice 4), and headless keys (slice 5; DT-HDL-02 waits for derived keys) are built; `@unreleased` per Rule — option sets. Design: [planning/drafts-and-triage.md](../planning/drafts-and-triage.md) |

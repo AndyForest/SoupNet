@@ -228,6 +228,8 @@ async function main(): Promise<void> {
   const { getDb, runMigrations } = await import("../db");
   await runMigrations();
   const db = getDb();
+  const { resolveEmbeddingReadModel } = await import("../lib/embeddings/read-model-resolve");
+  await resolveEmbeddingReadModel(db);
 
   if (process.argv.includes("--prepare")) {
     await prepare(db, datasetDir);

@@ -226,6 +226,80 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Core", ()
     expect(await authz.managedOrganizationOf(getDb(), max.userId)).toMatchObject({ organizationId: orgId, role: "member", joinedVia: "operator" });
   });
 
+  it("ORG-BOOK-04 / OC-B6: a slug taken in the organization is a 409 naming it, with controls for where the slug is free", async () => {
+    const olive = await actor("olive");
+    const { orgId } = await createOrg(olive);
+    const max = await actor("max");
+    await mustAdd(orgId, max);
+    const slug = `shared-${run}-${++n}`;
+    expect((await call(olive, "POST", "/recipe-books", { name: "A private book", slug })).status).toBe(201);
+
+    const refused = await call(max, "POST", "/recipe-books", { name: "Another book", slug });
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toEqual({
+      ok: false,
+      error: "slug_taken",
+      message: `Another recipe book in this organization already uses the short name "${slug}". Choose a different name.`,
+    });
+
+    // The same slug is free in someone else's organization, and another slug is free in this one.
+    const gus = await actor("gus");
+    expect((await call(gus, "POST", "/recipe-books", { name: "A book", slug })).status).toBe(201);
+    expect((await call(max, "POST", "/recipe-books", { name: "Another book", slug: `${slug}-2` })).status).toBe(201);
+
+    // A personal account repeating its own slug hears about its own book.
+    const again = await call(gus, "POST", "/recipe-books", { name: "A book again", slug });
+    expect(again.status).toBe(409);
+    expect(((await again.json()) as { message: string }).message).toBe(`You already have a recipe book with the short name "${slug}". Choose a different name.`);
+  });
+
+  it("ORG-BOOK-05 / OC-B6: moving books in steers around a slug the default book or a member's book holds", async () => {
+    const olive = await actor("olive");
+    const orgSlug = `acme-${run}-${++n}`;
+    const oliveBook = ((await (await call(olive, "POST", "/recipe-books", { name: "Same as the org", slug: orgSlug })).json()) as { data: { id: string } }).data.id;
+    const created = await call(sys, "POST", "/admin/organizations", { name: "Acme", slug: orgSlug, ownerEmail: olive.email });
+    expect(created.status).toBe(201);
+    const { organizationId } = ((await created.json()) as { data: { organizationId: string } }).data;
+    expect((await bookOf(oliveBook)).slug).toBe(`${orgSlug}-${olive.email.slice(0, olive.email.indexOf("@"))}`);
+
+    const max = await actor("max");
+    expect((await call(max, "POST", "/recipe-books", { name: "Same as the org", slug: orgSlug })).status).toBe(201);
+    expect((await addToOrg(organizationId, max)).status).toBe(201);
+  });
+
+  it("ORG-JOIN-05 / OC-J2: after a slug changes, the key reaches the book by its new slug and by id; the old slug is refused and stores nothing", async () => {
+    const olive = await actor("olive");
+    const { orgId } = await createOrg(olive);
+    const max = await actor("max");
+    await mustAdd(orgId, max);
+    const key = await scopedKey(max, [max.personalBookId]);
+    const newSlug = (await bookOf(max.personalBookId)).slug;
+    expect(newSlug).not.toBe("personal");
+
+    const check = async (recipeBook: string, marker: string) => {
+      const params = new URLSearchParams({
+        key,
+        trace: `As a person checking a short name ${marker} ${run}, I prefer one book so that my recipes stay together.`,
+        ef: `Asked the person.\n> "${marker}"\n-- org-core.test.ts`,
+        recipe_book: recipeBook,
+        format: "json",
+      });
+      return fetch(`${BASE}/check?${params.toString()}`, { headers: { Accept: "application/json" } });
+    };
+    const booksHolding = async (marker: string) =>
+      ((await getDb().execute(sql`SELECT group_id FROM claimnet.traces WHERE claim_text LIKE ${`%${marker} ${run}%`}`)) as unknown as Array<{ group_id: string }>).map((r) => r.group_id);
+
+    const stale = await check("personal", "old-slug");
+    expect(stale.status).toBeGreaterThanOrEqual(400);
+    expect(stale.status).toBeLessThan(500);
+    expect(await booksHolding("old-slug")).toEqual([]);
+
+    expect((await check(newSlug, "new-slug")).status).toBe(200);
+    expect(await booksHolding("new-slug")).toEqual([max.personalBookId]);
+    expect((await check(max.personalBookId, "by-id")).status).toBe(200);
+    expect(await booksHolding("by-id")).toEqual([max.personalBookId]);
+  });
+
   it("ORG-JOIN-02 / OC-J4: the join's audit row records the notice as owed, and the logged sender records the send", async () => {
     const olive = await actor("olive");
     const { orgId } = await createOrg(olive);
@@ -446,16 +520,147 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Core", ()
     const gus = await actor("gus");
     const secret = process.env["JWT_SECRET"] ?? "";
     const old = jwt.sign({ sub: gus.userId, email: gus.email, role: "tenant", iat: Math.floor(Date.now() / 1000) - 60 }, secret, { algorithm: "HS256", expiresIn: "7d" });
+    const beforeCutOff = Math.floor(Date.now() / 1000);
     await authz.invalidateSessions(getDb(), gus.userId);
+    // F145: a session from the cut-off's own second is refused too.
+    const sameSecond = jwt.sign({ sub: gus.userId, email: gus.email, role: "tenant", iat: beforeCutOff }, secret, { algorithm: "HS256", expiresIn: "7d" });
+    expect((await call({ jwt: sameSecond }, "GET", "/auth/me")).status).toBe(401);
     const refused = await call({ jwt: old }, "GET", "/recipe-books");
     expect(refused.status).toBe(401);
     expect(((await refused.json()) as Json)["error"]).toBe("session_expired");
     expect((await call({ jwt: old }, "GET", "/auth/me")).status).toBe(401);
+    // No wait: a sign-in after the cut-off dates its session at it (F147).
     const fresh = await relogin(gus);
     expect((await call(fresh, "GET", "/recipe-books")).status).toBe(200);
   });
 
   // ── The org admin's actions ───────────────────────────────────────────────
+
+  it("ORG-ROLE-04 / F141: a demoted creator keeps no owner powers over the default book", async () => {
+    const olive = await actor("olive-demoted");
+    const { orgId, defaultBookId } = await createOrg(olive);
+    const max = await actor("max-promoted");
+    await mustAdd(orgId, max, "owner");
+    expect(await membershipRow(defaultBookId, olive.userId)).toMatchObject({ role: "owner", via: "direct" });
+    // Every org owner holds the default book's owner role, however they became one.
+    expect(await membershipRow(defaultBookId, max.userId)).toMatchObject({ role: "owner", via: "org" });
+    const ada = await actor("ada-promoted");
+    await mustAdd(orgId, ada, "admin");
+    expect((await membershipRow(defaultBookId, ada.userId))?.role).toBe("admin");
+    expect((await call(max, "PATCH", `/organizations/${orgId}/members/${ada.userId}`, { role: "owner" })).status).toBe(200);
+    expect((await membershipRow(defaultBookId, ada.userId))?.role).toBe("owner");
+    expect((await call(max, "PATCH", `/organizations/${orgId}/members/${ada.userId}`, { role: "admin" })).status).toBe(200);
+    expect((await membershipRow(defaultBookId, ada.userId))?.role).toBe("admin");
+
+    expect((await call(max, "PATCH", `/organizations/${orgId}/members/${olive.userId}`, { role: "member" })).status).toBe(200);
+    expect((await membershipRow(defaultBookId, olive.userId))?.role).toBe("member");
+    // A book in the creator's personal organization stays theirs.
+    expect(await membershipRow(olive.personalBookId, olive.userId)).toMatchObject({ role: "owner", via: "direct" });
+
+    expect((await call(olive, "PUT", `/recipe-books/${defaultBookId}`, { name: `renamed-${run}` })).status).toBe(403);
+    expect((await call(olive, "DELETE", `/recipe-books/${defaultBookId}/members/${max.userId}`)).status).toBe(403);
+    expect((await membershipRow(defaultBookId, max.userId))?.role).toBe("owner");
+
+    expect((await call(max, "DELETE", `/recipe-books/${defaultBookId}/members/${olive.userId}`)).status).toBe(200);
+    expect(await membershipRow(defaultBookId, olive.userId)).toBeUndefined();
+    expect((await call(max, "PUT", `/recipe-books/${defaultBookId}`, { name: `renamed-${run}` })).status).toBe(200);
+  });
+
+  it("ORG-ROLE-05 / F150: the default book keeps its owners, and an org owner can't be locked out of it", async () => {
+    const olive = await actor("olive-keep");
+    const { orgId, defaultBookId } = await createOrg(olive);
+    const max = await actor("max-keep");
+    await mustAdd(orgId, max, "owner");
+
+    // The probe: Max removes Olive's row, then Olive demotes Max.
+    expect((await call(max, "DELETE", `/recipe-books/${defaultBookId}/members/${olive.userId}`)).status).toBe(400);
+    expect((await membershipRow(defaultBookId, olive.userId))?.role).toBe("owner");
+    expect((await call(olive, "PATCH", `/organizations/${orgId}/members/${max.userId}`, { role: "member" })).status).toBe(200);
+    expect((await call(olive, "PUT", `/recipe-books/${defaultBookId}`, { name: `kept-${run}` })).status).toBe(200);
+    expect((await call(max, "PUT", `/recipe-books/${defaultBookId}`, { name: `kept2-${run}` })).status).toBe(403);
+
+    // Once demoted, the row can go. And a row already missing comes back on the next role action.
+    expect((await call(olive, "DELETE", `/recipe-books/${defaultBookId}/members/${max.userId}`)).status).toBe(200);
+    expect((await call(olive, "PATCH", `/organizations/${orgId}/members/${max.userId}`, { role: "owner" })).status).toBe(200);
+    expect(await membershipRow(defaultBookId, max.userId)).toMatchObject({ role: "owner", via: "org", daily_read: true });
+
+    // Only the default book: on another org-wide book its owner can still remove an org owner's row.
+    const created = await call(olive, "POST", "/recipe-books", { name: "Keep team", slug: `keep-team-${run}`, orgWide: true });
+    expect(created.status).toBe(201);
+    const team = ((await created.json()) as { data: { id: string } }).data.id;
+    expect((await membershipRow(team, max.userId))?.role).toBe("admin");
+    expect((await call(olive, "DELETE", `/recipe-books/${team}/members/${max.userId}`)).status).toBe(200);
+    expect(await membershipRow(team, max.userId)).toBeUndefined();
+  });
+
+  it("ACC-VERIFY-13: an org-disabled account verifies with its password, gets no session, and hears why", async () => {
+    const olive = await actor("olive-disabled");
+    const { orgId } = await createOrg(olive);
+    const sam = await actor("sam-disabled");
+    await mustAdd(orgId, sam);
+    expect((await call(olive, "POST", `/organizations/${orgId}/members/${sam.userId}/disable`)).status).toBe(200);
+    const token = `disabled-${run}-${++n}`;
+    await getDb().execute(sql`
+      UPDATE claimnet.users SET email_verified_at = NULL, email_verification_token = ${token}, email_verification_token_created_at = now()
+      WHERE id = ${sam.userId}::uuid
+    `);
+    const verify = (body: Json) =>
+      fetch(`${BASE}/auth/verify`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
+    const first = ((await (await verify({ token, password: PASSWORD })).json()) as { data: Json }).data;
+    expect(first).toMatchObject({ verified: true, email: sam.email });
+    expect(first["token"]).toBeUndefined();
+    expect(String(first["signInRefusal"])).toMatch(/disabled/i);
+
+    const repeat = ((await (await verify({ token })).json()) as { data: Json }).data;
+    expect(repeat).toEqual({ verified: true, alreadyVerified: true, email: sam.email, ownSession: false });
+  });
+
+  it("ORG-ROLE-06 / F153: owner_id moves off a demoted owner to a current one, on the audit trail", async () => {
+    const olive = await actor("olive-owner-id");
+    const { orgId } = await createOrg(olive);
+    const max = await actor("max-owner-id");
+    await mustAdd(orgId, max, "owner");
+    const ownerId = async () =>
+      ((await getDb().execute(sql`SELECT owner_id FROM claimnet.organizations WHERE id = ${orgId}::uuid`)) as unknown as Array<{ owner_id: string }>)[0]?.owner_id;
+    expect(await ownerId()).toBe(olive.userId);
+
+    expect((await call(max, "PATCH", `/organizations/${orgId}/members/${olive.userId}`, { role: "admin" })).status).toBe(200);
+    expect(await ownerId()).toBe(max.userId);
+    const audit = (await getDb().execute(sql`
+      SELECT metadata FROM claimnet.audit_log WHERE action = 'organization.owner_handed_over' AND target_id = ${orgId}::uuid
+    `)) as unknown as Array<{ metadata: Json }>;
+    expect(audit[0]?.metadata).toMatchObject({ reason: "owner_demoted", newOwnerUserId: max.userId });
+
+    // Demoting someone who doesn't hold owner_id leaves it alone.
+    expect((await call(max, "PATCH", `/organizations/${orgId}/members/${olive.userId}`, { role: "member" })).status).toBe(200);
+    expect(await ownerId()).toBe(max.userId);
+
+    // It goes to an active owner ahead of a longer-standing disabled one.
+    const nia = await actor("nia-owner-id");
+    const { orgId: second } = await createOrg(nia);
+    const dan = await actor("dan-owner-id");
+    const una = await actor("una-owner-id");
+    await mustAdd(second, dan, "owner");
+    await mustAdd(second, una, "owner");
+    expect((await call(una, "POST", `/organizations/${second}/members/${dan.userId}/disable`)).status).toBe(200);
+    expect((await call(una, "PATCH", `/organizations/${second}/members/${nia.userId}`, { role: "member" })).status).toBe(200);
+    const moved = (await getDb().execute(sql`SELECT owner_id FROM claimnet.organizations WHERE id = ${second}::uuid`)) as unknown as Array<{ owner_id: string }>;
+    expect(moved[0]?.owner_id).toBe(una.userId);
+  });
+
+  it("ORG-ROLE-07 / F155: a hand-over gives the successor the default book's owner role", async () => {
+    const olive = await actor("olive-handover");
+    const { orgId, defaultBookId } = await createOrg(olive);
+    const ada = await actor("ada-handover");
+    await mustAdd(orgId, ada, "admin");
+    expect((await membershipRow(defaultBookId, ada.userId))?.role).toBe("admin");
+
+    const { handOverOrganizationsOwnedBy } = await import("../authz/organizations");
+    await getDb().transaction((tx) => handOverOrganizationsOwnedBy(tx, olive.userId));
+    expect((await membershipRow(defaultBookId, ada.userId))?.role).toBe("owner");
+    expect((await call(ada, "PUT", `/recipe-books/${defaultBookId}`, { name: `handed-${run}` })).status).toBe(200);
+  });
 
   it("ORG-ROLE-01, ORG-ROLE-02 / OC-R1, OC-R2, OC-B4: role rules, org-row roles, and one 404 for everything outside", async () => {
     const olive = await actor("olive");

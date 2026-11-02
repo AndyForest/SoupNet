@@ -30,6 +30,7 @@ import { inBooks, traceVisibleTo, normalizeOnBehalfOf, resolveNameableSubject, o
 import type { Principal } from "../authz";
 import {
   enqueueEmbedding,
+  type AfterCommitWork,
   getOrCreateCachedVector,
   computeChunkHash,
 } from "../lib/embeddings/enqueue";
@@ -327,6 +328,7 @@ export interface FlatListMeta {
  */
 export function buildSearchOnlyNotice(result: {
   totalResults: number;
+  filter?: string | undefined;
   searchedCorpusSize?: number | undefined;
   searchedOwnExcluded?: number | undefined;
   intentNotRecognized?: boolean | undefined;
@@ -359,6 +361,8 @@ interface InsertEvidenceOptions {
     originalFilename?: string | undefined;
     region?: RegionMeta | undefined;
   } | undefined;
+  /** Work for after the caller's transaction commits. See enqueueEmbedding. */
+  afterCommit?: AfterCommitWork[] | undefined;
 }
 
 export async function insertEvidenceEntries(opts: InsertEvidenceOptions): Promise<void> {
@@ -472,6 +476,7 @@ export async function insertEvidenceEntries(opts: InsertEvidenceOptions): Promis
       artifactCategory: hasFile ? "multimodal" : "text",
       ...(hasFile && embedFileBuffer && embedFileMimeType ? { fileBuffer: embedFileBuffer, fileMimeType: embedFileMimeType } : {}),
       deferToWorker: !hasFile,
+      ...(opts.afterCommit ? { afterCommit: opts.afterCommit } : {}),
     });
   }
 }
@@ -688,6 +693,7 @@ export async function submitAndSearch(
   // response notices instead (capture-only leniency, recipe abddb65d's
   // posture applied to the carrying call).
   const intent = await resolveIntent(db, {
+    markUsed: true,
     value: params.intent,
     userId,
     apiKeyId: keyId,
@@ -756,6 +762,7 @@ export async function submitAndSearch(
   });
   let depositAuditId: string | null = null;
 
+  const afterCommit: AfterCommitWork[] = [];
   await timer.time("write", () => db.transaction(async (tx) => {
     // Try to insert — unique constraint on (api_key_id, group_id, claim_text_hash)
     // prevents duplicates from the same agent + group. intent_id (slice 6a)
@@ -816,7 +823,7 @@ export async function submitAndSearch(
       // Insert evidence entries (each gets its own embedding)
       await insertEvidenceEntries({
         db: tx, traceId, traceText: params.traceText, apiKeyId: keyId, groupId,
-        entries: forEntries, stance: "for", file: fileInfo,
+        entries: forEntries, stance: "for", file: fileInfo, afterCommit,
       });
       // No "against" entries — stance discovery is handled by the evidence search pipeline
 
@@ -886,6 +893,13 @@ export async function submitAndSearch(
       }
     }
   }));
+
+  // Not awaited: the recipe is written, and a row this doesn't reach is the sweep's.
+  for (const work of afterCommit) {
+    void work(db).catch((err: unknown) => {
+      console.warn("[embedding-rebuild] Image vector for the target left to the worker:", err instanceof Error ? err.message : err);
+    });
+  }
 
   if (!traceId) {
     return {
@@ -1355,8 +1369,10 @@ export async function searchWithoutLogging(
     }
   }
   // Declared intent (Phase C): resolve + union its delivery ledger into the
-  // known-set — same rendering-only stub semantics as the check path.
+  // known-set — same rendering-only stub semantics as the check path. A
+  // search doesn't mark the intent used, so it can't revive a draft.
   const intent = await resolveIntent(db, {
+    markUsed: false,
     value: params.intent,
     userId: keyResult.userId,
     apiKeyId: keyResult.keyId,

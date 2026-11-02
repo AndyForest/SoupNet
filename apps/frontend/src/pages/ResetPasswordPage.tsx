@@ -1,35 +1,87 @@
 import { useState } from "react";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 import { useMutation } from "@tanstack/react-query";
-import { API_BASE } from "../auth.js";
+import { API_BASE, clearToken } from "../auth.js";
+import { readResetAnswer } from "../lib/reset-password.js";
+import type { ResetAnswer, StillRunning } from "../lib/reset-password.js";
+
+function runningList({ apiKeys, connectedApps }: StillRunning): string {
+  const parts: string[] = [];
+  if (apiKeys > 0) parts.push(apiKeys === 1 ? "1 API key" : `${apiKeys} API keys`);
+  if (connectedApps > 0) parts.push(connectedApps === 1 ? "1 connected app" : `${connectedApps} connected apps`);
+  return parts.join(" and ");
+}
 
 export function ResetPasswordPage() {
-  const navigate = useNavigate();
   const params = new URLSearchParams(window.location.search);
   const token = params.get("token") ?? "";
 
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<ResetAnswer | null>(null);
 
   const mutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`${API_BASE}/auth/reset-password`, {
+      return readResetAnswer(fetch(`${API_BASE}/auth/reset-password`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token, newPassword: password }),
-      });
-      const json = (await res.json()) as { ok: boolean; error?: string };
-      if (!json.ok) throw new Error(json.error ?? "Reset failed");
+      }));
     },
-    onSuccess: () => {
-      // Redirect to login with a success hint
-      void navigate({ to: "/auth/login" });
+    onSuccess: (answer) => {
+      // The reset ended every session, this browser's included.
+      clearToken();
+      setDone(answer);
     },
     onError: (err) => {
       setError(err instanceof Error ? err.message : "Reset failed");
     },
   });
+
+  if (done) {
+    const running = runningList(done.stillRunning);
+    return (
+      <div style={{
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+        minHeight: "100vh",
+        background: "var(--color-surface)",
+      }}>
+        <div style={{
+          width: "100%",
+          maxWidth: 400,
+          background: "var(--color-surface-container-lowest)",
+          borderRadius: "var(--radius-lg)",
+          padding: "var(--space-2xl) var(--space-xl)",
+        }}>
+          <h1 style={{ fontSize: "1.5rem", fontWeight: 800, color: "var(--color-primary)", marginBottom: "var(--space-md)" }}>
+            Your password is changed
+          </h1>
+          <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)", lineHeight: 1.5 }}>
+            Every session on this account is signed out.
+            {running && ` Your ${running} still work, because a reset doesn't end them. If you don't recognize any of them, sign in and revoke them.`}
+          </p>
+          {done.googleSignInRemoved && (
+            <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)", lineHeight: 1.5 }}>
+              The Google account that signed up with this address has been removed from this account, because it never showed it owned the address. Nothing changed at Google. From now on, sign in with this password, or with a Google Workspace account on this address.
+            </p>
+          )}
+          {/* When this reset joined an organization on a domain it has verified, or
+              that organization had no free seat (OD-J9). */}
+          {done.organizationLines.map((line) => (
+            <p key={line} style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)", lineHeight: 1.5 }}>{line}</p>
+          ))}
+          <Link to="/auth/login" search={running ? { next: "/app/keys" } : {}} style={{ textDecoration: "none" }}>
+            <button style={{ width: "100%", justifyContent: "center" }}>
+              {running ? "Sign in and review" : "Sign in"}
+            </button>
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   if (!token) {
     return (

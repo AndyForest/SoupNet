@@ -14,17 +14,10 @@
  *   - no redirects (a 3xx is a refusal, never followed);
  *   - a status of 200, a JSON content type, a byte cap and a deadline.
  *
- * `guardedFetchFile` is the variant for evidence files an agent names
- * (`check_recipe`'s `file_url`, F37): http or https on any port, binary
- * bodies of any type, and up to a few redirects, each hop's URL checked again
- * and its connection made through the same public-address lookup, with no
- * https-to-http downgrade. Recipe 78731e77.
- *
- * Neither throws: every refusal is `{ ok: false, reason }`, and callers map
+ * It doesn't throw: every refusal is `{ ok: false, reason }`, and callers map
  * them to a client error. The transport is a parameter so tests can exercise
  * the response handling without a network.
  */
-import http from "node:http";
 import https from "node:https";
 import dns from "node:dns";
 import net from "node:net";
@@ -153,20 +146,6 @@ export function checkFetchableUrl(raw: string): UrlCheck {
   return checkHost(url);
 }
 
-/** The static checks for an evidence file URL: http or https on any port,
- *  no credentials; the fragment is never sent. */
-export function checkFileUrl(raw: string | URL): UrlCheck {
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    return { ok: false, reason: "not an absolute URL" };
-  }
-  if (url.protocol !== "https:" && url.protocol !== "http:") return { ok: false, reason: "not http or https" };
-  if (url.username !== "" || url.password !== "") return { ok: false, reason: "credentials in URL" };
-  return checkHost(url);
-}
-
 type Hop =
   | { kind: "body"; body: Buffer; contentType: string }
   | { kind: "redirect"; location: string | undefined }
@@ -187,8 +166,7 @@ type FetchDeps = { request?: RequestFn; lookup?: ReturnType<typeof guardedLookup
 /** One GET through the public-address lookup. A 3xx comes back as a redirect
  *  for the caller to judge; it is never followed here. */
 function getOnce(url: URL, opts: HopOptions, deps: FetchDeps): Promise<Hop> {
-  const secure = url.protocol === "https:";
-  const request = deps.request ?? ((secure ? https.request : http.request) as unknown as RequestFn);
+  const request = deps.request ?? (https.request as unknown as RequestFn);
 
   return new Promise((resolve) => {
     let settled = false;
@@ -210,7 +188,7 @@ function getOnce(url: URL, opts: HopOptions, deps: FetchDeps): Promise<Hop> {
         {
           protocol: url.protocol,
           hostname: url.hostname.replace(/^\[|\]$/g, ""),
-          port: url.port !== "" ? Number(url.port) : secure ? 443 : 80,
+          port: 443,
           path: `${url.pathname}${url.search}`,
           method: "GET",
           headers: { accept: opts.accept, "user-agent": opts.userAgent },
@@ -290,38 +268,4 @@ export async function guardedFetch(raw: string, opts: GuardedFetchOptions, deps:
   if (hop.kind === "redirect") return { ok: false, reason: "redirect refused" };
   if (hop.kind === "refused") return { ok: false, reason: hop.reason };
   return { ok: true, body: hop.body.toString("utf8") };
-}
-
-export interface GuardedFileOptions extends GuardedFetchOptions {
-  maxRedirects: number;
-}
-
-export type GuardedFileResult =
-  | { ok: true; body: Buffer; contentType: string; finalUrl: URL }
-  | { ok: false; reason: string };
-
-/** GET an evidence file an agent names, following at most `maxRedirects`
- *  redirects with every hop checked again. `timeoutMs` covers the chain. */
-export async function guardedFetchFile(raw: string, opts: GuardedFileOptions, deps: FetchDeps = {}): Promise<GuardedFileResult> {
-  const first = checkFileUrl(raw);
-  if (!first.ok) return first;
-  const deadlineAt = Date.now() + opts.timeoutMs;
-  let url = first.url;
-  for (let redirects = 0; ; redirects++) {
-    const hop = await getOnce(url, { maxBytes: opts.maxBytes, deadlineAt, accept: "*/*", userAgent: "Soup.net evidence fetcher" }, deps);
-    if (hop.kind === "refused") return { ok: false, reason: hop.reason };
-    if (hop.kind === "body") return { ok: true, body: hop.body, contentType: hop.contentType, finalUrl: url };
-    if (redirects >= opts.maxRedirects) return { ok: false, reason: "too many redirects" };
-    if (hop.location === undefined) return { ok: false, reason: "redirect without a location" };
-    let next: URL;
-    try {
-      next = new URL(hop.location, url);
-    } catch {
-      return { ok: false, reason: "invalid redirect location" };
-    }
-    if (url.protocol === "https:" && next.protocol === "http:") return { ok: false, reason: "redirect from https to http refused" };
-    const checked = checkFileUrl(next);
-    if (!checked.ok) return { ok: false, reason: `redirect refused: ${checked.reason}` };
-    url = checked.url;
-  }
 }

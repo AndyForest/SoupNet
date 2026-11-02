@@ -929,7 +929,7 @@ describe.skipIf(!BASE || !canConnect())("drafts on behalf of another person (dra
         body: JSON.stringify({ email: quinn.email, password: PASSWORD, tosAccepted: true }),
       });
       const vtok = ((await reg.json()) as { data?: { verificationToken?: string } }).data?.verificationToken;
-      await fetch(`${BASE}/auth/verify`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: vtok }) });
+      await fetch(`${BASE}/auth/verify`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: vtok, password: PASSWORD }) });
       const again = { jwt: await login(quinn.email, PASSWORD) };
       expect((await queue(again)).items).toEqual([]);
       expect((await detail(again, rejected)).status).toBe(404);

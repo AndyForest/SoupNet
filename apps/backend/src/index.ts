@@ -8,6 +8,9 @@ import { runMigrations } from "./db";
 import { autoSetup } from "./auth";
 import { getDb } from "./db";
 import { authRoutes } from "./routes/auth";
+import { googleAuthRoutes } from "./routes/google-auth";
+import { googleOidcConfig } from "./services/google-oidc.service";
+import { installDirectoryChecking } from "./services/directory-connection.service";
 import { keyRoutes } from "./routes/keys";
 import { meRoutes } from "./routes/me";
 import { briefingRoutes } from "./routes/briefing";
@@ -20,6 +23,7 @@ import { groupRoutes } from "./routes/groups";
 import { invitationRoutes } from "./routes/invitations";
 import organizationsRouter from "./routes/organizations";
 import organizationConsoleRouter from "./routes/organization-console";
+import organizationDomainsRouter from "./routes/organization-domains";
 import { adminRoutes } from "./routes/admin";
 import { docsRoutes } from "./routes/docs";
 import { schemas as schemaRoutes } from "./routes/schemas";
@@ -122,6 +126,7 @@ app.route("/health/version", versionRoutes);
 app.route("/health/integrity", integrityRoutes);
 
 // Routes
+app.route("/auth/google", googleAuthRoutes);
 app.route("/auth", authRoutes);
 app.route("/keys", keyRoutes);
 app.route("/me", meRoutes);
@@ -147,6 +152,7 @@ app.use("/groups", async (c) => c.redirect(`/recipe-books${c.req.url.includes("?
 app.route("/invitations", invitationRoutes);
 app.route("/organizations", organizationsRouter);
 app.route("/organizations", organizationConsoleRouter);
+app.route("/organizations", organizationDomainsRouter);
 app.route("/admin", adminRoutes);
 app.route("/docs", docsRoutes);
 // Published wire schemas — public like /docs (shapes, not data).
@@ -167,8 +173,20 @@ app.route("/.well-known", oauthWellKnownRoutes);
 const port = parseInt(process.env["PORT"] ?? "3101", 10);
 
 async function start() {
+  // Before anything else: a bad model setting must stop this task while the old
+  // ones are still serving, not surface later as searches returning nothing.
+  const { validateEmbeddingConfig, getEmbeddingModelId, getRebuildTargetModelId } = await import(
+    "./lib/embeddings/provider"
+  );
+  validateEmbeddingConfig();
+
   // Run migrations
   await runMigrations();
+
+  // Unset EMBEDDINGS_MODEL on gemini: settle the read model from what the database
+  // holds, before anything reads or embeds. Throws, so stops this task, if it can't.
+  const { resolveEmbeddingReadModel } = await import("./lib/embeddings/read-model-resolve");
+  await resolveEmbeddingReadModel(getDb());
 
   // Auto-setup dev user if configured
   await autoSetup(getDb());
@@ -180,7 +198,9 @@ async function start() {
     "./lib/embeddings/provider"
   );
   const providerId = getEmbeddingProviderId();
-  console.warn(`[backend] Embedding provider: ${providerId}`);
+  console.warn(
+    `[backend] Embedding provider: ${providerId} model=${getEmbeddingModelId()} rebuild_target=${getRebuildTargetModelId() ?? "none"}`,
+  );
   if (providerId === "stub") {
     console.warn(
       "[backend] WARNING: stub embeddings are deterministic but not semantically meaningful. " +
@@ -190,7 +210,7 @@ async function start() {
     // Warm the in-process ONNX model so the ~0.5-2s load happens now, not on the
     // first real check. Non-fatal: warmup() already swallows its own errors, but
     // wrap defensively so a boot-time model-load hiccup can never crash startup —
-    // the first real embedQuery retries (and degrades to lexical if it truly fails).
+    // the first real embedQuery retries (and returns null if it truly fails).
     console.warn(`[backend] Local embedding model: ${embeddingModel()}`);
     try {
       const { warmup } = await import("./lib/embeddings/local-client");
@@ -212,6 +232,15 @@ async function start() {
   const { getSynthesisProviderId } = await import("./lib/synthesis/provider");
   const synthesisProviderId = getSynthesisProviderId();
   console.warn(`[backend] Synthesis provider: ${synthesisProviderId}`);
+  // Sign in with Google (stream SSO, SSO-G2): say when it is off, and name a
+  // test issuer loudly, since it replaces Google's endpoints.
+  const google = googleOidcConfig();
+  if (!google) console.warn("[backend] Google sign-in: off (GOOGLE_OAUTH_CLIENT_ID unset)");
+  else if (google.testIssuer) console.warn(`[backend] Google sign-in: TEST ISSUER ${google.issuers[0]} (GOOGLE_OIDC_TEST_ISSUER; never in production)`);
+  else console.warn("[backend] Google sign-in: on");
+  // The Workspace directory check (stream Offboarding): on when the
+  // credential key and Google are both configured. A malformed key throws.
+  console.warn(`[backend] Workspace directory check: ${installDirectoryChecking()}`);
   if (synthesisProviderId === "stub") {
     console.warn(
       "[backend] WARNING: stub synthesis is deterministic but not a real profile. " +
@@ -222,6 +251,11 @@ async function start() {
   // Boot the embedding worker (pg-boss consumers) in-process.
   // Gated by EMBEDDING_WORKER_ENABLED (default true). See ADR-0020.
   const stopWorker = await startEmbeddingWorker(getDb());
+
+  // Say loudly if the read model has nothing to search. Never stops the service.
+  const { checkReadModel, startReadModelWatch } = await import("./lib/embeddings/read-model-watch");
+  await checkReadModel(getDb());
+  startReadModelWatch(getDb());
 
   const server = serve({ fetch: app.fetch, port }, (info) => {
     console.log(`[backend] Soup.net backend running on http://localhost:${info.port}`); // eslint-disable-line no-console

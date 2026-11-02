@@ -40,7 +40,7 @@ supporting_evidence: "User explicitly described a mixed, contextual approach —
 
 This checks in the user's *actual* preference while also surfacing any related recipes about theme preferences. The search and the log are both useful.
 
-**Since 2026-08: when the intent really is lookup, there's a sanctioned tool.** The read-only search (`search_recipes` on MCP; the `filter` param on the check page) returns matches without logging anything — the agent above could have searched `"dark mode"` and found the recipes the user meant without polluting the corpus. That doesn't weaken the principle: a fabricated check is still the anti-pattern, and search doesn't replace forming a genuine hypothesis — it's for finding judgment that isn't yours to hypothesize (see Scenario G).
+**Since 2026-08: when the intent really is lookup, there's a sanctioned tool.** The read-only search (`search_recipes` on MCP; the `filter` param on the check page) returns matches without logging a recipe — the agent above could have searched `"dark mode"` and found the recipes the user meant without polluting the corpus. That doesn't weaken the principle: a fabricated check is still the anti-pattern, and search doesn't replace forming a genuine hypothesis — it's for finding judgment that isn't yours to hypothesize (see Scenario G).
 
 ---
 
@@ -363,7 +363,7 @@ Quoted filenames match lexically — including against the file citations inside
 
 The results are the teammates' logged reasoning for exactly the code under review. The reviewer's agent weighs the change against them — and when the PR *contradicts* a logged decision, that's not automatically a defect: it may be a deliberate reversal. Surface the tension, cite the recipe, and let the humans decide.
 
-**Why search and not check:** the reviewing agent isn't holding a hypothesis about its own user's taste — it's retrieving *other people's* decisions. That's precisely what the read-only search is for, and why its results exclude your own recipes by default (`author:me` / `author:anyone` override). After the review, close the loop: the search response's `searchId` takes a feedback row (`search_id`) recording whether the surfaced judgment shaped the review.
+**Why search and not check:** the reviewing agent isn't holding a hypothesis about its own user's taste — it's retrieving *other people's* decisions. That's precisely what the read-only search is for. Its results include your own recipes by default; add `-author:me` to leave them out. After the review, close the loop: the search response's `searchId` takes a feedback row (`search_id`) recording whether the surfaced judgment shaped the review.
 
 ### Principles illustrated
 

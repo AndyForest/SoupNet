@@ -19,7 +19,7 @@
 import crypto from "node:crypto";
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { embedQuery, embedMultimodal, getEmbeddingModelId } from "./provider";
+import { embedQuery, embedMultimodal, getEmbeddingModelId, getRebuildTargetModelId } from "./provider";
 import type { ContentPart } from "../gemini-client";
 
 // KNOWN BUG (2026-03-29): gemini-embedding-2-preview ignores task_type — all types produce
@@ -51,9 +51,28 @@ export async function getOrCreateCachedVector(
   sourceText: string,
   taskType: string,
   multimodalParts?: ContentPart[],
+  modelId: string = getEmbeddingModelId(),
 ): Promise<string | null> {
-  const modelId = getEmbeddingModelId();
-  // Check cache first
+  const cachedVector = await readCachedVector(db, contentHash, taskType, modelId);
+  if (cachedVector) return cachedVector;
+
+  // Cache miss — call Gemini API (multimodal or text-only)
+  const vector = multimodalParts
+    ? await embedMultimodal(multimodalParts, taskType, modelId)
+    : await embedQuery(sourceText, taskType, modelId);
+  if (!vector) return null;
+
+  const vectorStr = `[${vector.join(",")}]`;
+  await writeCachedVector(db, contentHash, taskType, modelId, vectorStr);
+  return vectorStr;
+}
+
+async function readCachedVector(
+  db: PostgresJsDatabase,
+  contentHash: string,
+  taskType: string,
+  modelId: string,
+): Promise<string | null> {
   const cached = await db.execute(sql`
     SELECT vector::text AS vector_str
     FROM claimnet.vector_cache
@@ -62,28 +81,22 @@ export async function getOrCreateCachedVector(
       AND task_type = ${taskType}
     LIMIT 1
   `);
+  return (cached as unknown as Array<{ vector_str: string }>)[0]?.vector_str ?? null;
+}
 
-  const cachedRow = (cached as unknown as Array<{ vector_str: string }>)[0];
-  if (cachedRow) {
-    return cachedRow.vector_str;
-  }
-
-  // Cache miss — call Gemini API (multimodal or text-only)
-  const vector = multimodalParts
-    ? await embedMultimodal(multimodalParts, taskType)
-    : await embedQuery(sourceText, taskType);
-  if (!vector) return null;
-
-  const vectorStr = `[${vector.join(",")}]`;
-
-  // Write to cache at full float32 precision (ON CONFLICT = another request cached it first)
+/** At full float32 precision. ON CONFLICT: another request cached it first. */
+async function writeCachedVector(
+  db: PostgresJsDatabase,
+  contentHash: string,
+  taskType: string,
+  modelId: string,
+  vectorStr: string,
+): Promise<void> {
   await db.execute(sql`
     INSERT INTO claimnet.vector_cache (content_hash, model_id, task_type, vector)
     VALUES (${contentHash}, ${modelId}, ${taskType}, ${vectorStr}::vector(3072))
     ON CONFLICT (content_hash, model_id, task_type) DO NOTHING
   `);
-
-  return vectorStr;
 }
 
 /** Content hash for a chunk — text plus file bytes when multimodal. The
@@ -94,6 +107,9 @@ export function computeChunkHash(sourceText: string, fileBuffer?: Buffer): strin
   if (fileBuffer) hasher.update(fileBuffer);
   return hasher.digest("hex");
 }
+
+/** Work to run once the caller's transaction has committed, outside it. */
+export type AfterCommitWork = (db: PostgresJsDatabase) => Promise<void>;
 
 export interface EnqueueEmbeddingParams {
   sourceType: string;
@@ -121,6 +137,8 @@ export interface EnqueueEmbeddingParams {
    * a 'pending' stub is inserted without retrying the API inline.
    */
   precomputedVectors?: Partial<Record<(typeof TASK_TYPES)[number], string | null>>;
+  /** Collects work that shouldn't hold the caller's transaction open. */
+  afterCommit?: AfterCommitWork[];
 }
 
 export async function enqueueEmbedding(
@@ -237,6 +255,44 @@ export async function enqueueEmbedding(
         VALUES
           (${chunkRow.id}::uuid, ${modelId}, ${taskType}, 'pending', NULL)
       `);
+    }
+
+    // During a rebuild, text rows reach the target through the sweep. An image is the
+    // exception: its bytes are in hand now, and on another task's disk the sweep
+    // couldn't read them. But this is often inside the caller's transaction, so the
+    // call waits for afterCommit. Until it lands, or if it fails, the row is the sweep's.
+    const rebuildTarget = multimodalParts ? getRebuildTargetModelId() : null;
+    if (rebuildTarget && multimodalParts) {
+      const imageParts = multimodalParts;
+      const targetRows = await db.execute(sql`
+        INSERT INTO claimnet.embedding_vectors
+          (embedding_chunk_id, model_id, task_type, status, vector)
+        VALUES
+          (${chunkRow.id}::uuid, ${rebuildTarget}, ${taskType}, 'pending', NULL)
+        ON CONFLICT (embedding_chunk_id, model_id, task_type) DO NOTHING
+        RETURNING id
+      `);
+      const targetRowId = (targetRows as unknown as Array<{ id: string }>)[0]?.id;
+      if (targetRowId) {
+        params.afterCommit?.push(async (outsideTx) => {
+          const cached = await readCachedVector(outsideTx, chunkHash, taskType, rebuildTarget);
+          const embedded = cached ? null : await embedMultimodal(imageParts, taskType, rebuildTarget);
+          const targetVector = cached ?? (embedded ? `[${embedded.join(",")}]` : null);
+          if (!targetVector) return;
+          const updated = await outsideTx.execute(sql`
+            UPDATE claimnet.embedding_vectors
+            SET vector = ${targetVector}::vector(3072)::halfvec(3072), vector_source = 'server',
+                status = 'complete', updated_at = now()
+            WHERE id = ${targetRowId}::uuid
+              AND (status IN ('pending', 'processing') OR vector_source = 'text_fallback')
+            RETURNING id
+          `);
+          // After the update: a recipe deleted during the call leaves no cache row.
+          if (!cached && (updated as unknown as unknown[]).length > 0) {
+            await writeCachedVector(outsideTx, chunkHash, taskType, rebuildTarget, targetVector);
+          }
+        });
+      }
     }
   }
 }

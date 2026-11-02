@@ -152,9 +152,9 @@ export const ACCOUNT_SUSPENDED_MESSAGE =
 export const SESSION_EXPIRED_MESSAGE =
   "This session has ended. Sign in again.";
 
-/** Placeholder until stream SSO words it. */
+/** A session or password sign-in refused by the organization's require_sso (stream SSO, SSO-R2). */
 export const SSO_REQUIRED_MESSAGE =
-  "Your organization requires signing in with Google. Sign in again with Google.";
+  "Your organization signs in with Google. Sign in with Google to continue.";
 
 export const ORGANIZATION_FULL_MESSAGE =
   "This organization has no free seats. Ask one of its admins.";
@@ -176,6 +176,18 @@ export const ORG_ACTION_MESSAGES: Record<OrgActionRefusal, string> = {
 };
 
 /** A book a join moved under the organization, as the notice names it. */
+/**
+ * The refusal for a new recipe book whose slug is taken. Members of a company
+ * organization share one slug space, so the holder can be a private book of
+ * another member's that this person can't see. Slugs are the "short name" the
+ * join notice already calls them.
+ */
+export function bookSlugTakenMessage(slug: string, inCompany: boolean): string {
+  return inCompany
+    ? `Another recipe book in this organization already uses the short name "${slug}". Choose a different name.`
+    : `You already have a recipe book with the short name "${slug}". Choose a different name.`;
+}
+
 export interface MovedBook {
   name: string;
   slug: string;
@@ -199,6 +211,9 @@ export function organizationJoinNotice(organizationName: string, moved: readonly
       lines.push(`- ${book.name}${renamed}`);
     }
   }
-  lines.push("", "Your API keys and your agents' connections keep working as before.");
+  const slugChanged = moved.some((book) => book.slug !== book.previousSlug);
+  lines.push("", slugChanged
+    ? "Your API keys and your agents' connections keep working. An agent that names one of these books by its old short name needs the new one."
+    : "Your API keys and your agents' connections keep working as before.");
   return { subject: `Your Soup.net account joined ${organizationName}`, text: lines.join("\n") };
 }

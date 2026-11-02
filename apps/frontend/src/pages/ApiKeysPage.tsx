@@ -379,7 +379,7 @@ export function ApiKeysPage() {
                     }}>&#9654;</span>
                     <span className="text-mono">{key.keyPrefix}...</span>
                     <span className="text-xs" style={{ color: "var(--color-on-surface-variant)" }}>
-                      {key.keyType}{key.label ? ` — ${key.label}` : ""}
+                      {key.keyType === "oauth" ? "connected app" : key.keyType}{key.label ? ` — ${key.label}` : ""}
                     </span>
                     <span className="text-xs" style={{ color: "var(--color-outline-variant)" }}>
                       expires {new Date(key.expiresAt).toLocaleDateString()}

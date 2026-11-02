@@ -86,6 +86,13 @@ export function nearMissParam(name: string, accepted: readonly string[], sent: r
   return best?.name;
 }
 
+/** Names that belong on another tool, keyed `tool.param`: the refusal says
+ *  where to send them, in place of a near miss. search_recipes writes no
+ *  feedback rows; they go through log_feedback (recipe 9dbcfb77). */
+const PARAM_STEERS: ReadonlyMap<string, string> = new Map([
+  ["search_recipes.feedback", "send those rows with log_feedback; a row about a search takes search_id"],
+]);
+
 function listNames(names: readonly string[]): string {
   if (names.length <= 1) return names.join("");
   return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
@@ -101,6 +108,8 @@ export function unknownParamsMessage(
   sent: readonly string[] = [],
 ): string {
   const described = listNames(unknown.map((u) => {
+    const steer = PARAM_STEERS.get(`${tool}.${u}`);
+    if (steer) return `${u} (${steer})`;
     const guess = nearMissParam(u, accepted, sent);
     return guess ? `${u} (did you mean ${guess}?)` : u;
   }));

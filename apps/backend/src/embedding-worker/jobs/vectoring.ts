@@ -48,13 +48,27 @@ async function handleBatchMode(
       AND status = 'pending'
   `);
 
+  // One call per model and task type, so no row gets another model's vector.
+  for (const group of groupByModel(items, (i) => `${i.modelId}\0${i.taskType}`)) {
+    await embedBatches(group, db);
+  }
+}
+
+function groupByModel<T>(items: T[], keyOf: (item: T) => string): T[][] {
+  const groups = new Map<string, T[]>();
+  for (const item of items) {
+    groups.set(keyOf(item), [...(groups.get(keyOf(item)) ?? []), item]);
+  }
+  return [...groups.values()];
+}
+
+async function embedBatches(items: BatchVectorItem[], db: PostgresJsDatabase): Promise<void> {
   const taskType = items[0]!.taskType;
   const modelId = items[0]!.modelId;
-  const texts = items.map((i) => i.chunkText);
 
   for (let i = 0; i < items.length; i += MAX_BATCH_SIZE) {
     const batch = items.slice(i, i + MAX_BATCH_SIZE);
-    const batchTexts = texts.slice(i, i + MAX_BATCH_SIZE);
+    const batchTexts = batch.map((b) => b.chunkText);
 
     try {
       const embeddings = await batchEmbed(batchTexts, taskType, modelId);
@@ -133,7 +147,7 @@ async function handleLegacyMode(
     chunkTextMap.set(row.id, row.chunk_text);
   }
 
-  const texts: string[] = [];
+  const texts = new Map<string, string>();
   const validItems: typeof pending = [];
   for (const item of pending) {
     const text = chunkTextMap.get(item.embedding_chunk_id);
@@ -141,30 +155,34 @@ async function handleLegacyMode(
       await markFailed(db, item.id, "Chunk text not found");
       continue;
     }
-    texts.push(text);
+    texts.set(item.id, text);
     validItems.push(item);
   }
 
   if (validItems.length === 0) return;
 
   try {
-    const taskType = validItems[0]!.task_type;
-    const modelId = validItems[0]!.model_id;
-    const embeddings = await batchEmbed(texts, taskType, modelId);
+    for (const group of groupByModel(validItems, (i) => `${i.model_id}\0${i.task_type}`)) {
+      const embeddings = await batchEmbed(
+        group.map((g) => texts.get(g.id)!),
+        group[0]!.task_type,
+        group[0]!.model_id,
+      );
 
-    for (let j = 0; j < validItems.length; j++) {
-      const item = validItems[j]!;
-      const embedding = embeddings[j];
-      if (!embedding) {
-        await markFailed(db, item.id, "No embedding returned");
-        continue;
+      for (let j = 0; j < group.length; j++) {
+        const item = group[j]!;
+        const embedding = embeddings[j];
+        if (!embedding) {
+          await markFailed(db, item.id, "No embedding returned");
+          continue;
+        }
+        const vectorStr = `[${embedding.join(",")}]`;
+        await db.execute(sql`
+          UPDATE claimnet.embedding_vectors
+          SET vector = ${vectorStr}::halfvec(3072), status = 'complete', updated_at = now()
+          WHERE id = ${item.id}
+        `);
       }
-      const vectorStr = `[${embedding.join(",")}]`;
-      await db.execute(sql`
-        UPDATE claimnet.embedding_vectors
-        SET vector = ${vectorStr}::halfvec(3072), status = 'complete', updated_at = now()
-        WHERE id = ${item.id}
-      `);
     }
 
     console.log(`[vectoring] Legacy batch: strategy=${embeddingChunkStrategyId} vectors=${validItems.length}`);

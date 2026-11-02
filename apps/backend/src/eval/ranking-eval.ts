@@ -552,11 +552,12 @@ async function main(): Promise<void> {
   }
 
   console.log(`ranking-eval — dataset ${datasetName}, algorithm ${RANKING_ALGORITHM_VERSION}`);
-  console.log(`provider ${provider} (${getEmbeddingModelId()})`);
-
   const { getDb, runMigrations } = await import("../db");
   await runMigrations();
   const db = getDb();
+  const { resolveEmbeddingReadModel } = await import("../lib/embeddings/read-model-resolve");
+  await resolveEmbeddingReadModel(db);
+  console.log(`provider ${provider} (${getEmbeddingModelId()})`);
 
   const runTag = Date.now().toString(36);
 

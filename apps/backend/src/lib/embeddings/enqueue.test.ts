@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { enqueueEmbedding } from "./enqueue";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 
@@ -9,6 +9,9 @@ const unusedDb = new Proxy({}, {
 }) as unknown as PostgresJsDatabase;
 
 describe("enqueueEmbedding structural invariant", () => {
+  beforeEach(() => vi.stubEnv("EMBEDDINGS_PROVIDER", "stub"));
+  afterEach(() => vi.unstubAllEnvs());
+
   it("rejects deferToWorker=true when a fileBuffer is present", async () => {
     await expect(
       enqueueEmbedding(unusedDb, {

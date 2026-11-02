@@ -14,7 +14,7 @@
 import crypto from "node:crypto";
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { activeUserPredicate, consumeRefreshToken } from "../authz";
+import { activeUserPredicate, consumeRefreshToken, checkDirectoryIfDue, userIdForRefreshToken } from "../authz";
 
 // ── Base62 encoding ──────────────────────────────────────────────────────────
 
@@ -291,6 +291,18 @@ export function requestedOidcScopes(scope: string): string[] {
   return OIDC_SCOPES.filter((s) => asked.has(s));
 }
 
+const LOGGED_SCOPES = new Set(["read", "write", ...OIDC_SCOPES, "offline_access"]);
+
+/**
+ * What a client asked for, safe to log: known scope names, and only a count of
+ * anything else, because the value is caller-supplied text.
+ */
+export function requestedScopeForLog(scope: string): { known: string[]; other: number } {
+  const asked = [...new Set(scope.split(/\s+/).filter(Boolean))];
+  const known = asked.filter((s) => LOGGED_SCOPES.has(s)).sort();
+  return { known, other: asked.length - known.length };
+}
+
 /** A text[] literal for a list of plain strings (an empty list included). */
 function textArray(values: string[]) {
   return sql`ARRAY[${sql.join(values.map((v) => sql`${v}`), sql`,`)}]::text[]`;
@@ -564,6 +576,12 @@ export async function refreshOAuthTokenBundle(
   params: { refreshToken: string; clientId: string; resource: string },
 ): Promise<OAuthTokenBundle> {
   const refreshTokenHash = hashOpaque(params.refreshToken);
+
+  // A Workspace directory check that is due runs before rotation, outside
+  // the rotation transaction (stream Offboarding); the consumption statement
+  // below then reads the recorded status through the user-state predicate.
+  const owner = await userIdForRefreshToken(db, refreshTokenHash);
+  if (owner) await checkDirectoryIfDue(db, owner);
 
   return db.transaction(async (tx) => {
     // The consumption statement — the compare-and-swap on consumed_at, the

@@ -227,19 +227,6 @@ describe.skipIf(!BASE)("triage ratings (drafts-and-triage slice 1)", () => {
     }
   });
 
-  it("S1-B3 follow-up (remote MCP): a non-object feedback row on search_recipes is a marker, not a failed call", async () => {
-    const res = await fetch(`${BASE}/mcp`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: ACCEPT_BOTH, Authorization: `Bearer ${pat.apiKey}` },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "search_recipes", arguments: { query: "triage ratings", feedback: [7] } } }),
-    });
-    const raw = await res.text();
-    const line = raw.split(/\r?\n/).find((l) => l.startsWith("data: "));
-    const msg = JSON.parse(line ? line.slice(6) : raw) as { result?: { isError?: boolean; content?: Array<{ text?: string }> } };
-    expect(msg.result?.isError).not.toBe(true);
-    expect(msg.result?.content?.map((c) => c.text ?? "").join(" ")).toContain("must be an object");
-  });
-
   // ── S1-B4 / DT-RAT-03: independent ratings ─────────────────────────────────
 
   it("S1-B4 / DT-RAT-03: mixed values are stored independently of each other", async () => {
@@ -317,7 +304,7 @@ describe.skipIf(!BASE)("triage ratings (drafts-and-triage slice 1)", () => {
 
   // ── S1-Z4 / DT-TOOL-03: every feedback field survives the pointer schema ───
 
-  it("S1-Z4 / DT-TOOL-03: every log_feedback field rides along on check_recipe and search_recipes and is stored", async () => {
+  it("S1-Z4 / DT-TOOL-03: every log_feedback field rides along on check_recipe and is stored", async () => {
     const prior = (await checkJsonGet(pat.apiKey, { trace: recipeText("fields-prior"), intent: `As a tester working on ${run}, I want feedback fields kept.` })).data as CheckData & { intentId?: string };
     const priorId = prior.checked!.recipeId;
     const intentId = prior.intentId!;
@@ -343,45 +330,39 @@ describe.skipIf(!BASE)("triage ratings (drafts-and-triage slice 1)", () => {
     });
 
     const onCheck = `fields on check ${run}`;
-    const onSearch = `fields on search ${run}`;
     const c = await mcpCall(pat.apiKey, "check_recipe", {
       recipe: recipeText("fields-check"), supporting_evidence: EVIDENCE, response_format: "structured", feedback: [row(onCheck)],
     });
     expect(c.structured?.feedbackResults?.[0]?.ok).toBe(true);
-    const s = await mcpCall(pat.apiKey, "search_recipes", {
-      query: "triage ratings", response_format: "structured", feedback: [row(onSearch)],
-    });
-    expect(s.structured?.feedbackResults?.[0]?.ok).toBe(true);
+    const s = await mcpCall(pat.apiKey, "search_recipes", { query: "triage ratings", response_format: "structured" });
 
-    // The search-target form (search_id) is accepted on both tools too.
+    // The search-target form (search_id) is accepted too.
     const searchId = (s.structured as { searchId?: string } | undefined)?.searchId;
     expect(searchId).toBeTruthy();
-    const bySearch = await mcpCall(pat.apiKey, "search_recipes", {
-      query: "triage ratings again", response_format: "structured",
+    const bySearch = await mcpCall(pat.apiKey, "check_recipe", {
+      recipe: recipeText("fields-by-search"), supporting_evidence: EVIDENCE, response_format: "structured",
       feedback: [{ search_id: searchId, kind: "check-feedback", impact: "none", disposition: "proceeded", story_fulfilled: "no", story: "As a tester, I wanted search_id accepted." }],
     });
     expect(bySearch.structured?.feedbackResults?.[0]?.ok).toBe(true);
 
     const res = await fetch(`${BASE}/traces/${priorId}/feedback`, { headers: { Authorization: `Bearer ${pat.jwt}` } });
     const rows = ((await res.json()) as { data: { feedback: Array<Record<string, unknown>> } }).data.feedback;
-    for (const note of [onCheck, onSearch]) {
-      const stored = rows.find((r) => r["note"] === note);
-      expect(stored, note).toMatchObject({
-        kind: "check-feedback",
-        impact: "subtle",
-        disposition: "corrected",
-        storyFulfilled: "partial",
-        story: "As a tester, I wanted every field to survive.",
-        agentId: "a-fields-row",
-        topSimilarity: 0.61,
-        model: "model-x",
-        harness: "harness-y",
-        harnessVersion: "9.9",
-        relatedTraceIds: [related],
-        sessionId: `sess-fields-${run}`,
-        intentId,
-      });
-    }
+    const stored = rows.find((r) => r["note"] === onCheck);
+    expect(stored, onCheck).toMatchObject({
+      kind: "check-feedback",
+      impact: "subtle",
+      disposition: "corrected",
+      storyFulfilled: "partial",
+      story: "As a tester, I wanted every field to survive.",
+      agentId: "a-fields-row",
+      topSimilarity: 0.61,
+      model: "model-x",
+      harness: "harness-y",
+      harnessVersion: "9.9",
+      relatedTraceIds: [related],
+      sessionId: `sess-fields-${run}`,
+      intentId,
+    });
   });
 
   // ── S1-B7 / DT-RAT-09: the detail surface ──────────────────────────────────

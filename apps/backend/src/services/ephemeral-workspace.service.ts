@@ -25,7 +25,7 @@
 import crypto from "node:crypto";
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { bindBookToKey, homeOrganizationOf } from "../authz";
+import { bindBookToKey, holdAccountForNewBook, homeOrganizationOf } from "../authz";
 import { deleteTraceCascade } from "./trace-delete.service";
 
 // ── Tunables ─────────────────────────────────────────────────────────────────
@@ -110,14 +110,6 @@ export async function createEphemeralWorkspace(
     );
   }
 
-  // Resolve the org: the account's home organization (its company
-  // organization when it is managed, else the pinned personal org, falling
-  // back to the oldest owned org for a user whose pointer was never
-  // backfilled), the same resolver new books and imports use.
-  const orgId = await homeOrganizationOf(db, userId);
-  if (!orgId) {
-    throw new EphemeralWorkspaceError(400, "No organization owned by this account — cannot create a workspace.");
-  }
 
   const bookName = input.name && input.name.trim().length > 0
     ? input.name.trim().slice(0, 200)
@@ -129,6 +121,18 @@ export async function createEphemeralWorkspace(
   const slug = `ephemeral-${Date.now().toString(36)}${crypto.randomInt(0, 1296).toString(36).padStart(2, "0")}`;
 
   return db.transaction(async (tx) => {
+    // Resolve the org: the account's home organization (its company
+    // organization when it is managed, else the pinned personal org, falling
+    // back to the oldest owned org for a user whose pointer was never
+    // backfilled), the same resolver new books and imports use. Under the
+    // account's lock, so a join can't leave the workspace behind (F169): this
+    // transaction is a fixed handful of single-row writes, so the hold is short.
+    await holdAccountForNewBook(tx, userId);
+    const orgId = await homeOrganizationOf(tx, userId);
+    if (!orgId) {
+      throw new EphemeralWorkspaceError(400, "No organization owned by this account — cannot create a workspace.");
+    }
+
     const groupRows = await tx.execute(sql`
       INSERT INTO claimnet.groups (name, slug, organization_id, description)
       VALUES (${bookName}, ${slug}, ${orgId}::uuid, ${description})

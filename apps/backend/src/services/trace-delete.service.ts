@@ -159,6 +159,15 @@ export async function deleteEmbeddingChainForSource(
   sourceType: "trace" | "evidence" | "reference",
   sourceId: string,
 ): Promise<void> {
+  // Lock the chunks first: a rebuild's sweep may be adding a vector row to one of
+  // them. With the lock, its foreign-key check waits and then fails on the sweep's
+  // side, which retries on its next tick, instead of failing this delete.
+  await tx.execute(sql`
+    SELECT ec.id FROM claimnet.embedding_chunks ec
+    JOIN claimnet.embedding_sources es ON es.id = ec.embedding_source_id
+    WHERE es.source_type = ${sourceType} AND es.source_id = ${sourceId}::uuid
+    FOR UPDATE OF ec
+  `);
   await tx.execute(sql`
     DELETE FROM claimnet.embedding_vectors
     WHERE embedding_chunk_id IN (

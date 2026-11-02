@@ -14,6 +14,7 @@
  */
 
 import { sql } from "drizzle-orm";
+import { getEmbeddingModelId } from "../lib/embeddings/provider";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import type { SearchResultItem } from "./trace.service";
 import { isPublishedDraftState, onBehalfSideFor, onBehalfPartyFor, draftExpiryReason } from "../authz";
@@ -302,6 +303,7 @@ export async function clusterEvidenceInResults(
     WHERE es.source_id IN (${evidenceIdsSql})
       AND es.source_type = 'evidence'
       AND ev.task_type = 'SEMANTIC_SIMILARITY'
+      AND ev.model_id = ${getEmbeddingModelId()}
       AND ev.status = 'complete'
       AND ev.vector IS NOT NULL
   `);

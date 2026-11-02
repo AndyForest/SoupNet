@@ -96,7 +96,7 @@ describe.skipIf(!BASE)("tool output and the profile tool (stream T)", () => {
     expect(logged.text).toBe(`Feedback recorded for check ${id}.`);
     const again = await tool(annScoped, "log_feedback", row);
     expect(again.text).toBe(`Feedback already recorded for check ${id} — identical resubmission.`);
-    const ride = await tool(annScoped, "search_recipes", { query: "output audits", response_format: "structured", feedback: [row] });
+    const ride = await tool(annScoped, "check_recipe", { recipe: `As a contract tester working on output audits, I prefer ride-along receipts without internal ids so that an agent sees only what it can use ${run}.`, supporting_evidence: evidence("ride"), response_format: "structured", feedback: [row] });
     const results = ride.structured?.["feedbackResults"] as Json[] | undefined;
     expect(results?.length).toBe(1);
     expect(results?.[0]).not.toHaveProperty("feedbackId");
