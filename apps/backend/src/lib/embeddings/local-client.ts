@@ -10,7 +10,8 @@
  * plus:
  *   - warmup()                             — load the model at boot (off the first request)
  *
- * The null-returning variants let the sync check path degrade to lexical search;
+ * The null-returning variants let a check succeed without a vector (search then
+ * returns no results; there is no lexical path);
  * batchEmbed throws so the async pipeline's binary-split retry can surface failures
  * — identical to gemini-client's split contract.
  *
@@ -167,7 +168,7 @@ export type ContentPart =
   | { inlineData: { mimeType: string; data: string } };
 
 /**
- * Embed a single text. Returns null on any failure for graceful lexical fallback.
+ * Embed a single text. Returns null on any failure; search then returns no results.
  * `_taskType` is accepted for signature parity with gemini-client; the local stack
  * is symmetric and does not vary embeddings by task type.
  */
@@ -179,7 +180,7 @@ export async function embedQuery(
     const rows = await embedTexts([text]);
     return rows[0] ?? null;
   } catch (err) {
-    console.error("[local-embed] embedQuery failed — falling back to lexical:", err);
+    console.error("[local-embed] embedQuery failed:", err);
     return null;
   }
 }
@@ -196,7 +197,7 @@ export async function embedMultimodal(
     const rows = await embedTexts([foldPartsToText(parts)]);
     return rows[0] ?? null;
   } catch (err) {
-    console.error("[local-embed] embedMultimodal failed — falling back to lexical:", err);
+    console.error("[local-embed] embedMultimodal failed:", err);
     return null;
   }
 }
@@ -221,7 +222,7 @@ export async function batchEmbed(
 /**
  * Warm the model at boot so the ~0.5-2 s ONNX model-load happens off the first real
  * request. Never throws — a warmup failure is logged and the first real embedQuery
- * retries (and degrades to lexical if the model genuinely can't load), so a boot-time
+ * retries (and returns null if the model genuinely can't load), so a boot-time
  * hiccup doesn't crash the server.
  */
 export async function warmup(): Promise<void> {

@@ -10,7 +10,8 @@
  *   - embedMultimodal(parts)  — text + inline parts folded to text, null on error
  *   - batchEmbed(texts)       — batch endpoint for the async pipeline, throws on error
  *
- * The null-returning variants let the sync check path degrade to lexical; the
+ * The null-returning variants let a check succeed without a vector (search then
+ * returns no results; there is no lexical path); the
  * async pipeline uses batchEmbed because it wants failures surfaced for its
  * binary-split retry policy — mirroring gemini-client exactly so provider
  * dispatch at the seam stays uniform.
@@ -98,7 +99,7 @@ async function requestEmbeddings(
 
 /**
  * Generate an embedding for a text string.
- * Returns null on any error so search falls back to lexical-only.
+ * Returns null on any error; search then returns no results for this query.
  *
  * `_taskType` is accepted for signature parity with gemini-client's dispatch
  * at the seam; the OpenAI embeddings API has no task-type concept, so it is
@@ -113,7 +114,7 @@ export async function embedQuery(
     return vector ?? null;
   } catch (err) {
     console.error("[openai-embeddings] Embedding request error:", err);
-    return null; // fallback to lexical
+    return null;
   }
 }
 
@@ -137,7 +138,7 @@ export async function embedMultimodal(
     return vector ?? null;
   } catch (err) {
     console.error("[openai-embeddings] Multimodal embedding request error:", err);
-    return null; // fallback to lexical
+    return null;
   }
 }
 
