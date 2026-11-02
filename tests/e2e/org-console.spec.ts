@@ -1187,6 +1187,18 @@ test("E22 turning automatic joining on asks first, naming who moves in", async (
   await expect(page.locator("table tbody tr", { hasText: `gus@${domain}` }), "Gus should now be a member").toHaveCount(1);
 });
 
+test("E23 a signed-out manager following an email's link lands back on the directory section", async ({ page, request }) => {
+  const acme = await setupAcme(request, "e23");
+  await page.addInitScript(() => localStorage.setItem("cookie_notice_dismissed", "true"));
+  await page.goto("/org#directory");
+  await expect(page, "signing out should lead to sign-in, carrying the link").toHaveURL(/\/auth\/login\?next=/);
+  await page.locator("#email").fill(acme.olive.email);
+  await page.locator("#password").fill(acme.olive.password);
+  await page.getByRole("button", { name: "Sign In", exact: true }).click();
+  await expect(page, "sign-in should return to the link, hash included").toHaveURL(/\/org#directory$/);
+  await expect(page.locator("#directory").getByRole("heading", { name: "Google Workspace directory" }), "the section should be on screen").toBeInViewport();
+});
+
 test("E20 the directory section, the status labels, last checked and Activity", async ({ page, request }, testInfo) => {
   const acme = await setupAcme(request, "e20");
   const domain = `${tag("e20")}.example`.toLowerCase();

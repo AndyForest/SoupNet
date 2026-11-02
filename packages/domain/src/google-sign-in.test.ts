@@ -160,6 +160,14 @@ describe("the closed error list", () => {
 });
 
 describe("safeAppReturnPath (the server's copy of the SPA's return rule, plus /oauth/authorize)", () => {
+  it("honours the org console, hash kept, and nothing that only looks like it", () => {
+    expect(safeAppReturnPath("/org#directory")).toBe("/org#directory");
+    expect(safeAppReturnPath("/org/domains")).toBe("/org/domains");
+    for (const bad of ["/organic", "/org.evil", "/org/../admin", "/org/%2e%2e/admin", "/org/..%2Fadmin", "//org", "https://evil.example/org"]) {
+      expect(safeAppReturnPath(bad), bad).toBeNull();
+    }
+  });
+
   it("accepts app paths with a query and a hash", () => {
     expect(safeAppReturnPath("/app/drafts?ids=a,b")).toBe("/app/drafts?ids=a,b");
     expect(safeAppReturnPath("/app/traces/abc#evidence")).toBe("/app/traces/abc#evidence");

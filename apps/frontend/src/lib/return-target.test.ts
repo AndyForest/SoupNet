@@ -29,6 +29,14 @@ describe("safeReturnTarget (S3-L5: no open redirect)", () => {
     }
   });
 
+  it("honours the org console, hash kept, and nothing that only looks like it", () => {
+    expect(safeReturnTarget("/org#directory")).toBe("/org#directory");
+    expect(safeReturnTarget("/org/domains")).toBe("/org/domains");
+    for (const bad of ["/organic", "/org.evil", "/org/../admin", "/org/%2e%2e/admin", "/org/..%2Fadmin", "//org", "https://evil.example/org"]) {
+      expect(safeReturnTarget(bad), bad).toBeNull();
+    }
+  });
+
   it("ignores other in-app paths and paths that normalize out of /app/", () => {
     for (const bad of ["/", "/auth/login", "/admin", "/app", "/application", "/app/../admin", "/app/%2e%2e/admin", "/info/terms"]) {
       expect(safeReturnTarget(bad), bad).toBeNull();
