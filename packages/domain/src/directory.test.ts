@@ -10,27 +10,64 @@ import {
 } from "./directory";
 
 describe("classifyDirectoryAnswer (OB-M3)", () => {
-  it("reads suspended, archived and active from a user", () => {
-    expect(classifyDirectoryAnswer({ httpStatus: 200, body: { suspended: true } })).toEqual({ kind: "status", status: "suspended" });
-    expect(classifyDirectoryAnswer({ httpStatus: 200, body: { archived: true } })).toEqual({ kind: "status", status: "archived" });
-    expect(classifyDirectoryAnswer({ httpStatus: 200, body: { suspended: false, archived: false } })).toEqual({ kind: "status", status: "active" });
-    expect(classifyDirectoryAnswer({ httpStatus: 200, body: null })).toEqual({ kind: "status", status: "active" });
+  const max = { email: "max@acme.example" };
+  const record = (over: Record<string, unknown> = {}) => ({ id: "111", primaryEmail: "max@acme.example", suspended: false, archived: false, ...over });
+  const status = (body: unknown, asked: { email: string } | { id: string } = max) => classifyDirectoryAnswer({ httpStatus: 200, body }, asked);
+
+  it("reads suspended, archived and active from a complete record", () => {
+    expect(status(record({ suspended: true }))).toEqual({ kind: "status", status: "suspended" });
+    expect(status(record({ archived: true }))).toEqual({ kind: "status", status: "archived" });
+    expect(status(record())).toEqual({ kind: "status", status: "active" });
+  });
+
+  it("F183: anything less than a complete record of the person is the connection's error, never a status", () => {
+    const bad = { kind: "connection_error", code: "bad_answer" };
+    for (const body of [
+      null,
+      "",
+      "<html></html>",
+      [],
+      {},
+      { error: { code: 200 } },
+      { primaryEmail: "max@acme.example" },
+      record({ suspended: "true" }),
+      record({ suspended: undefined }),
+      record({ archived: "false" }),
+      record({ archived: undefined }),
+      record({ primaryEmail: 7 }),
+      record({ primaryEmail: "someone-else@acme.example" }),
+      record({ primaryEmail: "someone-else@acme.example", suspended: true }),
+    ]) {
+      expect(status(body), JSON.stringify(body)).toEqual(bad);
+    }
+    expect(status(record(), { id: "222" })).toEqual(bad);
+  });
+
+  it("F183: an address may be an alias of the record, in any case; a lookup by id goes by the id", () => {
+    const active = { kind: "status", status: "active" };
+    const primary = { primaryEmail: "maxwell@acme.example" };
+    expect(status(record({ ...primary, aliases: ["MAX@acme.example"] }))).toEqual(active);
+    expect(status(record({ ...primary, nonEditableAliases: ["max@acme.example"] }))).toEqual(active);
+    expect(status(record({ ...primary, emails: [null, { address: "max@acme.example" }] }))).toEqual(active);
+    expect(status(record({ ...primary, aliases: "max@acme.example", emails: "max@acme.example" }))).toEqual({ kind: "connection_error", code: "bad_answer" });
+    expect(status(record({ primaryEmail: "MAX@ACME.EXAMPLE" }))).toEqual(active);
+    expect(status(record(primary), { id: "111" })).toEqual(active);
   });
 
   it("treats a 404 as deleted", () => {
-    expect(classifyDirectoryAnswer({ httpStatus: 404, body: {} })).toEqual({ kind: "status", status: "deleted" });
+    expect(classifyDirectoryAnswer({ httpStatus: 404, body: {} }, max)).toEqual({ kind: "status", status: "deleted" });
   });
 
   it("treats no answer, a 429 and a 5xx as unreachable", () => {
-    expect(classifyDirectoryAnswer(null)).toEqual({ kind: "unreachable" });
-    expect(classifyDirectoryAnswer({ httpStatus: 429, body: {} })).toEqual({ kind: "unreachable" });
-    expect(classifyDirectoryAnswer({ httpStatus: 503, body: {} })).toEqual({ kind: "unreachable" });
+    expect(classifyDirectoryAnswer(null, max)).toEqual({ kind: "unreachable" });
+    expect(classifyDirectoryAnswer({ httpStatus: 429, body: {} }, max)).toEqual({ kind: "unreachable" });
+    expect(classifyDirectoryAnswer({ httpStatus: 503, body: {} }, max)).toEqual({ kind: "unreachable" });
   });
 
   it("treats every other refusal as the connection's error, never the member's status", () => {
-    expect(classifyDirectoryAnswer({ httpStatus: 401, body: {} })).toEqual({ kind: "connection_error", code: "http_401" });
-    expect(classifyDirectoryAnswer({ httpStatus: 403, body: {} })).toEqual({ kind: "connection_error", code: "http_403" });
-    expect(classifyDirectoryAnswer({ httpStatus: 400, body: {} })).toEqual({ kind: "connection_error", code: "http_400" });
+    expect(classifyDirectoryAnswer({ httpStatus: 401, body: {} }, max)).toEqual({ kind: "connection_error", code: "http_401" });
+    expect(classifyDirectoryAnswer({ httpStatus: 403, body: {} }, max)).toEqual({ kind: "connection_error", code: "http_403" });
+    expect(classifyDirectoryAnswer({ httpStatus: 400, body: {} }, max)).toEqual({ kind: "connection_error", code: "http_400" });
   });
 });
 

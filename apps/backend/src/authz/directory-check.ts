@@ -13,10 +13,11 @@
  *      share the winner's promise;
  *   2. ask Google, outside any transaction, within DIRECTORY_TIMEOUT_MS;
  *   3. record the answer in one short statement: a status (with an audit row
- *      when it changes), or, when Google is slow or refuses our credential,
- *      only the claim's release and the connection's error, so the last
- *      status stands until the stale rule fails the member closed
- *      (recipe 6214370b).
+ *      when it changes), or, when Google is slow, refuses our credential or
+ *      answers with something that isn't a record of this person (F183), only
+ *      the claim's release and the connection's error, so the last status
+ *      stands, no success is renewed, and the stale rule fails the member
+ *      closed in time (recipe 6214370b).
  *
  * Google is reached through a checker the server installs at startup
  * (`installDirectoryChecker`, from services/google-directory.service.ts), so
@@ -177,7 +178,7 @@ async function recordConnectionTrouble(db: PostgresJsDatabase, row: ClaimedRow, 
   if (code === "unreachable") {
     console.warn(`[directory] org ${row.organization_id}: Google unreachable`);
   } else {
-    console.warn(`[directory] org ${row.organization_id}: connection refused (${code})`);
+    console.warn(`[directory] org ${row.organization_id}: connection error (${code})`);
   }
   const due = (await db.execute(sql`
     UPDATE claimnet.organization_directory_connections

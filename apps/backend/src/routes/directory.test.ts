@@ -409,6 +409,46 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     expect((await memberRow(max.userId)).directory_status).toBe("active");
   });
 
+  it("OFF-DIR-12 / F183: only a complete record of the person lifts a refusal; anything else is an error, and renews nothing", { timeout: 60_000 }, async () => {
+    const org = await acme();
+    const max = await member(org, "hostile");
+    await google.setDirectoryUser(max.email, { suspended: true });
+    expect((await useKey(max.key)).status).toBe(401);
+    const lastSuccess = async () => ((await (await call(org.olive.token, "GET", `/organizations/${org.orgId}/directory`)).json()) as { data: Json }).data;
+    const record = (over: Json) => JSON.stringify({ primaryEmail: max.email, suspended: false, archived: false, ...over });
+    const answers: Array<[string, Parameters<typeof google.setDirectoryUser>[1], string | null]> = [
+      ["empty", { rawBody: "" }, "bad_answer"],
+      ["{}", { rawBody: "{}" }, "bad_answer"],
+      ["truncated", { rawBody: record({}).slice(0, 20) }, "bad_answer"],
+      ["html", { rawBody: "<html>hello</html>" }, "bad_answer"],
+      ["null", { rawBody: "null" }, "bad_answer"],
+      ["error object", { rawBody: JSON.stringify({ error: { code: 200 } }) }, "bad_answer"],
+      ["string flag", { rawBody: record({ suspended: "true" }) }, "bad_answer"],
+      ["someone else", { rawBody: record({ primaryEmail: `someone-else@${org.domain}` }) }, "bad_answer"],
+      // Headers on time, then the body stalls past the timeout: no answer at all.
+      ["stalled body", { stallBody: true }, null],
+    ];
+    await getDb().execute(sql`UPDATE claimnet.organization_directory_connections SET last_success_at = NOW() - interval '1 hour' WHERE organization_id = ${org.orgId}::uuid`);
+    const before = (await lastSuccess())["lastSuccessAt"];
+    for (const [label, answer, code] of answers) {
+      await google.setDirectoryUser(max.email, answer);
+      await makeDue(max.userId);
+      const checkedAt = (await memberRow(max.userId)).directory_checked_at;
+      expect((await useKey(max.key)).status, label).toBe(401);
+      const row = await memberRow(max.userId);
+      expect(row.directory_status, label).toBe("suspended");
+      expect(row.directory_checked_at, label).toEqual(checkedAt);
+      const view = await lastSuccess();
+      expect(view["lastSuccessAt"], label).toEqual(before);
+      if (code) expect(view["lastError"], label).toBe(code);
+    }
+    // A real record of them, primary or by alias, is what restores them.
+    await google.setDirectoryUser(max.email, { primaryEmail: `max-renamed-${run}@${org.domain}`, aliases: [max.email] });
+    await makeDue(max.userId);
+    expect((await useKey(max.key)).status).toBe(200);
+    expect((await memberRow(max.userId)).directory_status).toBe("active");
+  });
+
   it("OFF-DIR-07 / OB-C7: stale a day with Google failing refuses (directory_unconfirmed); one success restores", async () => {
     const org = await acme();
     const max = await member(org, "stale");

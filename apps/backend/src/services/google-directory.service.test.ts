@@ -35,12 +35,18 @@ function fakeFetch(answers: (call: Call) => { status: number; body: unknown }) {
 
 const consent = { organizationId: "org-1", kind: "admin_consent" as const, adminEmail: "olive@acme.example", secret: "refresh-1" };
 
+/** The record Google gives for a lookup: the address in its URL, or a `sub`. */
+function record(url: string, over: Record<string, unknown> = {}) {
+  const key = decodeURIComponent(url.split("/users/")[1]!.split("?")[0]!);
+  return { id: key, primaryEmail: key, suspended: false, archived: false, ...over };
+}
+
 beforeEach(() => forgetDirectoryTokens());
 
 describe("checkDirectoryMember", () => {
   it("refreshes a token once, then asks users.get by the member's own stored address", async () => {
     const f = fakeFetch((c) =>
-      c.url === config.tokenEndpoint ? { status: 200, body: { access_token: "at-1", expires_in: 3600 } } : { status: 200, body: { suspended: true } },
+      c.url === config.tokenEndpoint ? { status: 200, body: { access_token: "at-1", expires_in: 3600 } } : { status: 200, body: record(c.url, { suspended: true }) },
     );
     const first = await checkDirectoryMember(config, consent, { email: "max@acme.example", googleSubject: null }, f.fn);
     expect(first).toEqual({ answer: { kind: "status", status: "suspended" }, renamedTo: null });
@@ -65,7 +71,7 @@ describe("checkDirectoryMember", () => {
     const f = fakeFetch((c) => {
       if (c.url === config.tokenEndpoint) return { status: 200, body: { access_token: "at", expires_in: 3600 } };
       if (c.url.includes("max%40acme.example")) return { status: 404, body: {} };
-      return { status: 200, body: { primaryEmail: "maxwell@acme.example", suspended: false } };
+      return { status: 200, body: record(c.url, { primaryEmail: "maxwell@acme.example" }) };
     });
     expect(await checkDirectoryMember(config, consent, { email: "max@acme.example", googleSubject: "sub-1" }, f.fn)).toEqual({
       answer: { kind: "status", status: "active" },
@@ -93,7 +99,7 @@ describe("checkDirectoryMember", () => {
         assertion = new URLSearchParams(String(c.init?.body)).get("assertion") ?? "";
         return { status: 200, body: { access_token: "at" } };
       }
-      return { status: 200, body: {} };
+      return { status: 200, body: record(c.url) };
     });
     expect(await testDirectoryCredential(config, { organizationId: "org-2", kind: "service_account", adminEmail: "olive@acme.example", secret }, f.fn)).toBeNull();
     const claims = jwt.verify(assertion, publicKey, { algorithms: ["RS256"] }) as jwt.JwtPayload;
@@ -103,6 +109,21 @@ describe("checkDirectoryMember", () => {
       scope: "https://www.googleapis.com/auth/admin.directory.user.readonly",
       aud: config.tokenEndpoint,
     });
+  });
+
+  it("F183: a body that stalls after its headers is no answer, and a whole one that isn't a record is the connection's error", async () => {
+    const stalled = (status: number) =>
+      new Response(new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode("{")); c.error(new Error("aborted")); } }), { status });
+    const lookupAnswering = (answer: () => Response) => async (url: string) =>
+      url === config.tokenEndpoint ? new Response(JSON.stringify({ access_token: "at" })) : answer();
+    const member = { email: "max@acme.example", googleSubject: null };
+    expect((await checkDirectoryMember(config, consent, member, lookupAnswering(() => stalled(200)))).answer).toEqual({ kind: "unreachable" });
+    forgetDirectoryTokens();
+    expect((await checkDirectoryMember(config, consent, member, lookupAnswering(() => stalled(404)))).answer).toEqual({ kind: "unreachable" });
+    forgetDirectoryTokens();
+    expect((await checkDirectoryMember(config, consent, member, lookupAnswering(() => new Response("{\"primaryEmail\":")))).answer).toEqual({ kind: "connection_error", code: "bad_answer" });
+    forgetDirectoryTokens();
+    expect((await checkDirectoryMember(config, consent, member, async () => stalled(200))).answer).toEqual({ kind: "unreachable" });
   });
 
   it("gives up within the timeout on a network failure", async () => {

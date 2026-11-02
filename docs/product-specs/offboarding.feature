@@ -92,6 +92,14 @@ Feature: Offboarding through the company's Google Workspace directory
       Then Max is switched off with "Soup.net couldn't confirm this account with your organization's Google Workspace."
       And one successful check restores him
 
+    @OFF-DIR-12
+    Scenario: An answer that isn't a whole record of the person
+      # Guards: audit F183.
+      Given Max was switched off by the directory
+      When a check gets an empty or cut-off reply, a page that isn't a record, someone else's record, or a reply that stalls
+      Then Max stays switched off, and no success is recorded
+      And Acme's admins see the error, unless nothing came back at all
+
     @OFF-DIR-08
     Scenario: Google refuses the connection
       Given the connection's credential stops working

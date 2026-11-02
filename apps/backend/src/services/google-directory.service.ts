@@ -50,6 +50,25 @@ export function forgetDirectoryTokens(organizationId?: string): void {
 
 type TokenResult = { ok: true; token: string } | { ok: false; answer: DirectoryAnswer };
 
+/**
+ * A response's body as JSON, null when it isn't JSON. Undefined when it never
+ * finished arriving, which is no answer at all: the headers of a slow reply
+ * mustn't read as a reply with nothing in it.
+ */
+async function readBody(res: Response): Promise<unknown> {
+  let text: string;
+  try {
+    text = await res.text();
+  } catch {
+    return undefined;
+  }
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
+}
+
 async function accessToken(
   config: GoogleOidcConfig,
   credential: DirectoryCredential,
@@ -95,8 +114,9 @@ async function accessToken(
   } catch {
     return { ok: false, answer: { kind: "unreachable" } };
   }
-  const json = (await res.json().catch(() => null)) as { access_token?: unknown; expires_in?: unknown; error?: unknown } | null;
-  if (res.status === 429 || res.status >= 500) return { ok: false, answer: { kind: "unreachable" } };
+  const read = await readBody(res);
+  if (read === undefined || res.status === 429 || res.status >= 500) return { ok: false, answer: { kind: "unreachable" } };
+  const json = read as { access_token?: unknown; expires_in?: unknown; error?: unknown } | null;
   if (!res.ok || typeof json?.access_token !== "string") {
     const code = typeof json?.error === "string" ? json.error.replace(/[^a-z_]/gi, "").slice(0, 40) : `http_${res.status}`;
     return { ok: false, answer: { kind: "connection_error", code: `token_${code}` } };
@@ -118,7 +138,8 @@ async function usersGet(
       headers: { authorization: `Bearer ${token}`, accept: "application/json" },
       signal,
     });
-    return { httpStatus: res.status, body: await res.json().catch(() => null) };
+    const body = await readBody(res);
+    return body === undefined ? null : { httpStatus: res.status, body };
   } catch {
     return null;
   }
@@ -144,7 +165,7 @@ export async function checkDirectoryMember(
   if (!token.ok) return { answer: token.answer, renamedTo: null };
 
   const byAddress = await usersGet(config, token.token, member.email, signal, fetchImpl);
-  const first = classifyDirectoryAnswer(byAddress);
+  const first = classifyDirectoryAnswer(byAddress, { email: member.email });
   if (first.kind === "connection_error" && (byAddress?.httpStatus === 401)) forgetDirectoryTokens(credential.organizationId);
   if (!(first.kind === "status" && first.status === "deleted") || !member.googleSubject) return { answer: first, renamedTo: null };
 
@@ -154,7 +175,7 @@ export async function checkDirectoryMember(
   // (slow, down, our credential refused) leaves the question open, so nobody
   // is switched off on half an answer.
   if (bySubject?.httpStatus === 400 || bySubject?.httpStatus === 404) return { answer: first, renamedTo: null };
-  const second = classifyDirectoryAnswer(bySubject);
+  const second = classifyDirectoryAnswer(bySubject, { id: member.googleSubject });
   if (second.kind !== "status") return { answer: second.kind === "connection_error" ? second : { kind: "unreachable" }, renamedTo: null };
   const primary = (bySubject?.body as { primaryEmail?: unknown } | null)?.primaryEmail;
   const renamedTo = typeof primary === "string" && primary.toLowerCase() !== member.email.toLowerCase() ? primary : null;

@@ -28,23 +28,52 @@ export type DirectoryStatus = "active" | "suspended" | "archived" | "deleted";
 export type DirectoryAnswer =
   /** The directory said something about the member. */
   | { kind: "status"; status: DirectoryStatus }
-  /** Google refused our credential: the connection's problem, never the member's. */
+  /**
+   * Google refused our credential, or what came back can't be trusted: the
+   * connection's problem, never the member's. The last status stands and the
+   * admins see the code.
+   */
   | { kind: "connection_error"; code: string }
   /** Slow, down, or rate-limited: keep the last status. */
   | { kind: "unreachable" };
 
+/** Whom a `users.get` asked about: by the address held here, or by the Google `sub`. */
+export type DirectoryLookup = { email: string } | { id: string };
+
+const listOf = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
+
+/** Is this user record the one asked for? An address may be its primary, or an alias of it. */
+function isAbout(user: Record<string, unknown>, asked: DirectoryLookup): boolean {
+  if ("id" in asked) return user["id"] === asked.id;
+  const wanted = asked.email.toLowerCase();
+  const addresses = [
+    user["primaryEmail"],
+    ...listOf(user["aliases"]),
+    ...listOf(user["nonEditableAliases"]),
+    ...listOf(user["emails"]).map((e) => (e && typeof e === "object" ? (e as { address?: unknown }).address : null)),
+  ];
+  return addresses.some((a) => typeof a === "string" && a.toLowerCase() === wanted);
+}
+
 /**
  * What a `users.get` answer means (OB-C1 to OB-C8). `null` is a request that
- * never got an answer (timeout, network). A 404 is a member the directory
- * doesn't know, which is deleted (recipe 88b1b328).
+ * never got a whole answer (timeout, network, a body that stalled). A 404 is a
+ * member the directory doesn't know, which is deleted (recipe 88b1b328).
+ *
+ * A 200 counts only as a complete record of the person asked about: it can
+ * lift a refusal, so an empty body, an error object, a string where a flag
+ * belongs or someone else's record says nothing about them (recipe 6214370b:
+ * only authoritative signals move a status).
  */
-export function classifyDirectoryAnswer(answer: { httpStatus: number; body: unknown } | null): DirectoryAnswer {
+export function classifyDirectoryAnswer(answer: { httpStatus: number; body: unknown } | null, asked: DirectoryLookup): DirectoryAnswer {
   if (!answer) return { kind: "unreachable" };
   const { httpStatus, body } = answer;
   if (httpStatus === 200) {
-    const user = (body && typeof body === "object" ? body : {}) as { suspended?: unknown; archived?: unknown };
-    if (user.suspended === true) return { kind: "status", status: "suspended" };
-    if (user.archived === true) return { kind: "status", status: "archived" };
+    const user = (body && typeof body === "object" && !Array.isArray(body) ? body : {}) as Record<string, unknown>;
+    const complete = typeof user["primaryEmail"] === "string" && typeof user["suspended"] === "boolean" && typeof user["archived"] === "boolean";
+    if (!complete || !isAbout(user, asked)) return { kind: "connection_error", code: "bad_answer" };
+    if (user["suspended"]) return { kind: "status", status: "suspended" };
+    if (user["archived"]) return { kind: "status", status: "archived" };
     return { kind: "status", status: "active" };
   }
   if (httpStatus === 404) return { kind: "status", status: "deleted" };
