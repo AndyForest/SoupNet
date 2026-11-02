@@ -9,6 +9,7 @@ import {
   parseServiceAccountKey,
   directoryWarningEmail,
   directoryChangedEmail,
+  directoryOffProblem,
 } from "./directory";
 
 describe("classifyDirectoryAnswer (OB-M3)", () => {
@@ -118,6 +119,17 @@ describe("parseServiceAccountKey (OB-K3)", () => {
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.message).not.toContain("BEGIN");
     }
+  });
+});
+
+describe("directoryOffProblem (F186)", () => {
+  it("is nothing with no connections, and names the count, the lockout and the way out otherwise", () => {
+    expect(directoryOffProblem(0)).toBeNull();
+    expect(directoryOffProblem(1)).toContain("1 organization has a directory connection");
+    const many = directoryOffProblem(3)!;
+    expect(many).toContain("3 organizations have a directory connection");
+    expect(many).toContain("refused 24 hours after their last check");
+    expect(many).toContain("DELETE /admin/organizations/:id/directory");
   });
 });
 

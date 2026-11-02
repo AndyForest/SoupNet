@@ -138,6 +138,22 @@ export function parseServiceAccountKey(raw: unknown): { ok: true; key: ServiceAc
   return { ok: true, key: { clientEmail, privateKey } };
 }
 
+/**
+ * What stops a server starting with the check off while companies are
+ * connected (F186), or null when none are. With no check there is no warning
+ * either: every member on those domains would just be refused a day after their
+ * last check. A failed deploy says so at once, with the old tasks still serving.
+ */
+export function directoryOffProblem(connections: number): string | null {
+  if (connections === 0) return null;
+  const who = connections === 1 ? "1 organization has" : `${connections} organizations have`;
+  return (
+    `The Workspace directory check is off (DIRECTORY_CREDENTIALS_KEY or Google sign-in isn't configured), but ${who} a directory connection. ` +
+    `Started like this, every member on those domains would be refused ${DIRECTORY_STALE_HOURS} hours after their last check, owners included, with no warning. ` +
+    `Restore the configuration. To turn the check off for good, first remove each connection (DELETE /admin/organizations/:id/directory) while it is still configured.`
+  );
+}
+
 /** "2 people", "1 person", "nobody", for the emails below. */
 function peopleCount(n: number): string {
   return n === 0 ? "nobody" : n === 1 ? "1 person" : `${n} people`;

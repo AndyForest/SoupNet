@@ -21,6 +21,7 @@ import {
   DIRECTORY_SCOPE,
   DIRECTORY_WARNING_HOURS,
   directoryChangedEmail,
+  directoryOffProblem,
   directoryStatusRefuses,
   directoryWarningEmail,
   normalizeDomain,
@@ -30,6 +31,7 @@ import type { GoogleSignInError } from "@soupnet/domain";
 import {
   askDirectoryAboutActor,
   deleteDirectoryConnection,
+  directoryConnectionCount,
   installDirectoryChecker,
   saveDirectoryConnection,
   directoryManagersOf,
@@ -69,6 +71,20 @@ export function installDirectoryChecking(): "on" | "off" {
     (organizationId) => warnOrganization(organizationId),
   );
   return "on";
+}
+
+/**
+ * The server's startup step: install the check, and refuse to start with it off
+ * while any company is connected, rather than lock them out a day later with no
+ * warning (F186, recipe c8f631d2).
+ */
+export async function installDirectoryCheckingOrStop(db: SqlExecutor): Promise<"on" | "off"> {
+  const state = installDirectoryChecking();
+  if (state === "off") {
+    const problem = directoryOffProblem(await directoryConnectionCount(db));
+    if (problem) throw new Error(problem);
+  }
+  return state;
 }
 
 /** Whether connecting is possible on this deployment (OB-K5). */

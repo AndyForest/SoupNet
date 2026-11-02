@@ -971,13 +971,14 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
   });
 
   it("OB-K5: in process, with DIRECTORY_CREDENTIALS_KEY unset, the routes answer 503 directory_not_configured and no checker is installed", async () => {
+    await acme();
     const org = await acme({ connect: false });
     const outsider = await seeded("outsider", "test.local");
     const saved = process.env["DIRECTORY_CREDENTIALS_KEY"];
     delete process.env["DIRECTORY_CREDENTIALS_KEY"];
     try {
       const { default: organizationsRouter } = await import("./organizations");
-      const { installDirectoryChecking } = await import("../services/directory-connection.service");
+      const { installDirectoryChecking, installDirectoryCheckingOrStop } = await import("../services/directory-connection.service");
       const asked = (token: string, method: string, path: string, body?: unknown) =>
         organizationsRouter.request(path, {
           method,
@@ -997,6 +998,8 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
       // The role gate still answers first: anyone else learns nothing.
       expect((await asked(outsider.token, "GET", `/${org.orgId}/directory`)).status).toBe(404);
       expect(installDirectoryChecking()).toBe("off");
+      // F186: with a company connected, a server configured like this doesn't start.
+      await expect(installDirectoryCheckingOrStop(getDb())).rejects.toThrow(/directory connection/);
     } finally {
       process.env["DIRECTORY_CREDENTIALS_KEY"] = saved;
     }

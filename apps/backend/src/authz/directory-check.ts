@@ -55,7 +55,8 @@ let installed: { key: Buffer; check: DirectoryChecker; warn: DirectoryWarner } |
 /**
  * Install Google (the server does this at startup when
  * DIRECTORY_CREDENTIALS_KEY is set). Without it no check runs, and checked
- * members fail closed a day after their last successful check.
+ * members fail closed a day after their last successful check, which is why a
+ * server won't start without it once any connection exists (F186).
  */
 export function installDirectoryChecker(key: Buffer, check: DirectoryChecker, warn: DirectoryWarner): void {
   installed = { key, check, warn };
@@ -304,6 +305,12 @@ export async function directoryConnectionOf(db: SqlExecutor, organizationId: str
     lastError: r["last_error"] ?? null,
     lastErrorAt: r["last_error_at"] ?? null,
   };
+}
+
+/** How many organizations are connected, for the startup check (F186). */
+export async function directoryConnectionCount(db: SqlExecutor): Promise<number> {
+  const rows = (await db.execute(sql`SELECT count(*)::int AS n FROM claimnet.organization_directory_connections`)) as unknown as Array<{ n: number }>;
+  return rows[0]?.n ?? 0;
 }
 
 /** Does this organization have a directory connection on `domain`? For the domain emails (F120). */
