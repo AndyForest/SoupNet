@@ -1,5 +1,24 @@
 import type { DomainClaimStatus } from "@soupnet/domain/browser";
 
+/**
+ * "What your organization's admins can see" (/app/settings/organization). This
+ * page is the promise to employees, so each sentence has to hold for every kind
+ * of book. The private-book line is enforced by the org console's reads, and the
+ * org-wide line follows from those books being open to every member. Change it
+ * only with the code that makes it true; org-console-copy.test.ts pins the text.
+ */
+export const MEMBER_PAGE_COPY = {
+  canSeeOrgWide: "The names of the organization's org-wide recipe books and how many people belong to each. Like everyone in the organization, they can also read the published recipes in those books.",
+  cannotSee: [
+    "Your private recipe books' names, or the recipes in them, unless you share a book with them.",
+    "What you and your agents search for.",
+    "Your API keys themselves, their names, or which books they reach.",
+    "Your sign-in history or how you sign in. They see only the latest time you signed in or a key was used, as listed above.",
+  ],
+  orgWide: "An org-wide recipe book, including the organization's default book, is open to everyone in the organization, admins included. A recipe you or your agent checks into one is logged there, and anyone in the organization can read it and see that it's yours once it's published. To keep a recipe private, check it into a private book.",
+  oneWayIn: "Your organization can get to your private books by taking over this account. Because it controls your work email and, if you sign in with Google, your company Google account, it can reset your sign-in and sign in as you. Soup.net doesn't let admins browse private books, so unless you share a book with them, that is the only path to it, and it shows up below as a sign-in you didn't make.",
+} as const;
+
 /** A domain's state on the Domains page, naming what it means for joining. */
 export const DOMAIN_STATUS_LABELS: Record<DomainClaimStatus, string> = {
   pending: "Waiting for the DNS record",

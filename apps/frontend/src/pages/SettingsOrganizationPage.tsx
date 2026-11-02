@@ -3,6 +3,7 @@ import { memberVisibleDescriptions } from "@soupnet/domain/browser";
 import type { OrgActivityEvent } from "@soupnet/domain/browser";
 import { authFetch } from "../auth.js";
 import { describeOrgEvent } from "../lib/org-activity-copy.js";
+import { MEMBER_PAGE_COPY } from "../lib/org-console-copy.js";
 
 interface OrganizationResponse {
   organization: {
@@ -72,24 +73,19 @@ export function SettingsOrganizationPage() {
       <h2>They can see</h2>
       <ul>
         {memberVisibleDescriptions().map((d) => <li key={d}>{d[0]!.toUpperCase() + d.slice(1)}.</li>)}
-        <li>The names of the organization's org-wide recipe books, and how many people belong to each.</li>
+        <li>{MEMBER_PAGE_COPY.canSeeOrgWide}</li>
       </ul>
 
       <h2>They can't see</h2>
       <ul>
-        <li>Your private recipe books' names or contents.</li>
-        <li>The text of your recipes, or what you and your agents search for.</li>
-        <li>Your API keys themselves, their names, or which books they reach.</li>
-        <li>When and how you sign in (they see only when you were last active).</li>
+        {MEMBER_PAGE_COPY.cannotSee.map((line) => <li key={line}>{line}</li>)}
       </ul>
 
-      <h2>The one way in</h2>
-      <p>
-        Your organization can get to your data by taking over this account. Because it controls your work
-        email and, if you sign in with Google, your company Google account, it can reset your sign-in and sign
-        in as you. Soup.net doesn't let admins browse your books, so that is the only path, and it shows up
-        below as a sign-in you didn't make.
-      </p>
+      <h2>Org-wide recipe books</h2>
+      <p>{MEMBER_PAGE_COPY.orgWide}</p>
+
+      <h2>The one way into your private books</h2>
+      <p>{MEMBER_PAGE_COPY.oneWayIn}</p>
 
       <h2>Your recent sign-ins</h2>
       {data.signIns.length === 0 ? (

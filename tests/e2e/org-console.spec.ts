@@ -631,6 +631,8 @@ test("E13 the member's own organization page", async ({ browser, request }, test
     await expect(content.getByRole("heading", { name: "They can see" }), "the page should list what admins can see").toBeVisible();
     await expect(content.getByRole("heading", { name: "They can't see" }), "the page should list what admins can't see").toBeVisible();
     expect(text, "the page should explain the one way in (taking over the account)").toMatch(/taking over this account/i);
+    expect(text, "the page should say org-wide books are open to admins").toContain("is open to everyone in the organization, admins included");
+    expect(text, "the page shouldn't promise the text of every recipe").not.toContain("The text of your recipes");
     expect(text, "the page should list at least one recent sign-in 'with your password'").toContain("with your password");
     expect(text, "the admin actions should include Max joining").toMatch(/You joined the organization/);
     expect(text, "the admin actions should include the disable").toMatch(/Disabled you/);
