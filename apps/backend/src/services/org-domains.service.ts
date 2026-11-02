@@ -342,7 +342,7 @@ async function listDomainView(db: SqlExecutor, row: ClaimRow, now: Date): Promis
 }
 
 /**
- * Is "we try again, you don't need to do anything" true of this claim now (F173)?
+ * Is "we try again" true of this claim now (F173)?
  * Only when the daily run would migrate on it, the same check its joins make,
  * and a seat is free for the run to use. Otherwise the failure stays on record
  * and shows again once it is true.

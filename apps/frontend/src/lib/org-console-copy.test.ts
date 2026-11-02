@@ -33,6 +33,11 @@ describe("migrationSummaryMessage", () => {
     expect(migrationSummaryMessage({ joined: 2, awaitingSeat: 1, failed: 0 })).toBe("2 accounts joined. 1 account couldn't join because there are no free seats.");
   });
 
+  it("doesn't tell a manager a failure needs nothing from them", () => {
+    expect(migrationSummaryMessage({ joined: 0, awaitingSeat: 0, failed: 1 })).not.toContain("don't need to do anything");
+    expect(migrationSummaryMessage({ joined: 0, awaitingSeat: 0, failed: 1 })).toContain("contact Soup.net support");
+  });
+
   it("says the daily job retries a failed or stopped run", () => {
     expect(migrationSummaryMessage({ joined: 0, awaitingSeat: 0, failed: 1 })).toContain("We try again every day");
     expect(migrationSummaryMessage({ joined: 0, awaitingSeat: 0, failed: 0, stopped: true })).toContain("We try again every day");

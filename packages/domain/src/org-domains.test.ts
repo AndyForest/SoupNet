@@ -54,7 +54,7 @@ const verified = (over: Partial<DomainClaimState> = {}): DomainClaimState => ({
 
 describe("domainMigrationRetryMessage (OD-X6)", () => {
   it("counts the accounts and says the retry needs nothing from the reader", () => {
-    expect(domainMigrationRetryMessage(1)).toBe(`1 account couldn't join on the last try. We try again every ${DOMAIN_RECHECK_HOURS} hours, and you don't need to do anything.`);
+    expect(domainMigrationRetryMessage(1)).toBe(`1 account couldn't join on the last try. We try again every ${DOMAIN_RECHECK_HOURS} hours. If this is still here after a couple of days, turn automatic joining off and on to try again now, and contact Soup.net support if it keeps coming back.`);
     expect(domainMigrationRetryMessage(4)).toContain("4 accounts couldn't join");
   });
 });
