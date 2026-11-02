@@ -153,6 +153,8 @@ export function orgActivityEvent(row: {
   connectionDomain?: unknown;
   connectFailure?: unknown;
   removedCount?: unknown;
+  /** The site operator removed the directory connection by hand: never their address (F205). */
+  byOperator?: unknown;
   cleared?: { suspended?: unknown; archived?: unknown; deleted?: unknown };
 }): OrgActivityEvent | null {
   const action = ORG_ACTIVITY_ACTIONS[row.action];
@@ -161,6 +163,7 @@ export function orgActivityEvent(row: {
   if (action.actor === "soupnet") actor = SOUPNET_ACTOR_LABEL;
   else if (action.actor === "directory") actor = DIRECTORY_ACTOR_LABEL;
   else if (action.actor === "join") actor = row.joinAuthority === "domain" ? DOMAIN_ACTOR_LABEL : SOUPNET_ACTOR_LABEL;
+  else if (action.kind === "directory_disconnected" && row.byOperator === true) actor = SOUPNET_ACTOR_LABEL;
   else actor = row.actorEmail ?? DELETED_ACTOR_LABEL;
   const event: OrgActivityEvent = { kind: action.kind, actor, target: row.targetEmail, at: row.at };
   if (action.kind === "role_changed" && isOrgRole(row.newRole)) event.role = row.newRole;

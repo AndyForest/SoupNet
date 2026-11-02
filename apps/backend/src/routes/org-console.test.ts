@@ -470,6 +470,16 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Console",
     expect(site.users.find((u) => u["id"] === max.userId)).toMatchObject({ status: "directory_deleted" });
   });
 
+  it("CN-L1: the site operator removing a directory connection reads as Soup.net in Activity, never their address", async () => {
+    const { olive, orgId } = await acme();
+    await connectDirectory(orgId, `con-${run}-${++n}.example`);
+    expect((await call(sys, "DELETE", `/admin/organizations/${orgId}/directory`)).status).toBe(200);
+    const text = await (await call(olive, "GET", `/organizations/${orgId}/activity`)).text();
+    expect(text).not.toContain(sys.email);
+    const events = (JSON.parse(text) as { data: { events: Json[] } }).data.events;
+    expect(events.find((e) => e["kind"] === "directory_disconnected")).toMatchObject({ actor: domain.SOUPNET_ACTOR_LABEL });
+  });
+
   it("CN-U6: a check that hasn't succeeded for a day reads as a failed directory check", async () => {
     const { olive, max, orgId } = await acme();
     const domainName = `con-${run}-${++n}.example`;

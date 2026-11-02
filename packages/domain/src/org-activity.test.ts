@@ -99,6 +99,12 @@ describe("orgActivityEvent", () => {
     expect(orgActivityEvent({ ...base, directoryTo: "<b>made up</b>" })).not.toHaveProperty("directoryStatus");
   });
 
+  it("shows the site operator's disconnect as Soup.net, and an org admin's as themselves", () => {
+    const row = { action: "organization.directory_disconnected", actorEmail: "root@soup.example", targetEmail: null, at: "2026-11-02T00:00:00.000Z" };
+    expect(orgActivityEvent({ ...row, byOperator: true })?.actor).toBe(SOUPNET_ACTOR_LABEL);
+    expect(orgActivityEvent({ ...row, byOperator: false })?.actor).toBe("root@soup.example");
+  });
+
   it("credits a burst of removals to Soup.net, with its count only when it is a count", () => {
     const row = { action: "organization.directory_deletions_noticed", actorEmail: null, targetEmail: null, at: "2026-11-02T00:00:00.000Z" };
     expect(orgActivityEvent({ ...row, removedCount: "4" })).toMatchObject({ kind: "directory_deletions_noticed", actor: SOUPNET_ACTOR_LABEL, removedCount: 4 });

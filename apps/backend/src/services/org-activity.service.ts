@@ -35,6 +35,7 @@ interface Row {
   connection_domain: string | null;
   connect_failure: string | null;
   removed_count: string | null;
+  by_operator: boolean;
   cleared_suspended: string | null;
   cleared_archived: string | null;
   cleared_deleted: string | null;
@@ -55,6 +56,7 @@ async function readEvents(db: PostgresJsDatabase, actions: string[], scope: SQL,
            CASE WHEN a.action IN ${CONNECTION_ACTIONS} THEN a.metadata->>'domain' END AS connection_domain,
            CASE WHEN a.action = 'organization.directory_connect_failed' AND a.metadata->>'kind' = 'admin_consent' THEN a.metadata->>'reason' END AS connect_failure,
            CASE WHEN a.action = 'organization.directory_deletions_noticed' THEN a.metadata->>'count' END AS removed_count,
+           COALESCE(a.action = 'organization.directory_disconnected' AND a.metadata->>'by' = 'operator', false) AS by_operator,
            CASE WHEN a.action IN ${CLEARING_ACTIONS} THEN a.metadata->'cleared'->>'suspended' END AS cleared_suspended,
            CASE WHEN a.action IN ${CLEARING_ACTIONS} THEN a.metadata->'cleared'->>'archived' END AS cleared_archived,
            CASE WHEN a.action IN ${CLEARING_ACTIONS} THEN a.metadata->'cleared'->>'deleted' END AS cleared_deleted
@@ -81,6 +83,7 @@ async function readEvents(db: PostgresJsDatabase, actions: string[], scope: SQL,
       connectionDomain: r.connection_domain,
       connectFailure: r.connect_failure,
       removedCount: r.removed_count,
+      byOperator: r.by_operator,
       cleared: { suspended: r.cleared_suspended, archived: r.cleared_archived, deleted: r.cleared_deleted },
     });
     return event ? [event] : [];
