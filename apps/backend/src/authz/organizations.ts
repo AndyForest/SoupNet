@@ -308,6 +308,7 @@ export async function joinOrganizationInTx(tx: SqlExecutor, input: JoinInput): P
     WHERE g.organization_id = ${organizationId}::uuid AND g.org_wide
     ON CONFLICT (group_id, user_id) DO NOTHING
   `);
+  if (role === "owner") await syncDefaultBookOwners(tx, organizationId);
 
   // A new account on a verified domain was just made by the sign-up it
   // arrived through; every other arrival is an account that existed, and is
@@ -598,8 +599,34 @@ export async function actOnMember(db: PostgresJsDatabase, input: MemberActionInp
         UPDATE claimnet.group_members gm SET role = ${bookRoleForOrgRole(action.role)}
         FROM claimnet.groups g
         WHERE gm.group_id = g.id AND g.organization_id = ${organizationId}::uuid
-          AND ${membershipOf("gm", targetUserId)} AND gm.via = 'org'
+          AND ${membershipOf("gm", targetUserId)}
+          -- The creator's row on the default book is written 'direct', but it
+          -- is held by being the organization's owner, so it follows the role.
+          AND (gm.via = 'org' OR g.org_default)
       `);
+      await syncDefaultBookOwners(tx, organizationId);
+      // owner_id is always a current owner (F153): account deletion and the
+      // operator's list both read it as the organization's accountable owner.
+      // The actor is an active owner, so there's always someone to take it.
+      if (action.role !== "owner") {
+        const moved = (await tx.execute(sql`
+          UPDATE claimnet.organizations o SET owner_id = (
+            SELECT om.user_id FROM claimnet.organization_members om
+            WHERE om.organization_id = o.id AND om.role = 'owner'
+            ORDER BY om.disabled_at IS NOT NULL, om.joined_at, om.user_id
+            LIMIT 1
+          ), updated_at = NOW()
+          WHERE o.id = ${organizationId}::uuid AND o.owner_id = ${targetUserId}::uuid
+          RETURNING o.owner_id
+        `)) as unknown as Array<{ owner_id: string }>;
+        if (moved[0]) {
+          await tx.execute(sql`
+            INSERT INTO claimnet.audit_log (actor_user_id, action, target_type, target_id, metadata)
+            VALUES (${actorUserId}::uuid, 'organization.owner_handed_over', 'organization', ${organizationId}::uuid,
+              ${JSON.stringify({ reason: "owner_demoted", newOwnerUserId: moved[0].owner_id })}::jsonb)
+          `);
+        }
+      }
     }
 
     await tx.execute(sql`
@@ -612,6 +639,26 @@ export async function actOnMember(db: PostgresJsDatabase, input: MemberActionInp
 }
 
 // ── Account deletion ────────────────────────────────────────────────────────
+
+/**
+ * Every owner of the organization holds the owner role on its default book
+ * (F141). Org owners otherwise hold a book's admin role, and renaming a book
+ * or removing a member takes its owner, so without this a demoted creator
+ * would leave the default book with nobody who can do either. Nobody changes
+ * their own role, so a demotion always leaves another owner to hold it, and
+ * removeMember refuses to take an org owner's row (F150). It writes a missing
+ * row as well as a lower one, so any role action repairs the whole organization.
+ */
+async function syncDefaultBookOwners(tx: SqlExecutor, organizationId: string): Promise<void> {
+  await tx.execute(sql`
+    INSERT INTO claimnet.group_members (group_id, user_id, role, daily_read, daily_write, via)
+    SELECT g.id, om.user_id, 'owner', true, true, 'org'
+    FROM claimnet.groups g
+    JOIN claimnet.organization_members om ON om.organization_id = g.organization_id
+    WHERE g.organization_id = ${organizationId}::uuid AND g.org_default AND om.role = 'owner'
+    ON CONFLICT (group_id, user_id) DO UPDATE SET role = 'owner'
+  `);
+}
 
 /**
  * The deletion cascade's first step for company organizations the departing
@@ -654,6 +701,7 @@ export async function handOverOrganizationsOwnedBy(tx: SqlExecutor, userId: stri
           AND ${membershipOf("gm", successor.user_id)} AND gm.via = 'org'
       `);
     }
+    await syncDefaultBookOwners(tx, id);
     await tx.execute(sql`
       INSERT INTO claimnet.audit_log (actor_user_id, action, target_type, target_id, metadata)
       VALUES (${userId}::uuid, 'organization.owner_handed_over', 'organization', ${id}::uuid,

@@ -4,7 +4,7 @@ import { useState } from "react";
 import { safeReturnTarget } from "../lib/return-target.js";
 import { useNavigate, useLocation, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { setToken, setEmailVerified } from "../auth.js";
+import { setSignupProof, setToken, setEmailVerified } from "../auth.js";
 import soupnetLogo from "../assets/soupnet-logo.png";
 import { loginNoticeFromSearch, searchWithoutLoginNotice } from "../lib/login-notice.js";
 import { GoogleSignInButton } from "../components/GoogleSignInButton.js";
@@ -22,6 +22,7 @@ interface AuthResponse {
     emailVerified?: boolean;
     message?: string;
     waitlisted?: boolean;
+    signupProof?: string;
   };
   error?: string;
   message?: string;
@@ -160,6 +161,7 @@ export function LoginPage() {
           // existing emails within a branch (F30). `waitlisted` picks which
           // post-submit screen to show — it derives from the public cap
           // state, so it leaks nothing about the email.
+          if (data.data.signupProof) setSignupProof(data.data.signupProof);
           setPostSubmit(data.data.waitlisted ? "waitlisted" : "verify");
           return;
         }
@@ -269,11 +271,12 @@ export function LoginPage() {
               We sent a verification link to <strong>{email}</strong>. Confirm
               your email to hold your place — we'll email you when a spot
               opens. First come, first served. Your account (this email and
-              password) is ready the moment you're in.
+              password) is ready the moment you're in. Open the link in this
+              browser and you won&apos;t need your password to confirm.
             </p>
           ) : (
             <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)", lineHeight: 1.5 }}>
-              We sent a verification link to <strong>{email}</strong>. Click it to activate your account.
+              We sent a verification link to <strong>{email}</strong>. Open it in this browser to activate your account and sign in. Anywhere else, you&apos;ll need your password.
             </p>
           )}
           <button

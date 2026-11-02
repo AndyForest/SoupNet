@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { validateReturnTarget } from "./google-sign-in.service";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { exchangeHandoff, validateReturnTarget } from "./google-sign-in.service";
 import { resetCimdStateForTests } from "./oauth-cimd.service";
 import type { Fetcher } from "./oauth-cimd.service";
 
@@ -50,6 +50,36 @@ function target(overrides: Record<string, string> = {}) {
     },
   };
 }
+
+describe("exchangeHandoff's date for the session (F145, F147)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** The consuming statement takes three seconds; the checks after it find nothing to refuse. */
+  function exchanging(notBefore: number | null) {
+    vi.useFakeTimers({ toFake: ["Date"], now: 1_000_000_000_000 });
+    let consumed = false;
+    return {
+      execute: async () => {
+        if (consumed) return [{ waitlisted: false, disabled: null }];
+        consumed = true;
+        vi.setSystemTime(1_000_000_003_000);
+        return [{ user_id: "00000000-0000-0000-0000-000000000000", session_idp: "google", return_kind: "app", return_params: {}, not_before: notBefore }];
+      },
+    } as never;
+  }
+
+  it("dates it from before the statement, so a code winning the race stays behind a later cut-off", async () => {
+    const result = await exchangeHandoff(exchanging(null), { handoff: "h", secret: "s" });
+    expect(result).toMatchObject({ ok: true, issuedAt: 1_000_000_000 });
+  });
+
+  it("dates it no earlier than a cut-off the statement saw, so a new owner's session isn't refused", async () => {
+    const result = await exchangeHandoff(exchanging(1_000_000_005), { handoff: "h", secret: "s" });
+    expect(result).toMatchObject({ ok: true, issuedAt: 1_000_000_005 });
+  });
+});
 
 describe("validateReturnTarget with a client ID metadata document client (SSO-G8)", () => {
   it("accepts the client, its registered redirect and an accepted resource, keeping the parameters as sent", async () => {

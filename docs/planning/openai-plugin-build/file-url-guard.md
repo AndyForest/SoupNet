@@ -1,5 +1,7 @@
 # F37 follow-up: the `file_url` fetch through the address guard
 
+**Superseded 2026-11-01:** the server no longer fetches a URL an agent names, so this guard is gone. `file_url` takes only a URL from `POST /uploads`. Kept for the record.
+
 Follow-up to stream O of the OpenAI plugin directory round (`oauth.md` in this folder). `check_recipe`'s `file_url` is the one tool input the server fetches from the open internet, and the directory review probes it. Until now its guard was a list of hostname patterns checked on the URL the agent sent, and the fetch followed redirects. F37 (security audit of 2026-06-11, companion repo) asked for every hop to be re-checked against resolved addresses and for a running byte cap. Stream O's `lib/guarded-fetch.ts` does that for JSON documents; this change gives it a variant for evidence files and routes `file_url` through it. Branch `plugin/file-url-guard`, agent `a-plugin-oauth-2026-10-26`, Soup.net intent `int_DxY7CUXz00XWoKyLaz0dgDL5`.
 
 ## Decisions
