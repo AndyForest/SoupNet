@@ -154,6 +154,13 @@ Feature: Offboarding through the company's Google Workspace directory
       Then the directory is asked about Ann first, and Ann is refused
       And the connection and everyone's status stay as they were
 
+    @OFF-CON-09
+    Scenario: Replacing with a key when the directory can't answer about the person
+      # Guards: audit F197.
+      Given Acme is connected and the directory can't answer about Bea through her new key
+      When Bea replaces the connection
+      Then the same hold applies as for a disconnect, and nobody's refusal is lifted
+
     @OFF-CON-08
     Scenario: A manager no check has reached yet repairs a broken connection
       # Guards: audit F194.

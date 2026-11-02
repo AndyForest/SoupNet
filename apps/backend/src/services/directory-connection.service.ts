@@ -32,6 +32,7 @@ import {
   askDirectoryAboutActor,
   deleteDirectoryConnection,
   directoryConnectionCount,
+  directoryHoldOver,
   installDirectoryChecker,
   saveDirectoryConnection,
   directoryManagersOf,
@@ -169,6 +170,7 @@ async function claimedDomain(db: SqlExecutor, organizationId: string, raw: unkno
 export type ConnectRefusal =
   | { status: 404; error: "not_found"; message: string }
   | { status: 403; error: "directory_inactive"; message: string }
+  | { status: 409; error: "directory_replace_held"; message: string }
   | { status: 400; error: "invalid_domain"; message: string }
   | { status: 400; error: "google_identity_required"; message: string }
   | { status: 400; error: "invalid_key"; message: string }
@@ -303,7 +305,9 @@ export async function connectServiceAccount(
   }
   // Replacing a connection lifts every refusal too, and a key in hand needs no
   // Google sign-in, so someone suspended there could still do it (F185). The new
-  // credential has just proved it reads the directory, so it can say.
+  // credential has just proved it reads the directory, so it can say. When it can't
+  // about this person, the same hold as a disconnect applies (F197); with no
+  // connection yet there's nothing to lift, so nothing holds.
   const domainUnicode = domainToUnicode(domain) || domain;
   const actor = await directoryMemberOnDomain(db, input.organizationId, input.userId, domain, domainUnicode);
   if (actor) {
@@ -311,6 +315,14 @@ export async function connectServiceAccount(
     if (answer.kind === "status" && directoryStatusRefuses(answer.status)) {
       await writeAudit(db, { actorUserId: input.userId, action: "organization.directory_connect_failed", targetType: "organization", targetId: input.organizationId, metadata: { kind: "service_account", domain, reason: "directory_inactive" } });
       return { status: 403, error: "directory_inactive", message: DIRECTORY_INACTIVE_MESSAGE };
+    }
+    if (answer.kind !== "status" && !(await directoryHoldOver(db, input.organizationId, actor.email))) {
+      await writeAudit(db, { actorUserId: input.userId, action: "organization.directory_connect_failed", targetType: "organization", targetId: input.organizationId, metadata: { kind: "service_account", domain, reason: "directory_replace_held" } });
+      return {
+        status: 409,
+        error: "directory_replace_held",
+        message: `Soup.net couldn't confirm your account with Google Workspace through this key, so the connection wasn't replaced, and your organization's owners and admins have been told. Try again shortly. If it keeps happening, another owner or admin can reconnect it, or ask Soup.net support to remove it. Otherwise you can replace it ${DIRECTORY_HOLD_HOURS} hours after that warning.`,
+      };
     }
   }
   const cleared = await saveDirectoryConnection(db, boxKey, {

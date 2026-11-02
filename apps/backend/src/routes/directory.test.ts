@@ -1098,6 +1098,39 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     expect((await memberRow(off.userId)).directory_status).toBe("suspended");
   });
 
+  it("OFF-CON-09 / F197: replacing with a key follows the same hold when the directory can't answer about the person", async () => {
+    const org = await acme();
+    const bea = await adminMember(org, "bea-held");
+    const off = await member(org, "off-held");
+    await google.setDirectoryUser(off.email, { suspended: true });
+    expect((await useKey(off.key)).status).toBe(401);
+    const replace = () => call(bea.token, "PUT", `/organizations/${org.orgId}/directory/service-account`, { key: org.serviceAccount.key, adminEmail: org.olive.email });
+    expect((await useKey(bea.key)).status).toBe(200);
+
+    for (const answer of [{ httpStatus: 503 }, { stallBody: true }]) {
+      await google.setDirectoryUser(bea.email, answer);
+      const held = await replace();
+      expect(held.status).toBe(409);
+      expect(((await held.json()) as { error: string }).error).toBe("directory_replace_held");
+      expect((await memberRow(off.userId)).directory_status).toBe("suspended");
+    }
+    expect((await useKey(off.key)).status).toBe(401);
+    expect(await warningsTo(org.olive.email, 1)).toBe(1);
+
+    await getDb().execute(sql`UPDATE claimnet.organization_directory_connections SET warned_at = NOW() - interval '7 hours', last_success_at = NOW() - interval '8 hours' WHERE organization_id = ${org.orgId}::uuid`);
+    expect((await replace()).status).toBe(200);
+    expect(await changeMailsTo(org.olive.email, "was replaced", 1)).toBe(1);
+  });
+
+  it("F197: a first connection has nothing to lift, so no hold applies", async () => {
+    const org = await acme({ connect: false });
+    await google.setDirectoryUser(org.olive.email, {});
+    const ann = await adminMember(org, "ann-first");
+    await google.setDirectoryUser(ann.email, { httpStatus: 503 });
+    const res = await call(ann.token, "PUT", `/organizations/${org.orgId}/directory/service-account`, { key: org.serviceAccount.key, adminEmail: org.olive.email });
+    expect(res.status).toBe(200);
+  });
+
   it("OFF-DIR-10 / OB-C10: disconnecting stops the checks and lifts the directory's refusals", async () => {
     const org = await acme();
     const max = await member(org, "freed");
