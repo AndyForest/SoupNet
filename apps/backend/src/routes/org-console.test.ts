@@ -470,6 +470,13 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Console",
     expect(site.users.find((u) => u["id"] === max.userId)).toMatchObject({ status: "directory_deleted" });
   });
 
+  it("the service-account route refuses a body far larger than any key before reading it", async () => {
+    const { olive, orgId } = await acme();
+    const res = await call(olive, "PUT", `/organizations/${orgId}/directory/service-account`, { key: "x".repeat(70 * 1024), adminEmail: "a@b.example" });
+    expect(res.status).toBe(413);
+    expect(await json(res)).toMatchObject({ ok: false, error: "Request body too large" });
+  });
+
   it("bad paging values answer 400 on every list, and a large limit still means the maximum", async () => {
     const { olive, orgId } = await acme();
     for (const [who, path] of [

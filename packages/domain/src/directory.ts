@@ -121,6 +121,9 @@ export type ServiceAccountKey = { clientEmail: string; privateKey: string };
  * Read a Google service-account JSON key (OB-K3). The refusal says what is
  * wrong and never repeats the key.
  */
+/** Google's service-account addresses, such as sa@project.iam.gserviceaccount.com. The console shows this and Google is asked for it. */
+const SERVICE_ACCOUNT_EMAIL = /^[a-z0-9][a-z0-9-]*@[a-z0-9][a-z0-9.:-]*\.gserviceaccount\.com$/;
+
 export function parseServiceAccountKey(raw: unknown): { ok: true; key: ServiceAccountKey } | { ok: false; message: string } {
   let value: unknown = raw;
   if (typeof raw === "string") {
@@ -135,7 +138,7 @@ export function parseServiceAccountKey(raw: unknown): { ok: true; key: ServiceAc
   if (v["type"] !== "service_account") return { ok: false, message: "The key's type must be service_account." };
   const clientEmail = v["client_email"];
   const privateKey = v["private_key"];
-  if (typeof clientEmail !== "string" || !clientEmail.includes("@")) return { ok: false, message: "The key has no client_email." };
+  if (typeof clientEmail !== "string" || clientEmail.length > 254 || !SERVICE_ACCOUNT_EMAIL.test(clientEmail)) return { ok: false, message: "The key's client_email isn't a Google service account's address." };
   if (typeof privateKey !== "string" || !privateKey.includes("PRIVATE KEY")) return { ok: false, message: "The key has no private_key." };
   return { ok: true, key: { clientEmail, privateKey } };
 }

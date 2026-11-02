@@ -114,6 +114,15 @@ describe("parseServiceAccountKey (OB-K3)", () => {
     expect(parseServiceAccountKey(good)).toMatchObject({ ok: true });
   });
 
+  it("takes only a service account's address as client_email", () => {
+    for (const email of ["sa@p.iam.gserviceaccount.com", "123-compute@developer.gserviceaccount.com", "app@p.appspot.gserviceaccount.com"]) {
+      expect(parseServiceAccountKey({ ...good, client_email: email }), email).toMatchObject({ ok: true });
+    }
+    for (const email of ["<b>sa</b>@p.iam.gserviceaccount.com", "sa@example.com", "sa@gserviceaccount.com.example.com", "sa@p.iam.gserviceaccount.com\n", 3, `${"a".repeat(250)}@p.iam.gserviceaccount.com`]) {
+      expect(parseServiceAccountKey({ ...good, client_email: email }), String(email)).toMatchObject({ ok: false, message: "The key's client_email isn't a Google service account's address." });
+    }
+  });
+
   it("says what's wrong without repeating the key", () => {
     for (const bad of ["{", null, 3, { ...good, type: "user" }, { ...good, client_email: "x" }, { ...good, private_key: "nope" }]) {
       const result = parseServiceAccountKey(bad);

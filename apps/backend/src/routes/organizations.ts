@@ -20,6 +20,7 @@
  */
 import { Hono } from "hono";
 import type { Context } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import { getDb } from "../db";
 import { sql } from "drizzle-orm";
@@ -160,7 +161,14 @@ organizationsRouter.post("/:id/directory/google/start", async (c) => {
   return c.json({ ok: false, error: result.error, message: result.message }, result.status);
 });
 
-organizationsRouter.put("/:id/directory/service-account", async (c) => {
+// A service account's JSON key is about 2 KB.
+const SERVICE_ACCOUNT_BODY_LIMIT_BYTES = 64 * 1024;
+const serviceAccountBodyLimit = bodyLimit({
+  maxSize: SERVICE_ACCOUNT_BODY_LIMIT_BYTES,
+  onError: (c) => c.json({ ok: false, error: "Request body too large", message: "That's too large to be a service account's key." }, 413),
+});
+
+organizationsRouter.put("/:id/directory/service-account", serviceAccountBodyLimit, async (c) => {
   const gate = await directoryGate(c);
   if (gate instanceof Response) return gate;
   const body = await jsonBody(c);
