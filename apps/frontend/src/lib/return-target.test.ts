@@ -56,6 +56,16 @@ describe("safeReturnTarget (S3-L5: no open redirect)", () => {
     expect(safeReturnTarget(`/app/drafts?ids=${"a".repeat(3000)}`)).toBeNull();
   });
 
+  it("honours exactly /oauth/authorize with its query, and no look-alike (stream SSO)", () => {
+    expect(safeReturnTarget("/oauth/authorize?client_id=c&state=s")).toBe("/oauth/authorize?client_id=c&state=s");
+    expect(safeReturnTarget("/oauth/authorize")).toBe("/oauth/authorize");
+    expect(safeReturnTarget("/oauth/authorizex")).toBeNull();
+    expect(safeReturnTarget("/oauth/authorize/grant")).toBeNull();
+    expect(safeReturnTarget("/oauth/authorize/../x")).toBeNull();
+    expect(safeReturnTarget("/oauth/x/../authorize")).toBeNull();
+    expect(safeReturnTarget("/oauth/token")).toBeNull();
+  });
+
   it("loginPathFor carries a safe target and drops an unsafe one", () => {
     expect(loginPathFor("/app/drafts?ids=a,b")).toBe("/auth/login?next=%2Fapp%2Fdrafts%3Fids%3Da%2Cb");
     expect(loginPathFor("https://example.com/")).toBe("/auth/login");

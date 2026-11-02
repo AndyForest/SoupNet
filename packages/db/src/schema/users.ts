@@ -24,9 +24,14 @@ export const users = claimnetSchema.table(
     id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
 
     email: text("email").notNull(),
-    passwordHash: text("password_hash").notNull(),
+    // Null for an account that signs in only with Google (user_identities), or
+    // whose unverified password was discarded when Google sign-in linked it
+    // (organization accounts round 1, stream SSO). Every reader handles null.
+    passwordHash: text("password_hash"),
     displayName: text("display_name"),
 
+    // Unused since stream SSO's user_identities (organization accounts round
+    // 1); kept until a later migration drops them (backlog).
     // Auth provider — 'local' for our JWT auth, 'oidc' for future Zitadel/etc
     provider: text("provider").notNull().default("local"),
     // External ID from OIDC provider — null for local auth

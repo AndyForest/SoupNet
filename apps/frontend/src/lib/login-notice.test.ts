@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ACCOUNT_DELETED_SEARCH, loginNoticeFromSearch, searchWithoutLoginNotice } from "./login-notice";
+import { ACCOUNT_DELETED_SEARCH, loginNoticeFromSearch, loginPathAfterSignOut, searchWithoutLoginNotice } from "./login-notice";
 
 // After deleting their account a person lands on the sign-in page. A short
 // confirmation there tells them the deletion went through, instead of a
@@ -18,6 +18,22 @@ describe("loginNoticeFromSearch", () => {
   it("ignores other values of the flag", () => {
     expect(loginNoticeFromSearch("?account=someone@example.com")).toBeNull();
   });
+
+  // Signed out by the server (stream SSO, SSO-U4): the page says why.
+  it("says why the server ended the session, for known reasons only", () => {
+    expect(loginNoticeFromSearch("?signedOut=sso_required")).toBe("Your organization signs in with Google. Sign in with Google to continue.");
+    expect(loginNoticeFromSearch("?signedOut=account_disabled")).toContain("disabled this account");
+    expect(loginNoticeFromSearch("?signedOut=<script>")).toBeNull();
+    expect(loginNoticeFromSearch("?signedOut=toString")).toBeNull();
+  });
+});
+
+describe("loginPathAfterSignOut", () => {
+  it("carries a known reason and drops anything else", () => {
+    expect(loginPathAfterSignOut("sso_required")).toBe("/auth/login?signedOut=sso_required");
+    expect(loginPathAfterSignOut("whatever")).toBe("/auth/login");
+    expect(loginPathAfterSignOut(null)).toBe("/auth/login");
+  });
 });
 
 // Once the person submits the form the notice has done its job; the page
@@ -30,6 +46,10 @@ describe("searchWithoutLoginNotice", () => {
 
   it("keeps every other parameter", () => {
     expect(searchWithoutLoginNotice("?invite=abc&account=deleted&x=1")).toBe("?invite=abc&x=1");
+  });
+
+  it("drops the signed-out reason too", () => {
+    expect(searchWithoutLoginNotice("?signedOut=sso_required&invite=abc")).toBe("?invite=abc");
   });
 
   it("leaves a search without the flag unchanged", () => {

@@ -13,7 +13,8 @@
  * CORS-open (server-to-server fetch from claude.ai's cloud + browser-side
  * fetches from MCP-aware clients).
  *
- * See ADR-pending and docs/connectors/claude.md for the integration context.
+ * See ADR-0022 (docs/adr/0022-oauth-connector-and-google-sign-in.md) and
+ * docs/connectors/claude.md for the integration context.
  */
 import { Hono } from "hono";
 import type { Context } from "hono";

@@ -109,26 +109,41 @@ admin.post("/organizations", async (c) => {
 });
 
 const updateOrganizationSchema = z.object({
-  seatLimit: z.number().int().min(1).nullable(),
-}).strict();
+  seatLimit: z.number().int().min(1).nullable().optional(),
+  // Stream SSO: members must sign in with their Google Workspace account.
+  requireSso: z.boolean().optional(),
+}).strict().refine((v) => v.seatLimit !== undefined || v.requireSso !== undefined, { message: "Name seatLimit or requireSso." });
 
-// PATCH /admin/organizations/:id — the site operator's settings (seats).
+// PATCH /admin/organizations/:id — the site operator's settings (seats, and
+// require_sso, which an org owner or admin can also set).
 admin.patch("/organizations/:id", async (c) => {
   const id = c.req.param("id");
   const parsed = updateOrganizationSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success || !z.string().uuid().safeParse(id).success) {
     return c.json({ ok: false, error: "Invalid input", details: parsed.success ? [] : parsed.error.issues }, 400);
   }
+  const { seatLimit, requireSso } = parsed.data;
   const rows = await getDb().execute(sql`
-    UPDATE claimnet.organizations SET seat_limit = ${parsed.data.seatLimit}, updated_at = NOW()
+    UPDATE claimnet.organizations
+    SET seat_limit = ${seatLimit === undefined ? sql`seat_limit` : sql`${seatLimit}`},
+        require_sso = ${requireSso === undefined ? sql`require_sso` : sql`${requireSso}`},
+        updated_at = NOW()
     WHERE id = ${id}::uuid AND NOT is_personal
     RETURNING id
   `);
   if ((rows as unknown as unknown[]).length === 0) return refuseJoin(c, "organization_not_found");
-  await writeAudit(getDb(), {
-    actorUserId: c.get("user").id, action: "organization.seat_limit_set", targetType: "organization", targetId: id,
-    metadata: { seatLimit: parsed.data.seatLimit },
-  });
+  if (seatLimit !== undefined) {
+    await writeAudit(getDb(), {
+      actorUserId: c.get("user").id, action: "organization.seat_limit_set", targetType: "organization", targetId: id,
+      metadata: { seatLimit },
+    });
+  }
+  if (requireSso !== undefined) {
+    await writeAudit(getDb(), {
+      actorUserId: c.get("user").id, action: "organization.require_sso_set", targetType: "organization", targetId: id,
+      metadata: { requireSso, by: "operator" },
+    });
+  }
   return c.json({ ok: true });
 });
 

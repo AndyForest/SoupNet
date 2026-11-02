@@ -27,6 +27,7 @@ export const ACCOUNT_EVENT_ACTIONS = [
   "user.self_delete",
   "user.waitlist_approved",
   "user.premium_set",
+  "auth.signed_in",
   "user.suspended",
   "user.unsuspended",
   // Recipe books and the recipes in them
@@ -54,6 +55,7 @@ export const ACCOUNT_EVENT_ACTIONS = [
   "organization.member_set_role",
   "organization.owner_handed_over",
   "organization.seat_limit_set",
+  "organization.require_sso_set",
   // Operators
   "integrity.repaired",
 ] as const;

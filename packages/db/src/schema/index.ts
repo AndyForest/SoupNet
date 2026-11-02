@@ -8,6 +8,7 @@
  * Table groups:
  *   traces.ts              — core trace object (stigmergic search-as-logging)
  *   users.ts               — user identity and authentication
+ *   user-identities.ts     — linked Google identities and pending Google sign-ins
  *   organizations.ts       — multi-tenant organization containers
  *   groups.ts              — groups and group membership
  *   ephemeral-books.ts     — born-ephemeral workspace birth records (TTL + reaper)
@@ -43,3 +44,4 @@ export * from "./oauth-authorization-codes";
 export * from "./check-feedback";
 export * from "./session-shown";
 export * from "./intents";
+export * from "./user-identities";

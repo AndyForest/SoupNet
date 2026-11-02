@@ -4,7 +4,9 @@
  * A signed-out person who opens a link into the app (an agent's
  * `/app/drafts?ids=…` link above all) is sent to sign in with the link as
  * `?next=`; after signing in they land back on it. Only a same-origin path
- * under `/app/` is honoured: an absolute URL, a protocol-relative `//host`,
+ * under `/app/`, or exactly `/oauth/authorize` with its query (the MCP
+ * consent page, so a signed-out person returns to it; stream SSO, recipe
+ * 607dc974), is honoured: an absolute URL, a protocol-relative `//host`,
  * a backslash trick, a path that normalizes out of `/app/`, or anything
  * else is ignored, so the parameter can never redirect off the app (no open
  * redirect). Pure.
@@ -33,7 +35,7 @@ export function safeReturnTarget(raw: string | null | undefined): string | null 
     return null;
   }
   if (url.origin !== BASE) return null;
-  if (!url.pathname.startsWith("/app/")) return null;
+  if (!url.pathname.startsWith("/app/") && !(url.pathname === "/oauth/authorize" && pathPart === "/oauth/authorize")) return null;
   return `${url.pathname}${url.search}${url.hash}`;
 }
 

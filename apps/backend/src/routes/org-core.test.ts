@@ -520,11 +520,16 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Core", ()
     const gus = await actor("gus");
     const secret = process.env["JWT_SECRET"] ?? "";
     const old = jwt.sign({ sub: gus.userId, email: gus.email, role: "tenant", iat: Math.floor(Date.now() / 1000) - 60 }, secret, { algorithm: "HS256", expiresIn: "7d" });
+    const beforeCutOff = Math.floor(Date.now() / 1000);
     await authz.invalidateSessions(getDb(), gus.userId);
+    // F145: a session from the cut-off's own second is refused too.
+    const sameSecond = jwt.sign({ sub: gus.userId, email: gus.email, role: "tenant", iat: beforeCutOff }, secret, { algorithm: "HS256", expiresIn: "7d" });
+    expect((await call({ jwt: sameSecond }, "GET", "/auth/me")).status).toBe(401);
     const refused = await call({ jwt: old }, "GET", "/recipe-books");
     expect(refused.status).toBe(401);
     expect(((await refused.json()) as Json)["error"]).toBe("session_expired");
     expect((await call({ jwt: old }, "GET", "/auth/me")).status).toBe(401);
+    // No wait: a sign-in after the cut-off dates its session at it (F147).
     const fresh = await relogin(gus);
     expect((await call(fresh, "GET", "/recipe-books")).status).toBe(200);
   });

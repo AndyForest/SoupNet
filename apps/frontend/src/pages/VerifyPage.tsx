@@ -7,10 +7,10 @@ interface VerifyResponse {
   ok: boolean;
   error?: string;
   message?: string;
-  data?: { verified: boolean; email: string; waitlisted?: boolean; passwordRequired?: boolean; ownSession?: boolean; alreadyVerified?: boolean; token?: string; signInRefusal?: string };
+  data?: { verified: boolean; email: string; waitlisted?: boolean; passwordRequired?: boolean; ownSession?: boolean; alreadyVerified?: boolean; token?: string; signInRefusal?: string; ssoRequired?: boolean; confirmationRequired?: boolean; googleSignInRemoved?: boolean };
 }
 
-async function verifyRequest(body: { token: string; password?: string }): Promise<{ status: number; json: VerifyResponse }> {
+async function verifyRequest(body: { token: string; password?: string; confirm?: boolean }): Promise<{ status: number; json: VerifyResponse }> {
   const session = getToken();
   const signupProof = getSignupProof();
   const res = await fetch(`${API_BASE}/auth/verify`, {
@@ -22,16 +22,18 @@ async function verifyRequest(body: { token: string; password?: string }): Promis
 }
 
 export function VerifyPage() {
-  const [status, setStatus] = useState<"loading" | "success" | "password" | "error">("loading");
+  const [status, setStatus] = useState<"loading" | "confirm" | "success" | "password" | "error">("loading");
   const [password, setPassword] = useState("");
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
   const [signInRefusal, setSignInRefusal] = useState<string | null>(null);
+  const [ssoRequired, setSsoRequired] = useState(false);
   const [alreadyVerified, setAlreadyVerified] = useState(false);
   const queryClient = useQueryClient();
   const [email, setEmail] = useState("");
   const [waitlisted, setWaitlisted] = useState(false);
+  const [googleSignInRemoved, setGoogleSignInRemoved] = useState(false);
   // Guard against React StrictMode double-invocation in dev. The /auth/verify
   // endpoint is idempotent on the backend, but firing twice would still
   // briefly flash an error before the second response lands. Belt and braces.
@@ -46,6 +48,11 @@ export function VerifyPage() {
       setStatus("password");
       return true;
     }
+    if (json.data.confirmationRequired) {
+      setStatus("confirm");
+      return true;
+    }
+    setGoogleSignInRemoved(json.data.googleSignInRemoved === true);
     setStatus("success");
     clearSignupProof();
     if (json.data.token) {
@@ -64,6 +71,7 @@ export function VerifyPage() {
       setSignedIn(true);
     }
     if (json.data.signInRefusal) setSignInRefusal(json.data.signInRefusal);
+    setSsoRequired(json.data.ssoRequired === true);
     return true;
   }
 
@@ -123,6 +131,44 @@ export function VerifyPage() {
           <p style={{ color: "var(--color-on-surface-variant)" }}>Verifying your email...</p>
         )}
 
+        {status === "confirm" && (
+          <>
+            <h1 style={{ color: "var(--color-primary)", fontSize: "1.5rem", marginBottom: "var(--space-md)" }}>
+              One more step
+            </h1>
+            {waitlisted ? (
+              <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)" }}>
+                This sign-up came through a Google account. Verifying holds your place on the waitlist and removes that Google account from this account. When your spot opens, you can set a password with the forgotten-password link on the sign-in page.
+              </p>
+            ) : (
+              <>
+                <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)" }}>
+                  This sign-up came through a Google account that isn't signed in on this browser. If you started it yourself, open this link in the browser you signed up in, and you'll keep signing in with Google.
+                </p>
+                <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)" }}>
+                  If you didn't start it, or can't open it there, verify here. That Google account will be removed from this account.
+                </p>
+              </>
+            )}
+            <button
+              style={{ width: "100%", justifyContent: "center" }}
+              onClick={() => {
+                const token = new URLSearchParams(window.location.search).get("token");
+                if (token) {
+                  setStatus("loading");
+                  verifyRequest({ token, confirm: true })
+                    .then((res) => {
+                      if (!settle(res)) setStatus("error");
+                    })
+                    .catch(() => setStatus("error"));
+                }
+              }}
+            >
+              Verify and remove it from this account
+            </button>
+          </>
+        )}
+
         {status === "success" && (
           <>
             <h1 style={{ color: "var(--color-primary)", fontSize: "1.5rem", marginBottom: "var(--space-md)" }}>
@@ -133,12 +179,23 @@ export function VerifyPage() {
                 ? `${email} is verified and your spot on the waitlist is held. We'll email you the moment a spot opens — nothing else to do for now.`
                 : signedIn
                   ? `${email} is ${alreadyVerified ? "already" : "now"} verified, and you're signed in.`
-                  // Reached only by a repeat click, which proves nothing, so it says the
-                  // same for every account. Signing in is where a person learns more.
+                  // "Already" is reached only by a repeat click, which proves nothing, so
+                  // it says the same for every account. Signing in is where a person learns more.
                   : signInRefusal
                     ? `${email} is now verified. ${signInRefusal}`
-                    : `${email} is already verified.`}
+                    : googleSignInRemoved
+                      ? `${email} is now verified.`
+                      : `${email} is already verified.`}
             </p>
+            {googleSignInRemoved && (
+              <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)" }}>
+                {signedIn
+                  ? "That Google account has been removed from this account."
+                  : waitlisted
+                    ? "That Google account has been removed from this account. When your spot opens, set a password with the forgotten-password link on the sign-in page, or use a Google Workspace account on this address."
+                    : "That Google account has been removed from this account. To sign in, set a password with the forgotten-password link on the next page, or use a Google Workspace account on this address."}
+              </p>
+            )}
             {signedIn && (
               <Link to="/app/dashboard" style={{ textDecoration: "none" }}>
                 <button style={{ width: "100%", justifyContent: "center" }}>
@@ -146,7 +203,7 @@ export function VerifyPage() {
                 </button>
               </Link>
             )}
-            {!waitlisted && !signedIn && !signInRefusal && (
+            {!waitlisted && !signedIn && (!signInRefusal || ssoRequired) && (
               <Link to="/auth/login" style={{ textDecoration: "none" }}>
                 <button style={{ width: "100%", justifyContent: "center" }}>
                   Sign In

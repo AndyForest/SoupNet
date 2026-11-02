@@ -2,6 +2,9 @@ import { describe, it, expect, vi } from "vitest";
 import { sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { authRoutes } from "./auth";
+import { signInAccount } from "../auth";
+import { invalidateSessions } from "../authz";
+import { untilBlockedBy } from "../test-locks";
 
 // F144, recipe 450a107b: someone who registered a password on another person's
 // address can't keep access once the real owner proves the mailbox. Scenarios
@@ -57,10 +60,6 @@ async function row(email: string): Promise<{ verified: boolean; waitlisted: bool
 /** A status that says whether a session still works on an unverified or verified account. */
 async function meStatus(session: string): Promise<number> {
   return (await fetch(`${BASE}/auth/me`, { headers: { Authorization: `Bearer ${session}` } })).status;
-}
-
-async function waitPastCurrentSecond(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 1100));
 }
 
 async function resetToken(email: string): Promise<string> {
@@ -139,7 +138,6 @@ describe.skipIf(!BASE)("POST /auth/verify and /auth/reset-password: proving a ma
     // A session cut by a reset no longer counts as the sign-up's own.
     const held = await register("cut-session");
     const heldSession = await signIn(held.email);
-    await waitPastCurrentSecond();
     const reset = await post("/auth/reset-password", { token: await resetToken(held.email), newPassword: "owner-new-password-1" });
     expect(reset.status).toBe(200);
     expect((await post("/auth/verify", { token: held.token }, heldSession)).data).toMatchObject({ verified: true, ownSession: false });
@@ -153,7 +151,6 @@ describe.skipIf(!BASE)("POST /auth/verify and /auth/reset-password: proving a ma
     // The owner, at the link, doesn't know the password, and takes the reset route.
     expect((await post("/auth/verify", { token })).data).toMatchObject({ passwordRequired: true });
     expect((await row(email)).verified).toBe(false);
-    await waitPastCurrentSecond();
     const newPassword = "owner-new-password-2";
     const reset = await post("/auth/reset-password", { token: await resetToken(email), newPassword });
     expect(reset.status).toBe(200);
@@ -161,7 +158,6 @@ describe.skipIf(!BASE)("POST /auth/verify and /auth/reset-password: proving a ma
     expect((await row(email)).verified).toBe(true);
     expect(await meStatus(strangerSession)).toBe(401);
     expect((await post("/auth/login", { email, password: PASSWORD })).status).toBe(401);
-    await waitPastCurrentSecond();
     expect(await meStatus(await signIn(email, newPassword))).toBe(200);
   });
 
@@ -176,7 +172,6 @@ describe.skipIf(!BASE)("POST /auth/verify and /auth/reset-password: proving a ma
     const key = ((await minted.json()) as { data?: { key?: string } }).data?.key;
     expect(key).toBeTruthy();
 
-    await waitPastCurrentSecond();
     expect((await post("/auth/reset-password", { token: await resetToken(email), newPassword: "next-password-345" })).status).toBe(200);
 
     expect(await meStatus(session)).toBe(401);
@@ -189,7 +184,6 @@ describe.skipIf(!BASE)("POST /auth/verify and /auth/reset-password: proving a ma
   it("ACC-VERIFY-08: a reset token that doesn't match changes nothing", async () => {
     const { email } = await register("bad-reset");
     const session = await signIn(email);
-    await waitPastCurrentSecond();
     expect((await post("/auth/reset-password", { token: "0".repeat(64), newPassword: "another-password-1" })).status).toBe(400);
     expect((await row(email)).verified).toBe(false);
     expect(await meStatus(session)).toBe(200);
@@ -310,10 +304,45 @@ describe.skipIf(!BASE)("POST /auth/verify and /auth/reset-password: proving a ma
   it("ACC-VERIFY-19: after the owner resets, the stranger's proof and session are worth nothing", async () => {
     const { email, token, proof } = await register("proof-takeover");
     const strangerSession = await signIn(email);
-    await waitPastCurrentSecond();
     expect((await post("/auth/reset-password", { token: await resetToken(email), newPassword: "owner-new-password-3" })).status).toBe(200);
     expect(await meStatus(strangerSession)).toBe(401);
     expect((await post("/auth/verify", { token, signupProof: proof })).data["token"]).toBeUndefined();
+  });
+
+  // F147, F152: nothing above waits for the clock around a reset. A session from
+  // just before one dies, and a sign-in just after one works.
+  it("ACC-VERIFY-19b: a sign-in that passed its checks before a cut-off stays behind it, and one after is past it", async () => {
+    const { email } = await register("dating");
+    const rows = await getDb().execute(sql`SELECT id FROM claimnet.users WHERE email = ${email}`);
+    const id = (rows as unknown as Array<{ id: string }>)[0]!.id;
+    const issuedAt = Math.floor(Date.now() / 1000);
+
+    await invalidateSessions(getDb(), id);
+
+    // Its checks read no cut-off, and the row it signs from now has one.
+    const raced = await signInAccount(getDb(), id, { issuedAt, notBefore: 0 });
+    expect(await meStatus(raced!.token!)).toBe(401);
+    expect(await meStatus(await signIn(email))).toBe(200);
+  });
+
+  it("ACC-VERIFY-19c / F166: a proof whose verify is overtaken by someone else's cut-off gets a session that cut-off ends", async () => {
+    const { email, token, proof } = await register("overtaken");
+    const rows = await getDb().execute(sql`SELECT id FROM claimnet.users WHERE email = ${email}`);
+    const id = (rows as unknown as Array<{ id: string }>)[0]!.id;
+
+    let verifying: ReturnType<typeof post> | undefined;
+    await getDb().transaction(async (tx) => {
+      await tx.execute(sql`SELECT 1 FROM claimnet.users WHERE id = ${id}::uuid FOR UPDATE`);
+      // Past the proof and its read of the account, it waits to write on this lock.
+      verifying = post("/auth/verify", { token, signupProof: proof });
+      await untilBlockedBy(getDb(), tx);
+      await invalidateSessions(tx, id);
+    });
+
+    const session = (await verifying)!.data["token"];
+    expect(typeof session).toBe("string");
+    expect(await meStatus(String(session))).toBe(401);
+    expect(await meStatus(await signIn(email))).toBe(200);
   });
 
   it("ACC-VERIFY-20: a reset says what's still running, and the person can see and end it", async () => {
