@@ -355,11 +355,12 @@ export async function saveDirectoryConnection(
 ): Promise<DirectoryStatusesCleared | null> {
   const sealed: SealedSecret = seal(key, input.secret, input.organizationId);
   return db.transaction(async (tx) => {
+    await lockOrganization(tx, input.organizationId);
     const manager = (await tx.execute(sql`
       SELECT 1 FROM claimnet.organization_members om
       WHERE om.organization_id = ${input.organizationId}::uuid AND om.user_id = ${input.connectedBy}::uuid
         AND om.role IN ('owner', 'admin') AND om.disabled_at IS NULL AND ${directoryInactive()} IS NOT TRUE
-      FOR SHARE OF om
+      FOR NO KEY UPDATE OF om
     `)) as unknown as unknown[];
     if (manager.length === 0) return null;
     await tx.execute(sql`
@@ -387,12 +388,22 @@ export async function saveDirectoryConnection(
  */
 export async function deleteDirectoryConnection(db: PostgresJsDatabase, organizationId: string): Promise<{ removed: boolean; cleared: DirectoryStatusesCleared }> {
   return db.transaction(async (tx) => {
+    await lockOrganization(tx, organizationId);
     const rows = (await tx.execute(sql`
       DELETE FROM claimnet.organization_directory_connections WHERE organization_id = ${organizationId}::uuid RETURNING id
     `)) as unknown as unknown[];
     const cleared = await resetMemberStatuses(tx, organizationId);
     return { removed: rows.length > 0, cleared };
   });
+}
+
+/**
+ * Connection changes each update every member's row, so two at once would wait
+ * on each other's rows (F195). They take the organization first, in the order
+ * member changes already do (organizations.ts), and foreign keys aren't blocked.
+ */
+async function lockOrganization(tx: SqlExecutor, organizationId: string): Promise<void> {
+  await tx.execute(sql`SELECT 1 FROM claimnet.organizations WHERE id = ${organizationId}::uuid FOR NO KEY UPDATE`);
 }
 
 async function resetMemberStatuses(tx: SqlExecutor, organizationId: string): Promise<DirectoryStatusesCleared> {

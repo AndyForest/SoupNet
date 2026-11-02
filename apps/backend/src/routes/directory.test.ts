@@ -1027,6 +1027,30 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     await call(org.olive.token, "PUT", `/organizations/${org.orgId}/directory/service-account`, { key: org.serviceAccount.key, adminEmail: org.olive.email });
   });
 
+  it("F195: saving and removing a connection at once don't deadlock, whoever does it", async () => {
+    const org = await acme();
+    const ann = await adminMember(org, "ann-race");
+    await member(org, "race-colleague");
+    const { saveDirectoryConnection, deleteDirectoryConnection } = await import("../authz");
+    const { secretBoxKey } = await import("../lib/secret-box");
+    const save = (connectedBy: string) =>
+      saveDirectoryConnection(getDb(), secretBoxKey()!, {
+        organizationId: org.orgId,
+        kind: "service_account",
+        domain: org.domain,
+        domainUnicode: org.domain,
+        adminEmail: org.olive.email,
+        serviceAccountEmail: org.serviceAccount.clientEmail,
+        secret: "{}",
+        connectedBy,
+      });
+    for (let i = 0; i < 10; i++) {
+      const raced = await Promise.allSettled([save(ann.userId), save(ann.userId), save(org.olive.userId), deleteDirectoryConnection(getDb(), org.orgId)]);
+      expect(raced.filter((r) => r.status === "rejected").map((r) => String((r as PromiseRejectedResult).reason)), `round ${i}`).toEqual([]);
+    }
+    await call(org.olive.token, "PUT", `/organizations/${org.orgId}/directory/service-account`, { key: org.serviceAccount.key, adminEmail: org.olive.email });
+  });
+
   it("OFF-DIR-10 / OB-C10: disconnecting stops the checks and lifts the directory's refusals", async () => {
     const org = await acme();
     const max = await member(org, "freed");
