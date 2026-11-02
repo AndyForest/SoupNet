@@ -121,6 +121,12 @@ Feature: Organization accounts: the org admin console, sharing policy, and what 
       Then his page lists both, with the time and "password" only
       And neither Acme's member list nor its activity carries a sign-in
 
+    @ORG-SHARE-07
+    Scenario: A sharing change never undoes another admin's
+      Given Olive opened the Books page while outbound was allowed
+      When Ada blocks outbound, and Olive then saves a change to inbound
+      Then outbound stays blocked and inbound has Olive's change
+
     @ORG-CON-08
     Scenario: A manager can see a stalled migration without an API client
       Given acme.example is verified with automatic joining on

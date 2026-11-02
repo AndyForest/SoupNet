@@ -258,6 +258,28 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Console",
     expect(((await json(res))["data"] as Json)["sharing"]).toEqual({ outbound: "admins_only", inbound: "allowed" });
   });
 
+  it("ORG-SHARE-07: a change to one field never undoes a change to the other, and each change is audited", async () => {
+    const { olive, ada, orgId } = await acme();
+    for (let round = 0; round < 12; round++) {
+      const [outbound, inbound] = round % 2 === 0 ? ["blocked", "allowed"] as const : ["allowed", "blocked"] as const;
+      const answers = await Promise.all([setSharing(olive, orgId, { outbound }), setSharing(ada, orgId, { inbound })]);
+      expect(answers.map((r) => r.status)).toEqual([200, 200]);
+      const overview = (await json(await call(olive, "GET", `/organizations/${orgId}`)))["data"] as Json;
+      expect(overview["sharing"]).toEqual({ outbound, inbound });
+    }
+    const rows = (await getDb().execute(sql`
+      SELECT metadata FROM claimnet.audit_log
+      WHERE action = 'organization.sharing_changed' AND target_id = ${orgId}::uuid
+      ORDER BY occurred_at, id
+    `)) as unknown as Array<{ metadata: { outbound: string; inbound: string; previous: { outbound: string; inbound: string } } }>;
+    expect(rows).toHaveLength(24);
+    // Each write changed the one field it was sent, whichever order they ran in.
+    for (const { metadata } of rows) {
+      const changed = [metadata.previous.outbound !== metadata.outbound, metadata.previous.inbound !== metadata.inbound].filter(Boolean);
+      expect(changed).toHaveLength(1);
+    }
+  });
+
   it("ORG-SHARE-02, 03 / CN-P2: outbound, one row per value × inviter role × book kind, at invitation, accept and direct add", async () => {
     const { olive, ada, max, gus, orgId, defaultBookId } = await acme();
     const maxBook = await book(max, "max-own");

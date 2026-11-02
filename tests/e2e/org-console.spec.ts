@@ -1059,6 +1059,22 @@ test("E17g axe reports no nested-main violations on the console pages", async ({
 
 // ── E18–E20: Domains, the stalled migration, and the directory ─────────────
 
+test("E21 a form opened before another admin's block doesn't undo it", async ({ page, request }, testInfo) => {
+  const acme = await setupAcme(request, "e21");
+  await signIn(page, acme.olive, "/org/books");
+  const inbound = page.getByLabel("Other people's recipe books");
+  await expect(inbound).toHaveValue("allowed");
+
+  await fixture(request, "Ada blocking outbound while Olive's form is open", "patch", `/organizations/${acme.orgId}/sharing`, acme.ada, { outbound: "blocked" });
+  await inbound.selectOption("blocked");
+  const saved = page.waitForRequest((r) => r.url().endsWith(`/organizations/${acme.orgId}/sharing`) && r.method() === "PATCH");
+  await page.getByRole("button", { name: "Save sharing policy" }).click();
+  expect((await saved).postDataJSON(), "the form should send only what it changed").toEqual({ inbound: "blocked" });
+  await expect(page.getByLabel("Our recipe books"), "Ada's block should still stand").toHaveValue("blocked");
+  await expect(inbound).toHaveValue("blocked");
+  await shot(page, testInfo, "E21-01-both-kept");
+});
+
 /** Fixture writes this spec can't reach through a route: DNS and Google answers. */
 async function withDb(work: (sql: postgres.Sql) => Promise<void>) {
   const sql = postgres({ ...dbSettings(), max: 1, onnotice: () => {} });

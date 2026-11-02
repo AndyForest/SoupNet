@@ -77,7 +77,11 @@ export function OrgBooksPage() {
       const res = await authFetch(`/organizations/${organizationId}/sharing`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ outbound, inbound }),
+        // Only what this form changed: a value it merely loaded earlier mustn't undo another admin's change.
+        body: JSON.stringify({
+          ...(outbound !== books.data?.sharing?.outbound ? { outbound } : {}),
+          ...(inbound !== books.data?.sharing?.inbound ? { inbound } : {}),
+        }),
       });
       const json = (await res.json()) as { ok: boolean; message?: string; error?: string };
       if (!json.ok) throw new Error(json.message ?? json.error ?? "Couldn't save the sharing policy.");

@@ -144,25 +144,37 @@ organizationConsoleRouter.patch("/:id/sharing", async (c) => {
       message: "Send outbound (blocked, admins_only or allowed) and/or inbound (blocked or allowed).",
     }, 400);
   }
-  const db = getDb();
-  const before = await orgRow(org.id);
-  if (!before) return notFound(c);
-  const next = {
-    outbound: outbound ?? before.outbound,
-    inbound: inbound ?? before.inbound,
-  };
-  await db.execute(sql`
-    UPDATE claimnet.organizations
-    SET outbound_sharing = ${next.outbound}, inbound_sharing = ${next.inbound}, updated_at = NOW()
-    WHERE id = ${org.id}::uuid
-  `);
-  await writeAudit(db, {
-    actorUserId: c.get("user").id,
-    action: "organization.sharing_changed",
-    targetType: "organization",
-    targetId: org.id,
-    metadata: { outbound: next.outbound, inbound: next.inbound, previous: { outbound: before.outbound, inbound: before.inbound } },
+  // One statement writes only the fields sent, and locks the row while it reads
+  // what they were, so a change to the other field can't be undone by this one
+  // and the audit row records what this write really replaced (F201).
+  const userId = c.get("user").id;
+  const next = await getDb().transaction(async (tx) => {
+    const rows = await tx.execute(sql`
+      UPDATE claimnet.organizations o
+      SET outbound_sharing = COALESCE(${outbound ?? null}::text, o.outbound_sharing),
+          inbound_sharing = COALESCE(${inbound ?? null}::text, o.inbound_sharing),
+          updated_at = NOW()
+      FROM (
+        SELECT id, outbound_sharing, inbound_sharing FROM claimnet.organizations
+        WHERE id = ${org.id}::uuid AND NOT is_personal
+        FOR NO KEY UPDATE
+      ) before
+      WHERE o.id = before.id
+      RETURNING o.outbound_sharing AS outbound, o.inbound_sharing AS inbound,
+                before.outbound_sharing AS "previousOutbound", before.inbound_sharing AS "previousInbound"
+    `);
+    const row = (rows as unknown as Array<{ outbound: string; inbound: string; previousOutbound: string; previousInbound: string }>)[0];
+    if (!row) return null;
+    await writeAudit(tx, {
+      actorUserId: userId,
+      action: "organization.sharing_changed",
+      targetType: "organization",
+      targetId: org.id,
+      metadata: { outbound: row.outbound, inbound: row.inbound, previous: { outbound: row.previousOutbound, inbound: row.previousInbound } },
+    });
+    return { outbound: row.outbound, inbound: row.inbound };
   });
+  if (!next) return notFound(c);
   return c.json({ ok: true, data: { sharing: next } });
 });
 
