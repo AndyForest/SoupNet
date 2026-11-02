@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import { appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { directoryDisabledMessage } from "@soupnet/domain";
 import { seedVerifiedUser } from "../test-users";
 import { fakeGoogle } from "../test-google-issuer";
 import type { FakeIdClaims } from "../test-google-issuer";
@@ -631,6 +632,29 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     expect(login.status).toBe(403);
     expect(((await login.json()) as { error: string }).error).toBe("directory_inactive");
     expect(await requestsFor(max.email)).toBe(before + 2);
+  });
+
+  it("OB-C1, F144: a proof or password at the verification link gets the directory's message, and no session", async () => {
+    const org = await acme();
+    for (const [label, proving] of [
+      ["link-proof", (signupProof: string) => ({ signupProof })],
+      ["link-password", () => ({ password: PASSWORD })],
+    ] as const) {
+      // On another address, so no check runs and the recorded status decides.
+      const email = `${label}-${run}-${++n}@elsewhere-${run}.test`;
+      const registered = (await (await call(null, "POST", "/auth/register", { email, password: PASSWORD, tosAccepted: true })).json()) as { data: { verificationToken: string; signupProof: string } };
+      const added = await call(sysToken, "POST", `/admin/organizations/${org.orgId}/members`, { email, role: "member" });
+      expect(added.status).toBe(201);
+      await getDb().execute(sql`
+        UPDATE claimnet.organization_members SET directory_status = 'suspended'
+        WHERE user_id = (SELECT id FROM claimnet.users WHERE email = ${email})
+      `);
+
+      const res = await call(null, "POST", "/auth/verify", { token: registered.data.verificationToken, ...proving(registered.data.signupProof) });
+      const data = ((await res.json()) as { data: Json }).data;
+      expect(data, label).toMatchObject({ verified: true, signInRefusal: directoryDisabledMessage("directory_inactive") });
+      expect(data["token"], label).toBeUndefined();
+    }
   });
 
   it("OB-M2: two similar addresses are each checked under their own key", async () => {
