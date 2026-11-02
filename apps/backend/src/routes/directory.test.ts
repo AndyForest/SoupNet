@@ -1168,7 +1168,12 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     await badThenGood();
     expect(await warningsTo(org.olive.email, 2)).toBe(2);
 
-    await google.setDirectoryUser(ida.email, { primaryEmail: `ida-now-${run}@${org.domain}`, aliases: [ida.email] });
+    // A rename is a hit by the linked Google identity after a 404 by address.
+    const subject = `ida-now-${run}-${++n}`;
+    await google.setDirectoryUser(ida.email, {});
+    await linkGoogle(ida, subject, org.domain);
+    await google.setDirectoryUser(ida.email, { httpStatus: 404 });
+    await google.setDirectoryUser(subject, { primaryEmail: `ida-now-${run}@${org.domain}` });
     await makeDue(ida.userId);
     expect((await useKey(ida.key)).status).toBe(200);
     expect(await lastError()).toBe("member_renamed");
