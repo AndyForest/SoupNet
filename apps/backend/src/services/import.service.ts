@@ -68,7 +68,7 @@ import {
   embeddingVectors as embeddingVectorsTable,
 } from "@soupnet/db";
 import { getEmbeddingModelId } from "../lib/embeddings/provider";
-import { normalizeOnBehalfOf, resolveNameableSubject, onBehalfSubjectOf, homeOrganizationOf } from "../authz";
+import { normalizeOnBehalfOf, resolveNameableSubject, onBehalfSubjectOf, holdAccountForNewBook, homeOrganizationOf } from "../authz";
 import { ownedIntentIds } from "./intent.service";
 import { onBehalfRefusal } from "@soupnet/domain";
 import type {
@@ -704,6 +704,8 @@ async function createImportBook(
 ): Promise<{ id: string; name: string; slug: string; created: boolean }> {
   // The account's home organization: its company organization when it is
   // managed, else its personal one (the resolver new books and workspaces use).
+  // Under the account's lock, so a join can't leave the book behind (F169).
+  await holdAccountForNewBook(db, userId);
   const homeId = await homeOrganizationOf(db, userId);
   const org = homeId ? { id: homeId } : undefined;
   if (!org) {

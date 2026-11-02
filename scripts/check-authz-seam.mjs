@@ -309,7 +309,7 @@ const TRACE_READS = {
     why: "feedback target ACL: prefix scan and readable set use traceReadableById (RP-11, RP-18); check_feedback inserts and the per-key budget count are writes and the caller's own rows; search, briefing, and intent-only rows (slice 8a) attach only to the caller's user's own audit rows or intents, with dedup lookups on the caller's key",
   },
   "apps/backend/src/services/import.service.ts": {
-    n: 14, fp: "05c440dce865", composes: false,
+    n: 14, fp: "5a6c16b97782", composes: false,
     why: "import only creates rows: it reads rows by id to decide skip / conflict / fresh id (RP-35), keeps a trace only when it is the importer's own and not a draft about someone else (onBehalfSubjectOf, [F92] [F97]), writes links only between rows it created (recipe 5d541d2c), and an on-behalf row's subject goes through the module's naming rule (S4-E2); a row's intent link is restored only onto the importer's own intents (slice 6a, S6a-E2)",
   },
   "apps/backend/src/services/integrity-repair.service.ts": {
@@ -365,11 +365,11 @@ const TRACE_READS = {
     why: "dev-only cleanup of seeded test users: counts their own recipes by user id before deleting the accounts",
   },
   "apps/backend/src/services/embedding-model-status.service.ts": {
-    n: 1, fp: "c2a2e9d9edce", composes: false,
+    n: 3, fp: "9b8d4b4d09ec", composes: false,
     why: "operator counts of a model's search coverage across the whole corpus: numbers only, no recipe content, no caller",
   },
   "apps/backend/src/cli/embedding-model.ts": {
-    n: 2, fp: "2069d34b1159", composes: false,
+    n: 3, fp: "2ab963156093", composes: false,
     why: "operator script: counts image sources and removes a retired model's vectors; no recipe content, no caller",
   },
   "scripts/repair-orphaned-user-data.mjs": {

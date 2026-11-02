@@ -93,10 +93,10 @@ export function VerifyPendingPage() {
             fontSize: "0.95rem",
             lineHeight: 1.5,
           }}>
-            We sent a verification link to{" "}
-            {meQuery.data ? <strong>{meQuery.data.email}</strong> : "your inbox"}.
-            Click the link to activate your account — once you do, you&apos;ll be
-            able to create API keys, check recipes, and join recipe books.
+            To activate your account, open a verification link sent to{" "}
+            {meQuery.data ? <strong>{meQuery.data.email}</strong> : "your email address"}.
+            You&apos;ll then be able to create API keys, check recipes, and join
+            recipe books. If you don&apos;t have a link, send one with the button below.
           </p>
         </div>
 
@@ -155,8 +155,8 @@ export function VerifyPendingPage() {
           textAlign: "center",
           lineHeight: 1.5,
         }}>
-          Don&apos;t see the email? Check your spam folder, or click resend
-          above. The link expires after 24 hours.
+          Don&apos;t see an email? Check your spam folder, or click resend
+          above. A link expires after 24 hours.
         </p>
       </div>
     </div>

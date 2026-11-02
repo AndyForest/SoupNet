@@ -173,6 +173,16 @@ export async function homeOrganizationOf(db: SqlExecutor, userId: string): Promi
 }
 
 /**
+ * Call first in the transaction that creates someone's new recipe book, before
+ * reading their home organization. It waits for a join in progress, so the book
+ * lands in the company, and a join waits for it, so the join's move finds the
+ * book. Neither can leave a book behind in the personal organization (F169).
+ */
+export async function holdAccountForNewBook(tx: SqlExecutor, userId: string): Promise<void> {
+  await tx.execute(sql`SELECT 1 FROM claimnet.users WHERE id = ${userId}::uuid FOR SHARE`);
+}
+
+/**
  * May this account create a recipe book in this organization? A managed
  * account only in its company organization, as an active member (a disabled
  * one never gets this far); any other account only in an organization it
@@ -248,10 +258,13 @@ export async function joinOrganization(db: PostgresJsDatabase, input: JoinInput)
 /**
  * The join inside a caller's transaction, for a caller whose own writes must
  * roll back with it (Domains' verification click, SSO's Google sign-up). It
- * locks the account's row, then the organization's: every caller's proof step
- * already holds the account's row when it gets here, and the opposite order
- * here deadlocks with them (F168). Nothing may hold an organization's row and
- * then wait on an account's. A refusal is returned, not
+ * locks the account's row, then the organization's: a proof step already holds
+ * the account's row when it gets here, and the opposite order deadlocks with it
+ * (F168). The account's lock is NO KEY UPDATE because a transaction holding the
+ * organization's row may still check a foreign key to the account: the owner
+ * hand-over in `actOnMember` names its successor, and FOR UPDATE would block
+ * that check and deadlock (F169). Holding an organization's row and then taking
+ * a row lock on an account is still out. A refusal is returned, not
  * thrown: the caller's transaction decides whether to roll back. After the
  * caller commits, it sends the notice with `sendJoinNotice`
  * (services/organization.service.ts).
@@ -263,7 +276,7 @@ export async function joinOrganizationInTx(tx: SqlExecutor, input: JoinInput): P
   const userRows = await tx.execute(sql`
     SELECT u.email, u.personal_organization_id FROM claimnet.users u
     WHERE u.id = ${userId}::uuid
-    FOR UPDATE
+    FOR NO KEY UPDATE
   `);
   const account = (userRows as unknown as Array<{ email: string; personal_organization_id: string | null }>)[0];
 
