@@ -984,6 +984,9 @@ auth.post("/verify", verifyRateLimit, async (c) => {
     if (signedIn?.token) {
       sessionToken = signedIn.token;
       await db.execute(sql`UPDATE claimnet.users SET last_login_at = now() WHERE id = ${updated.id}::uuid`);
+      // A session issued here is a sign-in like any other, and the record says so.
+      // The sign-up proof stands in for the password that was just set.
+      await recordSignIn(db, updated.id, "password");
     }
   }
 

@@ -237,6 +237,32 @@ describe.skipIf(!BASE)("POST /auth/verify and /auth/reset-password: proving a ma
     expect((await post("/auth/verify", { token, signupProof: proof })).data["token"]).toBeUndefined();
   });
 
+  it("ACC-VERIFY-14b: a session issued here goes on the sign-in record, and only a session does", async () => {
+    const signIns = async (email: string): Promise<unknown[]> => {
+      const rows = await getDb().execute(sql`
+        SELECT a.metadata FROM claimnet.audit_log a JOIN claimnet.users u ON u.id = a.actor_user_id
+        WHERE a.action = 'auth.signed_in' AND u.email = ${email}
+      `);
+      return (rows as unknown as Array<{ metadata: unknown }>).map((r) => r.metadata);
+    };
+    const byProof = await register("record-proof");
+    expect((await post("/auth/verify", { token: byProof.token, signupProof: byProof.proof })).data["token"]).toBeTruthy();
+    expect(await signIns(byProof.email)).toEqual([{ method: "password" }]);
+    // A repeat click issues no session, so it adds nothing.
+    await post("/auth/verify", { token: byProof.token, signupProof: byProof.proof });
+    expect(await signIns(byProof.email)).toHaveLength(1);
+
+    const byPassword = await register("record-password");
+    expect((await post("/auth/verify", { token: byPassword.token, password: PASSWORD })).data["token"]).toBeTruthy();
+    expect(await signIns(byPassword.email)).toEqual([{ method: "password" }]);
+
+    // Refused at the same checks as sign-in: verified, no session, no record.
+    const off = await register("record-suspended");
+    await getDb().execute(sql`UPDATE claimnet.users SET suspended_at = now() WHERE email = ${off.email}`);
+    expect((await post("/auth/verify", { token: off.token, password: PASSWORD })).data["token"]).toBeUndefined();
+    expect(await signIns(off.email)).toEqual([]);
+  });
+
   it("ACC-VERIFY-15: the proof says nothing about whether the address already has an account (F30)", async () => {
     const first = await register("f30");
     const again = await post("/auth/register", { email: first.email, password: "someone-else-pw-1", tosAccepted: true });
