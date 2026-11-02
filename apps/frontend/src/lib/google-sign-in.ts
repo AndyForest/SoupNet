@@ -71,10 +71,13 @@ export function authorizeTargetFrom(search: string): GoogleReturnTarget {
 }
 
 /** What /auth/google/complete found in its fragment. */
-export type CompleteFragment = { handoff: string } | { error: string } | null;
+export type CompleteFragment = { handoff: string } | { error: string } | { directoryConnected: true } | null;
 
 export function readCompleteFragment(hash: string): CompleteFragment {
   const params = new URLSearchParams(hash.startsWith("#") ? hash.slice(1) : hash);
+  // An organization's Google Workspace directory connection finished (stream
+  // Offboarding); no session comes with it.
+  if (params.get("directory") === "connected") return { directoryConnected: true };
   const handoff = params.get("handoff");
   if (handoff && /^[A-Za-z0-9_-]{43}$/.test(handoff)) return { handoff };
   const error = params.get("error");
@@ -117,8 +120,14 @@ const MESSAGES: Record<string, string> = {
   waitlisted: "You're on the waitlist and your place is held. We'll email you the moment a spot opens.",
   organization_full: "This organization has no free seats. Ask one of its admins.",
   account_disabled: "Your organization has disabled this account. Ask one of its admins to turn it back on.",
+  directory_inactive: "Your organization's Google Workspace doesn't list this account as active. Ask one of your organization's admins.",
+  directory_unconfirmed: "Soup.net couldn't confirm this account with your organization's Google Workspace. Ask one of your organization's admins to check the directory connection.",
   account_suspended: "This account is suspended. Contact Soup.net support.",
   reauthenticate: "Sign in with Google again to confirm.",
+  directory_wrong_account: "Connect the directory with the Google account you sign in to Soup.net with.",
+  directory_wrong_domain: "That Google account isn't on the domain you chose. Sign in with a Workspace admin account on that domain.",
+  directory_no_refresh_token: "Google didn't grant lasting access to the directory. Try connecting again and approve the request.",
+  directory_not_admin: "Google wouldn't let that account read the directory. Connect with a Workspace admin account, or use a service account.",
   failed: "Google sign-in didn't work this time. Try again in a moment.",
 };
 

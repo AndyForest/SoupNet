@@ -12,6 +12,8 @@
  *     copy a person reads.
  */
 
+import { DIRECTORY_INACTIVE_MESSAGE, DIRECTORY_UNCONFIRMED_MESSAGE } from "./directory";
+
 /** What the verified ID token says about the address. */
 export interface GoogleAddressClaims {
   email: string;
@@ -102,8 +104,14 @@ export const GOOGLE_SIGN_IN_ERRORS = [
   "waitlisted",
   "organization_full",
   "account_disabled",
+  "directory_inactive",
+  "directory_unconfirmed",
   "account_suspended",
   "reauthenticate",
+  "directory_wrong_account",
+  "directory_wrong_domain",
+  "directory_no_refresh_token",
+  "directory_not_admin",
   "failed",
 ] as const;
 
@@ -122,8 +130,14 @@ const MESSAGES: Record<GoogleSignInError, string> = {
   waitlisted: "You're on the waitlist and your place is held. We'll email you the moment a spot opens.",
   organization_full: "This organization has no free seats. Ask one of its admins.",
   account_disabled: "Your organization has disabled this account. Ask one of its admins to turn it back on.",
+  directory_inactive: DIRECTORY_INACTIVE_MESSAGE,
+  directory_unconfirmed: DIRECTORY_UNCONFIRMED_MESSAGE,
   account_suspended: "This account is suspended. Contact Soup.net support.",
   reauthenticate: "Sign in with Google again to confirm.",
+  directory_wrong_account: "Connect the directory with the Google account you sign in to Soup.net with.",
+  directory_wrong_domain: "That Google account isn't on the domain you chose. Sign in with a Workspace admin account on that domain.",
+  directory_no_refresh_token: "Google didn't grant lasting access to the directory. Try connecting again and approve the request.",
+  directory_not_admin: "Google wouldn't let that account read the directory. Connect with a Workspace admin account, or use a service account.",
   failed: "Google sign-in didn't work this time. Try again in a moment.",
 };
 

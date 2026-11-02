@@ -1,16 +1,16 @@
 # ClaimNet Data Model — Generated Reference
 
-> **Auto-generated** from Drizzle migration snapshot `0046_snapshot.json`.
+> **Auto-generated** from Drizzle migration snapshot `0047_snapshot.json`.
 > Do not edit by hand. Regenerate with: `npx tsx scripts/generate-data-model-docs.ts`
 >
-> Schema as of migration `0046_organization_domains` (2026-10-26).
-> Tables: 35 | Schema: `claimnet`
+> Schema as of migration `0047_organization_directory` (2026-10-31).
+> Tables: 36 | Schema: `claimnet`
 
 For design rationale, conventions, and context, see [data-model.md](data-model.md).
 
 ## Tables
 
-**Identity & Access:** [`users`](#claimnetusers) · [`user_identities`](#claimnetuser_identities) · [`sso_login_requests`](#claimnetsso_login_requests) · [`organizations`](#claimnetorganizations) · [`organization_members`](#claimnetorganization_members) · [`organization_domains`](#claimnetorganization_domains) · [`groups`](#claimnetgroups) · [`group_members`](#claimnetgroup_members) · [`ephemeral_books`](#claimnetephemeral_books)
+**Identity & Access:** [`users`](#claimnetusers) · [`user_identities`](#claimnetuser_identities) · [`sso_login_requests`](#claimnetsso_login_requests) · [`organizations`](#claimnetorganizations) · [`organization_members`](#claimnetorganization_members) · [`organization_directory_connections`](#claimnetorganization_directory_connections) · [`organization_domains`](#claimnetorganization_domains) · [`groups`](#claimnetgroups) · [`group_members`](#claimnetgroup_members) · [`ephemeral_books`](#claimnetephemeral_books)
 **Core Content:** [`traces`](#claimnettraces) · [`evidence`](#claimnetevidence) · [`references`](#claimnetreferences) · [`uploads`](#claimnetuploads)
 **Linking:** [`trace_evidence`](#claimnettrace_evidence) · [`trace_references`](#claimnettrace_references) · [`evidence_references`](#claimnetevidence_references)
 **Feedback & Reactions:** [`check_feedback`](#claimnetcheck_feedback) · [`check_feedback_stars`](#claimnetcheck_feedback_stars) · [`trace_reactions`](#claimnettrace_reactions) · [`session_shown`](#claimnetsession_shown) · [`intents`](#claimnetintents) · [`intent_shown`](#claimnetintent_shown)
@@ -251,6 +251,26 @@ erDiagram
         timestamptz last_used_at
     }
 
+    organization_directory_connections {
+        uuid id PK
+        uuid organization_id FK
+        text kind
+        text domain
+        text domain_unicode
+        text admin_email
+        text service_account_email
+        text credential_ciphertext
+        text credential_iv
+        text credential_tag
+        integer key_version
+        uuid connected_by
+        timestamptz connected_at
+        timestamptz last_success_at
+        text last_error
+        timestamptz last_error_at
+        timestamptz warned_at
+    }
+
     organization_domains {
         uuid id PK
         uuid organization_id FK
@@ -275,6 +295,9 @@ erDiagram
         timestamptz disabled_at
         uuid disabled_by
         timestamptz joined_at
+        text directory_status
+        timestamptz directory_checked_at
+        timestamptz directory_check_claimed_at
     }
 
     organizations {
@@ -471,6 +494,7 @@ erDiagram
     intents }o--|| users : "user_id"
     invitations }o--|| users : "inviter_id"
     invitations }o--|| groups : "group_id"
+    organization_directory_connections ||--|| organizations : "organization_id"
     organization_domains }o--|| organizations : "organization_id"
     organization_members }o--|| organizations : "organization_id"
     organization_members ||--|| users : "user_id"
@@ -638,6 +662,9 @@ These are created by raw SQL in migration files and are not captured in the snap
 | `disabled_at` | `timestamptz` | YES |  |  |
 | `disabled_by` | `uuid` | YES |  |  |
 | `joined_at` | `timestamptz` | NO | `now()` |  |
+| `directory_status` | `text` | YES |  |  |
+| `directory_checked_at` | `timestamptz` | YES |  |  |
+| `directory_check_claimed_at` | `timestamptz` | YES |  |  |
 
 **Foreign keys:**
 - `organization_id` → `organizations.id`
@@ -648,6 +675,36 @@ These are created by raw SQL in migration files and are not captured in the snap
 
 **Indexes:**
 - `organization_members_organization_id_idx`: `(organization_id)`
+
+---
+
+### `claimnet.organization_directory_connections`
+
+| Column | Type | Nullable | Default | PK |
+|---|---|---|---|---|
+| `id` | `uuid` | NO | `gen_random_uuid()` | PK |
+| `organization_id` | `uuid` | NO |  |  |
+| `kind` | `text` | NO |  |  |
+| `domain` | `text` | NO |  |  |
+| `domain_unicode` | `text` | NO |  |  |
+| `admin_email` | `text` | NO |  |  |
+| `service_account_email` | `text` | YES |  |  |
+| `credential_ciphertext` | `text` | NO |  |  |
+| `credential_iv` | `text` | NO |  |  |
+| `credential_tag` | `text` | NO |  |  |
+| `key_version` | `integer` | NO |  |  |
+| `connected_by` | `uuid` | YES |  |  |
+| `connected_at` | `timestamptz` | NO | `now()` |  |
+| `last_success_at` | `timestamptz` | YES |  |  |
+| `last_error` | `text` | YES |  |  |
+| `last_error_at` | `timestamptz` | YES |  |  |
+| `warned_at` | `timestamptz` | YES |  |  |
+
+**Foreign keys:**
+- `organization_id` → `organizations.id`
+
+**Unique constraints:**
+- `organization_directory_connections_org_unique`: `(organization_id)`
 
 ---
 

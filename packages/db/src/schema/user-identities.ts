@@ -72,8 +72,9 @@ export const ssoLoginRequests = claimnetSchema.table(
     // SHA-256 (base64url) of the secret the starting tab keeps in sessionStorage.
     bindingHash: text("binding_hash").notNull(),
 
-    // 'app' (an in-app path) or 'oauth_authorize' (the consent page's
-    // validated parameters).
+    // 'app' (an in-app path), 'oauth_authorize' (the consent page's
+    // validated parameters), or 'directory_connect' (an org admin connecting
+    // the Workspace directory; stream Offboarding: { organizationId, domain }).
     returnKind: text("return_kind").notNull(),
     returnParams: jsonb("return_params").notNull(),
 
@@ -94,7 +95,7 @@ export const ssoLoginRequests = claimnetSchema.table(
     unique("sso_login_requests_state_hash_unique").on(t.stateHash),
     unique("sso_login_requests_handoff_hash_unique").on(t.handoffHash),
     index("sso_login_requests_created_at_idx").on(t.createdAt),
-    check("sso_login_requests_return_kind_check", sql`${t.returnKind} IN ('app', 'oauth_authorize')`),
+    check("sso_login_requests_return_kind_check", sql`${t.returnKind} IN ('app', 'oauth_authorize', 'directory_connect')`),
   ]
 );
 

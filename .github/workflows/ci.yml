@@ -65,6 +65,9 @@ jobs:
       GOOGLE_OAUTH_CLIENT_ID: ci-google-client.apps.googleusercontent.com
       GOOGLE_OAUTH_CLIENT_SECRET: ci-google-secret
       GOOGLE_OIDC_TEST_ISSUER: http://127.0.0.1:3998
+      # Seals Workspace directory credentials (stream Offboarding); a fixed
+      # test key. Mirrors scripts/test-ci-local.mjs.
+      DIRECTORY_CREDENTIALS_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
     steps:
       # Actions pinned to commit SHAs (not tags) so the actions' own GitHub

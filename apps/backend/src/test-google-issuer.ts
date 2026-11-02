@@ -1,16 +1,30 @@
 /**
- * A fake Google for the Layer 3 suite (organization accounts round 1, stream
- * SSO, rubric SSO-G2). Test-only: imported by tests, never mounted by the
- * server.
+ * A fake Google for the Layer 3 suites (organization accounts round 1,
+ * streams SSO and Offboarding). Test-only: started once per vitest run by
+ * test-google-global-setup.ts when GOOGLE_OIDC_TEST_ISSUER is set, never
+ * mounted by the server.
  *
- * The backend under test is started with GOOGLE_OIDC_TEST_ISSUER pointing at
- * this server (honoured only outside production) and the same client id and
- * secret as the test process. The test starts the backend's flow, reads the
- * state, nonce and PKCE challenge off the authorization URL, registers the
- * claims the next ID token should carry with `issue`, and calls the
- * backend's callback with the returned code. The token endpoint checks the
- * client credentials and the PKCE verifier as Google does, redeems each code
- * once, and signs RS256 with a key it publishes at /certs.
+ * The backend under test is started with GOOGLE_OIDC_TEST_ISSUER pointing
+ * here (honoured only outside production) and the same client id and secret.
+ * It serves what the backend calls:
+ *   GET  /certs                         the signing keys (JWKS)
+ *   POST /token                         authorization_code (checks the client
+ *                                       credentials and the PKCE verifier,
+ *                                       redeems each code once), refresh_token,
+ *                                       and the JWT-bearer grant for service
+ *                                       accounts (checks the assertion's
+ *                                       signature against a registered key)
+ *   GET  /directory/users/:userKey      the Directory API's users.get
+ *   GET  /authorize                     for a browser: redirects straight back to the
+ *                                       backend's callback with a code for the identity
+ *                                       set by /__fake/next-identity (or access_denied)
+ * and, for test files running in other processes, control routes:
+ *   POST /__fake/codes                  { claims, nonce, codeChallenge, refreshToken? } → { code }
+ *   POST /__fake/next-identity          { claims, refreshToken? } for the next browser /authorize
+ *   PUT  /__fake/directory/:userKey     { suspended?, archived?, httpStatus?, delayMs? }
+ *   POST /__fake/service-accounts       { clientEmail, publicKeyPem }
+ *   POST /__fake/revoke                 every access and refresh token stops working
+ *   GET  /__fake/stats                  { tokenRequests, directoryRequests: { [userKey]: n } }
  */
 
 import http from "node:http";
@@ -30,64 +44,174 @@ interface PendingCode {
   claims: FakeIdClaims;
   nonce: string;
   codeChallenge: string;
+  refreshToken: string | null;
 }
 
-export interface FakeGoogleIssuer {
-  issuer: string;
-  /** Register the claims for the next sign-in; returns the authorization code. */
-  issue(claims: FakeIdClaims, binding: { nonce: string; codeChallenge: string }): string;
-  /** How many token requests reached the fake (replay tests assert none). */
-  tokenRequests(): number;
-  close(): Promise<void>;
+interface DirectoryEntry {
+  suspended?: boolean;
+  archived?: boolean;
+  httpStatus?: number;
+  delayMs?: number;
 }
+
+const DIRECTORY_SCOPE = "https://www.googleapis.com/auth/admin.directory.user.readonly";
 
 export async function startFakeGoogleIssuer(opts: {
   issuer: string;
   clientId: string;
   clientSecret: string;
-}): Promise<FakeGoogleIssuer> {
+}): Promise<{ close(): Promise<void> }> {
   const { privateKey, publicKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
   const kid = `fake-${crypto.randomBytes(4).toString("hex")}`;
   const jwks = { keys: [{ ...(publicKey.export({ format: "jwk" }) as Record<string, unknown>), kid, alg: "RS256", use: "sig" }] };
   const codes = new Map<string, PendingCode>();
+  const refreshTokens = new Set<string>();
+  const accessTokens = new Set<string>();
+  const serviceAccounts = new Map<string, crypto.KeyObject>();
+  const directory = new Map<string, DirectoryEntry>();
+  const directoryRequests: Record<string, number> = {};
   let tokenRequests = 0;
+  let nextIdentity: { claims: FakeIdClaims; refreshToken: string | null } | null = null;
+
+  function json(res: http.ServerResponse, status: number, body: unknown): void {
+    res.writeHead(status, { "content-type": "application/json" });
+    res.end(JSON.stringify(body));
+  }
+
+  function readBody(req: http.IncomingMessage): Promise<string> {
+    return new Promise((resolve) => {
+      let body = "";
+      req.on("data", (chunk: Buffer) => (body += chunk.toString("utf8")));
+      req.on("end", () => resolve(body));
+    });
+  }
+
+  function newAccessToken(): string {
+    const token = crypto.randomBytes(24).toString("base64url");
+    accessTokens.add(token);
+    return token;
+  }
+
+  async function token(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    tokenRequests++;
+    const form = new URLSearchParams(await readBody(req));
+    const grant = form.get("grant_type");
+    if (grant === "urn:ietf:params:oauth:grant-type:jwt-bearer") {
+      const assertion = form.get("assertion") ?? "";
+      const decoded = jwt.decode(assertion) as { iss?: string; scope?: string } | null;
+      const key = decoded?.iss ? serviceAccounts.get(decoded.iss) : undefined;
+      if (!key) return json(res, 400, { error: "invalid_grant" });
+      try {
+        jwt.verify(assertion, key, { algorithms: ["RS256"], audience: `${opts.issuer}/token` });
+      } catch {
+        return json(res, 400, { error: "invalid_grant" });
+      }
+      if (decoded?.scope !== DIRECTORY_SCOPE) return json(res, 400, { error: "invalid_scope" });
+      return json(res, 200, { access_token: newAccessToken(), token_type: "Bearer", expires_in: 3600 });
+    }
+    if (form.get("client_id") !== opts.clientId || form.get("client_secret") !== opts.clientSecret) return json(res, 401, { error: "invalid_client" });
+    if (grant === "refresh_token") {
+      if (!refreshTokens.has(form.get("refresh_token") ?? "")) return json(res, 400, { error: "invalid_grant" });
+      return json(res, 200, { access_token: newAccessToken(), token_type: "Bearer", expires_in: 3600 });
+    }
+    if (grant !== "authorization_code") return json(res, 400, { error: "unsupported_grant_type" });
+    const code = form.get("code") ?? "";
+    const pending = codes.get(code);
+    codes.delete(code);
+    if (!pending) return json(res, 400, { error: "invalid_grant" });
+    const challenge = crypto.createHash("sha256").update(form.get("code_verifier") ?? "").digest("base64url");
+    if (challenge !== pending.codeChallenge) return json(res, 400, { error: "invalid_grant" });
+    const idToken = jwt.sign(
+      { email_verified: true, ...pending.claims, iss: opts.issuer, aud: opts.clientId, nonce: pending.nonce },
+      privateKey,
+      { algorithm: "RS256", keyid: kid, expiresIn: "5m" },
+    );
+    if (pending.refreshToken) refreshTokens.add(pending.refreshToken);
+    return json(res, 200, {
+      id_token: idToken,
+      access_token: newAccessToken(),
+      token_type: "Bearer",
+      expires_in: 3600,
+      ...(pending.refreshToken ? { refresh_token: pending.refreshToken } : {}),
+    });
+  }
+
+  async function directoryUser(req: http.IncomingMessage, res: http.ServerResponse, userKey: string): Promise<void> {
+    directoryRequests[userKey] = (directoryRequests[userKey] ?? 0) + 1;
+    const bearer = (req.headers.authorization ?? "").replace(/^Bearer /, "");
+    if (!accessTokens.has(bearer)) return json(res, 401, { error: { code: 401, message: "Invalid Credentials" } });
+    const entry = directory.get(userKey);
+    if (entry?.delayMs) await new Promise((r) => setTimeout(r, entry.delayMs));
+    if (entry?.httpStatus) return json(res, entry.httpStatus, { error: { code: entry.httpStatus } });
+    if (!entry) return json(res, 404, { error: { code: 404, message: "Resource Not Found: userKey" } });
+    return json(res, 200, { kind: "admin#directory#user", primaryEmail: userKey, suspended: !!entry.suspended, archived: !!entry.archived });
+  }
+
+  async function control(req: http.IncomingMessage, res: http.ServerResponse, path: string): Promise<void> {
+    if (req.method === "POST" && path === "/__fake/codes") {
+      const body = JSON.parse(await readBody(req)) as { claims: FakeIdClaims; nonce: string; codeChallenge: string; refreshToken?: string };
+      const code = crypto.randomBytes(16).toString("base64url");
+      codes.set(code, { claims: body.claims, nonce: body.nonce, codeChallenge: body.codeChallenge, refreshToken: body.refreshToken ?? null });
+      return json(res, 200, { code });
+    }
+    if (req.method === "PUT" && path.startsWith("/__fake/directory/")) {
+      directory.set(decodeURIComponent(path.slice("/__fake/directory/".length)), JSON.parse(await readBody(req)) as DirectoryEntry);
+      return json(res, 200, { ok: true });
+    }
+    if (req.method === "POST" && path === "/__fake/next-identity") {
+      const body = JSON.parse(await readBody(req)) as { claims: FakeIdClaims; refreshToken?: string };
+      nextIdentity = { claims: body.claims, refreshToken: body.refreshToken ?? null };
+      return json(res, 200, { ok: true });
+    }
+    if (req.method === "POST" && path === "/__fake/service-accounts") {
+      const body = JSON.parse(await readBody(req)) as { clientEmail: string; publicKeyPem: string };
+      serviceAccounts.set(body.clientEmail, crypto.createPublicKey(body.publicKeyPem));
+      return json(res, 200, { ok: true });
+    }
+    if (req.method === "POST" && path === "/__fake/revoke") {
+      accessTokens.clear();
+      refreshTokens.clear();
+      return json(res, 200, { ok: true });
+    }
+    if (req.method === "GET" && path === "/__fake/stats") {
+      return json(res, 200, { tokenRequests, directoryRequests });
+    }
+    return json(res, 404, {});
+  }
 
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", opts.issuer);
-    if (req.method === "GET" && url.pathname === "/certs") {
+    const path = url.pathname;
+    const done = (p: Promise<void>) => void p.catch(() => json(res, 500, {}));
+    if (req.method === "GET" && path === "/certs") {
       res.writeHead(200, { "content-type": "application/json", "cache-control": "public, max-age=3600" });
       res.end(JSON.stringify(jwks));
       return;
     }
-    if (req.method === "POST" && url.pathname === "/token") {
-      tokenRequests++;
-      let body = "";
-      req.on("data", (chunk: Buffer) => (body += chunk.toString("utf8")));
-      req.on("end", () => {
-        const form = new URLSearchParams(body);
-        const fail = (error: string) => {
-          res.writeHead(400, { "content-type": "application/json" });
-          res.end(JSON.stringify({ error }));
-        };
-        if (form.get("client_id") !== opts.clientId || form.get("client_secret") !== opts.clientSecret) return fail("invalid_client");
-        if (form.get("grant_type") !== "authorization_code") return fail("unsupported_grant_type");
-        const code = form.get("code") ?? "";
-        const pending = codes.get(code);
-        codes.delete(code);
-        if (!pending) return fail("invalid_grant");
-        const verifier = form.get("code_verifier") ?? "";
-        const challenge = crypto.createHash("sha256").update(verifier).digest("base64url");
-        if (challenge !== pending.codeChallenge) return fail("invalid_grant");
-        const idToken = jwt.sign(
-          { email_verified: true, ...pending.claims, iss: opts.issuer, aud: opts.clientId, nonce: pending.nonce },
-          privateKey,
-          { algorithm: "RS256", keyid: kid, expiresIn: "5m" },
-        );
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ id_token: idToken, access_token: "fake-access-token", token_type: "Bearer", expires_in: 3600 }));
-      });
+    if (req.method === "POST" && path === "/token") return done(token(req, res));
+    if (req.method === "GET" && path === "/authorize") {
+      // Only the backend's registered callback is honoured, as Google would.
+      const back = new URL(url.searchParams.get("redirect_uri") ?? "");
+      const state = url.searchParams.get("state") ?? "";
+      if (!nextIdentity) {
+        back.search = new URLSearchParams({ state, error: "access_denied" }).toString();
+      } else {
+        const code = crypto.randomBytes(16).toString("base64url");
+        codes.set(code, {
+          claims: nextIdentity.claims,
+          nonce: url.searchParams.get("nonce") ?? "",
+          codeChallenge: url.searchParams.get("code_challenge") ?? "",
+          refreshToken: nextIdentity.refreshToken,
+        });
+        nextIdentity = null;
+        back.search = new URLSearchParams({ state, code }).toString();
+      }
+      res.writeHead(302, { location: back.toString() });
+      res.end();
       return;
     }
+    if (req.method === "GET" && path.startsWith("/directory/users/")) return done(directoryUser(req, res, decodeURIComponent(path.slice("/directory/users/".length))));
+    if (path.startsWith("/__fake/")) return done(control(req, res, path));
     res.writeHead(404);
     res.end();
   });
@@ -97,15 +221,34 @@ export async function startFakeGoogleIssuer(opts: {
     server.once("error", reject);
     server.listen(port, "127.0.0.1", () => resolve());
   });
+  return { close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
+}
 
+/** The test files' side: drive the fake over HTTP from any process. */
+export function fakeGoogle(issuer: string) {
+  async function post(path: string, body: unknown, method = "POST"): Promise<unknown> {
+    const res = await fetch(`${issuer}${path}`, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    if (!res.ok) throw new Error(`fake Google ${path}: ${res.status}`);
+    return res.json();
+  }
   return {
-    issuer: opts.issuer,
-    issue(claims, binding) {
-      const code = crypto.randomBytes(16).toString("base64url");
-      codes.set(code, { claims, nonce: binding.nonce, codeChallenge: binding.codeChallenge });
-      return code;
+    async issue(claims: FakeIdClaims, binding: { nonce: string; codeChallenge: string; refreshToken?: string }): Promise<string> {
+      return ((await post("/__fake/codes", { claims, ...binding })) as { code: string }).code;
     },
-    tokenRequests: () => tokenRequests,
-    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    async setNextIdentity(claims: FakeIdClaims, refreshToken?: string): Promise<void> {
+      await post("/__fake/next-identity", { claims, ...(refreshToken ? { refreshToken } : {}) });
+    },
+    async setDirectoryUser(userKey: string, entry: DirectoryEntry): Promise<void> {
+      await post(`/__fake/directory/${encodeURIComponent(userKey)}`, entry, "PUT");
+    },
+    async addServiceAccount(clientEmail: string, publicKeyPem: string): Promise<void> {
+      await post("/__fake/service-accounts", { clientEmail, publicKeyPem });
+    },
+    async revokeAll(): Promise<void> {
+      await post("/__fake/revoke", {});
+    },
+    async stats(): Promise<{ tokenRequests: number; directoryRequests: Record<string, number> }> {
+      return (await (await fetch(`${issuer}/__fake/stats`)).json()) as { tokenRequests: number; directoryRequests: Record<string, number> };
+    },
   };
 }

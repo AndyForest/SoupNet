@@ -58,6 +58,7 @@ describe("readCompleteFragment (SSO-U3)", () => {
     const code = "a".repeat(43);
     expect(readCompleteFragment(`#handoff=${code}`)).toEqual({ handoff: code });
     expect(readCompleteFragment("#error=expired")).toEqual({ error: "expired" });
+    expect(readCompleteFragment("#directory=connected")).toEqual({ directoryConnected: true });
   });
 
   it("ignores anything malformed", () => {
@@ -71,7 +72,7 @@ describe("the outcome copy", () => {
   // The backend's closed list (@soupnet/domain GOOGLE_SIGN_IN_ERRORS). The
   // SPA keeps its own copy of the sentences; the backend's suite checks they
   // match word for word (routes/google-auth.test.ts).
-  const codes = ["expired", "cancelled", "not_authoritative", "different_google_account", "sso_required_workspace", "waitlisted", "organization_full", "account_disabled", "account_suspended", "reauthenticate", "failed"];
+  const codes = ["expired", "cancelled", "not_authoritative", "different_google_account", "sso_required_workspace", "waitlisted", "organization_full", "account_disabled", "directory_inactive", "directory_unconfirmed", "account_suspended", "reauthenticate", "directory_wrong_account", "directory_wrong_domain", "directory_no_refresh_token", "directory_not_admin", "failed"];
 
   it("has a sentence for every code the callback can name", () => {
     for (const code of codes.filter((c) => c !== "failed")) expect(googleSignInMessage(code), code).not.toBe(googleSignInMessage("failed"));

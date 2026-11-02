@@ -315,7 +315,7 @@ export interface DomainEmail {
 }
 
 /** To an organization's active owners and admins when a verified claim starts failing (OD-R2). Names the record, never a token. */
-export function domainFailingEmail(input: { organizationName: string; domain: string; recordName: string; lapsesAt: Date }): DomainEmail {
+export function domainFailingEmail(input: { organizationName: string; domain: string; recordName: string; lapsesAt: Date; directoryConnected?: boolean }): DomainEmail {
   const { organizationName, domain, recordName, lapsesAt } = input;
   const date = lapsesAt.toISOString().slice(0, 10);
   return {
@@ -323,6 +323,7 @@ export function domainFailingEmail(input: { organizationName: string; domain: st
     text: [
       `We couldn't find the TXT record at ${recordName} that verifies ${domain} for ${organizationName} on Soup.net.`,
       `Automatic joining on ${domain} is paused until the record is back.`,
+      ...(input.directoryConnected ? [directoryPausedLine(domain, "until the record is back")] : []),
       `If it's still missing on ${date}, ${domain} becomes unverified and will need to be verified again.`,
       "Nobody's account or books change.",
       "To fix it, put the record back as shown on your organization's Domains page.",
@@ -330,14 +331,24 @@ export function domainFailingEmail(input: { organizationName: string; domain: st
   };
 }
 
+/**
+ * The line both emails add when the organization's Google Workspace directory
+ * is connected on the domain: its offboarding checks need the claim current,
+ * and refusals already recorded hold (stream Offboarding, audit F120).
+ */
+function directoryPausedLine(domain: string, until: string): string {
+  return `Checks against your Google Workspace directory have stopped for ${domain} too, so people suspended or removed there since keep their Soup.net access ${until}; anyone already switched off stays switched off.`;
+}
+
 /** To the same people when the claim lapses (OD-R4). Names no token. */
-export function domainLapsedEmail(input: { organizationName: string; domain: string }): DomainEmail {
+export function domainLapsedEmail(input: { organizationName: string; domain: string; directoryConnected?: boolean }): DomainEmail {
   const { organizationName, domain } = input;
   return {
     subject: `Soup.net: ${domain} is no longer verified for ${organizationName}`,
     text: [
       `${domain} is no longer verified for ${organizationName} on Soup.net, because its TXT record was missing for fourteen days.`,
       "Automatic joining on it has stopped.",
+      ...(input.directoryConnected ? [directoryPausedLine(domain, "until it is verified again")] : []),
       "Nobody's account or books changed.",
       "To verify it again, publish the new record shown on your organization's Domains page.",
     ].join(" "),
