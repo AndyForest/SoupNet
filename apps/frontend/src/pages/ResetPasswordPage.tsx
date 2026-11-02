@@ -3,7 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { useMutation } from "@tanstack/react-query";
 import { API_BASE, clearToken } from "../auth.js";
 import { readResetAnswer } from "../lib/reset-password.js";
-import type { StillRunning } from "../lib/reset-password.js";
+import type { ResetAnswer, StillRunning } from "../lib/reset-password.js";
 
 function runningList({ apiKeys, connectedApps }: StillRunning): string {
   const parts: string[] = [];
@@ -19,21 +19,20 @@ export function ResetPasswordPage() {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState<StillRunning | null>(null);
+  const [done, setDone] = useState<ResetAnswer | null>(null);
 
   const mutation = useMutation({
     mutationFn: async () => {
-      const { stillRunning } = await readResetAnswer(fetch(`${API_BASE}/auth/reset-password`, {
+      return readResetAnswer(fetch(`${API_BASE}/auth/reset-password`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token, newPassword: password }),
       }));
-      return stillRunning;
     },
-    onSuccess: (running) => {
+    onSuccess: (answer) => {
       // The reset ended every session, this browser's included.
       clearToken();
-      setDone(running);
+      setDone(answer);
     },
     onError: (err) => {
       setError(err instanceof Error ? err.message : "Reset failed");
@@ -41,7 +40,7 @@ export function ResetPasswordPage() {
   });
 
   if (done) {
-    const running = runningList(done);
+    const running = runningList(done.stillRunning);
     return (
       <div style={{
         display: "flex",
@@ -64,6 +63,11 @@ export function ResetPasswordPage() {
             Every session on this account is signed out.
             {running && ` Your ${running} still work, because a reset doesn't end them. If you don't recognize any of them, sign in and revoke them.`}
           </p>
+          {done.googleSignInRemoved && (
+            <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)", lineHeight: 1.5 }}>
+              The Google account that signed up with this address has been removed, because it never showed it owned the address. From now on, sign in with this password, or with a Google Workspace account on this address.
+            </p>
+          )}
           <Link to="/auth/login" search={running ? { next: "/app/keys" } : {}} style={{ textDecoration: "none" }}>
             <button style={{ width: "100%", justifyContent: "center" }}>
               {running ? "Sign in and review" : "Sign in"}

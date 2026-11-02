@@ -1170,7 +1170,7 @@ auth.post("/reset-password", resetPasswordRateLimit, async (c) => {
 
     // A reset proves the mailbox as a verification does, and nothing here ties
     // an unverified Google sign-up to it.
-    await settleGoogleIdentityOnVerify(tx, updated.id, null, true);
+    const googleSignIn = await settleGoogleIdentityOnVerify(tx, updated.id, null, true);
 
     // THE RESET'S VERIFY WRITE. It only takes effect on an unverified account,
     // so a reset on a verified one changes nothing here. Anything that has to
@@ -1182,7 +1182,7 @@ auth.post("/reset-password", resetPasswordRateLimit, async (c) => {
     `);
 
     const stillRunning = await credentialsStillRunning(tx, updated.id);
-    return { ...updated, newlyVerified: (verified as unknown as unknown[]).length > 0, stillRunning };
+    return { ...updated, newlyVerified: (verified as unknown as unknown[]).length > 0, stillRunning, googleSignInRemoved: googleSignIn === "removed" };
   });
 
   if (!outcome) {
@@ -1203,7 +1203,15 @@ auth.post("/reset-password", resetPasswordRateLimit, async (c) => {
   // A verification can take the last slots, as on POST /auth/verify.
   if (outcome.newlyVerified && !outcome.waitlisted) void logSignupCapState(db, { waitlisted: false });
 
-  return c.json({ ok: true, data: { reset: true, email: outcome.email, stillRunning: outcome.stillRunning } });
+  return c.json({
+    ok: true,
+    data: {
+      reset: true,
+      email: outcome.email,
+      stillRunning: outcome.stillRunning,
+      ...(outcome.googleSignInRemoved ? { googleSignInRemoved: true } : {}),
+    },
+  });
 });
 
 export { auth as authRoutes };

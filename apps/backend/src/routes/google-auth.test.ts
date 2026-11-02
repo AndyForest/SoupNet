@@ -614,11 +614,18 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
     const forgot = (await (await call(null, "POST", "/auth/forgot-password", { email })).json()) as { data: { resetToken?: string } };
     const reset = await call(null, "POST", "/auth/reset-password", { token: forgot.data.resetToken ?? "", newPassword: "a-brand-new-password" });
     expect(reset.status).toBe(200);
+    expect(((await reset.json()) as { data: Json }).data["googleSignInRemoved"]).toBe(true); // F165
 
     expect((await userRow(cy.userId)).email_verified_at).not.toBeNull();
     expect(await identitiesOf(cy.userId)).toEqual([]);
     expect((await call(cy.token, "GET", "/auth/me")).status).toBe(401);
     expect((await passwordLogin(email, "a-brand-new-password")).status).toBe(200);
+
+    // A reset with no Google sign-up to remove doesn't mention one.
+    const again = (await (await call(null, "POST", "/auth/forgot-password", { email })).json()) as { data: { resetToken?: string } };
+    const second = await call(null, "POST", "/auth/reset-password", { token: again.data.resetToken ?? "", newPassword: "another-brand-new-password" });
+    expect(second.status).toBe(200);
+    expect(((await second.json()) as { data: Json }).data["googleSignInRemoved"]).toBeUndefined();
   });
 
   it("GSI-SSO-02 / SSO-R2, F144: neither a sign-up proof nor a password at the link gets past require_sso", async () => {

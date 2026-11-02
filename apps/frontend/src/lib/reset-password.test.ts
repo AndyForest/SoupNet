@@ -18,9 +18,9 @@ describe("readResetAnswer (F163)", () => {
     await expect(readResetAnswer(answering({ ok: false, error: "Invalid or expired reset token" }))).rejects.toThrow("Invalid or expired reset token");
   });
 
-  it("reads what's still running", async () => {
+  it("reads what's still running, and whether a Google account was removed (F165)", async () => {
     const stillRunning = { apiKeys: 1, connectedApps: 2 };
-    await expect(readResetAnswer(answering({ ok: true, data: { stillRunning } }))).resolves.toEqual({ stillRunning });
-    await expect(readResetAnswer(answering({ ok: true, data: {} }))).resolves.toEqual({ stillRunning: { apiKeys: 0, connectedApps: 0 } });
+    await expect(readResetAnswer(answering({ ok: true, data: { stillRunning, googleSignInRemoved: true } }))).resolves.toEqual({ stillRunning, googleSignInRemoved: true });
+    await expect(readResetAnswer(answering({ ok: true, data: {} }))).resolves.toEqual({ stillRunning: { apiKeys: 0, connectedApps: 0 }, googleSignInRemoved: false });
   });
 });
