@@ -72,7 +72,7 @@ export const ADMIN_USER_COLUMNS: readonly AdminUserColumn[] = [
     label: "Recipes",
     anchor: "user",
     audience: "everyone",
-    memberDescription: "how many published recipes you have in the organization's recipe books (a number, never the recipes)",
+    memberDescription: "how many published recipes you have in the organization's recipe books (the console shows a number, not the recipes)",
   },
   {
     key: "activeKeyCount",
