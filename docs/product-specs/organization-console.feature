@@ -120,6 +120,9 @@ Feature: Organization accounts: the org admin console, sharing policy, and what 
       When Max opens "What your organization's admins can see"
       Then it says admins can't see his private books' names or the recipes in them, unless he shares a book with them
       And it says org-wide books, including the default book, are open to everyone in the organization, admins included
+      And it says that covers a recipe's author, book and key name, and an agent's feedback word for word
+      And it says who belongs to an org-wide book is visible, with each person's email address, role and join date
+      And it says a key's secret value, and the words an agent searches with, stay hidden
       And it says taking over his account is the one way into his private books
       And it lists the latest time he signed in or a key was used under what admins see, and his sign-in history under what they don't
 

@@ -5,22 +5,25 @@ import { describeOrgEvent } from "./org-activity-copy.js";
 describe("MEMBER_PAGE_COPY, the promise to employees", () => {
   it("is exactly this text: changing it is a decision about what employees are told", () => {
     expect(MEMBER_PAGE_COPY).toEqual({
-      canSeeOrgWide: "The names of the organization's org-wide recipe books and how many people belong to each. Like everyone in the organization, they can also read the published recipes in those books.",
-      cannotSee: [
-        "Your private recipe books' names, or the recipes in them, unless you share a book with them.",
-        "What you and your agents search for.",
-        "Your API keys themselves, their names, or which books they reach.",
-        "Your sign-in history or how you sign in. They see only the latest time you signed in or a key was used, as listed above.",
-      ],
-      orgWide: "An org-wide recipe book, including the organization's default book, is open to everyone in the organization, admins included. A recipe you or your agent checks into one is logged there, and anyone in the organization can read it and see that it's yours once it's published. To keep a recipe private, check it into a private book.",
-      oneWayIn: "Your organization can get to your private books by taking over this account. Because it controls your work email and, if you sign in with Google, your company Google account, it can reset your sign-in and sign in as you. Soup.net doesn't let admins browse private books, so unless you share a book with them, that is the only path to it, and it shows up below as a sign-in you didn't make.",
-    });
+    canSeeOrgWide: "The names of the organization's org-wide recipe books and who belongs to each, with each person's account id, email address, role and the date they joined. Anyone in one of those books can see that list too. Like everyone in the organization, admins can also read the published recipes in those books.",
+    cannotSee: [
+      "Your private recipe books' names, or the recipes in them, unless you share a book with them.",
+      "The words you or your agents search with, or the task an agent declares when it starts. Feedback is different: see the next section.",
+      "The secret value of any of your API keys, or a list of your keys and which books each one reaches. They see how many are live, and a key's name shows with what it wrote in an org-wide book: see the next section.",
+      "Your sign-in history or how you sign in. They see only the latest time you signed in or a key was used, as listed above.",
+    ],
+    orgWide: "An org-wide recipe book, including the organization's default book, is open to everyone in the organization, admins included. Once a recipe in one is published, they can all read its text, that it's yours, its book, and the name of the API key that wrote it. They can also read, word for word, any feedback your agent leaves on a recipe in one: the story it gave, its note, its session id and agent id, and the key's name. So a key's name or an agent's story can show what you were working on, even if you found that recipe while working on something private. To keep a recipe private, check it into a private book.",
+    oneWayIn: "Your organization can get to your private books by taking over this account. Because it controls your work email and, if you sign in with Google, your company Google account, it can reset your sign-in and sign in as you. Soup.net doesn't let admins browse private books, so unless you share a book with them, that is the only path to it, and it shows up below as a sign-in you didn't make.",
+  });
   });
 
-  it("doesn't promise the text of every recipe, or deny the last-active time it lists", () => {
+  it("doesn't repeat a promise the org-wide books break", () => {
     const text = JSON.stringify(MEMBER_PAGE_COPY);
     expect(text).not.toContain("The text of your recipes");
     expect(text).not.toContain("When and how you sign in");
+    expect(text).not.toContain("What you and your agents search for");
+    expect(text).not.toContain("Your API keys themselves, their names");
+    expect(text).not.toContain("how many people belong to each");
   });
 });
 

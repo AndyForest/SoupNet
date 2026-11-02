@@ -79,7 +79,7 @@ export const ADMIN_USER_COLUMNS: readonly AdminUserColumn[] = [
     label: "Live keys",
     anchor: "user",
     audience: "everyone",
-    memberDescription: "how many of your API keys are live (a number, never the keys, their names or what they can reach)",
+    memberDescription: "how many of your API keys are live (the console shows a number, not the keys, their names or what they can reach)",
   },
 
   { key: "orgRole", label: "Role", anchor: "membership", audience: "everyone", memberDescription: "your role in the organization" },
