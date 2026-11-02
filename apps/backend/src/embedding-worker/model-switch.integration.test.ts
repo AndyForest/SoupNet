@@ -894,7 +894,10 @@ describe.skipIf(!HAS_PG)("changing the embedding model", () => {
 
     // A row GA refuses blocks the prune, until the operator accepts losing it.
     const [one, two] = await sql<Array<{ id: string }>>`
-      SELECT id FROM claimnet.embedding_vectors WHERE model_id = ${GA} AND task_type = 'SEMANTIC_SIMILARITY' LIMIT 2
+      SELECT g.id FROM claimnet.embedding_vectors g
+      JOIN claimnet.embedding_vectors p ON p.embedding_chunk_id = g.embedding_chunk_id AND p.task_type = g.task_type
+      WHERE g.model_id = ${GA} AND p.model_id = ${PREVIEW} AND p.status = 'complete' AND g.task_type = 'SEMANTIC_SIMILARITY'
+      LIMIT 2
     `;
     await sql`UPDATE claimnet.embedding_vectors SET status = 'failed' WHERE id = ${one!.id}`;
     const refused = operatorCli("prune", "--model", PREVIEW, "--keep", GA, "--apply");
