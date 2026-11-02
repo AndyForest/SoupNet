@@ -114,6 +114,13 @@ describe("parseServiceAccountKey (OB-K3)", () => {
     expect(parseServiceAccountKey(good)).toMatchObject({ ok: true });
   });
 
+  it("the directory emails link to the console when given its address", () => {
+    const url = "https://soup.example/org#directory";
+    expect(directoryChangedEmail("Acme", "disconnected", "ada@acme.example", 0, url).text).toContain(url);
+    expect(directoryDeletionsEmail("Acme", 3, url).text).toContain(url);
+    expect(directoryWarningEmail("Acme", new Date("2026-11-02T00:00:00Z"), "max@acme.example", url).text).toContain(url);
+  });
+
   it("takes only a service account's address as client_email", () => {
     for (const email of ["sa@p.iam.gserviceaccount.com", "123-compute@developer.gserviceaccount.com", "app@p.appspot.gserviceaccount.com"]) {
       expect(parseServiceAccountKey({ ...good, client_email: email }), email).toMatchObject({ ok: true });

@@ -172,12 +172,12 @@ export const DIRECTORY_DELETION_BURST = 3;
  * Google's shape for everyone but the admin, so they are refused at once and the
  * people who can tell the two apart hear about it (F184).
  */
-export function directoryDeletionsEmail(organizationName: string, count: number): { subject: string; text: string } {
+export function directoryDeletionsEmail(organizationName: string, count: number, consoleUrl?: string): { subject: string; text: string } {
   return {
     subject: `${count} ${organizationName} members were just removed by your Google Workspace directory`,
     text:
       `In the last hour, your Google Workspace directory told Soup.net that ${count} of ${organizationName}'s members no longer exist, so they can't use Soup.net now. More may follow. ` +
-      `If people have just left, there's nothing to do. If not, something may be answering for Google wrongly: check your organization's members in Soup.net, and contact Soup.net support if the list looks wrong.`,
+      `If people have just left, there's nothing to do. If not, something may be answering for Google wrongly: check your organization's members in Soup.net${consoleUrl ? ` (${consoleUrl})` : ""}, and contact Soup.net support if the list looks wrong.`,
   };
 }
 
@@ -197,9 +197,10 @@ export function directoryChangedEmail(
   change: "disconnected" | "replaced",
   by: string,
   liftedRefusals: number,
+  consoleUrl?: string,
 ): { subject: string; text: string } {
   const lifted = liftedRefusals === 0 ? "" : ` ${peopleCount(liftedRefusals)} the directory had switched off can use Soup.net again${change === "replaced" ? " until their next check" : ""}.`;
-  const unexpected = "If you didn't expect this, an owner or admin can reconnect the directory from your organization's console, and your organization's activity shows what happened.";
+  const unexpected = `If you didn't expect this, an owner or admin can reconnect the directory from your organization's console${consoleUrl ? ` (${consoleUrl})` : ""}, and your organization's activity shows what happened.`;
   if (change === "disconnected") {
     return {
       subject: `${organizationName}'s Google Workspace directory was disconnected from Soup.net`,
@@ -223,7 +224,7 @@ export function directoryChangedEmail(
  * stale a day after their own last check, so the hour named is the latest
  * anyone keeps access, not the first (verification O1, O2).
  */
-export function directoryWarningEmail(organizationName: string, lastSuccessAt: Date, memberEmail: string): { subject: string; text: string } {
+export function directoryWarningEmail(organizationName: string, lastSuccessAt: Date, memberEmail: string, consoleUrl?: string): { subject: string; text: string } {
   const utc = (d: Date) => d.toISOString().replace("T", " ").slice(0, 16) + " UTC";
   const everyoneBy = new Date(lastSuccessAt.getTime() + DIRECTORY_STALE_HOURS * 3600_000);
   return {
@@ -232,7 +233,7 @@ export function directoryWarningEmail(organizationName: string, lastSuccessAt: D
       `Soup.net just failed to check ${memberEmail} against your Google Workspace directory, and its last successful check of anyone was at ${utc(lastSuccessAt)}. ` +
       `A member whose status hasn't been confirmed for ${DIRECTORY_STALE_HOURS} hours is signed out of Soup.net, and their agents' keys stop working until a check succeeds. ` +
       `Members who haven't used Soup.net recently may be signed out already, and unless a check succeeds, everyone on your domain will be by ${utc(everyoneBy)}. ` +
-      `To fix it, an owner or admin can reconnect the directory from your organization's console in Soup.net (or switch to a service account). ` +
+      `To fix it, an owner or admin can reconnect the directory from your organization's console in Soup.net${consoleUrl ? ` (${consoleUrl})` : ""} (or switch to a service account). ` +
       `While the directory can't answer, an owner or admin can disconnect it ${DIRECTORY_HOLD_HOURS} hours after this email, which stops the checks and lets back in anyone it had switched off, so if you aren't expecting that, reconnect it first. ` +
       `If nobody in your organization can sign in any more, contact Soup.net support.`,
   };

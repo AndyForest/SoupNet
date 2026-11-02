@@ -58,6 +58,11 @@ import type { GoogleOidcConfig, KeySource, FetchLike } from "./google-oidc.servi
 
 type SqlExecutor = Pick<PostgresJsDatabase, "execute">;
 
+/** Where the directory section is, for the emails that send someone there. */
+function directoryConsoleUrl(): string {
+  return `${process.env["FRONTEND_URL"] ?? "http://localhost:5273"}/org#directory`;
+}
+
 /**
  * At startup: install the directory check when both the key and Google are
  * configured. A set but malformed DIRECTORY_CREDENTIALS_KEY throws, stopping
@@ -104,7 +109,7 @@ async function warnOrganization(organizationId: string, memberEmail: string): Pr
   `)) as unknown as Array<{ since: string }>;
   if (!rows[0]) return;
   const managers = await directoryManagersOf(db, organizationId);
-  const mail = directoryWarningEmail(managers.name || "your organization", new Date(rows[0].since), memberEmail);
+  const mail = directoryWarningEmail(managers.name || "your organization", new Date(rows[0].since), memberEmail, directoryConsoleUrl());
   for (const email of managers.emails) {
     await sendOrganizationDirectoryEmail(email, mail).catch(() => undefined);
   }
@@ -114,7 +119,7 @@ async function warnOrganization(organizationId: string, memberEmail: string): Pr
 async function noticeDeletions(organizationId: string, count: number): Promise<void> {
   const { getDb } = await import("../db");
   const managers = await directoryManagersOf(getDb(), organizationId);
-  const mail = directoryDeletionsEmail(managers.name || "your organization", count);
+  const mail = directoryDeletionsEmail(managers.name || "your organization", count, directoryConsoleUrl());
   for (const email of managers.emails) {
     await sendOrganizationDirectoryEmail(email, mail).catch(() => undefined);
   }
@@ -129,7 +134,7 @@ function tellOtherManagers(db: PostgresJsDatabase, organizationId: string, chang
     const managers = await directoryManagersOf(db, organizationId, actor.userId);
     const rows = (await db.execute(sql`SELECT email FROM claimnet.users WHERE id = ${actor.userId}::uuid`)) as unknown as Array<{ email: string }>;
     const by = actor.operator ? "The Soup.net site operator" : (rows[0]?.email ?? "Someone");
-    const mail = directoryChangedEmail(managers.name || "your organization", change, by, liftedBy(cleared));
+    const mail = directoryChangedEmail(managers.name || "your organization", change, by, liftedBy(cleared), directoryConsoleUrl());
     for (const email of managers.emails) await sendOrganizationDirectoryEmail(email, mail).catch(() => undefined);
   })().catch(() => undefined);
 }
