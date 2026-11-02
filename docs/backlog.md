@@ -628,6 +628,8 @@ Observed once, 2026-10-25, on `drafts/6a-intent-link` rebased onto `f6b85f4` (lo
 
 **Recurred 2026-10-26** on `fix/audit-log-retention` (local gate, `TESTCI_PGPORT=5644`): three full runs of the same tree each failed exactly one test, a different one each time, and each passes alone on a fresh stack. All three assert an order taken from database timestamps written close together:
 
+**Connection limit, 2026-11-01** on `org/domains` (local gate, `TESTCI_PGPORT=5474`, 32 cores): two uncapped runs of nearly the same tree each lost a different test to Postgres's `sorry, too many clients already`. With `VITEST_MAX_WORKERS=6` that error went away, though the worker crash above ended that run with 7 tests not run. The gate's default worker count may need a cap on machines with many cores.
+
 - `authz/authz.test.ts:166` "listMembers returns every member with email and role, in join order" (the case above);
 - `routes/report-read-paths.test.ts:260` S9-I4, the intent lineage's deposits in deposit order;
 - `routes/flat-list.test.ts:348` S8b-C2, `changed-after:` latest change first, with changes 20 ms apart (`sleep(20)`).
