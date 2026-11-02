@@ -571,6 +571,9 @@ groupsRouter.delete("/:id/members/:userId", async (c) => {
   if (outcome === "last_owner") {
     return c.json({ ok: false, error: "Cannot remove the last owner of a recipe book" }, 400);
   }
+  if (outcome === "org_owner") {
+    return c.json({ ok: false, error: "Organization owners hold this recipe book by being owners. Change their organization role first." }, 400);
+  }
 
   // Deleting the membership row is ALL that removal has to do: the removed
   // user's existing API keys and OAuth connections lose the book on their next

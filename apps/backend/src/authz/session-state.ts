@@ -84,17 +84,17 @@ const CUT_OFF_MARGIN_SECONDS = 5;
 
 /**
  * Refuse every session issued before now (recipe a8003678). For SSO's account
- * linking, which discards an unverified password: a session the
- * pre-registrant already holds dies with it. Keys are untouched; an
- * unverified account has none. A Google handoff code already issued for the
- * account goes too, since it would otherwise produce a session past the
- * cut-off (F143, F149).
+ * linking, which discards an unverified password, and for a password reset
+ * (recipe 450a107b): a session the pre-registrant already holds dies with it.
+ * Keys are untouched; an unverified account has none. A Google handoff code
+ * already issued for the account goes too, since it would otherwise produce a
+ * session past the cut-off (F143, F149).
  *
  * The cut-off sits a few seconds ahead: a session someone was minting as this
  * ran would otherwise survive for its seven days. `iat` can't tell the two
  * parts of this second apart (F145), and the task minting it may have a clock
  * ahead of this one (F147). A sign-in that follows the cut-off dates its session
- * no earlier than it, so it isn't refused: `exchangeHandoff` and `loginUser`.
+ * no earlier than it, so it isn't refused: `exchangeHandoff` and `signInProved`.
  * Each reads the cut-off with what it checks, so one that won the race against
  * this doesn't see it.
  *
@@ -104,18 +104,39 @@ const CUT_OFF_MARGIN_SECONDS = 5;
  * 2f40fb9f). With NOW(), a session signed a moment after the cut-off could
  * read as issued before it and be refused.
  */
-export async function invalidateSessions(db: PostgresJsDatabase, userId: string): Promise<void> {
+export async function invalidateSessions(db: Pick<PostgresJsDatabase, "execute">, userId: string): Promise<void> {
   const cutOffSeconds = Math.floor(Date.now() / 1000) + CUT_OFF_MARGIN_SECONDS;
-  // Two statements, in this order: the first takes the row lock `issueHandoff`
-  // waits on, so the second's fresh snapshot finds any code it just committed.
-  // The transaction holds that lock across both (a savepoint, inside a caller's).
-  await db.transaction(async (tx) => {
-    await tx.execute(sql`
-      UPDATE claimnet.users SET sessions_valid_after = to_timestamp(${cutOffSeconds}) WHERE id = ${userId}::uuid
-    `);
-    await tx.execute(sql`
-      UPDATE claimnet.sso_login_requests SET handoff_consumed_at = now()
-      WHERE user_id = ${userId}::uuid AND handoff_hash IS NOT NULL AND handoff_consumed_at IS NULL
-    `);
-  });
+  // In this order, on the caller's transaction: the first statement takes the
+  // row lock `issueHandoff` waits on, and holds it, so the second's fresh
+  // snapshot finds any code it just committed.
+  await db.execute(sql`
+    UPDATE claimnet.users SET sessions_valid_after = to_timestamp(${cutOffSeconds}) WHERE id = ${userId}::uuid
+  `);
+  await db.execute(sql`
+    UPDATE claimnet.sso_login_requests SET handoff_consumed_at = now()
+    WHERE user_id = ${userId}::uuid AND handoff_hash IS NOT NULL AND handoff_consumed_at IS NULL
+  `);
+  // A pending authorization code is a session's consent not yet redeemed, and
+  // could otherwise become a connected app after the reset counted them (F160).
+  await db.execute(sql`DELETE FROM claimnet.oauth_authorization_codes WHERE user_id = ${userId}::uuid`);
+}
+
+/**
+ * What outlives a session cut-off. Keys and connected apps survive a reset,
+ * because a person who only forgot a password shouldn't lose them and the two
+ * cases can't be told apart. So whoever just proved the mailbox is told what's
+ * running, to review and end (F151). A connected app counts while its refresh
+ * token can still renew it.
+ */
+export async function credentialsStillRunning(
+  db: Pick<PostgresJsDatabase, "execute">,
+  userId: string,
+): Promise<{ apiKeys: number; connectedApps: number }> {
+  const rows = await db.execute(sql`
+    SELECT
+      count(*) FILTER (WHERE key_type <> 'oauth' AND expires_at > now())::int AS "apiKeys",
+      count(*) FILTER (WHERE key_type = 'oauth' AND (expires_at > now() OR refresh_token_expires_at > now()))::int AS "connectedApps"
+    FROM claimnet.api_keys WHERE user_id = ${userId}::uuid
+  `);
+  return (rows as unknown as Array<{ apiKeys: number; connectedApps: number }>)[0] ?? { apiKeys: 0, connectedApps: 0 };
 }

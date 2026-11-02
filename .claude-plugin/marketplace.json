@@ -1,0 +1,14 @@
+{
+  "name": "soupnet",
+  "owner": {
+    "name": "STEAMLabs",
+    "email": "admin@soup.net"
+  },
+  "plugins": [
+    {
+      "name": "soupnet",
+      "source": "./plugins/soupnet",
+      "description": "A shared record of your taste and judgment for your AI agents: the Soup.net connection plus its skills."
+    }
+  ]
+}

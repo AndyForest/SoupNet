@@ -304,25 +304,25 @@ export async function resolveAccount(
  * sessions go, leaving the owner free to sign in with Google or set a
  * password.
  *
- * Removing takes the person's explicit `confirmed`: the page asks first, so a
- * mail scanner running the page's script takes nothing away, and someone who
- * signed up on another device can open the link there instead (F146).
+ * Removing takes `confirmed`: the page asks first, so a mail scanner running
+ * the page's script takes nothing away, and someone who signed up on another
+ * device can open the link there instead (F146). A sign-up proof, a correct
+ * password or a password reset also confirm, since none of them is a scanner,
+ * and none is that session either.
  *
  * Run inside the verification's transaction, before it sets
  * `email_verified_at`: a repeat click finds a verified account and removes
  * nothing. On `confirm`, the caller verifies nothing yet.
  */
-export async function settleGoogleIdentityOnVerify(tx: Tx, token: string, session: JwtPayload | null, confirmed: boolean): Promise<"proceed" | "confirm" | "removed"> {
+export async function settleGoogleIdentityOnVerify(tx: Tx, userId: string, session: JwtPayload | null, confirmed: boolean): Promise<"proceed" | "confirm" | "removed"> {
   const rows = await tx.execute(sql`
     SELECT u.id FROM claimnet.users u
-    WHERE u.email_verification_token = ${token}
-      AND u.email_verification_token_created_at > now() - interval '24 hours'
+    WHERE u.id = ${userId}::uuid
       AND u.email_verified_at IS NULL
       AND EXISTS (SELECT 1 FROM claimnet.user_identities i WHERE i.user_id = u.id AND i.provider = 'google')
     FOR UPDATE OF u
   `);
-  const userId = (rows as unknown as Array<{ id: string }>)[0]?.id;
-  if (!userId) return "proceed";
+  if ((rows as unknown as unknown[]).length === 0) return "proceed";
 
   const db = tx as unknown as PostgresJsDatabase;
   if (session?.sub === userId && session.idp === "google-consumer") {

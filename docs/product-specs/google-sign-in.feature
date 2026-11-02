@@ -129,6 +129,25 @@ Feature: Sign in with Google, account linking, and require_sso
       Then nothing is verified or removed until the person confirms
       And Cy can open the link in the browser that signed up and keep Google sign-in
 
+    @GSI-LINK-09
+    Scenario: Proving who registered settles the Google account without asking
+      Given an unverified account with a password also holds an unproven Google account
+      When the person opens the link with the sign-up proof or the correct password
+      Then the address is verified, that Google account is unlinked and the person is signed in
+      And confirming without the proof or password verifies nothing
+
+    @GSI-LINK-10
+    Scenario: A password reset ends an unproven Google sign-up
+      Given someone signed up with a consumer Google account on Vic's address
+      When Vic sets a new password through the forgotten-password email
+      Then the address is verified, that Google account is unlinked and its session has ended
+
+    @GSI-LINK-11
+    Scenario: Signing in at the link obeys the organization's SSO policy
+      Given Max's organization requires SSO and Max's address isn't verified
+      When Max opens the link with the sign-up proof or the correct password
+      Then the address is verified, no session is issued and Max is told to sign in with Google
+
     @GSI-LINK-04
     Scenario: A verified account linked to another Google account isn't relinked by email
       Given Max's account is linked to one Google account
