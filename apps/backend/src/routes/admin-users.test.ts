@@ -117,7 +117,9 @@ describe.skipIf(!BASE || !DEV_EMAIL || !DEV_PASSWORD)("/admin/users + /admin/sta
 
   it("GET /admin/users applies email search filter", async () => {
     // Admin should match themselves via email substring
-    const needle = DEV_EMAIL.split("@")[0]!.slice(0, 4);
+    // Most of the address: a short needle like "ci" matches enough other test
+    // accounts to push this one off the first page.
+    const needle = DEV_EMAIL.slice(0, -1);
     const res = await fetch(`${BASE}/admin/users?q=${encodeURIComponent(needle)}`, {
       headers: { Authorization: `Bearer ${adminToken}` },
     });

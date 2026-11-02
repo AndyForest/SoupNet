@@ -747,17 +747,47 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
 
   /**
    * A real deadlock on the migration's first join, in an account deletion's
-   * order (F170): the default book's row, then the organization's. The join
-   * holds the organization and waits on the book, so it waited first and
-   * Postgres aborts it. Everything after it runs once this transaction commits.
+   * order (F170): the default book's row, then the organization's. Postgres
+   * aborts whichever backend's check first finds the cycle, and each backend
+   * checks once per wait. This transaction's check is pushed out of the test,
+   * and the join is held at an earlier lock (its own personal book) until this
+   * transaction is waiting, so the join's next wait closes the cycle and its
+   * check finds it. Everything after it runs once this
+   * transaction commits.
    */
-  async function deadlockingFirstJoin<T>(orgId: string, defaultBookId: string, start: () => Promise<T>): Promise<T> {
+  async function deadlockingFirstJoin<T>(orgId: string, defaultBookId: string, firstUserId: string, start: () => Promise<T>): Promise<T> {
+    const home = await authz.homeOrganizationOf(getDb(), firstUserId);
+    const personalBook = ((await getDb().execute(sql`
+      INSERT INTO claimnet.groups (name, slug, organization_id) VALUES ('Personal', ${`personal-${run}-${++n}`}, ${home}::uuid) RETURNING id
+    `)) as unknown as Array<{ id: string }>)[0]!.id;
+
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => { release = resolve; });
+    let holding!: (pid: number) => void;
+    const holderPid = new Promise<number>((resolve) => { holding = resolve; });
+    const holder = getDb().transaction(async (tx) => {
+      await tx.execute(sql`SELECT 1 FROM claimnet.groups WHERE id = ${personalBook}::uuid FOR UPDATE`);
+      holding(await backendPid(tx as never));
+      await released;
+    });
+    const pid = await holderPid;
+
     let running!: Promise<T>;
     await getDb().transaction(async (tx) => {
+      await tx.execute(sql`SET LOCAL deadlock_timeout = '60s'`);
       await tx.execute(sql`SELECT 1 FROM claimnet.groups WHERE id = ${defaultBookId}::uuid FOR UPDATE`);
       running = start();
-      await waitForBlocked(await backendPid(tx as never));
-      await tx.execute(sql`SELECT 1 FROM claimnet.organizations WHERE id = ${orgId}::uuid FOR KEY SHARE`);
+      await waitForBlocked(pid);
+      const self = await backendPid(tx as never);
+      const asking = tx.execute(sql`SELECT 1 FROM claimnet.organizations WHERE id = ${orgId}::uuid FOR KEY SHARE`);
+      for (let i = 0; i < 300; i++) {
+        const rows = (await getDb().execute(sql`SELECT wait_event_type AS w FROM pg_stat_activity WHERE pid = ${self}::int`)) as unknown as Array<{ w: string | null }>;
+        if (rows[0]?.w === "Lock") break;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      release();
+      await holder;
+      await asking;
     });
     return running;
   }
@@ -779,7 +809,7 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
     const people = [];
     for (let i = 0; i < 3; i++) people.push(await actor(`p${i}`, `test-orgdom-p${i}-${run}-${++n}@${domain}`));
 
-    const res = await deadlockingFirstJoin(orgId, defaultBookId, () => setAutoJoin(olive, orgId, claimId, true));
+    const res = await deadlockingFirstJoin(orgId, defaultBookId, people[0]!.userId, () => setAutoJoin(olive, orgId, claimId, true));
     expect(res.status).toBe(200);
     const data = ((await res.json()) as { data: Json }).data;
     expect(data["migration"]).toEqual({ joined: 2, awaitingSeat: 0, failed: 1 });
