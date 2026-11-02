@@ -11,10 +11,10 @@
     "lint": "eslint -c ../../eslint.config.js src/"
   },
   "dependencies": {
+    "@hono/node-server": "^2.0.5",
     "@soupnet/contracts": "*",
     "@soupnet/db": "*",
     "@soupnet/domain": "*",
-    "@hono/node-server": "^2.0.5",
     "bcryptjs": "^2.4.3",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.0.0",
@@ -22,7 +22,7 @@
     "nodemailer": "^9.0.1",
     "pg-boss": "^10.0.0",
     "postgres": "^3.4.0",
-    "sharp": "^0.35.2",
+    "sharp": "0.35.5",
     "zod": "^3.23.0"
   },
   "devDependencies": {
@@ -34,6 +34,6 @@
     "tsx": "^4.22.4"
   },
   "optionalDependencies": {
-    "@huggingface/transformers": "^3.0.0"
+    "@huggingface/transformers": "4.3.1"
   }
 }

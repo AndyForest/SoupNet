@@ -35,7 +35,11 @@ COPY apps/mcp-server/package.json apps/mcp-server/
 # gemini/stub) and tsup marks the package external, so the build never needs it.
 # EMBEDDINGS_LOCAL=true keeps the subtree for the local-capable variant.
 ARG EMBEDDINGS_LOCAL=false
-RUN npm ci --workspace=apps/backend --workspace=apps/mcp-server --include-workspace-root
+# ONNXRUNTIME_NODE_INSTALL=skip: onnxruntime-node's postinstall would fetch CUDA
+# execution-provider libraries from api.nuget.org (unverified) on linux/x64.
+# The CPU runtime the local provider loads ships in the npm package; the root
+# .npmrc sets the same skip for installs outside Docker.
+RUN ONNXRUNTIME_NODE_INSTALL=skip npm ci --workspace=apps/backend --workspace=apps/mcp-server --include-workspace-root
 RUN if [ "$EMBEDDINGS_LOCAL" != "true" ]; then \
       rm -rf node_modules/@huggingface node_modules/onnxruntime-node \
              node_modules/onnxruntime-web node_modules/onnxruntime-common; \
