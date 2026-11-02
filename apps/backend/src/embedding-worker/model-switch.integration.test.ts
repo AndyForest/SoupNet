@@ -56,8 +56,13 @@ interface Backend {
   log: () => string;
 }
 
+/**
+ * A port for a child backend, below Linux's ephemeral range (32768 up), where any
+ * outgoing connection on the machine may already hold it. startBackend retries
+ * a clash that happens anyway.
+ */
 function freePort(): number {
-  return 20000 + Math.floor(Math.random() * 20000);
+  return 20000 + Math.floor(Math.random() * 12000);
 }
 
 function childEnv(extra: Record<string, string>, port: number): NodeJS.ProcessEnv {
@@ -120,6 +125,7 @@ async function startBackend(extra: Record<string, string>, cwd?: string, attempt
   for (let i = 0; i < 120; i++) {
     // A native crash during start on Windows only, about one start in 30 here, with nothing logged. Not seen on CI's Linux.
     if (child.exitCode === 3221226505 && attempt === 1) return startBackend(extra, cwd, 2);
+    if (child.exitCode !== null && attempt < 3 && output().includes("EADDRINUSE")) return startBackend(extra, cwd, attempt + 1);
     if (child.exitCode !== null) throw new Error(`backend exited ${child.exitCode}: ${output().slice(-2000)}`);
     const up = await fetch(`${backend.url}/health/ready`).then((r) => r.ok, () => false);
     if (up) return backend;

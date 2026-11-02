@@ -135,7 +135,9 @@ groupsRouter.post("/", async (c) => {
   if (!group) return c.json({ ok: false, error: "Failed to create recipe book" }, 500);
 
   // The organization was checked to be a company one above, so this can't
-  // refuse; a crash between the two statements leaves a private book.
+  // refuse; a crash between the two statements leaves a private book. This is
+  // what serializes the new book with joins and role changes (F178). Imports
+  // create private books only, so no import ever gets here.
   if (orgWide) await setBookOrgWide(db, group.id, true);
 
   return c.json({ ok: true, data: { id: group.id, name, slug, orgWide: orgWide === true } }, 201);

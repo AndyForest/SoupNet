@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, vi } from "vitest";
 import { seedVerifiedUser } from "../test-users";
+import { parseExportPayload } from "../services/import-validate";
 import type { TxtLookup } from "../lib/dns-txt";
 
 /**
@@ -35,6 +36,8 @@ let googleSignIn: typeof import("../services/google-sign-in.service");
 let authority: typeof import("../authz/domain-authority");
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 let settings: typeof import("../services/system-settings.service");
+// eslint-disable-next-line @typescript-eslint/consistent-type-imports
+let importService: typeof import("../services/import.service");
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 let getDb: typeof import("../db").getDb;
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
@@ -195,6 +198,7 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
     googleSignIn = await import("../services/google-sign-in.service");
     authority = await import("../authz/domain-authority");
     settings = await import("../services/system-settings.service");
+    importService = await import("../services/import.service");
     getDb = (await import("../db")).getDb;
     sql = (await import("drizzle-orm")).sql;
     const s = await actor("sys");
@@ -752,10 +756,11 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
   }
 
   /**
-   * A real deadlock on the migration's first join (F170): the default book's
-   * row, then the organization's, which is taken here as an account deletion's
-   * hand-over takes it. Postgres
-   * aborts whichever backend's check first finds the cycle, and each backend
+   * A real deadlock on the migration's first join (F170), forced with two row
+   * locks here: the default book's, then the organization's. The one the audit
+   * found in use is `DELETE FROM claimnet.users` against the join locking
+   * `groups`, not an owner hand-over; this only needs the same kind of cycle.
+   * Postgres aborts whichever backend's check first finds the cycle, and each backend
    * checks once per wait. This transaction's check is pushed out of the test,
    * and the join is held at an earlier lock (its own personal book) until this
    * transaction is waiting, so the join's next wait closes the cycle and its
@@ -1269,6 +1274,185 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
     });
     expect((await migration).joined).toBe(1);
     expect((await bookRow((await before).recipeBookId)).organization_id).toBe(orgId);
+  });
+
+  async function bookRoleOf(bookId: string, userId: string): Promise<{ role: string; via: string } | undefined> {
+    return ((await getDb().execute(sql`
+      SELECT role, via FROM claimnet.group_members WHERE group_id = ${bookId}::uuid AND user_id = ${userId}::uuid
+    `)) as unknown as Array<{ role: string; via: string }>)[0];
+  }
+
+  async function newCompanyBook(who: Actor, orgId: string, orgWide = false): Promise<string> {
+    const res = await call(who, "POST", "/recipe-books", { name: "Shared", slug: `shared-${run}-${++n}`, organizationId: orgId, orgWide });
+    expect(res.status).toBe(201);
+    return ((await res.json()) as { data: { id: string } }).data.id;
+  }
+
+  const operatorAdd = (organizationId: string, userId: string) => ({ organizationId, userId, role: "member" as const, via: "operator" as const, authority: { kind: "operator" as const, actorUserId: sys.userId } });
+
+  it("ORG-JOIN-D17 / OD-X10, F178: a book created org-wide during a join reaches the new member", async () => {
+    const olive = await actor("olive");
+    const { orgId } = await createOrg(olive);
+    const newcomer = await actor("newcomer");
+
+    let made!: Promise<string>;
+    await getDb().transaction(async (tx) => {
+      expect((await authz.joinOrganizationInTx(tx, operatorAdd(orgId, newcomer.userId))).ok).toBe(true);
+      made = newCompanyBook(olive, orgId, true);
+      await waitForBlocked(await backendPid(tx as never));
+    });
+    expect(await bookRoleOf(await made, newcomer.userId)).toEqual({ role: "member", via: "org" });
+  });
+
+  it("ORG-JOIN-D18 / OD-X10, F178: a manager demoted during a book's creation doesn't keep admin on it", async () => {
+    const olive = await actor("olive");
+    const { orgId } = await createOrg(olive);
+    const manager = await actor("manager");
+    await addToOrg(orgId, manager, "admin");
+
+    let made!: Promise<string>;
+    await getDb().transaction(async (tx) => {
+      expect(await authz.actOnMember(tx as never, { organizationId: orgId, actorUserId: olive.userId, targetUserId: manager.userId, action: { kind: "set_role", role: "member" } })).toBeNull();
+      made = newCompanyBook(olive, orgId, true);
+      await waitForBlocked(await backendPid(tx as never));
+    });
+    expect(await bookRoleOf(await made, manager.userId)).toEqual({ role: "member", via: "org" });
+  });
+
+  it("ORG-JOIN-D19 / OD-X10, F178: the toggle serializes with a join, each way round, and with a role change", async () => {
+    const olive = await actor("olive");
+    const { orgId } = await createOrg(olive);
+    const bookId = await newCompanyBook(olive, orgId);
+    const [first, second, third] = [await actor("first"), await actor("second"), await actor("third")];
+
+    // Turning it org-wide, then a join: the join waits, and sees an org-wide book.
+    let join!: ReturnType<typeof authz.joinOrganization>;
+    await getDb().transaction(async (tx) => {
+      expect(await authz.setBookOrgWide(tx as never, bookId, true)).toBeNull();
+      join = authz.joinOrganization(getDb(), operatorAdd(orgId, first.userId));
+      await waitForBlocked(await backendPid(tx as never));
+    });
+    expect((await join).ok).toBe(true);
+    expect(await bookRoleOf(bookId, first.userId)).toEqual({ role: "member", via: "org" });
+
+    // A join in progress, then turning it private: the toggle waits, and takes the join's new row with the rest.
+    let toggle!: ReturnType<typeof authz.setBookOrgWide>;
+    await getDb().transaction(async (tx) => {
+      expect((await authz.joinOrganizationInTx(tx, operatorAdd(orgId, second.userId))).ok).toBe(true);
+      toggle = authz.setBookOrgWide(getDb(), bookId, false);
+      await waitForBlocked(await backendPid(tx as never));
+    });
+    expect(await toggle).toBeNull();
+    expect(await bookRoleOf(bookId, second.userId)).toBeUndefined();
+
+    // A demotion in progress, then turning it org-wide: the toggle reads the new role.
+    await addToOrg(orgId, third, "admin");
+    await getDb().transaction(async (tx) => {
+      expect(await authz.actOnMember(tx as never, { organizationId: orgId, actorUserId: olive.userId, targetUserId: third.userId, action: { kind: "set_role", role: "member" } })).toBeNull();
+      toggle = authz.setBookOrgWide(getDb(), bookId, true);
+      await waitForBlocked(await backendPid(tx as never));
+    });
+    expect(await toggle).toBeNull();
+    expect(await bookRoleOf(bookId, third.userId)).toEqual({ role: "member", via: "org" });
+  });
+
+  it("ORG-JOIN-D20 / OD-X10, F178, F174: creating and toggling org-wide books waits on no import and no foreign key's hold", async () => {
+    const olive = await actor("olive");
+    const { orgId } = await createOrg(olive);
+    const member = await actor("member");
+    await addToOrg(orgId, member);
+    const bookId = await newCompanyBook(olive, orgId);
+
+    const { status } = await whileImportRuns(member, "", async () => {
+      await promptly("creating an org-wide book", newCompanyBook(olive, orgId, true));
+      expect(await promptly("the toggle", authz.setBookOrgWide(getDb(), bookId, true))).toBeNull();
+    });
+    expect(status).toBe(200);
+
+    await getDb().transaction(async (tx) => {
+      await tx.execute(sql`SELECT 1 FROM claimnet.groups WHERE id = ${bookId}::uuid FOR KEY SHARE`);
+      expect(await promptly("the toggle", authz.setBookOrgWide(getDb(), bookId, false))).toBeNull();
+    });
+  });
+
+  it("ORG-JOIN-D21 / OD-X8, F179: a company book being created with the same slug costs a moved book its slug, not the join", async () => {
+    const olive = await actor("olive");
+    const { orgId } = await createOrg(olive);
+    const max = await actor("max");
+    const slug = `same-${run}-${++n}`;
+    const made = await call(max, "POST", "/recipe-books", { name: "Mine", slug });
+    expect(made.status).toBe(201);
+    const bookId = ((await made.json()) as { data: { id: string } }).data.id;
+
+    let added!: Promise<Response>;
+    await getDb().transaction(async (tx) => {
+      await tx.execute(sql`INSERT INTO claimnet.groups (name, slug, organization_id) VALUES ('Same', ${slug}, ${orgId}::uuid)`);
+      added = call(sys, "POST", `/admin/organizations/${orgId}/members`, { email: max.email, role: "member" });
+      await waitForBlocked(await backendPid(tx as never));
+    });
+    const res = await added;
+    expect(res.status).toBe(201);
+    const after = await bookRow(bookId);
+    expect(after.organization_id).toBe(orgId);
+    expect(after.slug).not.toBe(slug);
+    expect(((await res.json()) as { data: { movedBooks: Array<{ slug: string; previousSlug: string }> } }).data.movedBooks).toContainEqual(expect.objectContaining({ slug: after.slug, previousSlug: slug }));
+  });
+
+  it("ORG-JOIN-D22 / OD-X8, F174: an import's answer names the slug its book ended up with when the move changed it", async () => {
+    const olive = await actor("olive");
+    const { orgId } = await createOrg(olive);
+    const max = await actor("max");
+
+    // An import's slug is made from the clock and a random number: fix both, so the company already has it.
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now());
+    const dice = vi.spyOn(Math, "random").mockReturnValue(0);
+    const taken = `imported-${Date.now().toString(36)}00`;
+    await getDb().execute(sql`INSERT INTO claimnet.groups (name, slug, organization_id) VALUES ('Taken', ${taken}, ${orgId}::uuid)`);
+
+    const evidenceId = crypto.randomUUID();
+    const rollback = new Error("let the import finish");
+    const payload = parseExportPayload(JSON.parse(exportFile(evidenceId)));
+    if (!payload.ok) throw new Error(payload.error);
+    const parsedExport = payload.data;
+    let imported!: ReturnType<typeof importService.importCorpus>;
+    try {
+      await getDb().transaction(async (tx) => {
+        await tx.execute(sql`INSERT INTO claimnet.evidence (id, content) VALUES (${evidenceId}::uuid, 'held')`);
+        imported = importService.importCorpus(getDb(), parsedExport, { userId: max.userId });
+        await waitForBlocked(await backendPid(tx as never));
+        clock.mockRestore();
+        dice.mockRestore();
+        expect((await authz.joinOrganization(getDb(), operatorAdd(orgId, max.userId))).ok).toBe(true);
+        throw rollback;
+      });
+    } catch (err) {
+      if (err !== rollback) throw err;
+    } finally {
+      clock.mockRestore();
+      dice.mockRestore();
+    }
+    const { book } = await imported;
+    expect(book?.slug).not.toBe(taken);
+    expect(await bookRow(book!.id)).toEqual({ organization_id: orgId, slug: book!.slug });
+  });
+
+  it("ORG-SEAT-D08 / OC-J5: a re-enable and a join in progress can't both take the last seat", async () => {
+    const olive = await actor("olive");
+    const { orgId } = await createOrg(olive, 2);
+    const disabled = await actor("disabled");
+    await addToOrg(orgId, disabled);
+    expect((await call(olive, "POST", `/organizations/${orgId}/members/${disabled.userId}/disable`)).status).toBe(200);
+    const newcomer = await actor("newcomer");
+
+    let enabled!: Promise<Response>;
+    await getDb().transaction(async (tx) => {
+      expect((await authz.joinOrganizationInTx(tx, operatorAdd(orgId, newcomer.userId))).ok).toBe(true);
+      enabled = call(olive, "POST", `/organizations/${orgId}/members/${disabled.userId}/enable`);
+      await waitForBlocked(await backendPid(tx as never));
+    });
+    const res = await enabled;
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toBe("organization_full");
   });
 
   it("ORG-MIG-08 / OD-X2, F172: a claim that was checked but never verified joins nobody, with the switch on", async () => {
