@@ -288,7 +288,7 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     const start = await call(org.olive.token, "POST", `/organizations/${org.orgId}/directory/google/start`, { binding: sha256(secret()), domain: org.domain });
     const state = new URL(((await start.json()) as { data: { url: string } }).data.url).searchParams.get("state");
     const unknownCode = await fetch(`${BASE}/auth/google/callback?state=${state}&code=not-a-code`, { redirect: "manual" });
-    expect(unknownCode.headers.get("location")).toBe(`${FRONTEND}/auth/google/complete#error=failed`);
+    expect(unknownCode.headers.get("location")).toBe(`${FRONTEND}/auth/google/complete#error=directory_failed`);
     // No refusal stored a connection or linked an identity; each one past Google's leg is audited.
     expect(await connected()).toBe(false);
     expect(await identitiesOf(org.olive.userId)).toEqual([org.oliveSubject]);

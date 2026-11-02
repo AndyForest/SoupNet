@@ -129,8 +129,16 @@ const MESSAGES: Record<string, string> = {
   directory_no_refresh_token: "Google didn't grant lasting access to the directory. Try connecting again and approve the request.",
   directory_not_admin: "Google wouldn't let that account read the directory. Connect with a Workspace admin account, or use a service account.",
   directory_not_manager: "You're no longer an owner or admin of this organization, so the directory wasn't connected.",
+  directory_failed: "Connecting the directory didn't work this time. Try again in a moment.",
   failed: "Google sign-in didn't work this time. Try again in a moment.",
 };
+
+const DIRECTORY_CONNECT_ERRORS = ["directory_wrong_account", "directory_wrong_domain", "directory_no_refresh_token", "directory_not_admin", "directory_not_manager", "directory_failed"];
+
+/** Did a directory connection fail, rather than a sign-in? `directory_inactive` and `directory_unconfirmed` are sign-ins refused. */
+export function isDirectoryConnectError(code: string): boolean {
+  return DIRECTORY_CONNECT_ERRORS.includes(code);
+}
 
 export function googleSignInMessage(code: string): string {
   return MESSAGES[code] ?? MESSAGES["failed"]!;

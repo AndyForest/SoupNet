@@ -229,7 +229,7 @@ export async function completeDirectoryConnect(
   const domain = typeof request.params.domain === "string" ? request.params.domain : "";
   const userId = typeof request.params.userId === "string" ? request.params.userId : "";
   const key = secretBoxKey();
-  if (!organizationId || !domain || !userId || !key) return { ok: false, error: "failed" };
+  if (!organizationId || !domain || !userId || !key) return { ok: false, error: "directory_failed" };
 
   let tokens: { idToken: string; refreshToken: string | null };
   let claims: Awaited<ReturnType<typeof verifyGoogleIdToken>>;
@@ -238,7 +238,7 @@ export async function completeDirectoryConnect(
     claims = await verifyGoogleIdToken(config, tokens.idToken, request.nonce, keys);
   } catch (err) {
     console.error("[directory] connect: Google leg failed:", err instanceof GoogleOidcError ? err.message : "error");
-    return { ok: false, error: "failed" };
+    return { ok: false, error: "directory_failed" };
   }
 
   const linked = (await db.execute(sql`
