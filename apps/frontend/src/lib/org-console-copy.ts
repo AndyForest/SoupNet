@@ -60,6 +60,21 @@ const DIRECTORY_ERROR_LABELS: Record<string, string> = {
 };
 
 /**
+ * What turning automatic joining on will do, asked before it happens: it moves
+ * people's existing accounts, and neither they nor the switch can undo that.
+ * `accounts` is undefined until the domain is verified: the count is behind DNS
+ * proof (OD-X4).
+ */
+export function autoJoinConfirmMessage(domain: string, accounts: number | undefined): string {
+  const lasting = "Turning this off later won't return anyone who has joined, and the organization manages their accounts from then on, so they can't delete them themselves.";
+  if (accounts === undefined) return `Once ${domain} is verified, existing verified accounts on it move into your organization, each as a seat is free, and so does anyone who verifies an address on it later. ${lasting}`;
+  const moving = accounts === 0
+    ? `No existing accounts on ${domain} are waiting to move in right now.`
+    : `${accounts === 1 ? "1 existing account" : `${accounts} existing accounts`} on ${domain} will move into your organization, each as a seat is free.`;
+  return `${moving} Anyone who verifies an address on it later joins too. ${lasting}`;
+}
+
+/**
  * The directory connection's last error, as a label and its code and never
  * what came with it: anything that isn't a plain code shows as unknown, so a
  * Google response body can't reach the page.

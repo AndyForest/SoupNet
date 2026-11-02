@@ -143,6 +143,17 @@ Feature: Organization accounts: the org admin console, sharing policy, and what 
       Then it shows the domain as verified and one account waiting, as a count
       And it says that account couldn't join on the last try, when, and that the daily job tries again
 
+    @ORG-CON-08b
+    Scenario: Turning automatic joining on asks first
+      Given acme.example is verified with automatic joining off, and one verified account waits on it
+      When Ada turns automatic joining on
+      Then the page says that account will move in, that turning this off won't return anyone, and that they can't delete their accounts themselves
+      And nothing changes until she answers
+      When she keeps it off
+      Then nothing has changed
+      When she turns it on and confirms
+      Then automatic joining is on and the account joins
+
     @ORG-CON-09
     Scenario: The directory's refusals read as the directory's
       Given Acme has a Google Workspace directory connected

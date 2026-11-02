@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { MEMBER_PAGE_COPY, accountsAwaitingMessage, directoryLastErrorLabel, migrationSummaryMessage } from "./org-console-copy.js";
+import { MEMBER_PAGE_COPY, accountsAwaitingMessage, autoJoinConfirmMessage, directoryLastErrorLabel, migrationSummaryMessage } from "./org-console-copy.js";
 import { describeOrgEvent } from "./org-activity-copy.js";
 
 describe("MEMBER_PAGE_COPY, the promise to employees", () => {
@@ -43,6 +43,19 @@ describe("accountsAwaitingMessage", () => {
   it("reads differently with automatic joining on and off", () => {
     expect(accountsAwaitingMessage(1, true)).toContain("1 verified account on this domain is waiting");
     expect(accountsAwaitingMessage(3, false)).toContain("3 verified accounts on this domain would join");
+  });
+});
+
+describe("autoJoinConfirmMessage", () => {
+  it("names how many accounts will move, and that it can't be undone", () => {
+    expect(autoJoinConfirmMessage("acme.example", 1)).toContain("1 existing account on acme.example will move into your organization");
+    expect(autoJoinConfirmMessage("acme.example", 3)).toContain("3 existing accounts on acme.example will move");
+    expect(autoJoinConfirmMessage("acme.example", 0)).toContain("No existing accounts on acme.example are waiting");
+    expect(autoJoinConfirmMessage("acme.example", undefined)).toContain("Once acme.example is verified");
+    for (const accounts of [0, 1, 3, undefined]) {
+      expect(autoJoinConfirmMessage("acme.example", accounts)).toContain("Turning this off later won't return anyone who has joined");
+      expect(autoJoinConfirmMessage("acme.example", accounts)).toContain("they can't delete them themselves");
+    }
   });
 });
 

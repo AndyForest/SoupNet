@@ -12,7 +12,7 @@ import {
   useAdminGate,
   useAdminListQuery,
 } from "../components/admin/index.js";
-import { DOMAIN_STATUS_LABELS, accountsAwaitingMessage, migrationSummaryMessage } from "../lib/org-console-copy.js";
+import { DOMAIN_STATUS_LABELS, accountsAwaitingMessage, autoJoinConfirmMessage, migrationSummaryMessage } from "../lib/org-console-copy.js";
 
 interface MigrationSummary {
   joined: number;
@@ -132,6 +132,7 @@ function DomainCard({ claim, organizationId }: { claim: DomainClaim; organizatio
   const base = `/organizations/${organizationId}/domains/${claim.id}`;
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [confirmingAutoJoin, setConfirmingAutoJoin] = useState(false);
 
   const refresh = () => void queryClient.invalidateQueries({ queryKey: ["org", organizationId] });
   const report = (result: ClaimWriteResult | undefined) =>
@@ -198,14 +199,25 @@ function DomainCard({ claim, organizationId }: { claim: DomainClaim; organizatio
             type="checkbox"
             style={{ width: "auto", marginTop: "0.2rem" }}
             checked={claim.autoJoin}
-            disabled={setAutoJoin.isPending}
-            onChange={(e) => setAutoJoin.mutate(e.target.checked)}
+            disabled={setAutoJoin.isPending || confirmingAutoJoin}
+            // Turning it on moves people's accounts, so it asks first. Turning it off moves nobody.
+            onChange={(e) => (e.target.checked ? setConfirmingAutoJoin(true) : setAutoJoin.mutate(false))}
           />
           <span>
             Automatic joining
             <span style={{ ...MUTED, display: "block" }}>While the domain is verified, anyone who verifies an address on it joins your organization, and existing verified accounts on it move in.</span>
           </span>
         </label>
+      ) : null}
+
+      {confirmingAutoJoin ? (
+        <div role="group" aria-label={`Turn on automatic joining for ${claim.domain}`} style={{ marginTop: "var(--space-sm)" }}>
+          <p style={{ fontSize: "0.875rem", margin: 0 }}>{autoJoinConfirmMessage(claim.domain, claim.accountsAwaitingJoin)}</p>
+          <div style={{ display: "flex", gap: "var(--space-sm)", flexWrap: "wrap", marginTop: "var(--space-sm)" }}>
+            <button className="btn-primary" style={SMALL_BUTTON} disabled={setAutoJoin.isPending} onClick={() => { setConfirmingAutoJoin(false); setAutoJoin.mutate(true); }}>Turn on automatic joining</button>
+            <button className="btn-secondary" style={SMALL_BUTTON} onClick={() => setConfirmingAutoJoin(false)}>Keep it off</button>
+          </div>
+        </div>
       ) : null}
 
       {recordIsTheNextStep ? record : <details style={{ marginTop: "var(--space-sm)" }}><summary style={MUTED}>The DNS record to keep in place</summary>{record}</details>}

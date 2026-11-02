@@ -1141,6 +1141,42 @@ test("E19 a manager sees a stalled migration: status, accounts waiting and the f
   await shot(page, testInfo, "E19-01-stalled");
 });
 
+test("E22 turning automatic joining on asks first, naming who moves in", async ({ page, request }, testInfo) => {
+  const acme = await setupAcme(request, "e22");
+  const domain = `${tag("e22")}.example`.toLowerCase();
+  const added = await fixture(request, "Olive adding the domain", "post", `/organizations/${acme.orgId}/domains`, acme.olive, { domain });
+  await withDb(async (sql) => {
+    await sql`UPDATE claimnet.organization_domains SET verified_at = now(), last_checked_at = now() WHERE id = ${added.data.id as string}::uuid`;
+    await sql`UPDATE claimnet.users SET email = ${`gus@${domain}`}, email_verified_at = now() WHERE email = ${acme.gus.email}`;
+  });
+
+  await signIn(page, acme.olive, "/org/domains");
+  const card = page.getByRole("region", { name: domain });
+  const toggle = card.getByRole("checkbox");
+  const confirm = card.getByRole("group", { name: `Turn on automatic joining for ${domain}` });
+  const patches: string[] = [];
+  page.on("request", (r) => { if (r.method() === "PATCH") patches.push(r.url()); });
+
+  await toggle.check({ force: true }).catch(() => undefined);
+  await expect(confirm, "the switch should ask first").toContainText(`1 existing account on ${domain} will move into your organization`);
+  await expect(confirm, "it should say it can't be undone").toContainText("Turning this off later won't return anyone who has joined");
+  await expect(toggle, "nothing should be on yet").not.toBeChecked();
+  expect(patches, "nothing should be sent before the answer").toEqual([]);
+  await shot(page, testInfo, "E22-01-asks-first");
+
+  await confirm.getByRole("button", { name: "Keep it off" }).click();
+  await expect(confirm, "keeping it off should close the question").toHaveCount(0);
+  await expect(toggle, "it should stay off").not.toBeChecked();
+  expect(patches, "keeping it off should send nothing").toEqual([]);
+
+  await toggle.check({ force: true }).catch(() => undefined);
+  await confirm.getByRole("button", { name: "Turn on automatic joining" }).click();
+  await expect(toggle, "it should be on after the answer").toBeChecked();
+  await expect(card, "the run should say who joined").toContainText("1 account joined.");
+  await page.goto("/org");
+  await expect(page.locator("table tbody tr", { hasText: `gus@${domain}` }), "Gus should now be a member").toHaveCount(1);
+});
+
 test("E20 the directory section, the status labels, last checked and Activity", async ({ page, request }, testInfo) => {
   const acme = await setupAcme(request, "e20");
   const domain = `${tag("e20")}.example`.toLowerCase();
