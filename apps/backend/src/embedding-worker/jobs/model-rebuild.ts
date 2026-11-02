@@ -28,7 +28,6 @@ import {
   countsFor,
   readFlipGap,
   readModelCounts,
-  readRefusedGap,
 } from "../../services/embedding-model-status.service";
 import { getSetting } from "../../services/system-settings.service";
 
@@ -108,17 +107,17 @@ export async function handleModelRebuildTick(db: PostgresJsDatabase): Promise<vo
   const read = countsFor(counts, readModelId);
   if (targetModelId) {
     const target = countsFor(counts, targetModelId);
-    const gap = await readFlipGap(db, readModelId, targetModelId);
-    const done = read.complete - gap;
+    const { gap, refused, retryLimit, notSearched } = await readFlipGap(db, readModelId, targetModelId);
+    const remaining = gap + notSearched;
+    const done = read.complete - remaining;
     const percent = read.complete > 0 ? ((done / read.complete) * 100).toFixed(1) : "100.0";
-    const left = perMinute > 0 && gap > 0 ? `${Math.ceil(gap / perMinute)}min` : "0min";
-    // No wait closes a refused row: the steps are retry-failed, or accept it (ADR-0024).
-    const refused = target.failed > 0 ? await readRefusedGap(db, readModelId, targetModelId) : 0;
+    const left = perMinute > 0 && remaining > 0 ? `${Math.ceil(remaining / perMinute)}min` : "0min";
+    // No wait closes a failed row: the steps are retry-failed, or accept a refusal (ADR-0024).
     console.warn(
       `[embedding-rebuild] read=${readModelId} target=${targetModelId} done=${done}/${read.complete} (${percent}%) ` +
         `gap=${gap} pending=${target.pending} processing=${target.processing} failed=${target.failed} ` +
         `text_fallback=${target.textFallback} added=${added} budget=${perMinute}/min eta=${left} ` +
-        `safe_to_flip=${gap === 0 ? "yes" : "no"}${refused > 0 ? ` refused=${refused}` : ""}${pausedFor ? ` paused="${pausedFor}"` : ""}`,
+        `safe_to_flip=${gap === 0 ? "yes" : "no"}${refused > 0 ? ` refused=${refused}` : ""}${retryLimit > 0 ? ` retry_limit=${retryLimit}` : ""}${notSearched > 0 ? ` not_searched=${notSearched}` : ""}${pausedFor ? ` paused="${pausedFor}"` : ""}`,
     );
   } else if (added > 0 || read.pending + read.processing > 0 || pausedFor) {
     console.warn(
