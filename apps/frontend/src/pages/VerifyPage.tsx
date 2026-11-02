@@ -151,7 +151,7 @@ export function VerifyPage() {
             </h1>
             {waitlisted ? (
               <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)" }}>
-                This sign-up came through a Google account. Verifying holds your place on the waitlist and removes that Google account from this address. When your spot opens, you can set a password with the forgotten-password link on the sign-in page.
+                This sign-up came through a Google account. Verifying holds your place on the waitlist and removes that Google account from this account. When your spot opens, you can set a password with the forgotten-password link on the sign-in page.
               </p>
             ) : (
               <>
@@ -159,7 +159,7 @@ export function VerifyPage() {
                   This sign-up came through a Google account that isn't signed in on this browser. If you started it yourself, open this link in the browser you signed up in, and you'll keep signing in with Google.
                 </p>
                 <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)" }}>
-                  If you didn't start it, or can't open it there, verify here. That Google account will be removed from this address.
+                  If you didn't start it, or can't open it there, verify here. That Google account will be removed from this account.
                 </p>
               </>
             )}
@@ -177,7 +177,7 @@ export function VerifyPage() {
                 }
               }}
             >
-              Verify and remove that Google account
+              Verify and remove it from this account
             </button>
           </>
         )}
@@ -208,10 +208,10 @@ export function VerifyPage() {
             {googleSignInRemoved && (
               <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)" }}>
                 {signedIn
-                  ? "That Google account has been removed from this address."
+                  ? "That Google account has been removed from this account."
                   : waitlisted
-                    ? "That Google account has been removed. When your spot opens, set a password with the forgotten-password link on the sign-in page, or use a Google Workspace account on this address."
-                    : "That Google account has been removed. To sign in, set a password with the forgotten-password link on the next page, or use a Google Workspace account on this address."}
+                    ? "That Google account has been removed from this account. When your spot opens, set a password with the forgotten-password link on the sign-in page, or use a Google Workspace account on this address."
+                    : "That Google account has been removed from this account. To sign in, set a password with the forgotten-password link on the next page, or use a Google Workspace account on this address."}
               </p>
             )}
             {signedIn && (

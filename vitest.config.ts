@@ -33,6 +33,17 @@ function loadDotEnv(): Record<string, string> {
   } catch { return {}; }
 }
 
+// Tests that import the provider directly never boot, so nothing settles an unset
+// EMBEDDINGS_MODEL from the database (ADR-0024). Tests that do boot name their own.
+function testEnv(): Record<string, string> {
+  const env = loadDotEnv();
+  const provider = env["EMBEDDINGS_PROVIDER"] ?? process.env["EMBEDDINGS_PROVIDER"] ?? "gemini";
+  if (provider === "gemini" && !env["EMBEDDINGS_MODEL"] && !process.env["EMBEDDINGS_MODEL"]) {
+    env["EMBEDDINGS_MODEL"] = "gemini-embedding-2-preview";
+  }
+  return env;
+}
+
 export default defineConfig({
   test: {
     include: [
@@ -40,7 +51,7 @@ export default defineConfig({
       "packages/*/src/**/*.test.ts",
       "scripts/**/*.test.mts",
     ],
-    env: loadDotEnv(),
+    env: testEnv(),
     // A fake Google for the Google sign-in and directory suites, started once
     // when GOOGLE_OIDC_TEST_ISSUER is set (apps/backend/src/test-google-issuer.ts).
     globalSetup: ["apps/backend/src/test-google-global-setup.ts"],

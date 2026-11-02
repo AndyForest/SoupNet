@@ -18,7 +18,7 @@ describe("readResetAnswer (F163)", () => {
     await expect(readResetAnswer(answering({ ok: false, error: "Invalid or expired reset token" }))).rejects.toThrow("Invalid or expired reset token");
   });
 
-  it("reads what the server says about an organization (OD-J5)", async () => {
+  it("reads what the server says about an organization (OD-J9)", async () => {
     const organizationLines = ["No free seats.", "Sign in later."];
     const answer = await readResetAnswer(answering({ ok: true, data: { organizationLines } }));
     expect(answer.organizationLines).toEqual(organizationLines);

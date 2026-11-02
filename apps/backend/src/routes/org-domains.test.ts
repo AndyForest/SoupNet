@@ -695,7 +695,36 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
     expect(await orgOf(await userIdOf(email))).toMatchObject({ organization_id: orgId, joined_via: "domain" });
   });
 
-  it("ORG-JOIN-D05 / OD-J5: a password reset verifies the address, so it joins the captured domain's organization", async () => {
+  it("ORG-JOIN-D08 / OD-X5, F168: a proof step holding the account's row doesn't deadlock with the migration", async () => {
+    const olive = await actor("olive");
+    const { orgId } = await createOrg(olive);
+    const domain = testDomain();
+    const claimId = (await addDomain(olive, orgId, domain))["id"] as string;
+    expect((await checkNow(olive, orgId, claimId)).status).toBe(200);
+    const max = await actor("max", `test-orgdom-max-${run}-${++n}@${domain}`);
+    // Switched on directly: the route would migrate Max before the race starts.
+    await getDb().execute(sql`UPDATE claimnet.organization_domains SET auto_join = true WHERE id = ${claimId}::uuid`);
+
+    // The order every proof step has: the account's row, then the join.
+    let holding!: () => void;
+    const held = new Promise<void>((resolve) => { holding = resolve; });
+    const proofStep = getDb().transaction(async (tx) => {
+      await tx.execute(sql`SELECT id FROM claimnet.users WHERE id = ${max.userId}::uuid FOR UPDATE`);
+      holding();
+      // Long enough for the migration to reach this account.
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      return domains.onGoogleSignIn(tx, { userId: max.userId, email: max.email, hd: domain, created: false });
+    });
+    await held;
+    const migration = domains.migrateDomainAccounts(getDb(), claimId);
+
+    const [signedIn, migrated] = await Promise.allSettled([proofStep, migration]);
+    expect(signedIn).toEqual({ status: "fulfilled", value: "joined" });
+    expect(migrated).toEqual({ status: "fulfilled", value: { joined: 0, awaitingSeat: 0 } });
+    expect(await orgOf(max.userId)).toMatchObject({ organization_id: orgId, joined_via: "migrated" });
+  });
+
+  it("ORG-JOIN-D07 / OD-J9: a password reset verifies the address, so it joins the captured domain's organization", async () => {
     const olive = await actor("olive");
     const { orgId } = await createOrg(olive);
     const { domain } = await capture(olive, orgId);
@@ -712,7 +741,7 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
     expect((await resetPassword(max.email))["organizationLines"]).toBeUndefined();
   });
 
-  it("ORG-SEAT-D06 / OD-J5, OD-C1: a reset at the seat limit keeps the new password and leaves the address unverified", async () => {
+  it("ORG-SEAT-D06 / OD-J9, OD-C1: a reset at the seat limit keeps the new password and leaves the address unverified", async () => {
     const olive = await actor("olive");
     const { orgId } = await createOrg(olive, 1);
     const { domain } = await capture(olive, orgId);

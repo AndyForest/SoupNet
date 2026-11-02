@@ -139,6 +139,11 @@ You can ignore this in normal operation. If it's failing, the entire cron system
   },
 };
 
+// Jobs on the -ids queues hold row ids only; the handlers read the text themselves.
+// The older names remain to drain jobs queued before that.
+QUEUE_DESCRIPTIONS["embedding.vector-check-ids"] = QUEUE_DESCRIPTIONS["embedding.vector-check"]!;
+QUEUE_DESCRIPTIONS["embedding.vector-api-call-ids"] = QUEUE_DESCRIPTIONS["embedding.vector-api-call"]!;
+
 export function getQueueDescription(name: string): QueueDescription | null {
   return QUEUE_DESCRIPTIONS[name] ?? null;
 }

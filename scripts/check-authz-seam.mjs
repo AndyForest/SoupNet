@@ -232,13 +232,21 @@ const TRACE_READS = {
     n: 2, fp: "fe29f5d17c57", composes: false,
     why: "embedding worker: embeds every recipe, drafts included, so verification needs no re-embed (RP-43); returns nothing to a caller",
   },
+  "apps/backend/src/embedding-worker/jobs/load-vector-items.ts": {
+    n: 1, fp: "d60bb3907738", composes: false,
+    why: "embedding worker: loads the text of rows a job names by id, to embed them; returns nothing to a caller",
+  },
   "apps/backend/src/embedding-worker/jobs/strategy-check.ts": {
-    n: 8, fp: "853b950dc6d7", composes: false,
+    n: 8, fp: "20f5edd1ae57", composes: false,
     why: "embedding worker: strategy coverage bookkeeping (RP-43)",
   },
   "apps/backend/src/embedding-worker/jobs/strategy-sweep.ts": {
-    n: 3, fp: "a54ae684cf06", composes: false,
+    n: 3, fp: "3c80eade1f1a", composes: false,
     why: "embedding worker: finds recipes missing a strategy and embeds them, drafts included (RP-43)",
+  },
+  "apps/backend/src/embedding-worker/jobs/vector-api-call.ts": {
+    n: 2, fp: "274928dc7eab", composes: false,
+    why: "embedding worker: finds a chunk's image source to rebuild it from its bytes, drafts included (RP-43); returns nothing to a caller",
   },
   "apps/backend/src/embedding-worker/jobs/vectoring.ts": {
     n: 2, fp: "43c62c39abca", composes: false,
@@ -317,7 +325,7 @@ const TRACE_READS = {
     why: "the flat list (slice 8b): a qualifier-only search's rows and total share one statement's conditions, inBooks over the caller's validated books and traceVisibleTo, with the search's structured predicates (RP-03, S8b-L4)",
   },
   "apps/backend/src/services/result-enricher.ts": {
-    n: 4, fp: "1c4f660984be", composes: false,
+    n: 4, fp: "6f235d392c71", composes: false,
     why: "loads book, draft label, evidence, and references by id for results a filtered statement already chose (RP-42); names an on-behalf draft's other party through onBehalfSideFor and onBehalfPartyFor (S4-L1)",
   },
   "apps/backend/src/services/search-selection.ts": {
@@ -325,15 +333,15 @@ const TRACE_READS = {
     why: "changed-after: (slice 8b): correlated subqueries read the newest feedback row and reaction on a recipe the enclosing statement already selected under the draft rule; they return a time, never a row",
   },
   "apps/backend/src/services/search-pipeline.ts": {
-    n: 5, fp: "27cc9110e6b6", composes: true,
+    n: 5, fp: "3367b243513c", composes: true,
     why: "corpus mode rows and honest total use traceVisibleTo (RP-41); vector loads are by id for filtered results (RP-42)",
   },
   "apps/backend/src/services/trace.service.ts": {
-    n: 10, fp: "e96154ab5cb8", composes: true,
+    n: 10, fp: "4761bfb20775", composes: true,
     why: "deposit INSERT (the on-behalf subject from the module's naming rule, S4-M1; the draft state forced for a headless key by keyForcesDrafts, S5-M3; the intent link from the intent the check resolved to the depositor, S6a-S2), the depositing key's own idempotency row with its subject through onBehalfSubjectOf (RP-04, S4-L4), session ledger ids (RP-05), and zero-result scope counts that use traceVisibleTo (RP-03)",
   },
   "apps/backend/src/services/trace-delete.service.ts": {
-    n: 15, fp: "66a8c2514e26", composes: false,
+    n: 17, fp: "7e78fcecd845", composes: false,
     why: "deletes one recipe under lock after the route's access check (RP-36)",
   },
   "apps/backend/src/services/trace-move.service.ts": {
@@ -355,6 +363,14 @@ const TRACE_READS = {
   "apps/backend/src/services/test-data-cleanup.service.ts": {
     n: 2, fp: "3581836380cd", composes: false,
     why: "dev-only cleanup of seeded test users: counts their own recipes by user id before deleting the accounts",
+  },
+  "apps/backend/src/services/embedding-model-status.service.ts": {
+    n: 1, fp: "c2a2e9d9edce", composes: false,
+    why: "operator counts of a model's search coverage across the whole corpus: numbers only, no recipe content, no caller",
+  },
+  "apps/backend/src/cli/embedding-model.ts": {
+    n: 2, fp: "2069d34b1159", composes: false,
+    why: "operator script: counts image sources and removes a retired model's vectors; no recipe content, no caller",
   },
   "scripts/repair-orphaned-user-data.mjs": {
     n: 11, fp: "75064665cb1e", composes: false,

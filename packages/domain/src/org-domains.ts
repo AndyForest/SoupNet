@@ -301,7 +301,7 @@ export function domainJoinedNotice(organizationName: string): string {
   return `Your account now belongs to ${organizationName} on Soup.net. ${organizationName}'s admins manage it.`;
 }
 
-/** The reset page when the organization had no free seat: the reset stands, the address isn't verified (OD-J5). */
+/** The reset page when the organization had no free seat: the reset stands, the address isn't verified (OD-J9). */
 export const DOMAIN_RESET_FULL_RETRY =
   "Your password is changed, but your address isn't verified yet. Sign in once a seat is free to get a new verification link.";
 
