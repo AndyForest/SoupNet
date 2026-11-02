@@ -45,7 +45,7 @@ export interface DirectoryCheckInput {
   member: { email: string; googleSubject: string | null };
 }
 
-export type DirectoryChecker = (input: DirectoryCheckInput) => Promise<{ answer: DirectoryAnswer; renamedTo: string | null }>;
+export type DirectoryChecker = (input: DirectoryCheckInput) => Promise<{ answer: DirectoryAnswer; renamed: boolean }>;
 
 /** Told once per outage, six hours in (draft 47f9620f). */
 export type DirectoryWarner = (organizationId: string) => Promise<void>;
@@ -188,8 +188,8 @@ async function askAndRecord(db: PostgresJsDatabase, current: NonNullable<typeof 
   await db.execute(sql`
     UPDATE claimnet.organization_directory_connections
     SET last_success_at = NOW(), warned_at = NULL,
-        last_error = ${result.renamedTo ? `renamed: ${row.email} is now ${result.renamedTo} in the directory` : sql`last_error`},
-        last_error_at = ${result.renamedTo ? sql`NOW()` : sql`last_error_at`}
+        last_error = ${result.renamed ? "member_renamed" : sql`last_error`},
+        last_error_at = ${result.renamed ? sql`NOW()` : sql`last_error_at`}
     WHERE organization_id = ${row.organization_id}::uuid
   `);
   if (status !== row.previous_status) {
@@ -274,6 +274,7 @@ export interface DirectoryConnectionView {
   serviceAccountEmail: string | null;
   connectedAt: string | null;
   lastSuccessAt: string | null;
+  /** A short code, ours or Google's sanitized one, never text from the directory (F187). */
   lastError: string | null;
   lastErrorAt: string | null;
   /**

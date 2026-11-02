@@ -429,12 +429,13 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     await google.setDirectoryUser(max.email, {});
     await linkGoogle(max, subject, org.domain);
     await google.setDirectoryUser(max.email, { httpStatus: 404 });
-    await google.setDirectoryUser(subject, {});
+    // F187: whatever the directory calls them now, what's stored is a short code.
+    await google.setDirectoryUser(subject, { primaryEmail: `<img src=x>${"m".repeat(5000)}@${org.domain}` });
     await makeDue(max.userId);
     expect((await useKey(max.key)).status).toBe(200);
     expect((await memberRow(max.userId)).directory_status).toBe("active");
     const view = ((await (await call(org.olive.token, "GET", `/organizations/${org.orgId}/directory`)).json()) as { data: Json }).data;
-    expect(String(view["lastError"])).toContain("renamed");
+    expect(view["lastError"]).toBe("member_renamed");
   });
 
   it("OFF-DIR-04 / OB-C4: within the hour, no Google call", async () => {

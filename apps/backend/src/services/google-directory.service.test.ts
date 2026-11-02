@@ -51,7 +51,7 @@ describe("checkDirectoryMember", () => {
       c.url === config.tokenEndpoint ? { status: 200, body: { access_token: "at-1", expires_in: 3600 } } : { status: 200, body: record(c.url, { suspended: true }) },
     );
     const first = await checkDirectoryMember(config, consent, { email: "max@acme.example", googleSubject: null }, f.fn);
-    expect(first).toEqual({ answer: { kind: "status", status: "suspended" }, renamedTo: null });
+    expect(first).toEqual({ answer: { kind: "status", status: "suspended" }, renamed: false });
     await checkDirectoryMember(config, consent, { email: "max2@acme.example", googleSubject: null }, f.fn);
     expect(f.calls.filter((c) => c.url === config.tokenEndpoint)).toHaveLength(1);
     const lookups = f.calls.filter((c) => c.url !== config.tokenEndpoint).map((c) => c.url);
@@ -77,7 +77,7 @@ describe("checkDirectoryMember", () => {
     });
     expect(await checkDirectoryMember(config, consent, { email: "max@acme.example", googleSubject: "sub-1" }, f.fn)).toEqual({
       answer: { kind: "status", status: "active" },
-      renamedTo: "maxwell@acme.example",
+      renamed: true,
     });
   });
 

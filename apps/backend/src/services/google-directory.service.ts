@@ -30,10 +30,10 @@ export interface DirectoryCredential {
   secret: string;
 }
 
-/** What one check found. `renamedTo` is a rename the admin should hear about. */
+/** What one check found. `renamed` is a rename the admin should hear about. */
 export interface MemberCheck {
   answer: DirectoryAnswer;
-  renamedTo: string | null;
+  renamed: boolean;
 }
 
 function usersEndpoint(config: GoogleOidcConfig): string {
@@ -169,12 +169,12 @@ export async function checkDirectoryMember(
 ): Promise<MemberCheck> {
   const signal = AbortSignal.timeout(DIRECTORY_TIMEOUT_MS);
   const token = await accessToken(config, credential, signal, fetchImpl);
-  if (!token.ok) return { answer: token.answer, renamedTo: null };
+  if (!token.ok) return { answer: token.answer, renamed: false };
 
   const byAddress = await usersGet(config, token.token, member.email, signal, fetchImpl);
   const first = classifyDirectoryAnswer(byAddress, { email: member.email });
   if (first.kind === "connection_error" && (byAddress?.httpStatus === 401)) forgetDirectoryTokens(credential.organizationId);
-  if (!(first.kind === "status" && first.status === "deleted")) return { answer: first, renamedTo: null };
+  if (!(first.kind === "status" && first.status === "deleted")) return { answer: first, renamed: false };
 
   if (member.googleSubject) {
     const bySubject = await usersGet(config, token.token, member.googleSubject, signal, fetchImpl);
@@ -185,18 +185,17 @@ export async function checkDirectoryMember(
     // question open, so nobody is switched off on half an answer.
     const unknown = (second.kind === "status" && second.status === "deleted") || (bySubject?.httpStatus === 400 && isGoogleError(bySubject.body, 400));
     if (!unknown) {
-      if (second.kind !== "status") return { answer: second, renamedTo: null };
+      if (second.kind !== "status") return { answer: second, renamed: false };
       const primary = (bySubject?.body as { primaryEmail?: unknown } | null)?.primaryEmail;
-      const renamedTo = typeof primary === "string" && primary.toLowerCase() !== member.email.toLowerCase() ? primary : null;
-      return { answer: second, renamedTo };
+      return { answer: second, renamed: typeof primary === "string" && primary.toLowerCase() !== member.email.toLowerCase() };
     }
   }
 
   const adminGone: DirectoryAnswer = { kind: "connection_error", code: "admin_not_found" };
-  if (member.email.toLowerCase() === credential.adminEmail.toLowerCase()) return { answer: adminGone, renamedTo: null };
+  if (member.email.toLowerCase() === credential.adminEmail.toLowerCase()) return { answer: adminGone, renamed: false };
   const control = classifyDirectoryAnswer(await usersGet(config, token.token, credential.adminEmail, signal, fetchImpl), { email: credential.adminEmail });
-  if (control.kind !== "status") return { answer: control, renamedTo: null };
-  return { answer: control.status === "deleted" ? adminGone : first, renamedTo: null };
+  if (control.kind !== "status") return { answer: control, renamed: false };
+  return { answer: control.status === "deleted" ? adminGone : first, renamed: false };
 }
 
 /**
