@@ -634,6 +634,7 @@ test("E13 the member's own organization page", async ({ browser, request }, test
     expect(text, "the page should say org-wide books are open to admins").toContain("is open to everyone in the organization, admins included");
     expect(text, "the page shouldn't promise the text of every recipe").not.toContain("The text of your recipes");
     expect(text, "the page should say a key's name and an agent's story are open in org-wide books").toContain("the story it gave, its note, its session id and agent id, and the key's name");
+    expect(text, "the page should say a recipe's evidence is open in org-wide books").toContain("its supporting evidence and references");
     expect(text, "the page should say who belongs to an org-wide book is visible, not only how many").toContain("each person's account id, email address, role and the date they joined");
     expect(text, "the page should list at least one recent sign-in 'with your password'").toContain("with your password");
     expect(text, "the admin actions should include Max joining").toMatch(/You joined the organization/);
