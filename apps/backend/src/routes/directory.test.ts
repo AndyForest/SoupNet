@@ -172,6 +172,12 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     return call(key, "GET", "/health/version");
   }
 
+  /** Read straight from the row: asking the route would run the owner's own check, whose success clears it (F199). */
+  async function connectionError(orgId: string): Promise<string | null> {
+    const rows = (await getDb().execute(sql`SELECT last_error FROM claimnet.organization_directory_connections WHERE organization_id = ${orgId}::uuid`)) as unknown as Array<{ last_error: string | null }>;
+    return rows[0]?.last_error ?? null;
+  }
+
   async function requestsFor(userKey: string): Promise<number> {
     return (await google.stats()).directoryRequests[userKey] ?? 0;
   }
@@ -535,7 +541,7 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     const max = await member(org, "proxied");
     await google.setDirectoryUser(max.email, {});
     expect((await useKey(max.key)).status).toBe(200);
-    const lastError = async () => ((await (await call(org.olive.token, "GET", `/organizations/${org.orgId}/directory`)).json()) as { data: Json }).data["lastError"];
+    const lastError = () => connectionError(org.orgId);
 
     for (const rawBody of ["", "<html>404 Not Found</html>", "{}"]) {
       await google.setDirectoryUser(max.email, { httpStatus: 404, rawBody });
@@ -1142,7 +1148,7 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     await google.setDirectoryUser(ida.email, {});
     expect((await useKey(max.key)).status).toBe(200);
     expect((await useKey(ida.key)).status).toBe(200);
-    const lastError = async () => ((await (await call(org.olive.token, "GET", `/organizations/${org.orgId}/directory`)).json()) as { data: Json }).data["lastError"];
+    const lastError = () => connectionError(org.orgId);
     const badThenGood = async () => {
       await makeDue(max.userId);
       expect((await useKey(max.key)).status).toBe(200);
@@ -1210,8 +1216,7 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
       );
       expect(await checkDirectoryIfDue(getDb(), max.userId)).toBe(false);
       expect(asked).toEqual([]);
-      const view = ((await (await call(org.olive.token, "GET", `/organizations/${org.orgId}/directory`)).json()) as { data: Json }).data;
-      expect(view["lastError"]).toBe("decrypt_failed");
+      expect(await connectionError(org.orgId)).toBe("decrypt_failed");
       expect(await removeDirectoryConnection(getDb(), org.orgId, { userId: org.olive.userId, operator: true })).toBe(true);
       expect(await stillConnected(org)).toBe(false);
     } finally {
@@ -1219,7 +1224,7 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     }
   });
 
-  it("F200: /auth/verify runs a due check before its transaction, for a session on the account", async () => {
+  it("F200: /auth/verify judges a session after its due check, before the transaction", async () => {
     const org = await acme();
     const max = await member(org, "verify-due");
     await google.setDirectoryUser(max.email, {});
@@ -1229,12 +1234,12 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     const session = jwt.sign({ ...(jwt.decode(linked) as Json), idp: "google-consumer" }, process.env["JWT_SECRET"]!);
     const token = crypto.randomBytes(32).toString("hex");
     await getDb().execute(sql`
-      UPDATE claimnet.users SET email_verified_at = NULL, email_verification_token = ${token}, email_verification_token_created_at = NOW()
+      UPDATE claimnet.users SET email_verified_at = NULL, password_hash = NULL, email_verification_token = ${token}, email_verification_token_created_at = NOW()
       WHERE id = ${max.userId}::uuid
     `);
     await google.setDirectoryUser(max.email, { suspended: true });
     await makeDue(max.userId);
-    // Judged on a stale "active" this would proceed; the check before the transaction changes the answer.
+    // Judged on the stale "active" this would proceed; the check, in the session's judging, changes the answer.
     const res = await call(session, "POST", "/auth/verify", { token });
     expect(((await res.json()) as { data: Json }).data["confirmationRequired"]).toBe(true);
     expect((await memberRow(max.userId)).directory_status).toBe("suspended");

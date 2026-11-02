@@ -12,7 +12,7 @@ import { sendVerificationEmail, sendPasswordResetEmail } from "../services/email
 import { rateLimit } from "../middleware/rate-limit";
 import { normalizeEmail } from "../lib/normalize-email";
 import type { AccountDisabledReason } from "../authz/account-state";
-import { checkDirectoryIfDue, credentialsStillRunning, onBehalfSubjectOf, feedbackOwnedBy, intentOwnedBy, invalidateSessions, managedOrganizationOf, ssoRequired } from "../authz";
+import { credentialsStillRunning, onBehalfSubjectOf, feedbackOwnedBy, intentOwnedBy, invalidateSessions, managedOrganizationOf, ssoRequired } from "../authz";
 import { ACCOUNT_DISABLED_MESSAGE, ACCOUNT_SUSPENDED_MESSAGE, MANAGED_ACCOUNT_DELETE_MESSAGE, SSO_REQUIRED_MESSAGE, googleSignInErrorMessage, ORGANIZATION_FULL_MESSAGE, DOMAIN_JOIN_FULL_RETRY, DOMAIN_RESET_FULL_RETRY, domainJoinedNotice, directoryDisabledMessage } from "@soupnet/domain";
 import { googleOidcConfig } from "../services/google-oidc.service";
 import { settleGoogleIdentityOnVerify } from "../services/google-sign-in.service";
@@ -920,9 +920,6 @@ auth.post("/verify", verifyRateLimit, async (c) => {
 
   const bearer = c.req.header("Authorization");
   const session = bearer?.startsWith("Bearer ") ? verifyToken(bearer.slice(7)) : null;
-  // Judging this session below is a credential use. Its directory check, if due,
-  // runs here, so no Google call waits inside the transaction holding the row.
-  if (session?.sub === account.id) await checkDirectoryIfDue(db, account.id);
 
   // The verification and an organization join on a captured domain commit
   // together (stream Domains, OD-J1). At the seat limit both roll back, so

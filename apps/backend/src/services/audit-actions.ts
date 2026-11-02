@@ -60,6 +60,7 @@ export const ACCOUNT_EVENT_ACTIONS = [
   "organization.directory_connect_failed",
   "organization.directory_disconnected",
   "organization.member_directory_status",
+  "organization.directory_deletions_noticed",
   "organization_domain.added",
   "organization_domain.token_reissued",
   "organization_domain.auto_join_on",
