@@ -120,6 +120,35 @@ Feature: Organization accounts: membership, disable, org-wide books, and joining
       Then Max holds the admin role on Acme's org-wide books
       And a book role Max was granted directly is unchanged
 
+    @ORG-ROLE-04
+    Scenario: A demoted owner keeps no owner powers over the default book
+      Given Olive created Acme, and Max is now an owner too
+      When Max makes Olive a member
+      Then Olive holds the member role on Acme's default book
+      And Olive can't rename it or remove Max from it
+      And Max can remove Olive from it, and rename it
+      And every owner of Acme holds the owner role on its default book
+
+    @ORG-ROLE-05
+    Scenario: The default book keeps its owners
+      Given Olive and Max both own Acme
+      When Max tries to remove Olive from Acme's default book
+      Then it is refused, and Olive still holds the owner role
+      And once someone is no longer an owner, their row can be removed
+      And a row already missing comes back on the next role change
+
+    @ORG-ROLE-06
+    Scenario: The organization's accountable owner is always a current owner
+      Given Olive created Acme, and Max is now an owner too
+      When Max makes Olive an admin
+      Then Max becomes Acme's accountable owner, and the audit trail says so
+
+    @ORG-ROLE-07
+    Scenario: A hand-over gives the successor the default book's owner role
+      Given Olive created Acme, and Ada is its only other member, an admin
+      When Olive's account is removed
+      Then Ada owns Acme, and can rename its default book
+
     @ORG-ROLE-02
     Scenario: The role rules
       Then an admin can't disable or re-role an owner, or make someone an owner

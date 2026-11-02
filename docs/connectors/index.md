@@ -88,6 +88,15 @@ For Claude Code, Claude Desktop, VS Code (Copilot), Google Antigravity, Cursor, 
 
 Cursor, Windsurf, Zed, and VS Code Copilot also accept the OAuth flow above if you'd rather sign in via the browser than paste a key — point them at `https://mcp.soup.net/mcp` and let their built-in OAuth client handle the rest.
 
+### Claude Code, as a plugin with skills
+
+The plugin brings the Soup.net connection and its skills, which teach recipe checks and a few ways of working with them. You sign in through your browser the first time Claude Code connects:
+
+```
+claude plugin marketplace add AndyForest/SoupNet
+claude plugin install soupnet@soupnet
+```
+
 ### Claude Code, spelled out
 
 This is what setup looks like in a repo — one small file your teammates can read before any agent touches it. Create `.mcp.json` at the repo root:

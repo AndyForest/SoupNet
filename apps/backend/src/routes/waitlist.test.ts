@@ -191,7 +191,7 @@ describe.skipIf(!BASE || !DEV_EMAIL || !DEV_PASSWORD)("signup queue + admin invi
     const verify = await fetch(`${BASE}/auth/verify`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: regBody.data!.verificationToken }),
+      body: JSON.stringify({ token: regBody.data!.verificationToken, password: "invite-arc-password-123" }),
     });
     const verifyBody = (await verify.json()) as { ok: boolean; data?: { waitlisted?: boolean } };
     expect(verifyBody.ok).toBe(true);

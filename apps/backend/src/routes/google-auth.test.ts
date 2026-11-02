@@ -508,7 +508,7 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
     // What a mail scanner running the page's script sends.
     const scanned = await call(null, "POST", "/auth/verify", { token });
     expect(scanned.status).toBe(200);
-    expect(((await scanned.json()) as { data: unknown }).data).toEqual({ verified: false, confirmationRequired: true, waitlisted: false });
+    expect(((await scanned.json()) as { data: unknown }).data).toEqual({ verified: false, confirmationRequired: true, email, waitlisted: false });
     expect((await userRow(cy.userId)).email_verified_at).toBeNull();
     expect((await identitiesOf(cy.userId)).map((i) => i.subject)).toEqual([cySub]);
     expect((await call(cy.token, "GET", "/auth/me")).status).toBe(200);
@@ -526,19 +526,116 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
     await getDb().execute(sql`UPDATE claimnet.users SET waitlisted_at = now() WHERE id = ${cy.userId}::uuid`);
     try {
       const res = await call(null, "POST", "/auth/verify", { token });
-      expect(((await res.json()) as { data: unknown }).data).toEqual({ verified: false, confirmationRequired: true, waitlisted: true });
+      expect(((await res.json()) as { data: unknown }).data).toEqual({ verified: false, confirmationRequired: true, email, waitlisted: true });
     } finally {
       // waitlist.service.test.ts promotes verified waitlisted accounts across the whole table.
       await getDb().execute(sql`UPDATE claimnet.users SET waitlisted_at = NULL WHERE id = ${cy.userId}::uuid`);
     }
   });
 
-  it("GSI-LINK-08 / SSO-A4b: a password account is never asked to confirm", async () => {
-    const email = address("f146-password", `outside-${run}.example`);
-    const registered = await call(null, "POST", "/auth/register", { email, password: PASSWORD, tosAccepted: true });
-    const token = ((await registered.json()) as { data: { verificationToken: string } }).data.verificationToken;
-    const res = await call(null, "POST", "/auth/verify", { token });
-    expect(((await res.json()) as { data: { verified: boolean; confirmationRequired?: boolean } }).data).toMatchObject({ verified: true });
+  /** A password registration on an unverified address, with the proof its browser holds. */
+  async function registered(label: string): Promise<{ userId: string; email: string; token: string; proof: string }> {
+    const email = address(label, `outside-${run}.example`);
+    const res = await call(null, "POST", "/auth/register", { email, password: PASSWORD, tosAccepted: true });
+    const data = ((await res.json()) as { data: { verificationToken: string; signupProof: string } }).data;
+    const rows = (await getDb().execute(sql`SELECT id FROM claimnet.users WHERE email = ${email}`)) as unknown as Array<{ id: string }>;
+    return { userId: rows[0]!.id, email, token: data.verificationToken, proof: data.signupProof };
+  }
+
+  async function withUnprovenGoogle(userId: string, email: string): Promise<void> {
+    await getDb().execute(sql`
+      INSERT INTO claimnet.user_identities (user_id, provider, issuer, subject, email, email_verified, hosted_domain, linked_via)
+      VALUES (${userId}::uuid, 'google', 'https://accounts.google.com', ${sub()}, ${email}, false, NULL, 'signup')
+    `);
+  }
+
+  type VerifyData = { verified?: boolean; token?: string; passwordRequired?: boolean; confirmationRequired?: boolean; googleSignInRemoved?: boolean; signInRefusal?: string; ssoRequired?: boolean; ownSession?: boolean };
+
+  async function postVerify(body: Json, session: string | null = null): Promise<{ status: number; data: VerifyData }> {
+    const res = await call(session, "POST", "/auth/verify", body);
+    return { status: res.status, data: ((await res.json()) as { data?: VerifyData }).data ?? {} };
+  }
+
+  it("GSI-LINK-08 / SSO-A4b, F144: a password account answers for the password, and confirming doesn't stand in for it", async () => {
+    const reg = await registered("f144-password");
+    await withUnprovenGoogle(reg.userId, reg.email);
+
+    for (const body of [{ token: reg.token }, { token: reg.token, confirm: true }]) {
+      expect((await postVerify(body)).data).toMatchObject({ verified: false, passwordRequired: true });
+    }
+    expect((await postVerify({ token: reg.token, password: "not-the-password", confirm: true })).status).toBe(401);
+    expect((await userRow(reg.userId)).email_verified_at).toBeNull();
+    expect(await identitiesOf(reg.userId)).toHaveLength(1);
+  });
+
+  it("GSI-LINK-08 / SSO-A4b, F144: a Google-only account gets the question, whatever password is sent", async () => {
+    const email = address("f144-google-only", `outside-${run}.example`);
+    const cy = signedIn(await signIn(consumer(email)));
+    const token = await verificationTokenOf(cy.userId);
+
+    const res = await postVerify({ token, password: PASSWORD });
+    expect(res.status).toBe(200);
+    expect(res.data).toMatchObject({ verified: false, confirmationRequired: true });
+    expect((await userRow(cy.userId)).email_verified_at).toBeNull();
+  });
+
+  it("GSI-LINK-06 / SSO-A4b, F144: the confirmation's button removes the Google account and signs nobody in", async () => {
+    const email = address("f144-confirm", `outside-${run}.example`);
+    const cy = signedIn(await signIn(consumer(email)));
+    const token = await verificationTokenOf(cy.userId);
+
+    const { data } = await postVerify({ token, confirm: true });
+    expect(data).toMatchObject({ verified: true, googleSignInRemoved: true, ownSession: false });
+    expect(data.token).toBeUndefined();
+    expect(await identitiesOf(cy.userId)).toEqual([]);
+  });
+
+  it("GSI-LINK-06 / SSO-A4b, F144: a sign-up proof or the password isn't that session: the Google account goes, and the sign-in outlives the cut-off", async () => {
+    for (const [label, proving] of [
+      ["f144-proof", (r: { proof: string }) => ({ signupProof: r.proof })],
+      ["f144-correct-password", () => ({ password: PASSWORD })],
+    ] as const) {
+      const reg = await registered(label);
+      await withUnprovenGoogle(reg.userId, reg.email);
+
+      const { data } = await postVerify({ token: reg.token, ...proving(reg) });
+      expect(data).toMatchObject({ verified: true, googleSignInRemoved: true });
+      expect(await identitiesOf(reg.userId)).toEqual([]);
+      // Dated at the cut-off this verify just set, with no wait for it.
+      expect((await call(data.token ?? "", "GET", "/auth/me")).status).toBe(200);
+    }
+  });
+
+  it("GSI-LINK-06 / SSO-A4b: a password reset proves the mailbox, so it ends an unproven Google sign-up", async () => {
+    const email = address("f144-reset", `outside-${run}.example`);
+    const cy = signedIn(await signIn(consumer(email)));
+
+    const forgot = (await (await call(null, "POST", "/auth/forgot-password", { email })).json()) as { data: { resetToken?: string } };
+    const reset = await call(null, "POST", "/auth/reset-password", { token: forgot.data.resetToken ?? "", newPassword: "a-brand-new-password" });
+    expect(reset.status).toBe(200);
+
+    expect((await userRow(cy.userId)).email_verified_at).not.toBeNull();
+    expect(await identitiesOf(cy.userId)).toEqual([]);
+    expect((await call(cy.token, "GET", "/auth/me")).status).toBe(401);
+    expect((await passwordLogin(email, "a-brand-new-password")).status).toBe(200);
+  });
+
+  it("GSI-SSO-02 / SSO-R2, F144: neither a sign-up proof nor a password at the link gets past require_sso", async () => {
+    const olive = await seeded("olive-f144");
+    const orgId = await createOrg(olive.email);
+    await getDb().execute(sql`UPDATE claimnet.organizations SET require_sso = true WHERE id = ${orgId}::uuid`);
+
+    for (const [label, proving] of [
+      ["f144-sso-proof", (r: { proof: string }) => ({ signupProof: r.proof })],
+      ["f144-sso-password", () => ({ password: PASSWORD })],
+    ] as const) {
+      const reg = await registered(label);
+      await addToOrg(orgId, reg.email);
+
+      const { data } = await postVerify({ token: reg.token, ...proving(reg) });
+      expect(data).toMatchObject({ verified: true, signInRefusal: SSO_REQUIRED_MESSAGE, ssoRequired: true });
+      expect(data.token).toBeUndefined();
+    }
   });
 
   /** A callback that has issued its handoff code, not yet exchanged. */
@@ -683,7 +780,7 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
     // F146: nothing happens until the person confirms.
     const asked = await call(null, "POST", "/auth/verify", { token });
     expect(asked.status).toBe(200);
-    expect(((await asked.json()) as { data: unknown }).data).toEqual({ verified: false, confirmationRequired: true, waitlisted: false });
+    expect(((await asked.json()) as { data: unknown }).data).toMatchObject({ verified: false, confirmationRequired: true, waitlisted: false });
     expect(await identitiesOf(stranger.userId)).toHaveLength(1);
 
     // On a captured domain a waitlisted account joins, so it isn't told it stays waitlisted.

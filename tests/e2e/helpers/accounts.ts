@@ -31,7 +31,7 @@ export async function seedUser(request: APIRequestContext, label: string): Promi
   ).toBeTruthy();
   expect(regBody.data?.waitlisted, "a seeded account should not land on the waitlist").toBe(false);
 
-  const ver = await request.post(`${BACKEND_URL}/auth/verify`, { data: { token: regBody.data.verificationToken } });
+  const ver = await request.post(`${BACKEND_URL}/auth/verify`, { data: { token: regBody.data.verificationToken, password: PASSWORD } });
   expect(ver.ok(), `verifying ${email} should succeed; got ${ver.status()}`).toBe(true);
 
   const login = await request.post(`${BACKEND_URL}/auth/login`, { data: { email, password: PASSWORD } });

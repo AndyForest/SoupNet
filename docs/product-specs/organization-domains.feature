@@ -258,6 +258,26 @@ Feature: Verified domains, automatic joining, and existing accounts on a claimed
       Then the address is verified and she joins Acme
       And the Google identity and the stranger's session are gone
 
+    @ORG-JOIN-D05
+    Scenario: A password reset joins the captured domain's organization
+      Given acme.example is captured
+      And nia@acme.example is registered and unverified
+      When she resets the password from the emailed link
+      Then the address is verified and she joins Acme
+
+    @ORG-SEAT-D06
+    Scenario: A password reset at the seat limit keeps the new password
+      Given acme.example is captured
+      And Acme has no free seat
+      And nia@acme.example is registered and unverified
+      When she resets the password from the emailed link
+      Then the new password stands and every session is signed out
+      And the page says there is no free seat
+      And her address is still unverified
+      When a seat frees
+      And she verifies with the new password
+      Then she joins Acme
+
     @ORG-SEAT-D01
     Scenario: A verification click at the seat limit is refused and can be retried
       Given acme.example is captured

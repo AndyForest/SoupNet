@@ -1,9 +1,37 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { API_BASE, getToken, setEmailVerified, isLoggedIn } from "../auth.js";
+import { useQueryClient } from "@tanstack/react-query";
+import { API_BASE, clearSignupProof, getSignupProof, getToken, setEmailVerified, setToken } from "../auth.js";
+
+interface VerifyResponse {
+  ok: boolean;
+  error?: string;
+  message?: string;
+  detail?: string;
+  data?: { verified: boolean; email: string; waitlisted?: boolean; organization?: { name: string; notice: string } | null; passwordRequired?: boolean; ownSession?: boolean; alreadyVerified?: boolean; token?: string; signInRefusal?: string; ssoRequired?: boolean; confirmationRequired?: boolean; googleSignInRemoved?: boolean };
+}
+
+async function verifyRequest(body: { token: string; password?: string; confirm?: boolean }): Promise<{ status: number; json: VerifyResponse }> {
+  const session = getToken();
+  const signupProof = getSignupProof();
+  const res = await fetch(`${API_BASE}/auth/verify`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(session ? { Authorization: `Bearer ${session}` } : {}) },
+    body: JSON.stringify({ ...body, ...(signupProof ? { signupProof } : {}) }),
+  });
+  return { status: res.status, json: (await res.json()) as VerifyResponse };
+}
 
 export function VerifyPage() {
-  const [status, setStatus] = useState<"loading" | "confirm" | "success" | "full" | "error">("loading");
+  const [status, setStatus] = useState<"loading" | "confirm" | "success" | "full" | "password" | "error">("loading");
+  const [password, setPassword] = useState("");
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [signedIn, setSignedIn] = useState(false);
+  const [signInRefusal, setSignInRefusal] = useState<string | null>(null);
+  const [ssoRequired, setSsoRequired] = useState(false);
+  const [alreadyVerified, setAlreadyVerified] = useState(false);
+  const queryClient = useQueryClient();
   const [email, setEmail] = useState("");
   const [waitlisted, setWaitlisted] = useState(false);
   // What the server says when this click joined an organization on a domain
@@ -18,52 +46,82 @@ export function VerifyPage() {
   // briefly flash an error before the second response lands. Belt and braces.
   const calledRef = useRef(false);
 
-  const verify = (token: string, confirm: boolean) => {
-    // This browser's session, if any, shows a Google sign-up that this click
-    // comes from the same person. The backend ignores it otherwise.
-    const session = getToken();
-    fetch(`${API_BASE}/auth/verify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...(session ? { Authorization: `Bearer ${session}` } : {}) },
-      body: JSON.stringify({ token, ...(confirm ? { confirm: true } : {}) }),
-    })
-      .then((res) => res.json() as Promise<{ ok: boolean; error?: string; message?: string; detail?: string; data?: { email: string; waitlisted?: boolean; organization?: { name: string; notice: string } | null; googleSignInRemoved?: boolean; confirmationRequired?: boolean } }>)
-      .then((data) => {
-        if (!data.ok && data.error === "organization_full") {
-          setFullLines([data.message ?? "", data.detail ?? ""].filter(Boolean));
-          setStatus("full");
-          return;
-        }
-        if (data.ok && data.data?.confirmationRequired) {
-          setWaitlisted(data.data.waitlisted === true);
-          setStatus("confirm");
-        } else if (data.ok && data.data) {
-          setStatus("success");
-          setEmail(data.data.email);
-          setWaitlisted(data.data.waitlisted === true);
-          setJoinedNotice(data.data.organization?.notice ?? null);
-          setGoogleSignInRemoved(data.data.googleSignInRemoved === true);
-          // If the user is logged in in this tab, update the cached flag so
-          // subsequent navigation no longer redirects to /verify-pending.
-          if (isLoggedIn()) setEmailVerified(true);
-        } else {
-          setStatus("error");
-        }
+  function settle({ json }: { status: number; json: VerifyResponse }): boolean {
+    if (!json.ok && json.error === "organization_full") {
+      setFullLines([json.message ?? "", json.detail ?? ""].filter(Boolean));
+      setStatus("full");
+      return true;
+    }
+    if (!json.ok || !json.data) return false;
+    setEmail(json.data.email);
+    setWaitlisted(json.data.waitlisted === true);
+    setAlreadyVerified(json.data.alreadyVerified === true);
+    if (json.data.passwordRequired) {
+      setStatus("password");
+      return true;
+    }
+    if (json.data.confirmationRequired) {
+      setStatus("confirm");
+      return true;
+    }
+    setJoinedNotice(json.data.organization?.notice ?? null);
+    setGoogleSignInRemoved(json.data.googleSignInRemoved === true);
+    setStatus("success");
+    clearSignupProof();
+    if (json.data.token) {
+      // A correct password here is a sign-in. Clear the cache first, as the
+      // login page does, so another account's data can't show under this one.
+      queryClient.clear();
+      setToken(json.data.token);
+      setEmailVerified(true);
+      setSignedIn(true);
+      return true;
+    }
+    // The session in this tab was this account's, so update the cached flag:
+    // subsequent navigation no longer redirects to /verify-pending.
+    if (json.data.ownSession) {
+      setEmailVerified(true);
+      setSignedIn(true);
+    }
+    if (json.data.signInRefusal) setSignInRefusal(json.data.signInRefusal);
+    setSsoRequired(json.data.ssoRequired === true);
+    return true;
+  }
+
+  function submitPassword(e: React.FormEvent) {
+    e.preventDefault();
+    const token = new URLSearchParams(window.location.search).get("token");
+    if (!token) return;
+    setPasswordError(null);
+    setSubmitting(true);
+    verifyRequest({ token, password })
+      .then((res) => {
+        if (settle(res)) return;
+        if (res.status === 429) setPasswordError("Too many tries. Wait 15 minutes and try again, or set a new password below.");
+        else if (res.json.error === "wrong_password") setPasswordError(res.json.message ?? "That isn't this account's password.");
+        else setStatus("error");
       })
-      .catch(() => setStatus("error"));
-  };
+      .catch(() => setPasswordError("Network error. Check your connection and try again."))
+      .finally(() => setSubmitting(false));
+  }
 
   useEffect(() => {
     if (calledRef.current) return;
     calledRef.current = true;
 
-    const token = new URLSearchParams(window.location.search).get("token");
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("token");
 
     if (!token) {
       setStatus("error");
       return;
     }
-    verify(token, false);
+
+    verifyRequest({ token })
+      .then((res) => {
+        if (!settle(res)) setStatus("error");
+      })
+      .catch(() => setStatus("error"));
   }, []);
 
   return (
@@ -111,7 +169,11 @@ export function VerifyPage() {
                 const token = new URLSearchParams(window.location.search).get("token");
                 if (token) {
                   setStatus("loading");
-                  verify(token, true);
+                  verifyRequest({ token, confirm: true })
+                    .then((res) => {
+                      if (!settle(res)) setStatus("error");
+                    })
+                    .catch(() => setStatus("error"));
                 }
               }}
             >
@@ -128,7 +190,15 @@ export function VerifyPage() {
             <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)" }}>
               {waitlisted
                 ? `${email} is verified and your spot on the waitlist is held. We'll email you the moment a spot opens — nothing else to do for now.`
-                : `${email} is now verified. You can sign in and start using Soup.net.`}
+                : signedIn
+                  ? `${email} is ${alreadyVerified ? "already" : "now"} verified, and you're signed in.`
+                  // "Already" is reached only by a repeat click, which proves nothing, so
+                  // it says the same for every account. Signing in is where a person learns more.
+                  : signInRefusal
+                    ? `${email} is now verified. ${signInRefusal}`
+                    : googleSignInRemoved
+                      ? `${email} is now verified.`
+                      : `${email} is already verified.`}
             </p>
             {joinedNotice && (
               <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)" }}>
@@ -137,12 +207,21 @@ export function VerifyPage() {
             )}
             {googleSignInRemoved && (
               <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)" }}>
-                {waitlisted
-                  ? "That Google account has been removed. When your spot opens, set a password with the forgotten-password link on the sign-in page, or use a Google Workspace account on this address."
-                  : "That Google account has been removed. To sign in, set a password with the forgotten-password link on the next page, or use a Google Workspace account on this address."}
+                {signedIn
+                  ? "That Google account has been removed from this address."
+                  : waitlisted
+                    ? "That Google account has been removed. When your spot opens, set a password with the forgotten-password link on the sign-in page, or use a Google Workspace account on this address."
+                    : "That Google account has been removed. To sign in, set a password with the forgotten-password link on the next page, or use a Google Workspace account on this address."}
               </p>
             )}
-            {!waitlisted && (
+            {signedIn && (
+              <Link to="/app/dashboard" style={{ textDecoration: "none" }}>
+                <button style={{ width: "100%", justifyContent: "center" }}>
+                  Go to your dashboard
+                </button>
+              </Link>
+            )}
+            {!waitlisted && !signedIn && (!signInRefusal || ssoRequired) && (
               <Link to="/auth/login" style={{ textDecoration: "none" }}>
                 <button style={{ width: "100%", justifyContent: "center" }}>
                   Sign In
@@ -165,6 +244,42 @@ export function VerifyPage() {
                 Back to sign in
               </button>
             </Link>
+          </>
+        )}
+
+        {status === "password" && (
+          <>
+            <h1 style={{ color: "var(--color-primary)", fontSize: "1.5rem", marginBottom: "var(--space-md)" }}>
+              Confirm it&apos;s you
+            </h1>
+            <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)" }}>
+              Someone signed up for Soup.net with {email}. Enter the password chosen at sign-up to verify this address.
+            </p>
+            <form onSubmit={submitPassword} style={{ textAlign: "left" }}>
+              <label htmlFor="verify-password">Password</label>
+              <input
+                id="verify-password"
+                type="password"
+                autoComplete="current-password"
+                required
+                autoFocus
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                aria-describedby={passwordError ? "verify-password-error" : undefined}
+              />
+              {passwordError && (
+                <p id="verify-password-error" role="alert" style={{ color: "var(--color-error)", marginTop: "var(--space-sm)" }}>
+                  {passwordError}
+                </p>
+              )}
+              <button type="submit" disabled={submitting} style={{ width: "100%", justifyContent: "center", marginTop: "var(--space-md)" }}>
+                {submitting ? "Verifying..." : "Verify email"}
+              </button>
+            </form>
+            <p style={{ color: "var(--color-on-surface-variant)", marginTop: "var(--space-lg)" }}>
+              Didn&apos;t sign up, or don&apos;t know the password? <Link to="/auth/forgot-password">Set a new password</Link>. That
+              verifies this address, replaces the old password and signs out every session on the account.
+            </p>
           </>
         )}
 

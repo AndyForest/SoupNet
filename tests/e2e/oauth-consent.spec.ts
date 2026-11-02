@@ -127,7 +127,7 @@ test.describe("OAuth consent page (stream O)", () => {
     const user = await seeded(request, "oauth-e3");
     const clientId = await registerClient(request, "E3 Client");
     const iss = await issuer(request);
-    expect(iss, "the metadata issuer should be the backend origin http://127.0.0.1:3171").toBe("http://127.0.0.1:3171");
+    expect(iss, "the metadata issuer should be the backend origin").toBe(new URL(BACKEND_URL).origin);
     const seen = await stubHost(page, "https://client.example.com/**", "client.example.com");
 
     await test.step("open the consent page", async () => {

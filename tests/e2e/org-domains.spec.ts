@@ -138,22 +138,32 @@ async function setSeatLimit(request: APIRequestContext, company: CompanyFixture,
 
 const verifyPath = (token: string) => `/auth/verify?token=${encodeURIComponent(token)}`;
 
+/** Open the link in a browser with no session, and give the sign-up's password (F144). */
+async function openLink(page: Page, token: string) {
+  await page.goto(verifyPath(token));
+  const password = page.getByLabel("Password");
+  await expect(password, "with no session, the page should ask for the sign-up's password").toBeVisible();
+  await password.fill(PASSWORD);
+  await page.getByRole("button", { name: "Verify email", exact: true }).click();
+  await expect(password, "the page should move on once the password is accepted").toHaveCount(0);
+}
+
 /** Wait until the page leaves its loading state. */
 async function settled(page: Page) {
   await expect(page.getByText("Verifying your email..."), "the verify page should finish loading").toHaveCount(0);
 }
 
-async function expectJoinedView(page: Page, email: string, orgName: string, what: string) {
+async function expectJoinedView(page: Page, email: string, orgName: string, what: string, already = false) {
   await expect(page.getByRole("heading", { name: "Email verified" }), `${what}: the page should show the "Email verified" success view`).toBeVisible();
   await expect(
-    page.getByText(`${email} is now verified. You can sign in and start using Soup.net.`, { exact: true }),
-    `${what}: the page should say the address is now verified`,
+    page.getByText(`${email} is ${already ? "already" : "now"} verified, and you're signed in.`, { exact: true }),
+    `${what}: the page should say the address is verified and the person signed in`,
   ).toBeVisible();
   await expect(
     page.getByText(`Your account now belongs to ${orgName} on Soup.net. ${orgName}'s admins manage it.`, { exact: true }),
     `${what}: the page should say the account now belongs to ${orgName}`,
   ).toBeVisible();
-  await expect(page.getByRole("button", { name: "Sign In", exact: true }), `${what}: the page should offer a Sign In button`).toBeVisible();
+  await expect(page.getByRole("button", { name: "Go to your dashboard", exact: true }), `${what}: the page should offer the dashboard`).toBeVisible();
 }
 
 async function recordAxe(page: Page, testInfo: TestInfo, name: string) {
@@ -173,8 +183,7 @@ test("verifying an address on a captured domain says the account joined the orga
   const token = await registerUnverified(request, nia);
 
   await test.step("Nia opens the verification link", async () => {
-    await page.goto(verifyPath(token));
-    await settled(page);
+    await openLink(page, token);
     await expectJoinedView(page, nia, company.name, "first visit");
     await shot(page, testInfo, "joined-01-verified");
   });
@@ -190,14 +199,13 @@ test("verifying an ordinary address shows no organization line", async ({ page, 
   const token = await registerUnverified(request, gus);
 
   await test.step("Gus opens the verification link", async () => {
-    await page.goto(verifyPath(token));
-    await settled(page);
+    await openLink(page, token);
     await expect(page.getByRole("heading", { name: "Email verified" }), "an ordinary address should get the \"Email verified\" view").toBeVisible();
     await expect(
-      page.getByText(`${gus} is now verified. You can sign in and start using Soup.net.`, { exact: true }),
+      page.getByText(`${gus} is now verified, and you're signed in.`, { exact: true }),
       "the page should say Gus's address is now verified",
     ).toBeVisible();
-    await expect(page.getByRole("button", { name: "Sign In", exact: true }), "the page should offer a Sign In button").toBeVisible();
+    await expect(page.getByRole("button", { name: "Go to your dashboard", exact: true }), "the page should offer the dashboard").toBeVisible();
     await expect(page.getByText("belongs to"), "an ordinary verification should show no organization line").toHaveCount(0);
     await shot(page, testInfo, "ordinary-01-verified");
   });
@@ -209,8 +217,7 @@ test("at the seat limit the page says there are no free seats, and the address s
   const token = await registerUnverified(request, nia);
 
   await test.step("Nia opens the verification link while the organization is full", async () => {
-    await page.goto(verifyPath(token));
-    await settled(page);
+    await openLink(page, token);
     await expect(page.getByRole("heading", { name: "No free seats" }), "a full organization should show the heading \"No free seats\"").toBeVisible();
     await expect(
       page.getByText("This organization has no free seats. Ask one of its admins.", { exact: true }),
@@ -258,8 +265,7 @@ test("once a seat frees, the same link joins", async ({ page, request }, testInf
   const token = await registerUnverified(request, nia);
 
   await test.step("Nia opens the link while the organization is full", async () => {
-    await page.goto(verifyPath(token));
-    await settled(page);
+    await openLink(page, token);
     await expect(page.getByRole("heading", { name: "No free seats" }), "the full organization should first show \"No free seats\"").toBeVisible();
   });
 
@@ -268,8 +274,7 @@ test("once a seat frees, the same link joins", async ({ page, request }, testInf
   });
 
   await test.step("Nia reloads the same link", async () => {
-    await page.reload();
-    await settled(page);
+    await openLink(page, token);
     await expectJoinedView(page, nia, company.name, "after a seat frees");
     await shot(page, testInfo, "freed-01-joined");
   });
@@ -289,14 +294,13 @@ test("a bad token shows the existing error", async ({ page }, testInfo) => {
   });
 });
 
-test("a second visit to an already-used joining link still names the organization", async ({ page, request }, testInfo) => {
+test("a second visit in the browser that verified still names the organization", async ({ page, request }, testInfo) => {
   const company = await companyWithCapturedDomain(request, "second", 5);
   const nia = `e2e-nia-${unique()}@${company.domain}`;
   const token = await registerUnverified(request, nia);
 
   await test.step("Nia verifies once", async () => {
-    await page.goto(verifyPath(token));
-    await settled(page);
+    await openLink(page, token);
     await expectJoinedView(page, nia, company.name, "first visit");
   });
 
@@ -304,7 +308,7 @@ test("a second visit to an already-used joining link still names the organizatio
     const second = await page.context().newPage();
     await second.goto(verifyPath(token));
     await settled(second);
-    await expectJoinedView(second, nia, company.name, "second visit");
+    await expectJoinedView(second, nia, company.name, "second visit", true);
     await shot(second, testInfo, "second-01-visit");
   });
 });
@@ -315,8 +319,7 @@ test("a reload after joining keeps the success view and the organization line", 
   const token = await registerUnverified(request, nia);
 
   await test.step("Nia verifies", async () => {
-    await page.goto(verifyPath(token));
-    await settled(page);
+    await openLink(page, token);
     await expectJoinedView(page, nia, company.name, "before reload");
   });
 

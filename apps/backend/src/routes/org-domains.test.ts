@@ -39,6 +39,7 @@ let sql: typeof import("drizzle-orm").sql;
 const BASE = process.env["BACKEND_URL"] ?? "";
 const run = `${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
 const PASSWORD = "org-domains-test-pw";
+const NEW_PASSWORD = "org-domains-test-pw-new";
 let n = 0;
 
 type Json = Record<string, unknown>;
@@ -155,8 +156,16 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
     return { body, token };
   }
 
+  /** The click of the person who signed up: F144's proof goes with the link. */
   function verify(token: string): Promise<Response> {
-    return call(null, "POST", "/auth/verify", { token });
+    return call(null, "POST", "/auth/verify", { token, password: PASSWORD });
+  }
+
+  async function resetPassword(email: string): Promise<Json> {
+    const asked = (await (await call(null, "POST", "/auth/forgot-password", { email })).json()) as { data: { resetToken: string } };
+    const res = await call(null, "POST", "/auth/reset-password", { token: asked.data.resetToken, newPassword: NEW_PASSWORD });
+    expect(res.status).toBe(200);
+    return ((await res.json()) as { data: Json }).data;
   }
 
   async function userIdOf(email: string): Promise<string> {
@@ -495,10 +504,14 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
     const row = (await getDb().execute(sql`SELECT daily_read FROM claimnet.group_members WHERE group_id = ${defaultBookId}::uuid AND user_id = ${userId}::uuid`)) as unknown as Array<{ daily_read: boolean }>;
     expect(row[0]?.daily_read).toBe(true);
 
-    // The second click changes nothing, and still says which organization manages the account.
+    // The second click changes nothing. With no session it says only what anyone
+    // holding the link knows (F158); the account's own session is told which
+    // organization manages it.
     const again = await verify(nia.token);
     expect(again.status).toBe(200);
-    expect(((await again.json()) as { data: Json }).data["organization"]).toEqual(data["organization"]);
+    expect(((await again.json()) as { data: Json }).data).toEqual({ verified: true, alreadyVerified: true, email, ownSession: false });
+    const own = await call({ jwt: data["token"] as string }, "POST", "/auth/verify", { token: nia.token });
+    expect(((await own.json()) as { data: Json }).data["organization"]).toEqual(data["organization"]);
     expect(await orgOf(userId)).toMatchObject({ organization_id: orgId, joined_via: "domain" });
 
     // An account on an ordinary domain: verified, no organization.
@@ -679,6 +692,42 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
     expect((await call(olive, "POST", `/organizations/${orgId}/members/${ann.userId}/disable`)).status).toBe(200);
     const joined = await verify(token);
     expect(joined.status).toBe(200);
+    expect(await orgOf(await userIdOf(email))).toMatchObject({ organization_id: orgId, joined_via: "domain" });
+  });
+
+  it("ORG-JOIN-D05 / OD-J5: a password reset verifies the address, so it joins the captured domain's organization", async () => {
+    const olive = await actor("olive");
+    const { orgId } = await createOrg(olive);
+    const { domain } = await capture(olive, orgId);
+    const email = `test-orgdom-nia-${run}-${++n}@${domain}`;
+    await register(email);
+
+    const data = await resetPassword(email);
+    expect(data["organizationLines"]).toEqual([expect.stringMatching(/^Your account now belongs to Acme /)]);
+    expect(await verifiedAt(email)).not.toBeNull();
+    expect(await orgOf(await userIdOf(email))).toMatchObject({ organization_id: orgId, joined_via: "domain" });
+
+    // A reset on an account already verified joins nothing here; the migration owns those.
+    const max = await actor("max");
+    expect((await resetPassword(max.email))["organizationLines"]).toBeUndefined();
+  });
+
+  it("ORG-SEAT-D06 / OD-J5, OD-C1: a reset at the seat limit keeps the new password and leaves the address unverified", async () => {
+    const olive = await actor("olive");
+    const { orgId } = await createOrg(olive, 1);
+    const { domain } = await capture(olive, orgId);
+    const email = `test-orgdom-nia-${run}-${++n}@${domain}`;
+    const { token } = await register(email);
+
+    const data = await resetPassword(email);
+    expect(data["organizationLines"]).toEqual(["This organization has no free seats. Ask one of its admins.", expect.stringContaining("Your password is changed")]);
+    expect(await verifiedAt(email)).toBeNull();
+    expect(await orgOf(await userIdOf(email))).toBeUndefined();
+
+    // The old password no longer proves anything; the new one does, once a seat frees.
+    expect((await call(null, "POST", "/auth/verify", { token, password: PASSWORD })).status).toBe(401);
+    expect((await call(sys, "PATCH", `/admin/organizations/${orgId}`, { seatLimit: 2 })).status).toBe(200);
+    expect((await call(null, "POST", "/auth/verify", { token, password: NEW_PASSWORD })).status).toBe(200);
     expect(await orgOf(await userIdOf(email))).toMatchObject({ organization_id: orgId, joined_via: "domain" });
   });
 
