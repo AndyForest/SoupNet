@@ -56,6 +56,18 @@ export const ACCOUNT_EVENT_ACTIONS = [
   "organization.owner_handed_over",
   "organization.seat_limit_set",
   "organization.require_sso_set",
+  "organization_domain.added",
+  "organization_domain.token_reissued",
+  "organization_domain.auto_join_on",
+  "organization_domain.auto_join_off",
+  "organization_domain.removed",
+  "organization_domain.verified",
+  "organization_domain.failing",
+  "organization_domain.recovered",
+  "organization_domain.lapsed",
+  "organization_domain.migrated",
+  "organization_domain.migration_failed",
+  "organization_domain.migration_recovered",
   // Operators
   "integrity.repaired",
 ] as const;

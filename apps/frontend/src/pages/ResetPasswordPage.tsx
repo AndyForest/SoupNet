@@ -68,6 +68,11 @@ export function ResetPasswordPage() {
               The Google account that signed up with this address has been removed from this account, because it never showed it owned the address. Nothing changed at Google. From now on, sign in with this password, or with a Google Workspace account on this address.
             </p>
           )}
+          {/* When this reset joined an organization on a domain it has verified, or
+              that organization had no free seat (OD-J9). */}
+          {done.organizationLines.map((line) => (
+            <p key={line} style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)", lineHeight: 1.5 }}>{line}</p>
+          ))}
           <Link to="/auth/login" search={running ? { next: "/app/keys" } : {}} style={{ textDecoration: "none" }}>
             <button style={{ width: "100%", justifyContent: "center" }}>
               {running ? "Sign in and review" : "Sign in"}

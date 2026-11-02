@@ -7,7 +7,8 @@ interface VerifyResponse {
   ok: boolean;
   error?: string;
   message?: string;
-  data?: { verified: boolean; email: string; waitlisted?: boolean; passwordRequired?: boolean; ownSession?: boolean; alreadyVerified?: boolean; token?: string; signInRefusal?: string; ssoRequired?: boolean; confirmationRequired?: boolean; googleSignInRemoved?: boolean };
+  detail?: string;
+  data?: { verified: boolean; email: string; waitlisted?: boolean; organization?: { name: string; notice: string } | null; passwordRequired?: boolean; ownSession?: boolean; alreadyVerified?: boolean; token?: string; signInRefusal?: string; ssoRequired?: boolean; confirmationRequired?: boolean; googleSignInRemoved?: boolean };
 }
 
 async function verifyRequest(body: { token: string; password?: string; confirm?: boolean }): Promise<{ status: number; json: VerifyResponse }> {
@@ -22,7 +23,7 @@ async function verifyRequest(body: { token: string; password?: string; confirm?:
 }
 
 export function VerifyPage() {
-  const [status, setStatus] = useState<"loading" | "confirm" | "success" | "password" | "error">("loading");
+  const [status, setStatus] = useState<"loading" | "confirm" | "success" | "full" | "password" | "error">("loading");
   const [password, setPassword] = useState("");
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -33,6 +34,12 @@ export function VerifyPage() {
   const queryClient = useQueryClient();
   const [email, setEmail] = useState("");
   const [waitlisted, setWaitlisted] = useState(false);
+  // What the server says when this click joined an organization on a domain
+  // it has verified, or when that organization had no free seat (stream
+  // Domains, OD-J1, OD-C1). The copy comes from the server: the SPA doesn't
+  // depend on @soupnet/domain.
+  const [joinedNotice, setJoinedNotice] = useState<string | null>(null);
+  const [fullLines, setFullLines] = useState<string[]>([]);
   const [googleSignInRemoved, setGoogleSignInRemoved] = useState(false);
   // Guard against React StrictMode double-invocation in dev. The /auth/verify
   // endpoint is idempotent on the backend, but firing twice would still
@@ -40,6 +47,11 @@ export function VerifyPage() {
   const calledRef = useRef(false);
 
   function settle({ json }: { status: number; json: VerifyResponse }): boolean {
+    if (!json.ok && json.error === "organization_full") {
+      setFullLines([json.message ?? "", json.detail ?? ""].filter(Boolean));
+      setStatus("full");
+      return true;
+    }
     if (!json.ok || !json.data) return false;
     setEmail(json.data.email);
     setWaitlisted(json.data.waitlisted === true);
@@ -52,6 +64,7 @@ export function VerifyPage() {
       setStatus("confirm");
       return true;
     }
+    setJoinedNotice(json.data.organization?.notice ?? null);
     setGoogleSignInRemoved(json.data.googleSignInRemoved === true);
     setStatus("success");
     clearSignupProof();
@@ -187,6 +200,11 @@ export function VerifyPage() {
                       ? `${email} is now verified.`
                       : `${email} is already verified.`}
             </p>
+            {joinedNotice && (
+              <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)" }}>
+                {joinedNotice}
+              </p>
+            )}
             {googleSignInRemoved && (
               <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)" }}>
                 {signedIn
@@ -210,6 +228,22 @@ export function VerifyPage() {
                 </button>
               </Link>
             )}
+          </>
+        )}
+
+        {status === "full" && (
+          <>
+            <h1 style={{ color: "var(--color-error)", fontSize: "1.5rem", marginBottom: "var(--space-md)" }}>
+              No free seats
+            </h1>
+            {fullLines.map((line) => (
+              <p key={line} style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-md)" }}>{line}</p>
+            ))}
+            <Link to="/auth/login" style={{ textDecoration: "none" }}>
+              <button className="btn-secondary" style={{ width: "100%", justifyContent: "center", marginTop: "var(--space-md)" }}>
+                Back to sign in
+              </button>
+            </Link>
           </>
         )}
 

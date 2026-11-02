@@ -42,6 +42,7 @@ import { sendVerificationEmail } from "./email.service";
 import { resolveOAuthClient } from "./oauth-cimd.service";
 import type { CimdDeps } from "./oauth-cimd.service";
 import { normalizeResource } from "../lib/oauth-resource";
+import { onGoogleSignIn } from "./org-domains.service";
 import {
   buildGoogleAuthorizationUrl,
   exchangeGoogleCode,
@@ -178,10 +179,10 @@ export type JoinHookResult = "joined" | "full" | "none";
  * with `organization_full`; for an existing account it changes nothing.
  */
 export async function afterGoogleSignIn(
-  _tx: SqlExecutor,
-  _input: { userId: string; email: string; hd: string | null; created: boolean },
+  tx: SqlExecutor,
+  input: { userId: string; email: string; hd: string | null; created: boolean },
 ): Promise<JoinHookResult> {
-  return "none";
+  return onGoogleSignIn(tx, input);
 }
 
 class Rollback extends Error {
@@ -218,12 +219,14 @@ export async function resolveAccount(
       // The account's row before its identities, in id order if the two differ.
       // Everything that removes an identity holds that row first, and a reset
       // takes it first anyway, so the opposite order here deadlocks with them (F163).
+      // NO KEY UPDATE: a running import's foreign keys check this row until it
+      // commits, and FOR UPDATE would make the sign-in wait for that (F174).
       await tx.execute(sql`
         SELECT u.id FROM claimnet.users u
         WHERE u.email = ${email}
            OR u.id = (SELECT i.user_id FROM claimnet.user_identities i WHERE i.issuer = ${claims.issuer} AND i.subject = ${claims.subject})
         ORDER BY u.id
-        FOR UPDATE OF u
+        FOR NO KEY UPDATE OF u
       `);
 
       const identityRows = await tx.execute(sql`
@@ -239,7 +242,7 @@ export async function resolveAccount(
                        WHERE i.user_id = u.id AND i.provider = 'google'
                          AND NOT (i.issuer = ${claims.issuer} AND i.subject = ${claims.subject})) AS other
         FROM claimnet.users u WHERE u.email = ${email}
-        FOR UPDATE OF u
+        FOR NO KEY UPDATE OF u
       `);
       const account = (accountRows as unknown as Array<{ id: string; verified: boolean; other: boolean }>)[0];
 
@@ -331,7 +334,7 @@ export async function settleGoogleIdentityOnVerify(tx: Tx, userId: string, sessi
     WHERE u.id = ${userId}::uuid
       AND u.email_verified_at IS NULL
       AND EXISTS (SELECT 1 FROM claimnet.user_identities i WHERE i.user_id = u.id AND i.provider = 'google')
-    FOR UPDATE OF u
+    FOR NO KEY UPDATE OF u
   `);
   if ((rows as unknown as unknown[]).length === 0) return "proceed";
 

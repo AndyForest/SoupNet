@@ -6,6 +6,7 @@ export interface StillRunning {
 export interface ResetAnswer {
   stillRunning: StillRunning;
   googleSignInRemoved: boolean;
+  organizationLines: string[];
 }
 
 const FAILED =
@@ -21,11 +22,12 @@ export async function readResetAnswer(request: Promise<Pick<Response, "json">>):
     ok?: boolean;
     error?: string;
     message?: string;
-    data?: { stillRunning?: StillRunning; googleSignInRemoved?: boolean };
+    data?: { stillRunning?: StillRunning; googleSignInRemoved?: boolean; organizationLines?: string[] };
   } | null;
   if (!json?.ok) throw new Error(json?.message ?? json?.error ?? FAILED);
   return {
     stillRunning: json.data?.stillRunning ?? { apiKeys: 0, connectedApps: 0 },
     googleSignInRemoved: json.data?.googleSignInRemoved === true,
+    organizationLines: json.data?.organizationLines ?? [],
   };
 }
