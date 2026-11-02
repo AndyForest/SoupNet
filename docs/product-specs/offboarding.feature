@@ -34,6 +34,13 @@ Feature: Offboarding through the company's Google Workspace directory
       When the consent comes back for another Google account, another domain, or without lasting access
       Then nothing is stored and Olive is told which
 
+    @OFF-CON-05
+    Scenario: A consent that outlasts its starter's role
+      # Guards: audit F182.
+      Given Ann, an admin, started a consent
+      When Olive demotes or disables Ann before it completes
+      Then nothing is stored, the connection stays as it was, and Ann is told why
+
     @OFF-CON-03
     Scenario: An owner connects with the company's own service account
       When Olive gives Acme's service-account key and her admin address on acme.example
@@ -92,6 +99,20 @@ Feature: Offboarding through the company's Google Workspace directory
       Then Max is switched off with "Soup.net couldn't confirm this account with your organization's Google Workspace."
       And one successful check restores him
 
+    @OFF-DIR-12
+    Scenario: An answer that isn't a whole record of the person
+      # Guards: audit F183.
+      Given Max was switched off by the directory
+      When a check gets an empty or cut-off reply, a page that isn't a record, someone else's record, or a reply that stalls
+      Then Max stays switched off, and no success is recorded
+      And Acme's admins see the error, unless nothing came back at all
+
+    @OFF-DIR-13
+    Scenario: A not-found that can't be trusted
+      # Guards: audit F184.
+      When a check gets a 404 that isn't Google's own, or Google can't find the admin the connection acts as either
+      Then nobody is switched off, and Acme's admins see the error
+
     @OFF-DIR-08
     Scenario: Google refuses the connection
       Given the connection's credential stops working
@@ -112,7 +133,31 @@ Feature: Offboarding through the company's Google Workspace directory
       Then Google is asked about nobody and nobody goes stale
       And Max stays switched off
 
+    @OFF-DIR-14
+    Scenario: A switched-off member keeps their seat
+      # Guards: audit F190, ruled.
+      Given Max was switched off by the directory and Acme is at its seat limit
+      Then Max keeps the seat, so restoring Max in Google can't overflow the limit
+      And it frees only when an owner or admin disables Max
+
     @OFF-DIR-10
     Scenario: Disconnecting
       When Olive disconnects the directory
       Then no one is checked, and anyone the directory switched off works again
+      And Acme's other owners and admins are told by email
+
+    @OFF-CON-06
+    Scenario: Someone suspended in Google tries to end the checks
+      # Guards: audit F185.
+      Given Ann, an admin, is suspended in Google, and Ann's status was last checked minutes ago
+      When Ann disconnects the directory, or replaces it with a service-account key Ann holds
+      Then the directory is asked about Ann first, and Ann is refused
+      And the connection and everyone's status stay as they were
+
+    @OFF-CON-07
+    Scenario: Disconnecting when the directory can't answer
+      # Guards: audit F185.
+      Given Google can't answer about Ann
+      When Ann disconnects the directory
+      Then Ann is told it stays connected, and can reconnect, ask support, or disconnect once it has gone six hours without a successful check
+      And after those six hours the disconnect goes through and the others are told

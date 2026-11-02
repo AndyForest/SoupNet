@@ -341,7 +341,8 @@ export async function settleGoogleIdentityOnVerify(tx: Tx, userId: string, sessi
 
   const db = tx as unknown as PostgresJsDatabase;
   if (session?.sub === userId && session.idp === "google-consumer") {
-    const { refusal } = await sessionState(db, userId, session.iat, session.idp);
+    // No directory check here: this holds the account's row, and the route ran any due one first.
+    const { refusal } = await sessionState(db, userId, session.iat, session.idp, true);
     if (!refusal) return "proceed";
   }
   if (!confirmed) return "confirm";

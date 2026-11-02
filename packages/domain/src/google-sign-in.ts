@@ -112,6 +112,8 @@ export const GOOGLE_SIGN_IN_ERRORS = [
   "directory_wrong_domain",
   "directory_no_refresh_token",
   "directory_not_admin",
+  "directory_not_manager",
+  "directory_failed",
   "failed",
 ] as const;
 
@@ -138,6 +140,8 @@ const MESSAGES: Record<GoogleSignInError, string> = {
   directory_wrong_domain: "That Google account isn't on the domain you chose. Sign in with a Workspace admin account on that domain.",
   directory_no_refresh_token: "Google didn't grant lasting access to the directory. Try connecting again and approve the request.",
   directory_not_admin: "Google wouldn't let that account read the directory. Connect with a Workspace admin account, or use a service account.",
+  directory_not_manager: "You're no longer an owner or admin of this organization, so the directory wasn't connected.",
+  directory_failed: "Connecting the directory didn't work this time. Try again in a moment.",
   failed: "Google sign-in didn't work this time. Try again in a moment.",
 };
 

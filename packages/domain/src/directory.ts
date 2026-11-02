@@ -28,26 +28,70 @@ export type DirectoryStatus = "active" | "suspended" | "archived" | "deleted";
 export type DirectoryAnswer =
   /** The directory said something about the member. */
   | { kind: "status"; status: DirectoryStatus }
-  /** Google refused our credential: the connection's problem, never the member's. */
+  /**
+   * Google refused our credential, or what came back can't be trusted: the
+   * connection's problem, never the member's. The last status stands and the
+   * admins see the code.
+   */
   | { kind: "connection_error"; code: string }
   /** Slow, down, or rate-limited: keep the last status. */
   | { kind: "unreachable" };
 
+/** Whom a `users.get` asked about: by the address held here, or by the Google `sub`. */
+export type DirectoryLookup = { email: string } | { id: string };
+
+const listOf = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
+
+/** Is this user record the one asked for? An address may be its primary, or an alias of it. */
+function isAbout(user: Record<string, unknown>, asked: DirectoryLookup): boolean {
+  if ("id" in asked) return user["id"] === asked.id;
+  const wanted = asked.email.toLowerCase();
+  const addresses = [
+    user["primaryEmail"],
+    ...listOf(user["aliases"]),
+    ...listOf(user["nonEditableAliases"]),
+    ...listOf(user["emails"]).map((e) => (e && typeof e === "object" ? (e as { address?: unknown }).address : null)),
+  ];
+  return addresses.some((a) => typeof a === "string" && a.toLowerCase() === wanted);
+}
+
+/** Is this body Google's own error, with this code? Google's API errors say so in `error.code`. */
+export function isGoogleError(body: unknown, code: number): boolean {
+  const error = body && typeof body === "object" ? (body as { error?: unknown }).error : null;
+  return !!error && typeof error === "object" && (error as { code?: unknown }).code === code;
+}
+
+/** Google's own "no such user": its 404 with the reason `notFound`, or the newer `status` form. */
+function isGoogleNotFound(body: unknown): boolean {
+  if (!isGoogleError(body, 404)) return false;
+  const error = (body as { error: { errors?: unknown; status?: unknown } }).error;
+  return error.status === "NOT_FOUND" || listOf(error.errors).some((e) => !!e && typeof e === "object" && (e as { reason?: unknown }).reason === "notFound");
+}
+
 /**
  * What a `users.get` answer means (OB-C1 to OB-C8). `null` is a request that
- * never got an answer (timeout, network). A 404 is a member the directory
- * doesn't know, which is deleted (recipe 88b1b328).
+ * never got a whole answer (timeout, network, a body that stalled). Google's
+ * own not-found is a member the directory doesn't know, which is deleted
+ * (recipe 88b1b328); a 404 in any other shape came from something else on the
+ * way (a proxy, a gateway) and says nothing about them (F184).
+ *
+ * A 200 counts only as a complete record of the person asked about: it can
+ * lift a refusal, so an empty body, an error object, a string where a flag
+ * belongs or someone else's record says nothing about them (recipe 6214370b:
+ * only authoritative signals move a status).
  */
-export function classifyDirectoryAnswer(answer: { httpStatus: number; body: unknown } | null): DirectoryAnswer {
+export function classifyDirectoryAnswer(answer: { httpStatus: number; body: unknown } | null, asked: DirectoryLookup): DirectoryAnswer {
   if (!answer) return { kind: "unreachable" };
   const { httpStatus, body } = answer;
   if (httpStatus === 200) {
-    const user = (body && typeof body === "object" ? body : {}) as { suspended?: unknown; archived?: unknown };
-    if (user.suspended === true) return { kind: "status", status: "suspended" };
-    if (user.archived === true) return { kind: "status", status: "archived" };
+    const user = (body && typeof body === "object" && !Array.isArray(body) ? body : {}) as Record<string, unknown>;
+    const complete = typeof user["primaryEmail"] === "string" && typeof user["suspended"] === "boolean" && typeof user["archived"] === "boolean";
+    if (!complete || !isAbout(user, asked)) return { kind: "connection_error", code: "bad_answer" };
+    if (user["suspended"]) return { kind: "status", status: "suspended" };
+    if (user["archived"]) return { kind: "status", status: "archived" };
     return { kind: "status", status: "active" };
   }
-  if (httpStatus === 404) return { kind: "status", status: "deleted" };
+  if (httpStatus === 404) return isGoogleNotFound(body) ? { kind: "status", status: "deleted" } : { kind: "connection_error", code: "bad_404" };
   if (httpStatus === 429 || httpStatus >= 500) return { kind: "unreachable" };
   return { kind: "connection_error", code: `http_${httpStatus}` };
 }
@@ -92,6 +136,53 @@ export function parseServiceAccountKey(raw: unknown): { ok: true; key: ServiceAc
   if (typeof clientEmail !== "string" || !clientEmail.includes("@")) return { ok: false, message: "The key has no client_email." };
   if (typeof privateKey !== "string" || !privateKey.includes("PRIVATE KEY")) return { ok: false, message: "The key has no private_key." };
   return { ok: true, key: { clientEmail, privateKey } };
+}
+
+/**
+ * What stops a server starting with the check off while companies are
+ * connected (F186), or null when none are. With no check there is no warning
+ * either: every member on those domains would just be refused a day after their
+ * last check. A failed deploy says so at once, with the old tasks still serving.
+ */
+export function directoryOffProblem(connections: number): string | null {
+  if (connections === 0) return null;
+  const who = connections === 1 ? "1 organization has" : `${connections} organizations have`;
+  return (
+    `The Workspace directory check is off (DIRECTORY_CREDENTIALS_KEY or Google sign-in isn't configured), but ${who} a directory connection. ` +
+    `Started like this, every member on those domains would be refused ${DIRECTORY_STALE_HOURS} hours after their last check, owners included, with no warning. ` +
+    `Restore the configuration. To turn the check off for good, first remove each connection (DELETE /admin/organizations/:id/directory) while it is still configured.`
+  );
+}
+
+/** "2 people", "1 person", "nobody", for the emails below. */
+function peopleCount(n: number): string {
+  return n === 0 ? "nobody" : n === 1 ? "1 person" : `${n} people`;
+}
+
+/**
+ * Tells an organization's other owners and admins that someone removed or
+ * replaced its directory connection, so ending offboarding is never quiet
+ * (F185). `liftedRefusals` is how many members the directory had switched off
+ * and who work again because of it.
+ */
+export function directoryChangedEmail(
+  organizationName: string,
+  change: "disconnected" | "replaced",
+  by: string,
+  liftedRefusals: number,
+): { subject: string; text: string } {
+  const lifted = liftedRefusals === 0 ? "" : ` ${peopleCount(liftedRefusals)} the directory had switched off can use Soup.net again${change === "replaced" ? " until their next check" : ""}.`;
+  const unexpected = "If you didn't expect this, an owner or admin can reconnect the directory from your organization's console, and your organization's activity shows what happened.";
+  if (change === "disconnected") {
+    return {
+      subject: `${organizationName}'s Google Workspace directory was disconnected from Soup.net`,
+      text: `${by} disconnected ${organizationName}'s Google Workspace directory from Soup.net, so Soup.net has stopped checking members against it.${lifted} ${unexpected}`,
+    };
+  }
+  return {
+    subject: `${organizationName}'s Google Workspace directory connection was replaced`,
+    text: `${by} replaced ${organizationName}'s Google Workspace directory connection in Soup.net. Members are checked through the new connection from now on.${lifted} ${unexpected}`,
+  };
 }
 
 /**

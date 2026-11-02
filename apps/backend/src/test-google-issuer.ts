@@ -21,7 +21,8 @@
  * and, for test files running in other processes, control routes:
  *   POST /__fake/codes                  { claims, nonce, codeChallenge, refreshToken? } → { code }
  *   POST /__fake/next-identity          { claims, refreshToken? } for the next browser /authorize
- *   PUT  /__fake/directory/:userKey     { suspended?, archived?, httpStatus?, delayMs? }
+ *   PUT  /__fake/directory/:userKey     { suspended?, archived?, httpStatus?, delayMs?,
+ *                                       primaryEmail?, rawBody?, stallBody? }
  *   POST /__fake/service-accounts       { clientEmail, publicKeyPem }
  *   POST /__fake/revoke                 every access and refresh token stops working
  *   GET  /__fake/stats                  { tokenRequests, directoryRequests: { [userKey]: n } }
@@ -52,6 +53,13 @@ interface DirectoryEntry {
   archived?: boolean;
   httpStatus?: number;
   delayMs?: number;
+  /** The record's primary address, when it isn't the key asked for (a rename, an alias). */
+  primaryEmail?: string;
+  aliases?: string[];
+  /** Answer with exactly these bytes instead of a record (a proxy, a malformed reply). */
+  rawBody?: string;
+  /** Send the headers and part of a body, then nothing more. */
+  stallBody?: boolean;
 }
 
 const DIRECTORY_SCOPE = "https://www.googleapis.com/auth/admin.directory.user.readonly";
@@ -70,6 +78,7 @@ export async function startFakeGoogleIssuer(opts: {
   const serviceAccounts = new Map<string, crypto.KeyObject>();
   const directory = new Map<string, DirectoryEntry>();
   const directoryRequests: Record<string, number> = {};
+  const notFound = { error: { code: 404, message: "Resource Not Found: userKey", errors: [{ message: "Resource Not Found: userKey", domain: "global", reason: "notFound" }] } };
   let tokenRequests = 0;
   let nextIdentity: { claims: FakeIdClaims; refreshToken: string | null } | null = null;
 
@@ -142,9 +151,26 @@ export async function startFakeGoogleIssuer(opts: {
     if (!accessTokens.has(bearer)) return json(res, 401, { error: { code: 401, message: "Invalid Credentials" } });
     const entry = directory.get(userKey);
     if (entry?.delayMs) await new Promise((r) => setTimeout(r, entry.delayMs));
-    if (entry?.httpStatus) return json(res, entry.httpStatus, { error: { code: entry.httpStatus } });
-    if (!entry) return json(res, 404, { error: { code: 404, message: "Resource Not Found: userKey" } });
-    return json(res, 200, { kind: "admin#directory#user", primaryEmail: userKey, suspended: !!entry.suspended, archived: !!entry.archived });
+    if (entry?.stallBody) {
+      res.writeHead(entry.httpStatus ?? 200, { "content-type": "application/json" });
+      res.write("{");
+      return;
+    }
+    if (entry?.rawBody !== undefined) {
+      res.writeHead(entry.httpStatus ?? 200, { "content-type": "application/json" });
+      res.end(entry.rawBody);
+      return;
+    }
+    if (!entry || entry.httpStatus === 404) return json(res, 404, notFound);
+    if (entry.httpStatus) return json(res, entry.httpStatus, { error: { code: entry.httpStatus } });
+    return json(res, 200, {
+      kind: "admin#directory#user",
+      id: userKey,
+      primaryEmail: entry.primaryEmail ?? userKey,
+      ...(entry.aliases ? { aliases: entry.aliases } : {}),
+      suspended: !!entry.suspended,
+      archived: !!entry.archived,
+    });
   }
 
   async function control(req: http.IncomingMessage, res: http.ServerResponse, path: string): Promise<void> {

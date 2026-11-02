@@ -17,21 +17,30 @@ import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { domainToUnicode } from "node:url";
 import {
+  DIRECTORY_INACTIVE_MESSAGE,
   DIRECTORY_SCOPE,
   DIRECTORY_WARNING_HOURS,
+  directoryChangedEmail,
+  directoryOffProblem,
+  directoryStatusRefuses,
   directoryWarningEmail,
   normalizeDomain,
   parseServiceAccountKey,
 } from "@soupnet/domain";
 import type { GoogleSignInError } from "@soupnet/domain";
 import {
+  askDirectoryAboutActor,
+  deleteDirectoryConnection,
+  directoryConnectionCount,
   installDirectoryChecker,
   saveDirectoryConnection,
   directoryManagersOf,
+  directoryMemberOnDomain,
   domainClaimCurrentFor,
 } from "../authz";
+import type { DirectoryStatusesCleared } from "../authz";
 import { secretBoxKey } from "../lib/secret-box";
-import { checkDirectoryMember, testDirectoryCredential } from "./google-directory.service";
+import { checkDirectoryMember, forgetDirectoryTokens, testDirectoryCredential } from "./google-directory.service";
 import { sendOrganizationDirectoryEmail } from "./email.service";
 import { writeAudit } from "./audit-log.service";
 import {
@@ -64,6 +73,20 @@ export function installDirectoryChecking(): "on" | "off" {
   return "on";
 }
 
+/**
+ * The server's startup step: install the check, and refuse to start with it off
+ * while any company is connected, rather than lock them out a day later with no
+ * warning (F186, recipe c8f631d2).
+ */
+export async function installDirectoryCheckingOrStop(db: SqlExecutor): Promise<"on" | "off"> {
+  const state = installDirectoryChecking();
+  if (state === "off") {
+    const problem = directoryOffProblem(await directoryConnectionCount(db));
+    if (problem) throw new Error(problem);
+  }
+  return state;
+}
+
 /** Whether connecting is possible on this deployment (OB-K5). */
 export function directoryConnectAvailable(): boolean {
   return secretBoxKey() !== null && googleOidcConfig() !== null;
@@ -85,6 +108,56 @@ async function warnOrganization(organizationId: string): Promise<void> {
   console.warn(`[directory] org ${organizationId}: warned ${managers.emails.length} managers after ${DIRECTORY_WARNING_HOURS}h`);
 }
 
+const liftedBy = (cleared: DirectoryStatusesCleared) => cleared.suspended + cleared.archived + cleared.deleted;
+
+/** Tell the organization's other owners and admins, after the request; a failed send costs nothing here. */
+function tellOtherManagers(db: PostgresJsDatabase, organizationId: string, change: "disconnected" | "replaced", actor: { userId: string; operator?: boolean }, cleared: DirectoryStatusesCleared): void {
+  void (async () => {
+    const managers = await directoryManagersOf(db, organizationId, actor.userId);
+    const rows = (await db.execute(sql`SELECT email FROM claimnet.users WHERE id = ${actor.userId}::uuid`)) as unknown as Array<{ email: string }>;
+    const by = actor.operator ? "The Soup.net site operator" : (rows[0]?.email ?? "Someone");
+    const mail = directoryChangedEmail(managers.name || "your organization", change, by, liftedBy(cleared));
+    for (const email of managers.emails) await sendOrganizationDirectoryEmail(email, mail).catch(() => undefined);
+  })().catch(() => undefined);
+}
+
+/**
+ * May this owner or admin disconnect the directory? It lifts every refusal and
+ * stops every check for good, so someone the company has suspended in Google,
+ * still inside their hour, mustn't be able to do it (F185): the directory is
+ * asked about them first.
+ *
+ * When it can't answer, the disconnect waits until the connection has gone
+ * DIRECTORY_WARNING_HOURS without a success. An admin's consent token dies when
+ * they are suspended, so "the connection is broken" is exactly what that admin
+ * would see. A genuine manager's ways out are reconnecting, which proves itself
+ * with a new credential, the wait, and the site operator's DELETE (recipe
+ * aa8dd085).
+ */
+export async function directoryDisconnectRefusal(db: PostgresJsDatabase, organizationId: string, userId: string): Promise<{ status: 403 | 409; error: string; message: string } | null> {
+  const asked = await askDirectoryAboutActor(db, organizationId, userId);
+  if (asked === "refused") return { status: 403, error: "directory_inactive", message: DIRECTORY_INACTIVE_MESSAGE };
+  if (asked === "unanswered") {
+    return {
+      status: 409,
+      error: "directory_disconnect_held",
+      message: `Soup.net couldn't confirm your account with Google Workspace just now, so the directory stays connected. Try again shortly. If the connection is broken, reconnect it. You can also disconnect once it has gone ${DIRECTORY_WARNING_HOURS} hours without a successful check, or ask Soup.net support to remove it.`,
+    };
+  }
+  return null;
+}
+
+/** Remove the connection, audit it, and tell the other managers (OB-K6, F185). */
+export async function removeDirectoryConnection(db: PostgresJsDatabase, organizationId: string, actor: { userId: string; operator?: boolean }): Promise<boolean> {
+  const { removed, cleared } = await deleteDirectoryConnection(db, organizationId);
+  forgetDirectoryTokens(organizationId);
+  if (removed) {
+    await writeAudit(db, { actorUserId: actor.userId, action: "organization.directory_disconnected", targetType: "organization", targetId: organizationId, metadata: { ...(actor.operator ? { by: "operator" } : {}), cleared } });
+    tellOtherManagers(db, organizationId, "disconnected", actor, cleared);
+  }
+  return removed;
+}
+
 /** A domain this organization's claim is current for, normalized; else null. */
 async function claimedDomain(db: SqlExecutor, organizationId: string, raw: unknown): Promise<string | null> {
   const normalized = normalizeDomain(raw);
@@ -94,6 +167,8 @@ async function claimedDomain(db: SqlExecutor, organizationId: string, raw: unkno
 }
 
 export type ConnectRefusal =
+  | { status: 404; error: "not_found"; message: string }
+  | { status: 403; error: "directory_inactive"; message: string }
   | { status: 400; error: "invalid_domain"; message: string }
   | { status: 400; error: "google_identity_required"; message: string }
   | { status: 400; error: "invalid_key"; message: string }
@@ -140,7 +215,7 @@ export async function startDirectoryConnect(
  * resolution: no session is issued and no identity linked here. Completes
  * the connection only for the Google account linked to the person who
  * started, on the requested domain, with a refresh token that reads the
- * directory.
+ * directory, while that person is still an owner or admin (F182).
  */
 export async function completeDirectoryConnect(
   db: PostgresJsDatabase,
@@ -154,7 +229,7 @@ export async function completeDirectoryConnect(
   const domain = typeof request.params.domain === "string" ? request.params.domain : "";
   const userId = typeof request.params.userId === "string" ? request.params.userId : "";
   const key = secretBoxKey();
-  if (!organizationId || !domain || !userId || !key) return { ok: false, error: "failed" };
+  if (!organizationId || !domain || !userId || !key) return { ok: false, error: "directory_failed" };
 
   let tokens: { idToken: string; refreshToken: string | null };
   let claims: Awaited<ReturnType<typeof verifyGoogleIdToken>>;
@@ -163,7 +238,7 @@ export async function completeDirectoryConnect(
     claims = await verifyGoogleIdToken(config, tokens.idToken, request.nonce, keys);
   } catch (err) {
     console.error("[directory] connect: Google leg failed:", err instanceof GoogleOidcError ? err.message : "error");
-    return { ok: false, error: "failed" };
+    return { ok: false, error: "directory_failed" };
   }
 
   const linked = (await db.execute(sql`
@@ -193,7 +268,9 @@ export async function completeDirectoryConnect(
     secret: tokens.refreshToken,
     connectedBy: userId,
   });
+  if (!cleared) return fail("directory_not_manager");
   await writeAudit(db, { actorUserId: userId, action: "organization.directory_connected", targetType: "organization", targetId: organizationId, metadata: { kind: "admin_consent", domain, cleared } });
+  if (liftedBy(cleared) > 0) tellOtherManagers(db, organizationId, "replaced", { userId }, cleared);
   return { ok: true };
 }
 
@@ -224,16 +301,30 @@ export async function connectServiceAccount(
       message: "Google wouldn't let this service account read the directory as that admin. Check its domain-wide delegation for the read-only directory scope.",
     };
   }
+  // Replacing a connection lifts every refusal too, and a key in hand needs no
+  // Google sign-in, so someone suspended there could still do it (F185). The new
+  // credential has just proved it reads the directory, so it can say.
+  const domainUnicode = domainToUnicode(domain) || domain;
+  const actor = await directoryMemberOnDomain(db, input.organizationId, input.userId, domain, domainUnicode);
+  if (actor) {
+    const { answer } = await checkDirectoryMember(config, credential, actor, fetchImpl);
+    if (answer.kind === "status" && directoryStatusRefuses(answer.status)) {
+      await writeAudit(db, { actorUserId: input.userId, action: "organization.directory_connect_failed", targetType: "organization", targetId: input.organizationId, metadata: { kind: "service_account", domain, reason: "directory_inactive" } });
+      return { status: 403, error: "directory_inactive", message: DIRECTORY_INACTIVE_MESSAGE };
+    }
+  }
   const cleared = await saveDirectoryConnection(db, boxKey, {
     organizationId: input.organizationId,
     kind: "service_account",
     domain,
-    domainUnicode: domainToUnicode(domain) || domain,
+    domainUnicode,
     adminEmail,
     serviceAccountEmail: parsed.key.clientEmail,
     secret,
     connectedBy: input.userId,
   });
+  if (!cleared) return { status: 404, error: "not_found", message: "Not found." };
   await writeAudit(db, { actorUserId: input.userId, action: "organization.directory_connected", targetType: "organization", targetId: input.organizationId, metadata: { kind: "service_account", domain, cleared } });
+  if (liftedBy(cleared) > 0) tellOtherManagers(db, input.organizationId, "replaced", { userId: input.userId }, cleared);
   return null;
 }

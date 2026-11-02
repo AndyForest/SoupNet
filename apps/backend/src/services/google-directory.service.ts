@@ -16,7 +16,7 @@
 
 import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
-import { DIRECTORY_SCOPE, DIRECTORY_TIMEOUT_MS, classifyDirectoryAnswer, parseServiceAccountKey } from "@soupnet/domain";
+import { DIRECTORY_SCOPE, DIRECTORY_TIMEOUT_MS, classifyDirectoryAnswer, isGoogleError, parseServiceAccountKey } from "@soupnet/domain";
 import type { DirectoryAnswer } from "@soupnet/domain";
 import type { FetchLike, GoogleOidcConfig } from "./google-oidc.service";
 
@@ -30,10 +30,10 @@ export interface DirectoryCredential {
   secret: string;
 }
 
-/** What one check found. `renamedTo` is a rename the admin should hear about. */
+/** What one check found. `renamed` is a rename the admin should hear about. */
 export interface MemberCheck {
   answer: DirectoryAnswer;
-  renamedTo: string | null;
+  renamed: boolean;
 }
 
 function usersEndpoint(config: GoogleOidcConfig): string {
@@ -49,6 +49,25 @@ export function forgetDirectoryTokens(organizationId?: string): void {
 }
 
 type TokenResult = { ok: true; token: string } | { ok: false; answer: DirectoryAnswer };
+
+/**
+ * A response's body as JSON, null when it isn't JSON. Undefined when it never
+ * finished arriving, which is no answer at all: the headers of a slow reply
+ * mustn't read as a reply with nothing in it.
+ */
+async function readBody(res: Response): Promise<unknown> {
+  let text: string;
+  try {
+    text = await res.text();
+  } catch {
+    return undefined;
+  }
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
+}
 
 async function accessToken(
   config: GoogleOidcConfig,
@@ -95,8 +114,9 @@ async function accessToken(
   } catch {
     return { ok: false, answer: { kind: "unreachable" } };
   }
-  const json = (await res.json().catch(() => null)) as { access_token?: unknown; expires_in?: unknown; error?: unknown } | null;
-  if (res.status === 429 || res.status >= 500) return { ok: false, answer: { kind: "unreachable" } };
+  const read = await readBody(res);
+  if (read === undefined || res.status === 429 || res.status >= 500) return { ok: false, answer: { kind: "unreachable" } };
+  const json = read as { access_token?: unknown; expires_in?: unknown; error?: unknown } | null;
   if (!res.ok || typeof json?.access_token !== "string") {
     const code = typeof json?.error === "string" ? json.error.replace(/[^a-z_]/gi, "").slice(0, 40) : `http_${res.status}`;
     return { ok: false, answer: { kind: "connection_error", code: `token_${code}` } };
@@ -118,7 +138,8 @@ async function usersGet(
       headers: { authorization: `Bearer ${token}`, accept: "application/json" },
       signal,
     });
-    return { httpStatus: res.status, body: await res.json().catch(() => null) };
+    const body = await readBody(res);
+    return body === undefined ? null : { httpStatus: res.status, body };
   } catch {
     return null;
   }
@@ -132,6 +153,13 @@ async function usersGet(
  * `sub` whose primary address differs is a rename, reported for the admin.
  * The member is the one whose credential is being judged; nothing here takes
  * a key from a request.
+ *
+ * Before `deleted` is believed, the connection's own admin must still resolve:
+ * a directory that doesn't know the person the credential acts as has lost
+ * track of everyone, and switching people off on that would take out the whole
+ * company (F184). One more call, only for an answer that would switch someone
+ * off. A real layoff still lands at once, which a cap per hour couldn't do
+ * (recipe 502a6d4a).
  */
 export async function checkDirectoryMember(
   config: GoogleOidcConfig,
@@ -141,24 +169,33 @@ export async function checkDirectoryMember(
 ): Promise<MemberCheck> {
   const signal = AbortSignal.timeout(DIRECTORY_TIMEOUT_MS);
   const token = await accessToken(config, credential, signal, fetchImpl);
-  if (!token.ok) return { answer: token.answer, renamedTo: null };
+  if (!token.ok) return { answer: token.answer, renamed: false };
 
   const byAddress = await usersGet(config, token.token, member.email, signal, fetchImpl);
-  const first = classifyDirectoryAnswer(byAddress);
+  const first = classifyDirectoryAnswer(byAddress, { email: member.email });
   if (first.kind === "connection_error" && (byAddress?.httpStatus === 401)) forgetDirectoryTokens(credential.organizationId);
-  if (!(first.kind === "status" && first.status === "deleted") || !member.googleSubject) return { answer: first, renamedTo: null };
+  if (!(first.kind === "status" && first.status === "deleted")) return { answer: first, renamed: false };
 
-  const bySubject = await usersGet(config, token.token, member.googleSubject, signal, fetchImpl);
-  // A 400 means the directory doesn't take this `sub` as a user id, which is
-  // as good as unknown; a 404 is unknown. Anything else that isn't a user
-  // (slow, down, our credential refused) leaves the question open, so nobody
-  // is switched off on half an answer.
-  if (bySubject?.httpStatus === 400 || bySubject?.httpStatus === 404) return { answer: first, renamedTo: null };
-  const second = classifyDirectoryAnswer(bySubject);
-  if (second.kind !== "status") return { answer: second.kind === "connection_error" ? second : { kind: "unreachable" }, renamedTo: null };
-  const primary = (bySubject?.body as { primaryEmail?: unknown } | null)?.primaryEmail;
-  const renamedTo = typeof primary === "string" && primary.toLowerCase() !== member.email.toLowerCase() ? primary : null;
-  return { answer: second, renamedTo };
+  if (member.googleSubject) {
+    const bySubject = await usersGet(config, token.token, member.googleSubject, signal, fetchImpl);
+    const second = classifyDirectoryAnswer(bySubject, { id: member.googleSubject });
+    // Google's 400 means it doesn't take this `sub` as a user id, which is as
+    // good as unknown; its not-found is unknown. Anything else that isn't a
+    // user (slow, down, our credential refused, a stranger's 404) leaves the
+    // question open, so nobody is switched off on half an answer.
+    const unknown = (second.kind === "status" && second.status === "deleted") || (bySubject?.httpStatus === 400 && isGoogleError(bySubject.body, 400));
+    if (!unknown) {
+      if (second.kind !== "status") return { answer: second, renamed: false };
+      const primary = (bySubject?.body as { primaryEmail?: unknown } | null)?.primaryEmail;
+      return { answer: second, renamed: typeof primary === "string" && primary.toLowerCase() !== member.email.toLowerCase() };
+    }
+  }
+
+  const adminGone: DirectoryAnswer = { kind: "connection_error", code: "admin_not_found" };
+  if (member.email.toLowerCase() === credential.adminEmail.toLowerCase()) return { answer: adminGone, renamed: false };
+  const control = classifyDirectoryAnswer(await usersGet(config, token.token, credential.adminEmail, signal, fetchImpl), { email: credential.adminEmail });
+  if (control.kind !== "status") return { answer: control, renamed: false };
+  return { answer: control.status === "deleted" ? adminGone : first, renamed: false };
 }
 
 /**

@@ -1,36 +1,90 @@
 import { describe, it, expect } from "vitest";
 import {
   classifyDirectoryAnswer,
+  isGoogleError,
   directoryStatusRefuses,
   directoryDisabledMessage,
   DIRECTORY_INACTIVE_MESSAGE,
   DIRECTORY_UNCONFIRMED_MESSAGE,
   parseServiceAccountKey,
   directoryWarningEmail,
+  directoryChangedEmail,
+  directoryOffProblem,
 } from "./directory";
 
 describe("classifyDirectoryAnswer (OB-M3)", () => {
-  it("reads suspended, archived and active from a user", () => {
-    expect(classifyDirectoryAnswer({ httpStatus: 200, body: { suspended: true } })).toEqual({ kind: "status", status: "suspended" });
-    expect(classifyDirectoryAnswer({ httpStatus: 200, body: { archived: true } })).toEqual({ kind: "status", status: "archived" });
-    expect(classifyDirectoryAnswer({ httpStatus: 200, body: { suspended: false, archived: false } })).toEqual({ kind: "status", status: "active" });
-    expect(classifyDirectoryAnswer({ httpStatus: 200, body: null })).toEqual({ kind: "status", status: "active" });
+  const max = { email: "max@acme.example" };
+  const record = (over: Record<string, unknown> = {}) => ({ id: "111", primaryEmail: "max@acme.example", suspended: false, archived: false, ...over });
+  const status = (body: unknown, asked: { email: string } | { id: string } = max) => classifyDirectoryAnswer({ httpStatus: 200, body }, asked);
+
+  it("reads suspended, archived and active from a complete record", () => {
+    expect(status(record({ suspended: true }))).toEqual({ kind: "status", status: "suspended" });
+    expect(status(record({ archived: true }))).toEqual({ kind: "status", status: "archived" });
+    expect(status(record())).toEqual({ kind: "status", status: "active" });
   });
 
-  it("treats a 404 as deleted", () => {
-    expect(classifyDirectoryAnswer({ httpStatus: 404, body: {} })).toEqual({ kind: "status", status: "deleted" });
+  it("F183: anything less than a complete record of the person is the connection's error, never a status", () => {
+    const bad = { kind: "connection_error", code: "bad_answer" };
+    for (const body of [
+      null,
+      "",
+      "<html></html>",
+      [],
+      {},
+      { error: { code: 200 } },
+      { primaryEmail: "max@acme.example" },
+      record({ suspended: "true" }),
+      record({ suspended: undefined }),
+      record({ archived: "false" }),
+      record({ archived: undefined }),
+      record({ primaryEmail: 7 }),
+      record({ primaryEmail: "someone-else@acme.example" }),
+      record({ primaryEmail: "someone-else@acme.example", suspended: true }),
+    ]) {
+      expect(status(body), JSON.stringify(body)).toEqual(bad);
+    }
+    expect(status(record(), { id: "222" })).toEqual(bad);
+  });
+
+  it("F183: an address may be an alias of the record, in any case; a lookup by id goes by the id", () => {
+    const active = { kind: "status", status: "active" };
+    const primary = { primaryEmail: "maxwell@acme.example" };
+    expect(status(record({ ...primary, aliases: ["MAX@acme.example"] }))).toEqual(active);
+    expect(status(record({ ...primary, nonEditableAliases: ["max@acme.example"] }))).toEqual(active);
+    expect(status(record({ ...primary, emails: [null, { address: "max@acme.example" }] }))).toEqual(active);
+    expect(status(record({ ...primary, aliases: "max@acme.example", emails: "max@acme.example" }))).toEqual({ kind: "connection_error", code: "bad_answer" });
+    expect(status(record({ primaryEmail: "MAX@ACME.EXAMPLE" }))).toEqual(active);
+    expect(status(record(primary), { id: "111" })).toEqual(active);
+  });
+
+  it("F184: only Google's own not-found is deleted; any other 404 is the connection's error", () => {
+    const notFound = (error: Record<string, unknown>) => classifyDirectoryAnswer({ httpStatus: 404, body: { error } }, max);
+    const deleted = { kind: "status", status: "deleted" };
+    expect(notFound({ code: 404, message: "Resource Not Found: userKey", errors: [{ message: "Resource Not Found: userKey", domain: "global", reason: "notFound" }] })).toEqual(deleted);
+    expect(notFound({ code: 404, status: "NOT_FOUND" })).toEqual(deleted);
+    const bad = { kind: "connection_error", code: "bad_404" };
+    for (const body of [null, "", "<html>404</html>", {}, [], { error: "nope" }, { error: { code: 404 } }, { error: { code: 404, errors: "notFound" } }, { error: { code: 404, errors: [null, { reason: "gone" }] } }, { error: { code: 500, status: "NOT_FOUND" } }]) {
+      expect(classifyDirectoryAnswer({ httpStatus: 404, body }, max), JSON.stringify(body)).toEqual(bad);
+    }
   });
 
   it("treats no answer, a 429 and a 5xx as unreachable", () => {
-    expect(classifyDirectoryAnswer(null)).toEqual({ kind: "unreachable" });
-    expect(classifyDirectoryAnswer({ httpStatus: 429, body: {} })).toEqual({ kind: "unreachable" });
-    expect(classifyDirectoryAnswer({ httpStatus: 503, body: {} })).toEqual({ kind: "unreachable" });
+    expect(classifyDirectoryAnswer(null, max)).toEqual({ kind: "unreachable" });
+    expect(classifyDirectoryAnswer({ httpStatus: 429, body: {} }, max)).toEqual({ kind: "unreachable" });
+    expect(classifyDirectoryAnswer({ httpStatus: 503, body: {} }, max)).toEqual({ kind: "unreachable" });
   });
 
   it("treats every other refusal as the connection's error, never the member's status", () => {
-    expect(classifyDirectoryAnswer({ httpStatus: 401, body: {} })).toEqual({ kind: "connection_error", code: "http_401" });
-    expect(classifyDirectoryAnswer({ httpStatus: 403, body: {} })).toEqual({ kind: "connection_error", code: "http_403" });
-    expect(classifyDirectoryAnswer({ httpStatus: 400, body: {} })).toEqual({ kind: "connection_error", code: "http_400" });
+    expect(classifyDirectoryAnswer({ httpStatus: 401, body: {} }, max)).toEqual({ kind: "connection_error", code: "http_401" });
+    expect(classifyDirectoryAnswer({ httpStatus: 403, body: {} }, max)).toEqual({ kind: "connection_error", code: "http_403" });
+    expect(classifyDirectoryAnswer({ httpStatus: 400, body: {} }, max)).toEqual({ kind: "connection_error", code: "http_400" });
+  });
+});
+
+describe("isGoogleError", () => {
+  it("needs Google's error object with that code", () => {
+    expect(isGoogleError({ error: { code: 400 } }, 400)).toBe(true);
+    for (const body of [null, "x", {}, { error: "x" }, { error: { code: 404 } }, { error: { code: "400" } }]) expect(isGoogleError(body, 400), JSON.stringify(body)).toBe(false);
   });
 });
 
@@ -65,6 +119,31 @@ describe("parseServiceAccountKey (OB-K3)", () => {
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.message).not.toContain("BEGIN");
     }
+  });
+});
+
+describe("directoryOffProblem (F186)", () => {
+  it("is nothing with no connections, and names the count, the lockout and the way out otherwise", () => {
+    expect(directoryOffProblem(0)).toBeNull();
+    expect(directoryOffProblem(1)).toContain("1 organization has a directory connection");
+    const many = directoryOffProblem(3)!;
+    expect(many).toContain("3 organizations have a directory connection");
+    expect(many).toContain("refused 24 hours after their last check");
+    expect(many).toContain("DELETE /admin/organizations/:id/directory");
+  });
+});
+
+describe("directoryChangedEmail (F185)", () => {
+  it("says who did what, and how many it let back in", () => {
+    const gone = directoryChangedEmail("Acme", "disconnected", "ann@acme.example", 2);
+    expect(gone.subject).toBe("Acme's Google Workspace directory was disconnected from Soup.net");
+    expect(gone.text).toContain("ann@acme.example disconnected Acme's Google Workspace directory");
+    expect(gone.text).toContain("2 people the directory had switched off can use Soup.net again.");
+    expect(directoryChangedEmail("Acme", "disconnected", "ann@acme.example", 1).text).toContain("1 person the directory had switched off");
+    expect(directoryChangedEmail("Acme", "disconnected", "ann@acme.example", 0).text).not.toContain("switched off");
+    const replaced = directoryChangedEmail("Acme", "replaced", "ann@acme.example", 1);
+    expect(replaced.subject).toBe("Acme's Google Workspace directory connection was replaced");
+    expect(replaced.text).toContain("can use Soup.net again until their next check.");
   });
 });
 

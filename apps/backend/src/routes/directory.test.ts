@@ -288,7 +288,7 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     const start = await call(org.olive.token, "POST", `/organizations/${org.orgId}/directory/google/start`, { binding: sha256(secret()), domain: org.domain });
     const state = new URL(((await start.json()) as { data: { url: string } }).data.url).searchParams.get("state");
     const unknownCode = await fetch(`${BASE}/auth/google/callback?state=${state}&code=not-a-code`, { redirect: "manual" });
-    expect(unknownCode.headers.get("location")).toBe(`${FRONTEND}/auth/google/complete#error=failed`);
+    expect(unknownCode.headers.get("location")).toBe(`${FRONTEND}/auth/google/complete#error=directory_failed`);
     // No refusal stored a connection or linked an identity; each one past Google's leg is audited.
     expect(await connected()).toBe(false);
     expect(await identitiesOf(org.olive.userId)).toEqual([org.oliveSubject]);
@@ -301,6 +301,83 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     expect(await consent(asOlive, `rt-${run}-ok`)).toBe(`${FRONTEND}/auth/google/complete#directory=connected`);
     const view = ((await (await call(org.olive.token, "GET", `/organizations/${org.orgId}/directory`)).json()) as { data: Json }).data;
     expect(view).toMatchObject({ connected: true, kind: "admin_consent", domain: org.domain });
+  });
+
+  /** A member who is also an admin of the organization, known to the directory. */
+  async function adminMember(org: Org, label: string): Promise<Actor & { key: string }> {
+    const a = await member(org, label);
+    await google.setDirectoryUser(a.email, {});
+    const promoted = await call(org.olive.token, "PATCH", `/organizations/${org.orgId}/members/${a.userId}`, { role: "admin" });
+    if (promoted.status !== 200) throw new Error(`promote failed: ${promoted.status} ${await promoted.text()}`);
+    return a;
+  }
+
+  /** Start a consent as `a`; the returned step finishes it as `claims`, and says where it landed. */
+  async function startConsent(a: Actor, org: Org, claims: FakeIdClaims): Promise<() => Promise<string>> {
+    const start = await call(a.token, "POST", `/organizations/${org.orgId}/directory/google/start`, { binding: sha256(secret()), domain: org.domain });
+    expect(start.status).toBe(200);
+    const url = new URL(((await start.json()) as { data: { url: string } }).data.url);
+    return async () => {
+      const code = await google.issue(claims, { nonce: url.searchParams.get("nonce")!, codeChallenge: url.searchParams.get("code_challenge")!, refreshToken: `rt-${run}-${++n}` });
+      const cb = await fetch(`${BASE}/auth/google/callback?state=${url.searchParams.get("state")}&code=${code}`, { redirect: "manual" });
+      return cb.headers.get("location") ?? "";
+    };
+  }
+
+  it("OFF-CON-05 / F182: a consent started before its starter was demoted or disabled stores nothing and leaves the live connection alone", async () => {
+    const org = await acme();
+    const ann = await adminMember(org, "ann");
+    const annSub = `ann-${run}-${++n}`;
+    await linkGoogle(ann, annSub, org.domain);
+    const asAnn = { sub: annSub, email: ann.email, email_verified: true, hd: org.domain };
+    const victim = await member(org, "colleague");
+    await google.setDirectoryUser(victim.email, { suspended: true });
+    expect((await useKey(victim.key)).status).toBe(401);
+
+    const finishDemoted = await startConsent(ann, org, asAnn);
+    expect((await call(org.olive.token, "PATCH", `/organizations/${org.orgId}/members/${ann.userId}`, { role: "member" })).status).toBe(200);
+    expect(await finishDemoted()).toBe(`${FRONTEND}/auth/google/complete#error=directory_not_manager`);
+
+    expect((await call(org.olive.token, "PATCH", `/organizations/${org.orgId}/members/${ann.userId}`, { role: "admin" })).status).toBe(200);
+    const finishDisabled = await startConsent(ann, org, asAnn);
+    expect((await call(org.olive.token, "POST", `/organizations/${org.orgId}/members/${ann.userId}/disable`)).status).toBe(200);
+    expect(await finishDisabled()).toBe(`${FRONTEND}/auth/google/complete#error=directory_not_manager`);
+
+    const view = ((await (await call(org.olive.token, "GET", `/organizations/${org.orgId}/directory`)).json()) as { data: Json }).data;
+    expect(view).toMatchObject({ kind: "service_account", adminEmail: org.olive.email });
+    expect((await memberRow(victim.userId)).directory_status).toBe("suspended");
+    expect((await useKey(victim.key)).status).toBe(401);
+    expect((await auditRows("organization.directory_connect_failed", org.orgId)).map((m) => m["reason"])).toEqual(["directory_not_manager", "directory_not_manager"]);
+  });
+
+  it("F182: a service-account connect that outlasts its person's role stores nothing", async () => {
+    const org = await acme();
+    const ann = await adminMember(org, "ann-sa");
+    await google.setDirectoryUser(org.olive.email, { delayMs: 800 });
+    const putting = call(ann.token, "PUT", `/organizations/${org.orgId}/directory/service-account`, { key: org.serviceAccount.key, adminEmail: org.olive.email });
+    await new Promise((r) => setTimeout(r, 300));
+    expect((await call(org.olive.token, "PATCH", `/organizations/${org.orgId}/members/${ann.userId}`, { role: "member" })).status).toBe(200);
+    const res = await putting;
+    expect(res.status).toBe(404);
+    expect((await res.json()) as Json).toEqual((await (await call(ann.token, "GET", `/organizations/${org.orgId}/directory`)).json()) as Json);
+    await google.setDirectoryUser(org.olive.email, {});
+    expect(await auditRows("organization.directory_connected", org.orgId)).toHaveLength(1);
+  });
+
+  it("OB-K2: a claim that lapsed during the round trip stores nothing", async () => {
+    const org = await acme({ connect: false });
+    await linkGoogle(org.olive, org.oliveSubject, org.domain);
+    const finish = await startConsent(org.olive, org, { sub: org.oliveSubject, email: org.olive.email, email_verified: true, hd: org.domain });
+    await setClaim(org.orgId, "lapsed");
+    expect(await finish()).toBe(`${FRONTEND}/auth/google/complete#error=directory_wrong_domain`);
+    expect(((await (await call(org.olive.token, "GET", `/organizations/${org.orgId}/directory`)).json()) as { data: Json }).data["connected"]).toBe(false);
+  });
+
+  it("OB-K1: starting a consent needs a Google identity on the account", async () => {
+    const org = await acme({ connect: false });
+    const start = await call(org.olive.token, "POST", `/organizations/${org.orgId}/directory/google/start`, { binding: sha256(secret()), domain: org.domain });
+    expect(start.status).toBe(400);
+    expect(((await start.json()) as { error: string }).error).toBe("google_identity_required");
   });
 
   // ── The check ─────────────────────────────────────────────────────────────
@@ -352,12 +429,13 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     await google.setDirectoryUser(max.email, {});
     await linkGoogle(max, subject, org.domain);
     await google.setDirectoryUser(max.email, { httpStatus: 404 });
-    await google.setDirectoryUser(subject, {});
+    // F187: whatever the directory calls them now, what's stored is a short code.
+    await google.setDirectoryUser(subject, { primaryEmail: `<img src=x>${"m".repeat(5000)}@${org.domain}` });
     await makeDue(max.userId);
     expect((await useKey(max.key)).status).toBe(200);
     expect((await memberRow(max.userId)).directory_status).toBe("active");
     const view = ((await (await call(org.olive.token, "GET", `/organizations/${org.orgId}/directory`)).json()) as { data: Json }).data;
-    expect(String(view["lastError"])).toContain("renamed");
+    expect(view["lastError"]).toBe("member_renamed");
   });
 
   it("OFF-DIR-04 / OB-C4: within the hour, no Google call", async () => {
@@ -407,6 +485,76 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     expect((await useKey(max.key)).status).toBe(200);
     expect(await requestsFor(max.email)).toBe(afterFailure + 1);
     expect((await memberRow(max.userId)).directory_status).toBe("active");
+  });
+
+  it("OFF-DIR-12 / F183: only a complete record of the person lifts a refusal; anything else is an error, and renews nothing", { timeout: 60_000 }, async () => {
+    const org = await acme();
+    const max = await member(org, "hostile");
+    await google.setDirectoryUser(max.email, { suspended: true });
+    expect((await useKey(max.key)).status).toBe(401);
+    const lastSuccess = async () => ((await (await call(org.olive.token, "GET", `/organizations/${org.orgId}/directory`)).json()) as { data: Json }).data;
+    const record = (over: Json) => JSON.stringify({ primaryEmail: max.email, suspended: false, archived: false, ...over });
+    const answers: Array<[string, Parameters<typeof google.setDirectoryUser>[1], string | null]> = [
+      ["empty", { rawBody: "" }, "bad_answer"],
+      ["{}", { rawBody: "{}" }, "bad_answer"],
+      ["truncated", { rawBody: record({}).slice(0, 20) }, "bad_answer"],
+      ["html", { rawBody: "<html>hello</html>" }, "bad_answer"],
+      ["null", { rawBody: "null" }, "bad_answer"],
+      ["error object", { rawBody: JSON.stringify({ error: { code: 200 } }) }, "bad_answer"],
+      ["string flag", { rawBody: record({ suspended: "true" }) }, "bad_answer"],
+      ["someone else", { rawBody: record({ primaryEmail: `someone-else@${org.domain}` }) }, "bad_answer"],
+      // Headers on time, then the body stalls past the timeout: no answer at all.
+      ["stalled body", { stallBody: true }, null],
+    ];
+    await getDb().execute(sql`UPDATE claimnet.organization_directory_connections SET last_success_at = NOW() - interval '1 hour' WHERE organization_id = ${org.orgId}::uuid`);
+    const before = (await lastSuccess())["lastSuccessAt"];
+    for (const [label, answer, code] of answers) {
+      await google.setDirectoryUser(max.email, answer);
+      await makeDue(max.userId);
+      const checkedAt = (await memberRow(max.userId)).directory_checked_at;
+      expect((await useKey(max.key)).status, label).toBe(401);
+      const row = await memberRow(max.userId);
+      expect(row.directory_status, label).toBe("suspended");
+      expect(row.directory_checked_at, label).toEqual(checkedAt);
+      const view = await lastSuccess();
+      expect(view["lastSuccessAt"], label).toEqual(before);
+      if (code) expect(view["lastError"], label).toBe(code);
+    }
+    // A real record of them, primary or by alias, is what restores them.
+    await google.setDirectoryUser(max.email, { primaryEmail: `max-renamed-${run}@${org.domain}`, aliases: [max.email] });
+    await makeDue(max.userId);
+    expect((await useKey(max.key)).status).toBe(200);
+    expect((await memberRow(max.userId)).directory_status).toBe("active");
+  });
+
+  it("OFF-DIR-13 / F184: a 404 that isn't Google's refuses nobody; nor does Google's, while it can't find the connection's own admin", async () => {
+    const org = await acme();
+    const max = await member(org, "proxied");
+    await google.setDirectoryUser(max.email, {});
+    expect((await useKey(max.key)).status).toBe(200);
+    const lastError = async () => ((await (await call(org.olive.token, "GET", `/organizations/${org.orgId}/directory`)).json()) as { data: Json }).data["lastError"];
+
+    for (const rawBody of ["", "<html>404 Not Found</html>", "{}"]) {
+      await google.setDirectoryUser(max.email, { httpStatus: 404, rawBody });
+      await makeDue(max.userId);
+      expect((await useKey(max.key)).status, rawBody).toBe(200);
+      expect((await memberRow(max.userId)).directory_status, rawBody).toBe("active");
+      expect(await lastError(), rawBody).toBe("bad_404");
+    }
+
+    // Google's own not-found, for the member and for the admin the credential acts as.
+    await google.setDirectoryUser(max.email, { httpStatus: 404 });
+    await google.setDirectoryUser(org.olive.email, { httpStatus: 404 });
+    await makeDue(max.userId);
+    expect((await useKey(max.key)).status).toBe(200);
+    expect((await memberRow(max.userId)).directory_status).toBe("active");
+    expect(await lastError()).toBe("admin_not_found");
+
+    // The admin found again, and the same answer about Max is believed.
+    await google.setDirectoryUser(org.olive.email, {});
+    await makeDue(max.userId);
+    expect((await useKey(max.key)).status).toBe(401);
+    expect((await memberRow(max.userId)).directory_status).toBe("deleted");
   });
 
   it("OFF-DIR-07 / OB-C7: stale a day with Google failing refuses (directory_unconfirmed); one success restores", async () => {
@@ -634,6 +782,45 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     expect(await requestsFor(max.email)).toBe(before + 2);
   });
 
+  it("OB-C1: a session runs the check by itself, with no key involved, and answers from it", async () => {
+    const org = await acme();
+    const max = await member(org, "session-only");
+    await google.setDirectoryUser(max.email, { suspended: true });
+    expect(await requestsFor(max.email)).toBe(0);
+    const me = await call(max.token, "GET", "/auth/me");
+    expect(me.status).toBe(403);
+    expect(((await me.json()) as { error: string }).error).toBe("directory_inactive");
+    expect(await requestsFor(max.email)).toBe(1);
+    expect((await memberRow(max.userId)).directory_status).toBe("suspended");
+  });
+
+  it("OB-C1: Google sign-in is refused for a member the directory switched off, with the directory's reason and no handoff", async () => {
+    const org = await acme();
+    const max = await member(org, "google-refused");
+    await google.setDirectoryUser(max.email, {});
+    await linkGoogle(max, `refused-${run}-${++n}`, org.domain);
+    const subject = (await identitiesOf(max.userId))[0]!;
+    await google.setDirectoryUser(max.email, { suspended: true });
+    await makeDue(max.userId);
+    const tab = secret();
+    const start = await call(null, "POST", "/auth/google/start", { binding: sha256(tab) });
+    const url = new URL(((await start.json()) as { data: { url: string } }).data.url);
+    const code = await google.issue({ sub: subject, email: max.email, email_verified: true, hd: org.domain }, { nonce: url.searchParams.get("nonce")!, codeChallenge: url.searchParams.get("code_challenge")! });
+    const cb = await fetch(`${BASE}/auth/google/callback?state=${url.searchParams.get("state")}&code=${code}`, { redirect: "manual" });
+    expect(cb.headers.get("location")).toBe(`${FRONTEND}/auth/google/complete#error=directory_inactive`);
+  });
+
+  it("OB-C10: a recorded status with no connection behind it refuses nobody", async () => {
+    const org = await acme();
+    const max = await member(org, "no-connection");
+    await google.setDirectoryUser(max.email, { suspended: true });
+    expect((await useKey(max.key)).status).toBe(401);
+    // The routes clear statuses with the connection; this is the fragment's own guard, should a row ever go otherwise.
+    await getDb().execute(sql`DELETE FROM claimnet.organization_directory_connections WHERE organization_id = ${org.orgId}::uuid`);
+    expect((await memberRow(max.userId)).directory_status).toBe("suspended");
+    expect((await useKey(max.key)).status).toBe(200);
+  });
+
   it("OB-C1, F144: a proof or password at the verification link gets the directory's message, and no session", async () => {
     const org = await acme();
     for (const [label, proving] of [
@@ -692,6 +879,97 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     expect(p99(withCheck)).toBeLessThan(2_500);
   });
 
+  /** Mail about the connection changing reaches a manager after the request: wait for it. */
+  async function changeMailsTo(email: string, subjectPart: string, wanted: number): Promise<number> {
+    let sent = 0;
+    for (let i = 0; i < 30; i++) {
+      const rows = (await getDb().execute(sql`
+        SELECT count(*)::int AS n FROM claimnet.email_log WHERE kind = 'organization_directory' AND to_email = ${email} AND subject LIKE ${`%${subjectPart}%`}
+      `)) as unknown as Array<{ n: number }>;
+      sent = rows[0]!.n;
+      if (sent >= wanted) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return sent;
+  }
+
+  const stillConnected = async (org: Org) => ((await (await call(org.olive.token, "GET", `/organizations/${org.orgId}/directory`)).json()) as { data: Json }).data["connected"];
+
+  it("OFF-CON-06 / F185: an admin suspended in Google, inside their hour, can't disconnect or replace the directory", async () => {
+    const org = await acme();
+    const ann = await adminMember(org, "ann-gone");
+    const victim = await member(org, "held-off");
+    await google.setDirectoryUser(victim.email, { suspended: true });
+    expect((await useKey(victim.key)).status).toBe(401);
+    // Ann's status was just recorded active, so nothing else would ask for an hour.
+    expect((await useKey(ann.key)).status).toBe(200);
+    expect((await memberRow(ann.userId)).directory_status).toBe("active");
+    await google.setDirectoryUser(ann.email, { suspended: true });
+
+    const res = await call(ann.token, "DELETE", `/organizations/${org.orgId}/directory`);
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error: string }).error).toBe("directory_inactive");
+    expect(await stillConnected(org)).toBe(true);
+    expect((await useKey(victim.key)).status).toBe(401);
+    expect((await memberRow(ann.userId)).directory_status).toBe("suspended");
+    expect(await auditRows("organization.directory_disconnected", org.orgId)).toEqual([]);
+
+    // A key in hand doesn't get round it, and a paused claim doesn't either.
+    const bea = await adminMember(org, "bea-gone");
+    expect((await useKey(bea.key)).status).toBe(200);
+    await google.setDirectoryUser(bea.email, { suspended: true });
+    const replacing = await call(bea.token, "PUT", `/organizations/${org.orgId}/directory/service-account`, { key: org.serviceAccount.key, adminEmail: org.olive.email });
+    expect(replacing.status).toBe(403);
+    expect((await memberRow(victim.userId)).directory_status).toBe("suspended");
+
+    const cam = await adminMember(org, "cam-gone");
+    expect((await useKey(cam.key)).status).toBe(200);
+    await google.setDirectoryUser(cam.email, { suspended: true });
+    await setClaim(org.orgId, "failing");
+    expect((await call(cam.token, "DELETE", `/organizations/${org.orgId}/directory`)).status).toBe(403);
+    expect(await stillConnected(org)).toBe(true);
+  });
+
+  it("OFF-CON-07 / F185: when the directory can't answer, a disconnect waits for six hours without a success; the other managers are told", async () => {
+    const org = await acme();
+    const ann = await adminMember(org, "ann-stuck");
+    const victim = await member(org, "off-stuck");
+    await google.setDirectoryUser(victim.email, { suspended: true });
+    expect((await useKey(victim.key)).status).toBe(401);
+    await google.setDirectoryUser(ann.email, { httpStatus: 503 });
+
+    const held = await call(ann.token, "DELETE", `/organizations/${org.orgId}/directory`);
+    expect(held.status).toBe(409);
+    const body = (await held.json()) as { error: string; message: string };
+    expect(body.error).toBe("directory_disconnect_held");
+    expect(body.message).toContain("reconnect");
+    expect(await stillConnected(org)).toBe(true);
+
+    await getDb().execute(sql`UPDATE claimnet.organization_directory_connections SET last_success_at = NOW() - interval '7 hours' WHERE organization_id = ${org.orgId}::uuid`);
+    expect((await call(ann.token, "DELETE", `/organizations/${org.orgId}/directory`)).status).toBe(200);
+    expect(await stillConnected(org)).toBe(false);
+    expect(await changeMailsTo(org.olive.email, "was disconnected", 1)).toBe(1);
+    expect(await changeMailsTo(ann.email, "was disconnected", 1)).toBe(0);
+  });
+
+  it("F185: a manager on another address has no directory to answer to; replacing a connection that lifted refusals tells the others", async () => {
+    const org = await acme();
+    const ann = await adminMember(org, "ann-told");
+    const off = await member(org, "off-told");
+    await google.setDirectoryUser(off.email, { archived: true });
+    expect((await useKey(off.key)).status).toBe(401);
+    const again = await call(org.olive.token, "PUT", `/organizations/${org.orgId}/directory/service-account`, { key: org.serviceAccount.key, adminEmail: org.olive.email });
+    expect(again.status).toBe(200);
+    expect(await changeMailsTo(ann.email, "was replaced", 1)).toBe(1);
+    expect(await changeMailsTo(org.olive.email, "was replaced", 1)).toBe(0);
+
+    const rae = await member(org, "rae-admin", `consultancy-${run}.test`);
+    expect((await call(org.olive.token, "PATCH", `/organizations/${org.orgId}/members/${rae.userId}`, { role: "admin" })).status).toBe(200);
+    expect((await call(rae.token, "DELETE", `/organizations/${org.orgId}/directory`)).status).toBe(200);
+    expect(await requestsFor(rae.email)).toBe(0);
+    expect(await changeMailsTo(ann.email, "was disconnected", 1)).toBe(1);
+  });
+
   it("OFF-DIR-10 / OB-C10: disconnecting stops the checks and lifts the directory's refusals", async () => {
     const org = await acme();
     const max = await member(org, "freed");
@@ -728,16 +1006,19 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     expect((await useKey(max.key)).status).toBe(200);
     expect((await memberRow(max.userId)).directory_status).toBeNull();
     expect(await auditRows("organization.directory_disconnected", org.orgId)).toEqual([{ by: "operator", cleared: { suspended: 1, archived: 0, deleted: 0 } }]);
+    // F185: the company is told, the owner included, since the operator isn't one of its managers.
+    expect(await changeMailsTo(org.olive.email, "was disconnected", 1)).toBe(1);
   });
 
   it("OB-K5: in process, with DIRECTORY_CREDENTIALS_KEY unset, the routes answer 503 directory_not_configured and no checker is installed", async () => {
+    await acme();
     const org = await acme({ connect: false });
     const outsider = await seeded("outsider", "test.local");
     const saved = process.env["DIRECTORY_CREDENTIALS_KEY"];
     delete process.env["DIRECTORY_CREDENTIALS_KEY"];
     try {
       const { default: organizationsRouter } = await import("./organizations");
-      const { installDirectoryChecking } = await import("../services/directory-connection.service");
+      const { installDirectoryChecking, installDirectoryCheckingOrStop } = await import("../services/directory-connection.service");
       const asked = (token: string, method: string, path: string, body?: unknown) =>
         organizationsRouter.request(path, {
           method,
@@ -757,6 +1038,8 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
       // The role gate still answers first: anyone else learns nothing.
       expect((await asked(outsider.token, "GET", `/${org.orgId}/directory`)).status).toBe(404);
       expect(installDirectoryChecking()).toBe("off");
+      // F186: with a company connected, a server configured like this doesn't start.
+      await expect(installDirectoryCheckingOrStop(getDb())).rejects.toThrow(/directory connection/);
     } finally {
       process.env["DIRECTORY_CREDENTIALS_KEY"] = saved;
     }

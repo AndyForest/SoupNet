@@ -225,7 +225,7 @@ Copy `.env.example` to `.env`. Key variables (see `.env.example` for the full li
 - `SMTP_*` — Mailpit locally (auto-wired by docker-compose); configure for any SMTP server in production (e.g., AWS SES, Postmark, SendGrid).
 - `BACKEND_URL` / `FRONTEND_URL` / `MCP_PORT` — app URLs.
 - `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` — Sign in with Google (a Google Cloud web client with redirect URI `${BACKEND_URL}/auth/google/callback`, scopes `openid email profile`). Unset turns it off. `GOOGLE_OIDC_TEST_ISSUER` points the backend at the Layer 3 suites' fake Google (started by vitest's global setup) and is ignored when `NODE_ENV=production`.
-- `DIRECTORY_CREDENTIALS_KEY` — 32 bytes that seal a company's Google Workspace directory credential; with Google sign-in configured, it turns on the lazy hourly directory check that switches off members their company suspended or removed. Empty turns it off.
+- `DIRECTORY_CREDENTIALS_KEY` — 32 bytes that seal a company's Google Workspace directory credential; with Google sign-in configured, it turns on the lazy hourly directory check that switches off members their company suspended or removed. Empty means no company can connect; once one has, the backend refuses to start without it, since members would otherwise be refused a day later with no warning.
 
 ## Infrastructure (Docker Compose)
 
