@@ -301,6 +301,12 @@ export function domainJoinedNotice(organizationName: string): string {
   return `Your account now belongs to ${organizationName} on Soup.net. ${organizationName}'s admins manage it.`;
 }
 
+/** The domain list, while a failed migration's accounts wait for the daily job (OD-X6). */
+export function domainMigrationRetryMessage(accounts: number): string {
+  const who = accounts === 1 ? "1 account" : `${accounts} accounts`;
+  return `${who} couldn't join on the last try. We try again every ${DOMAIN_RECHECK_HOURS} hours, and you don't need to do anything.`;
+}
+
 /** The reset page when the organization had no free seat: the reset stands, the address isn't verified (OD-J9). */
 export const DOMAIN_RESET_FULL_RETRY =
   "Your password is changed, but your address isn't verified yet. Sign in once a seat is free to get a new verification link.";

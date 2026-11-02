@@ -278,6 +278,66 @@ Feature: Verified domains, automatic joining, and existing accounts on a claimed
       And she verifies with the new password
       Then she joins Acme
 
+    @ORG-MIG-05
+    Scenario: An account the migration can't move doesn't stop the others
+      Given acme.example has three verified accounts in no company organization
+      And the first one's join hits a deadlock beside an account deletion
+      When Ada turns automatic joining on
+      Then the response reports joined 2, awaitingSeat 0 and failed 1
+      And acme.example's migrationFailure says 1 account will be tried again
+      And an audit row records the failure with the count and the error code and no account
+      When the daily re-check runs
+      Then the third account joins
+      And acme.example has no migrationFailure
+      And an audit row records the recovery
+
+    @ORG-MIG-06
+    Scenario: The daily job goes on after an error
+      Given Acme has two captured claims
+      When one's re-check and the other's join hit an error
+      Then the rest of the run completes and counts both
+      And the next run finishes them
+
+    @ORG-MIG-07
+    Scenario: A migration that can't list its accounts says so
+      When a migration hits an error before its first join
+      Then it returns with stopped set rather than throwing
+      And an audit row records it
+
+    @ORG-JOIN-D09
+    Scenario: An owner hand-over beside an operator's add of the successor
+      Given Ada and Olive own Acme, and Olive holds owner_id
+      When Ada demotes Olive while the operator adds Ada to Acme
+      Then neither deadlocks
+      And Ada holds owner_id
+      And the add answers already_a_member
+
+    @ORG-JOIN-D10
+    Scenario: A new book beside a join for the same account
+      When Max creates a book while his join is in progress
+      Then the book waits and lands in Acme
+      When Nia's join starts while her new book is in progress
+      Then the join waits and moves the book into Acme
+
+    @ORG-MIG-08
+    Scenario: A checked, unverified claim joins nobody with the switch on
+      Given Ada has added acme.example, the record is missing, and a check has run
+      When Ada turns automatic joining on
+      Then the claim is still pending and no account joins
+
+    @ORG-MIG-09
+    Scenario: A waitlisted account leaves the waitlist when migrated
+      Given Max is a verified, waitlisted account on acme.example
+      When acme.example becomes captured
+      Then Max is a member of Acme and off the waitlist
+
+    @ORG-JOIN-D11
+    Scenario: A reset doesn't join an account that was already verified
+      Given acme.example is captured and Max is a verified account on it that hasn't joined
+      When Max resets his password
+      Then he is in no company organization
+      And the next migration joins him via "migrated"
+
     @ORG-JOIN-D08
     Scenario: A sign-in racing the migration for the same account
       Given acme.example is captured

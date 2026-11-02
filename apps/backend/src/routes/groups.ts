@@ -4,6 +4,7 @@ import { getDb } from "../db";
 import { requireAuth, requireVerifiedEmail } from "../auth";
 import type { AppEnv } from "../types";
 import { sql } from "drizzle-orm";
+import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { groups } from "@soupnet/db";
 import { writeAudit } from "../services/audit-log.service";
 import { isUniqueViolationOn } from "../lib/pg-errors";
@@ -20,6 +21,7 @@ import {
   addMember,
   removeMember,
   updateDailyPrefs,
+  holdAccountForNewBook,
   homeOrganizationOf,
   mayCreateBookIn,
   setBookOrgWide,
@@ -93,37 +95,43 @@ groupsRouter.post("/", async (c) => {
   // Where the book lands: the named organization only when the caller may
   // create there (they own it, or they are an active member of the company
   // organization that manages their account; a guest of one of a company's
-  // books is neither), else their home organization (OC-B2).
-  const organizationId = parsed.data.organizationId ?? (await homeOrganizationOf(db, user.id));
-  if (!organizationId || !(await mayCreateBookIn(db, user.id, organizationId))) {
-    return c.json({ ok: false, error: "Organization not found or not yours to create recipe books in" }, 403);
-  }
-  if (orgWide) {
-    const orgRows = await db.execute(sql`SELECT is_personal FROM claimnet.organizations WHERE id = ${organizationId}::uuid`);
-    if ((orgRows as unknown as Array<{ is_personal: boolean }>)[0]?.is_personal !== false) {
-      return c.json({ ok: false, error: "not_a_company_book", message: ORG_WIDE_MESSAGES.not_a_company_book }, 400);
-    }
-  }
-
-  let groupRows: Array<{ id: string }>;
+  // books is neither), else their home organization (OC-B2). One transaction
+  // under the account's lock, so a join can't leave the book behind (F169).
+  let organizationId: string | null = null;
+  let created: { group: { id: string } | undefined } | { refusal: "forbidden" | "not_a_company_book" };
   try {
-    groupRows = await db.insert(groups).values({
-      name, slug, organizationId, description,
-    }).returning({ id: groups.id });
+    created = await db.transaction(async (tx) => {
+      await holdAccountForNewBook(tx, user.id);
+      organizationId = parsed.data.organizationId ?? (await homeOrganizationOf(tx, user.id));
+      if (!organizationId || !(await mayCreateBookIn(tx, user.id, organizationId))) return { refusal: "forbidden" as const };
+      if (orgWide) {
+        const orgRows = await tx.execute(sql`SELECT is_personal FROM claimnet.organizations WHERE id = ${organizationId}::uuid`);
+        if ((orgRows as unknown as Array<{ is_personal: boolean }>)[0]?.is_personal !== false) return { refusal: "not_a_company_book" as const };
+      }
+      const groupRows = await tx.insert(groups).values({
+        name, slug, organizationId, description,
+      }).returning({ id: groups.id });
+      const group = groupRows[0];
+      // Add creator as owner, auto-opted-in for daily-link read + write. The
+      // "new groups default to excluded" rule applies to memberships gained
+      // via invite accept (see invitations.ts), not to groups you create.
+      if (group) await addCreatorAsOwner(tx as unknown as PostgresJsDatabase, group.id, user.id);
+      return { group };
+    });
   } catch (err) {
     if (!isUniqueViolationOn(err, "groups_org_slug_unique")) throw err;
     const orgRows = await db.execute(sql`SELECT is_personal FROM claimnet.organizations WHERE id = ${organizationId}::uuid`);
     const inCompany = (orgRows as unknown as Array<{ is_personal: boolean }>)[0]?.is_personal === false;
     return c.json({ ok: false, error: "slug_taken", message: bookSlugTakenMessage(slug, inCompany) }, 409);
   }
+  if ("refusal" in created) {
+    return created.refusal === "forbidden"
+      ? c.json({ ok: false, error: "Organization not found or not yours to create recipe books in" }, 403)
+      : c.json({ ok: false, error: "not_a_company_book", message: ORG_WIDE_MESSAGES.not_a_company_book }, 400);
+  }
 
-  const group = groupRows[0];
+  const group = created.group;
   if (!group) return c.json({ ok: false, error: "Failed to create recipe book" }, 500);
-
-  // Add creator as owner, auto-opted-in for daily-link read + write. The
-  // "new groups default to excluded" rule applies to memberships gained
-  // via invite accept (see invitations.ts), not to groups you create.
-  await addCreatorAsOwner(db, group.id, user.id);
 
   // The organization was checked to be a company one above, so this can't
   // refuse; a crash between the two statements leaves a private book.

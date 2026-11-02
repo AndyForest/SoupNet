@@ -36,6 +36,7 @@ import {
   googleHdMatches,
   domainFailingEmail,
   domainLapsedEmail,
+  domainMigrationRetryMessage,
   DOMAIN_RECHECK_HOURS,
   DOMAIN_GRACE_DAYS,
   DOMAIN_CHALLENGE_TTL_DAYS,
@@ -118,6 +119,8 @@ const DOMAIN_AUDIT_ACTIONS = {
   recovered: "organization_domain.recovered",
   lapsed: "organization_domain.lapsed",
   migrated: "organization_domain.migrated",
+  migration_failed: "organization_domain.migration_failed",
+  migration_recovered: "organization_domain.migration_recovered",
 } as const satisfies Record<string, AuditAction>;
 
 async function audit(db: SqlExecutor, actorUserId: string | null, action: AuditAction, claim: Pick<ClaimRow, "id" | "organization_id" | "domain">, extra: Record<string, unknown> = {}): Promise<void> {
@@ -143,12 +146,14 @@ export interface DomainClaimView {
   lapsesAt?: string;
   autoJoin: boolean;
   accountsAwaitingJoin?: number;
+  /** The last migration couldn't move some accounts and the daily job will try them again (OD-X6). */
+  migrationFailure?: { accounts: number; at: string; message: string };
   recheckEveryHours: number;
   graceDays: number;
   challengeDays: number;
 }
 
-function viewOf(row: ClaimRow, now: Date, awaiting: number | null): DomainClaimView {
+function viewOf(row: ClaimRow, now: Date, awaiting: number | null, failure: MigrationFailureRow | null = null): DomainClaimView {
   const state = stateOf(row);
   const status = domainClaimStatus(state, now);
   const record = domainChallengeRecord(row.domain, row.challenge_token);
@@ -167,6 +172,7 @@ function viewOf(row: ClaimRow, now: Date, awaiting: number | null): DomainClaimV
     autoJoin: row.auto_join,
     // A count, never a list, and only behind DNS proof (OD-X4).
     ...(row.verified_at !== null && awaiting !== null ? { accountsAwaitingJoin: awaiting } : {}),
+    ...(failure && awaiting ? { migrationFailure: migrationFailureView(failure, awaiting) } : {}),
     recheckEveryHours: DOMAIN_RECHECK_HOURS,
     graceDays: DOMAIN_GRACE_DAYS,
     challengeDays: DOMAIN_CHALLENGE_TTL_DAYS,
@@ -192,6 +198,30 @@ async function eligibleAccounts(db: SqlExecutor, domain: string, limit: number):
   return rows.filter((r) => isAddressOnDomain(r.email, domain)).slice(0, limit);
 }
 
+interface MigrationFailureRow {
+  accounts: number;
+  occurred_at: Date | string;
+}
+
+/** A run that stopped before it could count sets accounts to 0: all that are waiting will be tried again. */
+function migrationFailureView(failure: MigrationFailureRow, awaiting: number): NonNullable<DomainClaimView["migrationFailure"]> {
+  const accounts = failure.accounts > 0 ? Math.min(failure.accounts, awaiting) : awaiting;
+  return { accounts, at: new Date(failure.occurred_at).toISOString(), message: domainMigrationRetryMessage(accounts) };
+}
+
+/** The claim's latest migration failure, unless a later run has cleared it. */
+async function openMigrationFailure(db: SqlExecutor, claim: Pick<ClaimRow, "id" | "organization_id">): Promise<MigrationFailureRow | null> {
+  const rows = (await db.execute(sql`
+    SELECT action, COALESCE((metadata->>'accounts')::int, 0) AS accounts, occurred_at FROM claimnet.audit_log
+    WHERE target_id = ${claim.organization_id}::uuid
+      AND action IN (${DOMAIN_AUDIT_ACTIONS.migration_failed}, ${DOMAIN_AUDIT_ACTIONS.migration_recovered})
+      AND metadata->>'claimId' = ${claim.id}
+    ORDER BY occurred_at DESC
+    LIMIT 1
+  `)) as unknown as Array<MigrationFailureRow & { action: string }>;
+  return rows[0]?.action === DOMAIN_AUDIT_ACTIONS.migration_failed ? rows[0] : null;
+}
+
 export async function listDomains(db: SqlExecutor, organizationId: string, now = new Date()): Promise<DomainClaimView[]> {
   const rows = ((await db.execute(sql`
     SELECT ${CLAIM_COLUMNS} FROM claimnet.organization_domains
@@ -199,10 +229,7 @@ export async function listDomains(db: SqlExecutor, organizationId: string, now =
     ORDER BY created_at, id
   `)) as unknown as Array<Record<string, unknown>>).map(rowFrom);
   const views: DomainClaimView[] = [];
-  for (const row of rows) {
-    const awaiting = row.verified_at !== null ? (await eligibleAccounts(db, row.domain, Number.MAX_SAFE_INTEGER)).length : null;
-    views.push(viewOf(row, now, awaiting));
-  }
+  for (const row of rows) views.push(await listDomainView(db, row, now));
   return views;
 }
 
@@ -275,6 +302,10 @@ export async function addDomain(db: PostgresJsDatabase, input: { organizationId:
 export interface MigrationSummary {
   joined: number;
   awaitingSeat: number;
+  /** Accounts whose join hit an error; the daily job tries them again (OD-X6). */
+  failed: number;
+  /** The run hit an error outside any one account's join, so it couldn't count them. */
+  stopped?: true;
 }
 
 /**
@@ -303,8 +334,9 @@ export async function setAutoJoin(
 }
 
 async function listDomainView(db: SqlExecutor, row: ClaimRow, now: Date): Promise<DomainClaimView> {
-  const awaiting = row.verified_at !== null ? (await eligibleAccounts(db, row.domain, Number.MAX_SAFE_INTEGER)).length : null;
-  return viewOf(row, now, awaiting);
+  if (row.verified_at === null) return viewOf(row, now, null);
+  const awaiting = (await eligibleAccounts(db, row.domain, Number.MAX_SAFE_INTEGER)).length;
+  return viewOf(row, now, awaiting, awaiting > 0 ? await openMigrationFailure(db, row) : null);
 }
 
 /** Remove a claim (OD-A3). Joining stops at once; no member is touched. */
@@ -335,6 +367,10 @@ export type CheckNowResult =
 interface AppliedCheck {
   row: ClaimRow;
   event: DomainCheckEvent;
+}
+
+function pgErrorCode(err: unknown): string | undefined {
+  return (err as { cause?: { code?: string }; code?: string }).cause?.code ?? (err as { code?: string }).code;
 }
 
 /**
@@ -370,8 +406,7 @@ async function applyOutcome(db: PostgresJsDatabase, claimId: string, outcome: "f
       return { row: rowFrom(updated[0]!), event: result.event };
     });
   } catch (err) {
-    const code = (err as { cause?: { code?: string }; code?: string }).cause?.code ?? (err as { code?: string }).code;
-    if (code === "23505") return "domain_taken";
+    if (pgErrorCode(err) === "23505") return "domain_taken";
     throw err;
   }
 }
@@ -419,28 +454,36 @@ export async function checkDomainNow(
 /**
  * The daily job (OD-R1, OD-X1, OD-X3): re-check every verified claim, then
  * migrate every captured one, which continues an unfinished migration and
- * seats accounts that waited for a seat. `organizationId` narrows the run to
- * one organization (tests share a database).
+ * seats accounts that waited for a seat. An error on one claim or one account
+ * is logged and counted, and the run goes on to the next; tomorrow's run tries
+ * it again (OD-X6). `organizationId` narrows the run to one organization (tests
+ * share a database).
  */
 export async function recheckDomains(
   db: PostgresJsDatabase,
   options: { lookup?: TxtLookup; now?: Date; organizationId?: string } = {},
-): Promise<{ checked: number; events: Partial<Record<DomainCheckEvent, number>>; migration: MigrationSummary }> {
+): Promise<{ checked: number; events: Partial<Record<DomainCheckEvent, number>>; failedChecks: number; migration: MigrationSummary }> {
   const now = options.now ?? new Date();
   const scope = options.organizationId ? sql`AND organization_id = ${options.organizationId}::uuid` : sql``;
   const claims = ((await db.execute(sql`
     SELECT ${CLAIM_COLUMNS} FROM claimnet.organization_domains WHERE verified_at IS NOT NULL ${scope} ORDER BY id
   `)) as unknown as Array<Record<string, unknown>>).map(rowFrom);
   const events: Partial<Record<DomainCheckEvent, number>> = {};
+  let failedChecks = 0;
   for (const claim of claims) {
-    const check = await checkDomainRecord(domainChallengeRecord(claim.domain, claim.challenge_token), options.lookup ?? txtLookupFor(claim.domain, db));
-    if (check.outcome !== "found") console.warn(`[org-domains] re-check of ${claim.domain}: ${check.outcome}${check.code ? ` (${check.code})` : ""}`);
-    const applied = await applyOutcome(db, claim.id, check.outcome, now, null);
-    if (applied === null || applied === "domain_taken") continue;
-    events[applied.event] = (events[applied.event] ?? 0) + 1;
-    // The migration below covers every captured claim; afterCheck's own
-    // migration would only repeat it, so send just the emails here.
-    if (applied.event === "failing" || applied.event === "lapsed") await afterCheck(db, applied);
+    try {
+      const check = await checkDomainRecord(domainChallengeRecord(claim.domain, claim.challenge_token), options.lookup ?? txtLookupFor(claim.domain, db));
+      if (check.outcome !== "found") console.warn(`[org-domains] re-check of ${claim.domain}: ${check.outcome}${check.code ? ` (${check.code})` : ""}`);
+      const applied = await applyOutcome(db, claim.id, check.outcome, now, null);
+      if (applied === null || applied === "domain_taken") continue;
+      events[applied.event] = (events[applied.event] ?? 0) + 1;
+      // The migration below covers every captured claim; afterCheck's own
+      // migration would only repeat it, so send just the emails here.
+      if (applied.event === "failing" || applied.event === "lapsed") await afterCheck(db, applied);
+    } catch (err) {
+      failedChecks++;
+      console.error(`[org-domains] re-check of ${claim.domain} failed (${pgErrorCode(err) ?? "no code"}); the next run tries again:`, err);
+    }
   }
 
   // Every verified claim: migrateDomainAccounts checks domainVerifiedFor
@@ -448,13 +491,15 @@ export async function recheckDomains(
   const verified = (await db.execute(sql`
     SELECT id FROM claimnet.organization_domains WHERE verified_at IS NOT NULL ${scope} ORDER BY id
   `)) as unknown as Array<{ id: string }>;
-  const migration: MigrationSummary = { joined: 0, awaitingSeat: 0 };
+  const migration: MigrationSummary = { joined: 0, awaitingSeat: 0, failed: 0 };
   for (const { id } of verified) {
     const m = await migrateDomainAccounts(db, id);
     migration.joined += m.joined;
     migration.awaitingSeat += m.awaitingSeat;
+    migration.failed += m.failed;
+    if (m.stopped) migration.stopped = true;
   }
-  return { checked: claims.length, events, migration };
+  return { checked: claims.length, events, failedChecks, migration };
 }
 
 // ── Joining ──────────────────────────────────────────────────────────────────
@@ -466,44 +511,91 @@ export async function recheckDomains(
  * holds at that moment, so a claim that stops being captured mid-run stops
  * the run. One audit row per migrated account names the claim. At the seat
  * limit the rest are left as they are and counted (OD-C3).
+ *
+ * It doesn't throw on an error (OD-X6). An account whose join fails, a deadlock
+ * beside an account deletion for one (F170), is counted and the run moves on;
+ * an error outside any one join ends the run, marked `stopped`. Either writes a
+ * `migration_failed` audit row, which is what the domain list reads to explain
+ * the accounts still waiting. The daily job is the retry, and its first clean
+ * run writes `migration_recovered`.
  */
 export async function migrateDomainAccounts(db: PostgresJsDatabase, claimId: string, batch = MIGRATION_BATCH): Promise<MigrationSummary> {
-  const summary: MigrationSummary = { joined: 0, awaitingSeat: 0 };
-  const rows = (await db.execute(sql`SELECT ${CLAIM_COLUMNS} FROM claimnet.organization_domains WHERE id = ${claimId}::uuid`)) as unknown as Array<Record<string, unknown>>;
-  if (!rows[0]) return summary;
-  const claim = rowFrom(rows[0]);
+  const summary: MigrationSummary = { joined: 0, awaitingSeat: 0, failed: 0 };
+  const errorCodes = new Set<string>();
+  const failedWith = (err: unknown, what: string): void => {
+    const code = pgErrorCode(err) ?? "no code";
+    errorCodes.add(code);
+    console.error(`[org-domains] migration of claim ${claimId}: ${what} failed (${code}); the daily job tries again:`, err);
+  };
 
-  const precondition = (await db.execute(sql`SELECT ${domainVerifiedFor(claim.organization_id, claim.domain)} AS ok`)) as unknown as Array<{ ok: boolean }>;
-  if (precondition[0]?.ok !== true) return summary;
+  let claim: ClaimRow | null = null;
+  try {
+    const rows = (await db.execute(sql`SELECT ${CLAIM_COLUMNS} FROM claimnet.organization_domains WHERE id = ${claimId}::uuid`)) as unknown as Array<Record<string, unknown>>;
+    if (!rows[0]) return summary;
+    const found = rowFrom(rows[0]);
+    claim = found;
 
-  const accounts = await eligibleAccounts(db, claim.domain, Number.MAX_SAFE_INTEGER);
-  for (const [i, account] of accounts.entries()) {
-    if (i >= batch) break;
-    const result = await db.transaction(async (tx) => {
-      const join = await joinOrganizationInTx(tx, {
-        organizationId: claim.organization_id,
-        userId: account.id,
-        role: "member",
-        via: "migrated",
-        authority: { kind: "domain", domain: claim.domain },
-      });
-      if (join.ok) {
-        await tx.execute(sql`UPDATE claimnet.users SET waitlisted_at = NULL WHERE id = ${account.id}::uuid`);
-        await audit(tx, null, DOMAIN_AUDIT_ACTIONS.migrated, claim, { userId: account.id });
+    const precondition = (await db.execute(sql`SELECT ${domainVerifiedFor(found.organization_id, found.domain)} AS ok`)) as unknown as Array<{ ok: boolean }>;
+    if (precondition[0]?.ok !== true) return summary;
+
+    const accounts = await eligibleAccounts(db, found.domain, Number.MAX_SAFE_INTEGER);
+    for (const [i, account] of accounts.entries()) {
+      if (i >= batch) break;
+      let result: JoinResult;
+      try {
+        result = await db.transaction(async (tx) => {
+          const join = await joinOrganizationInTx(tx, {
+            organizationId: found.organization_id,
+            userId: account.id,
+            role: "member",
+            via: "migrated",
+            authority: { kind: "domain", domain: found.domain },
+          });
+          if (join.ok) {
+            await tx.execute(sql`UPDATE claimnet.users SET waitlisted_at = NULL WHERE id = ${account.id}::uuid`);
+            await audit(tx, null, DOMAIN_AUDIT_ACTIONS.migrated, found, { userId: account.id });
+          }
+          return join;
+        });
+      } catch (err) {
+        summary.failed++;
+        failedWith(err, "one account's join");
+        continue;
       }
-      return join;
-    });
-    if (result.ok) {
-      summary.joined++;
-      sendJoinNotice(result);
-    } else if (result.refusal === "organization_full") {
-      summary.awaitingSeat = accounts.length - summary.joined;
-      break;
-    } else if (result.refusal === "not_authorized") {
-      break;
+      if (result.ok) {
+        summary.joined++;
+        sendJoinNotice(result);
+      } else if (result.refusal === "organization_full") {
+        summary.awaitingSeat = accounts.length - summary.joined - summary.failed;
+        break;
+      } else if (result.refusal === "not_authorized") {
+        break;
+      }
     }
+  } catch (err) {
+    summary.stopped = true;
+    failedWith(err, "the run");
   }
+  if (claim) await recordMigrationOutcome(db, claim, summary, [...errorCodes]);
   return summary;
+}
+
+/** The record of a failed run, and of the first clean one after it. A failure here is only logged: the run's counts still go back to the caller. */
+async function recordMigrationOutcome(db: PostgresJsDatabase, claim: ClaimRow, summary: MigrationSummary, errorCodes: string[]): Promise<void> {
+  try {
+    if (summary.failed > 0 || summary.stopped) {
+      await audit(db, null, DOMAIN_AUDIT_ACTIONS.migration_failed, claim, {
+        accounts: summary.failed,
+        joined: summary.joined,
+        ...(summary.stopped ? { stopped: true } : {}),
+        errorCodes,
+      });
+    } else if (await openMigrationFailure(db, claim)) {
+      await audit(db, null, DOMAIN_AUDIT_ACTIONS.migration_recovered, claim, { joined: summary.joined });
+    }
+  } catch (err) {
+    console.error(`[org-domains] couldn't record the migration outcome for claim ${claim.id}:`, err);
+  }
 }
 
 export type DomainJoinOutcome =

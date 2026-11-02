@@ -24,6 +24,7 @@ import {
   DOMAIN_RECORD_PREFIX,
   DOMAIN_CHALLENGE_TTL_DAYS,
   DOMAIN_RECHECK_HOURS,
+  domainMigrationRetryMessage,
   DOMAIN_FRESHNESS_HOURS,
   DOMAIN_GRACE_DAYS,
   type DomainClaimState,
@@ -49,6 +50,13 @@ const verified = (over: Partial<DomainClaimState> = {}): DomainClaimState => ({
   lastFoundAt: ago(HOUR),
   tokenIssuedAt: ago(31 * DAY),
   ...over,
+});
+
+describe("domainMigrationRetryMessage (OD-X6)", () => {
+  it("counts the accounts and says the retry needs nothing from the reader", () => {
+    expect(domainMigrationRetryMessage(1)).toBe(`1 account couldn't join on the last try. We try again every ${DOMAIN_RECHECK_HOURS} hours, and you don't need to do anything.`);
+    expect(domainMigrationRetryMessage(4)).toContain("4 accounts couldn't join");
+  });
 });
 
 describe("the published numbers", () => {

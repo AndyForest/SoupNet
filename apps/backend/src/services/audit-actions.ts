@@ -66,6 +66,8 @@ export const ACCOUNT_EVENT_ACTIONS = [
   "organization_domain.recovered",
   "organization_domain.lapsed",
   "organization_domain.migrated",
+  "organization_domain.migration_failed",
+  "organization_domain.migration_recovered",
   // Operators
   "integrity.repaired",
 ] as const;
