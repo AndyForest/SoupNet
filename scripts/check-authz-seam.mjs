@@ -365,11 +365,11 @@ const TRACE_READS = {
     why: "dev-only cleanup of seeded test users: counts their own recipes by user id before deleting the accounts",
   },
   "apps/backend/src/services/embedding-model-status.service.ts": {
-    n: 1, fp: "c2a2e9d9edce", composes: false,
+    n: 3, fp: "9b8d4b4d09ec", composes: false,
     why: "operator counts of a model's search coverage across the whole corpus: numbers only, no recipe content, no caller",
   },
   "apps/backend/src/cli/embedding-model.ts": {
-    n: 2, fp: "2069d34b1159", composes: false,
+    n: 3, fp: "2ab963156093", composes: false,
     why: "operator script: counts image sources and removes a retired model's vectors; no recipe content, no caller",
   },
   "scripts/repair-orphaned-user-data.mjs": {

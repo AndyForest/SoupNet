@@ -54,49 +54,46 @@ export function countsFor(counts: Map<string, ModelCounts>, modelId: string): Mo
   return counts.get(modelId) ?? EMPTY_COUNTS;
 }
 
-/**
- * Chunks searchable under `fromModel` that aren't under `toModel`. Zero means reads
- * can move from one to the other without any source leaving search.
- */
+/** What the sweep writes when a row keeps going stale. No provider said anything about it. */
+export const RETRY_LIMIT_ERROR = "Auto-retry limit exceeded after stale processing recovery";
+
+const SEARCHED_STRATEGIES = sql.join(PRODUCTION_SEARCH_STRATEGY_IDS.map((id) => sql`${id}`), sql`, `);
+
+export interface FlipGap {
+  /** Chunks search reads, complete under one model and not the other. Zero means reads can move. */
+  gap: number;
+  /** Of those, rows the provider failed. No wait closes them. */
+  refused: number;
+  /** Of those, rows the sweep gave up on. Nothing said they can't be embedded. */
+  retryLimit: number;
+  /** Chunks search doesn't read, missing the same way. They block nothing. */
+  notSearched: number;
+}
+
 export async function readFlipGap(
   db: PostgresJsDatabase,
   fromModel: string,
   toModel: string,
-): Promise<number> {
+): Promise<FlipGap> {
   const rows = await db.execute(sql`
-    SELECT count(*)::int AS n
-    FROM claimnet.embedding_vectors f
-    WHERE f.model_id = ${fromModel}
-      AND f.task_type = 'SEMANTIC_SIMILARITY'
-      AND f.status = 'complete'
-      AND NOT EXISTS (
-        SELECT 1 FROM claimnet.embedding_vectors t
-        WHERE t.embedding_chunk_id = f.embedding_chunk_id
-          AND t.model_id = ${toModel}
-          AND t.task_type = f.task_type
-          AND t.status = 'complete'
-      )
+    SELECT count(*) FILTER (WHERE searched)::int AS gap,
+           count(*) FILTER (WHERE searched AND to_status = 'failed' AND to_error IS DISTINCT FROM ${RETRY_LIMIT_ERROR})::int AS refused,
+           count(*) FILTER (WHERE searched AND to_status = 'failed' AND to_error = ${RETRY_LIMIT_ERROR})::int AS "retryLimit",
+           count(*) FILTER (WHERE NOT searched)::int AS "notSearched"
+    FROM (
+      SELECT ecs.strategy_id IN (${SEARCHED_STRATEGIES}) AS searched, t.status AS to_status, t.error AS to_error
+      FROM claimnet.embedding_vectors f
+      JOIN claimnet.embedding_chunks ec ON ec.id = f.embedding_chunk_id
+      JOIN claimnet.embedding_chunk_strategies ecs ON ecs.id = ec.chunk_strategy_id
+      LEFT JOIN claimnet.embedding_vectors t
+        ON t.embedding_chunk_id = f.embedding_chunk_id AND t.model_id = ${toModel} AND t.task_type = f.task_type
+      WHERE f.model_id = ${fromModel}
+        AND f.task_type = 'SEMANTIC_SIMILARITY'
+        AND f.status = 'complete'
+        AND t.status IS DISTINCT FROM 'complete'
+    ) missing
   `);
-  return (rows as unknown as Array<{ n: number }>)[0]?.n ?? 0;
-}
-
-/** Of a flip gap, the chunks the target's provider refused, which no wait will close. */
-export async function readRefusedGap(
-  db: PostgresJsDatabase,
-  fromModel: string,
-  toModel: string,
-): Promise<number> {
-  const rows = await db.execute(sql`
-    SELECT count(*)::int AS n
-    FROM claimnet.embedding_vectors f
-    JOIN claimnet.embedding_vectors t
-      ON t.embedding_chunk_id = f.embedding_chunk_id AND t.model_id = ${toModel} AND t.task_type = f.task_type
-    WHERE f.model_id = ${fromModel}
-      AND f.task_type = 'SEMANTIC_SIMILARITY'
-      AND f.status = 'complete'
-      AND t.status = 'failed'
-  `);
-  return (rows as unknown as Array<{ n: number }>)[0]?.n ?? 0;
+  return (rows as unknown as FlipGap[])[0] ?? { gap: 0, refused: 0, retryLimit: 0, notSearched: 0 };
 }
 
 export type ReadVectorsState = "ok" | "partial" | "empty";
@@ -106,9 +103,11 @@ export interface ReadCoverage {
   total: number;
   /** Searchable under this model. */
   covered: number;
-  /** The provider refused this chunk's row. Reported by the rebuild line and status. */
+  /** Out of search because the provider failed the row. */
   refused: number;
-  /** No searchable vector and none refused, and old enough that it isn't normal lag. */
+  /** Out of search because the sweep gave up on the row. */
+  retryLimit: number;
+  /** No searchable vector and no failure, and old enough that it isn't normal lag. */
   missing: number;
 }
 
@@ -120,7 +119,8 @@ export async function readCoverage(db: PostgresJsDatabase, modelId: string): Pro
   const rows = await db.execute(sql`
     SELECT count(*)::int AS total,
            count(*) FILTER (WHERE ev.status = 'complete')::int AS covered,
-           count(*) FILTER (WHERE ev.status = 'failed')::int AS refused,
+           count(*) FILTER (WHERE ev.status = 'failed' AND ev.error IS DISTINCT FROM ${RETRY_LIMIT_ERROR})::int AS refused,
+           count(*) FILTER (WHERE ev.status = 'failed' AND ev.error = ${RETRY_LIMIT_ERROR})::int AS "retryLimit",
            count(*) FILTER (
              WHERE (ev.status IS NULL OR ev.status NOT IN ('complete', 'failed'))
                AND ec.created_at < now() - ${NORMAL_LAG}
@@ -131,21 +131,55 @@ export async function readCoverage(db: PostgresJsDatabase, modelId: string): Pro
       ON ev.embedding_chunk_id = ec.id
      AND ev.model_id = ${modelId}
      AND ev.task_type = 'SEMANTIC_SIMILARITY'
-    WHERE ecs.strategy_id IN (${sql.join(PRODUCTION_SEARCH_STRATEGY_IDS.map((id) => sql`${id}`), sql`, `)})
+    WHERE ecs.strategy_id IN (${SEARCHED_STRATEGIES})
   `);
-  return (rows as unknown as ReadCoverage[])[0] ?? { total: 0, covered: 0, refused: 0, missing: 0 };
+  return (rows as unknown as ReadCoverage[])[0] ?? { total: 0, covered: 0, refused: 0, retryLimit: 0, missing: 0 };
 }
+
+// A few real refusals are normal and shouldn't page anyone on a small corpus.
+const TOLERATED_REFUSALS = 10;
 
 /**
  * `empty`: search reaches nothing while chunks exist, which is 200 with no results.
- * `partial`: over 1% of chunks are out of search with no refusal to explain them.
- * Failed rows and other models' counts don't enter into it. An empty corpus is `ok`.
+ * `partial`: over 1% of chunks are out of search for no reason a provider gave, or
+ * over 1% and over a handful once refusals count too, since a provider-wide failure
+ * also lands on rows as refusals. Other models' counts don't enter into it.
  */
 export function readVectorsState(coverage: ReadCoverage): ReadVectorsState {
   if (coverage.total === 0) return "ok";
   if (coverage.covered === 0) return "empty";
-  if (coverage.missing > coverage.total * 0.01) return "partial";
+  const onePercent = coverage.total * 0.01;
+  const unexplained = coverage.missing + coverage.retryLimit;
+  if (unexplained > onePercent) return "partial";
+  if (unexplained + coverage.refused > Math.max(onePercent, TOLERATED_REFUSALS)) return "partial";
   return "ok";
+}
+
+export interface FailedRows {
+  modelId: string;
+  kind: "provider_refused" | "retry_limit" | "not_searched";
+  error: string | null;
+  rows: number;
+}
+
+/** Every failed row, by what it is and what it said, most common first. */
+export async function readFailedRows(db: PostgresJsDatabase): Promise<FailedRows[]> {
+  const rows = await db.execute(sql`
+    SELECT ev.model_id AS "modelId",
+           CASE WHEN ecs.strategy_id NOT IN (${SEARCHED_STRATEGIES}) THEN 'not_searched'
+                WHEN ev.error = ${RETRY_LIMIT_ERROR} THEN 'retry_limit'
+                ELSE 'provider_refused' END AS kind,
+           left(ev.error, 120) AS error,
+           count(*)::int AS rows
+    FROM claimnet.embedding_vectors ev
+    JOIN claimnet.embedding_chunks ec ON ec.id = ev.embedding_chunk_id
+    JOIN claimnet.embedding_chunk_strategies ecs ON ecs.id = ec.chunk_strategy_id
+    WHERE ev.status = 'failed'
+    GROUP BY 1, 2, 3
+    ORDER BY rows DESC
+    LIMIT 25
+  `);
+  return rows as unknown as FailedRows[];
 }
 
 // ── What running tasks read ────────────────────────────────────────────────
