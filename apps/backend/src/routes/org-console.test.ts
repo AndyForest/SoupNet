@@ -134,8 +134,8 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Console",
     return key;
   }
 
-  async function seedRecipe(key: string, claim: string): Promise<string> {
-    const form = new URLSearchParams({ key, trace: claim, ef: EVIDENCE, format: "json" });
+  async function seedRecipe(key: string, claim: string, extra: Record<string, string> = {}): Promise<string> {
+    const form = new URLSearchParams({ key, trace: claim, ef: EVIDENCE, format: "json", ...extra });
     const res = await fetch(`${BASE}/check`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -278,6 +278,20 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Console",
       const changed = [metadata.previous.outbound !== metadata.outbound, metadata.previous.inbound !== metadata.inbound].filter(Boolean);
       expect(changed).toHaveLength(1);
     }
+  });
+
+  it("CN-P2: an invitation from an admin who has since been disabled isn't an admin's", async () => {
+    const { olive, ada, gus, orgId } = await acme();
+    const adaBook = await book(ada, "ada-disabled-own");
+    expect((await setSharing(olive, orgId, { outbound: "admins_only" })).status).toBe(200);
+    expect((await call(ada, "POST", `/recipe-books/${adaBook}/invite`, { email: gus.email })).status).toBe(201);
+    const invitation = await pendingInvite(gus, adaBook);
+    expect((await call(olive, "POST", `/organizations/${orgId}/members/${ada.userId}/disable`)).status).toBe(200);
+    const refused = await call(gus, "POST", `/invitations/${invitation}/accept`);
+    expect(refused.status).toBe(403);
+    expect(await json(refused)).toMatchObject({ error: "sharing_blocked" });
+    expect((await call(olive, "POST", `/organizations/${orgId}/members/${ada.userId}/enable`)).status).toBe(200);
+    expect((await call(gus, "POST", `/invitations/${invitation}/accept`)).status).toBe(200);
   });
 
   it("ORG-SHARE-02, 03 / CN-P2: outbound, one row per value × inviter role × book kind, at invitation, accept and direct add", async () => {
@@ -468,6 +482,53 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Console",
     expect((await call(ada, "POST", `/organizations/${orgId}/members/${max.userId}/enable`)).status).toBe(200);
     const site = (await json(await call(sys, "GET", `/admin/users?q=${encodeURIComponent(max.email)}`)))["data"] as { users: Json[] };
     expect(site.users.find((u) => u["id"] === max.userId)).toMatchObject({ status: "directory_deleted" });
+  });
+
+  it("CN-T2: a person's page lists their own sign-ins, never another's", async () => {
+    const { ada, max } = await acme();
+    const at = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    await getDb().execute(sql`
+      INSERT INTO claimnet.audit_log (actor_user_id, action, target_type, target_id, metadata, occurred_at)
+      VALUES (${ada.userId}::uuid, 'auth.signed_in', 'user', ${ada.userId}::uuid, ${JSON.stringify({ method: "google" })}::jsonb, ${at}::timestamptz)
+    `);
+    const signIns = async (who: Actor) => ((await json(await call(who, "GET", "/me/organization")))["data"] as { signIns: Json[] }).signIns;
+    expect((await signIns(ada)).map((s) => s["at"])).toContain(at);
+    expect((await signIns(max)).map((s) => s["at"])).not.toContain(at);
+  });
+
+  it("CN-U2: a draft isn't counted, on the member list or the Books page", async () => {
+    const { olive, max, orgId, defaultBookId } = await acme();
+    const key = await keyFor(max, defaultBookId);
+    await seedRecipe(key, `As a member I publish a recipe ${run}`);
+    await seedRecipe(key, `As a member I hold a draft for now ${run}`, { draft: "true" });
+    const members = (await json(await call(olive, "GET", `/organizations/${orgId}/members`)))["data"] as { users: Json[] };
+    expect(members.users.find((u) => u["id"] === max.userId)).toMatchObject({ recipeCount: 1 });
+    const books = (await json(await call(olive, "GET", `/organizations/${orgId}/books`)))["data"] as { orgWideBooks: Json[] };
+    expect(books.orgWideBooks.find((b) => b["id"] === defaultBookId)).toMatchObject({ recipes: 1 });
+  });
+
+  it("CN-U3: a site-only filter or sort does nothing for an org viewer, and still works for the operator", async () => {
+    const { olive, max, orgId } = await acme();
+    await getDb().execute(sql`UPDATE claimnet.users SET premium_at = NOW() WHERE id = ${max.userId}::uuid`);
+    const page = async (who: Actor, path: string, query: string) => ((await json(await call(who, "GET", `${path}?${query}`)))["data"]) as { users: Json[]; sortBy: string };
+    const path = `/organizations/${orgId}/members`;
+    const everyone = (await page(olive, path, "")).users.map((u) => u["id"]);
+    expect(everyone).toHaveLength(3);
+    for (const filter of ["verified=no", "role=system", "suspended=yes", "premium=yes", "premium=no", "waitlisted=yes", "hasKeys=yes", "hasKeys=no"]) {
+      expect((await page(olive, path, filter)).users.map((u) => u["id"]), filter).toEqual(everyone);
+    }
+    for (const sortBy of ["createdAt", "lastLoginAt"]) {
+      expect((await page(olive, path, `sortBy=${sortBy}`)).sortBy, sortBy).toBe("joinedAt");
+    }
+    const site = `/admin/organizations/${orgId}/members`;
+    expect((await page(sys, site, "premium=yes")).users.map((u) => u["id"])).toEqual([max.userId]);
+    expect((await page(sys, site, "sortBy=createdAt")).sortBy).toBe("createdAt");
+  });
+
+  it("the operator's member list is the operator's: a malformed id is a 404 and an org admin is refused", async () => {
+    const { olive, orgId } = await acme();
+    expect((await call(sys, "GET", "/admin/organizations/not-a-uuid/members")).status).toBe(404);
+    expect((await call(olive, "GET", `/admin/organizations/${orgId}/members`)).status).toBe(403);
   });
 
   it("the service-account route refuses a body far larger than any key before reading it", async () => {

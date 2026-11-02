@@ -26,7 +26,7 @@
 import { sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { decideMembershipSharing, decideRefileSharing, emailDomain, isInboundSharing, isOutboundSharing } from "@soupnet/domain";
+import { decideMembershipSharing, decideRefileSharing, emailDomain, storedSharingPolicy } from "@soupnet/domain";
 import type { SharingDecision, SharingPolicy } from "@soupnet/domain";
 import { orgMembershipDisabled } from "./account-state";
 import { domainVerifiedFor } from "./domain-authority";
@@ -37,14 +37,6 @@ type SqlExecutor = Pick<PostgresJsDatabase, "execute">;
 
 /** A book whose row is gone is refused: the caller asked about a grant that can't happen. */
 const NO_BOOK: SharingDecision = { allowed: false, refusal: "outbound_blocked" };
-
-/** The policy stored on a company organization; unknown values fail closed. */
-function policyOf(outbound: unknown, inbound: unknown): SharingPolicy {
-  return {
-    outbound: isOutboundSharing(outbound) ? outbound : "blocked",
-    inbound: isInboundSharing(inbound) ? inbound : "blocked",
-  };
-}
 
 /** Is `actor` (a bound user id) an active owner or admin of the organization in `orgIdColumn`? */
 function activeManagerOf(orgIdColumn: SQL, actorUserId: string): SQL {
@@ -89,8 +81,8 @@ export async function sharingDecisionFor(
   const row = (rows as unknown as BoundaryRow[])[0];
   if (!row) return NO_BOOK;
   return decideMembershipSharing({
-    bookOrgPolicy: row.book_org_company ? policyOf(row.book_outbound, row.book_inbound) : null,
-    joinerOrgPolicy: row.joiner_org_id ? policyOf(row.joiner_outbound, row.joiner_inbound) : null,
+    bookOrgPolicy: row.book_org_company ? storedSharingPolicy(row.book_outbound, row.book_inbound) : null,
+    joinerOrgPolicy: row.joiner_org_id ? storedSharingPolicy(row.joiner_outbound, row.joiner_inbound) : null,
     sameOrganization: row.joiner_org_id !== null && row.joiner_org_id === row.book_org_id,
     actorIsBookOrgAdmin: row.actor_is_admin,
   });
@@ -144,7 +136,7 @@ export async function outboundSharingAllowsInvitation(
     ) AS inside
   `);
   return decideMembershipSharing({
-    bookOrgPolicy: policyOf(book.book_outbound, book.book_inbound),
+    bookOrgPolicy: storedSharingPolicy(book.book_outbound, book.book_inbound),
     joinerOrgPolicy: null,
     sameOrganization: (inside as unknown as Array<{ inside: boolean }>)[0]?.inside === true,
     actorIsBookOrgAdmin: book.actor_is_admin,
@@ -171,7 +163,7 @@ export async function sharingAllowsRefile(
   }>)[0];
   if (!row) return NO_BOOK;
   return decideRefileSharing({
-    sourceOrgPolicy: row.source_org_company ? policyOf(row.source_outbound, row.source_inbound) : null,
+    sourceOrgPolicy: row.source_org_company ? storedSharingPolicy(row.source_outbound, row.source_inbound) : null,
     destinationInSameOrganization: row.same_organization,
     actorIsSourceOrgAdmin: row.actor_is_admin,
   });

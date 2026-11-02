@@ -34,6 +34,14 @@ export function isInboundSharing(value: unknown): value is InboundSharing {
 }
 
 /** What a new organization starts with: nothing changes until an admin chooses. */
+/** The policy stored on a company organization; a value this code doesn't know fails closed. */
+export function storedSharingPolicy(outbound: unknown, inbound: unknown): SharingPolicy {
+  return {
+    outbound: isOutboundSharing(outbound) ? outbound : "blocked",
+    inbound: isInboundSharing(inbound) ? inbound : "blocked",
+  };
+}
+
 export const DEFAULT_SHARING_POLICY: SharingPolicy = { outbound: "allowed", inbound: "allowed" };
 
 export type SharingRefusal = "outbound_blocked" | "outbound_admins_only" | "inbound_blocked";

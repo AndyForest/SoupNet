@@ -188,3 +188,12 @@ describe("sharingRefusalMessage", () => {
     );
   });
 });
+
+describe("storedSharingPolicy", () => {
+  it("keeps known values and fails closed on anything else", () => {
+    expect(storedSharingPolicy("admins_only", "allowed")).toEqual({ outbound: "admins_only", inbound: "allowed" });
+    for (const unknown of ["open", null, undefined, 1]) {
+      expect(storedSharingPolicy(unknown, unknown)).toEqual({ outbound: "blocked", inbound: "blocked" });
+    }
+  });
+});
