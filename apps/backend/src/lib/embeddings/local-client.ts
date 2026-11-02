@@ -52,7 +52,8 @@ const SYMMETRIC_PREFIXES: Record<string, string> = {};
  * a second copy of the default that could drift (trace 18912fbd).
  */
 export function localModelRepoId(): string {
-  return process.env["EMBEDDINGS_MODEL"] ?? DEFAULT_MODEL;
+  // docker-compose passes an unset variable through as empty.
+  return (process.env["EMBEDDINGS_MODEL"] ?? "").trim() || DEFAULT_MODEL;
 }
 
 function symmetricPrefix(): string {

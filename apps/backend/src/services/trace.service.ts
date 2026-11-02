@@ -30,6 +30,7 @@ import { inBooks, traceVisibleTo, normalizeOnBehalfOf, resolveNameableSubject, o
 import type { Principal } from "../authz";
 import {
   enqueueEmbedding,
+  type AfterCommitWork,
   getOrCreateCachedVector,
   computeChunkHash,
 } from "../lib/embeddings/enqueue";
@@ -360,6 +361,8 @@ interface InsertEvidenceOptions {
     originalFilename?: string | undefined;
     region?: RegionMeta | undefined;
   } | undefined;
+  /** Work for after the caller's transaction commits. See enqueueEmbedding. */
+  afterCommit?: AfterCommitWork[] | undefined;
 }
 
 export async function insertEvidenceEntries(opts: InsertEvidenceOptions): Promise<void> {
@@ -473,6 +476,7 @@ export async function insertEvidenceEntries(opts: InsertEvidenceOptions): Promis
       artifactCategory: hasFile ? "multimodal" : "text",
       ...(hasFile && embedFileBuffer && embedFileMimeType ? { fileBuffer: embedFileBuffer, fileMimeType: embedFileMimeType } : {}),
       deferToWorker: !hasFile,
+      ...(opts.afterCommit ? { afterCommit: opts.afterCommit } : {}),
     });
   }
 }
@@ -758,6 +762,7 @@ export async function submitAndSearch(
   });
   let depositAuditId: string | null = null;
 
+  const afterCommit: AfterCommitWork[] = [];
   await timer.time("write", () => db.transaction(async (tx) => {
     // Try to insert — unique constraint on (api_key_id, group_id, claim_text_hash)
     // prevents duplicates from the same agent + group. intent_id (slice 6a)
@@ -818,7 +823,7 @@ export async function submitAndSearch(
       // Insert evidence entries (each gets its own embedding)
       await insertEvidenceEntries({
         db: tx, traceId, traceText: params.traceText, apiKeyId: keyId, groupId,
-        entries: forEntries, stance: "for", file: fileInfo,
+        entries: forEntries, stance: "for", file: fileInfo, afterCommit,
       });
       // No "against" entries — stance discovery is handled by the evidence search pipeline
 
@@ -888,6 +893,13 @@ export async function submitAndSearch(
       }
     }
   }));
+
+  // Not awaited: the recipe is written, and a row this doesn't reach is the sweep's.
+  for (const work of afterCommit) {
+    void work(db).catch((err: unknown) => {
+      console.warn("[embedding-rebuild] Image vector for the target left to the worker:", err instanceof Error ? err.message : err);
+    });
+  }
 
   if (!traceId) {
     return {

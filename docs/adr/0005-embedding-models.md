@@ -1,7 +1,7 @@
 # ADR-0005: Embedding model selection
 
 **Date:** 2026-03-19
-**Status:** Accepted (updated 2026-03-19 — model upgraded from gemini-embedding-001 to gemini-embedding-2-preview; Cohere deferred to optional future feature)
+**Status:** Accepted (updated 2026-03-19 — model upgraded from gemini-embedding-001 to gemini-embedding-2-preview; Cohere deferred to optional future feature). Updated 2026-11-01: the model is a setting, and changing it is a rebuild with search working throughout. See [ADR-0024](0024-embedding-model-switch.md).
 
 ---
 
@@ -95,6 +95,10 @@ The Gemini synchronous API accepts up to **200 inputs per call**. The async batc
 ---
 
 ## Known issues
+
+**The preview model is on a shutdown list (2026-11-01):** `gemini-embedding-2-preview` was listed for shutdown as early as 2026-08-10 and still serves. GA is `gemini-embedding-2`. Every comparison so far gave identical vectors, but Google doesn't promise that, so moving is a real rebuild under the new `model_id` ([ADR-0024](0024-embedding-model-switch.md)). This document's references to the preview id record the original decision. `EMBEDDINGS_MODEL` names the model a deployment runs.
+
+**`taskType` is no longer sent (2026-11-01):** GA's documentation says the parameter isn't supported. With and without it gave byte-identical vectors on both models, for text and for an image, so stopping changes nothing stored. The `task_type` column stays, as part of the key.
 
 **Task type ignored (2026-03-29):** Empirical testing confirmed that `gemini-embedding-2-preview` produces identical vectors regardless of `taskType` parameter. All task types (SEMANTIC_SIMILARITY, RETRIEVAL_DOCUMENT, FACT_VERIFICATION, QUESTION_ANSWERING) return cosine similarity 1.0 against each other. We continue generating both RETRIEVAL_DOCUMENT and SEMANTIC_SIMILARITY so the infrastructure is ready when Google fixes this. See `docs/architecture/embedding-test-results.md` for full test results and [the bug report](https://discuss.ai.google.dev/t/gemini-embedding-2-preview-appears-to-ignore-task-type-for-text-and-image-embeddings/134720).
 

@@ -165,8 +165,20 @@ app.route("/.well-known", oauthWellKnownRoutes);
 const port = parseInt(process.env["PORT"] ?? "3101", 10);
 
 async function start() {
+  // Before anything else: a bad model setting must stop this task while the old
+  // ones are still serving, not surface later as searches returning nothing.
+  const { validateEmbeddingConfig, getEmbeddingModelId, getRebuildTargetModelId } = await import(
+    "./lib/embeddings/provider"
+  );
+  validateEmbeddingConfig();
+
   // Run migrations
   await runMigrations();
+
+  // Unset EMBEDDINGS_MODEL on gemini: settle the read model from what the database
+  // holds, before anything reads or embeds. Throws, so stops this task, if it can't.
+  const { resolveEmbeddingReadModel } = await import("./lib/embeddings/read-model-resolve");
+  await resolveEmbeddingReadModel(getDb());
 
   // Auto-setup dev user if configured
   await autoSetup(getDb());
@@ -178,7 +190,9 @@ async function start() {
     "./lib/embeddings/provider"
   );
   const providerId = getEmbeddingProviderId();
-  console.warn(`[backend] Embedding provider: ${providerId}`);
+  console.warn(
+    `[backend] Embedding provider: ${providerId} model=${getEmbeddingModelId()} rebuild_target=${getRebuildTargetModelId() ?? "none"}`,
+  );
   if (providerId === "stub") {
     console.warn(
       "[backend] WARNING: stub embeddings are deterministic but not semantically meaningful. " +
@@ -220,6 +234,11 @@ async function start() {
   // Boot the embedding worker (pg-boss consumers) in-process.
   // Gated by EMBEDDING_WORKER_ENABLED (default true). See ADR-0020.
   const stopWorker = await startEmbeddingWorker(getDb());
+
+  // Say loudly if the read model has nothing to search. Never stops the service.
+  const { checkReadModel, startReadModelWatch } = await import("./lib/embeddings/read-model-watch");
+  await checkReadModel(getDb());
+  startReadModelWatch(getDb());
 
   const server = serve({ fetch: app.fetch, port }, (info) => {
     console.log(`[backend] Soup.net backend running on http://localhost:${info.port}`); // eslint-disable-line no-console

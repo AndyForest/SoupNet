@@ -32,6 +32,7 @@
  */
 
 import type { ContentPart } from "../gemini-client";
+import { EmbeddingHttpError, parseRetryAfterMs } from "./errors";
 
 const SINGLE_TIMEOUT_MS = 30_000;
 const BATCH_TIMEOUT_MS = 60_000;
@@ -58,6 +59,7 @@ function baseUrl(): string | undefined {
 async function requestEmbeddings(
   input: string | string[],
   timeoutMs: number,
+  wireModel?: string,
 ): Promise<number[][]> {
   const base = baseUrl();
   if (!base) {
@@ -73,13 +75,18 @@ async function requestEmbeddings(
   const response = await fetch(`${base}/embeddings`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ input, model: process.env["EMBEDDINGS_MODEL"] ?? "" }),
+    body: JSON.stringify({ input, model: wireModel ?? process.env["EMBEDDINGS_MODEL"] ?? "" }),
     signal: AbortSignal.timeout(timeoutMs),
   });
 
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`OpenAI-compatible embedding API error ${response.status}: ${body}`);
+    throw new EmbeddingHttpError(
+      "OpenAI-compatible",
+      response.status,
+      body,
+      parseRetryAfterMs(response.headers.get("retry-after"), body),
+    );
   }
 
   const parsed = (await response.json()) as EmbeddingsResponse;
@@ -108,9 +115,10 @@ async function requestEmbeddings(
 export async function embedQuery(
   text: string,
   _taskType: string = "SEMANTIC_SIMILARITY",
+  wireModel?: string,
 ): Promise<number[] | null> {
   try {
-    const [vector] = await requestEmbeddings(text, SINGLE_TIMEOUT_MS);
+    const [vector] = await requestEmbeddings(text, SINGLE_TIMEOUT_MS, wireModel);
     return vector ?? null;
   } catch (err) {
     console.error("[openai-embeddings] Embedding request error:", err);
@@ -127,6 +135,7 @@ export async function embedQuery(
 export async function embedMultimodal(
   parts: ContentPart[],
   _taskType: string = "SEMANTIC_SIMILARITY",
+  wireModel?: string,
 ): Promise<number[] | null> {
   const text = parts
     .map((p) =>
@@ -134,7 +143,7 @@ export async function embedMultimodal(
     )
     .join("\n");
   try {
-    const [vector] = await requestEmbeddings(text, SINGLE_TIMEOUT_MS);
+    const [vector] = await requestEmbeddings(text, SINGLE_TIMEOUT_MS, wireModel);
     return vector ?? null;
   } catch (err) {
     console.error("[openai-embeddings] Multimodal embedding request error:", err);
@@ -146,16 +155,16 @@ export async function embedMultimodal(
  * Batch-embed an array of texts in a single request. Throws on any error —
  * the async pipeline catches and applies binary-split retry.
  *
- * `_taskType` and `_modelId` are accepted for signature parity with the
- * provider seam's dispatch; the OpenAI embeddings API has no task type, and
- * the wire model always comes from EMBEDDINGS_MODEL (the seam's modelId is the
- * internal cache-scoping id, not the server's model name).
+ * `_taskType` is accepted for signature parity with the provider seam's dispatch;
+ * the OpenAI embeddings API has no task type. `wireModel` is the server's model
+ * name, resolved at the seam from the row's internal model id (a rebuild target
+ * differs from EMBEDDINGS_MODEL); it defaults to EMBEDDINGS_MODEL.
  */
 export async function batchEmbed(
   texts: string[],
   _taskType: string,
-  _modelId?: string,
+  wireModel?: string,
 ): Promise<number[][]> {
   if (texts.length === 0) return [];
-  return requestEmbeddings(texts, BATCH_TIMEOUT_MS);
+  return requestEmbeddings(texts, BATCH_TIMEOUT_MS, wireModel);
 }

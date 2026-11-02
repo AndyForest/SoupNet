@@ -165,7 +165,7 @@ At recipe check time, only what's needed for immediate searchability runs synchr
 
 - **Sync:** `full_document` (Strategy 1) and `full_recipe_context` (Strategy 3) trace embeddings. Both are resolved **in parallel, before the write transaction** (`trace.service.ts`), so the write path costs ~one embed round-trip. The trace vector is then reused as the search query vector — the query text is the trace text — so the search pipeline makes zero additional embedding calls. Duplicate re-checks hit `vector_cache` for everything: zero API calls.
 - **Async (worker):** Strategy 2 evidence embeddings, and the five `exp_*` strategies (not enqueued at check time at all — the strategy sweep discovers traces missing them and backfills within ~1 minute).
-- **Exception:** multimodal (file-attached) evidence embeds synchronously — the async pipeline can't re-embed file bytes (ADR-0019).
+- **Exception:** multimodal (file-attached) evidence embeds synchronously (ADR-0019). The async pipeline re-embeds file bytes only for a model rebuild, from the local file store, and falls back to text with `vector_source = 'text_fallback'` when the bytes aren't there (ADR-0024).
 
 This keeps recipe checks fast (~0.5s for a new check, ~0.1s + network for a duplicate) while the worker builds richer embeddings asynchronously. Evidence search improves over minutes as the worker catches up.
 
