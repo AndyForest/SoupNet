@@ -124,6 +124,12 @@ The worker sweep backfills ~200 traces/strategy/minute, so a 40k-trace import ta
 
 Nothing limits concurrent `POST /import` runs. Each one holds a database connection for its whole run, and the pool has 10, so a handful of large overlapping files slows everyone's requests (the #158 delta audit, F176; on `main` already, and not caused by the org round). A small in-process limit per account and overall, answering 429 with a retry hint, is the likely shape.
 
+### `[IMPL]` Small follow-ups from the #192 audit (2026-11-02)
+
+- `POST /recipe-books` ignores the result of `setBookOrgWide`, so it can answer 201 with `orgWide: true` for a book deleted between its two transactions (F192). The answer should come from what the toggle returned.
+- In `model-switch.integration.test.ts`, if another process holding the child's port answers 200 on `/health/ready`, `startBackend` returns while its child is about to die on `EADDRINUSE` (F193). It should confirm its own child is still running after the health check passes.
+- Nothing tests that `tryMoveBook` rethrows a unique violation on any constraint other than `groups_org_slug_unique`: widening its catch to every 23505 passes today's tests.
+
 ### `[DESIGN]` Keys minted before an import don't see the new book
 
 API keys freeze their read scope at mint time, so a key created before an import cannot search the imported book — confusing exactly when a user imports then immediately asks their agent about it. Surface a "mint a fresh key" hint in the import response and/or dashboard. Found during 2026-07-12 import acceptance testing. Still true after the 2026-09-19 authz change: a key's effective scope is its grant *intersected* with live membership, so membership can take a book away from a key but never adds one.
