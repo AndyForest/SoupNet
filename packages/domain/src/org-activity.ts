@@ -33,7 +33,8 @@ export type OrgActivityKind =
   | "directory_status"
   | "directory_connected"
   | "directory_connect_failed"
-  | "directory_disconnected";
+  | "directory_disconnected"
+  | "directory_deletions_noticed";
 
 /**
  * Who appears as the actor:
@@ -71,6 +72,8 @@ export const ORG_ACTIVITY_ACTIONS: Readonly<Record<string, OrgActivityAction>> =
   "organization.directory_connected": { kind: "directory_connected", actor: "person", orgView: true, memberView: false },
   "organization.directory_connect_failed": { kind: "directory_connect_failed", actor: "person", orgView: true, memberView: false },
   "organization.directory_disconnected": { kind: "directory_disconnected", actor: "person", orgView: true, memberView: false },
+  // Nobody acted: Soup.net noticed the burst and wrote this row itself.
+  "organization.directory_deletions_noticed": { kind: "directory_deletions_noticed", actor: "soupnet", orgView: true, memberView: false },
 };
 
 export const SOUPNET_ACTOR_LABEL = "Soup.net";
@@ -102,6 +105,8 @@ export interface OrgActivityEvent {
   connectFailure?: DirectoryConnectFailure;
   /** Only when a connection change cleared recorded statuses: how many of each. */
   cleared?: DirectoryStatusCounts;
+  /** Only on directory_deletions_noticed: how many members were found removed within the hour. */
+  removedCount?: number;
 }
 
 export type DirectoryConnectionKind = "admin_consent" | "service_account";
@@ -113,7 +118,7 @@ export const DIRECTORY_CONNECT_FAILURE_LABELS = {
   directory_wrong_domain: "that Google account isn't on this domain",
   directory_no_refresh_token: "Google didn't grant lasting access",
   directory_not_admin: "that account can't read the directory",
-  directory_not_manager: "that person was no longer an owner or admin here",
+  directory_not_manager: "that person wasn't an active owner or admin here",
 } as const;
 export type DirectoryConnectFailure = keyof typeof DIRECTORY_CONNECT_FAILURE_LABELS;
 
@@ -147,6 +152,7 @@ export function orgActivityEvent(row: {
   connectionKind?: unknown;
   connectionDomain?: unknown;
   connectFailure?: unknown;
+  removedCount?: unknown;
   cleared?: { suspended?: unknown; archived?: unknown; deleted?: unknown };
 }): OrgActivityEvent | null {
   const action = ORG_ACTIVITY_ACTIONS[row.action];
@@ -165,6 +171,7 @@ export function orgActivityEvent(row: {
     if (typeof row.connectionDomain === "string" && row.connectionDomain) event.domain = row.connectionDomain;
     if (action.kind === "directory_connect_failed" && kind === "admin_consent" && isConnectFailure(row.connectFailure)) event.connectFailure = row.connectFailure;
   }
+  if (action.kind === "directory_deletions_noticed" && count(row.removedCount) > 0) event.removedCount = count(row.removedCount);
   if (action.kind === "directory_connected" || action.kind === "directory_disconnected") {
     const cleared = { suspended: count(row.cleared?.suspended), archived: count(row.cleared?.archived), deleted: count(row.cleared?.deleted) };
     if (cleared.suspended + cleared.archived + cleared.deleted > 0) event.cleared = cleared;

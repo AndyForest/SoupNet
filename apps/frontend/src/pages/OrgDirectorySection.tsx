@@ -91,9 +91,9 @@ export function OrgDirectorySection({ organizationId }: { organizationId: string
     },
     onSettled: refresh,
   });
-  // A 409 means the directory couldn't confirm this person, so the backend's
-  // message says what to do and the confirmation stays up to try again. A 403
-  // signs them out in authFetch.
+  // Disconnecting and replacing a service account can both answer 409: the
+  // directory couldn't confirm this person, so the backend's message says what
+  // to do and the connection stays. A 403 signs them out in authFetch.
   const disconnect = useMutation({
     ...attempt,
     mutationFn: () => send<unknown>(`/organizations/${organizationId}/directory`, "DELETE"),

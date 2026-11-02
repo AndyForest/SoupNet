@@ -72,6 +72,11 @@ describe("describeOrgEvent, directory events", () => {
     expect(describeOrgEvent({ ...base, target: null, kind: "directory_disconnected" }, "org")).toBe("Disconnected the Google Workspace directory");
   });
 
+  it("says how many members a burst of removals found", () => {
+    expect(describeOrgEvent({ ...base, actor: "Soup.net", target: null, kind: "directory_deletions_noticed", removedCount: 4 }, "org")).toBe("4 members were found removed from the directory within an hour");
+    expect(describeOrgEvent({ ...base, actor: "Soup.net", target: null, kind: "directory_deletions_noticed" }, "org")).toBe("Several members were found removed from the directory within an hour");
+  });
+
   it("labels a failed admin consent's reason", () => {
     expect(describeOrgEvent({ ...base, target: null, kind: "directory_connect_failed", domain: "acme.example", connectFailure: "directory_not_admin" }, "org")).toBe(
       "Couldn't connect the Google Workspace directory on acme.example: that account can't read the directory",

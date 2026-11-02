@@ -152,6 +152,6 @@ Feature: Organization accounts: the org admin console, sharing policy, and what 
       When Ada confirms disconnecting the directory
       Then the section says the directory stays connected, and what she can do about it
       And the connection still reads as connected
-      When the connection has gone six hours without a successful check
+      When six hours have passed since the owners and admins were warned
       And Ada confirms again
       Then the directory is disconnected

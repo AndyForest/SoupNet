@@ -57,5 +57,7 @@ export function describeOrgEvent(event: OrgActivityEvent, view: "org" | "me"): s
     }
     case "directory_disconnected":
       return `Disconnected the Google Workspace directory${clearedPhrase(event.cleared)}`;
+    case "directory_deletions_noticed":
+      return `${event.removedCount ?? "Several"} members were found removed from the directory within an hour`;
   }
 }

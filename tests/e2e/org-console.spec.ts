@@ -1200,7 +1200,7 @@ test("E20 the directory section, the status labels, last checked and Activity", 
     await shot(page, testInfo, "E20-02-held");
 
     await withDb(async (sql) => {
-      await sql`UPDATE claimnet.organization_directory_connections SET last_success_at = now() - interval '7 hours' WHERE organization_id = ${acme.orgId}::uuid`;
+      await sql`UPDATE claimnet.organization_directory_connections SET last_success_at = now() - interval '8 hours', warned_at = now() - interval '7 hours' WHERE organization_id = ${acme.orgId}::uuid`;
     });
     await section.getByRole("button", { name: "Disconnect the directory" }).click();
     await expect(section.getByRole("button", { name: "Disconnect", exact: true }), "the connection should be gone").toHaveCount(0);

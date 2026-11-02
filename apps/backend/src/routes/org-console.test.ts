@@ -470,9 +470,10 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Console",
     await audit("organization.directory_connect_failed", "organization", orgId, olive.userId, { kind: "admin_consent", domain: "acme.example", reason: "directory_not_admin" });
     await audit("organization.directory_connect_failed", "organization", orgId, olive.userId, { kind: "service_account", domain: "acme.example", reason: "google-said-marker" });
     await audit("organization.directory_disconnected", "organization", orgId, olive.userId, { by: "by-marker", cleared: { suspended: 1, archived: 0, deleted: 0 } });
+    await audit("organization.directory_deletions_noticed", "organization", orgId, null, { count: 4, note: "note-marker" });
 
     const text = await (await call(olive, "GET", `/organizations/${orgId}/activity`)).text();
-    for (const marker of ["from-marker", "by-marker", "google-said-marker", '"from"', '"by"', '"reason"']) expect(text).not.toContain(marker);
+    for (const marker of ["from-marker", "by-marker", "google-said-marker", "note-marker", '"from"', '"by"', '"reason"']) expect(text).not.toContain(marker);
     const events = (JSON.parse(text) as { data: { events: Json[] } }).data.events;
     expect(events.find((e) => e["kind"] === "directory_status")).toMatchObject({ actor: domain.DIRECTORY_ACTOR_LABEL, target: max.email, directoryStatus: "active" });
     expect(events.find((e) => e["kind"] === "directory_connected")).toMatchObject({ actor: olive.email, connectionKind: "admin_consent", domain: "acme.example", cleared: { suspended: 2, archived: 0, deleted: 1 } });
@@ -480,10 +481,11 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Console",
     expect(failed.find((e) => e["connectionKind"] === "admin_consent")).toMatchObject({ connectFailure: "directory_not_admin" });
     expect(failed.find((e) => e["connectionKind"] === "service_account")).not.toHaveProperty("connectFailure");
     expect(events.find((e) => e["kind"] === "directory_disconnected")).toMatchObject({ cleared: { suspended: 1, archived: 0, deleted: 0 } });
+    expect(events.find((e) => e["kind"] === "directory_deletions_noticed")).toMatchObject({ actor: domain.SOUPNET_ACTOR_LABEL, removedCount: 4 });
 
     const mine = (await json(await call(max, "GET", "/me/organization")))["data"] as { adminActions: Json[] };
     const kinds = mine.adminActions.map((a) => a["kind"]);
     expect(kinds).toContain("directory_status");
-    for (const hidden of ["directory_connected", "directory_connect_failed", "directory_disconnected"]) expect(kinds).not.toContain(hidden);
+    for (const hidden of ["directory_connected", "directory_connect_failed", "directory_disconnected", "directory_deletions_noticed"]) expect(kinds).not.toContain(hidden);
   });
 });

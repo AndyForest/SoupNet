@@ -25,6 +25,7 @@ describe("the allowlist", () => {
         "organization.directory_connected",
         "organization.directory_connect_failed",
         "organization.directory_disconnected",
+        "organization.directory_deletions_noticed",
       ].sort(),
     );
   });
@@ -96,6 +97,12 @@ describe("orgActivityEvent", () => {
     expect(orgActivityEvent({ ...base, directoryTo: "suspended" })).toMatchObject({ kind: "directory_status", actor: "Google Workspace", directoryStatus: "suspended" });
     expect(orgActivityEvent({ ...base, directoryTo: null })).toMatchObject({ directoryStatus: null });
     expect(orgActivityEvent({ ...base, directoryTo: "<b>made up</b>" })).not.toHaveProperty("directoryStatus");
+  });
+
+  it("credits a burst of removals to Soup.net, with its count only when it is a count", () => {
+    const row = { action: "organization.directory_deletions_noticed", actorEmail: null, targetEmail: null, at: "2026-11-02T00:00:00.000Z" };
+    expect(orgActivityEvent({ ...row, removedCount: "4" })).toMatchObject({ kind: "directory_deletions_noticed", actor: SOUPNET_ACTOR_LABEL, removedCount: 4 });
+    expect(orgActivityEvent({ ...row, removedCount: "<b>many</b>" })).not.toHaveProperty("removedCount");
   });
 
   it("gives a connection its kind, domain and cleared numbers, and a failure's reason only from admin consent", () => {
