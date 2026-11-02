@@ -78,6 +78,7 @@ export async function startFakeGoogleIssuer(opts: {
   const serviceAccounts = new Map<string, crypto.KeyObject>();
   const directory = new Map<string, DirectoryEntry>();
   const directoryRequests: Record<string, number> = {};
+  const notFound = { error: { code: 404, message: "Resource Not Found: userKey", errors: [{ message: "Resource Not Found: userKey", domain: "global", reason: "notFound" }] } };
   let tokenRequests = 0;
   let nextIdentity: { claims: FakeIdClaims; refreshToken: string | null } | null = null;
 
@@ -160,8 +161,8 @@ export async function startFakeGoogleIssuer(opts: {
       res.end(entry.rawBody);
       return;
     }
-    if (entry?.httpStatus) return json(res, entry.httpStatus, { error: { code: entry.httpStatus } });
-    if (!entry) return json(res, 404, { error: { code: 404, message: "Resource Not Found: userKey" } });
+    if (!entry || entry.httpStatus === 404) return json(res, 404, notFound);
+    if (entry.httpStatus) return json(res, entry.httpStatus, { error: { code: entry.httpStatus } });
     return json(res, 200, {
       kind: "admin#directory#user",
       id: userKey,

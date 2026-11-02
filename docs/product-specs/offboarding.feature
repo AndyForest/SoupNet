@@ -100,6 +100,12 @@ Feature: Offboarding through the company's Google Workspace directory
       Then Max stays switched off, and no success is recorded
       And Acme's admins see the error, unless nothing came back at all
 
+    @OFF-DIR-13
+    Scenario: A not-found that can't be trusted
+      # Guards: audit F184.
+      When a check gets a 404 that isn't Google's own, or Google can't find the admin the connection acts as either
+      Then nobody is switched off, and Acme's admins see the error
+
     @OFF-DIR-08
     Scenario: Google refuses the connection
       Given the connection's credential stops working

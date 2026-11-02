@@ -449,6 +449,36 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     expect((await memberRow(max.userId)).directory_status).toBe("active");
   });
 
+  it("OFF-DIR-13 / F184: a 404 that isn't Google's refuses nobody; nor does Google's, while it can't find the connection's own admin", async () => {
+    const org = await acme();
+    const max = await member(org, "proxied");
+    await google.setDirectoryUser(max.email, {});
+    expect((await useKey(max.key)).status).toBe(200);
+    const lastError = async () => ((await (await call(org.olive.token, "GET", `/organizations/${org.orgId}/directory`)).json()) as { data: Json }).data["lastError"];
+
+    for (const rawBody of ["", "<html>404 Not Found</html>", "{}"]) {
+      await google.setDirectoryUser(max.email, { httpStatus: 404, rawBody });
+      await makeDue(max.userId);
+      expect((await useKey(max.key)).status, rawBody).toBe(200);
+      expect((await memberRow(max.userId)).directory_status, rawBody).toBe("active");
+      expect(await lastError(), rawBody).toBe("bad_404");
+    }
+
+    // Google's own not-found, for the member and for the admin the credential acts as.
+    await google.setDirectoryUser(max.email, { httpStatus: 404 });
+    await google.setDirectoryUser(org.olive.email, { httpStatus: 404 });
+    await makeDue(max.userId);
+    expect((await useKey(max.key)).status).toBe(200);
+    expect((await memberRow(max.userId)).directory_status).toBe("active");
+    expect(await lastError()).toBe("admin_not_found");
+
+    // The admin found again, and the same answer about Max is believed.
+    await google.setDirectoryUser(org.olive.email, {});
+    await makeDue(max.userId);
+    expect((await useKey(max.key)).status).toBe(401);
+    expect((await memberRow(max.userId)).directory_status).toBe("deleted");
+  });
+
   it("OFF-DIR-07 / OB-C7: stale a day with Google failing refuses (directory_unconfirmed); one success restores", async () => {
     const org = await acme();
     const max = await member(org, "stale");

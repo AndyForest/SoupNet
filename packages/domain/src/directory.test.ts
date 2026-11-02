@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   classifyDirectoryAnswer,
+  isGoogleError,
   directoryStatusRefuses,
   directoryDisabledMessage,
   DIRECTORY_INACTIVE_MESSAGE,
@@ -54,8 +55,15 @@ describe("classifyDirectoryAnswer (OB-M3)", () => {
     expect(status(record(primary), { id: "111" })).toEqual(active);
   });
 
-  it("treats a 404 as deleted", () => {
-    expect(classifyDirectoryAnswer({ httpStatus: 404, body: {} }, max)).toEqual({ kind: "status", status: "deleted" });
+  it("F184: only Google's own not-found is deleted; any other 404 is the connection's error", () => {
+    const notFound = (error: Record<string, unknown>) => classifyDirectoryAnswer({ httpStatus: 404, body: { error } }, max);
+    const deleted = { kind: "status", status: "deleted" };
+    expect(notFound({ code: 404, message: "Resource Not Found: userKey", errors: [{ message: "Resource Not Found: userKey", domain: "global", reason: "notFound" }] })).toEqual(deleted);
+    expect(notFound({ code: 404, status: "NOT_FOUND" })).toEqual(deleted);
+    const bad = { kind: "connection_error", code: "bad_404" };
+    for (const body of [null, "", "<html>404</html>", {}, [], { error: "nope" }, { error: { code: 404 } }, { error: { code: 404, errors: "notFound" } }, { error: { code: 404, errors: [null, { reason: "gone" }] } }, { error: { code: 500, status: "NOT_FOUND" } }]) {
+      expect(classifyDirectoryAnswer({ httpStatus: 404, body }, max), JSON.stringify(body)).toEqual(bad);
+    }
   });
 
   it("treats no answer, a 429 and a 5xx as unreachable", () => {
@@ -68,6 +76,13 @@ describe("classifyDirectoryAnswer (OB-M3)", () => {
     expect(classifyDirectoryAnswer({ httpStatus: 401, body: {} }, max)).toEqual({ kind: "connection_error", code: "http_401" });
     expect(classifyDirectoryAnswer({ httpStatus: 403, body: {} }, max)).toEqual({ kind: "connection_error", code: "http_403" });
     expect(classifyDirectoryAnswer({ httpStatus: 400, body: {} }, max)).toEqual({ kind: "connection_error", code: "http_400" });
+  });
+});
+
+describe("isGoogleError", () => {
+  it("needs Google's error object with that code", () => {
+    expect(isGoogleError({ error: { code: 400 } }, 400)).toBe(true);
+    for (const body of [null, "x", {}, { error: "x" }, { error: { code: 404 } }, { error: { code: "400" } }]) expect(isGoogleError(body, 400), JSON.stringify(body)).toBe(false);
   });
 });
 

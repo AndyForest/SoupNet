@@ -55,10 +55,25 @@ function isAbout(user: Record<string, unknown>, asked: DirectoryLookup): boolean
   return addresses.some((a) => typeof a === "string" && a.toLowerCase() === wanted);
 }
 
+/** Is this body Google's own error, with this code? Google's API errors say so in `error.code`. */
+export function isGoogleError(body: unknown, code: number): boolean {
+  const error = body && typeof body === "object" ? (body as { error?: unknown }).error : null;
+  return !!error && typeof error === "object" && (error as { code?: unknown }).code === code;
+}
+
+/** Google's own "no such user": its 404 with the reason `notFound`, or the newer `status` form. */
+function isGoogleNotFound(body: unknown): boolean {
+  if (!isGoogleError(body, 404)) return false;
+  const error = (body as { error: { errors?: unknown; status?: unknown } }).error;
+  return error.status === "NOT_FOUND" || listOf(error.errors).some((e) => !!e && typeof e === "object" && (e as { reason?: unknown }).reason === "notFound");
+}
+
 /**
  * What a `users.get` answer means (OB-C1 to OB-C8). `null` is a request that
- * never got a whole answer (timeout, network, a body that stalled). A 404 is a
- * member the directory doesn't know, which is deleted (recipe 88b1b328).
+ * never got a whole answer (timeout, network, a body that stalled). Google's
+ * own not-found is a member the directory doesn't know, which is deleted
+ * (recipe 88b1b328); a 404 in any other shape came from something else on the
+ * way (a proxy, a gateway) and says nothing about them (F184).
  *
  * A 200 counts only as a complete record of the person asked about: it can
  * lift a refusal, so an empty body, an error object, a string where a flag
@@ -76,7 +91,7 @@ export function classifyDirectoryAnswer(answer: { httpStatus: number; body: unkn
     if (user["archived"]) return { kind: "status", status: "archived" };
     return { kind: "status", status: "active" };
   }
-  if (httpStatus === 404) return { kind: "status", status: "deleted" };
+  if (httpStatus === 404) return isGoogleNotFound(body) ? { kind: "status", status: "deleted" } : { kind: "connection_error", code: "bad_404" };
   if (httpStatus === 429 || httpStatus >= 500) return { kind: "unreachable" };
   return { kind: "connection_error", code: `http_${httpStatus}` };
 }

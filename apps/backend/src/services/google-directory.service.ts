@@ -16,7 +16,7 @@
 
 import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
-import { DIRECTORY_SCOPE, DIRECTORY_TIMEOUT_MS, classifyDirectoryAnswer, parseServiceAccountKey } from "@soupnet/domain";
+import { DIRECTORY_SCOPE, DIRECTORY_TIMEOUT_MS, classifyDirectoryAnswer, isGoogleError, parseServiceAccountKey } from "@soupnet/domain";
 import type { DirectoryAnswer } from "@soupnet/domain";
 import type { FetchLike, GoogleOidcConfig } from "./google-oidc.service";
 
@@ -153,6 +153,13 @@ async function usersGet(
  * `sub` whose primary address differs is a rename, reported for the admin.
  * The member is the one whose credential is being judged; nothing here takes
  * a key from a request.
+ *
+ * Before `deleted` is believed, the connection's own admin must still resolve:
+ * a directory that doesn't know the person the credential acts as has lost
+ * track of everyone, and switching people off on that would take out the whole
+ * company (F184). One more call, only for an answer that would switch someone
+ * off. A real layoff still lands at once, which a cap per hour couldn't do
+ * (recipe 502a6d4a).
  */
 export async function checkDirectoryMember(
   config: GoogleOidcConfig,
@@ -167,19 +174,29 @@ export async function checkDirectoryMember(
   const byAddress = await usersGet(config, token.token, member.email, signal, fetchImpl);
   const first = classifyDirectoryAnswer(byAddress, { email: member.email });
   if (first.kind === "connection_error" && (byAddress?.httpStatus === 401)) forgetDirectoryTokens(credential.organizationId);
-  if (!(first.kind === "status" && first.status === "deleted") || !member.googleSubject) return { answer: first, renamedTo: null };
+  if (!(first.kind === "status" && first.status === "deleted")) return { answer: first, renamedTo: null };
 
-  const bySubject = await usersGet(config, token.token, member.googleSubject, signal, fetchImpl);
-  // A 400 means the directory doesn't take this `sub` as a user id, which is
-  // as good as unknown; a 404 is unknown. Anything else that isn't a user
-  // (slow, down, our credential refused) leaves the question open, so nobody
-  // is switched off on half an answer.
-  if (bySubject?.httpStatus === 400 || bySubject?.httpStatus === 404) return { answer: first, renamedTo: null };
-  const second = classifyDirectoryAnswer(bySubject, { id: member.googleSubject });
-  if (second.kind !== "status") return { answer: second.kind === "connection_error" ? second : { kind: "unreachable" }, renamedTo: null };
-  const primary = (bySubject?.body as { primaryEmail?: unknown } | null)?.primaryEmail;
-  const renamedTo = typeof primary === "string" && primary.toLowerCase() !== member.email.toLowerCase() ? primary : null;
-  return { answer: second, renamedTo };
+  if (member.googleSubject) {
+    const bySubject = await usersGet(config, token.token, member.googleSubject, signal, fetchImpl);
+    const second = classifyDirectoryAnswer(bySubject, { id: member.googleSubject });
+    // Google's 400 means it doesn't take this `sub` as a user id, which is as
+    // good as unknown; its not-found is unknown. Anything else that isn't a
+    // user (slow, down, our credential refused, a stranger's 404) leaves the
+    // question open, so nobody is switched off on half an answer.
+    const unknown = (second.kind === "status" && second.status === "deleted") || (bySubject?.httpStatus === 400 && isGoogleError(bySubject.body, 400));
+    if (!unknown) {
+      if (second.kind !== "status") return { answer: second, renamedTo: null };
+      const primary = (bySubject?.body as { primaryEmail?: unknown } | null)?.primaryEmail;
+      const renamedTo = typeof primary === "string" && primary.toLowerCase() !== member.email.toLowerCase() ? primary : null;
+      return { answer: second, renamedTo };
+    }
+  }
+
+  const adminGone: DirectoryAnswer = { kind: "connection_error", code: "admin_not_found" };
+  if (member.email.toLowerCase() === credential.adminEmail.toLowerCase()) return { answer: adminGone, renamedTo: null };
+  const control = classifyDirectoryAnswer(await usersGet(config, token.token, credential.adminEmail, signal, fetchImpl), { email: credential.adminEmail });
+  if (control.kind !== "status") return { answer: control, renamedTo: null };
+  return { answer: control.status === "deleted" ? adminGone : first, renamedTo: null };
 }
 
 /**

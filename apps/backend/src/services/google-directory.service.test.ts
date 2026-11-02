@@ -35,6 +35,8 @@ function fakeFetch(answers: (call: Call) => { status: number; body: unknown }) {
 
 const consent = { organizationId: "org-1", kind: "admin_consent" as const, adminEmail: "olive@acme.example", secret: "refresh-1" };
 
+const NOT_FOUND = { error: { code: 404, message: "Resource Not Found: userKey", errors: [{ message: "Resource Not Found: userKey", domain: "global", reason: "notFound" }] } };
+
 /** The record Google gives for a lookup: the address in its URL, or a `sub`. */
 function record(url: string, over: Record<string, unknown> = {}) {
   const key = decodeURIComponent(url.split("/users/")[1]!.split("?")[0]!);
@@ -70,7 +72,7 @@ describe("checkDirectoryMember", () => {
   it("asks once more by sub after a 404 by address, and reports a rename", async () => {
     const f = fakeFetch((c) => {
       if (c.url === config.tokenEndpoint) return { status: 200, body: { access_token: "at", expires_in: 3600 } };
-      if (c.url.includes("max%40acme.example")) return { status: 404, body: {} };
+      if (c.url.includes("max%40acme.example")) return { status: 404, body: NOT_FOUND };
       return { status: 200, body: record(c.url, { primaryEmail: "maxwell@acme.example" }) };
     });
     expect(await checkDirectoryMember(config, consent, { email: "max@acme.example", googleSubject: "sub-1" }, f.fn)).toEqual({
@@ -79,15 +81,54 @@ describe("checkDirectoryMember", () => {
     });
   });
 
-  it("is deleted only when both lookups say unknown, and undecided when the second can't answer", async () => {
-    const unknown = fakeFetch((c) => (c.url === config.tokenEndpoint ? { status: 200, body: { access_token: "at" } } : { status: 404, body: {} }));
-    expect((await checkDirectoryMember(config, consent, { email: "gone@acme.example", googleSubject: "sub-2" }, unknown.fn)).answer).toEqual({ kind: "status", status: "deleted" });
-    forgetDirectoryTokens();
-    const flaky = fakeFetch((c) => {
+  /** Google answers `gone` and the `sub` as told, and knows the connection's admin. */
+  const directory = (gone: { status: number; body: unknown }, subject: { status: number; body: unknown } = gone, admin?: { status: number; body: unknown }) =>
+    fakeFetch((c) => {
       if (c.url === config.tokenEndpoint) return { status: 200, body: { access_token: "at" } };
-      return c.url.includes("%40") ? { status: 404, body: {} } : { status: 503, body: {} };
+      if (c.url.includes("olive%40")) return admin ?? { status: 200, body: record(c.url) };
+      return c.url.includes("%40") ? gone : subject;
     });
-    expect((await checkDirectoryMember(config, consent, { email: "gone@acme.example", googleSubject: "sub-2" }, flaky.fn)).answer).toEqual({ kind: "unreachable" });
+  const gone = { email: "gone@acme.example", googleSubject: "sub-2" };
+  const notFound = { status: 404, body: NOT_FOUND };
+
+  it("is deleted only when both lookups say unknown, and undecided when the second can't answer", async () => {
+    expect((await checkDirectoryMember(config, consent, gone, directory(notFound).fn)).answer).toEqual({ kind: "status", status: "deleted" });
+    forgetDirectoryTokens();
+    expect((await checkDirectoryMember(config, consent, gone, directory(notFound, { status: 400, body: { error: { code: 400 } } }).fn)).answer).toEqual({ kind: "status", status: "deleted" });
+    forgetDirectoryTokens();
+    expect((await checkDirectoryMember(config, consent, gone, directory(notFound, { status: 503, body: {} }).fn)).answer).toEqual({ kind: "unreachable" });
+    forgetDirectoryTokens();
+    expect((await checkDirectoryMember(config, consent, gone, directory(notFound, { status: 400, body: "<html>" }).fn)).answer).toEqual({ kind: "connection_error", code: "http_400" });
+    forgetDirectoryTokens();
+    expect((await checkDirectoryMember(config, consent, gone, directory(notFound, { status: 404, body: "<html>" }).fn)).answer).toEqual({ kind: "connection_error", code: "bad_404" });
+  });
+
+  it("F184: a 404 that isn't Google's asks no more and deletes nobody", async () => {
+    const proxy = directory({ status: 404, body: "<html>not here</html>" });
+    expect((await checkDirectoryMember(config, consent, gone, proxy.fn)).answer).toEqual({ kind: "connection_error", code: "bad_404" });
+    expect(proxy.calls.filter((c) => c.url !== config.tokenEndpoint)).toHaveLength(1);
+  });
+
+  it("F184: `deleted` is believed only while the connection's own admin still resolves", async () => {
+    const adminAnswers = async (admin: { status: number; body: unknown }, member = gone) => {
+      forgetDirectoryTokens();
+      return (await checkDirectoryMember(config, consent, member, directory(notFound, notFound, admin).fn)).answer;
+    };
+    expect(await adminAnswers(notFound)).toEqual({ kind: "connection_error", code: "admin_not_found" });
+    expect(await adminAnswers({ status: 503, body: {} })).toEqual({ kind: "unreachable" });
+    expect(await adminAnswers({ status: 403, body: {} })).toEqual({ kind: "connection_error", code: "http_403" });
+    expect(await adminAnswers({ status: 200, body: {} })).toEqual({ kind: "connection_error", code: "bad_answer" });
+    // Even suspended, the admin proves the directory still knows people.
+    expect(await adminAnswers({ status: 200, body: { id: "o", primaryEmail: "olive@acme.example", suspended: true, archived: false } })).toEqual({ kind: "status", status: "deleted" });
+    // The member being checked is the admin: that's the connection's problem, with no second lookup to make.
+    forgetDirectoryTokens();
+    const self = directory(notFound, notFound, notFound);
+    expect((await checkDirectoryMember(config, consent, { email: "Olive@acme.example", googleSubject: null }, self.fn)).answer).toEqual({ kind: "connection_error", code: "admin_not_found" });
+    expect(self.calls.filter((c) => c.url !== config.tokenEndpoint)).toHaveLength(1);
+  });
+
+  it("refuses a credential whose admin the directory doesn't know", async () => {
+    expect(await testDirectoryCredential(config, consent, directory(notFound, notFound, notFound).fn)).toEqual({ kind: "connection_error", code: "admin_not_found" });
   });
 
   it("signs a JWT-bearer assertion for a service account, acting as the admin", async () => {
