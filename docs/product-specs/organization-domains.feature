@@ -258,7 +258,7 @@ Feature: Verified domains, automatic joining, and existing accounts on a claimed
       Then the address is verified and she joins Acme
       And the Google identity and the stranger's session are gone
 
-    @ORG-JOIN-D05
+    @ORG-JOIN-D07
     Scenario: A password reset joins the captured domain's organization
       Given acme.example is captured
       And nia@acme.example is registered and unverified
@@ -277,6 +277,14 @@ Feature: Verified domains, automatic joining, and existing accounts on a claimed
       When a seat frees
       And she verifies with the new password
       Then she joins Acme
+
+    @ORG-JOIN-D08
+    Scenario: A sign-in racing the migration for the same account
+      Given acme.example is captured
+      And Max is a verified account on it that hasn't joined yet
+      When Max's sign-in holds his account while the migration reaches him
+      Then neither fails
+      And Max joins Acme once
 
     @ORG-SEAT-D01
     Scenario: A verification click at the seat limit is refused and can be retried

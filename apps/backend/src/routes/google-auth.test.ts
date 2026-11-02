@@ -806,7 +806,7 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
     expect(signedIn(await signIn(consumer(email, cySub))).userId).toBe(cy.userId);
   });
 
-  it("ORG-SEAT-D07 / OD-J5, F165: a reset at the seat limit still says the stranger's Google sign-up was removed", async () => {
+  it("ORG-SEAT-D07 / OD-J9, F165: a reset at the seat limit still says the stranger's Google sign-up was removed", async () => {
     const olive = await seeded("olive-f165");
     const created = await call(sysToken, "POST", "/admin/organizations", { name: `Acme ${n}`, slug: `acme-sso-${run}-${++n}`, ownerEmail: olive.email, seatLimit: 1 });
     const orgId = ((await created.json()) as { data: { organizationId: string } }).data.organizationId;

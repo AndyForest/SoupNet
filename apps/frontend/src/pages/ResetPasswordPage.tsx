@@ -69,7 +69,7 @@ export function ResetPasswordPage() {
             </p>
           )}
           {/* When this reset joined an organization on a domain it has verified, or
-              that organization had no free seat (OD-J5). */}
+              that organization had no free seat (OD-J9). */}
           {done.organizationLines.map((line) => (
             <p key={line} style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)", lineHeight: 1.5 }}>{line}</p>
           ))}

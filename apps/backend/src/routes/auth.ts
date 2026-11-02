@@ -1221,7 +1221,7 @@ auth.post("/reset-password", resetPasswordRateLimit, async (c) => {
     const googleSignIn = await settleGoogleIdentityOnVerify(tx, updated.id, null, true);
 
     // Proving the mailbox joins a captured domain's organization here too
-    // (OD-J5). With no free seat the address stays unverified, as on a refused
+    // (OD-J9). With no free seat the address stays unverified, as on a refused
     // click (OD-C1), but the reset still stands: undoing it would leave a
     // stranger's password working on the owner's address (F144).
     const join = updated.unverified ? await joinOnVerification(tx, { userId: updated.id, email: updated.email }) : null;
