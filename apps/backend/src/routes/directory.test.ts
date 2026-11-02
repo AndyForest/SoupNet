@@ -970,6 +970,63 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     expect(await changeMailsTo(ann.email, "was disconnected", 1)).toBe(1);
   });
 
+  it("OFF-CON-08 / F194: a manager no check has reached yet can repair a broken connection, by consent or by key", async () => {
+    const org = await acme();
+    await linkGoogle(org.olive, org.oliveSubject, org.domain);
+    const finish = await startConsent(org.olive, org, { sub: org.oliveSubject, email: org.olive.email, email_verified: true, hd: org.domain });
+    expect(await finish()).toBe(`${FRONTEND}/auth/google/complete#directory=connected`);
+    const idle = async (label: string) => {
+      const a = await adminMember(org, label);
+      const subject = `${label}-${run}-${++n}`;
+      await linkGoogle(a, subject, org.domain);
+      await getDb().execute(sql`UPDATE claimnet.organization_members SET directory_status = NULL, directory_checked_at = NULL WHERE user_id = ${a.userId}::uuid`);
+      return { ...a, claims: { sub: subject, email: a.email, email_verified: true, hd: org.domain } };
+    };
+    const bea = await idle("bea-idle");
+    const cam = await idle("cam-idle");
+
+    // The connection's token dies with the admin who gave it, so Bea's first check can't say.
+    await google.revokeAll();
+    const finishBea = await startConsent(bea, org, bea.claims);
+    expect((await memberRow(bea.userId)).directory_status).toBeNull();
+    expect(await finishBea()).toBe(`${FRONTEND}/auth/google/complete#directory=connected`);
+
+    await google.revokeAll();
+    expect((await useKey(cam.key)).status).toBe(200);
+    expect((await memberRow(cam.userId)).directory_status).toBeNull();
+    const replaced = await call(cam.token, "PUT", `/organizations/${org.orgId}/directory/service-account`, { key: org.serviceAccount.key, adminEmail: org.olive.email });
+    expect(replaced.status).toBe(200);
+  });
+
+  it("F194, F182: the save itself takes a manager with no status, and refuses one the directory has switched off", async () => {
+    const org = await acme();
+    const ann = await adminMember(org, "ann-save");
+    const { saveDirectoryConnection } = await import("../authz");
+    const { secretBoxKey } = await import("../lib/secret-box");
+    const save = () =>
+      saveDirectoryConnection(getDb(), secretBoxKey()!, {
+        organizationId: org.orgId,
+        kind: "service_account",
+        domain: org.domain,
+        domainUnicode: org.domain,
+        adminEmail: org.olive.email,
+        serviceAccountEmail: org.serviceAccount.clientEmail,
+        secret: "{}",
+        connectedBy: ann.userId,
+      });
+    const setStatus = (status: string | null) => getDb().execute(sql`UPDATE claimnet.organization_members SET directory_status = ${status} WHERE user_id = ${ann.userId}::uuid`);
+    await setStatus(null);
+    expect(await save()).not.toBeNull();
+    await setStatus("active");
+    expect(await save()).not.toBeNull();
+    for (const status of ["suspended", "archived", "deleted"]) {
+      await setStatus(status);
+      expect(await save(), status).toBeNull();
+    }
+    await setStatus(null);
+    await call(org.olive.token, "PUT", `/organizations/${org.orgId}/directory/service-account`, { key: org.serviceAccount.key, adminEmail: org.olive.email });
+  });
+
   it("OFF-DIR-10 / OB-C10: disconnecting stops the checks and lifts the directory's refusals", async () => {
     const org = await acme();
     const max = await member(org, "freed");

@@ -154,6 +154,14 @@ Feature: Offboarding through the company's Google Workspace directory
       Then the directory is asked about Ann first, and Ann is refused
       And the connection and everyone's status stay as they were
 
+    @OFF-CON-08
+    Scenario: A manager no check has reached yet repairs a broken connection
+      # Guards: audit F194.
+      Given Ann's consent gave Acme its connection, and Ann has left, so the token is dead
+      And Bea, an admin, has never had a successful check
+      When Bea reconnects by consent, or with a service-account key
+      Then the connection is saved
+
     @OFF-CON-07
     Scenario: Disconnecting when the directory can't answer
       # Guards: audit F185.

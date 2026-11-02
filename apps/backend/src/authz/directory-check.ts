@@ -335,7 +335,9 @@ export type DirectoryStatusesCleared = Record<"suspended" | "archived" | "delete
  * owner or admin. A consent takes minutes and a lookup seconds, and either can
  * outlast their role, which would leave a demoted person's token as the
  * company's credential (F182). Read with the write, holding their row, so a
- * demotion lands before this or after it.
+ * demotion lands before this or after it. A manager no check has reached yet has
+ * no status, and directoryInactive() is NULL for them, not false: they are often
+ * the one repairing a connection that broke before their first check (F194).
  */
 export async function saveDirectoryConnection(
   db: PostgresJsDatabase,
@@ -356,7 +358,7 @@ export async function saveDirectoryConnection(
     const manager = (await tx.execute(sql`
       SELECT 1 FROM claimnet.organization_members om
       WHERE om.organization_id = ${input.organizationId}::uuid AND om.user_id = ${input.connectedBy}::uuid
-        AND om.role IN ('owner', 'admin') AND om.disabled_at IS NULL AND NOT ${directoryInactive()}
+        AND om.role IN ('owner', 'admin') AND om.disabled_at IS NULL AND ${directoryInactive()} IS NOT TRUE
       FOR SHARE OF om
     `)) as unknown as unknown[];
     if (manager.length === 0) return null;
