@@ -5,6 +5,7 @@ import { invalidateSessions } from "../authz";
 import { seedVerifiedUser } from "../test-users";
 import { fakeGoogle } from "../test-google-issuer";
 import type { FakeIdClaims } from "../test-google-issuer";
+import { untilBlockedBy } from "../test-locks";
 import { readFileSync, readdirSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -518,6 +519,19 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
     expect((await identitiesOf(cy.userId)).map((i) => i.subject)).toEqual([cySub]);
   });
 
+  it("GSI-LINK-08 / SSO-A4b, F166: a cut-off session of the sign-up's own isn't that session any more, so it's asked too", async () => {
+    const email = address("f166-cut-session", `outside-${run}.example`);
+    const cySub = sub();
+    const cy = signedIn(await signIn(consumer(email, cySub)));
+    const token = await verificationTokenOf(cy.userId);
+    await invalidateSessions(getDb(), cy.userId);
+
+    const { data } = await postVerify({ token }, cy.token);
+    expect(data).toMatchObject({ verified: false, confirmationRequired: true });
+    expect((await userRow(cy.userId)).email_verified_at).toBeNull();
+    expect((await identitiesOf(cy.userId)).map((i) => i.subject)).toEqual([cySub]);
+  });
+
   it("GSI-LINK-08 / SSO-A4b, F148: the confirmation says when the sign-up is waitlisted, which has no browser to go back to", async () => {
     const email = address("f148", `outside-${run}.example`);
     const cy = signedIn(await signIn(consumer(email)));
@@ -612,11 +626,18 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
     const forgot = (await (await call(null, "POST", "/auth/forgot-password", { email })).json()) as { data: { resetToken?: string } };
     const reset = await call(null, "POST", "/auth/reset-password", { token: forgot.data.resetToken ?? "", newPassword: "a-brand-new-password" });
     expect(reset.status).toBe(200);
+    expect(((await reset.json()) as { data: Json }).data["googleSignInRemoved"]).toBe(true); // F165
 
     expect((await userRow(cy.userId)).email_verified_at).not.toBeNull();
     expect(await identitiesOf(cy.userId)).toEqual([]);
     expect((await call(cy.token, "GET", "/auth/me")).status).toBe(401);
     expect((await passwordLogin(email, "a-brand-new-password")).status).toBe(200);
+
+    // A reset with no Google sign-up to remove doesn't mention one.
+    const again = (await (await call(null, "POST", "/auth/forgot-password", { email })).json()) as { data: { resetToken?: string } };
+    const second = await call(null, "POST", "/auth/reset-password", { token: again.data.resetToken ?? "", newPassword: "another-brand-new-password" });
+    expect(second.status).toBe(200);
+    expect(((await second.json()) as { data: Json }).data["googleSignInRemoved"]).toBeUndefined();
   });
 
   it("GSI-SSO-02 / SSO-R2, F144: neither a sign-up proof nor a password at the link gets past require_sso", async () => {
@@ -710,6 +731,28 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
     expect(await issueHandoff(getDb(), input)).toBeNull();
   });
 
+  it("SSO-G5b / F163: a sign-in racing a reset waits on the account's row, holding nothing the reset goes on to need", async () => {
+    const { resolveAccount } = await import("../services/google-sign-in.service");
+    const email = address("f163-race", `outside-${run}.example`);
+    const strangerSub = sub();
+    const stranger = signedIn(await signIn(consumer(email, strangerSub)));
+    const issuer = ((await getDb().execute(sql`SELECT issuer FROM claimnet.user_identities WHERE user_id = ${stranger.userId}::uuid`)) as unknown as Array<{ issuer: string }>)[0]!.issuer;
+    const claims = { issuer, subject: strangerSub, email, emailVerified: true, hostedDomain: null, name: null };
+
+    let signingIn: ReturnType<typeof resolveAccount> | undefined;
+    await getDb().transaction(async (tx) => {
+      // The reset's first write, then the sign-in arriving behind it.
+      await tx.execute(sql`UPDATE claimnet.users SET updated_at = now() WHERE id = ${stranger.userId}::uuid`);
+      signingIn = resolveAccount(getDb(), claims);
+      await untilBlockedBy(getDb(), tx);
+      // The reset's settling. With the sign-in holding this row, it's a deadlock.
+      await tx.execute(sql`DELETE FROM claimnet.user_identities WHERE user_id = ${stranger.userId}::uuid`);
+    });
+
+    expect(await signingIn).not.toBe("failed");
+    expect(await identitiesOf(stranger.userId)).toEqual([]);
+  });
+
   it("GSI-LINK-06 / SSO-A4b: the mailbox's owner verifying ends a stranger's Google sign-up, and the owner's Workspace sign-in works", async () => {
     const email = address("victim-f137", `outside-${run}.example`);
     const strangerSub = sub();
@@ -760,6 +803,28 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
     // Clicking again elsewhere, once verified, takes nothing away.
     expect((await verifyEmail(token)).googleSignInRemoved).toBeUndefined();
     expect(signedIn(await signIn(consumer(email, cySub))).userId).toBe(cy.userId);
+  });
+
+  it("ORG-SEAT-D07 / OD-J5, F165: a reset at the seat limit still says the stranger's Google sign-up was removed", async () => {
+    const olive = await seeded("olive-f165");
+    const created = await call(sysToken, "POST", "/admin/organizations", { name: `Acme ${n}`, slug: `acme-sso-${run}-${++n}`, ownerEmail: olive.email, seatLimit: 1 });
+    const orgId = ((await created.json()) as { data: { organizationId: string } }).data.organizationId;
+    const domain = `dns-ok-${run}-${++n}.test`;
+    const added = await call(olive.token, "POST", `/organizations/${orgId}/domains`, { domain });
+    const claimId = ((await added.json()) as { data: { id: string } }).data.id;
+    expect((await call(olive.token, "POST", `/organizations/${orgId}/domains/${claimId}/check`)).status).toBe(200);
+    expect((await call(olive.token, "PATCH", `/organizations/${orgId}/domains/${claimId}`, { autoJoin: true })).status).toBe(200);
+
+    const email = address("f165-full", domain);
+    const stranger = signedIn(await signIn(consumer(email)));
+    const forgot = (await (await call(null, "POST", "/auth/forgot-password", { email })).json()) as { data: { resetToken?: string } };
+    const reset = await call(null, "POST", "/auth/reset-password", { token: forgot.data.resetToken ?? "", newPassword: "a-brand-new-password" });
+    expect(reset.status).toBe(200);
+    const data = ((await reset.json()) as { data: { googleSignInRemoved?: boolean; organizationLines?: string[] } }).data;
+    expect(data.googleSignInRemoved).toBe(true);
+    expect(data.organizationLines).toHaveLength(2);
+    expect(await identitiesOf(stranger.userId)).toEqual([]);
+    expect((await userRow(stranger.userId)).email_verified_at).toBeNull();
   });
 
   it("ORG-SEAT-D05 / OD-C6, SSO-A4b: a click refused at the seat limit leaves a stranger's Google sign-up in place, and the retried click ends it", async () => {

@@ -217,6 +217,17 @@ export async function resolveAccount(
   const email = normalizeEmail(claims.email);
   try {
     return await db.transaction(async (tx) => {
+      // The account's row before its identities, in id order if the two differ.
+      // Everything that removes an identity holds that row first, and a reset
+      // takes it first anyway, so the opposite order here deadlocks with them (F163).
+      await tx.execute(sql`
+        SELECT u.id FROM claimnet.users u
+        WHERE u.email = ${email}
+           OR u.id = (SELECT i.user_id FROM claimnet.user_identities i WHERE i.issuer = ${claims.issuer} AND i.subject = ${claims.subject})
+        ORDER BY u.id
+        FOR UPDATE OF u
+      `);
+
       const identityRows = await tx.execute(sql`
         SELECT user_id FROM claimnet.user_identities
         WHERE issuer = ${claims.issuer} AND subject = ${claims.subject}

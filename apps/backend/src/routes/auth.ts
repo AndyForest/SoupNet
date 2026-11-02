@@ -1231,7 +1231,7 @@ auth.post("/reset-password", resetPasswordRateLimit, async (c) => {
 
     // A reset proves the mailbox as a verification does, and nothing here ties
     // an unverified Google sign-up to it.
-    await settleGoogleIdentityOnVerify(tx, updated.id, null, true);
+    const googleSignIn = await settleGoogleIdentityOnVerify(tx, updated.id, null, true);
 
     // Proving the mailbox joins a captured domain's organization here too
     // (OD-J5). With no free seat the address stays unverified, as on a refused
@@ -1239,7 +1239,7 @@ auth.post("/reset-password", resetPasswordRateLimit, async (c) => {
     // stranger's password working on the owner's address (F144).
     const join = updated.unverified ? await joinOnVerification(tx, { userId: updated.id, email: updated.email }) : null;
     if (join?.kind === "full") {
-      return { ...updated, newlyVerified: false, stillRunning: await credentialsStillRunning(tx, updated.id), joined: null, organizationFull: true };
+      return { ...updated, newlyVerified: false, stillRunning: await credentialsStillRunning(tx, updated.id), googleSignInRemoved: googleSignIn === "removed", joined: null, organizationFull: true };
     }
     const joined = join?.kind === "joined" ? join.organizationName : null;
 
@@ -1253,7 +1253,7 @@ auth.post("/reset-password", resetPasswordRateLimit, async (c) => {
     `);
 
     const stillRunning = await credentialsStillRunning(tx, updated.id);
-    return { ...updated, waitlisted: joined ? false : updated.waitlisted, newlyVerified: (verified as unknown as unknown[]).length > 0, stillRunning, joined, organizationFull: false };
+    return { ...updated, waitlisted: joined ? false : updated.waitlisted, newlyVerified: (verified as unknown as unknown[]).length > 0, stillRunning, googleSignInRemoved: googleSignIn === "removed", joined, organizationFull: false };
   });
 
   if (!outcome) {
@@ -1279,7 +1279,16 @@ auth.post("/reset-password", resetPasswordRateLimit, async (c) => {
     : outcome.joined
       ? [domainJoinedNotice(outcome.joined)]
       : [];
-  return c.json({ ok: true, data: { reset: true, email: outcome.email, stillRunning: outcome.stillRunning, ...(organizationLines.length > 0 ? { organizationLines } : {}) } });
+  return c.json({
+    ok: true,
+    data: {
+      reset: true,
+      email: outcome.email,
+      stillRunning: outcome.stillRunning,
+      ...(outcome.googleSignInRemoved ? { googleSignInRemoved: true } : {}),
+      ...(organizationLines.length > 0 ? { organizationLines } : {}),
+    },
+  });
 });
 
 export { auth as authRoutes };
