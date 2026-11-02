@@ -33,6 +33,17 @@ function loadDotEnv(): Record<string, string> {
   } catch { return {}; }
 }
 
+// Tests that import the provider directly never boot, so nothing settles an unset
+// EMBEDDINGS_MODEL from the database (ADR-0024). Tests that do boot name their own.
+function testEnv(): Record<string, string> {
+  const env = loadDotEnv();
+  const provider = env["EMBEDDINGS_PROVIDER"] ?? process.env["EMBEDDINGS_PROVIDER"] ?? "gemini";
+  if (provider === "gemini" && !env["EMBEDDINGS_MODEL"] && !process.env["EMBEDDINGS_MODEL"]) {
+    env["EMBEDDINGS_MODEL"] = "gemini-embedding-2-preview";
+  }
+  return env;
+}
+
 export default defineConfig({
   test: {
     include: [
@@ -40,7 +51,7 @@ export default defineConfig({
       "packages/*/src/**/*.test.ts",
       "scripts/**/*.test.mts",
     ],
-    env: loadDotEnv(),
+    env: testEnv(),
     // Set 2026-06-11 when integration beforeAll hooks signed users up over
     // HTTP (register → verify → login), each costing the backend a 12-round
     // bcryptjs hash on its single thread; the 10s default hook timeout was

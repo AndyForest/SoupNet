@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { getEmbeddingModelId } from "../lib/embeddings/provider";
 import { ownDraftFields } from "../lib/own-draft-fields";
 import { flatListFields } from "../lib/flat-list-fields";
 import type { Context } from "hono";
@@ -977,7 +978,7 @@ export function renderPage(
       resultsHtml += `
   <section id="related-evidence">
     <h2>Related evidence from other recipes</h2>
-    <p><small>Surfaced via cosine-similarity search over gemini-embedding-2-preview vectors &mdash;
+    <p><small>Surfaced via cosine-similarity search over ${esc(getEmbeddingModelId())} vectors &mdash;
     evidence from other recipes that is topically related to yours. The system makes no stance assertion;
     you decide if it supports, contradicts, or adds context.</small></p>
     <ul>

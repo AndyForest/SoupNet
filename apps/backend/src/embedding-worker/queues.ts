@@ -16,8 +16,15 @@ export const QUEUES = {
   // Embedding pipeline — 4-tier hierarchy (see ADR-0002)
   STRATEGY_SWEEP: "embedding.strategy-sweep",      // Tier 1: cron, discovers work, fans out
   STRATEGY_CHECK: "embedding.strategy-check",      // Tier 2: per strategy, ensures texts + stubs exist
-  VECTOR_CHECK: "embedding.vector-check",           // Tier 3: per batch ≤64, resolves cache hits
-  VECTOR_API_CALL: "embedding.vector-api-call",     // Tier 4: per batch of cache misses, Gemini API
+  // Jobs on these two carry row ids only; handlers read the text from the database
+  // (ADR-0024). New names, so a task on older code can't take a job it can't read.
+  VECTOR_CHECK: "embedding.vector-check-ids",       // Tier 3: per batch ≤64, resolves cache hits
+  VECTOR_API_CALL: "embedding.vector-api-call-ids", // Tier 4: per batch of cache misses, Gemini API
+
+  // The same handlers drain jobs queued under the old names, which carried text.
+  // The text in them is ignored. These can go once none is left.
+  VECTOR_CHECK_WITH_TEXT: "embedding.vector-check",
+  VECTOR_API_CALL_WITH_TEXT: "embedding.vector-api-call",
 
   // Legacy (kept for backward compat with in-flight jobs, will be removed)
   EMBEDDINGS_CHUNK: "embeddings.chunk",
@@ -59,11 +66,12 @@ export interface StrategyCheckJob {
   strategyId: string;
 }
 
+/**
+ * Row ids only. pg-boss keeps a finished job's payload for about a week, so text put
+ * here outlives a deleted recipe, and a job queued before a delete would still send it.
+ */
 export interface VectorCheckItem {
   vectorId: string;
-  chunkId: string;
-  chunkText: string;
-  chunkHash: string;
   taskType: string;
   modelId: string;
 }
@@ -87,7 +95,7 @@ export interface EmbeddingsChunkJob {
 export interface EmbeddingsVectorJob {
   correlationId: string;
   embeddingChunkStrategyId?: string;
-  batchVectors?: VectorCheckItem[];
+  batchVectors?: Array<VectorCheckItem & { chunkId: string; chunkText: string; chunkHash: string }>;
 }
 
 export interface GraphClosureRebuildJob {

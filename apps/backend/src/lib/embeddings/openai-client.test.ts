@@ -132,7 +132,7 @@ describe("openai-compatible embedding client", () => {
     expect(parseBody(lastRequest().init).input).toBe("caption\n[inline:image/png:4b]");
   });
 
-  it("embedQuery returns null on a non-OK response (graceful lexical fallback)", async () => {
+  it("embedQuery returns null on a non-OK response", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     fetchSpy.mockResolvedValue(jsonResponse({ error: "boom" }, 500));
 

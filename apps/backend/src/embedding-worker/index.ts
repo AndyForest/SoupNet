@@ -92,6 +92,8 @@ export async function startEmbeddingWorker(
   await boss.createQueue(QUEUES.STRATEGY_CHECK);
   await boss.createQueue(QUEUES.VECTOR_CHECK);
   await boss.createQueue(QUEUES.VECTOR_API_CALL);
+  await boss.createQueue(QUEUES.VECTOR_CHECK_WITH_TEXT);
+  await boss.createQueue(QUEUES.VECTOR_API_CALL_WITH_TEXT);
   await boss.createQueue(QUEUES.EMBEDDINGS_CHUNK);
   await boss.createQueue(QUEUES.EMBEDDINGS_VECTOR);
   await boss.createQueue(QUEUES.EPHEMERAL_REAP);
@@ -135,26 +137,31 @@ export async function startEmbeddingWorker(
   );
 
   // Tier 3: Vector Check
-  await boss.work<VectorCheckJob>(
-    QUEUES.VECTOR_CHECK,
-    { batchSize: concurrency },
-    async (jobs) => {
-      for (const job of jobs) {
-        await handleVectorCheck(job, boss, db);
-      }
-    },
-  );
+  for (const queue of [QUEUES.VECTOR_CHECK, QUEUES.VECTOR_CHECK_WITH_TEXT]) {
+    await boss.work<VectorCheckJob>(
+      queue,
+      { batchSize: concurrency },
+      async (jobs) => {
+        for (const job of jobs) {
+          await handleVectorCheck(job, boss, db);
+        }
+      },
+    );
+  }
 
   // Tier 4: Vector API Call
-  await boss.work<VectorApiCallJob>(
-    QUEUES.VECTOR_API_CALL,
-    { batchSize: Math.max(1, Math.floor(concurrency / 2)) },
-    async (jobs) => {
-      for (const job of jobs) {
-        await handleVectorApiCall(job, boss, db);
-      }
-    },
-  );
+  // includeMetadata: the handler's split-on-second-failure reads retryCount.
+  for (const queue of [QUEUES.VECTOR_API_CALL, QUEUES.VECTOR_API_CALL_WITH_TEXT]) {
+    await boss.work<VectorApiCallJob>(
+      queue,
+      { batchSize: Math.max(1, Math.floor(concurrency / 2)), includeMetadata: true },
+      async (jobs) => {
+        for (const job of jobs) {
+          await handleVectorApiCall(job, boss, db);
+        }
+      },
+    );
+  }
 
   // Legacy handlers (drain in-flight jobs from the pre-4-tier queue)
   await boss.work<EmbeddingsChunkJob>(

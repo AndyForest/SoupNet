@@ -55,6 +55,7 @@ jobs:
       DEV_PASSWORD: ci-test-password
       GEMINI_API_KEY: ""
       EMBEDDINGS_PROVIDER: stub  # deterministic fake vectors; no API quota, no flakiness
+      EMBEDDINGS_REBUILD_TARGET: ""  # stub has one model; model-switch.integration.test.ts boots its own gemini backends, with and without EMBEDDINGS_MODEL
       SYNTHESIS_PROVIDER: stub  # deterministic premium synthesis; no LLM call, no flakiness
       DISABLE_RATE_LIMIT: "true"  # tests make many rapid requests
       # Sign in with Google against a fake issuer the Layer 3 suite starts
@@ -205,8 +206,8 @@ jobs:
       # Same cache step as ranking-eval (keep the two in sync): a cache hit
       # skips the HF Hub download entirely, which is also this job's main
       # flake source — 2026-07-21, PR #53: the hub reset the ~23 MB model
-      # download mid-stream (ECONNRESET), embedQuery fell back to lexical
-      # (null), and both assertions failed on an unrelated diff. Restore runs
+      # download mid-stream (ECONNRESET), embedQuery returned null,
+      # and both assertions failed on an unrelated diff. Restore runs
       # AFTER npm ci (which would wipe node_modules contents).
       - name: Cache HF embedding model
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
