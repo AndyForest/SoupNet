@@ -303,6 +303,83 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     expect(view).toMatchObject({ connected: true, kind: "admin_consent", domain: org.domain });
   });
 
+  /** A member who is also an admin of the organization, known to the directory. */
+  async function adminMember(org: Org, label: string): Promise<Actor & { key: string }> {
+    const a = await member(org, label);
+    await google.setDirectoryUser(a.email, {});
+    const promoted = await call(org.olive.token, "PATCH", `/organizations/${org.orgId}/members/${a.userId}`, { role: "admin" });
+    if (promoted.status !== 200) throw new Error(`promote failed: ${promoted.status} ${await promoted.text()}`);
+    return a;
+  }
+
+  /** Start a consent as `a`; the returned step finishes it as `claims`, and says where it landed. */
+  async function startConsent(a: Actor, org: Org, claims: FakeIdClaims): Promise<() => Promise<string>> {
+    const start = await call(a.token, "POST", `/organizations/${org.orgId}/directory/google/start`, { binding: sha256(secret()), domain: org.domain });
+    expect(start.status).toBe(200);
+    const url = new URL(((await start.json()) as { data: { url: string } }).data.url);
+    return async () => {
+      const code = await google.issue(claims, { nonce: url.searchParams.get("nonce")!, codeChallenge: url.searchParams.get("code_challenge")!, refreshToken: `rt-${run}-${++n}` });
+      const cb = await fetch(`${BASE}/auth/google/callback?state=${url.searchParams.get("state")}&code=${code}`, { redirect: "manual" });
+      return cb.headers.get("location") ?? "";
+    };
+  }
+
+  it("OFF-CON-05 / F182: a consent started before its starter was demoted or disabled stores nothing and leaves the live connection alone", async () => {
+    const org = await acme();
+    const ann = await adminMember(org, "ann");
+    const annSub = `ann-${run}-${++n}`;
+    await linkGoogle(ann, annSub, org.domain);
+    const asAnn = { sub: annSub, email: ann.email, email_verified: true, hd: org.domain };
+    const victim = await member(org, "colleague");
+    await google.setDirectoryUser(victim.email, { suspended: true });
+    expect((await useKey(victim.key)).status).toBe(401);
+
+    const finishDemoted = await startConsent(ann, org, asAnn);
+    expect((await call(org.olive.token, "PATCH", `/organizations/${org.orgId}/members/${ann.userId}`, { role: "member" })).status).toBe(200);
+    expect(await finishDemoted()).toBe(`${FRONTEND}/auth/google/complete#error=directory_not_manager`);
+
+    expect((await call(org.olive.token, "PATCH", `/organizations/${org.orgId}/members/${ann.userId}`, { role: "admin" })).status).toBe(200);
+    const finishDisabled = await startConsent(ann, org, asAnn);
+    expect((await call(org.olive.token, "POST", `/organizations/${org.orgId}/members/${ann.userId}/disable`)).status).toBe(200);
+    expect(await finishDisabled()).toBe(`${FRONTEND}/auth/google/complete#error=directory_not_manager`);
+
+    const view = ((await (await call(org.olive.token, "GET", `/organizations/${org.orgId}/directory`)).json()) as { data: Json }).data;
+    expect(view).toMatchObject({ kind: "service_account", adminEmail: org.olive.email });
+    expect((await memberRow(victim.userId)).directory_status).toBe("suspended");
+    expect((await useKey(victim.key)).status).toBe(401);
+    expect((await auditRows("organization.directory_connect_failed", org.orgId)).map((m) => m["reason"])).toEqual(["directory_not_manager", "directory_not_manager"]);
+  });
+
+  it("F182: a service-account connect that outlasts its person's role stores nothing", async () => {
+    const org = await acme();
+    const ann = await adminMember(org, "ann-sa");
+    await google.setDirectoryUser(org.olive.email, { delayMs: 800 });
+    const putting = call(ann.token, "PUT", `/organizations/${org.orgId}/directory/service-account`, { key: org.serviceAccount.key, adminEmail: org.olive.email });
+    await new Promise((r) => setTimeout(r, 300));
+    expect((await call(org.olive.token, "PATCH", `/organizations/${org.orgId}/members/${ann.userId}`, { role: "member" })).status).toBe(200);
+    const res = await putting;
+    expect(res.status).toBe(404);
+    expect((await res.json()) as Json).toEqual((await (await call(ann.token, "GET", `/organizations/${org.orgId}/directory`)).json()) as Json);
+    await google.setDirectoryUser(org.olive.email, {});
+    expect(await auditRows("organization.directory_connected", org.orgId)).toHaveLength(1);
+  });
+
+  it("OB-K2: a claim that lapsed during the round trip stores nothing", async () => {
+    const org = await acme({ connect: false });
+    await linkGoogle(org.olive, org.oliveSubject, org.domain);
+    const finish = await startConsent(org.olive, org, { sub: org.oliveSubject, email: org.olive.email, email_verified: true, hd: org.domain });
+    await setClaim(org.orgId, "lapsed");
+    expect(await finish()).toBe(`${FRONTEND}/auth/google/complete#error=directory_wrong_domain`);
+    expect(((await (await call(org.olive.token, "GET", `/organizations/${org.orgId}/directory`)).json()) as { data: Json }).data["connected"]).toBe(false);
+  });
+
+  it("OB-K1: starting a consent needs a Google identity on the account", async () => {
+    const org = await acme({ connect: false });
+    const start = await call(org.olive.token, "POST", `/organizations/${org.orgId}/directory/google/start`, { binding: sha256(secret()), domain: org.domain });
+    expect(start.status).toBe(400);
+    expect(((await start.json()) as { error: string }).error).toBe("google_identity_required");
+  });
+
   // ── The check ─────────────────────────────────────────────────────────────
 
   it("OFF-DIR-01, 02 / OB-C1, OB-C2, OB-C11: suspended in Google refuses every credential; restored, the same ones work again", async () => {

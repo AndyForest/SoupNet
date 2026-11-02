@@ -32,7 +32,7 @@ import { DIRECTORY_WARNING_HOURS, directoryStatusRefuses } from "@soupnet/domain
 import type { DirectoryAnswer, DirectoryStatus } from "@soupnet/domain";
 import { open, seal } from "../lib/secret-box";
 import type { SealedSecret } from "../lib/secret-box";
-import { checkedUnder, directoryCheckDue } from "./directory-sql";
+import { checkedUnder, directoryCheckDue, directoryInactive } from "./directory-sql";
 import { domainClaimCurrentAt } from "./domain-authority";
 
 type SqlExecutor = Pick<PostgresJsDatabase, "execute">;
@@ -282,6 +282,12 @@ export type DirectoryStatusesCleared = Record<"suspended" | "archived" | "delete
  * with the organization id as additional data. Replacing it clears every
  * member's directory status, so nobody stays switched off by the old one;
  * the refusals it cleared come back for the audit row.
+ *
+ * Null, storing nothing, when the person connecting is no longer an active
+ * owner or admin. A consent takes minutes and a lookup seconds, and either can
+ * outlast their role, which would leave a demoted person's token as the
+ * company's credential (F182). Read with the write, holding their row, so a
+ * demotion lands before this or after it.
  */
 export async function saveDirectoryConnection(
   db: PostgresJsDatabase,
@@ -296,9 +302,16 @@ export async function saveDirectoryConnection(
     secret: string;
     connectedBy: string;
   },
-): Promise<DirectoryStatusesCleared> {
+): Promise<DirectoryStatusesCleared | null> {
   const sealed: SealedSecret = seal(key, input.secret, input.organizationId);
   return db.transaction(async (tx) => {
+    const manager = (await tx.execute(sql`
+      SELECT 1 FROM claimnet.organization_members om
+      WHERE om.organization_id = ${input.organizationId}::uuid AND om.user_id = ${input.connectedBy}::uuid
+        AND om.role IN ('owner', 'admin') AND om.disabled_at IS NULL AND NOT ${directoryInactive()}
+      FOR SHARE OF om
+    `)) as unknown as unknown[];
+    if (manager.length === 0) return null;
     await tx.execute(sql`
       INSERT INTO claimnet.organization_directory_connections
         (organization_id, kind, domain, domain_unicode, admin_email, service_account_email,

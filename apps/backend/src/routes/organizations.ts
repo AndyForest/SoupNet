@@ -165,6 +165,7 @@ organizationsRouter.put("/:id/directory/service-account", async (c) => {
   if (gate instanceof Response) return gate;
   const body = await jsonBody(c);
   const refused = await connectServiceAccount(getDb(), { organizationId: gate.organizationId, userId: c.get("user").id, key: body["key"], adminEmail: body["adminEmail"] });
+  if (refused?.status === 404) return c.json(NOT_FOUND, 404);
   if (refused) return c.json({ ok: false, error: refused.error, message: refused.message }, refused.status);
   forgetDirectoryTokens(gate.organizationId);
   return c.json({ ok: true, data: await directoryConnectionOf(getDb(), gate.organizationId) });

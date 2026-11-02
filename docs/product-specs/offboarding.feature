@@ -35,6 +35,12 @@ Feature: Offboarding through the company's Google Workspace directory
       Then nothing is stored and Olive is told which
 
     @OFF-CON-03
+    Scenario: A consent that outlasts its starter's role
+      # Guards: audit F182.
+      Given Ann, an admin, started a consent
+      When Olive demotes or disables Ann before it completes
+      Then nothing is stored, the connection stays as it was, and Ann is told why
+
     Scenario: An owner connects with the company's own service account
       When Olive gives Acme's service-account key and her admin address on acme.example
       Then the connection is stored once a test lookup through it succeeds

@@ -94,6 +94,7 @@ async function claimedDomain(db: SqlExecutor, organizationId: string, raw: unkno
 }
 
 export type ConnectRefusal =
+  | { status: 404; error: "not_found"; message: string }
   | { status: 400; error: "invalid_domain"; message: string }
   | { status: 400; error: "google_identity_required"; message: string }
   | { status: 400; error: "invalid_key"; message: string }
@@ -140,7 +141,7 @@ export async function startDirectoryConnect(
  * resolution: no session is issued and no identity linked here. Completes
  * the connection only for the Google account linked to the person who
  * started, on the requested domain, with a refresh token that reads the
- * directory.
+ * directory, while that person is still an owner or admin (F182).
  */
 export async function completeDirectoryConnect(
   db: PostgresJsDatabase,
@@ -193,6 +194,7 @@ export async function completeDirectoryConnect(
     secret: tokens.refreshToken,
     connectedBy: userId,
   });
+  if (!cleared) return fail("directory_not_manager");
   await writeAudit(db, { actorUserId: userId, action: "organization.directory_connected", targetType: "organization", targetId: organizationId, metadata: { kind: "admin_consent", domain, cleared } });
   return { ok: true };
 }
@@ -234,6 +236,7 @@ export async function connectServiceAccount(
     secret,
     connectedBy: input.userId,
   });
+  if (!cleared) return { status: 404, error: "not_found", message: "Not found." };
   await writeAudit(db, { actorUserId: input.userId, action: "organization.directory_connected", targetType: "organization", targetId: input.organizationId, metadata: { kind: "service_account", domain, cleared } });
   return null;
 }
