@@ -28,7 +28,7 @@
 
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { DIRECTORY_HOLD_HOURS, DIRECTORY_STALE_HOURS, DIRECTORY_WARNING_HOURS, directoryStatusRefuses } from "@soupnet/domain";
+import { DIRECTORY_DELETION_BURST, DIRECTORY_HOLD_HOURS, DIRECTORY_STALE_HOURS, DIRECTORY_WARNING_HOURS, directoryStatusRefuses } from "@soupnet/domain";
 import type { DirectoryAnswer, DirectoryStatus } from "@soupnet/domain";
 import { open, seal } from "../lib/secret-box";
 import type { SealedSecret } from "../lib/secret-box";
@@ -50,7 +50,10 @@ export type DirectoryChecker = (input: DirectoryCheckInput) => Promise<{ answer:
 /** Told once per failing run; `memberEmail` is who the failed check was about (draft 47f9620f, F196). */
 export type DirectoryWarner = (organizationId: string, memberEmail: string) => Promise<void>;
 
-let installed: { key: Buffer; check: DirectoryChecker; warn: DirectoryWarner } | null = null;
+/** Several members found removed within the hour (F184). */
+export type DirectoryDeletionsNotifier = (organizationId: string, count: number) => Promise<void>;
+
+let installed: { key: Buffer; check: DirectoryChecker; warn: DirectoryWarner; noticeDeletions: DirectoryDeletionsNotifier } | null = null;
 
 /**
  * Install Google (the server does this at startup when
@@ -58,8 +61,8 @@ let installed: { key: Buffer; check: DirectoryChecker; warn: DirectoryWarner } |
  * members fail closed a day after their last successful check, which is why a
  * server won't start without it once any connection exists (F186).
  */
-export function installDirectoryChecker(key: Buffer, check: DirectoryChecker, warn: DirectoryWarner): void {
-  installed = { key, check, warn };
+export function installDirectoryChecker(key: Buffer, check: DirectoryChecker, warn: DirectoryWarner, noticeDeletions: DirectoryDeletionsNotifier): void {
+  installed = { key, check, warn, noticeDeletions };
 }
 
 export function directoryCheckerInstalled(): boolean {
@@ -217,11 +220,37 @@ async function askAndRecord(db: PostgresJsDatabase, current: NonNullable<typeof 
       VALUES (NULL, 'organization.member_directory_status', 'user', ${userId}::uuid,
         ${JSON.stringify({ organizationId: row.organization_id, from: row.previous_status, to: status })}::jsonb)
     `);
+    if (status === "deleted") await noticeDeletionBurst(db, current, row.organization_id);
   }
   if (directoryStatusRefuses(status) !== directoryStatusRefuses(row.previous_status)) {
     console.warn(`[directory] org ${row.organization_id}: member ${userId} ${status}`);
   }
   return status;
+}
+
+/**
+ * Tell the managers when several members have been found removed within the
+ * hour, at most daily. The status-change audit rows are the count, since only a
+ * change writes one, and the notice's own row is the daily limit. This delays no
+ * refusal: a threshold on the refusal itself would hold back a real layoff (F184).
+ */
+async function noticeDeletionBurst(db: SqlExecutor, current: NonNullable<typeof installed>, organizationId: string): Promise<void> {
+  const rows = (await db.execute(sql`
+    INSERT INTO claimnet.audit_log (actor_user_id, action, target_type, target_id, metadata)
+    SELECT NULL, 'organization.directory_deletions_noticed', 'organization', ${organizationId}::uuid, jsonb_build_object('count', recent.n)
+    FROM (
+      SELECT count(*)::int AS n FROM claimnet.audit_log
+      WHERE action = 'organization.member_directory_status' AND metadata->>'organizationId' = ${organizationId} AND metadata->>'to' = 'deleted'
+        AND occurred_at > NOW() - interval '1 hour'
+    ) recent
+    WHERE recent.n >= ${DIRECTORY_DELETION_BURST} AND NOT EXISTS (
+      SELECT 1 FROM claimnet.audit_log
+      WHERE action = 'organization.directory_deletions_noticed' AND target_id = ${organizationId}::uuid
+        AND occurred_at > NOW() - make_interval(hours => ${DIRECTORY_STALE_HOURS})
+    )
+    RETURNING (metadata->>'count')::int AS count
+  `)) as unknown as Array<{ count: number }>;
+  if (rows[0]) void current.noticeDeletions(organizationId, rows[0].count).catch(() => undefined);
 }
 
 /**

@@ -21,6 +21,7 @@ import {
   DIRECTORY_HOLD_HOURS,
   DIRECTORY_SCOPE,
   directoryChangedEmail,
+  directoryDeletionsEmail,
   directoryOffProblem,
   directoryStatusRefuses,
   directoryWarningEmail,
@@ -70,6 +71,7 @@ export function installDirectoryChecking(): "on" | "off" {
     key,
     (input) => checkDirectoryMember(config, { organizationId: input.organizationId, kind: input.kind, adminEmail: input.adminEmail, secret: input.secret }, input.member),
     (organizationId, memberEmail) => warnOrganization(organizationId, memberEmail),
+    (organizationId, count) => noticeDeletions(organizationId, count),
   );
   return "on";
 }
@@ -107,6 +109,16 @@ async function warnOrganization(organizationId: string, memberEmail: string): Pr
     await sendOrganizationDirectoryEmail(email, mail).catch(() => undefined);
   }
   console.warn(`[directory] org ${organizationId}: warned ${managers.emails.length} managers`);
+}
+
+async function noticeDeletions(organizationId: string, count: number): Promise<void> {
+  const { getDb } = await import("../db");
+  const managers = await directoryManagersOf(getDb(), organizationId);
+  const mail = directoryDeletionsEmail(managers.name || "your organization", count);
+  for (const email of managers.emails) {
+    await sendOrganizationDirectoryEmail(email, mail).catch(() => undefined);
+  }
+  console.warn(`[directory] org ${organizationId}: ${count} members removed within the hour, told ${managers.emails.length} managers`);
 }
 
 const liftedBy = (cleared: DirectoryStatusesCleared) => cleared.suspended + cleared.archived + cleared.deleted;

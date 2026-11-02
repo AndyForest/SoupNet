@@ -133,6 +133,13 @@ Feature: Offboarding through the company's Google Workspace directory
       Then Google is asked about nobody and nobody goes stale
       And Max stays switched off
 
+    @OFF-DIR-15
+    Scenario: Several members found removed within the hour
+      # Guards: audit F184.
+      When a third member of Acme is found removed from the directory within an hour
+      Then all of them are refused at once, none held back
+      And Acme's owners and admins get one email saying so, and what to do if it's wrong
+
     @OFF-DIR-14
     Scenario: A switched-off member keeps their seat
       # Guards: audit F190, ruled.

@@ -1169,6 +1169,22 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     expect(await lastError()).toBe("member_renamed");
   });
 
+  it("OFF-DIR-15 / F184: several members found removed within the hour are refused at once, and the managers hear, once", async () => {
+    const org = await acme();
+    const gone = await Promise.all(["gone-a", "gone-b", "gone-c", "gone-d"].map((label) => member(org, label)));
+    const told = () => changeMailsTo(org.olive.email, "were just removed", 1);
+    expect((await useKey(gone[0]!.key)).status).toBe(401);
+    expect((await useKey(gone[1]!.key)).status).toBe(401);
+    await new Promise((r) => setTimeout(r, 500));
+    expect(await changeMailsTo(org.olive.email, "were just removed", 0)).toBe(0);
+    expect((await useKey(gone[2]!.key)).status).toBe(401);
+    expect(await told()).toBe(1);
+    expect((await useKey(gone[3]!.key)).status).toBe(401);
+    await new Promise((r) => setTimeout(r, 500));
+    expect(await told()).toBe(1);
+    expect((await auditRows("organization.directory_deletions_noticed", org.orgId)).map((m) => m["count"])).toEqual([3]);
+  });
+
   it("OFF-DIR-10 / OB-C10: disconnecting stops the checks and lifts the directory's refusals", async () => {
     const org = await acme();
     const max = await member(org, "freed");

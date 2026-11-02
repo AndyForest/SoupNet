@@ -10,6 +10,7 @@ import {
   directoryWarningEmail,
   directoryChangedEmail,
   directoryOffProblem,
+  directoryDeletionsEmail,
 } from "./directory";
 
 describe("classifyDirectoryAnswer (OB-M3)", () => {
@@ -130,6 +131,15 @@ describe("directoryOffProblem (F186)", () => {
     expect(many).toContain("3 organizations have a directory connection");
     expect(many).toContain("refused 24 hours after their last check");
     expect(many).toContain("DELETE /admin/organizations/:id/directory");
+  });
+});
+
+describe("directoryDeletionsEmail (F184)", () => {
+  it("says how many, and what to do either way", () => {
+    const mail = directoryDeletionsEmail("Acme", 3);
+    expect(mail.subject).toBe("3 Acme members were just removed by your Google Workspace directory");
+    expect(mail.text).toContain("3 of Acme's members no longer exist");
+    expect(mail.text).toContain("If people have just left, there's nothing to do.");
   });
 });
 

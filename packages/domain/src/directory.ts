@@ -156,6 +156,24 @@ export function directoryOffProblem(connections: number): string | null {
   );
 }
 
+/** This many members found removed from the directory within the hour tells the owners and admins, without delaying any of them. */
+export const DIRECTORY_DELETION_BURST = 3;
+
+/**
+ * Several members were switched off as removed from the directory within the
+ * hour. A layoff looks just like this, and so does something answering 404 in
+ * Google's shape for everyone but the admin, so they are refused at once and the
+ * people who can tell the two apart hear about it (F184).
+ */
+export function directoryDeletionsEmail(organizationName: string, count: number): { subject: string; text: string } {
+  return {
+    subject: `${count} ${organizationName} members were just removed by your Google Workspace directory`,
+    text:
+      `In the last hour, your Google Workspace directory told Soup.net that ${count} of ${organizationName}'s members no longer exist, so they can't use Soup.net now. More may follow. ` +
+      `If people have just left, there's nothing to do. If not, something may be answering for Google wrongly: check your organization's members in Soup.net, and contact Soup.net support if the list looks wrong.`,
+  };
+}
+
 /** "2 people", "1 person", "nobody", for the emails below. */
 function peopleCount(n: number): string {
   return n === 0 ? "nobody" : n === 1 ? "1 person" : `${n} people`;
