@@ -8,6 +8,8 @@ import { runMigrations } from "./db";
 import { autoSetup } from "./auth";
 import { getDb } from "./db";
 import { authRoutes } from "./routes/auth";
+import { googleAuthRoutes } from "./routes/google-auth";
+import { googleOidcConfig } from "./services/google-oidc.service";
 import { keyRoutes } from "./routes/keys";
 import { meRoutes } from "./routes/me";
 import { briefingRoutes } from "./routes/briefing";
@@ -121,6 +123,7 @@ app.route("/health/version", versionRoutes);
 app.route("/health/integrity", integrityRoutes);
 
 // Routes
+app.route("/auth/google", googleAuthRoutes);
 app.route("/auth", authRoutes);
 app.route("/keys", keyRoutes);
 app.route("/me", meRoutes);
@@ -224,6 +227,12 @@ async function start() {
   const { getSynthesisProviderId } = await import("./lib/synthesis/provider");
   const synthesisProviderId = getSynthesisProviderId();
   console.warn(`[backend] Synthesis provider: ${synthesisProviderId}`);
+  // Sign in with Google (stream SSO, SSO-G2): say when it is off, and name a
+  // test issuer loudly, since it replaces Google's endpoints.
+  const google = googleOidcConfig();
+  if (!google) console.warn("[backend] Google sign-in: off (GOOGLE_OAUTH_CLIENT_ID unset)");
+  else if (google.testIssuer) console.warn(`[backend] Google sign-in: TEST ISSUER ${google.issuers[0]} (GOOGLE_OIDC_TEST_ISSUER; never in production)`);
+  else console.warn("[backend] Google sign-in: on");
   if (synthesisProviderId === "stub") {
     console.warn(
       "[backend] WARNING: stub synthesis is deterministic but not a real profile. " +

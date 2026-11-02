@@ -129,6 +129,7 @@ Single Postgres database on port **5633** (non-standard, intentional), single `c
 - `traces` — taste/judgment claims (user story format, tsvector for search)
 - `evidence`, `references` — Toulmin-structured supporting data
 - `trace_evidence`, `trace_references`, `evidence_references` — N:N linking tables with `api_key_id` for coverage tracking
+- `user_identities`, `sso_login_requests` — linked Google accounts (keyed on issuer and `sub`, never email) and in-flight Google sign-ins (stream SSO); `users.password_hash` is null for a Google-only account, and `organizations.require_sso` makes members sign in with Google Workspace
 - `api_keys` — daily rotating and scoped keys for agent authentication; hashed at rest
 - `uploads` — multimodal evidence files, api-key-scoped capability tokens (design in `apps/backend/src/routes/uploads.ts`)
 - `embedding_sources`, `embedding_chunk_strategies`, `embedding_chunks`, `embedding_vectors` — 4-table vector pipeline
@@ -138,18 +139,18 @@ Single Postgres database on port **5633** (non-standard, intentional), single `c
 - `system_settings` — signup cap, feature flags, admin-managed config
 - `pgboss.*` — pg-boss queue schema (jobs, archive, schedules) in its own schema
 
-Auth is swappable: `users.provider` + `users.external_id` fields support future OIDC federation.
+Federated sign-in lives in `user_identities` (Google today; another IdP is a new `provider` value). The older `users.provider` + `users.external_id` columns are unused and due to be dropped.
 
 ## Backend Architecture (apps/backend)
 
 Hono HTTP server. JWT for humans, API keys (Bearer) for agents — strictly separate credential populations (engineering-principles.md §7). Route modules mounted in `src/index.ts`:
 
-- `/auth` — register, login, me, email verification, password reset, data export
+- `/auth` — register, login, me, email verification, password reset, data export. `/auth/google/start`, `/callback` and `/exchange` are Sign in with Google (organization accounts round 1, stream SSO; ADR-0022): a pending record keyed by the hash of an opaque state, PKCE and nonce toward Google, and a single-use handoff code the SPA exchanges together with a secret its tab holds. They answer 404 when `GOOGLE_OAUTH_CLIENT_ID` is unset.
 - `/keys` — daily + scoped API key CRUD (JWT-auth)
 - `/check` — recipe check page for agents. HTML by default, JSON with `format=json` or `Accept: application/json`. API-key auth. The primary agent surface.
 - `/recipe-books` — recipe-book CRUD, members, invites (JWT-auth; some agent-writable fields via API key). The legacy `/groups/*` paths 308-redirect to `/recipe-books/*` for backwards compatibility. Creating a book without `organizationId` files it in the caller's home organization (the company organization for a managed account); `PUT /recipe-books/:id/org-wide` makes a company book org-wide or private again.
 - `/invitations` — accept/decline flow for recipe-book invites
-- `/organizations` — an org owner's or admin's member actions: `POST /organizations/:id/members/:userId/disable` and `/enable`, `PATCH /organizations/:id/members/:userId` (`role`). JWT; a uniform 404 for anyone who isn't an active owner or admin of that organization. The console itself is a later stream.
+- `/organizations` — an org owner's or admin's member actions: `POST /organizations/:id/members/:userId/disable` and `/enable`, `PATCH /organizations/:id/members/:userId` (`role`), and `PATCH /organizations/:id` (`requireSso`, only from a Workspace Google session). JWT; a uniform 404 for anyone who isn't an active owner or admin of that organization. The console itself is a later stream.
 - `/admin` — system-role-only: organizations (list, create a company organization with its default book and owner, set seats, add an existing account through the one join), user suspension (`POST /admin/users/:id/suspend` and `/unsuspend`), settings (signup cap, embeddings toggle), invite (cap bypass), users list/detail, stats, audit-log, queues, workers/embeddings
 - `/docs` — agent-facing HTML guides: `recipe-check-guide`, `recipe-scenarios`, `mcp-setup`, `bootstrap`. Read-only; some pre-fill with `?key=` for copy-paste configs.
 - `/recipes` — recipe lookup by id (batch ≤20, API-key Bearer). Same read-scope ACL as `/check`; ids that don't resolve return uniform `not_found_or_unreadable` markers (anti-enumeration). REST twin of the MCP `get_recipes` tool. `POST /recipes/:id/verify` is the REST twin of `verify_draft`: the person's agent publishes their draft with new, quoted and cited evidence (drafts-and-triage slice 2).
@@ -221,6 +222,7 @@ Copy `.env.example` to `.env`. Key variables (see `.env.example` for the full li
 - `WORKER_CONCURRENCY` (default `5`) — pg-boss batch size.
 - `SMTP_*` — Mailpit locally (auto-wired by docker-compose); configure for any SMTP server in production (e.g., AWS SES, Postmark, SendGrid).
 - `BACKEND_URL` / `FRONTEND_URL` / `MCP_PORT` — app URLs.
+- `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` — Sign in with Google (a Google Cloud web client with redirect URI `${BACKEND_URL}/auth/google/callback`, scopes `openid email profile`). Unset turns it off. `GOOGLE_OIDC_TEST_ISSUER` points the backend at the Layer 3 suite's fake Google and is ignored when `NODE_ENV=production`.
 
 ## Infrastructure (Docker Compose)
 
