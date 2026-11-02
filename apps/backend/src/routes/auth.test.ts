@@ -81,7 +81,7 @@ describe.skipIf(!BASE)("/auth routes integration", () => {
     await fetch(`${BASE}/auth/verify`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: body.data!.verificationToken }),
+      body: JSON.stringify({ token: body.data!.verificationToken, password: testPassword }),
     });
     const loginRes = await fetch(`${BASE}/auth/login`, {
       method: "POST",
@@ -303,7 +303,7 @@ describe.skipIf(!BASE)("F15 — email verification hard gate", () => {
     const first = await fetch(`${BASE}/auth/verify`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: vtok }),
+      body: JSON.stringify({ token: vtok, password: "idem-pw-123" }),
     });
     expect(first.status).toBe(200);
     const firstBody = (await first.json()) as { ok: boolean; data?: { verified?: boolean } };
@@ -331,7 +331,7 @@ describe.skipIf(!BASE)("F15 — email verification hard gate", () => {
   it("POST /auth/verify with valid token unblocks key creation", async () => {
     const verifyRes = await fetch(`${BASE}/auth/verify`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${gateToken}` },
       body: JSON.stringify({ token: gateVerificationToken }),
     });
     expect(verifyRes.status).toBe(200);
@@ -375,7 +375,7 @@ describe.skipIf(!BASE)("password reset flow", () => {
     const ver = await fetch(`${BASE}/auth/verify`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: vtok }),
+      body: JSON.stringify({ token: vtok, password: originalPassword }),
     });
     expect(ver.status).toBe(200);
   });
@@ -536,7 +536,7 @@ describe.skipIf(!BASE)("data export", () => {
     await fetch(`${BASE}/auth/verify`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: vtok }),
+      body: JSON.stringify({ token: vtok, password: exportPassword }),
     });
     // F30: register no longer returns a JWT — log in to obtain one.
     const login = await fetch(`${BASE}/auth/login`, {

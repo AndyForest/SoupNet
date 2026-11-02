@@ -1,16 +1,28 @@
 import { useState } from "react";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 import { useMutation } from "@tanstack/react-query";
-import { API_BASE } from "../auth.js";
+import { API_BASE, clearToken } from "../auth.js";
+
+interface StillRunning {
+  apiKeys: number;
+  connectedApps: number;
+}
+
+function runningList({ apiKeys, connectedApps }: StillRunning): string {
+  const parts: string[] = [];
+  if (apiKeys > 0) parts.push(apiKeys === 1 ? "1 API key" : `${apiKeys} API keys`);
+  if (connectedApps > 0) parts.push(connectedApps === 1 ? "1 connected app" : `${connectedApps} connected apps`);
+  return parts.join(" and ");
+}
 
 export function ResetPasswordPage() {
-  const navigate = useNavigate();
   const params = new URLSearchParams(window.location.search);
   const token = params.get("token") ?? "";
 
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<StillRunning | null>(null);
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -19,17 +31,53 @@ export function ResetPasswordPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token, newPassword: password }),
       });
-      const json = (await res.json()) as { ok: boolean; error?: string };
+      const json = (await res.json()) as { ok: boolean; error?: string; data?: { stillRunning?: StillRunning } };
       if (!json.ok) throw new Error(json.error ?? "Reset failed");
+      return json.data?.stillRunning ?? { apiKeys: 0, connectedApps: 0 };
     },
-    onSuccess: () => {
-      // Redirect to login with a success hint
-      void navigate({ to: "/auth/login" });
+    onSuccess: (running) => {
+      // The reset ended every session, this browser's included.
+      clearToken();
+      setDone(running);
     },
     onError: (err) => {
       setError(err instanceof Error ? err.message : "Reset failed");
     },
   });
+
+  if (done) {
+    const running = runningList(done);
+    return (
+      <div style={{
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+        minHeight: "100vh",
+        background: "var(--color-surface)",
+      }}>
+        <div style={{
+          width: "100%",
+          maxWidth: 400,
+          background: "var(--color-surface-container-lowest)",
+          borderRadius: "var(--radius-lg)",
+          padding: "var(--space-2xl) var(--space-xl)",
+        }}>
+          <h1 style={{ fontSize: "1.5rem", fontWeight: 800, color: "var(--color-primary)", marginBottom: "var(--space-md)" }}>
+            Your password is changed
+          </h1>
+          <p style={{ color: "var(--color-on-surface-variant)", marginBottom: "var(--space-lg)", lineHeight: 1.5 }}>
+            Every session on this account is signed out.
+            {running && ` Your ${running} still work, because a reset doesn't end them. If you don't recognize any of them, sign in and revoke them.`}
+          </p>
+          <Link to="/auth/login" search={running ? { next: "/app/keys" } : {}} style={{ textDecoration: "none" }}>
+            <button style={{ width: "100%", justifyContent: "center" }}>
+              {running ? "Sign in and review" : "Sign in"}
+            </button>
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   if (!token) {
     return (
