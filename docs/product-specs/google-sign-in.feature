@@ -141,6 +141,7 @@ Feature: Sign in with Google, account linking, and require_sso
       Given someone signed up with a consumer Google account on Vic's address
       When Vic sets a new password through the forgotten-password email
       Then the address is verified, that Google account is unlinked and its session has ended
+      And the page says that Google account was removed and to sign in with the password
 
     @GSI-LINK-11
     Scenario: Signing in at the link obeys the organization's SSO policy
