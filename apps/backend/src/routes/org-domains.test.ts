@@ -491,8 +491,8 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Domains",
     const email = `test-orgdom-nia-${run}-${++n}@${domain}`;
     const nia = await register(email);
     const other = await register(`test-orgdom-gus-${run}-${++n}@test.local`);
-    // The register bodies differ only in the test-mode token.
-    const strip = (b: Json) => JSON.stringify({ ...b, data: { ...(b["data"] as Json), verificationToken: undefined } });
+    // The register bodies differ only in the test-mode token and the per-account sign-up proof.
+    const strip = (b: Json) => JSON.stringify({ ...b, data: { ...(b["data"] as Json), verificationToken: undefined, signupProof: undefined } });
     expect(strip(nia.body)).toBe(strip(other.body));
 
     const res = await verify(nia.token);
