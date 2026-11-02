@@ -120,3 +120,27 @@ Feature: Organization accounts: the org admin console, sharing policy, and what 
       When Max signs in twice
       Then his page lists both, with the time and "password" only
       And neither Acme's member list nor its activity carries a sign-in
+
+    @ORG-CON-08
+    Scenario: A manager can see a stalled migration without an API client
+      Given acme.example is verified with automatic joining on
+      And the last migration couldn't move one account
+      When Ada opens the Domains page
+      Then it shows the domain as verified and one account waiting, as a count
+      And it says that account couldn't join on the last try, when, and that the daily job tries again
+
+    @ORG-CON-09
+    Scenario: The directory's refusals read as the directory's
+      Given Acme has a Google Workspace directory connected
+      And the directory lists Max as suspended
+      When Ada opens the Members page
+      Then Max reads "Suspended in Google Workspace", never "Disabled by the organization"
+      And the member list has a Last checked column
+      And Activity says the directory lists him as suspended, with Google Workspace as the actor
+
+    @ORG-CON-10
+    Scenario: A paused directory says so
+      Given Acme's directory is connected on acme.example
+      And acme.example's TXT record has gone missing
+      When Ada opens the Members page
+      Then the directory section says checks are paused and people already switched off stay switched off

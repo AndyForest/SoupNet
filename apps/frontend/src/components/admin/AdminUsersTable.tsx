@@ -55,7 +55,15 @@ export function fmtAdminDate(iso: string | null | undefined): string {
   return d.toLocaleDateString() + " " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-const STATUS_DOT: Record<AdminUserStatus, AdminStatus> = { active: "healthy", disabled: "warning", suspended: "error" };
+const STATUS_DOT: Record<AdminUserStatus, AdminStatus> = {
+  active: "healthy",
+  disabled: "warning",
+  suspended: "error",
+  directory_suspended: "warning",
+  directory_archived: "warning",
+  directory_deleted: "warning",
+  directory_unconfirmed: "warning",
+};
 
 function defaultRender(key: string, value: unknown): ReactNode {
   // Codes the domain labels, so neither console shows a raw value.

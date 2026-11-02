@@ -174,7 +174,7 @@ export function AdminOrganizationMembersPage() {
             <AdminUsersTable
               viewer="site"
               listing="organization"
-              show={["email", "status", "orgRole", "joinedVia", "joinedAt", "lastActiveAt", "recipeCount", "privateBookCount", "orgWideBookCount", "activeKeyCount", "suspendedReason", "premiumAt"]}
+              show={["email", "status", "orgRole", "joinedVia", "joinedAt", "lastActiveAt", "directoryCheckedAt", "recipeCount", "privateBookCount", "orgWideBookCount", "activeKeyCount", "suspendedReason", "premiumAt"]}
               rows={members.data?.users ?? []}
               empty={<AdminEmptyState title="No members" body="Add an existing account through the organization's join." />}
             />

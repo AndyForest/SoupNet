@@ -13,3 +13,4 @@ export * from "./organizations";
 export * from "./sharing-policy";
 export * from "./admin-columns";
 export * from "./org-activity";
+export * from "./org-domains";

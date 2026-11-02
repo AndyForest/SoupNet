@@ -4,10 +4,11 @@
  * docs/planning/org-accounts-build/console.md, CN-L1, CN-L2).
  *
  * Which actions, and how each reads, is @soupnet/domain's allowlist
- * (org-activity.ts). This file finds the rows and reads exactly two facts out
- * of their metadata server-side, the join's authority and a role change's
- * new role, plus the joiner's id to name them; nothing else of the metadata
- * is selected, so it can't be sent.
+ * (org-activity.ts). This file finds the rows and reads named facts out of
+ * their metadata server-side: the join's authority, a role change's new role
+ * and the joiner's id to name them; a directory status's new value; and for a
+ * directory connection its kind, domain, failure reason and the three numbers
+ * it cleared. Nothing else of the metadata is selected, so it can't be sent.
  */
 
 import { sql } from "drizzle-orm";
@@ -29,7 +30,17 @@ interface Row {
   target_email: string | null;
   join_authority: string | null;
   new_role: string | null;
+  directory_to: string | null;
+  connection_kind: string | null;
+  connection_domain: string | null;
+  connect_failure: string | null;
+  cleared_suspended: string | null;
+  cleared_archived: string | null;
+  cleared_deleted: string | null;
 }
+
+const CONNECTION_ACTIONS = sql`('organization.directory_connected', 'organization.directory_connect_failed')`;
+const CLEARING_ACTIONS = sql`('organization.directory_connected', 'organization.directory_disconnected')`;
 
 async function readEvents(db: PostgresJsDatabase, actions: string[], scope: SQL, limit: number, offset: number): Promise<OrgActivityEvent[]> {
   if (actions.length === 0) return [];
@@ -37,7 +48,14 @@ async function readEvents(db: PostgresJsDatabase, actions: string[], scope: SQL,
     SELECT a.action, a.occurred_at AS at, au.email AS actor_email,
            COALESCE(tu.email, ju.email) AS target_email,
            a.metadata->>'authority' AS join_authority,
-           CASE WHEN a.action = 'organization.member_set_role' THEN a.metadata->>'role' END AS new_role
+           CASE WHEN a.action = 'organization.member_set_role' THEN a.metadata->>'role' END AS new_role,
+           CASE WHEN a.action = 'organization.member_directory_status' THEN a.metadata->>'to' END AS directory_to,
+           CASE WHEN a.action IN ${CONNECTION_ACTIONS} THEN a.metadata->>'kind' END AS connection_kind,
+           CASE WHEN a.action IN ${CONNECTION_ACTIONS} THEN a.metadata->>'domain' END AS connection_domain,
+           CASE WHEN a.action = 'organization.directory_connect_failed' AND a.metadata->>'kind' = 'admin_consent' THEN a.metadata->>'reason' END AS connect_failure,
+           CASE WHEN a.action IN ${CLEARING_ACTIONS} THEN a.metadata->'cleared'->>'suspended' END AS cleared_suspended,
+           CASE WHEN a.action IN ${CLEARING_ACTIONS} THEN a.metadata->'cleared'->>'archived' END AS cleared_archived,
+           CASE WHEN a.action IN ${CLEARING_ACTIONS} THEN a.metadata->'cleared'->>'deleted' END AS cleared_deleted
     FROM claimnet.audit_log a
     LEFT JOIN claimnet.users au ON au.id = a.actor_user_id
     LEFT JOIN claimnet.users tu ON a.target_type = 'user' AND tu.id = a.target_id
@@ -56,6 +74,11 @@ async function readEvents(db: PostgresJsDatabase, actions: string[], scope: SQL,
       at: new Date(r.at).toISOString(),
       joinAuthority: r.join_authority,
       newRole: r.new_role,
+      directoryTo: r.directory_to,
+      connectionKind: r.connection_kind,
+      connectionDomain: r.connection_domain,
+      connectFailure: r.connect_failure,
+      cleared: { suspended: r.cleared_suspended, archived: r.cleared_archived, deleted: r.cleared_deleted },
     });
     return event ? [event] : [];
   });

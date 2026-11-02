@@ -177,3 +177,14 @@ These belong elsewhere:
 - the directory connection and check (Offboarding);
 - org data export, and transfer of a departed member's private books (program §3.13 and §3.6, later rounds);
 - a domain allowlist for outbound sharing (§3.7, later).
+
+## Build notes
+
+- **2026-11-02, CN-D1, CN-U5, CN-U6.** The rubric had these land after Domains and Offboarding merged. The orchestrator asked for #156 to stack on `org/offboarding` instead, with a manager able to see a stalled migration without an API client, so they are built on that branch: `OrgDomainsPage`, `OrgDirectorySection` on `/org#directory`, the Last checked column (the Members page shows it once a directory is connected; the site operator's member view always does), the directory statuses and a "Switched off by the directory" filter, and Activity's four directory events.
+- **The member list said Active for a directory refusal.** The status expression mapped only `suspended` and `org_disabled`, so the merge of Offboarding left a member the directory switched off reading "Active". `adminAccountStatus()` in `authz/account-state.ts` now names what the directory said, in both consoles.
+- **A connection's `last_error` isn't always a code.** A rename stores two addresses there. The section shows a label for it and for an HTTP code, a plain code as itself, and anything else as "Unknown error", so neither addresses nor a Google response body reach the page (`directoryLastErrorLabel`).
+- **Only a current claim is offered to connect on**, matching `claimedDomain` in Offboarding's service: a failing domain would be refused.
+- **Domains' copy is the backend's.** The record's instructions (OD-D2) and the failure message (OD-X6) come from the API; the page adds only its status labels and the summary of a run it just triggered.
+- **Sign-ins at `/auth/verify`.** Verifying with a password or the sign-up proof issues a session, and only `/auth/login` and Google wrote `auth.signed_in`. It now records one when a session is issued (ACC-VERIFY-14b), so the member's page and the privacy policy's "each successful sign-in" hold.
+- **Locks.** Console's reads take no row locks and its only member writes go through Core's `actOnMember`, so the `FOR NO KEY UPDATE` change (OD-X5, OD-X7, OD-X9) needs nothing here.
+- **Seats, left as it is.** A member the directory switched off still counts toward "Seats in use", because `orgMemberCount` looks only at `disabled_at`. That is Core's and Offboarding's rule, and the page's hint only claims it for disabled members.

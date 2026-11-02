@@ -21,6 +21,10 @@ describe("the allowlist", () => {
         "organization.member_enable",
         "organization.member_set_role",
         "organization.sharing_changed",
+        "organization.member_directory_status",
+        "organization.directory_connected",
+        "organization.directory_connect_failed",
+        "organization.directory_disconnected",
       ].sort(),
     );
   });
@@ -34,6 +38,7 @@ describe("the allowlist", () => {
         "organization.member_set_role",
         "user.suspended",
         "user.unsuspended",
+        "organization.member_directory_status",
       ].sort(),
     );
   });
@@ -84,6 +89,27 @@ describe("orgActivityEvent", () => {
     expect(
       orgActivityEvent({ action: "organization.member_set_role", actorEmail: "olive@acme.example", targetEmail: "ada@acme.example", at, newRole: "<script>" }),
     ).not.toHaveProperty("role");
+  });
+
+  it("reads a directory status only from the closed set, and shows Google Workspace as the actor", () => {
+    const base = { action: "organization.member_directory_status", actorEmail: null, targetEmail: "max@acme.example", at: "2026-11-02T00:00:00.000Z" };
+    expect(orgActivityEvent({ ...base, directoryTo: "suspended" })).toMatchObject({ kind: "directory_status", actor: "Google Workspace", directoryStatus: "suspended" });
+    expect(orgActivityEvent({ ...base, directoryTo: null })).toMatchObject({ directoryStatus: null });
+    expect(orgActivityEvent({ ...base, directoryTo: "<b>made up</b>" })).not.toHaveProperty("directoryStatus");
+  });
+
+  it("gives a connection its kind, domain and cleared numbers, and a failure's reason only from admin consent", () => {
+    const base = { actorEmail: "ada@acme.example", targetEmail: null, at: "2026-11-02T00:00:00.000Z" };
+    const failed = { ...base, action: "organization.directory_connect_failed", connectionDomain: "acme.example" };
+    expect(orgActivityEvent({ ...failed, connectionKind: "admin_consent", connectFailure: "directory_not_admin" })).toMatchObject({ connectFailure: "directory_not_admin", domain: "acme.example" });
+    // A service account's reason comes from Google's answer, so it is never shown.
+    expect(orgActivityEvent({ ...failed, connectionKind: "service_account", connectFailure: "directory_not_admin" })).not.toHaveProperty("connectFailure");
+    expect(orgActivityEvent({ ...failed, connectionKind: "admin_consent", connectFailure: "http_403: secret detail" })).not.toHaveProperty("connectFailure");
+
+    const gone = { ...base, action: "organization.directory_disconnected" };
+    expect(orgActivityEvent({ ...gone, cleared: { suspended: "2", archived: "0", deleted: 1 } })).toMatchObject({ cleared: { suspended: 2, archived: 0, deleted: 1 } });
+    expect(orgActivityEvent({ ...gone, cleared: { suspended: "0", archived: null, deleted: "not a number" } })).not.toHaveProperty("cleared");
+    expect(orgActivityEvent({ ...gone, connectionDomain: "acme.example", connectionKind: "admin_consent" })).not.toHaveProperty("domain");
   });
 
   it("never carries a role on any other event", () => {

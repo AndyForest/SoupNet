@@ -401,4 +401,89 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Console",
       expect(text).not.toContain('"method"');
     }
   });
+
+  /** A directory connection row on a domain: the credential is never read here. */
+  async function connectDirectory(orgId: string, domainName: string, connectedAt = sql`NOW()`): Promise<void> {
+    await getDb().execute(sql`
+      INSERT INTO claimnet.organization_directory_connections
+        (organization_id, kind, domain, domain_unicode, admin_email, credential_ciphertext, credential_iv, credential_tag, key_version, connected_at)
+      VALUES (${orgId}::uuid, 'admin_consent', ${domainName}, ${domainName}, ${`admin@${domainName}`}, 'x', 'x', 'x', 1, ${connectedAt})
+    `);
+  }
+
+  it("CN-U5, CN-U6: a member the directory switched off has their own label, the filter finds them, and last checked is empty without a connection", async () => {
+    const { olive, ada, max, orgId } = await acme();
+    const statusOf = async (who: Actor): Promise<Json> => {
+      const body = (await json(await call(olive, "GET", `/organizations/${orgId}/members`)))["data"] as { users: Json[] };
+      return body.users.find((u) => u["id"] === who.userId)!;
+    };
+    // A recorded status with no connection refuses nobody, so it reads active.
+    await getDb().execute(sql`UPDATE claimnet.organization_members SET directory_status = 'suspended', directory_checked_at = NOW() WHERE user_id = ${max.userId}::uuid`);
+    expect(await statusOf(max)).toMatchObject({ status: "active" });
+    expect(await statusOf(ada)).toMatchObject({ status: "active", directoryCheckedAt: null });
+
+    const domainName = `con-${run}-${++n}.example`;
+    await connectDirectory(orgId, domainName);
+    for (const [recorded, listed] of [["suspended", "directory_suspended"], ["archived", "directory_archived"], ["deleted", "directory_deleted"]] as const) {
+      await getDb().execute(sql`UPDATE claimnet.organization_members SET directory_status = ${recorded} WHERE user_id = ${max.userId}::uuid`);
+      expect((await statusOf(max))["status"]).toBe(listed);
+      expect(domain.ADMIN_USER_STATUS_LABELS[listed]).not.toBe(domain.ADMIN_USER_STATUS_LABELS.disabled);
+    }
+    expect((await statusOf(max))["directoryCheckedAt"]).toBeTruthy();
+
+    const ids = async (status: string): Promise<unknown[]> =>
+      ((await json(await call(olive, "GET", `/organizations/${orgId}/members?status=${status}`)))["data"] as { users: Json[] }).users.map((u) => u["id"]);
+    expect(await ids("directory")).toEqual([max.userId]);
+    expect(await ids("active")).not.toContain(max.userId);
+    expect(await ids("disabled")).not.toContain(max.userId);
+
+    // An admin's disable wins over the directory's reason, and reads as theirs.
+    expect((await call(ada, "POST", `/organizations/${orgId}/members/${max.userId}/disable`)).status).toBe(200);
+    expect((await statusOf(max))["status"]).toBe("disabled");
+    expect(await ids("directory")).toEqual([]);
+
+    // The site operator's every-account list names the same reason.
+    expect((await call(ada, "POST", `/organizations/${orgId}/members/${max.userId}/enable`)).status).toBe(200);
+    const site = (await json(await call(sys, "GET", `/admin/users?q=${encodeURIComponent(max.email)}`)))["data"] as { users: Json[] };
+    expect(site.users.find((u) => u["id"] === max.userId)).toMatchObject({ status: "directory_deleted" });
+  });
+
+  it("CN-U6: a check that hasn't succeeded for a day reads as a failed directory check", async () => {
+    const { olive, max, orgId } = await acme();
+    const domainName = `con-${run}-${++n}.example`;
+    expect((await call(olive, "POST", `/organizations/${orgId}/domains`, { domain: domainName })).status).toBe(201);
+    await getDb().execute(sql`UPDATE claimnet.organization_domains SET verified_at = NOW(), last_checked_at = NOW() WHERE organization_id = ${orgId}::uuid`);
+    await getDb().execute(sql`UPDATE claimnet.users SET email = ${`max@${domainName}`} WHERE id = ${max.userId}::uuid`);
+    await connectDirectory(orgId, domainName, sql`NOW() - interval '25 hours'`);
+    const body = (await json(await call(olive, "GET", `/organizations/${orgId}/members`)))["data"] as { users: Json[] };
+    expect(body.users.find((u) => u["id"] === max.userId)).toMatchObject({ status: "directory_unconfirmed" });
+  });
+
+  it("CN-U6: Activity shows directory events with only their checked details, and a member sees only their own status", async () => {
+    const { olive, max, orgId } = await acme();
+    const audit = (action: string, targetType: string, targetId: string, actor: string | null, metadata: Json) => getDb().execute(sql`
+      INSERT INTO claimnet.audit_log (actor_user_id, action, target_type, target_id, metadata)
+      VALUES (${actor}::uuid, ${action}, ${targetType}, ${targetId}::uuid, ${JSON.stringify(metadata)}::jsonb)
+    `);
+    await audit("organization.member_directory_status", "user", max.userId, null, { organizationId: orgId, from: "from-marker", to: "active" });
+    await audit("organization.directory_connected", "organization", orgId, olive.userId, { kind: "admin_consent", domain: "acme.example", by: "by-marker", cleared: { suspended: 2, archived: 0, deleted: 1 } });
+    await audit("organization.directory_connect_failed", "organization", orgId, olive.userId, { kind: "admin_consent", domain: "acme.example", reason: "directory_not_admin" });
+    await audit("organization.directory_connect_failed", "organization", orgId, olive.userId, { kind: "service_account", domain: "acme.example", reason: "google-said-marker" });
+    await audit("organization.directory_disconnected", "organization", orgId, olive.userId, { by: "by-marker", cleared: { suspended: 1, archived: 0, deleted: 0 } });
+
+    const text = await (await call(olive, "GET", `/organizations/${orgId}/activity`)).text();
+    for (const marker of ["from-marker", "by-marker", "google-said-marker", '"from"', '"by"', '"reason"']) expect(text).not.toContain(marker);
+    const events = (JSON.parse(text) as { data: { events: Json[] } }).data.events;
+    expect(events.find((e) => e["kind"] === "directory_status")).toMatchObject({ actor: domain.DIRECTORY_ACTOR_LABEL, target: max.email, directoryStatus: "active" });
+    expect(events.find((e) => e["kind"] === "directory_connected")).toMatchObject({ actor: olive.email, connectionKind: "admin_consent", domain: "acme.example", cleared: { suspended: 2, archived: 0, deleted: 1 } });
+    const failed = events.filter((e) => e["kind"] === "directory_connect_failed");
+    expect(failed.find((e) => e["connectionKind"] === "admin_consent")).toMatchObject({ connectFailure: "directory_not_admin" });
+    expect(failed.find((e) => e["connectionKind"] === "service_account")).not.toHaveProperty("connectFailure");
+    expect(events.find((e) => e["kind"] === "directory_disconnected")).toMatchObject({ cleared: { suspended: 1, archived: 0, deleted: 0 } });
+
+    const mine = (await json(await call(max, "GET", "/me/organization")))["data"] as { adminActions: Json[] };
+    const kinds = mine.adminActions.map((a) => a["kind"]);
+    expect(kinds).toContain("directory_status");
+    for (const hidden of ["directory_connected", "directory_connect_failed", "directory_disconnected"]) expect(kinds).not.toContain(hidden);
+  });
 });

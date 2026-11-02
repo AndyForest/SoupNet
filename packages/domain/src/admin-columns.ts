@@ -58,7 +58,7 @@ export const ADMIN_USER_COLUMNS: readonly AdminUserColumn[] = [
     label: "Status",
     anchor: "user",
     audience: "everyone",
-    memberDescription: "whether your account is active, disabled by your organization, or suspended by Soup.net (never the reason for a suspension)",
+    memberDescription: "whether your account is active, disabled by your organization, switched off because of your organization's Google Workspace directory, or suspended by Soup.net (never the reason for a suspension)",
   },
   {
     key: "lastActiveAt",
@@ -91,6 +91,13 @@ export const ADMIN_USER_COLUMNS: readonly AdminUserColumn[] = [
     memberDescription: "how you joined: named when the organization was created, added by Soup.net, by your email domain, or moved in from an existing account",
   },
   { key: "joinedAt", label: "Joined", anchor: "membership", audience: "everyone", memberDescription: "when you joined the organization" },
+  {
+    key: "directoryCheckedAt",
+    label: "Last checked",
+    anchor: "membership",
+    audience: "everyone",
+    memberDescription: "when your organization's Google Workspace directory last confirmed your account's status, if it has a directory connected",
+  },
   {
     key: "privateBookCount",
     label: "Private books",
@@ -141,7 +148,17 @@ export function memberVisibleDescriptions(): string[] {
 }
 
 /** The account's status as both consoles show it. A site suspension wins over an org disable. */
-export type AdminUserStatus = "active" | "disabled" | "suspended";
+export type AdminUserStatus =
+  | "active"
+  | "disabled"
+  | "suspended"
+  // Why the organization's Google Workspace directory switched the account
+  // off (stream Offboarding). Their own labels: an admin's re-enable doesn't
+  // lift these, so they never read as "Disabled by the organization".
+  | "directory_suspended"
+  | "directory_archived"
+  | "directory_deleted"
+  | "directory_unconfirmed";
 
 export function adminUserStatus(input: { suspendedAt: unknown; orgDisabledAt: unknown }): AdminUserStatus {
   if (input.suspendedAt) return "suspended";
@@ -165,4 +182,8 @@ export const ADMIN_USER_STATUS_LABELS: Record<AdminUserStatus, string> = {
   active: "Active",
   disabled: "Disabled by the organization",
   suspended: "Suspended by Soup.net",
+  directory_suspended: "Suspended in Google Workspace",
+  directory_archived: "Archived in Google Workspace",
+  directory_deleted: "Not in the directory",
+  directory_unconfirmed: "Directory check failed",
 };

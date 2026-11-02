@@ -17,6 +17,7 @@ import {
   useAdminGate,
   useAdminListQuery,
 } from "../components/admin/index.js";
+import { OrgDirectorySection, type DirectoryConnection } from "./OrgDirectorySection.js";
 
 /** A member row as GET /organizations/:id/members returns it (the org column set). */
 interface MemberRow {
@@ -32,6 +33,7 @@ interface MemberRow {
   activeKeyCount: number;
   privateBookCount: number;
   orgWideBookCount: number;
+  directoryCheckedAt: string | null;
 }
 
 interface MembersResponse {
@@ -90,6 +92,14 @@ export function OrgMembersPage() {
     failure: "Failed to load members",
   });
 
+  // A failed read (no directory set up on this server) just leaves the column off.
+  const directory = useAdminListQuery<DirectoryConnection>({
+    queryKey: ["org", organizationId, "directory"],
+    path: `/organizations/${organizationId}/directory`,
+    enabled,
+    failure: "Failed to load the directory connection",
+  });
+
   const act = useMutation({
     mutationFn: async ({ userId, action }: { userId: string; action: OrgMemberAction }) => {
       const base = `/organizations/${organizationId}/members/${userId}`;
@@ -146,6 +156,7 @@ export function OrgMembersPage() {
               { value: "active", label: ADMIN_USER_STATUS_LABELS.active },
               { value: "disabled", label: ADMIN_USER_STATUS_LABELS.disabled },
               { value: "suspended", label: ADMIN_USER_STATUS_LABELS.suspended },
+              { value: "directory", label: "Switched off by the directory" },
             ]}
           />
         </AdminField>
@@ -176,7 +187,12 @@ export function OrgMembersPage() {
             <AdminUsersTable
               viewer="org"
               listing="organization"
-              show={["email", "displayName", "status", "orgRole", "joinedVia", "joinedAt", "lastActiveAt", "recipeCount", "privateBookCount", "orgWideBookCount", "activeKeyCount"]}
+              show={[
+                "email", "displayName", "status", "orgRole", "joinedVia", "joinedAt", "lastActiveAt",
+                // Only means something once a directory is connected (CN-U5).
+                ...(directory.data?.connected ? ["directoryCheckedAt"] : []),
+                "recipeCount", "privateBookCount", "orgWideBookCount", "activeKeyCount",
+              ]}
               rows={rows}
               sortable={["email", "joinedAt", "lastActiveAt"]}
               extraAfterFirst
@@ -215,6 +231,7 @@ export function OrgMembersPage() {
                   header: "",
                   render: (u) => {
                     // A site suspension is Soup.net's, so the org's switch can't lift it.
+                    // A directory refusal keeps Disable: an admin's disable outlasts it.
                     if (u.status === "suspended") return null;
                     const action: OrgMemberAction = u.status === "disabled" ? { kind: "enable" } : { kind: "disable" };
                     if (!allowed(u, action)) return null;
@@ -239,6 +256,7 @@ export function OrgMembersPage() {
             <AdminPagination total={members.data?.total ?? 0} offset={offset} pageSize={PAGE_SIZE} onOffsetChange={setOffset} />
           </>
         )}
+        {organizationId ? <OrgDirectorySection organizationId={organizationId} /> : null}
       </div>
     </AdminLayout>
   );

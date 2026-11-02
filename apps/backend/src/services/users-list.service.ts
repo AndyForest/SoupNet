@@ -32,6 +32,7 @@ import {
   homeOrganizationIdOf,
   orgMemberBookCounts,
   orgMembersOf,
+  adminAccountStatus,
   publishedTrace,
 } from "../authz";
 
@@ -71,9 +72,9 @@ function columnExpression(key: string, orgId: string | undefined): SQL | null {
     case "displayName":
       return sql`u.display_name`;
     case "status":
-      // The account-state rule's own reason, so a directory suspension
-      // (stream Offboarding) shows here with no change to this file.
-      return sql`(CASE ${accountDisabledReason()} WHEN 'suspended' THEN 'suspended' WHEN 'org_disabled' THEN 'disabled' ELSE 'active' END)`;
+      // The account-state rule's own reason, so a member the directory
+      // switched off never reads as active or as an admin's disable.
+      return adminAccountStatus();
     case "lastActiveAt":
       return sql`GREATEST(u.last_login_at, (SELECT max(ak.last_used_at) FROM claimnet.api_keys ak WHERE ak.user_id = u.id))`;
     case "recipeCount":
@@ -94,6 +95,8 @@ function columnExpression(key: string, orgId: string | undefined): SQL | null {
       return sql`m.joined_via`;
     case "joinedAt":
       return sql`m.joined_at`;
+    case "directoryCheckedAt":
+      return sql`m.directory_checked_at`;
     case "privateBookCount":
       return sql`COALESCE(bc.private_books, 0)`;
     case "orgWideBookCount":
@@ -149,6 +152,7 @@ function filters(scope: UsersListScope, query: UsersListQuery): SQL[] {
     if (status === "active") where.push(sql`${accountDisabledReason()} IS NULL`);
     if (status === "disabled") where.push(sql`${accountDisabledReason()} = 'org_disabled'`);
     if (status === "suspended") where.push(sql`${accountDisabledReason()} = 'suspended'`);
+    if (status === "directory") where.push(sql`${accountDisabledReason()} IN ('directory_inactive', 'directory_unconfirmed')`);
     const orgRole = query["orgRole"];
     if (orgRole === "owner" || orgRole === "admin" || orgRole === "member") where.push(sql`m.role = ${orgRole}`);
   }

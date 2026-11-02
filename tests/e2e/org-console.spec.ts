@@ -727,6 +727,7 @@ test("X1 axe scan of the console pages", async ({ browser, request }, testInfo) 
     ["org", acme.olive, "/org", /Members/],
     ["org-books", acme.olive, "/org/books", /Recipe books/],
     ["org-activity", acme.olive, "/org/activity", /Activity/],
+    ["org-domains", acme.olive, "/org/domains", /Domains/],
     ["settings-organization", acme.max, "/app/settings/organization", /What your organization's admins can see/],
     ["admin-organizations", acme.sys, "/admin/organizations", /Organizations/],
   ];
@@ -1054,4 +1055,144 @@ test("E17g axe reports no nested-main violations on the console pages", async ({
       await context.close();
     });
   }
+});
+
+// ── E18–E20: Domains, the stalled migration, and the directory ─────────────
+
+/** Fixture writes this spec can't reach through a route: DNS and Google answers. */
+async function withDb(work: (sql: postgres.Sql) => Promise<void>) {
+  const sql = postgres({ ...dbSettings(), max: 1, onnotice: () => {} });
+  try {
+    await work(sql);
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+}
+
+test("E18 an admin adds a domain and is shown the TXT record, and refusals read plainly", async ({ page, request }, testInfo) => {
+  const acme = await setupAcme(request, "e18");
+  const domain = `${tag("e18")}.example`.toLowerCase();
+
+  await signIn(page, acme.olive, "/org/domains");
+  await expect(page.getByRole("link", { name: "Domains" }), "the org nav should link to Domains").toBeVisible();
+  await expect(page.getByRole("heading", { name: "Domains" })).toBeVisible();
+  await expect(page.getByText("No domains yet"), "an empty organization should say so").toBeVisible();
+
+  await page.getByLabel("Add a domain").fill("gmail.com");
+  await page.getByRole("button", { name: "Add domain" }).click();
+  await expect(page.getByRole("alert"), "a public provider should be refused in plain words").toContainText("public email provider");
+
+  await page.getByLabel("Add a domain").fill(domain);
+  await page.getByRole("button", { name: "Add domain" }).click();
+  const card = page.getByRole("region", { name: domain });
+  await expect(card.getByText("Waiting for the DNS record"), "a new domain should be pending").toBeVisible();
+  await expect(card.getByText(`_soupnet-challenge.${domain}`, { exact: true }), "the record's name should be shown").toBeVisible();
+  await expect(card.getByText(/^soupnet-domain-verification=/), "the record's value should be shown").toBeVisible();
+  await expect(card, "the instructions should publish the re-check and grace period").toContainText("fourteen days");
+  await shot(page, testInfo, "E18-01-pending");
+
+  await test.step("Delete asks first, and says nobody is affected", async () => {
+    await card.getByRole("button", { name: "Delete", exact: true }).click();
+    await expect(card, "the confirmation should say what deleting does").toContainText("Nobody's account or books change");
+    await card.getByRole("button", { name: `Delete ${domain}` }).click();
+    await expect(page.getByText("No domains yet"), "the domain should be gone").toBeVisible();
+  });
+});
+
+test("E19 a manager sees a stalled migration: status, accounts waiting and the failure message", async ({ page, request }, testInfo) => {
+  const acme = await setupAcme(request, "e19");
+  const domain = `${tag("e19")}.example`.toLowerCase();
+  const added = await fixture(request, "Olive adding the domain", "post", `/organizations/${acme.orgId}/domains`, acme.olive, { domain });
+  const claimId = added.data.id as string;
+  await withDb(async (sql) => {
+    // DNS proof and auto-join set directly: the switch itself would migrate.
+    await sql`UPDATE claimnet.organization_domains SET verified_at = now(), last_checked_at = now(), auto_join = true WHERE id = ${claimId}::uuid`;
+    await sql`UPDATE claimnet.users SET email = ${`gus@${domain}`}, email_verified_at = now() WHERE email = ${acme.gus.email}`;
+    await sql`INSERT INTO claimnet.audit_log (action, target_type, target_id, metadata)
+      VALUES ('organization_domain.migration_failed', 'organization', ${acme.orgId}::uuid, ${sql.json({ claimId, accounts: 1 })})`;
+  });
+
+  await signIn(page, acme.olive, "/org/domains");
+  const card = page.getByRole("region", { name: domain });
+  await expect(card.getByText("Verified", { exact: true }), "the domain should read as verified").toBeVisible();
+  await expect(card, "the waiting count should show").toContainText("1 verified account on this domain is waiting to join");
+  await expect(card.getByRole("status"), "the failure message should show, with its time").toContainText("1 account couldn't join on the last try");
+  await expect(card.getByRole("status")).toContainText("Last try:");
+  await expect(card.getByRole("checkbox"), "automatic joining should read as on").toBeChecked();
+  expect(await card.textContent(), "the count must never become a list").not.toContain(`gus@${domain}`);
+  await shot(page, testInfo, "E19-01-stalled");
+});
+
+test("E20 the directory section, the status labels, last checked and Activity", async ({ page, request }, testInfo) => {
+  const acme = await setupAcme(request, "e20");
+  const domain = `${tag("e20")}.example`.toLowerCase();
+
+  await test.step("with no directory, the section offers to connect after a domain is verified", async () => {
+    await signIn(page, acme.olive, "/org#directory");
+    const section = page.locator("#directory");
+    await expect(section.getByRole("heading", { name: "Google Workspace directory" })).toBeVisible();
+    test.skip((await section.textContent())?.includes("isn't set up") ?? false, "this stack has no directory credentials configured");
+    await expect(section, "connecting needs a verified domain first").toContainText("Verify a domain");
+    await expect(page.locator("table thead"), "no Last checked column before a connection").not.toContainText("Last checked");
+  });
+
+  const added = await fixture(request, "Olive adding the domain", "post", `/organizations/${acme.orgId}/domains`, acme.olive, { domain });
+  await withDb(async (sql) => {
+    await sql`UPDATE claimnet.organization_domains SET verified_at = now(), last_checked_at = now() WHERE id = ${added.data.id as string}::uuid`;
+  });
+
+  await test.step("the connect button says what it opens", async () => {
+    await page.reload();
+    const section = page.locator("#directory");
+    await expect(section.getByRole("button", { name: "Connect with Google" })).toBeVisible();
+    await expect(section, "the copy should name Google, the admin account and read-only access").toContainText(`Opens Google, where a Workspace admin's account for ${domain} is asked once for read-only access`);
+  });
+
+  await withDb(async (sql) => {
+    await sql`INSERT INTO claimnet.organization_directory_connections
+      (organization_id, kind, domain, domain_unicode, admin_email, credential_ciphertext, credential_iv, credential_tag, key_version, last_success_at, last_error, last_error_at)
+      VALUES (${acme.orgId}::uuid, 'admin_consent', ${domain}, ${domain}, ${`admin@${domain}`}, 'x', 'x', 'x', 1, now(), 'http_403', now())`;
+    await sql`UPDATE claimnet.organization_members SET directory_status = 'suspended', directory_checked_at = now() WHERE user_id = (SELECT id FROM claimnet.users WHERE email = ${acme.max.email})`;
+    await sql`INSERT INTO claimnet.audit_log (action, target_type, target_id, metadata)
+      SELECT 'organization.member_directory_status', 'user', id, ${sql.json({ organizationId: acme.orgId, from: "active", to: "suspended" })} FROM claimnet.users WHERE email = ${acme.max.email}`;
+  });
+
+  await test.step("connected: the member's label, last checked, and the error as a code", async () => {
+    await page.reload();
+    const row = page.locator("table tbody tr", { hasText: acme.max.email });
+    await expect(row, "Max should read as suspended in Workspace, not disabled").toContainText("Suspended in Google Workspace");
+    await expect(page.locator("table thead"), "the column should appear once connected").toContainText("Last checked");
+    const section = page.locator("#directory");
+    await expect(section).toContainText(`admin@${domain}`);
+    await expect(section, "the last error should be its code").toContainText("Google refused the connection (http_403)");
+    await expect(section, "checks aren't paused while the claim is current").not.toContainText("Checks paused");
+    await shot(page, testInfo, "E20-01-connected");
+  });
+
+  await test.step("the claim goes stale: the paused notice says so", async () => {
+    await withDb(async (sql) => {
+      await sql`UPDATE claimnet.organization_domains SET failing_since = now() WHERE id = ${added.data.id as string}::uuid`;
+    });
+    await page.reload();
+    await expect(page.locator("#directory"), "the paused copy").toContainText(`Checks paused: ${domain}'s verification isn't current. People already switched off stay switched off.`);
+    await expect(page.locator("#directory").getByRole("status").getByRole("link", { name: "Domains page" })).toBeVisible();
+  });
+
+  await test.step("Activity reads the status change", async () => {
+    await page.goto("/org/activity");
+    await expect(page.getByText(`The directory lists ${acme.max.email} as suspended`), "the status change should show").toBeVisible();
+    await expect(page.getByText("Google Workspace", { exact: true }).first(), "the directory is the actor").toBeVisible();
+  });
+
+  await test.step("disconnecting asks first, then Max is active again", async () => {
+    await page.goto("/org");
+    const section = page.locator("#directory");
+    await section.getByRole("button", { name: "Disconnect", exact: true }).click();
+    await expect(section, "the confirmation should say who comes back").toContainText("people the directory switched off can use Soup.net again");
+    await section.getByRole("button", { name: "Disconnect the directory" }).click();
+    await expect(section.getByRole("button", { name: "Disconnect", exact: true }), "the connection should be gone").toHaveCount(0);
+    await expect(page.locator("table tbody tr", { hasText: acme.max.email }), "Max should read active").toContainText("Active");
+    await page.goto("/org/activity");
+    await expect(page.getByText(/Disconnected the Google Workspace directory; recorded statuses cleared: 1 suspended/), "Activity gives the cleared count").toBeVisible();
+  });
 });

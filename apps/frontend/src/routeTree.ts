@@ -40,6 +40,7 @@ import { AdminOrganizationsPage, AdminOrganizationMembersPage } from "./pages/Ad
 import { OrgMembersPage } from "./pages/OrgMembersPage.js";
 import { OrgBooksPage } from "./pages/OrgBooksPage.js";
 import { OrgActivityPage } from "./pages/OrgActivityPage.js";
+import { OrgDomainsPage } from "./pages/OrgDomainsPage.js";
 import { SettingsOrganizationPage } from "./pages/SettingsOrganizationPage.js";
 import { isLoggedIn, getEmailVerified } from "./auth.js";
 import { safeReturnTarget } from "./lib/return-target.js";
@@ -420,6 +421,13 @@ const orgBooksRoute = createRoute({
   component: OrgBooksPage,
 });
 
+const orgDomainsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/org/domains",
+  beforeLoad: requireAuth,
+  component: OrgDomainsPage,
+});
+
 const orgActivityRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/org/activity",
@@ -477,6 +485,7 @@ export const routeTree = rootRoute.addChildren([
   adminOrganizationMembersRoute,
   orgMembersRoute,
   orgBooksRoute,
+  orgDomainsRoute,
   orgActivityRoute,
 ]);
 

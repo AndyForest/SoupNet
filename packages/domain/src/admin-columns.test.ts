@@ -44,6 +44,7 @@ describe("columnsFor", () => {
         "orgRole",
         "joinedVia",
         "joinedAt",
+        "directoryCheckedAt",
         "privateBookCount",
         "orgWideBookCount",
       ].sort(),
