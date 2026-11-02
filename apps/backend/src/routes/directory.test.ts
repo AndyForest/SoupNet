@@ -782,6 +782,45 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     expect(await requestsFor(max.email)).toBe(before + 2);
   });
 
+  it("OB-C1: a session runs the check by itself, with no key involved, and answers from it", async () => {
+    const org = await acme();
+    const max = await member(org, "session-only");
+    await google.setDirectoryUser(max.email, { suspended: true });
+    expect(await requestsFor(max.email)).toBe(0);
+    const me = await call(max.token, "GET", "/auth/me");
+    expect(me.status).toBe(403);
+    expect(((await me.json()) as { error: string }).error).toBe("directory_inactive");
+    expect(await requestsFor(max.email)).toBe(1);
+    expect((await memberRow(max.userId)).directory_status).toBe("suspended");
+  });
+
+  it("OB-C1: Google sign-in is refused for a member the directory switched off, with the directory's reason and no handoff", async () => {
+    const org = await acme();
+    const max = await member(org, "google-refused");
+    await google.setDirectoryUser(max.email, {});
+    await linkGoogle(max, `refused-${run}-${++n}`, org.domain);
+    const subject = (await identitiesOf(max.userId))[0]!;
+    await google.setDirectoryUser(max.email, { suspended: true });
+    await makeDue(max.userId);
+    const tab = secret();
+    const start = await call(null, "POST", "/auth/google/start", { binding: sha256(tab) });
+    const url = new URL(((await start.json()) as { data: { url: string } }).data.url);
+    const code = await google.issue({ sub: subject, email: max.email, email_verified: true, hd: org.domain }, { nonce: url.searchParams.get("nonce")!, codeChallenge: url.searchParams.get("code_challenge")! });
+    const cb = await fetch(`${BASE}/auth/google/callback?state=${url.searchParams.get("state")}&code=${code}`, { redirect: "manual" });
+    expect(cb.headers.get("location")).toBe(`${FRONTEND}/auth/google/complete#error=directory_inactive`);
+  });
+
+  it("OB-C10: a recorded status with no connection behind it refuses nobody", async () => {
+    const org = await acme();
+    const max = await member(org, "no-connection");
+    await google.setDirectoryUser(max.email, { suspended: true });
+    expect((await useKey(max.key)).status).toBe(401);
+    // The routes clear statuses with the connection; this is the fragment's own guard, should a row ever go otherwise.
+    await getDb().execute(sql`DELETE FROM claimnet.organization_directory_connections WHERE organization_id = ${org.orgId}::uuid`);
+    expect((await memberRow(max.userId)).directory_status).toBe("suspended");
+    expect((await useKey(max.key)).status).toBe(200);
+  });
+
   it("OB-C1, F144: a proof or password at the verification link gets the directory's message, and no session", async () => {
     const org = await acme();
     for (const [label, proving] of [
@@ -862,7 +901,7 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     const victim = await member(org, "held-off");
     await google.setDirectoryUser(victim.email, { suspended: true });
     expect((await useKey(victim.key)).status).toBe(401);
-    // Her status was just recorded active, so nothing else would ask for an hour.
+    // Ann's status was just recorded active, so nothing else would ask for an hour.
     expect((await useKey(ann.key)).status).toBe(200);
     expect((await memberRow(ann.userId)).directory_status).toBe("active");
     await google.setDirectoryUser(ann.email, { suspended: true });

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   newTabSecret,
+  isDirectoryConnectError,
   sha256Base64Url,
   returnTargetFor,
   authorizeTargetFrom,
@@ -76,6 +77,11 @@ describe("the outcome copy", () => {
 
   it("has a sentence for every code the callback can name", () => {
     for (const code of codes.filter((c) => c !== "failed")) expect(googleSignInMessage(code), code).not.toBe(googleSignInMessage("failed"));
+  });
+
+  it("tells a directory connection that failed from a sign-in that was refused (F188)", () => {
+    for (const code of ["directory_wrong_account", "directory_wrong_domain", "directory_no_refresh_token", "directory_not_admin", "directory_not_manager", "directory_failed"]) expect(isDirectoryConnectError(code), code).toBe(true);
+    for (const code of ["directory_inactive", "directory_unconfirmed", "failed", "expired"]) expect(isDirectoryConnectError(code), code).toBe(false);
   });
 
   it("falls back to the failure copy", () => {
