@@ -199,8 +199,8 @@ jobs:
       # Same cache step as ranking-eval (keep the two in sync): a cache hit
       # skips the HF Hub download entirely, which is also this job's main
       # flake source — 2026-07-21, PR #53: the hub reset the ~23 MB model
-      # download mid-stream (ECONNRESET), embedQuery fell back to lexical
-      # (null), and both assertions failed on an unrelated diff. Restore runs
+      # download mid-stream (ECONNRESET), embedQuery returned null,
+      # and both assertions failed on an unrelated diff. Restore runs
       # AFTER npm ci (which would wipe node_modules contents).
       - name: Cache HF embedding model
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
