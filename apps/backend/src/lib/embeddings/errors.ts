@@ -45,13 +45,14 @@ export function parseRetryAfterMs(
 /**
  * True when the provider, not the row, is the problem, so the rows should go back
  * to `pending` and the caller should back off. False leaves the poison-pill path
- * to isolate the row. Google answers a bad API key with a 400, hence the body check.
+ * to isolate the row. Google answers a bad API key, and an account precondition such as
+ * billing, with a 400, hence the body check.
  */
 export function isProviderSideFailure(err: unknown): boolean {
   if (err instanceof EmbeddingHttpError) {
     if ([401, 403, 404, 408, 429].includes(err.status)) return true;
     if (err.status >= 500) return true;
-    return err.body.includes("API_KEY_INVALID");
+    return err.body.includes("API_KEY_INVALID") || err.body.includes("FAILED_PRECONDITION");
   }
   if (err instanceof Error) {
     // fetch: TypeError on a network failure, TimeoutError on AbortSignal.timeout.

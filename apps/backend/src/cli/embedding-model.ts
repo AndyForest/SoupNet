@@ -12,6 +12,10 @@
  * retry-failed --model <id>
  *   Puts a model's failed rows back to pending for the worker.
  *
+ * repair-image-fallbacks [--apply]
+ *   A text fallback that overwrote an image's real vector during a rebuild: restores
+ *   the real one from vector_cache. Dry run unless --apply.
+ *
  * prune --model <old> --keep <read id> [--batch 500] [--sleep-ms 2000] [--cache]
  *       [--accept-refused] [--apply]
  *   Removes a retired model's rows in small batches. Dry run unless --apply.
@@ -19,15 +23,19 @@
  *   bytes are gone, the old row can be the only vector that ever saw the image.
  */
 
+import { Console } from "node:console";
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { getDb } from "../db";
 import {
   readCoverage,
+  readFailedRows,
   readFlipGap,
   readLiveTasks,
-  readRefusedGap,
 } from "../services/embedding-model-status.service";
+
+// Everything on one stream, so a table stays under its heading in any log.
+const out = new Console(process.stderr, process.stderr);
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -53,7 +61,7 @@ async function status(db: PostgresJsDatabase): Promise<void> {
   const read = required("read");
   const target = arg("target");
   console.warn("vectors:");
-  console.table(rowsOf(await db.execute(sql`
+  out.table(rowsOf(await db.execute(sql`
     SELECT model_id, status, count(*)::int AS n,
            count(*) FILTER (WHERE vector_source = 'text_fallback')::int AS text_fallback
     FROM claimnet.embedding_vectors WHERE task_type = 'SEMANTIC_SIMILARITY'
@@ -61,14 +69,17 @@ async function status(db: PostgresJsDatabase): Promise<void> {
   `)));
   console.warn(`search coverage under ${read}:`, await readCoverage(db, read));
   if (target) {
-    const gap = await readFlipGap(db, read, target);
-    const refused = await readRefusedGap(db, read, target);
-    console.warn(`gap ${read} -> ${target}: ${gap}, of which refused by the provider: ${refused}. Safe to flip reads: ${gap === 0 ? "YES" : "NO"}`);
+    const g = await readFlipGap(db, read, target);
+    console.warn(
+      `gap ${read} -> ${target}: ${g.gap} chunks search reads, of which provider refused: ${g.refused}, over the retry limit: ${g.retryLimit}, ` +
+        `still on their way: ${g.gap - g.refused - g.retryLimit}. Chunks search doesn't read, not counted: ${g.notSearched}. ` +
+        `Safe to flip reads: ${g.gap === 0 ? "YES" : "NO"}`,
+    );
   }
   console.warn("tasks heard from in the last 3 minutes:");
-  console.table(await readLiveTasks(db));
+  out.table(await readLiveTasks(db));
   console.warn("image sources:");
-  console.table(rowsOf(await db.execute(sql`
+  out.table(rowsOf(await db.execute(sql`
     SELECT es.source_type, count(DISTINCT es.id)::int AS image_sources, count(DISTINCT ec.id)::int AS chunks
     FROM claimnet.embedding_sources es
     JOIN claimnet.embedding_chunks ec ON ec.embedding_source_id = es.id
@@ -80,14 +91,12 @@ async function status(db: PostgresJsDatabase): Promise<void> {
            pg_size_pretty(pg_relation_size('claimnet.embedding_vectors_hnsw_idx')) AS hnsw,
            pg_size_pretty(pg_total_relation_size('claimnet.vector_cache')) AS vector_cache
   `))[0]);
-  const failed = rowsOf(await db.execute(sql`
-    SELECT id AS vector_id, model_id, left(error, 120) AS error
-    FROM claimnet.embedding_vectors WHERE status = 'failed' ORDER BY updated_at DESC LIMIT 25
-  `));
+  const failed = await readFailedRows(db);
   if (failed.length > 0) {
-    console.warn("refused rows (latest 25). Try retry-failed; if the provider keeps refusing, see ADR-0024:");
-    console.table(failed);
+    console.warn("failed rows, by kind (top 25). Try retry-failed; if the provider keeps refusing, see ADR-0024:");
+    out.table(failed);
   }
+  console.warn(`text fallbacks with a real image vector in the cache: ${await count(db, restorableFallbacks())}. repair-image-fallbacks restores them.`);
 }
 
 async function retryFailed(db: PostgresJsDatabase): Promise<void> {
@@ -99,6 +108,33 @@ async function retryFailed(db: PostgresJsDatabase): Promise<void> {
     RETURNING id
   `));
   console.warn(`${rows.length} rows under ${model} back to pending.`);
+}
+
+const RESTORABLE_FROM = sql`
+  FROM claimnet.embedding_vectors ev
+  JOIN claimnet.embedding_chunks ec ON ec.id = ev.embedding_chunk_id
+  JOIN claimnet.vector_cache vc
+    ON vc.content_hash = ec.chunk_hash AND vc.model_id = ev.model_id AND vc.task_type = ev.task_type
+  WHERE ev.status = 'complete' AND ev.vector_source = 'text_fallback'
+`;
+
+// A text fallback never enters the cache, so a cache row under its hash is the image's.
+const restorableFallbacks = () => sql`SELECT count(*)::int AS n ${RESTORABLE_FROM}`;
+
+async function repairImageFallbacks(db: PostgresJsDatabase): Promise<void> {
+  const n = await count(db, restorableFallbacks());
+  if (!flag("apply")) {
+    console.warn(`${n} text fallbacks can be restored from vector_cache. Dry run. Pass --apply to restore.`);
+    return;
+  }
+  const rows = rowsOf(await db.execute(sql`
+    UPDATE claimnet.embedding_vectors target
+    SET vector = found.vector::halfvec(3072), vector_source = 'server', updated_at = now()
+    FROM (SELECT ev.id, vc.vector ${RESTORABLE_FROM}) found
+    WHERE target.id = found.id
+    RETURNING target.id
+  `));
+  console.warn(`${rows.length} text fallbacks restored from vector_cache.`);
 }
 
 /** Whatever could make this prune take rows away from search, checked before each batch. */
@@ -131,14 +167,12 @@ async function pruneRefusal(
     return `${keep} has no complete vectors. Removing ${model} would empty search.`;
   }
 
-  const gap = await readFlipGap(db, model, keep);
-  if (gap > 0) {
-    const refused = await readRefusedGap(db, model, keep);
-    if (!acceptRefused || refused < gap) {
-      return `${gap} chunks are complete under ${model} and not under ${keep}, ${refused} of them refused by the provider. ` +
-        "Removing them drops them from search. Let the rebuild finish; for refused rows, try retry-failed, " +
-        "and pass --accept-refused only if you accept losing them.";
-    }
+  const g = await readFlipGap(db, model, keep);
+  if (g.gap > 0 && !(acceptRefused && g.refused === g.gap)) {
+    return `${g.gap} chunks search reads are complete under ${model} and not under ${keep}: ${g.refused} refused by the provider, ` +
+      `${g.retryLimit} over the retry limit, ${g.gap - g.refused - g.retryLimit} still on their way. Removing them drops them from search. ` +
+      "Let the rebuild finish, and run retry-failed for failed rows. --accept-refused covers only rows the provider refused, " +
+      "so pass it only when nothing else is left and you accept losing them.";
   }
   return null;
 }
@@ -174,13 +208,14 @@ async function prune(db: PostgresJsDatabase): Promise<void> {
     WHERE old.model_id = ${model} AND old.vector_source = 'server' AND old.status = 'complete'
       AND k.vector_source = 'text_fallback'
   `);
-  const refusedLoss = await readRefusedGap(db, model, keep);
+  const loss = await readFlipGap(db, model, keep);
 
   console.warn("WARNING: this is irreversible without another paid rebuild.");
   console.warn(`  Removes ${total} rows under ${model}, keeping ${kept} complete rows under ${keep}.`);
   console.warn(`  Flipping reads back to ${model} afterwards means rebuilding it first, if that model still serves.`);
   console.warn(`  ${imageLoss} image sources hold their only image-derived vector under ${model}: their kept vector is text only, and their bytes are gone.`);
-  if (refusedLoss > 0) console.warn(`  ${refusedLoss} chunks the provider refused under ${keep} leave search for good.`);
+  if (loss.refused > 0) console.warn(`  ${loss.refused} chunks the provider refused under ${keep} leave search for good.`);
+  if (loss.notSearched > 0) console.warn(`  ${loss.notSearched} chunks search doesn't read aren't complete under ${keep}. They leave the map's experimental views until the worker fills them, if it can.`);
   console.warn(`  vector_cache rows under ${model}: ${cached}, ${includeCache ? "removed too" : "kept (pass --cache to remove)"}.`);
 
   if (!apply) {
@@ -227,8 +262,9 @@ async function main(): Promise<void> {
   const db = getDb();
   if (command === "status") await status(db);
   else if (command === "retry-failed") await retryFailed(db);
+  else if (command === "repair-image-fallbacks") await repairImageFallbacks(db);
   else if (command === "prune") await prune(db);
-  else throw new Refused("Usage: embedding-model status|retry-failed|prune (see the top of this file)");
+  else throw new Refused("Usage: embedding-model status|retry-failed|repair-image-fallbacks|prune (see the top of this file)");
 }
 
 main().then(
