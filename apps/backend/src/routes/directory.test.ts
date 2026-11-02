@@ -1131,6 +1131,44 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     expect(res.status).toBe(200);
   });
 
+  it("F199: a later success clears the error, but not a rename; one person's bad answers while colleagues succeed reach the managers, at most daily", async () => {
+    const org = await acme();
+    const max = await member(org, "max-bad");
+    const ida = await member(org, "ida-good");
+    await google.setDirectoryUser(max.email, {});
+    await google.setDirectoryUser(ida.email, {});
+    expect((await useKey(max.key)).status).toBe(200);
+    expect((await useKey(ida.key)).status).toBe(200);
+    const lastError = async () => ((await (await call(org.olive.token, "GET", `/organizations/${org.orgId}/directory`)).json()) as { data: Json }).data["lastError"];
+    const badThenGood = async () => {
+      await makeDue(max.userId);
+      expect((await useKey(max.key)).status).toBe(200);
+      expect(await lastError()).toBe("bad_answer");
+      await makeDue(ida.userId);
+      expect((await useKey(ida.key)).status).toBe(200);
+      expect(await lastError()).toBeNull();
+    };
+
+    await google.setDirectoryUser(max.email, { rawBody: "null" });
+    await badThenGood();
+    expect(await warningsTo(org.olive.email, 1)).toBe(1);
+    await badThenGood();
+    expect(await warningsTo(org.olive.email, 2)).toBe(1);
+    // A day later, still going: they hear again, before that person is signed out for good.
+    await getDb().execute(sql`UPDATE claimnet.organization_directory_connections SET warned_at = NOW() - interval '25 hours', last_success_at = NOW() - interval '1 hour' WHERE organization_id = ${org.orgId}::uuid`);
+    await badThenGood();
+    expect(await warningsTo(org.olive.email, 2)).toBe(2);
+
+    await google.setDirectoryUser(ida.email, { primaryEmail: `ida-now-${run}@${org.domain}`, aliases: [ida.email] });
+    await makeDue(ida.userId);
+    expect((await useKey(ida.key)).status).toBe(200);
+    expect(await lastError()).toBe("member_renamed");
+    await google.setDirectoryUser(max.email, {});
+    await makeDue(max.userId);
+    expect((await useKey(max.key)).status).toBe(200);
+    expect(await lastError()).toBe("member_renamed");
+  });
+
   it("OFF-DIR-10 / OB-C10: disconnecting stops the checks and lifts the directory's refusals", async () => {
     const org = await acme();
     const max = await member(org, "freed");

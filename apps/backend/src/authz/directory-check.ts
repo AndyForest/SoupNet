@@ -207,8 +207,8 @@ async function askAndRecord(db: PostgresJsDatabase, current: NonNullable<typeof 
   await db.execute(sql`
     UPDATE claimnet.organization_directory_connections
     SET last_success_at = NOW(),
-        last_error = ${result.renamed ? "member_renamed" : sql`last_error`},
-        last_error_at = ${result.renamed ? sql`NOW()` : sql`last_error_at`}
+        last_error = CASE WHEN ${result.renamed} THEN 'member_renamed' WHEN last_error = 'member_renamed' THEN last_error END,
+        last_error_at = CASE WHEN ${result.renamed} THEN NOW() WHEN last_error = 'member_renamed' THEN last_error_at END
     WHERE organization_id = ${row.organization_id}::uuid
   `);
   if (status !== row.previous_status) {
