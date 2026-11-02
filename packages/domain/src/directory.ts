@@ -145,14 +145,18 @@ export function parseServiceAccountKey(raw: unknown): { ok: true; key: ServiceAc
  * connected (F186), or null when none are. With no check there is no warning
  * either: every member on those domains would just be refused a day after their
  * last check. A failed deploy says so at once, with the old tasks still serving.
+ * Names the organizations, so the operator needn't go to SQL to find them.
  */
-export function directoryOffProblem(connections: number): string | null {
-  if (connections === 0) return null;
-  const who = connections === 1 ? "1 organization has" : `${connections} organizations have`;
+export function directoryOffProblem(connected: Array<{ id: string; name: string }>): string | null {
+  if (connected.length === 0) return null;
+  const SHOWN = 10;
+  const names = connected.slice(0, SHOWN).map((o) => `${JSON.stringify(o.name)} (${o.id})`).join(", ");
+  const more = connected.length > SHOWN ? `, and ${connected.length - SHOWN} more` : "";
   return (
-    `The Workspace directory check is off (DIRECTORY_CREDENTIALS_KEY or Google sign-in isn't configured), but ${who} a directory connection. ` +
+    `The Workspace directory check is off (DIRECTORY_CREDENTIALS_KEY or Google sign-in isn't configured), but ${connected.length === 1 ? "this organization has" : "these organizations have"} a directory connection: ${names}${more}. ` +
     `Started like this, every member on those domains would be refused ${DIRECTORY_STALE_HOURS} hours after their last check, owners included, with no warning. ` +
-    `Restore the configuration. To turn the check off for good, first remove each connection (DELETE /admin/organizations/:id/directory) while it is still configured.`
+    `Restore the configuration. To turn the check off for good, first remove each connection (DELETE /admin/organizations/:id/directory) while it is still configured. ` +
+    `If the key itself is lost, start with a new 32-byte key: the server runs, the stored credentials can't be read, each organization's owners and admins are warned at their next failed check, and the same DELETE still works, so each company can then reconnect.`
   );
 }
 

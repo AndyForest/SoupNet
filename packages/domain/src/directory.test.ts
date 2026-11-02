@@ -124,13 +124,18 @@ describe("parseServiceAccountKey (OB-K3)", () => {
 });
 
 describe("directoryOffProblem (F186)", () => {
-  it("is nothing with no connections, and names the count, the lockout and the way out otherwise", () => {
-    expect(directoryOffProblem(0)).toBeNull();
-    expect(directoryOffProblem(1)).toContain("1 organization has a directory connection");
-    const many = directoryOffProblem(3)!;
-    expect(many).toContain("3 organizations have a directory connection");
-    expect(many).toContain("refused 24 hours after their last check");
-    expect(many).toContain("DELETE /admin/organizations/:id/directory");
+  it("is nothing with no connections, and names the organizations, the lockout and the ways out otherwise", () => {
+    expect(directoryOffProblem([])).toBeNull();
+    expect(directoryOffProblem([{ id: "o1", name: "Acme" }])).toContain('this organization has a directory connection: "Acme" (o1).');
+    const two = directoryOffProblem([{ id: "o1", name: "Acme" }, { id: "o2", name: 'Bad"\nName' }])!;
+    expect(two).toContain('these organizations have a directory connection: "Acme" (o1), "Bad\\"\\nName" (o2).');
+    expect(two).not.toContain("\n");
+    expect(two).toContain("refused 24 hours after their last check");
+    expect(two).toContain("DELETE /admin/organizations/:id/directory");
+    expect(two).toContain("If the key itself is lost, start with a new 32-byte key");
+    const many = directoryOffProblem(Array.from({ length: 12 }, (_, i) => ({ id: `o${i}`, name: `Org ${i}` })))!;
+    expect(many).toContain('"Org 9" (o9), and 2 more.');
+    expect(many).not.toContain("Org 10");
   });
 });
 

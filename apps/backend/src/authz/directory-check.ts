@@ -364,10 +364,13 @@ export async function directoryConnectionOf(db: SqlExecutor, organizationId: str
   };
 }
 
-/** How many organizations are connected, for the startup check (F186). */
-export async function directoryConnectionCount(db: SqlExecutor): Promise<number> {
-  const rows = (await db.execute(sql`SELECT count(*)::int AS n FROM claimnet.organization_directory_connections`)) as unknown as Array<{ n: number }>;
-  return rows[0]?.n ?? 0;
+/** Which organizations are connected, for the startup check (F186, F198). */
+export async function directoryConnectedOrganizations(db: SqlExecutor): Promise<Array<{ id: string; name: string }>> {
+  return (await db.execute(sql`
+    SELECT o.id, o.name FROM claimnet.organization_directory_connections dc
+    JOIN claimnet.organizations o ON o.id = dc.organization_id
+    ORDER BY o.name, o.id
+  `)) as unknown as Array<{ id: string; name: string }>;
 }
 
 /** Does this organization have a directory connection on `domain`? For the domain emails (F120). */

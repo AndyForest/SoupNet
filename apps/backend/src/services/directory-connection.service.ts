@@ -32,7 +32,7 @@ import type { GoogleSignInError } from "@soupnet/domain";
 import {
   askDirectoryAboutActor,
   deleteDirectoryConnection,
-  directoryConnectionCount,
+  directoryConnectedOrganizations,
   directoryHoldOver,
   installDirectoryChecker,
   saveDirectoryConnection,
@@ -84,7 +84,7 @@ export function installDirectoryChecking(): "on" | "off" {
 export async function installDirectoryCheckingOrStop(db: SqlExecutor): Promise<"on" | "off"> {
   const state = installDirectoryChecking();
   if (state === "off") {
-    const problem = directoryOffProblem(await directoryConnectionCount(db));
+    const problem = directoryOffProblem(await directoryConnectedOrganizations(db));
     if (problem) throw new Error(problem);
   }
   return state;

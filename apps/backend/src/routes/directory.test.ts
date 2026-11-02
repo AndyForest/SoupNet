@@ -1185,6 +1185,37 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !process.env["DIRECTORY_CRE
     expect((await auditRows("organization.directory_deletions_noticed", org.orgId)).map((m) => m["count"])).toEqual([3]);
   });
 
+  it("F198: with the key lost, a brand-new key starts, the connection reports it can't be read, and the operator's way out works on the real row", async () => {
+    const org = await acme();
+    const max = await member(org, "key-lost");
+    const { installDirectoryChecker, checkDirectoryIfDue } = await import("../authz");
+    const { installDirectoryCheckingOrStop, removeDirectoryConnection } = await import("../services/directory-connection.service");
+    const saved = process.env["DIRECTORY_CREDENTIALS_KEY"];
+    const brandNew = crypto.randomBytes(32);
+    process.env["DIRECTORY_CREDENTIALS_KEY"] = brandNew.toString("hex");
+    try {
+      expect(await installDirectoryCheckingOrStop(getDb())).toBe("on");
+      const asked: string[] = [];
+      installDirectoryChecker(
+        brandNew,
+        (input) => {
+          asked.push(input.member.email);
+          return Promise.resolve({ answer: { kind: "unreachable" }, renamed: false });
+        },
+        () => Promise.resolve(),
+        () => Promise.resolve(),
+      );
+      expect(await checkDirectoryIfDue(getDb(), max.userId)).toBe(false);
+      expect(asked).toEqual([]);
+      const view = ((await (await call(org.olive.token, "GET", `/organizations/${org.orgId}/directory`)).json()) as { data: Json }).data;
+      expect(view["lastError"]).toBe("decrypt_failed");
+      expect(await removeDirectoryConnection(getDb(), org.orgId, { userId: org.olive.userId, operator: true })).toBe(true);
+      expect(await stillConnected(org)).toBe(false);
+    } finally {
+      process.env["DIRECTORY_CREDENTIALS_KEY"] = saved;
+    }
+  });
+
   it("OFF-DIR-10 / OB-C10: disconnecting stops the checks and lifts the directory's refusals", async () => {
     const org = await acme();
     const max = await member(org, "freed");
