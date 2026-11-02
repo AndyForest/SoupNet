@@ -18,8 +18,10 @@ export const DIRECTORY_STALE_HOURS = 24;
 export const DIRECTORY_TIMEOUT_MS = 2_000;
 /** A claim on a check older than this may be taken over (the task holding it died). */
 export const DIRECTORY_CLAIM_SECONDS = 30;
-/** A connection failing this long warns the organization's owners and admins once. */
+/** With nothing but no answers from Google for this long, the owners and admins are warned once. Google refusing the credential warns at once. */
 export const DIRECTORY_WARNING_HOURS = 6;
+/** How long a disconnect or a replacement waits, once the owners and admins have been warned, when the directory can't answer about the person doing it. */
+export const DIRECTORY_HOLD_HOURS = 6;
 
 export const DIRECTORY_SCOPE = "https://www.googleapis.com/auth/admin.directory.user.readonly";
 
@@ -143,15 +145,37 @@ export function parseServiceAccountKey(raw: unknown): { ok: true; key: ServiceAc
  * connected (F186), or null when none are. With no check there is no warning
  * either: every member on those domains would just be refused a day after their
  * last check. A failed deploy says so at once, with the old tasks still serving.
+ * Names the organizations, so the operator needn't go to SQL to find them.
  */
-export function directoryOffProblem(connections: number): string | null {
-  if (connections === 0) return null;
-  const who = connections === 1 ? "1 organization has" : `${connections} organizations have`;
+export function directoryOffProblem(connected: Array<{ id: string; name: string }>): string | null {
+  if (connected.length === 0) return null;
+  const SHOWN = 10;
+  const names = connected.slice(0, SHOWN).map((o) => `${JSON.stringify(o.name)} (${o.id})`).join(", ");
+  const more = connected.length > SHOWN ? `, and ${connected.length - SHOWN} more` : "";
   return (
-    `The Workspace directory check is off (DIRECTORY_CREDENTIALS_KEY or Google sign-in isn't configured), but ${who} a directory connection. ` +
+    `The Workspace directory check is off (DIRECTORY_CREDENTIALS_KEY or Google sign-in isn't configured), but ${connected.length === 1 ? "this organization has" : "these organizations have"} a directory connection: ${names}${more}. ` +
     `Started like this, every member on those domains would be refused ${DIRECTORY_STALE_HOURS} hours after their last check, owners included, with no warning. ` +
-    `Restore the configuration. To turn the check off for good, first remove each connection (DELETE /admin/organizations/:id/directory) while it is still configured.`
+    `Restore the configuration. To turn the check off for good, first remove each connection (DELETE /admin/organizations/:id/directory) while it is still configured. ` +
+    `If the key itself is lost, start with a new 32-byte key: the server runs, the stored credentials can't be read, each organization's owners and admins are warned at their next failed check, and the same DELETE still works, so each company can then reconnect.`
   );
+}
+
+/** This many members found removed from the directory within the hour tells the owners and admins, without delaying any of them. */
+export const DIRECTORY_DELETION_BURST = 3;
+
+/**
+ * Several members were switched off as removed from the directory within the
+ * hour. A layoff looks just like this, and so does something answering 404 in
+ * Google's shape for everyone but the admin, so they are refused at once and the
+ * people who can tell the two apart hear about it (F184).
+ */
+export function directoryDeletionsEmail(organizationName: string, count: number): { subject: string; text: string } {
+  return {
+    subject: `${count} ${organizationName} members were just removed by your Google Workspace directory`,
+    text:
+      `In the last hour, your Google Workspace directory told Soup.net that ${count} of ${organizationName}'s members no longer exist, so they can't use Soup.net now. More may follow. ` +
+      `If people have just left, there's nothing to do. If not, something may be answering for Google wrongly: check your organization's members in Soup.net, and contact Soup.net support if the list looks wrong.`,
+  };
 }
 
 /** "2 people", "1 person", "nobody", for the emails below. */
@@ -196,16 +220,17 @@ export function directoryChangedEmail(
  * stale a day after their own last check, so the hour named is the latest
  * anyone keeps access, not the first (verification O1, O2).
  */
-export function directoryWarningEmail(organizationName: string, lastSuccessAt: Date): { subject: string; text: string } {
+export function directoryWarningEmail(organizationName: string, lastSuccessAt: Date, memberEmail: string): { subject: string; text: string } {
   const utc = (d: Date) => d.toISOString().replace("T", " ").slice(0, 16) + " UTC";
   const everyoneBy = new Date(lastSuccessAt.getTime() + DIRECTORY_STALE_HOURS * 3600_000);
   return {
     subject: `Soup.net can't reach ${organizationName}'s Google Workspace directory`,
     text:
-      `Soup.net just failed to check one of ${organizationName}'s members against your Google Workspace directory, and its last successful check was at ${utc(lastSuccessAt)}. ` +
+      `Soup.net just failed to check ${memberEmail} against your Google Workspace directory, and its last successful check of anyone was at ${utc(lastSuccessAt)}. ` +
       `A member whose status hasn't been confirmed for ${DIRECTORY_STALE_HOURS} hours is signed out of Soup.net, and their agents' keys stop working until a check succeeds. ` +
       `Members who haven't used Soup.net recently may be signed out already, and unless a check succeeds, everyone on your domain will be by ${utc(everyoneBy)}. ` +
       `To fix it, an owner or admin can reconnect the directory from your organization's console in Soup.net (or switch to a service account). ` +
+      `While the directory can't answer, an owner or admin can disconnect it ${DIRECTORY_HOLD_HOURS} hours after this email, which stops the checks and lets back in anyone it had switched off, so if you aren't expecting that, reconnect it first. ` +
       `If nobody in your organization can sign in any more, contact Soup.net support.`,
   };
 }

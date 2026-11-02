@@ -28,7 +28,7 @@
 
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { DIRECTORY_WARNING_HOURS, directoryStatusRefuses } from "@soupnet/domain";
+import { DIRECTORY_DELETION_BURST, DIRECTORY_HOLD_HOURS, DIRECTORY_STALE_HOURS, DIRECTORY_WARNING_HOURS, directoryStatusRefuses } from "@soupnet/domain";
 import type { DirectoryAnswer, DirectoryStatus } from "@soupnet/domain";
 import { open, seal } from "../lib/secret-box";
 import type { SealedSecret } from "../lib/secret-box";
@@ -47,10 +47,13 @@ export interface DirectoryCheckInput {
 
 export type DirectoryChecker = (input: DirectoryCheckInput) => Promise<{ answer: DirectoryAnswer; renamed: boolean }>;
 
-/** Told once per outage, six hours in (draft 47f9620f). */
-export type DirectoryWarner = (organizationId: string) => Promise<void>;
+/** Told once per failing run; `memberEmail` is who the failed check was about (draft 47f9620f, F196). */
+export type DirectoryWarner = (organizationId: string, memberEmail: string) => Promise<void>;
 
-let installed: { key: Buffer; check: DirectoryChecker; warn: DirectoryWarner } | null = null;
+/** Several members found removed within the hour (F184). */
+export type DirectoryDeletionsNotifier = (organizationId: string, count: number) => Promise<void>;
+
+let installed: { key: Buffer; check: DirectoryChecker; warn: DirectoryWarner; noticeDeletions: DirectoryDeletionsNotifier } | null = null;
 
 /**
  * Install Google (the server does this at startup when
@@ -58,8 +61,8 @@ let installed: { key: Buffer; check: DirectoryChecker; warn: DirectoryWarner } |
  * members fail closed a day after their last successful check, which is why a
  * server won't start without it once any connection exists (F186).
  */
-export function installDirectoryChecker(key: Buffer, check: DirectoryChecker, warn: DirectoryWarner): void {
-  installed = { key, check, warn };
+export function installDirectoryChecker(key: Buffer, check: DirectoryChecker, warn: DirectoryWarner, noticeDeletions: DirectoryDeletionsNotifier): void {
+  installed = { key, check, warn, noticeDeletions };
 }
 
 export function directoryCheckerInstalled(): boolean {
@@ -128,15 +131,14 @@ async function runCheck(db: PostgresJsDatabase, userId: string): Promise<boolean
  * is the company's own directory, and a paused claim is no reason to take
  * their word for it (F185).
  *   - `not_on_domain`: the directory was never theirs to answer to;
- *   - `unanswered`: it couldn't say, and the connection last worked recently;
- *   - `unanswered_long`: it couldn't say, and the connection hasn't worked for
- *     DIRECTORY_WARNING_HOURS, so its managers have already been told.
+ *   - `held`: it couldn't say, and the managers haven't had their time yet;
+ *   - `hold_over`: it couldn't say, and they have (directoryHoldOver).
  */
 export async function askDirectoryAboutActor(
   db: PostgresJsDatabase,
   organizationId: string,
   userId: string,
-): Promise<"not_on_domain" | "active" | "refused" | "unanswered" | "unanswered_long"> {
+): Promise<"not_on_domain" | "active" | "refused" | "held" | "hold_over"> {
   const claimed = (await db.execute(sql`
     UPDATE claimnet.organization_members AS om
     SET directory_check_claimed_at = NOW()
@@ -149,11 +151,31 @@ export async function askDirectoryAboutActor(
   if (!row) return "not_on_domain";
   const status = installed ? await askAndRecord(db, installed, userId, row) : null;
   if (status) return directoryStatusRefuses(status) ? "refused" : "active";
+  return (await directoryHoldOver(db, organizationId, row.email)) ? "hold_over" : "held";
+}
+
+/** Since the last success: a warning from before it was about some earlier trouble. */
+const WARNED_THIS_RUN = sql`(warned_at IS NOT NULL AND warned_at >= COALESCE(last_success_at, connected_at))`;
+
+/**
+ * The directory can't answer about someone ending or replacing the connection.
+ * May they go ahead? Only DIRECTORY_HOLD_HOURS after the managers were warned
+ * about this run of failures, and this warns them now if nothing has yet. Counting
+ * from a warning, not from the last success, means a quiet night buys nothing: a
+ * token that died this minute still leaves the others the whole time (F196). True
+ * when there's no connection, since there's nothing to protect.
+ */
+export async function directoryHoldOver(db: SqlExecutor, organizationId: string, memberEmail: string): Promise<boolean> {
   const rows = (await db.execute(sql`
-    SELECT COALESCE(last_success_at, connected_at) < NOW() - make_interval(hours => ${DIRECTORY_WARNING_HOURS}) AS long_failing
-    FROM claimnet.organization_directory_connections WHERE organization_id = ${organizationId}::uuid
-  `)) as unknown as Array<{ long_failing: boolean }>;
-  return rows[0]?.long_failing ? "unanswered_long" : "unanswered";
+    UPDATE claimnet.organization_directory_connections
+    SET warned_at = CASE WHEN ${WARNED_THIS_RUN} THEN warned_at ELSE NOW() END
+    WHERE organization_id = ${organizationId}::uuid
+    RETURNING (warned_at = NOW()) AS warn_now, warned_at < NOW() - make_interval(hours => ${DIRECTORY_HOLD_HOURS}) AS hold_over
+  `)) as unknown as Array<{ warn_now: boolean; hold_over: boolean }>;
+  const row = rows[0];
+  if (!row) return true;
+  if (row.warn_now) void installed?.warn(organizationId, memberEmail).catch(() => undefined);
+  return row.hold_over;
 }
 
 /** Ask Google about a claimed member and record what it said. The status, or null when it couldn't say. */
@@ -187,9 +209,9 @@ async function askAndRecord(db: PostgresJsDatabase, current: NonNullable<typeof 
   `);
   await db.execute(sql`
     UPDATE claimnet.organization_directory_connections
-    SET last_success_at = NOW(), warned_at = NULL,
-        last_error = ${result.renamed ? "member_renamed" : sql`last_error`},
-        last_error_at = ${result.renamed ? sql`NOW()` : sql`last_error_at`}
+    SET last_success_at = NOW(),
+        last_error = CASE WHEN ${result.renamed} THEN 'member_renamed' WHEN last_error = 'member_renamed' THEN last_error END,
+        last_error_at = CASE WHEN ${result.renamed} THEN NOW() WHEN last_error = 'member_renamed' THEN last_error_at END
     WHERE organization_id = ${row.organization_id}::uuid
   `);
   if (status !== row.previous_status) {
@@ -198,6 +220,7 @@ async function askAndRecord(db: PostgresJsDatabase, current: NonNullable<typeof 
       VALUES (NULL, 'organization.member_directory_status', 'user', ${userId}::uuid,
         ${JSON.stringify({ organizationId: row.organization_id, from: row.previous_status, to: status })}::jsonb)
     `);
+    if (status === "deleted") await noticeDeletionBurst(db, current, row.organization_id);
   }
   if (directoryStatusRefuses(status) !== directoryStatusRefuses(row.previous_status)) {
     console.warn(`[directory] org ${row.organization_id}: member ${userId} ${status}`);
@@ -206,11 +229,42 @@ async function askAndRecord(db: PostgresJsDatabase, current: NonNullable<typeof 
 }
 
 /**
+ * Tell the managers when several members have been found removed within the
+ * hour, at most daily. The status-change audit rows are the count, since only a
+ * change writes one, and the notice's own row is the daily limit. This delays no
+ * refusal: a threshold on the refusal itself would hold back a real layoff (F184).
+ */
+async function noticeDeletionBurst(db: SqlExecutor, current: NonNullable<typeof installed>, organizationId: string): Promise<void> {
+  const rows = (await db.execute(sql`
+    INSERT INTO claimnet.audit_log (actor_user_id, action, target_type, target_id, metadata)
+    SELECT NULL, 'organization.directory_deletions_noticed', 'organization', ${organizationId}::uuid, jsonb_build_object('count', recent.n)
+    FROM (
+      SELECT count(*)::int AS n FROM claimnet.audit_log
+      WHERE action = 'organization.member_directory_status' AND metadata->>'organizationId' = ${organizationId} AND metadata->>'to' = 'deleted'
+        AND occurred_at > NOW() - interval '1 hour'
+    ) recent
+    WHERE recent.n >= ${DIRECTORY_DELETION_BURST} AND NOT EXISTS (
+      SELECT 1 FROM claimnet.audit_log
+      WHERE action = 'organization.directory_deletions_noticed' AND target_id = ${organizationId}::uuid
+        AND occurred_at > NOW() - make_interval(hours => ${DIRECTORY_STALE_HOURS})
+    )
+    RETURNING (metadata->>'count')::int AS count
+  `)) as unknown as Array<{ count: number }>;
+  if (rows[0]) void current.noticeDeletions(organizationId, rows[0].count).catch(() => undefined);
+}
+
+/**
  * Google couldn't say: hold the claim, restamped now, so this member's next
  * check waits DIRECTORY_CLAIM_SECONDS instead of every request calling Google
  * again through an outage or a revoked credential (audit F114), and record the connection's error for the admin and the operator (organization
- * id and code only, never a credential). Warn the organization once when the
- * connection has had no success for DIRECTORY_WARNING_HOURS.
+ * id and code only, never a credential).
+ *
+ * Warn the organization, once per run of failures since the last success. Google
+ * refusing the credential or answering badly needs a person, so that warns at the
+ * first failure (F196), at most daily, since one person's bad answers restart the
+ * run whenever a colleague's check succeeds (F199). No answer at all also happens
+ * in a healthy company, one slow call past DIRECTORY_TIMEOUT_MS, so that alone
+ * waits DIRECTORY_WARNING_HOURS; anyone held by it warns sooner (directoryHoldOver).
  */
 async function recordConnectionTrouble(db: PostgresJsDatabase, row: ClaimedRow, code: string): Promise<void> {
   await db.execute(sql`
@@ -226,13 +280,15 @@ async function recordConnectionTrouble(db: PostgresJsDatabase, row: ClaimedRow, 
     SET last_error = ${code === "unreachable" ? sql`last_error` : sql`${code}`},
         last_error_at = ${code === "unreachable" ? sql`last_error_at` : sql`NOW()`},
         warned_at = CASE
-          WHEN warned_at IS NULL AND COALESCE(last_success_at, connected_at) < NOW() - make_interval(hours => ${DIRECTORY_WARNING_HOURS})
-          THEN NOW() ELSE warned_at END
+          WHEN NOT ${WARNED_THIS_RUN} AND (
+            COALESCE(last_success_at, connected_at) < NOW() - make_interval(hours => ${DIRECTORY_WARNING_HOURS})
+            OR (${code !== "unreachable"} AND (warned_at IS NULL OR warned_at < NOW() - make_interval(hours => ${DIRECTORY_STALE_HOURS})))
+          ) THEN NOW() ELSE warned_at END
     WHERE organization_id = ${row.organization_id}::uuid
     RETURNING (warned_at = NOW()) AS warn_now
   `)) as unknown as Array<{ warn_now: boolean }>;
   if (due[0]?.warn_now) {
-    void installed?.warn(row.organization_id).catch(() => undefined);
+    void installed?.warn(row.organization_id, row.email).catch(() => undefined);
   }
 }
 
@@ -308,10 +364,13 @@ export async function directoryConnectionOf(db: SqlExecutor, organizationId: str
   };
 }
 
-/** How many organizations are connected, for the startup check (F186). */
-export async function directoryConnectionCount(db: SqlExecutor): Promise<number> {
-  const rows = (await db.execute(sql`SELECT count(*)::int AS n FROM claimnet.organization_directory_connections`)) as unknown as Array<{ n: number }>;
-  return rows[0]?.n ?? 0;
+/** Which organizations are connected, for the startup check (F186, F198). */
+export async function directoryConnectedOrganizations(db: SqlExecutor): Promise<Array<{ id: string; name: string }>> {
+  return (await db.execute(sql`
+    SELECT o.id, o.name FROM claimnet.organization_directory_connections dc
+    JOIN claimnet.organizations o ON o.id = dc.organization_id
+    ORDER BY o.name, o.id
+  `)) as unknown as Array<{ id: string; name: string }>;
 }
 
 /** Does this organization have a directory connection on `domain`? For the domain emails (F120). */
@@ -335,7 +394,9 @@ export type DirectoryStatusesCleared = Record<"suspended" | "archived" | "delete
  * owner or admin. A consent takes minutes and a lookup seconds, and either can
  * outlast their role, which would leave a demoted person's token as the
  * company's credential (F182). Read with the write, holding their row, so a
- * demotion lands before this or after it.
+ * demotion lands before this or after it. A manager no check has reached yet has
+ * no status, and directoryInactive() is NULL for them, not false: they are often
+ * the one repairing a connection that broke before their first check (F194).
  */
 export async function saveDirectoryConnection(
   db: PostgresJsDatabase,
@@ -353,11 +414,12 @@ export async function saveDirectoryConnection(
 ): Promise<DirectoryStatusesCleared | null> {
   const sealed: SealedSecret = seal(key, input.secret, input.organizationId);
   return db.transaction(async (tx) => {
+    await lockOrganization(tx, input.organizationId);
     const manager = (await tx.execute(sql`
       SELECT 1 FROM claimnet.organization_members om
       WHERE om.organization_id = ${input.organizationId}::uuid AND om.user_id = ${input.connectedBy}::uuid
-        AND om.role IN ('owner', 'admin') AND om.disabled_at IS NULL AND NOT ${directoryInactive()}
-      FOR SHARE OF om
+        AND om.role IN ('owner', 'admin') AND om.disabled_at IS NULL AND ${directoryInactive()} IS NOT TRUE
+      FOR NO KEY UPDATE OF om
     `)) as unknown as unknown[];
     if (manager.length === 0) return null;
     await tx.execute(sql`
@@ -385,12 +447,22 @@ export async function saveDirectoryConnection(
  */
 export async function deleteDirectoryConnection(db: PostgresJsDatabase, organizationId: string): Promise<{ removed: boolean; cleared: DirectoryStatusesCleared }> {
   return db.transaction(async (tx) => {
+    await lockOrganization(tx, organizationId);
     const rows = (await tx.execute(sql`
       DELETE FROM claimnet.organization_directory_connections WHERE organization_id = ${organizationId}::uuid RETURNING id
     `)) as unknown as unknown[];
     const cleared = await resetMemberStatuses(tx, organizationId);
     return { removed: rows.length > 0, cleared };
   });
+}
+
+/**
+ * Connection changes each update every member's row, so two at once would wait
+ * on each other's rows (F195). They take the organization first, in the order
+ * member changes already do (organizations.ts), and foreign keys aren't blocked.
+ */
+async function lockOrganization(tx: SqlExecutor, organizationId: string): Promise<void> {
+  await tx.execute(sql`SELECT 1 FROM claimnet.organizations WHERE id = ${organizationId}::uuid FOR NO KEY UPDATE`);
 }
 
 async function resetMemberStatuses(tx: SqlExecutor, organizationId: string): Promise<DirectoryStatusesCleared> {

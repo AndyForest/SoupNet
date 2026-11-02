@@ -344,6 +344,50 @@ Feature: Verified domains, automatic joining, and existing accounts on a claimed
       When Olive switches automatic joining on
       Then the switch answers without waiting for it, and Max's book moves into Acme
 
+    @ORG-JOIN-D17
+    Scenario: A book created org-wide during a join
+      Given a join into Acme is in progress
+      When Olive creates an org-wide book
+      Then the creation waits for the join, and the new member holds the book
+
+    @ORG-JOIN-D18
+    Scenario: A book created org-wide during a demotion
+      Given Olive's demotion of an admin to member is in progress
+      When Olive creates an org-wide book
+      Then the creation waits for the demotion, and the demoted person holds the book as a member
+
+    @ORG-JOIN-D19
+    Scenario: The org-wide toggle beside a join and a role change
+      When a join starts while a book is being made org-wide
+      Then the join waits and the new member holds the book
+      When a book is made private while a join is in progress
+      Then the toggle waits and the new member doesn't keep the book
+      When a book is made org-wide while a demotion is in progress
+      Then the toggle waits and the demoted person holds the book as a member
+
+    @ORG-JOIN-D20
+    Scenario: Org-wide books beside an import
+      Given a member's import into a new Acme book is running
+      Then Olive can create an org-wide book and toggle another without waiting for it
+
+    @ORG-JOIN-D21
+    Scenario: A company book being created with the slug of a moving book
+      Given a new Acme book with the slug of one of Max's books is being created
+      When an operator adds Max to Acme
+      Then the add succeeds, and Max's book moves under a new slug listed in the answer
+
+    @ORG-JOIN-D22
+    Scenario: An import whose book changes slug as it moves
+      Given Acme has a book with the slug Max's running import chose
+      When Max joins Acme during the import
+      Then the import's answer names the book's new slug
+
+    @ORG-SEAT-D08
+    Scenario: A re-enable beside a join for the last seat
+      Given a join is taking Acme's last seat
+      When Olive re-enables a disabled member
+      Then the re-enable waits for the join and is refused as organization_full
+
     @ORG-JOIN-D15
     Scenario: A workspace beside a join for the same account
       When Max creates a workspace while his join is in progress

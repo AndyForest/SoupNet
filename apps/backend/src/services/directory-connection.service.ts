@@ -18,9 +18,10 @@ import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { domainToUnicode } from "node:url";
 import {
   DIRECTORY_INACTIVE_MESSAGE,
+  DIRECTORY_HOLD_HOURS,
   DIRECTORY_SCOPE,
-  DIRECTORY_WARNING_HOURS,
   directoryChangedEmail,
+  directoryDeletionsEmail,
   directoryOffProblem,
   directoryStatusRefuses,
   directoryWarningEmail,
@@ -31,7 +32,8 @@ import type { GoogleSignInError } from "@soupnet/domain";
 import {
   askDirectoryAboutActor,
   deleteDirectoryConnection,
-  directoryConnectionCount,
+  directoryConnectedOrganizations,
+  directoryHoldOver,
   installDirectoryChecker,
   saveDirectoryConnection,
   directoryManagersOf,
@@ -68,7 +70,8 @@ export function installDirectoryChecking(): "on" | "off" {
   installDirectoryChecker(
     key,
     (input) => checkDirectoryMember(config, { organizationId: input.organizationId, kind: input.kind, adminEmail: input.adminEmail, secret: input.secret }, input.member),
-    (organizationId) => warnOrganization(organizationId),
+    (organizationId, memberEmail) => warnOrganization(organizationId, memberEmail),
+    (organizationId, count) => noticeDeletions(organizationId, count),
   );
   return "on";
 }
@@ -81,7 +84,7 @@ export function installDirectoryChecking(): "on" | "off" {
 export async function installDirectoryCheckingOrStop(db: SqlExecutor): Promise<"on" | "off"> {
   const state = installDirectoryChecking();
   if (state === "off") {
-    const problem = directoryOffProblem(await directoryConnectionCount(db));
+    const problem = directoryOffProblem(await directoryConnectedOrganizations(db));
     if (problem) throw new Error(problem);
   }
   return state;
@@ -92,7 +95,7 @@ export function directoryConnectAvailable(): boolean {
   return secretBoxKey() !== null && googleOidcConfig() !== null;
 }
 
-async function warnOrganization(organizationId: string): Promise<void> {
+async function warnOrganization(organizationId: string, memberEmail: string): Promise<void> {
   const { getDb } = await import("../db");
   const db = getDb();
   const rows = (await db.execute(sql`
@@ -101,11 +104,21 @@ async function warnOrganization(organizationId: string): Promise<void> {
   `)) as unknown as Array<{ since: string }>;
   if (!rows[0]) return;
   const managers = await directoryManagersOf(db, organizationId);
-  const mail = directoryWarningEmail(managers.name || "your organization", new Date(rows[0].since));
+  const mail = directoryWarningEmail(managers.name || "your organization", new Date(rows[0].since), memberEmail);
   for (const email of managers.emails) {
     await sendOrganizationDirectoryEmail(email, mail).catch(() => undefined);
   }
-  console.warn(`[directory] org ${organizationId}: warned ${managers.emails.length} managers after ${DIRECTORY_WARNING_HOURS}h`);
+  console.warn(`[directory] org ${organizationId}: warned ${managers.emails.length} managers`);
+}
+
+async function noticeDeletions(organizationId: string, count: number): Promise<void> {
+  const { getDb } = await import("../db");
+  const managers = await directoryManagersOf(getDb(), organizationId);
+  const mail = directoryDeletionsEmail(managers.name || "your organization", count);
+  for (const email of managers.emails) {
+    await sendOrganizationDirectoryEmail(email, mail).catch(() => undefined);
+  }
+  console.warn(`[directory] org ${organizationId}: ${count} members removed within the hour, told ${managers.emails.length} managers`);
 }
 
 const liftedBy = (cleared: DirectoryStatusesCleared) => cleared.suspended + cleared.archived + cleared.deleted;
@@ -127,21 +140,21 @@ function tellOtherManagers(db: PostgresJsDatabase, organizationId: string, chang
  * still inside their hour, mustn't be able to do it (F185): the directory is
  * asked about them first.
  *
- * When it can't answer, the disconnect waits until the connection has gone
- * DIRECTORY_WARNING_HOURS without a success. An admin's consent token dies when
- * they are suspended, so "the connection is broken" is exactly what that admin
- * would see. A genuine manager's ways out are reconnecting, which proves itself
- * with a new credential, the wait, and the site operator's DELETE (recipe
- * aa8dd085).
+ * When it can't answer, the disconnect waits DIRECTORY_HOLD_HOURS from the
+ * warning to the other managers (F196). An admin's consent token dies when they
+ * are suspended, so "the connection is broken" is exactly what that admin would
+ * see. That admin can still go ahead after the hold, but not before the others
+ * have had the time to act. A genuine manager's ways out are reconnecting, which
+ * proves itself with a new credential, and the site operator's DELETE.
  */
 export async function directoryDisconnectRefusal(db: PostgresJsDatabase, organizationId: string, userId: string): Promise<{ status: 403 | 409; error: string; message: string } | null> {
   const asked = await askDirectoryAboutActor(db, organizationId, userId);
   if (asked === "refused") return { status: 403, error: "directory_inactive", message: DIRECTORY_INACTIVE_MESSAGE };
-  if (asked === "unanswered") {
+  if (asked === "held") {
     return {
       status: 409,
       error: "directory_disconnect_held",
-      message: `Soup.net couldn't confirm your account with Google Workspace just now, so the directory stays connected. Try again shortly. If the connection is broken, reconnect it. You can also disconnect once it has gone ${DIRECTORY_WARNING_HOURS} hours without a successful check, or ask Soup.net support to remove it.`,
+      message: `Soup.net couldn't confirm your account with Google Workspace just now, so the directory stays connected, and your organization's owners and admins have been told. Try again shortly. If the connection is broken, reconnect it now, or ask Soup.net support to remove it. Otherwise you can disconnect ${DIRECTORY_HOLD_HOURS} hours after that warning.`,
     };
   }
   return null;
@@ -169,6 +182,7 @@ async function claimedDomain(db: SqlExecutor, organizationId: string, raw: unkno
 export type ConnectRefusal =
   | { status: 404; error: "not_found"; message: string }
   | { status: 403; error: "directory_inactive"; message: string }
+  | { status: 409; error: "directory_replace_held"; message: string }
   | { status: 400; error: "invalid_domain"; message: string }
   | { status: 400; error: "google_identity_required"; message: string }
   | { status: 400; error: "invalid_key"; message: string }
@@ -303,7 +317,9 @@ export async function connectServiceAccount(
   }
   // Replacing a connection lifts every refusal too, and a key in hand needs no
   // Google sign-in, so someone suspended there could still do it (F185). The new
-  // credential has just proved it reads the directory, so it can say.
+  // credential has just proved it reads the directory, so it can say. When it can't
+  // about this person, the same hold as a disconnect applies (F197); with no
+  // connection yet there's nothing to lift, so nothing holds.
   const domainUnicode = domainToUnicode(domain) || domain;
   const actor = await directoryMemberOnDomain(db, input.organizationId, input.userId, domain, domainUnicode);
   if (actor) {
@@ -311,6 +327,14 @@ export async function connectServiceAccount(
     if (answer.kind === "status" && directoryStatusRefuses(answer.status)) {
       await writeAudit(db, { actorUserId: input.userId, action: "organization.directory_connect_failed", targetType: "organization", targetId: input.organizationId, metadata: { kind: "service_account", domain, reason: "directory_inactive" } });
       return { status: 403, error: "directory_inactive", message: DIRECTORY_INACTIVE_MESSAGE };
+    }
+    if (answer.kind !== "status" && !(await directoryHoldOver(db, input.organizationId, actor.email))) {
+      await writeAudit(db, { actorUserId: input.userId, action: "organization.directory_connect_failed", targetType: "organization", targetId: input.organizationId, metadata: { kind: "service_account", domain, reason: "directory_replace_held" } });
+      return {
+        status: 409,
+        error: "directory_replace_held",
+        message: `Soup.net couldn't confirm your account with Google Workspace through this key, so the connection wasn't replaced, and your organization's owners and admins have been told. Try again shortly. If it keeps happening, another owner or admin can reconnect it, or ask Soup.net support to remove it. Otherwise you can replace it ${DIRECTORY_HOLD_HOURS} hours after that warning.`,
+      };
     }
   }
   const cleared = await saveDirectoryConnection(db, boxKey, {

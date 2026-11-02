@@ -182,7 +182,7 @@ export const organizationDirectoryConnections = claimnetSchema.table(
     // Google's refusal of our credential, or a renamed member, for the admin.
     lastError: text("last_error"),
     lastErrorAt: timestamp("last_error_at", { withTimezone: true }),
-    // When the six-hour warning went out for the current outage; cleared by a success.
+    // When the managers were last warned; a warning after the last success covers this run of failures (F196).
     warnedAt: timestamp("warned_at", { withTimezone: true }),
   },
   (t) => [

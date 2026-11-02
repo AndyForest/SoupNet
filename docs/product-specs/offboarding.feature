@@ -133,6 +133,13 @@ Feature: Offboarding through the company's Google Workspace directory
       Then Google is asked about nobody and nobody goes stale
       And Max stays switched off
 
+    @OFF-DIR-15
+    Scenario: Several members found removed within the hour
+      # Guards: audit F184.
+      When a third member of Acme is found removed from the directory within an hour
+      Then all of them are refused at once, none held back
+      And Acme's owners and admins get one email saying so, and what to do if it's wrong
+
     @OFF-DIR-14
     Scenario: A switched-off member keeps their seat
       # Guards: audit F190, ruled.
@@ -154,10 +161,25 @@ Feature: Offboarding through the company's Google Workspace directory
       Then the directory is asked about Ann first, and Ann is refused
       And the connection and everyone's status stay as they were
 
+    @OFF-CON-09
+    Scenario: Replacing with a key when the directory can't answer about the person
+      # Guards: audit F197.
+      Given Acme is connected and the directory can't answer about Bea through her new key
+      When Bea replaces the connection
+      Then the same hold applies as for a disconnect, and nobody's refusal is lifted
+
+    @OFF-CON-08
+    Scenario: A manager no check has reached yet repairs a broken connection
+      # Guards: audit F194.
+      Given Ann's consent gave Acme its connection, and Ann has left, so the token is dead
+      And Bea, an admin, has never had a successful check
+      When Bea reconnects by consent, or with a service-account key
+      Then the connection is saved
+
     @OFF-CON-07
     Scenario: Disconnecting when the directory can't answer
-      # Guards: audit F185.
-      Given Google can't answer about Ann
+      # Guards: audit F185, F196.
+      Given Google can't answer about Ann, whether the last success was minutes or hours ago
       When Ann disconnects the directory
-      Then Ann is told it stays connected, and can reconnect, ask support, or disconnect once it has gone six hours without a successful check
-      And after those six hours the disconnect goes through and the others are told
+      Then it stays connected, Acme's owners and admins are warned now if they haven't been already, and Ann is told to reconnect, ask support, or wait six hours from that warning
+      And six hours after the warning the disconnect goes through and the others are told

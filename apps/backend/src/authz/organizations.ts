@@ -32,6 +32,7 @@ import {
 } from "@soupnet/domain";
 import type { MovedBook, OrgJoinedVia, OrgMemberAction, OrgRole } from "@soupnet/domain";
 import type { AuditAction } from "../services/audit-actions";
+import { isUniqueViolationOn } from "../lib/pg-errors";
 import { domainVerifiedFor } from "./domain-authority";
 import { membershipOf } from "./membership-sql";
 
@@ -425,12 +426,11 @@ async function moveOwnBooksInto(
   const movedBooks: MovedBook[] = [];
   const auditedBooks: Array<{ bookId: string; previousSlug: string }> = [];
   for (const book of books) {
-    const slug = slugForMovedBook(book.slug, localPart, taken);
-    taken.add(slug);
-    await tx.execute(sql`
-      UPDATE claimnet.groups SET organization_id = ${organizationId}::uuid, slug = ${slug}, updated_at = NOW()
-      WHERE id = ${book.id}::uuid
-    `);
+    let slug: string;
+    do {
+      slug = slugForMovedBook(book.slug, localPart, taken);
+      taken.add(slug);
+    } while (!(await tryMoveBook(tx, book.id, organizationId, slug)));
     await tx.execute(sql`
       INSERT INTO claimnet.audit_log (actor_user_id, action, target_type, target_id, metadata)
       VALUES (${userId}::uuid, 'recipe_book.moved_into_organization', 'group', ${book.id}::uuid,
@@ -440,6 +440,30 @@ async function moveOwnBooksInto(
     auditedBooks.push({ bookId: book.id, previousSlug: book.slug });
   }
   return { movedBooks, auditedBooks };
+}
+
+/**
+ * Move a book under a slug the join's read found free. A book being created
+ * with that slug wasn't visible to the read: the update waits for it, and fails
+ * if it commits. That costs the moved book its slug, not the person their join
+ * (F179), so the failure stays inside a savepoint. The wait is short: the only
+ * long transaction that creates a book is an import, and its slug is random.
+ */
+async function tryMoveBook(tx: SqlExecutor, bookId: string, organizationId: string, slug: string): Promise<boolean> {
+  try {
+    // A nested transaction, not raw SAVEPOINT statements: postgres-js rethrows any
+    // error a transaction's own queries raised, even one caught here, at its commit.
+    await (tx as unknown as PostgresJsDatabase).transaction(async (savepoint) => {
+      await savepoint.execute(sql`
+        UPDATE claimnet.groups SET organization_id = ${organizationId}::uuid, slug = ${slug}, updated_at = NOW()
+        WHERE id = ${bookId}::uuid
+      `);
+    });
+    return true;
+  } catch (err) {
+    if (isUniqueViolationOn(err, "groups_org_slug_unique")) return false;
+    throw err;
+  }
 }
 
 // ── Creating an organization ────────────────────────────────────────────────
@@ -525,14 +549,31 @@ export type OrgWideRefusal = "not_a_company_book" | "default_book_stays_org_wide
  * book), leaving any row a person already holds. Private deletes the 'org'
  * rows and keeps every direct one. The caller has already authorized the
  * actor on the book (book owner or admin).
+ *
+ * It takes the organization's row first, as the join and the member actions do.
+ * Each of them reads what this writes and writes what this reads, so without the
+ * lock a member joining meanwhile misses the book, and a manager demoted meanwhile
+ * keeps its admin role (F178). Both locks here are NO KEY UPDATE, so neither waits
+ * on a foreign key's hold, which is all an import has on these rows (F174).
  */
 export async function setBookOrgWide(db: PostgresJsDatabase, bookId: string, orgWide: boolean): Promise<OrgWideRefusal | null> {
   return db.transaction(async (tx) => {
+    const seen = (await tx.execute(sql`
+      SELECT g.organization_id, o.is_personal FROM claimnet.groups g
+      JOIN claimnet.organizations o ON o.id = g.organization_id
+      WHERE g.id = ${bookId}::uuid
+    `)) as unknown as Array<{ organization_id: string; is_personal: boolean }>;
+    if (!seen[0]) return "book_not_found";
+    // Refused on what was read: a personal book can move into a company during
+    // this, and would then be under an organization not locked here.
+    if (orgWide && seen[0].is_personal) return "not_a_company_book";
+    await tx.execute(sql`SELECT 1 FROM claimnet.organizations WHERE id = ${seen[0].organization_id}::uuid FOR NO KEY UPDATE`);
+
     const rows = await tx.execute(sql`
       SELECT g.org_default, o.is_personal FROM claimnet.groups g
       JOIN claimnet.organizations o ON o.id = g.organization_id
       WHERE g.id = ${bookId}::uuid
-      FOR UPDATE OF g
+      FOR NO KEY UPDATE OF g
     `);
     const book = (rows as unknown as Array<{ org_default: boolean; is_personal: boolean }>)[0];
     if (!book) return "book_not_found";
