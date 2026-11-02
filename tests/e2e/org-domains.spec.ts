@@ -280,6 +280,56 @@ test("once a seat frees, the same link joins", async ({ page, request }, testInf
   });
 });
 
+async function resetPasswordOnPage(page: Page, request: APIRequestContext, email: string) {
+  const asked = await request.post(`${BACKEND_URL}/auth/forgot-password`, { data: { email } });
+  const body = await asked.json();
+  expect(body.data?.resetToken, "the test-mode backend should return a reset token").toBeTruthy();
+  await page.goto(`/auth/reset-password?token=${encodeURIComponent(body.data.resetToken as string)}`);
+  await page.getByLabel("New password", { exact: true }).fill("e2e-password-new-456");
+  await page.getByLabel("Confirm new password", { exact: true }).fill("e2e-password-new-456");
+  await page.getByRole("button", { name: "Reset password", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Your password is changed" }), "the reset should succeed").toBeVisible();
+}
+
+test("a password reset on a captured domain says the account joined the organization @mobile", async ({ page, request }, testInfo) => {
+  const company = await companyWithCapturedDomain(request, "reset-joined", 5);
+  const nia = `e2e-nia-${unique()}@${company.domain}`;
+  await registerUnverified(request, nia);
+
+  await test.step("Nia resets the password from the emailed link", async () => {
+    await resetPasswordOnPage(page, request, nia);
+    await expect(
+      page.getByText(`Your account now belongs to ${company.name} on Soup.net. ${company.name}'s admins manage it.`, { exact: true }),
+      "the page should say the account now belongs to the organization",
+    ).toBeVisible();
+    await shot(page, testInfo, "reset-01-joined");
+  });
+
+  await test.step("axe scan and phone fit of the joined reset", async () => {
+    await recordAxe(page, testInfo, "reset-joined-axe");
+    await assertNoHorizontalScroll(page, testInfo, "reset joined view");
+  });
+});
+
+test("a password reset at the seat limit says the password changed but the address isn't verified", async ({ page, request }, testInfo) => {
+  const company = await companyWithCapturedDomain(request, "reset-full", 1);
+  const nia = `e2e-nia-${unique()}@${company.domain}`;
+  await registerUnverified(request, nia);
+
+  await test.step("Nia resets the password while the organization is full", async () => {
+    await resetPasswordOnPage(page, request, nia);
+    await expect(
+      page.getByText("This organization has no free seats. Ask one of its admins.", { exact: true }),
+      "the page should say the organization has no free seats",
+    ).toBeVisible();
+    await expect(
+      page.getByText("Your password is changed, but your address isn't verified yet. Sign in once a seat is free to get a new verification link.", { exact: true }),
+      "the page should say the address isn't verified yet and what to do next",
+    ).toBeVisible();
+    await shot(page, testInfo, "reset-02-full");
+  });
+});
+
 test("a bad token shows the existing error", async ({ page }, testInfo) => {
   await test.step("open the verify page with a token that doesn't exist", async () => {
     await page.goto(verifyPath("not-a-real-token"));
@@ -326,7 +376,7 @@ test("a reload after joining keeps the success view and the organization line", 
   await test.step("Nia reloads the page", async () => {
     await page.reload();
     await settled(page);
-    await expectJoinedView(page, nia, company.name, "after reload");
+    await expectJoinedView(page, nia, company.name, "after reload", true);
     await shot(page, testInfo, "reload-01-after-join");
   });
 });
