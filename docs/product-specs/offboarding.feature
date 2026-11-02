@@ -133,6 +133,13 @@ Feature: Offboarding through the company's Google Workspace directory
       Then Google is asked about nobody and nobody goes stale
       And Max stays switched off
 
+    @OFF-DIR-14
+    Scenario: A switched-off member keeps their seat
+      # Guards: audit F190, ruled.
+      Given Max was switched off by the directory and Acme is at its seat limit
+      Then Max keeps the seat, so restoring Max in Google can't overflow the limit
+      And it frees only when an owner or admin disables Max
+
     @OFF-DIR-10
     Scenario: Disconnecting
       When Olive disconnects the directory
@@ -142,9 +149,9 @@ Feature: Offboarding through the company's Google Workspace directory
     @OFF-CON-06
     Scenario: Someone suspended in Google tries to end the checks
       # Guards: audit F185.
-      Given Ann, an admin, is suspended in Google, and her status was last checked minutes ago
-      When Ann disconnects the directory, or replaces it with a service-account key she holds
-      Then the directory is asked about Ann first, and she is refused
+      Given Ann, an admin, is suspended in Google, and Ann's status was last checked minutes ago
+      When Ann disconnects the directory, or replaces it with a service-account key Ann holds
+      Then the directory is asked about Ann first, and Ann is refused
       And the connection and everyone's status stay as they were
 
     @OFF-CON-07
@@ -152,5 +159,5 @@ Feature: Offboarding through the company's Google Workspace directory
       # Guards: audit F185.
       Given Google can't answer about Ann
       When Ann disconnects the directory
-      Then she is told it stays connected, and that she can reconnect, ask support, or disconnect once it has gone six hours without a successful check
+      Then Ann is told it stays connected, and can reconnect, ask support, or disconnect once it has gone six hours without a successful check
       And after those six hours the disconnect goes through and the others are told

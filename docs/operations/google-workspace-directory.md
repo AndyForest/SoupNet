@@ -10,11 +10,15 @@ Who is checked: members whose Soup.net address is on the domain you connect (exa
 - You are an owner or admin of the organization in Soup.net.
 - For the admin-consent way, you are also a Google Workspace admin who can read users, and you have signed in to Soup.net with Google at least once.
 
+## Seats
+
+A person the directory switches off keeps their seat, so they can't find the organization full when you restore them in Google. To free the seat for someone else, disable them in your organization's console as well. Restoring them after that needs a free seat, like enabling anyone else.
+
 ## Way 1: consent as a Workspace admin
 
 1. In the Google Admin console, go to Security, Access and data control, API controls, Manage third-party app access, and mark Soup.net as **Trusted**. ([Google: Control which third-party & internal apps access Google Workspace data](https://support.google.com/a/answer/60757))
 2. In Soup.net's console, choose your domain and **Connect with Google**. Google asks you for read-only access to your directory's users; approve it.
-3. Soup.net checks that it can read your own entry, then saves the connection.
+3. Soup.net checks that it can read your own entry, then saves the connection. If you stop being an owner or admin in Soup.net before you finish, nothing is saved.
 
 The connection uses your own consent. When you leave the company or lose admin rights, it stops working, so before offboarding the admin who connected, reconnect as another admin, or switch to way 2.
 
@@ -28,7 +32,7 @@ Google may show an "unverified app" screen to the consenting admin, since Soup.n
 
 ## What happens when the connection breaks
 
-If Soup.net can't read your directory (Google refuses the credential, or can't be reached), it keeps using the last status it has. When a check fails more than six hours after the last successful one, your organization's owners and admins get one email saying when that was and the hour everyone will be signed out by. A member with no successful check for a day is signed out and their agents' keys stop working until a check succeeds, because Soup.net can no longer confirm they still work for you.
+If Soup.net can't read your directory (Google refuses the credential, can't be reached, or sends back something other than a complete record of the person), it keeps using the last status it has, and the console shows the error. When a check fails more than six hours after the last successful one, your organization's owners and admins get one email saying when that was and the hour everyone will be signed out by. A member with no successful check for a day is signed out and their agents' keys stop working until a check succeeds, because Soup.net can no longer confirm they still work for you.
 
 The checks need your domain's verification in Soup.net to stay current. If its DNS check fails or the TXT record is removed, Soup.net stops checking and stops signing people out for want of a check, but anyone the directory already showed as suspended, archived or removed stays signed out. Your owners and admins get the domain's email saying so, and the console shows the checks as paused. Once the record is back and the domain verifies again, checks resume, and anyone restored in Google in the meantime gets access back at their next check.
 
@@ -36,4 +40,8 @@ To fix it, reconnect (either way) from the console. If that's no longer possible
 
 ## Disconnecting
 
-Disconnect from the console. Checks stop at once, and anyone the directory had switched off works again.
+Disconnect from the console. Checks stop at once, anyone the directory had switched off works again, and your organization's other owners and admins get an email saying who did it.
+
+Soup.net first asks your directory about the person disconnecting, so someone you have suspended in Google can't end the checks, even in the hour before their own next check. Replacing the connection with a service-account key asks the same thing.
+
+If your directory can't answer at that moment, the connection stays and Soup.net says why. Try again shortly, or reconnect, which needs only a credential that works. Once the connection has gone six hours without a successful check, you can disconnect anyway. If you can't wait, Soup.net support can remove it.
