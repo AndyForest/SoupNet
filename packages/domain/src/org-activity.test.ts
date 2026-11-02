@@ -102,6 +102,7 @@ describe("orgActivityEvent", () => {
     const base = { actorEmail: "ada@acme.example", targetEmail: null, at: "2026-11-02T00:00:00.000Z" };
     const failed = { ...base, action: "organization.directory_connect_failed", connectionDomain: "acme.example" };
     expect(orgActivityEvent({ ...failed, connectionKind: "admin_consent", connectFailure: "directory_not_admin" })).toMatchObject({ connectFailure: "directory_not_admin", domain: "acme.example" });
+    expect(orgActivityEvent({ ...failed, connectionKind: "admin_consent", connectFailure: "directory_not_manager" })).toMatchObject({ connectFailure: "directory_not_manager" });
     // A service account's reason comes from Google's answer, so it is never shown.
     expect(orgActivityEvent({ ...failed, connectionKind: "service_account", connectFailure: "directory_not_admin" })).not.toHaveProperty("connectFailure");
     expect(orgActivityEvent({ ...failed, connectionKind: "admin_consent", connectFailure: "http_403: secret detail" })).not.toHaveProperty("connectFailure");

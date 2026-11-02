@@ -61,6 +61,9 @@ export function OrgDirectorySection({ organizationId }: { organizationId: string
   const [key, setKey] = useState("");
   const [adminEmail, setAdminEmail] = useState("");
   const [confirmingDisconnect, setConfirmingDisconnect] = useState(false);
+  // The latest attempt's refusal: an older one mustn't hide a disconnect being held.
+  const [failure, setFailure] = useState<string | null>(null);
+  const attempt = { onMutate: () => setFailure(null), onError: (error: Error) => setFailure(error.message) };
   const refresh = () => void queryClient.invalidateQueries({ queryKey: ["org", organizationId] });
 
   // The page loads before this section has anything to scroll to.
@@ -70,6 +73,7 @@ export function OrgDirectorySection({ organizationId }: { organizationId: string
   }, [loaded]);
 
   const connect = useMutation({
+    ...attempt,
     mutationFn: async () => {
       const secret = newTabSecret();
       storeTabSecret(secret);
@@ -79,6 +83,7 @@ export function OrgDirectorySection({ organizationId }: { organizationId: string
     },
   });
   const serviceAccount = useMutation({
+    ...attempt,
     mutationFn: () => send<DirectoryConnection>(`/organizations/${organizationId}/directory/service-account`, "PUT", { key, adminEmail }),
     onSuccess: () => {
       setKey("");
@@ -86,14 +91,17 @@ export function OrgDirectorySection({ organizationId }: { organizationId: string
     },
     onSettled: refresh,
   });
+  // A 409 means the directory couldn't confirm this person, so the backend's
+  // message says what to do and the confirmation stays up to try again. A 403
+  // signs them out in authFetch.
   const disconnect = useMutation({
+    ...attempt,
     mutationFn: () => send<unknown>(`/organizations/${organizationId}/directory`, "DELETE"),
     onSuccess: () => setConfirmingDisconnect(false),
     onSettled: refresh,
   });
 
   const data = directory.data;
-  const failure = (connect.error ?? serviceAccount.error ?? disconnect.error) as Error | null;
 
   const connectForms = (
     <>
@@ -167,7 +175,7 @@ export function OrgDirectorySection({ organizationId }: { organizationId: string
           <div style={{ marginTop: "var(--space-md)", display: "flex", gap: "var(--space-sm)", flexWrap: "wrap", alignItems: "center" }}>
             {confirmingDisconnect ? (
               <>
-                <span style={MUTED}>Checks stop, and people the directory switched off can use Soup.net again.</span>
+                <span style={MUTED}>Checks stop, people the directory switched off can use Soup.net again, and your organization's other owners and admins get an email saying who did it.</span>
                 <button className="btn-secondary" disabled={disconnect.isPending} onClick={() => disconnect.mutate()}>Disconnect the directory</button>
                 <button className="btn-secondary" onClick={() => setConfirmingDisconnect(false)}>Keep it connected</button>
               </>
@@ -182,7 +190,7 @@ export function OrgDirectorySection({ organizationId }: { organizationId: string
           {connectForms}
         </>
       )}
-      {failure ? <div role="alert" style={{ ...ERROR, marginTop: "var(--space-sm)" }}>{failure.message}</div> : null}
+      {failure ? <div role="alert" style={{ ...ERROR, marginTop: "var(--space-sm)" }}>{failure}</div> : null}
     </section>
   );
 }

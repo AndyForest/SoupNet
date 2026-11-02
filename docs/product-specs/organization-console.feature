@@ -144,3 +144,14 @@ Feature: Organization accounts: the org admin console, sharing policy, and what 
       And acme.example's TXT record has gone missing
       When Ada opens the Members page
       Then the directory section says checks are paused and people already switched off stay switched off
+
+    @ORG-CON-11
+    Scenario: A disconnect the directory can't confirm says why and changes nothing
+      Given Acme's directory is connected on acme.example and last worked an hour ago
+      And Google can't answer about Ada, whose address is on acme.example
+      When Ada confirms disconnecting the directory
+      Then the section says the directory stays connected, and what she can do about it
+      And the connection still reads as connected
+      When the connection has gone six hours without a successful check
+      And Ada confirms again
+      Then the directory is disconnected

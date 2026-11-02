@@ -1184,11 +1184,24 @@ test("E20 the directory section, the status labels, last checked and Activity", 
     await expect(page.getByText("Google Workspace", { exact: true }).first(), "the directory is the actor").toBeVisible();
   });
 
-  await test.step("disconnecting asks first, then Max is active again", async () => {
+  await test.step("disconnecting asks first; held while the directory can't confirm the person; then Max is active again", async () => {
+    await withDb(async (sql) => {
+      // On the domain, so the directory is asked about Olive, and the fixture's credential can't answer.
+      await sql`UPDATE claimnet.users SET email = ${`olive@${domain}`} WHERE email = ${acme.olive.email}`;
+    });
     await page.goto("/org");
     const section = page.locator("#directory");
     await section.getByRole("button", { name: "Disconnect", exact: true }).click();
     await expect(section, "the confirmation should say who comes back").toContainText("people the directory switched off can use Soup.net again");
+    await expect(section, "the confirmation should say the others are told").toContainText("other owners and admins get an email saying who did it");
+    await section.getByRole("button", { name: "Disconnect the directory" }).click();
+    await expect(section.getByRole("alert"), "the refusal should say what to do").toContainText("the directory stays connected");
+    await expect(section, "the connection should still read as connected").toContainText(`admin@${domain}`);
+    await shot(page, testInfo, "E20-02-held");
+
+    await withDb(async (sql) => {
+      await sql`UPDATE claimnet.organization_directory_connections SET last_success_at = now() - interval '7 hours' WHERE organization_id = ${acme.orgId}::uuid`;
+    });
     await section.getByRole("button", { name: "Disconnect the directory" }).click();
     await expect(section.getByRole("button", { name: "Disconnect", exact: true }), "the connection should be gone").toHaveCount(0);
     await expect(page.locator("table tbody tr", { hasText: acme.max.email }), "Max should read active").toContainText("Active");

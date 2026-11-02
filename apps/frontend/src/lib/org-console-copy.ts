@@ -30,13 +30,25 @@ export function accountsAwaitingMessage(accounts: number, autoJoin: boolean): st
     : `${who} on this domain would join if you turned automatic joining on.`;
 }
 
+/** What the stored codes mean. `token_…` and `http_…` carry a variable part, so they are matched below. */
+const DIRECTORY_ERROR_LABELS: Record<string, string> = {
+  member_renamed: "A member's address changed in Google Workspace",
+  bad_answer: "Google's answer wasn't a complete record of the person",
+  bad_404: "Google answered with an unexpected not-found",
+  admin_not_found: "Google Workspace can't find the admin behind this connection",
+  bad_service_account_key: "The service account's key wasn't usable",
+  decrypt_failed: "Soup.net couldn't read the saved credential",
+};
+
 /**
- * The directory connection's last error, as a code and never what came with
- * it: a stored rename names two addresses, and anything that isn't a plain
- * code shows as unknown, so a Google response body can't reach the page.
+ * The directory connection's last error, as a label and its code and never
+ * what came with it: anything that isn't a plain code shows as unknown, so a
+ * Google response body can't reach the page.
  */
 export function directoryLastErrorLabel(lastError: string): string {
-  if (lastError.startsWith("renamed:")) return "A member's address changed in Google Workspace (renamed)";
+  const known = Object.prototype.hasOwnProperty.call(DIRECTORY_ERROR_LABELS, lastError) ? DIRECTORY_ERROR_LABELS[lastError] : undefined;
+  if (known) return `${known} (${lastError})`;
+  if (/^token_[A-Za-z0-9_]{1,48}$/.test(lastError)) return `Google refused the connection's credential (${lastError})`;
   const http = /^http_(\d{3})$/.exec(lastError);
   if (http) return http[1] === "401" || http[1] === "403" ? `Google refused the connection (${lastError})` : `Google answered with an error (${lastError})`;
   return /^[a-z0-9_]{1,64}$/.test(lastError) ? lastError : "Unknown error";

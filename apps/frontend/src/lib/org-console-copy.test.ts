@@ -30,13 +30,26 @@ describe("directoryLastErrorLabel", () => {
     expect(directoryLastErrorLabel("http_400")).toBe("Google answered with an error (http_400)");
   });
 
-  it("never repeats the addresses a rename stored", () => {
-    const label = directoryLastErrorLabel("renamed: max@acme.example is now maxine@acme.example in the directory");
-    expect(label).not.toContain("@");
+  it("labels each stored code and keeps the code beside it", () => {
+    for (const code of ["member_renamed", "bad_answer", "bad_404", "admin_not_found", "bad_service_account_key", "decrypt_failed"]) {
+      const label = directoryLastErrorLabel(code);
+      expect(label).toContain(`(${code})`);
+      expect(label).not.toBe(code);
+    }
+    expect(directoryLastErrorLabel("member_renamed")).toBe("A member's address changed in Google Workspace (member_renamed)");
+    expect(directoryLastErrorLabel("token_invalid_grant")).toBe("Google refused the connection's credential (token_invalid_grant)");
+  });
+
+  it("doesn't take a property of Object for a label", () => {
+    expect(directoryLastErrorLabel("constructor")).toBe("constructor");
+  });
+
+  it("never repeats an address, even in a row stored before the rename code", () => {
+    expect(directoryLastErrorLabel("renamed: max@acme.example is now maxine@acme.example in the directory")).toBe("Unknown error");
   });
 
   it("shows a plain code and refuses anything else", () => {
-    expect(directoryLastErrorLabel("invalid_grant")).toBe("invalid_grant");
+    expect(directoryLastErrorLabel("something_new")).toBe("something_new");
     expect(directoryLastErrorLabel('{"error":"token ya29.abc"}')).toBe("Unknown error");
   });
 });

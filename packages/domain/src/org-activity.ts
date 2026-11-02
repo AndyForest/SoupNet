@@ -113,6 +113,7 @@ export const DIRECTORY_CONNECT_FAILURE_LABELS = {
   directory_wrong_domain: "that Google account isn't on this domain",
   directory_no_refresh_token: "Google didn't grant lasting access",
   directory_not_admin: "that account can't read the directory",
+  directory_not_manager: "that person was no longer an owner or admin here",
 } as const;
 export type DirectoryConnectFailure = keyof typeof DIRECTORY_CONNECT_FAILURE_LABELS;
 
