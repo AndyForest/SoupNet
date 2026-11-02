@@ -53,20 +53,8 @@ export async function getOrCreateCachedVector(
   multimodalParts?: ContentPart[],
   modelId: string = getEmbeddingModelId(),
 ): Promise<string | null> {
-  // Check cache first
-  const cached = await db.execute(sql`
-    SELECT vector::text AS vector_str
-    FROM claimnet.vector_cache
-    WHERE content_hash = ${contentHash}
-      AND model_id = ${modelId}
-      AND task_type = ${taskType}
-    LIMIT 1
-  `);
-
-  const cachedRow = (cached as unknown as Array<{ vector_str: string }>)[0];
-  if (cachedRow) {
-    return cachedRow.vector_str;
-  }
+  const cachedVector = await readCachedVector(db, contentHash, taskType, modelId);
+  if (cachedVector) return cachedVector;
 
   // Cache miss — call Gemini API (multimodal or text-only)
   const vector = multimodalParts
@@ -75,15 +63,40 @@ export async function getOrCreateCachedVector(
   if (!vector) return null;
 
   const vectorStr = `[${vector.join(",")}]`;
+  await writeCachedVector(db, contentHash, taskType, modelId, vectorStr);
+  return vectorStr;
+}
 
-  // Write to cache at full float32 precision (ON CONFLICT = another request cached it first)
+async function readCachedVector(
+  db: PostgresJsDatabase,
+  contentHash: string,
+  taskType: string,
+  modelId: string,
+): Promise<string | null> {
+  const cached = await db.execute(sql`
+    SELECT vector::text AS vector_str
+    FROM claimnet.vector_cache
+    WHERE content_hash = ${contentHash}
+      AND model_id = ${modelId}
+      AND task_type = ${taskType}
+    LIMIT 1
+  `);
+  return (cached as unknown as Array<{ vector_str: string }>)[0]?.vector_str ?? null;
+}
+
+/** At full float32 precision. ON CONFLICT: another request cached it first. */
+async function writeCachedVector(
+  db: PostgresJsDatabase,
+  contentHash: string,
+  taskType: string,
+  modelId: string,
+  vectorStr: string,
+): Promise<void> {
   await db.execute(sql`
     INSERT INTO claimnet.vector_cache (content_hash, model_id, task_type, vector)
     VALUES (${contentHash}, ${modelId}, ${taskType}, ${vectorStr}::vector(3072))
     ON CONFLICT (content_hash, model_id, task_type) DO NOTHING
   `);
-
-  return vectorStr;
 }
 
 /** Content hash for a chunk — text plus file bytes when multimodal. The
@@ -249,7 +262,8 @@ export async function enqueueEmbedding(
     // couldn't read them. But this is often inside the caller's transaction, so the
     // call waits for afterCommit. Until it lands, or if it fails, the row is the sweep's.
     const rebuildTarget = multimodalParts ? getRebuildTargetModelId() : null;
-    if (rebuildTarget) {
+    if (rebuildTarget && multimodalParts) {
+      const imageParts = multimodalParts;
       const targetRows = await db.execute(sql`
         INSERT INTO claimnet.embedding_vectors
           (embedding_chunk_id, model_id, task_type, status, vector)
@@ -261,17 +275,22 @@ export async function enqueueEmbedding(
       const targetRowId = (targetRows as unknown as Array<{ id: string }>)[0]?.id;
       if (targetRowId) {
         params.afterCommit?.push(async (outsideTx) => {
-          const targetVector = await getOrCreateCachedVector(
-            outsideTx, chunkHash, params.sourceText, taskType, multimodalParts, rebuildTarget,
-          );
+          const cached = await readCachedVector(outsideTx, chunkHash, taskType, rebuildTarget);
+          const embedded = cached ? null : await embedMultimodal(imageParts, taskType, rebuildTarget);
+          const targetVector = cached ?? (embedded ? `[${embedded.join(",")}]` : null);
           if (!targetVector) return;
-          await outsideTx.execute(sql`
+          const updated = await outsideTx.execute(sql`
             UPDATE claimnet.embedding_vectors
             SET vector = ${targetVector}::vector(3072)::halfvec(3072), vector_source = 'server',
                 status = 'complete', updated_at = now()
             WHERE id = ${targetRowId}::uuid
               AND (status IN ('pending', 'processing') OR vector_source = 'text_fallback')
+            RETURNING id
           `);
+          // After the update: a recipe deleted during the call leaves no cache row.
+          if (!cached && (updated as unknown as unknown[]).length > 0) {
+            await writeCachedVector(outsideTx, chunkHash, taskType, rebuildTarget, targetVector);
+          }
         });
       }
     }

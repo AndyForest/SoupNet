@@ -63,8 +63,8 @@ export async function checkReadModel(db: PostgresJsDatabase): Promise<void> {
       );
     } else {
       console.error(
-        `[embedding-model] READ_MODEL_PARTIAL: ${coverage.missing} of ${coverage.total} chunks are out of search under ${readModelId}. ` +
-          `Refused by the provider, and not counted here: ${coverage.refused}. Complete vectors: ${read} ${others}.`,
+        `[embedding-model] READ_MODEL_PARTIAL: ${coverage.total - coverage.covered} of ${coverage.total} chunks are out of search under ${readModelId}: ` +
+          `${coverage.refused} failed by the provider, ${coverage.retryLimit} over the retry limit, ${coverage.missing} missing. Complete vectors: ${read} ${others}.`,
       );
     }
   } catch (err) {

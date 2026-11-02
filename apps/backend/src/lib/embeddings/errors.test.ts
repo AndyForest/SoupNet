@@ -10,6 +10,7 @@ describe("embedding failure classification", () => {
       expect(isProviderSideFailure(http(status))).toBe(true);
     }
     expect(isProviderSideFailure(http(400, '{"reason":"API_KEY_INVALID"}'))).toBe(true);
+    expect(isProviderSideFailure(http(400, '{"error":{"status":"FAILED_PRECONDITION","message":"enable billing"}}'))).toBe(true);
     expect(isProviderSideFailure(new TypeError("fetch failed"))).toBe(true);
     const timeout = new Error("timed out");
     timeout.name = "TimeoutError";

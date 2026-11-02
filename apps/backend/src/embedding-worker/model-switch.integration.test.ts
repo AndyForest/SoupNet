@@ -263,7 +263,7 @@ function operatorCli(...args: string[]) {
     env: childEnv({}, 0),
     encoding: "utf8",
   });
-  return { status: r.status, output: `${r.stdout}${r.stderr}` };
+  return { status: r.status, stdout: r.stdout, stderr: r.stderr, output: `${r.stdout}${r.stderr}` };
 }
 
 async function readVectors(backend: Backend): Promise<string> {
@@ -282,6 +282,55 @@ async function readVectorsBecomes(backend: Backend, state: string): Promise<void
     await new Promise((r) => setTimeout(r, 500));
   }
   throw new Error(`readVectors stayed ${last}, expected ${state}`);
+}
+
+async function until(condition: () => boolean | Promise<boolean>, timeoutMs = 30_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await condition()) return;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  throw new Error("condition not reached before the timeout");
+}
+
+/** A model's rows on chunks search reads, whose twin under the other model is complete. */
+const searchedRows = (modelId: string, otherId: string, n: number) => sql<Array<{ id: string }>>`
+  SELECT g.id FROM claimnet.embedding_vectors g
+  JOIN claimnet.embedding_chunks ec ON ec.id = g.embedding_chunk_id
+  JOIN claimnet.embedding_chunk_strategies ecs ON ecs.id = ec.chunk_strategy_id
+  JOIN claimnet.embedding_vectors p ON p.embedding_chunk_id = g.embedding_chunk_id AND p.task_type = g.task_type
+  WHERE g.model_id = ${modelId} AND p.model_id = ${otherId} AND p.status = 'complete'
+    AND g.task_type = 'SEMANTIC_SIMILARITY' AND ecs.strategy_id IN ('full_document', 'full_recipe_context')
+  LIMIT ${n}
+`;
+
+/** Every chunk hash a recipe holds, its evidence's included. */
+async function recipeChunkHashes(topic: string): Promise<string[]> {
+  const rows = await sql<Array<{ chunk_hash: string }>>`
+    SELECT DISTINCT ec.chunk_hash FROM claimnet.traces t
+    LEFT JOIN claimnet.trace_evidence te ON te.trace_id = t.id
+    JOIN claimnet.embedding_sources es ON es.source_id = t.id OR es.source_id = te.evidence_id
+    JOIN claimnet.embedding_chunks ec ON ec.embedding_source_id = es.id
+    WHERE t.claim_text LIKE ${`%${topic}%`}
+  `;
+  return rows.map((r) => r.chunk_hash);
+}
+
+async function deleteRecipe(topic: string): Promise<void> {
+  const [row] = await sql<Array<{ id: string }>>`SELECT id FROM claimnet.traces WHERE claim_text LIKE ${`%${topic}%`}`;
+  const res = await fetch(`${children.values().next().value!.url}/traces/${row!.id}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+    body: JSON.stringify({ reason: "model switch test" }),
+  });
+  expect(res.status).toBe(200);
+}
+
+async function cachedUnder(modelId: string, hashes: string[]): Promise<number> {
+  const [row] = await sql<Array<{ n: number }>>`
+    SELECT count(*)::int AS n FROM claimnet.vector_cache WHERE model_id = ${modelId} AND content_hash IN ${sql(hashes)}
+  `;
+  return row!.n;
 }
 
 /** Forget tasks that have stopped, rather than waiting out their 3 minutes. */
@@ -594,6 +643,111 @@ describe.skipIf(!HAS_PG)("changing the embedding model", () => {
     expect(cached!.n).toBe(cachedBefore);
   }, 180_000);
 
+  it("leaves no cache row for a recipe deleted during a provider call", async () => {
+    await sweepUntil(async () => (await quiet(PREVIEW)) && (await quiet(GA)));
+    const deletedDuringCall = async (topic: string, seen: () => boolean, only?: string[]) => {
+      const hashes = only ?? await recipeChunkHashes(topic);
+      expect(hashes.length).toBeGreaterThan(0);
+      await sweepUntil(async () => seen(), 60_000);
+      await deleteRecipe(topic);
+      // The held call comes back and finds nothing to write.
+      await new Promise((r) => setTimeout(r, 3500));
+      fake.delay.clear();
+      expect(await cachedUnder(GA, hashes)).toBe(0);
+    };
+    const sawImage = () => fake.callsFor(GA).some((c) => c.sentImage);
+    try {
+      // The image call after the request's transaction.
+      fake.calls = [];
+      fake.delay.set(GA, 3000);
+      await checkRecipe(a, "deleted during the commit image call", png(4));
+      await deletedDuringCall("deleted during the commit image call", sawImage);
+
+      // The worker, for text.
+      await sweepUntil(() => quiet(GA));
+      fake.calls = [];
+      fake.delay.set(GA, 3000);
+      await checkRecipe(a, "deleted during the worker text call");
+      await deletedDuringCall("deleted during the worker text call", () => fake.callsFor(GA).length > 0);
+
+      // The worker, for an image. Its row goes back to waiting with nothing cached.
+      await sweepUntil(() => quiet(GA));
+      const topic = "deleted during the worker image call";
+      await checkRecipe(a, topic, png(5));
+      await sweepUntil(async () => (await quiet(GA)) && (await cachedUnder(GA, await recipeChunkHashes(topic))) > 0);
+      const hashes = await recipeChunkHashes(topic);
+      await sql`DELETE FROM claimnet.vector_cache WHERE model_id = ${GA} AND content_hash IN ${sql(hashes)}`;
+      await sql`
+        UPDATE claimnet.embedding_vectors ev SET status = 'pending', vector = NULL, vector_source = 'server'
+        FROM claimnet.embedding_chunks ec, claimnet.embedding_sources es
+        WHERE ev.embedding_chunk_id = ec.id AND ec.embedding_source_id = es.id AND es.artifact_category = 'multimodal'
+          AND ev.model_id = ${GA} AND ec.chunk_hash IN ${sql(hashes)}
+      `;
+      // The image's own chunk: map-only chunks of this recipe can embed and cache before the delete.
+      const imageChunks = await sql<Array<{ chunk_hash: string }>>`
+        SELECT ec.chunk_hash FROM claimnet.embedding_chunks ec
+        JOIN claimnet.embedding_sources es ON es.id = ec.embedding_source_id AND es.artifact_category = 'multimodal'
+        WHERE ec.chunk_hash IN ${sql(hashes)}
+      `;
+      fake.calls = [];
+      fake.delay.set(GA, 3000);
+      await deletedDuringCall(topic, sawImage, imageChunks.map((r) => r.chunk_hash));
+    } finally {
+      fake.delay.clear();
+    }
+    await sweepUntil(async () => (await quiet(PREVIEW)) && (await quiet(GA)));
+  }, 240_000);
+
+  it("restores an image's real vector over a text fallback, during the call or after it", async () => {
+    const topic = "fallback landing during the image call";
+    const row = async () => (await sql<Array<{ id: string; vector_source: string; marker: string }>>`
+      SELECT ev.id, ev.vector_source, (subvector(ev.vector, 2, 1)::text::jsonb->>0) AS marker
+      FROM claimnet.embedding_vectors ev
+      JOIN claimnet.embedding_chunks ec ON ec.id = ev.embedding_chunk_id
+      JOIN claimnet.embedding_sources es ON es.id = ec.embedding_source_id AND es.artifact_category = 'multimodal'
+      JOIN claimnet.trace_evidence te ON te.evidence_id = es.source_id
+      JOIN claimnet.traces t ON t.id = te.trace_id
+      WHERE ev.model_id = ${GA} AND t.claim_text LIKE ${`%${topic}%`}
+    `)[0]!;
+    const asFallback = (id: string) => sql`
+      UPDATE claimnet.embedding_vectors SET status = 'complete', vector_source = 'text_fallback', updated_at = now(),
+        vector = (SELECT v.vector FROM claimnet.embedding_vectors v
+                  JOIN claimnet.embedding_chunks c ON c.id = v.embedding_chunk_id
+                  JOIN claimnet.embedding_sources s ON s.id = c.embedding_source_id AND s.artifact_category = 'text'
+                  WHERE v.model_id = ${GA} AND v.status = 'complete' LIMIT 1)
+      WHERE id = ${id}::uuid
+    `;
+    fake.calls = [];
+    fake.delay.set(GA, 3000);
+    try {
+      await checkRecipe(a, topic, png(6));
+      baseline += 1;
+      await until(() => fake.callsFor(GA).some((c) => c.sentImage));
+      // The sweep gets there first, from a task without the bytes.
+      await asFallback((await row()).id);
+      expect((await row()).vector_source).toBe("text_fallback");
+      expect(Number((await row()).marker)).toBeCloseTo(TEXT_MARKER, 2);
+      await until(async () => (await row()).vector_source === "server");
+    } finally {
+      fake.delay.clear();
+    }
+    expect(Number((await row()).marker)).toBeCloseTo(IMAGE_MARKER, 2);
+
+    // It lands after the call: the real vector is in the cache, and the command restores it.
+    await asFallback((await row()).id);
+    const dry = operatorCli("repair-image-fallbacks");
+    expect(dry.status, dry.output).toBe(0);
+    expect(dry.output).toContain("1 text fallbacks can be restored");
+    expect((await row()).vector_source).toBe("text_fallback");
+    expect(operatorCli("status", "--read", PREVIEW).output).toContain("text fallbacks with a real image vector in the cache: 1");
+    const applied = operatorCli("repair-image-fallbacks", "--apply");
+    expect(applied.status, applied.output).toBe(0);
+    expect((await row()).vector_source).toBe("server");
+    expect(Number((await row()).marker)).toBeCloseTo(IMAGE_MARKER, 2);
+    // The fallback that was never an image stays what it is.
+    expect(operatorCli("repair-image-fallbacks").output).toContain("0 text fallbacks can be restored");
+  }, 120_000);
+
   it("reads only the read model at evidence search, the map and evidence clustering", async () => {
     // Seven evidence entries, so clustering has something to do.
     const form = new FormData();
@@ -711,6 +865,34 @@ describe.skipIf(!HAS_PG)("changing the embedding model", () => {
       await sql`UPDATE claimnet.embedding_vectors SET status = 'complete' WHERE id IN ${sql(ids)}`;
     }
     await readVectorsBecomes(a, "ok");
+
+    // More than a handful of failures is real, whatever they say, and keeps saying so.
+    const many = (await someSearchedRows(12)).map((r) => r.id);
+    await sql`UPDATE claimnet.embedding_vectors SET status = 'failed', error = 'API call failed: 400 billing' WHERE id IN ${sql(many)}`;
+    try {
+      await readVectorsBecomes(a, "partial");
+      const before = a.log().split("READ_MODEL_PARTIAL").length;
+      await until(() => a.log().split("READ_MODEL_PARTIAL").length >= before + 2, 130_000);
+      expect(a.log()).toMatch(/READ_MODEL_PARTIAL: \d+ of \d+ chunks are out of search under .*: 12 failed by the provider/);
+    } finally {
+      await sql`UPDATE claimnet.embedding_vectors SET status = 'complete', error = NULL WHERE id IN ${sql(many)}`;
+    }
+    await readVectorsBecomes(a, "ok");
+
+    // The sweep giving up isn't a refusal, so it doesn't get the allowance.
+    const stale = (await someSearchedRows(2)).map((r) => r.id);
+    await sql`
+      UPDATE claimnet.embedding_vectors SET status = 'failed',
+        error = 'Auto-retry limit exceeded after stale processing recovery'
+      WHERE id IN ${sql(stale)}
+    `;
+    try {
+      await readVectorsBecomes(a, "partial");
+    } finally {
+      await sql`UPDATE claimnet.embedding_vectors SET status = 'complete', error = NULL WHERE id IN ${sql(stale)}`;
+    }
+    await readVectorsBecomes(a, "ok");
+
     // Another model holding far fewer or far more doesn't enter into it: GA's rows
     // are complete here, and failing them changes nothing under preview.
     const held = await sql<Array<{ id: string }>>`
@@ -722,7 +904,7 @@ describe.skipIf(!HAS_PG)("changing the embedding model", () => {
     } finally {
       await sql`UPDATE claimnet.embedding_vectors SET status = 'complete' WHERE id IN ${sql(held.map((r) => r.id))}`;
     }
-  }, 120_000);
+  }, 300_000);
 
   it("survives 429s: rows wait, nothing fails, search keeps working, the work finishes", async () => {
     await checkRecipe(a, "recipe during rate limit one");
@@ -766,9 +948,16 @@ describe.skipIf(!HAS_PG)("changing the embedding model", () => {
     await sweepUntil(async () => /safe_to_flip=no refused=\d+/.test(a.log()));
     const seen = operatorCli("status", "--read", PREVIEW, "--target", GA);
     expect(seen.status, seen.output).toBe(0);
-    expect(seen.output).toMatch(/refused by the provider: [1-9]/);
+    expect(seen.output).toMatch(/provider refused: [1-9]/);
     expect(seen.output).toContain("Safe to flip reads: NO");
-    expect(seen.output).toContain("refused rows");
+    expect(seen.output).toContain("provider_refused");
+
+    // On one stream, so each table stays under its heading in a log.
+    expect(seen.stdout).toBe("");
+    const order = ["vectors:", "model_id", "search coverage", "tasks heard from", "secondsAgo", "image sources:", "source_type", "failed rows, by kind", "provider_refused"];
+    const at = order.map((text) => seen.stderr.indexOf(text));
+    expect(at.every((i) => i >= 0)).toBe(true);
+    expect([...at].sort((x, y) => x - y)).toEqual(at);
 
     // retry-failed puts it back, and the gap closes.
     const retry = operatorCli("retry-failed", "--model", GA);
@@ -777,12 +966,24 @@ describe.skipIf(!HAS_PG)("changing the embedding model", () => {
     expect(operatorCli("status", "--read", PREVIEW, "--target", GA).output).toContain("Safe to flip reads: YES");
 
     // A target row still on its way is not done: only 'complete' closes the gap.
-    await sql`
-      UPDATE claimnet.embedding_vectors SET status = 'processing', updated_at = now()
-      WHERE id = (SELECT id FROM claimnet.embedding_vectors WHERE model_id = ${GA} AND task_type = 'SEMANTIC_SIMILARITY' AND status = 'complete' LIMIT 1)
-    `;
+    const [onItsWay] = await searchedRows(GA, PREVIEW, 1);
+    await sql`UPDATE claimnet.embedding_vectors SET status = 'processing', updated_at = now() WHERE id = ${onItsWay!.id}`;
     expect(operatorCli("status", "--read", PREVIEW, "--target", GA).output).toContain("Safe to flip reads: NO");
-    await sql`UPDATE claimnet.embedding_vectors SET status = 'complete' WHERE model_id = ${GA} AND status = 'processing'`;
+    await sql`UPDATE claimnet.embedding_vectors SET status = 'complete' WHERE id = ${onItsWay!.id}`;
+
+    // A chunk search doesn't read holds nothing up, and is counted apart.
+    const [experimental] = await sql<Array<{ id: string }>>`
+      SELECT ev.id FROM claimnet.embedding_vectors ev
+      JOIN claimnet.embedding_chunks ec ON ec.id = ev.embedding_chunk_id
+      JOIN claimnet.embedding_chunk_strategies ecs ON ecs.id = ec.chunk_strategy_id
+      WHERE ev.model_id = ${GA} AND ecs.strategy_id NOT IN ('full_document', 'full_recipe_context') LIMIT 1
+    `;
+    await sql`UPDATE claimnet.embedding_vectors SET status = 'failed', error = 'API call failed: 400' WHERE id = ${experimental!.id}`;
+    const notRead = operatorCli("status", "--read", PREVIEW, "--target", GA).output;
+    expect(notRead).toContain("Safe to flip reads: YES");
+    expect(notRead).toContain("Chunks search doesn't read, not counted: 1");
+    expect(notRead).toContain("not_searched");
+    await sql`UPDATE claimnet.embedding_vectors SET status = 'complete', error = NULL WHERE id = ${experimental!.id}`;
   }, 240_000);
 
   let b: Backend; // read=GA, target=preview
@@ -893,12 +1094,7 @@ describe.skipIf(!HAS_PG)("changing the embedding model", () => {
     expect((await modelCounts(PREVIEW)).complete).toBe(before.complete);
 
     // A row GA refuses blocks the prune, until the operator accepts losing it.
-    const [one, two] = await sql<Array<{ id: string }>>`
-      SELECT g.id FROM claimnet.embedding_vectors g
-      JOIN claimnet.embedding_vectors p ON p.embedding_chunk_id = g.embedding_chunk_id AND p.task_type = g.task_type
-      WHERE g.model_id = ${GA} AND p.model_id = ${PREVIEW} AND p.status = 'complete' AND g.task_type = 'SEMANTIC_SIMILARITY'
-      LIMIT 2
-    `;
+    const [one, two] = await searchedRows(GA, PREVIEW, 2);
     await sql`UPDATE claimnet.embedding_vectors SET status = 'failed' WHERE id = ${one!.id}`;
     const refused = operatorCli("prune", "--model", PREVIEW, "--keep", GA, "--apply");
     expect(refused.status).toBe(3);
@@ -907,6 +1103,17 @@ describe.skipIf(!HAS_PG)("changing the embedding model", () => {
     const accepted = operatorCli("prune", "--model", PREVIEW, "--keep", GA, "--accept-refused");
     expect(accepted.status, accepted.output).toBe(0);
     expect(accepted.output).toContain("1 chunks the provider refused");
+
+    // Accepting refusals doesn't cover a row the sweep gave up on.
+    await sql`
+      UPDATE claimnet.embedding_vectors SET status = 'failed',
+        error = 'Auto-retry limit exceeded after stale processing recovery'
+      WHERE id = ${one!.id}
+    `;
+    const stale = operatorCli("prune", "--model", PREVIEW, "--keep", GA, "--accept-refused", "--apply");
+    expect(stale.status).toBe(3);
+    expect(stale.output).toContain("0 refused by the provider, 1 over the retry limit");
+    await sql`UPDATE claimnet.embedding_vectors SET error = 'API call failed: 400' WHERE id = ${one!.id}`;
 
     // Accepting refusals doesn't cover a row still on its way.
     await sql`UPDATE claimnet.embedding_vectors SET status = 'processing' WHERE id = ${two!.id}`;

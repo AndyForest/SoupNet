@@ -17,6 +17,7 @@ import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { ALL_STRATEGY_IDS } from "@soupnet/domain";
 import { getActiveEmbeddingModelIds, getEmbeddingProviderId } from "../../lib/embeddings/provider";
+import { RETRY_LIMIT_ERROR } from "../../services/embedding-model-status.service";
 import { QUEUES } from "../queues";
 import { handleModelRebuildTick } from "./model-rebuild";
 
@@ -41,7 +42,7 @@ export async function handleStrategySweep(
   const failedRows = await db.execute(sql`
     UPDATE claimnet.embedding_vectors
     SET status = 'failed',
-        error = 'Auto-retry limit exceeded after stale processing recovery',
+        error = ${RETRY_LIMIT_ERROR},
         updated_at = now()
     WHERE status = 'processing'
       AND updated_at < now() - interval '${sql.raw(String(STALE_PROCESSING_MINUTES))} minutes'
