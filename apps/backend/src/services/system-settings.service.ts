@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { systemSettings } from "@soupnet/db";
+import { accountIsManaged } from "../authz";
 
 export interface SystemSettingsMap {
   signupCap: number;
@@ -61,10 +62,15 @@ export async function getVerifiedUserCount(db: PostgresJsDatabase): Promise<numb
   // Waitlisted accounts don't occupy a cap slot — they're the queue FOR
   // slots. They start counting the moment the flag clears (approval or
   // auto-promotion).
+  //
+  // Managed accounts don't either: an organization's seats are the site
+  // operator's allowance for that company, counted outside the public cap
+  // (stream Domains, OD-C5; recipe 15b767de, draft 8e468d54 for the operator).
   const rows = await db.execute(sql`
-    SELECT count(*)::int AS total FROM claimnet.users
-    WHERE (email_verified_at IS NOT NULL OR role = 'system')
-      AND waitlisted_at IS NULL
+    SELECT count(*)::int AS total FROM claimnet.users u
+    WHERE (u.email_verified_at IS NOT NULL OR u.role = 'system')
+      AND u.waitlisted_at IS NULL
+      AND NOT ${accountIsManaged(sql`u.id`)}
   `);
   return ((rows[0] as Record<string, unknown>)?.["total"] as number) ?? 0;
 }

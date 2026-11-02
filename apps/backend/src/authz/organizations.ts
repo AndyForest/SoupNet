@@ -245,8 +245,10 @@ export async function joinOrganization(db: PostgresJsDatabase, input: JoinInput)
 /**
  * The join inside a caller's transaction, for a caller whose own writes must
  * roll back with it (Domains' verification click, SSO's Google sign-up). It
- * takes the organization row lock first, so call it before anything else in
- * the transaction that could wait on that row. A refusal is returned, not
+ * locks the account's row, then the organization's: every caller's proof step
+ * already holds the account's row when it gets here, and the opposite order
+ * here deadlocks with them (F168). Nothing may hold an organization's row and
+ * then wait on an account's. A refusal is returned, not
  * thrown: the caller's transaction decides whether to roll back. After the
  * caller commits, it sends the notice with `sendJoinNotice`
  * (services/organization.service.ts).
@@ -254,6 +256,13 @@ export async function joinOrganization(db: PostgresJsDatabase, input: JoinInput)
 export async function joinOrganizationInTx(tx: SqlExecutor, input: JoinInput): Promise<JoinResult> {
   const { organizationId, userId, role, via, authority } = input;
   if (!VIA_FOR_AUTHORITY[authority.kind].includes(via)) return { ok: false, refusal: "not_authorized" };
+
+  const userRows = await tx.execute(sql`
+    SELECT u.email, u.personal_organization_id FROM claimnet.users u
+    WHERE u.id = ${userId}::uuid
+    FOR UPDATE
+  `);
+  const account = (userRows as unknown as Array<{ email: string; personal_organization_id: string | null }>)[0];
 
   // The organization row lock serializes joins and re-enables, so two of them
   // racing for the last seat can't both see it free.
@@ -264,13 +273,6 @@ export async function joinOrganizationInTx(tx: SqlExecutor, input: JoinInput): P
   `);
   const org = (orgRows as unknown as Array<{ id: string; name: string; seat_limit: number | null }>)[0];
   if (!org) return { ok: false, refusal: "organization_not_found" };
-
-  const userRows = await tx.execute(sql`
-    SELECT u.email, u.personal_organization_id FROM claimnet.users u
-    WHERE u.id = ${userId}::uuid
-    FOR UPDATE
-  `);
-  const account = (userRows as unknown as Array<{ email: string; personal_organization_id: string | null }>)[0];
   if (!account) return { ok: false, refusal: "unknown_account" };
 
   if (!(await authorityHolds(tx, authority, organizationId, account.email))) {

@@ -39,6 +39,12 @@ export const QUEUES = {
   // Ephemeral workspaces — reaper (eval-reset destructive tier). Cron every
   // 5 min; physically deletes expired born-ephemeral books. The only deleter.
   EPHEMERAL_REAP: "ephemeral.reap",
+  /** Hourly: delete Google sign-in request rows older than a day (stream SSO, SSO-S2). */
+  SSO_REQUEST_SWEEP: "sso.request-sweep",
+
+  // Organization domains — daily DNS re-check of verified claims, then the
+  // migration of captured claims' accounts (stream Domains).
+  ORG_DOMAINS_RECHECK: "org-domains.recheck",
 
   // Payload fulfillment (indexed + air-gapped modes)
   PAYLOAD_FULFILLMENT: "payload.fulfillment",

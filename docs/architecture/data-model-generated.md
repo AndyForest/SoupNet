@@ -1,16 +1,16 @@
 # ClaimNet Data Model — Generated Reference
 
-> **Auto-generated** from Drizzle migration snapshot `0044_snapshot.json`.
+> **Auto-generated** from Drizzle migration snapshot `0046_snapshot.json`.
 > Do not edit by hand. Regenerate with: `npx tsx scripts/generate-data-model-docs.ts`
 >
-> Schema as of migration `0044_organization_members` (2026-10-26).
-> Tables: 32 | Schema: `claimnet`
+> Schema as of migration `0046_organization_domains` (2026-10-26).
+> Tables: 35 | Schema: `claimnet`
 
 For design rationale, conventions, and context, see [data-model.md](data-model.md).
 
 ## Tables
 
-**Identity & Access:** [`users`](#claimnetusers) · [`organizations`](#claimnetorganizations) · [`organization_members`](#claimnetorganization_members) · [`groups`](#claimnetgroups) · [`group_members`](#claimnetgroup_members) · [`ephemeral_books`](#claimnetephemeral_books)
+**Identity & Access:** [`users`](#claimnetusers) · [`user_identities`](#claimnetuser_identities) · [`sso_login_requests`](#claimnetsso_login_requests) · [`organizations`](#claimnetorganizations) · [`organization_members`](#claimnetorganization_members) · [`organization_domains`](#claimnetorganization_domains) · [`groups`](#claimnetgroups) · [`group_members`](#claimnetgroup_members) · [`ephemeral_books`](#claimnetephemeral_books)
 **Core Content:** [`traces`](#claimnettraces) · [`evidence`](#claimnetevidence) · [`references`](#claimnetreferences) · [`uploads`](#claimnetuploads)
 **Linking:** [`trace_evidence`](#claimnettrace_evidence) · [`trace_references`](#claimnettrace_references) · [`evidence_references`](#claimnetevidence_references)
 **Feedback & Reactions:** [`check_feedback`](#claimnetcheck_feedback) · [`check_feedback_stars`](#claimnetcheck_feedback_stars) · [`trace_reactions`](#claimnettrace_reactions) · [`session_shown`](#claimnetsession_shown) · [`intents`](#claimnetintents) · [`intent_shown`](#claimnetintent_shown)
@@ -251,6 +251,21 @@ erDiagram
         timestamptz last_used_at
     }
 
+    organization_domains {
+        uuid id PK
+        uuid organization_id FK
+        text domain
+        text challenge_token
+        timestamptz token_issued_at
+        timestamptz verified_at
+        timestamptz last_checked_at
+        timestamptz last_found_at
+        timestamptz failing_since
+        boolean auto_join
+        uuid added_by
+        timestamptz created_at
+    }
+
     organization_members {
         uuid id PK
         uuid organization_id FK
@@ -269,6 +284,7 @@ erDiagram
         uuid owner_id FK
         boolean is_personal
         integer seat_limit
+        boolean require_sso
         timestamptz created_at
         timestamptz updated_at
     }
@@ -302,6 +318,24 @@ erDiagram
         text session_id
         uuid trace_id
         timestamptz shown_at
+    }
+
+    sso_login_requests {
+        uuid id PK
+        text state_hash
+        text nonce
+        text code_verifier
+        text binding_hash
+        text return_kind
+        jsonb return_params
+        timestamptz created_at
+        timestamptz expires_at
+        timestamptz consumed_at
+        uuid user_id FK
+        text session_idp
+        text handoff_hash
+        timestamptz handoff_expires_at
+        timestamptz handoff_consumed_at
     }
 
     system_settings {
@@ -369,6 +403,20 @@ erDiagram
         timestamptz created_at
     }
 
+    user_identities {
+        uuid id PK
+        uuid user_id FK
+        text provider
+        text issuer
+        text subject
+        text email
+        boolean email_verified
+        text hosted_domain
+        text linked_via
+        timestamptz linked_at
+        timestamptz last_sign_in_at
+    }
+
     users {
         uuid id PK
         text email
@@ -423,16 +471,19 @@ erDiagram
     intents }o--|| users : "user_id"
     invitations }o--|| users : "inviter_id"
     invitations }o--|| groups : "group_id"
+    organization_domains }o--|| organizations : "organization_id"
     organization_members }o--|| organizations : "organization_id"
     organization_members ||--|| users : "user_id"
     organizations }o--|| users : "owner_id"
     reference_source_cache }o--|| references : "reference_id"
+    sso_login_requests }o--|| users : "user_id"
     trace_evidence }o--|| traces : "trace_id"
     trace_evidence }o--|| evidence : "evidence_id"
     trace_reactions }o--|| traces : "trace_id"
     trace_reactions }o--|| users : "user_id"
     trace_references }o--|| traces : "trace_id"
     trace_references }o--|| references : "reference_id"
+    user_identities }o--|| users : "user_id"
     traces }o..|| users : "user_id"
     traces }o..|| groups : "group_id"
     traces }o..|| api_keys : "api_key_id"
@@ -462,7 +513,7 @@ These are created by raw SQL in migration files and are not captured in the snap
 |---|---|---|---|---|
 | `id` | `uuid` | NO | `gen_random_uuid()` | PK |
 | `email` | `text` | NO |  |  |
-| `password_hash` | `text` | NO |  |  |
+| `password_hash` | `text` | YES |  |  |
 | `display_name` | `text` | YES |  |  |
 | `provider` | `text` | NO | `'local'` |  |
 | `external_id` | `text` | YES |  |  |
@@ -493,6 +544,63 @@ These are created by raw SQL in migration files and are not captured in the snap
 
 ---
 
+### `claimnet.user_identities`
+
+| Column | Type | Nullable | Default | PK |
+|---|---|---|---|---|
+| `id` | `uuid` | NO | `gen_random_uuid()` | PK |
+| `user_id` | `uuid` | NO |  |  |
+| `provider` | `text` | NO |  |  |
+| `issuer` | `text` | NO |  |  |
+| `subject` | `text` | NO |  |  |
+| `email` | `text` | NO |  |  |
+| `email_verified` | `boolean` | NO |  |  |
+| `hosted_domain` | `text` | YES |  |  |
+| `linked_via` | `text` | NO |  |  |
+| `linked_at` | `timestamptz` | NO | `now()` |  |
+| `last_sign_in_at` | `timestamptz` | NO | `now()` |  |
+
+**Foreign keys:**
+- `user_id` → `users.id`
+
+**Unique constraints:**
+- `user_identities_issuer_subject_unique`: `(issuer, subject)`
+- `user_identities_user_provider_unique`: `(user_id, provider)`
+
+---
+
+### `claimnet.sso_login_requests`
+
+| Column | Type | Nullable | Default | PK |
+|---|---|---|---|---|
+| `id` | `uuid` | NO | `gen_random_uuid()` | PK |
+| `state_hash` | `text` | NO |  |  |
+| `nonce` | `text` | NO |  |  |
+| `code_verifier` | `text` | NO |  |  |
+| `binding_hash` | `text` | NO |  |  |
+| `return_kind` | `text` | NO |  |  |
+| `return_params` | `jsonb` | NO |  |  |
+| `created_at` | `timestamptz` | NO | `now()` |  |
+| `expires_at` | `timestamptz` | NO |  |  |
+| `consumed_at` | `timestamptz` | YES |  |  |
+| `user_id` | `uuid` | YES |  |  |
+| `session_idp` | `text` | YES |  |  |
+| `handoff_hash` | `text` | YES |  |  |
+| `handoff_expires_at` | `timestamptz` | YES |  |  |
+| `handoff_consumed_at` | `timestamptz` | YES |  |  |
+
+**Foreign keys:**
+- `user_id` → `users.id`
+
+**Unique constraints:**
+- `sso_login_requests_state_hash_unique`: `(state_hash)`
+- `sso_login_requests_handoff_hash_unique`: `(handoff_hash)`
+
+**Indexes:**
+- `sso_login_requests_created_at_idx`: `(created_at)`
+
+---
+
 ### `claimnet.organizations`
 
 | Column | Type | Nullable | Default | PK |
@@ -503,6 +611,7 @@ These are created by raw SQL in migration files and are not captured in the snap
 | `owner_id` | `uuid` | NO |  |  |
 | `is_personal` | `boolean` | NO |  |  |
 | `seat_limit` | `integer` | YES |  |  |
+| `require_sso` | `boolean` | NO |  |  |
 | `created_at` | `timestamptz` | NO | `now()` |  |
 | `updated_at` | `timestamptz` | NO | `now()` |  |
 
@@ -539,6 +648,35 @@ These are created by raw SQL in migration files and are not captured in the snap
 
 **Indexes:**
 - `organization_members_organization_id_idx`: `(organization_id)`
+
+---
+
+### `claimnet.organization_domains`
+
+| Column | Type | Nullable | Default | PK |
+|---|---|---|---|---|
+| `id` | `uuid` | NO | `gen_random_uuid()` | PK |
+| `organization_id` | `uuid` | NO |  |  |
+| `domain` | `text` | NO |  |  |
+| `challenge_token` | `text` | NO |  |  |
+| `token_issued_at` | `timestamptz` | NO |  |  |
+| `verified_at` | `timestamptz` | YES |  |  |
+| `last_checked_at` | `timestamptz` | YES |  |  |
+| `last_found_at` | `timestamptz` | YES |  |  |
+| `failing_since` | `timestamptz` | YES |  |  |
+| `auto_join` | `boolean` | NO |  |  |
+| `added_by` | `uuid` | YES |  |  |
+| `created_at` | `timestamptz` | NO | `now()` |  |
+
+**Foreign keys:**
+- `organization_id` → `organizations.id`
+
+**Unique constraints:**
+- `organization_domains_org_domain_unique`: `(organization_id, domain)`
+
+**Indexes:**
+- `organization_domains_verified_domain_unique`: `(domain)` (unique)
+- `organization_domains_domain_idx`: `(domain)`
 
 ---
 

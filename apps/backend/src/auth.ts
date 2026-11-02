@@ -9,6 +9,7 @@ import { normalizeEmail } from "./lib/normalize-email";
 import { ACCOUNT_DISABLED_MESSAGE, ACCOUNT_SUSPENDED_MESSAGE, SESSION_EXPIRED_MESSAGE, SSO_REQUIRED_MESSAGE } from "@soupnet/domain";
 import type { AccountDisabledReason } from "./authz/account-state";
 import { accountRefusal, sessionState } from "./authz/session-state";
+import { ssoRequiredFor } from "./authz/sso-policy";
 
 const JWT_SECRET = () => {
   const secret = process.env["JWT_SECRET"];
@@ -52,7 +53,21 @@ export async function hashPassword(password: string): Promise<string> {
   return bcrypt.hash(password, SALT_ROUNDS);
 }
 
-export async function verifyPassword(password: string, hash: string): Promise<boolean> {
+let dummyHash: Promise<string> | null = null;
+
+/**
+ * Check a password against a stored hash. An account with no password (one
+ * that signs in only with Google, or whose unverified password was discarded
+ * at link time) has a null hash: it is compared against a fixed dummy hash and
+ * refused, so it costs the same bcrypt work as a wrong password and the two
+ * can't be told apart (organization accounts round 1, stream SSO, SSO-A9).
+ */
+export async function verifyPassword(password: string, hash: string | null): Promise<boolean> {
+  if (hash === null) {
+    dummyHash ??= bcrypt.hash("no password on this account", SALT_ROUNDS);
+    await bcrypt.compare(password, await dummyHash);
+    return false;
+  }
   return bcrypt.compare(password, hash);
 }
 
@@ -225,16 +240,44 @@ export async function registerUser(
     signupReason?: string | null;
   },
 ): Promise<{ user: { id: string; email: string; role: string }; token: string }> {
-  email = normalizeEmail(email);
-  const passwordHash = await hashPassword(password);
+  const user = await createAccount(db, {
+    email,
+    passwordHash: await hashPassword(password),
+    role,
+    waitlisted: opts?.waitlisted ?? false,
+    signupReason: opts?.signupReason ?? null,
+  });
+  const token = signToken({ sub: user.id, email: user.email, role: user.role });
+  return { user, token };
+}
+
+type AccountExecutor = Pick<PostgresJsDatabase, "insert" | "execute">;
+
+/**
+ * Create an account with its personal organization and default book: the
+ * setup every way in shares (password registration, a Google sign-up). The
+ * password hash is null for an account that signs in only with Google
+ * (stream SSO). Runs on the root connection or inside a transaction.
+ */
+export async function createAccount(
+  db: AccountExecutor,
+  input: {
+    email: string;
+    passwordHash: string | null;
+    role?: string;
+    waitlisted?: boolean;
+    signupReason?: string | null;
+  },
+): Promise<{ id: string; email: string; role: string }> {
+  const email = normalizeEmail(input.email);
 
   // Insert user
   const userRows = await db.insert(users).values({
     email,
-    passwordHash,
-    role,
-    waitlistedAt: opts?.waitlisted ? new Date() : null,
-    signupReason: opts?.signupReason ?? null,
+    passwordHash: input.passwordHash,
+    role: input.role ?? "tenant",
+    waitlistedAt: input.waitlisted ? new Date() : null,
+    signupReason: input.signupReason ?? null,
   }).returning({ id: users.id, email: users.email, role: users.role });
 
   const user = userRows[0];
@@ -281,9 +324,7 @@ export async function registerUser(
     });
   }
 
-  const token = signToken({ sub: user.id, email: user.email, role: user.role });
-
-  return { user: { id: user.id, email: user.email, role: user.role }, token };
+  return { id: user.id, email: user.email, role: user.role };
 }
 
 /**
@@ -317,16 +358,30 @@ export function isSignupProofOf(proof: string, userId: string): boolean {
 type SignInResult =
   | { user: { id: string; email: string; role: string }; token: string; waitlistedAt: null; disabled: null }
   | { user: { id: string; email: string; role: string }; token: null; waitlistedAt: Date; disabled: null }
-  | { user: { id: string; email: string; role: string }; token: null; waitlistedAt: null; disabled: AccountDisabledReason };
+  | { user: { id: string; email: string; role: string }; token: null; waitlistedAt: null; disabled: AccountDisabledReason | "sso_required" };
+
+/**
+ * When a session may say it was issued (F145, F147): `issuedAt` is taken before
+ * the read that proved the person, and `notBefore` is the cut-off that read saw,
+ * or one this request set itself. A cut-off arriving later isn't in it, so a
+ * sign-in that won the race stays behind it, as invalidateSessions intends.
+ */
+export interface SessionDating {
+  issuedAt: number;
+  notBefore: number;
+}
 
 /**
  * The checks every sign-in passes once the person is proved, and the session
- * they get. No token for a waitlisted or switched-off account: without a JWT,
- * every other surface stays blocked with zero additional checks.
+ * they get. No token for a waitlisted or switched-off account, or for a member
+ * of an organization that requires SSO, whose session here would carry no `idp`
+ * and be refused on every request: without a JWT, every other surface stays
+ * blocked with zero additional checks.
  */
 async function signInProved(
   db: PostgresJsDatabase,
   user: { id: string; email: string; role: string; waitlistedAt: Date | null },
+  dating: SessionDating,
 ): Promise<SignInResult> {
   if (user.waitlistedAt) {
     return {
@@ -344,15 +399,20 @@ async function signInProved(
     return { user: { id: user.id, email: user.email, role: user.role }, token: null, waitlistedAt: null, disabled };
   }
 
-  const token = signToken({ sub: user.id, email: user.email, role: user.role });
+  // Likewise after the password checks, so only the password holder learns it (SSO-R2).
+  if (await ssoRequiredFor(db, user.id)) {
+    return { user: { id: user.id, email: user.email, role: user.role }, token: null, waitlistedAt: null, disabled: "sso_required" };
+  }
+
+  const token = signToken({ sub: user.id, email: user.email, role: user.role, iat: Math.max(dating.issuedAt, dating.notBefore) });
   return { user: { id: user.id, email: user.email, role: user.role }, token, waitlistedAt: null, disabled: null };
 }
 
 /** Sign in an account already proved some other way (POST /auth/verify). */
-export async function signInAccount(db: PostgresJsDatabase, userId: string): Promise<SignInResult | null> {
+export async function signInAccount(db: PostgresJsDatabase, userId: string, dating: SessionDating): Promise<SignInResult | null> {
   const rows = await db.select().from(users).where(sql`${users.id} = ${userId}::uuid`).limit(1);
   const user = rows[0];
-  return user ? signInProved(db, user) : null;
+  return user ? signInProved(db, user, dating) : null;
 }
 
 /**
@@ -370,6 +430,7 @@ export async function loginUser(
   email: string,
   password: string,
 ): Promise<SignInResult | null> {
+  const issuedAt = Math.floor(Date.now() / 1000);
   const rows = await db.select().from(users).where(sql`${users.email} = ${normalizeEmail(email)}`).limit(1);
   const user = rows[0];
   if (!user) return null;
@@ -377,7 +438,8 @@ export async function loginUser(
   const valid = await verifyPassword(password, user.passwordHash);
   if (!valid) return null;
 
-  return signInProved(db, user);
+  const notBefore = user.sessionsValidAfter ? Math.floor(user.sessionsValidAfter.getTime() / 1000) : 0;
+  return signInProved(db, user, { issuedAt, notBefore });
 }
 
 /**

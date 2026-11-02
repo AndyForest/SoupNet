@@ -114,6 +114,20 @@ The original pipeline had a single vectoring worker that batched per-strategy. T
 **Why we still have it:** A legacy handler is registered to drain any in-flight jobs from before the refactor. Once the queue stays empty for the retention window, this handler can be removed.`,
   },
 
+  "org-domains.recheck": {
+    summary: "Daily re-check of organizations' verified domains, then their migrations. Runs at 04:17 UTC.",
+    status: "live",
+    details: `**Verified domains for company organizations (organization accounts round 1, stream Domains).**
+
+Each run looks up the TXT record at \`_soupnet-challenge.<domain>\` for every verified claim. A missing record freezes automatic joining at once and emails the organization's active owners and admins; fourteen days of failed checks turns the domain unverified. Members and books are never touched.
+
+It then migrates every captured claim's eligible accounts (verified email exactly on the domain, in no company organization), which continues any migration a request left unfinished and seats accounts that waited for a seat.
+
+**If it stops:** joining on every domain freezes within 48 hours, because the domain authority requires a recent successful check. Nothing else breaks.
+
+See: docs/planning/org-accounts-build/domains.md`,
+  },
+
   "__pgboss__send-it": {
     summary: "Internal pg-boss queue for cron schedule firing.",
     status: "live",

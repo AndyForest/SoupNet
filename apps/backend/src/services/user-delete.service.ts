@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { deleteTraceCascade } from "./trace-delete.service";
+import { removeDomainsOfOrganizationsOwnedBy } from "./org-domains.service";
 import { anonymiseAuditLogOf } from "./audit-log.service";
 import {
   sharedBooksOwnedBy,
@@ -261,6 +262,8 @@ export async function deleteUserCascade(
       )
       AND NOT EXISTS (SELECT 1 FROM claimnet.traces t WHERE t.group_id = g.id)
     `);
+    // An organization's domain claims go with it (their foreign key).
+    await removeDomainsOfOrganizationsOwnedBy(tx, userId);
     await tx.execute(sql`
       DELETE FROM claimnet.organizations WHERE owner_id = ${userId}::uuid
     `);
