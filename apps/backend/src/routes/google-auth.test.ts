@@ -520,6 +520,19 @@ describe.skipIf(!canConnect() || !BASE || !ISSUER || !CLIENT_ID)("Google sign-in
     expect((await identitiesOf(cy.userId)).map((i) => i.subject)).toEqual([cySub]);
   });
 
+  it("GSI-LINK-08 / SSO-A4b, F166: a cut-off session of the sign-up's own isn't that session any more, so it's asked too", async () => {
+    const email = address("f166-cut-session", `outside-${run}.example`);
+    const cySub = sub();
+    const cy = signedIn(await signIn(consumer(email, cySub)));
+    const token = await verificationTokenOf(cy.userId);
+    await invalidateSessions(getDb(), cy.userId);
+
+    const { data } = await postVerify({ token }, cy.token);
+    expect(data).toMatchObject({ verified: false, confirmationRequired: true });
+    expect((await userRow(cy.userId)).email_verified_at).toBeNull();
+    expect((await identitiesOf(cy.userId)).map((i) => i.subject)).toEqual([cySub]);
+  });
+
   it("GSI-LINK-08 / SSO-A4b, F148: the confirmation says when the sign-up is waitlisted, which has no browser to go back to", async () => {
     const email = address("f148", `outside-${run}.example`);
     const cy = signedIn(await signIn(consumer(email)));

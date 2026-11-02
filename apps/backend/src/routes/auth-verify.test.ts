@@ -4,6 +4,7 @@ import { getDb } from "../db";
 import { authRoutes } from "./auth";
 import { signInAccount } from "../auth";
 import { invalidateSessions } from "../authz";
+import { untilBlockedBy } from "../test-locks";
 
 // F144, recipe 450a107b: someone who registered a password on another person's
 // address can't keep access once the real owner proves the mailbox. Scenarios
@@ -321,6 +322,26 @@ describe.skipIf(!BASE)("POST /auth/verify and /auth/reset-password: proving a ma
     // Its checks read no cut-off, and the row it signs from now has one.
     const raced = await signInAccount(getDb(), id, { issuedAt, notBefore: 0 });
     expect(await meStatus(raced!.token!)).toBe(401);
+    expect(await meStatus(await signIn(email))).toBe(200);
+  });
+
+  it("ACC-VERIFY-19c / F166: a proof whose verify is overtaken by someone else's cut-off gets a session that cut-off ends", async () => {
+    const { email, token, proof } = await register("overtaken");
+    const rows = await getDb().execute(sql`SELECT id FROM claimnet.users WHERE email = ${email}`);
+    const id = (rows as unknown as Array<{ id: string }>)[0]!.id;
+
+    let verifying: ReturnType<typeof post> | undefined;
+    await getDb().transaction(async (tx) => {
+      await tx.execute(sql`SELECT 1 FROM claimnet.users WHERE id = ${id}::uuid FOR UPDATE`);
+      // Past the proof and its read of the account, it waits to write on this lock.
+      verifying = post("/auth/verify", { token, signupProof: proof });
+      await untilBlockedBy(getDb(), tx);
+      await invalidateSessions(tx, id);
+    });
+
+    const session = (await verifying)!.data["token"];
+    expect(typeof session).toBe("string");
+    expect(await meStatus(String(session))).toBe(401);
     expect(await meStatus(await signIn(email))).toBe(200);
   });
 
