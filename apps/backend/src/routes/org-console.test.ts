@@ -470,6 +470,25 @@ describe.skipIf(!canConnect() || !BASE)("organization accounts: stream Console",
     expect(site.users.find((u) => u["id"] === max.userId)).toMatchObject({ status: "directory_deleted" });
   });
 
+  it("bad paging values answer 400 on every list, and a large limit still means the maximum", async () => {
+    const { olive, orgId } = await acme();
+    for (const [who, path] of [
+      [olive, `/organizations/${orgId}/members`],
+      [olive, `/organizations/${orgId}/activity`],
+      [sys, "/admin/users"],
+      [sys, `/admin/organizations/${orgId}/members`],
+    ] as const) {
+      for (const bad of ["limit=-1", "limit=abc", "offset=-1", "offset=99999999999999999999"]) {
+        const res = await call(who, "GET", `${path}?${bad}`);
+        expect(res.status, `${path}?${bad}`).toBe(400);
+        expect(await json(res)).toMatchObject({ ok: false, error: "Invalid input" });
+      }
+      const fine = await call(who, "GET", `${path}?limit=100000&offset=0`);
+      expect(fine.status, path).toBe(200);
+      expect(((await json(fine))["data"] as Json)["limit"]).toBe(200);
+    }
+  });
+
   it("CN-L1: the site operator removing a directory connection reads as Soup.net in Activity, never their address", async () => {
     const { olive, orgId } = await acme();
     await connectDirectory(orgId, `con-${run}-${++n}.example`);

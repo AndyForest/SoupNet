@@ -11,7 +11,7 @@ import {
   getVerifiedUserCount,
   getPendingInvitationCount,
 } from "../services/system-settings.service";
-import { QUEUE_DESCRIPTIONS, getQueueDescription, ORGANIZATION_FULL_MESSAGE } from "@soupnet/domain";
+import { LIST_PAGING_MESSAGE, QUEUE_DESCRIPTIONS, getQueueDescription, ORGANIZATION_FULL_MESSAGE, parseListPaging } from "@soupnet/domain";
 import { orgMemberCount } from "../authz";
 import { removeDirectoryConnection } from "../services/directory-connection.service";
 import type { JoinRefusal } from "../authz";
@@ -374,7 +374,9 @@ admin.post("/invite", inviteRateLimit, async (c) => {
 //   limit?        — default 50, max 200
 //   offset?       — default 0
 admin.get("/users", async (c) => {
-  const data = await listUsers(getDb(), { viewer: "site" }, c.req.query());
+  const paging = parseListPaging(c.req.query());
+  if (!paging) return c.json({ ok: false, error: "Invalid input", message: LIST_PAGING_MESSAGE }, 400);
+  const data = await listUsers(getDb(), { viewer: "site" }, c.req.query(), paging);
   return c.json({ ok: true, data });
 });
 
@@ -388,7 +390,9 @@ admin.get("/organizations/:id/members", async (c) => {
   if (!z.string().uuid().safeParse(organizationId).success) {
     return c.json({ ok: false, error: "not_found" }, 404);
   }
-  const data = await listUsers(getDb(), { viewer: "site", organizationId }, c.req.query());
+  const paging = parseListPaging(c.req.query());
+  if (!paging) return c.json({ ok: false, error: "Invalid input", message: LIST_PAGING_MESSAGE }, 400);
+  const data = await listUsers(getDb(), { viewer: "site", organizationId }, c.req.query(), paging);
   return c.json({ ok: true, data });
 });
 

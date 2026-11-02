@@ -26,7 +26,7 @@ import { sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { columnsFor } from "@soupnet/domain";
-import type { AdminViewer } from "@soupnet/domain";
+import type { AdminViewer, ListPaging } from "@soupnet/domain";
 import {
   accountDisabledReason,
   homeOrganizationIdOf,
@@ -183,11 +183,9 @@ const SORT_COLUMN: Record<string, string> = {
 };
 
 /** One page of the list for this scope. */
-export async function listUsers(db: PostgresJsDatabase, scope: UsersListScope, query: UsersListQuery): Promise<UsersListPage> {
+export async function listUsers(db: PostgresJsDatabase, scope: UsersListScope, query: UsersListQuery, { limit, offset }: ListPaging): Promise<UsersListPage> {
   const listing = scope.organizationId ? "organization" : "all";
   const keys = columnsFor(scope.viewer, listing).map((c) => c.key);
-  const limit = Math.min(parseInt(query["limit"] ?? "50", 10) || 50, 200);
-  const offset = Math.max(parseInt(query["offset"] ?? "0", 10) || 0, 0);
   const sortable = sortKeys(scope.viewer, listing);
   const sortBy = sortable.includes(query["sortBy"] ?? "") ? query["sortBy"]! : sortable[0]!;
   const sortDir: "asc" | "desc" = query["sortDir"] === "asc" ? "asc" : "desc";

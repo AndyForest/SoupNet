@@ -25,7 +25,7 @@ import { getDb } from "../db";
 import { requireAuth, requireVerifiedEmail } from "../auth";
 import type { AppEnv } from "../types";
 import { activeOrgManagerRole, orgBookSummary, orgMemberCount, publishedTrace } from "../authz";
-import { ORGANIZATION_NOT_FOUND, isInboundSharing, isOutboundSharing } from "@soupnet/domain";
+import { LIST_PAGING_MESSAGE, ORGANIZATION_NOT_FOUND, isInboundSharing, isOutboundSharing, parseListPaging } from "@soupnet/domain";
 import { listUsers } from "../services/users-list.service";
 import { orgActivity } from "../services/org-activity.service";
 import { writeAudit } from "../services/audit-log.service";
@@ -94,7 +94,9 @@ organizationConsoleRouter.get("/:id", async (c) => {
 organizationConsoleRouter.get("/:id/members", async (c) => {
   const org = await managedOrgId(c);
   if (!org) return notFound(c);
-  const data = await listUsers(getDb(), { viewer: "org", organizationId: org.id }, c.req.query());
+  const paging = parseListPaging(c.req.query());
+  if (!paging) return c.json({ ok: false, error: "Invalid input", message: LIST_PAGING_MESSAGE }, 400);
+  const data = await listUsers(getDb(), { viewer: "org", organizationId: org.id }, c.req.query(), paging);
   return c.json({ ok: true, data });
 });
 
@@ -181,7 +183,9 @@ organizationConsoleRouter.patch("/:id/sharing", async (c) => {
 organizationConsoleRouter.get("/:id/activity", async (c) => {
   const org = await managedOrgId(c);
   if (!org) return notFound(c);
-  const data = await orgActivity(getDb(), org.id, c.req.query());
+  const paging = parseListPaging(c.req.query());
+  if (!paging) return c.json({ ok: false, error: "Invalid input", message: LIST_PAGING_MESSAGE }, 400);
+  const data = await orgActivity(getDb(), org.id, paging);
   return c.json({ ok: true, data });
 });
 

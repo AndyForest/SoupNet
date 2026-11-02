@@ -15,7 +15,7 @@ import { sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { orgActivityActionsFor, orgActivityEvent } from "@soupnet/domain";
-import type { OrgActivityEvent } from "@soupnet/domain";
+import type { ListPaging, OrgActivityEvent } from "@soupnet/domain";
 
 export interface OrgActivityPage {
   events: OrgActivityEvent[];
@@ -90,20 +90,12 @@ async function readEvents(db: PostgresJsDatabase, actions: string[], scope: SQL,
   });
 }
 
-function page(query: Partial<Record<string, string | undefined>>): { limit: number; offset: number } {
-  return {
-    limit: Math.min(parseInt(query["limit"] ?? "50", 10) || 50, 200),
-    offset: Math.min(Math.max(parseInt(query["offset"] ?? "0", 10) || 0, 0), 10_000),
-  };
-}
-
 /** Admin actions on this organization and its members, newest first. */
 export async function orgActivity(
   db: PostgresJsDatabase,
   organizationId: string,
-  query: Partial<Record<string, string | undefined>>,
+  { limit, offset }: ListPaging,
 ): Promise<OrgActivityPage> {
-  const { limit, offset } = page(query);
   const scope = sql`(
     (a.target_type = 'organization' AND a.target_id = ${organizationId}::uuid)
     OR (a.target_type = 'user' AND a.metadata->>'organizationId' = ${organizationId})
