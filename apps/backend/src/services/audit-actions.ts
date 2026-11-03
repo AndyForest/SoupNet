@@ -55,6 +55,7 @@ export const ACCOUNT_EVENT_ACTIONS = [
   "organization.member_set_role",
   "organization.owner_handed_over",
   "organization.seat_limit_set",
+  "organization.sharing_changed",
   "organization.require_sso_set",
   "organization.directory_connected",
   "organization.directory_connect_failed",

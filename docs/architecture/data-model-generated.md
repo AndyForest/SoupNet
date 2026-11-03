@@ -1,9 +1,9 @@
 # ClaimNet Data Model — Generated Reference
 
-> **Auto-generated** from Drizzle migration snapshot `0047_snapshot.json`.
+> **Auto-generated** from Drizzle migration snapshot `0048_snapshot.json`.
 > Do not edit by hand. Regenerate with: `npx tsx scripts/generate-data-model-docs.ts`
 >
-> Schema as of migration `0047_organization_directory` (2026-10-31).
+> Schema as of migration `0048_organization_sharing_policy` (2026-11-02).
 > Tables: 36 | Schema: `claimnet`
 
 For design rationale, conventions, and context, see [data-model.md](data-model.md).
@@ -307,6 +307,8 @@ erDiagram
         uuid owner_id FK
         boolean is_personal
         integer seat_limit
+        text outbound_sharing
+        text inbound_sharing
         boolean require_sso
         timestamptz created_at
         timestamptz updated_at
@@ -635,6 +637,8 @@ These are created by raw SQL in migration files and are not captured in the snap
 | `owner_id` | `uuid` | NO |  |  |
 | `is_personal` | `boolean` | NO |  |  |
 | `seat_limit` | `integer` | YES |  |  |
+| `outbound_sharing` | `text` | NO | `'allowed'` |  |
+| `inbound_sharing` | `text` | NO | `'allowed'` |  |
 | `require_sso` | `boolean` | NO |  |  |
 | `created_at` | `timestamptz` | NO | `now()` |  |
 | `updated_at` | `timestamptz` | NO | `now()` |  |

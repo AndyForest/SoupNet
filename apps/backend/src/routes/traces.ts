@@ -26,7 +26,7 @@ import {
   needsWriteAccessReason,
 } from "../services/draft-queue.service";
 import type { SharedAudience } from "../authz";
-import { TRACE_REACTIONS, vocab, authorizeTraceMove, onlySubjectReviewsReason } from "@soupnet/domain";
+import { TRACE_REACTIONS, vocab, authorizeTraceMove, onlySubjectReviewsReason, sharingRefusalMessage } from "@soupnet/domain";
 import { draftQueueUrl } from "../lib/key-remediation";
 import {
   bookIdsFor,
@@ -50,6 +50,7 @@ import {
   SHARED_AUDIENCE,
   inBooks,
   feedbackOwnedBy,
+  sharingAllowsRefile,
 } from "../authz";
 
 const traces = new Hono<AppEnv>();
@@ -968,6 +969,14 @@ traces.patch("/:id", async (c) => {
   // A system user may move into a book they aren't a member of, but the book
   // still has to exist.
   if (!dest) return c.json({ ok: false, error: "Recipe book not found" }, 404);
+
+  // A recipe leaving a company's books crosses the same boundary an outbound
+  // share does, so the source organization's outbound policy applies, to the
+  // site operator too (CN-P4).
+  const sharing = await sharingAllowsRefile(db, { sourceBookId: access.bookId, destinationBookId: destGroupId, actorUserId: user.id });
+  if (!sharing.allowed) {
+    return c.json({ ok: false, error: "sharing_blocked", message: sharingRefusalMessage(sharing.refusal, "mover") }, 403);
+  }
 
   try {
     const result = await moveTraceToBook({

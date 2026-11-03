@@ -7,10 +7,14 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./browser": {
+      "import": "./dist/browser.js",
+      "types": "./dist/browser.d.ts"
     }
   },
   "scripts": {
-    "build": "tsc --build tsconfig.json && tsup src/index.ts --format esm --no-splitting",
+    "build": "tsc --build tsconfig.json && tsup src/index.ts src/browser.ts --format esm --no-splitting",
     "typecheck": "tsc --noEmit",
     "lint": "eslint -c ../../eslint.config.js src/"
   },

@@ -11,4 +11,6 @@ export {
 } from "./AdminFilterBar.js";
 export { AdminTable, type AdminColumn } from "./AdminTable.js";
 export { AdminPagination } from "./AdminPagination.js";
-export { useAdminGate } from "./useAdminGate.js";
+export { useAdminGate, type AdminScope } from "./useAdminGate.js";
+export { AdminUsersTable, fmtAdminDate } from "./AdminUsersTable.js";
+export { useAdminListQuery } from "./useAdminListQuery.js";

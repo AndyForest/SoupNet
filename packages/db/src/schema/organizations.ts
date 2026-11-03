@@ -38,6 +38,15 @@ export const organizations = claimnetSchema.table(
     // never by an org admin (program §3.1; recipe 61adb152).
     seatLimit: integer("seat_limit"),
 
+    // Company organizations only: the sharing policy (program §3.7; stream
+    // Console, recipe 5c76b5ff). Outbound: may people outside the
+    // organization be brought into its recipe books ('blocked', 'admins_only',
+    // 'allowed'). Inbound: may its members join books owned outside it
+    // ('blocked', 'allowed'). Kept apart so blocking outbound never stops a
+    // member bringing their own context in (§2). Read by the authz module's
+    // sharingPolicyAllows; set only through PATCH /organizations/:id/sharing.
+    outboundSharing: text("outbound_sharing").notNull().default("allowed"),
+    inboundSharing: text("inbound_sharing").notNull().default("allowed"),
     // Company organizations only: members must sign in with their Google
     // Workspace account. Password sign-in and reset are refused for active
     // members, and a session not issued by a Workspace Google sign-in is
@@ -52,6 +61,8 @@ export const organizations = claimnetSchema.table(
   (t) => [
     unique("organizations_slug_unique").on(t.slug),
     index("organizations_owner_id_idx").on(t.ownerId),
+    check("organizations_outbound_sharing_check", sql`${t.outboundSharing} IN ('blocked', 'admins_only', 'allowed')`),
+    check("organizations_inbound_sharing_check", sql`${t.inboundSharing} IN ('blocked', 'allowed')`),
   ]
 );
 

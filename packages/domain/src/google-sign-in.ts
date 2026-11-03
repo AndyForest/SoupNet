@@ -155,9 +155,9 @@ const RETURN_BASE = "https://soup.invalid";
  * Where a sign-in may return to: the server's copy of the SPA's audited rule
  * (`apps/frontend/src/lib/return-target.ts`, drafts slice 3, S3-L5), so a
  * stored return path is checked on both sides. Same-origin paths under
- * `/app/`, plus exactly `/oauth/authorize` with its query, so a signed-out
- * person returns to the consent page (recipe 607dc974). Null for anything
- * else.
+ * `/app/`, the org console (`/org` and below), plus exactly `/oauth/authorize`
+ * with its query, so a signed-out person returns to the consent page (recipe
+ * 607dc974). Null for anything else.
  */
 export function safeAppReturnPath(raw: string | null | undefined): string | null {
   if (typeof raw !== "string" || raw.length === 0 || raw.length > 2048) return null;
@@ -175,6 +175,7 @@ export function safeAppReturnPath(raw: string | null | undefined): string | null
   // The normalized path must be the one written: "/oauth/authorize/../x"
   // normalizes to "/oauth/x", which the prefix test below would refuse anyway.
   if (url.pathname !== pathPart) return null;
-  if (!url.pathname.startsWith("/app/") && url.pathname !== "/oauth/authorize") return null;
+  const orgConsole = url.pathname === "/org" || url.pathname.startsWith("/org/");
+  if (!url.pathname.startsWith("/app/") && !orgConsole && url.pathname !== "/oauth/authorize") return null;
   return `${url.pathname}${url.search}${url.hash}`;
 }

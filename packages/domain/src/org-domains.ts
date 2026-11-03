@@ -304,7 +304,7 @@ export function domainJoinedNotice(organizationName: string): string {
 /** The domain list, while a failed migration's accounts wait for the daily job (OD-X6). */
 export function domainMigrationRetryMessage(accounts: number): string {
   const who = accounts === 1 ? "1 account" : `${accounts} accounts`;
-  return `${who} couldn't join on the last try. We try again every ${DOMAIN_RECHECK_HOURS} hours, and you don't need to do anything.`;
+  return `${who} couldn't join on the last try. We try again every ${DOMAIN_RECHECK_HOURS} hours. If this is still here after a couple of days, turn automatic joining off and on to try again now. If it keeps coming back, contact Soup.net support, or your own server's operator if you host Soup.net yourselves.`;
 }
 
 /** The reset page when the organization had no free seat: the reset stands, the address isn't verified (OD-J9). */

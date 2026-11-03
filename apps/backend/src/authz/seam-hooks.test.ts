@@ -8,11 +8,10 @@ import { accountIsManaged } from "./organizations";
 import { orgMembershipDisabled } from "./account-state";
 
 // Layer 1 — the one-body hooks other streams fill (organization accounts
-// round 1). These pin what each answers until its stream fills it: nothing
-// joins on a domain's authority, and no membership grant is refused by a
-// sharing policy. SSO's row pins the filled policy instead, and Domains' row
-// its filled domain authority. A stream that fills a body updates its row
-// here in the same change (Console owns sharing-policy.ts whole, and its row).
+// round 1). All three are filled now, and these pin what each answers: SSO's
+// row the filled policy, Domains' row the filled domain authority, Console's
+// row the sharing policy. A stream that changes a body updates its row here in
+// the same change (Console owns sharing-policy.ts whole, and its row).
 
 const dialect = new PgDialect();
 
@@ -42,9 +41,15 @@ describe("the hooks' answers before their streams fill them", () => {
     expect(text).toContain("om.user_id = u.id AND o.require_sso AND NOT ((om.disabled_at IS NOT NULL OR (");
   });
 
-  it("sharingPolicyAllows is true (stream Console)", async () => {
-    const neverCalled = { execute: () => { throw new Error("the stub reads nothing"); } } as never;
-    expect(await sharingPolicyAllows(neverCalled, { bookId: "b", userId: "u", actorUserId: "a" })).toBe(true);
+  // Filled by stream Console: the policy decision itself is Layer 1 in
+  // @soupnet/domain (sharing-policy.test.ts) and each grant path is Layer 3
+  // (org-console.test.ts). Here: it reads the boundary, and a book it can't
+  // find is refused rather than waved through.
+  it("sharingPolicyAllows reads the boundary and refuses a book it can't find (stream Console)", async () => {
+    let asked = 0;
+    const noBook = { execute: async () => { asked++; return []; } } as never;
+    expect(await sharingPolicyAllows(noBook, { bookId: "b", userId: "u", actorUserId: "a" })).toBe(false);
+    expect(asked).toBe(1);
   });
 
   it("orgMembershipDisabled is the org admin's switch or the Workspace directory's (stream Offboarding, filled)", () => {

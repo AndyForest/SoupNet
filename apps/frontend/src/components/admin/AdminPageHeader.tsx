@@ -4,9 +4,11 @@ interface AdminPageHeaderProps {
   title: string;
   subtitle?: string | undefined;
   action?: ReactNode | undefined;
+  /** The small label above the title: "Admin" on the site console, "Organization" on an org's. */
+  eyebrow?: string | undefined;
 }
 
-export function AdminPageHeader({ title, subtitle, action }: AdminPageHeaderProps) {
+export function AdminPageHeader({ title, subtitle, action, eyebrow = "Admin" }: AdminPageHeaderProps) {
   return (
     <header
       style={{
@@ -29,7 +31,7 @@ export function AdminPageHeader({ title, subtitle, action }: AdminPageHeaderProp
             marginBottom: "var(--space-xs)",
           }}
         >
-          Admin
+          {eyebrow}
         </div>
         <h1
           style={{

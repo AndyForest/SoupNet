@@ -36,6 +36,12 @@ import { AdminUsersPage } from "./pages/AdminUsersPage.js";
 import { AdminSignupsPage } from "./pages/AdminSignupsPage.js";
 import { AdminEmailsPage } from "./pages/AdminEmailsPage.js";
 import { DraftQueuePage } from "./pages/DraftQueuePage.js";
+import { AdminOrganizationsPage, AdminOrganizationMembersPage } from "./pages/AdminOrganizationsPage.js";
+import { OrgMembersPage } from "./pages/OrgMembersPage.js";
+import { OrgBooksPage } from "./pages/OrgBooksPage.js";
+import { OrgActivityPage } from "./pages/OrgActivityPage.js";
+import { OrgDomainsPage } from "./pages/OrgDomainsPage.js";
+import { SettingsOrganizationPage } from "./pages/SettingsOrganizationPage.js";
 import { isLoggedIn, getEmailVerified } from "./auth.js";
 import { safeReturnTarget } from "./lib/return-target.js";
 
@@ -320,6 +326,12 @@ const settingsBriefingsRoute = createRoute({
   component: SettingsBriefingsPage,
 });
 
+const settingsOrganizationRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "organization",
+  component: SettingsOrganizationPage,
+});
+
 const mapRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "map",
@@ -377,6 +389,52 @@ const adminEmailsRoute = createRoute({
   component: AdminEmailsPage,
 });
 
+const adminOrganizationsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/admin/organizations",
+  beforeLoad: requireAuth,
+  component: AdminOrganizationsPage,
+});
+
+const adminOrganizationMembersRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/admin/organizations/$orgId",
+  beforeLoad: requireAuth,
+  component: AdminOrganizationMembersPage,
+});
+
+// ── The org console: /org/* for an organization's owners and admins (stream
+// Console). Each page gates itself on the caller's own organization; the
+// backend decides again on every request.
+
+const orgMembersRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/org",
+  beforeLoad: requireAuth,
+  component: OrgMembersPage,
+});
+
+const orgBooksRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/org/books",
+  beforeLoad: requireAuth,
+  component: OrgBooksPage,
+});
+
+const orgDomainsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/org/domains",
+  beforeLoad: requireAuth,
+  component: OrgDomainsPage,
+});
+
+const orgActivityRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/org/activity",
+  beforeLoad: requireAuth,
+  component: OrgActivityPage,
+});
+
 export const routeTree = rootRoute.addChildren([
   indexRoute,
   infoRoute.addChildren([
@@ -412,6 +470,7 @@ export const routeTree = rootRoute.addChildren([
       settingsIndexRoute,
       settingsAccountRoute,
       settingsBriefingsRoute,
+      settingsOrganizationRoute,
     ]),
     mapRoute,
     checksRoute,
@@ -422,6 +481,12 @@ export const routeTree = rootRoute.addChildren([
   adminUsersRoute,
   adminSignupsRoute,
   adminEmailsRoute,
+  adminOrganizationsRoute,
+  adminOrganizationMembersRoute,
+  orgMembersRoute,
+  orgBooksRoute,
+  orgDomainsRoute,
+  orgActivityRoute,
 ]);
 
 export type Router = ReturnType<typeof createRouter<typeof routeTree>>;

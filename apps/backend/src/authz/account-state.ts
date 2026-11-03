@@ -66,4 +66,20 @@ export function accountDisabledReason(): SQL {
   END)`;
 }
 
+/**
+ * The account's status as both consoles list it: the reason above, with a
+ * directory refusal named by what the directory said. Against `u`.
+ */
+export function adminAccountStatus(): SQL {
+  return sql`(CASE ${accountDisabledReason()}
+    WHEN 'suspended' THEN 'suspended'
+    WHEN 'org_disabled' THEN 'disabled'
+    WHEN 'directory_inactive' THEN (
+      SELECT 'directory_' || om.directory_status FROM claimnet.organization_members om WHERE om.user_id = u.id
+    )
+    WHEN 'directory_unconfirmed' THEN 'directory_unconfirmed'
+    ELSE 'active'
+  END)`;
+}
+
 export type AccountDisabledReason = "suspended" | "org_disabled" | "directory_inactive" | "directory_unconfirmed";

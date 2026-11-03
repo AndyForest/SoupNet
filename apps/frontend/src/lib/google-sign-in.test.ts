@@ -22,6 +22,10 @@ describe("the tab secret", () => {
 });
 
 describe("returnTargetFor (SSO-U1, SSO-U2)", () => {
+  it("returns to the org console", () => {
+    expect(returnTargetFor("/org#directory")).toEqual({ kind: "app", path: "/org#directory" });
+  });
+
   it("returns to an app path", () => {
     expect(returnTargetFor("/app/drafts?ids=a")).toEqual({ kind: "app", path: "/app/drafts?ids=a" });
   });

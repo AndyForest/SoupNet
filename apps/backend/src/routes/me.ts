@@ -8,6 +8,12 @@
  * GET /me/intents/:id is the web intent page's data (drafts-and-triage slice
  * 9): the same service as the agent's GET /intents/:id, read by the person's
  * rule instead of a key's scope.
+ *
+ * GET /me/organization is the data behind "What your organization's admins
+ * can see" (organization accounts round 1, stream Console, CN-L2, CN-T2): for
+ * a managed account, its organization, its role, the sharing policy, the
+ * admin actions that touched it, and its own recent sign-ins; null for a
+ * personal account. The sign-ins are read here and nowhere an admin can reach.
  */
 import { Hono } from "hono";
 import { sql } from "drizzle-orm";
@@ -19,7 +25,8 @@ import {
   mergeUserPreferences,
   applyPreferencesPatch,
 } from "@soupnet/domain";
-import { bookIdsFor } from "../authz";
+import { bookIdsFor, managedOrganizationOf } from "../authz";
+import { memberActivity, recentSignIns } from "../services/org-activity.service";
 import { parseReportQuery } from "../services/report-params";
 import { getIntent } from "../services/intent-read.service";
 
@@ -88,6 +95,31 @@ me.get("/intents/:id", async (c) => {
   const data = await getIntent(db, { kind: "person", userId: user.id, memberBookIds }, c.req.param("id"), parsed.paging);
   if (!data) return c.json({ ok: false, error: "Intent not found" }, 404);
   return c.json({ ok: true, data });
+});
+
+me.get("/organization", async (c) => {
+  const user = c.get("user");
+  const db = getDb();
+  const managed = await managedOrganizationOf(db, user.id);
+  const signIns = await recentSignIns(db, user.id);
+  if (!managed) return c.json({ ok: true, data: { organization: null, adminActions: [], signIns } });
+  const policy = await db.execute(sql`
+    SELECT outbound_sharing AS outbound, inbound_sharing AS inbound
+    FROM claimnet.organizations WHERE id = ${managed.organizationId}::uuid
+  `);
+  return c.json({
+    ok: true,
+    data: {
+      organization: {
+        id: managed.organizationId,
+        name: managed.name,
+        role: managed.role,
+        sharing: (policy as unknown as Array<{ outbound: string; inbound: string }>)[0] ?? null,
+      },
+      adminActions: await memberActivity(db, user.id),
+      signIns,
+    },
+  });
 });
 
 export { me as meRoutes };

@@ -22,6 +22,7 @@ import { workspaceRoutes } from "./routes/workspaces";
 import { groupRoutes } from "./routes/groups";
 import { invitationRoutes } from "./routes/invitations";
 import organizationsRouter from "./routes/organizations";
+import organizationConsoleRouter from "./routes/organization-console";
 import organizationDomainsRouter from "./routes/organization-domains";
 import { adminRoutes } from "./routes/admin";
 import { docsRoutes } from "./routes/docs";
@@ -150,6 +151,7 @@ app.use("/groups/*", async (c) => {
 app.use("/groups", async (c) => c.redirect(`/recipe-books${c.req.url.includes("?") ? c.req.url.slice(c.req.url.indexOf("?")) : ""}`, 308));
 app.route("/invitations", invitationRoutes);
 app.route("/organizations", organizationsRouter);
+app.route("/organizations", organizationConsoleRouter);
 app.route("/organizations", organizationDomainsRouter);
 app.route("/admin", adminRoutes);
 app.route("/docs", docsRoutes);

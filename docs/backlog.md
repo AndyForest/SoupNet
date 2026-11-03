@@ -338,11 +338,20 @@ Slug races Core left as they are, each a small read-then-write gap:
 - `[IMPL]` `createOrganization` (`authz/organizations.ts`) checks the organization slug before inserting, so two operators creating the same slug at once give one a 500 instead of `slug_taken`.
 
 Left open by Core, each for the stream named:
-- the SPA's private or org-wide choice when creating a book, and the members page (Console);
+- ~~the SPA's private or org-wide choice when creating a book, and the members page (Console);~~ built on `org/console` (PR #156), with the rest of the console below;
 - `domainVerifiedFor` in `authz/domain-authority.ts`, `FALSE` until Domains fills it;
 - a per-organization key-cap minimum, deferred by the settled simplification "no org-level cap policy in the first release";
 - seat tier (out of the round);
 - bounding the operator join (core.md OC-F1, after Domains merges): an operator add requires the account's email domain to be verified for the organization, with the unbounded form kept only for the concierge first customer, behind the system-role check, and audit-logged.
+
+Stream Console (`org/console`, PR #156; rubric [planning/org-accounts-build/console.md](planning/org-accounts-build/console.md)) built the org admin console at `/org` (Members, Books with the sharing policy, Activity), the shared users-list service and table the site console now uses, the inbound and outbound sharing policy (migration `0048`), the site operator's Organizations page, the member's "What your organization's admins can see" page, and a sign-in record listed only to its person. Left open, each waiting on the stream named:
+- ~~the Domains page (CN-D1), against stream Domains' routes once they merge, and its entry in the org nav;~~
+- ~~the last-directory-check column (CN-U5) and the directory connection section, status labels and Activity entries (CN-U6), against stream Offboarding's routes and columns (#160) once it merges;~~
+- the privacy policy's §2.1 sign-in line (CN-X4), added once stream L's #151 is on `main`;
+- `AdminQueuesPage` and `AdminEmbeddingsPage` onto the admin kit (CN-X3; untouched by the shared table, so not in this round).
+- ~~A phone layout for the admin kit. `AdminLayout`'s fixed 200px nav column squeezes both consoles' tables to about 200px at phone width; the browser verification of `org/console` recorded it at 412px (X3, open). The pages work, but they are hard to read. Stacking the nav above the content below the app shell's 768px breakpoint, as `SettingsLayout` does, would fix both consoles.~~
+- Bad paging on `GET /admin/queues/jobs`: it still parses `limit` and `offset` with bare `parseInt`, so a bad value reaches Postgres. It is operator-only, so it wasn't part of this round; use `parseListPaging`.
+- "Contact Soup.net support" reads wrong on a self-hosted server in the other places that say it: the suspended-account message, the taken-domain refusal, and the directory's hold messages and emails. The Domains failure message now names both; these need the same wording.
 
 ### `[DESIGN]` Derived API keys — an orchestrator mints scoped-down keys for its sub-agents (direction decided 2026-09-19; optional, separate track)
 

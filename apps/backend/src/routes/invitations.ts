@@ -3,7 +3,8 @@ import { sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { requireAuth, requireVerifiedEmail } from "../auth";
 import type { AppEnv } from "../types";
-import { sharingPolicyAllows } from "../authz";
+import { sharingDecisionFor } from "../authz";
+import { sharingRefusalMessage } from "@soupnet/domain";
 
 const invitationsRouter = new Hono<AppEnv>();
 // Secure-by-default: every route requires both auth and verified email.
@@ -71,12 +72,9 @@ invitationsRouter.post("/:id/accept", async (c) => {
   // An organization's sharing policy can refuse a grant that crosses its
   // boundary; the invitation stays pending (authz/sharing-policy.ts, which
   // stream Console fills). The one sharing is the inviter, not the accepter.
-  if (!(await sharingPolicyAllows(db, { bookId: invite.groupId, userId: user.id, actorUserId: invite.inviterId }))) {
-    return c.json({
-      ok: false,
-      error: "sharing_blocked",
-      message: "An organization's sharing policy doesn't allow you in this recipe book. Ask one of its admins.",
-    }, 403);
+  const sharing = await sharingDecisionFor(db, { bookId: invite.groupId, userId: user.id, actorUserId: invite.inviterId });
+  if (!sharing.allowed) {
+    return c.json({ ok: false, error: "sharing_blocked", message: sharingRefusalMessage(sharing.refusal, "joiner") }, 403);
   }
 
   await db.execute(sql`
