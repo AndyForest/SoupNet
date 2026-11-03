@@ -1,0 +1,214 @@
+/**
+ * The Google Workspace Directory API, for offboarding (organization accounts
+ * round 1, stream Offboarding; rubric docs/planning/org-accounts-build/
+ * offboarding.md, OB-M2).
+ *
+ * Two ways to get an access token, one per connection kind: a refresh token
+ * a Workspace admin granted by consenting to the read-only directory scope,
+ * or the customer's service-account key signing a JWT-bearer assertion that
+ * acts as their admin. Tokens are cached per organization in memory until a
+ * minute before they expire. Then `users.get` for one member.
+ *
+ * The whole check, token included, gets DIRECTORY_TIMEOUT_MS. Nothing here
+ * logs a credential or a token; callers log the organization id and Google's
+ * error code only.
+ */
+
+import crypto from "node:crypto";
+import jwt from "jsonwebtoken";
+import { DIRECTORY_SCOPE, DIRECTORY_TIMEOUT_MS, classifyDirectoryAnswer, isGoogleError, parseServiceAccountKey } from "@soupnet/domain";
+import type { DirectoryAnswer } from "@soupnet/domain";
+import type { FetchLike, GoogleOidcConfig } from "./google-oidc.service";
+
+const DIRECTORY_USERS_ENDPOINT = "https://admin.googleapis.com/admin/directory/v1/users/";
+
+export interface DirectoryCredential {
+  organizationId: string;
+  kind: "admin_consent" | "service_account";
+  adminEmail: string;
+  /** The opened credential: a refresh token, or a service-account JSON key. */
+  secret: string;
+}
+
+/** What one check found. `renamed` is a rename the admin should hear about. */
+export interface MemberCheck {
+  answer: DirectoryAnswer;
+  renamed: boolean;
+}
+
+function usersEndpoint(config: GoogleOidcConfig): string {
+  return config.testIssuer ? `${config.issuers[0]}/directory/users/` : DIRECTORY_USERS_ENDPOINT;
+}
+
+const tokenCache = new Map<string, { token: string; expiresAt: number; fingerprint: string }>();
+
+/** Forget cached tokens (a connection replaced or removed; tests). */
+export function forgetDirectoryTokens(organizationId?: string): void {
+  if (organizationId) tokenCache.delete(organizationId);
+  else tokenCache.clear();
+}
+
+type TokenResult = { ok: true; token: string } | { ok: false; answer: DirectoryAnswer };
+
+/**
+ * A response's body as JSON, null when it isn't JSON. Undefined when it never
+ * finished arriving, which is no answer at all: the headers of a slow reply
+ * mustn't read as a reply with nothing in it.
+ */
+async function readBody(res: Response): Promise<unknown> {
+  let text: string;
+  try {
+    text = await res.text();
+  } catch {
+    return undefined;
+  }
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+async function accessToken(
+  config: GoogleOidcConfig,
+  credential: DirectoryCredential,
+  signal: AbortSignal,
+  fetchImpl: FetchLike,
+): Promise<TokenResult> {
+  const fingerprint = crypto.createHash("sha256").update(credential.secret).digest("base64url");
+  const cached = tokenCache.get(credential.organizationId);
+  if (cached && cached.fingerprint === fingerprint && cached.expiresAt > Date.now() + 60_000) return { ok: true, token: cached.token };
+
+  let body: URLSearchParams;
+  if (credential.kind === "admin_consent") {
+    body = new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: credential.secret,
+      client_id: config.clientId,
+      client_secret: config.clientSecret,
+    });
+  } else {
+    const parsed = parseServiceAccountKey(credential.secret);
+    if (!parsed.ok) return { ok: false, answer: { kind: "connection_error", code: "bad_service_account_key" } };
+    let assertion: string;
+    try {
+      assertion = jwt.sign(
+        { iss: parsed.key.clientEmail, sub: credential.adminEmail, scope: DIRECTORY_SCOPE, aud: config.tokenEndpoint },
+        parsed.key.privateKey,
+        { algorithm: "RS256", expiresIn: 3600 },
+      );
+    } catch {
+      return { ok: false, answer: { kind: "connection_error", code: "bad_service_account_key" } };
+    }
+    body = new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion });
+  }
+
+  let res: Response;
+  try {
+    res = await fetchImpl(config.tokenEndpoint, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+      body: body.toString(),
+      signal,
+    });
+  } catch {
+    return { ok: false, answer: { kind: "unreachable" } };
+  }
+  const read = await readBody(res);
+  if (read === undefined || res.status === 429 || res.status >= 500) return { ok: false, answer: { kind: "unreachable" } };
+  const json = read as { access_token?: unknown; expires_in?: unknown; error?: unknown } | null;
+  if (!res.ok || typeof json?.access_token !== "string") {
+    const code = typeof json?.error === "string" ? json.error.replace(/[^a-z_]/gi, "").slice(0, 40) : `http_${res.status}`;
+    return { ok: false, answer: { kind: "connection_error", code: `token_${code}` } };
+  }
+  const expiresIn = typeof json.expires_in === "number" ? json.expires_in : 3600;
+  tokenCache.set(credential.organizationId, { token: json.access_token, expiresAt: Date.now() + expiresIn * 1000, fingerprint });
+  return { ok: true, token: json.access_token };
+}
+
+async function usersGet(
+  config: GoogleOidcConfig,
+  token: string,
+  userKey: string,
+  signal: AbortSignal,
+  fetchImpl: FetchLike,
+): Promise<{ httpStatus: number; body: unknown } | null> {
+  try {
+    const res = await fetchImpl(`${usersEndpoint(config)}${encodeURIComponent(userKey)}?projection=basic&viewType=admin_view`, {
+      headers: { authorization: `Bearer ${token}`, accept: "application/json" },
+      signal,
+    });
+    const body = await readBody(res);
+    return body === undefined ? null : { httpStatus: res.status, body };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Check one member: by their stored address, and on a 404 once more by their
+ * linked Google identity's `sub` when they have one, since a renamed person
+ * whose old address isn't kept as an alias reads as unknown by address
+ * (planning session, 2026-10-26). Only a 404 on both is `deleted`. A hit by
+ * `sub` whose primary address differs is a rename, reported for the admin.
+ * The member is the one whose credential is being judged; nothing here takes
+ * a key from a request.
+ *
+ * Before `deleted` is believed, the connection's own admin must still resolve:
+ * a directory that doesn't know the person the credential acts as has lost
+ * track of everyone, and switching people off on that would take out the whole
+ * company (F184). One more call, only for an answer that would switch someone
+ * off. A real layoff still lands at once, which a cap per hour couldn't do
+ * (recipe 502a6d4a).
+ */
+export async function checkDirectoryMember(
+  config: GoogleOidcConfig,
+  credential: DirectoryCredential,
+  member: { email: string; googleSubject: string | null },
+  fetchImpl: FetchLike = fetch,
+): Promise<MemberCheck> {
+  const signal = AbortSignal.timeout(DIRECTORY_TIMEOUT_MS);
+  const token = await accessToken(config, credential, signal, fetchImpl);
+  if (!token.ok) return { answer: token.answer, renamed: false };
+
+  const byAddress = await usersGet(config, token.token, member.email, signal, fetchImpl);
+  const first = classifyDirectoryAnswer(byAddress, { email: member.email });
+  if (first.kind === "connection_error" && (byAddress?.httpStatus === 401)) forgetDirectoryTokens(credential.organizationId);
+  if (!(first.kind === "status" && first.status === "deleted")) return { answer: first, renamed: false };
+
+  if (member.googleSubject) {
+    const bySubject = await usersGet(config, token.token, member.googleSubject, signal, fetchImpl);
+    const second = classifyDirectoryAnswer(bySubject, { id: member.googleSubject });
+    // Google's 400 means it doesn't take this `sub` as a user id, which is as
+    // good as unknown; its not-found is unknown. Anything else that isn't a
+    // user (slow, down, our credential refused, a stranger's 404) leaves the
+    // question open, so nobody is switched off on half an answer.
+    const unknown = (second.kind === "status" && second.status === "deleted") || (bySubject?.httpStatus === 400 && isGoogleError(bySubject.body, 400));
+    if (!unknown) {
+      if (second.kind !== "status") return { answer: second, renamed: false };
+      const primary = (bySubject?.body as { primaryEmail?: unknown } | null)?.primaryEmail;
+      return { answer: second, renamed: typeof primary === "string" && primary.toLowerCase() !== member.email.toLowerCase() };
+    }
+  }
+
+  const adminGone: DirectoryAnswer = { kind: "connection_error", code: "admin_not_found" };
+  if (member.email.toLowerCase() === credential.adminEmail.toLowerCase()) return { answer: adminGone, renamed: false };
+  const control = classifyDirectoryAnswer(await usersGet(config, token.token, credential.adminEmail, signal, fetchImpl), { email: credential.adminEmail });
+  if (control.kind !== "status") return { answer: control, renamed: false };
+  return { answer: control.status === "deleted" ? adminGone : first, renamed: false };
+}
+
+/**
+ * Prove a credential works before storing it (OB-K2, OB-K3): look up the
+ * admin it acts as. Returns null when it works, else the answer that says why not.
+ */
+export async function testDirectoryCredential(
+  config: GoogleOidcConfig,
+  credential: DirectoryCredential,
+  fetchImpl: FetchLike = fetch,
+): Promise<DirectoryAnswer | null> {
+  forgetDirectoryTokens(credential.organizationId);
+  const check = await checkDirectoryMember(config, credential, { email: credential.adminEmail, googleSubject: null }, fetchImpl);
+  forgetDirectoryTokens(credential.organizationId);
+  return check.answer.kind === "status" && check.answer.status !== "deleted" ? null : check.answer;
+}

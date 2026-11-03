@@ -6,7 +6,7 @@ import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import type { Context, Next } from "hono";
 import { users, organizations, groups, groupMembers } from "@soupnet/db";
 import { normalizeEmail } from "./lib/normalize-email";
-import { ACCOUNT_DISABLED_MESSAGE, ACCOUNT_SUSPENDED_MESSAGE, SESSION_EXPIRED_MESSAGE, SSO_REQUIRED_MESSAGE } from "@soupnet/domain";
+import { ACCOUNT_DISABLED_MESSAGE, ACCOUNT_SUSPENDED_MESSAGE, SESSION_EXPIRED_MESSAGE, SSO_REQUIRED_MESSAGE, directoryDisabledMessage } from "@soupnet/domain";
 import type { AccountDisabledReason } from "./authz/account-state";
 import { accountRefusal, sessionState } from "./authz/session-state";
 import { ssoRequiredFor } from "./authz/sso-policy";
@@ -130,6 +130,9 @@ export async function requireSystem(c: Context, next: Next): Promise<Response | 
  *     (or the account is gone). The SPA treats a 401 as signed out.
  *   - 403 account_suspended / account_disabled: switched off by the site
  *     operator or by the person's organization, with copy saying which.
+ *   - 403 directory_inactive / directory_unconfirmed: the company's Google
+ *     Workspace directory says the person isn't active, or hasn't confirmed
+ *     them for a day (stream Offboarding), each with its own copy.
  *   - 403 sso_required: the person's organization requires its identity
  *     provider and this session wasn't signed in through it (sso-policy.ts).
  */
@@ -148,6 +151,9 @@ async function judgeSession(c: Context): Promise<Response | { emailVerified: boo
       return c.json({ ok: false, error: "account_suspended", message: ACCOUNT_SUSPENDED_MESSAGE }, 403);
     case "org_disabled":
       return c.json({ ok: false, error: "account_disabled", message: ACCOUNT_DISABLED_MESSAGE }, 403);
+    case "directory_inactive":
+    case "directory_unconfirmed":
+      return c.json({ ok: false, error: state.refusal, message: directoryDisabledMessage(state.refusal) }, 403);
     case "sso_required":
       return c.json({ ok: false, error: "sso_required", message: SSO_REQUIRED_MESSAGE }, 403);
   }

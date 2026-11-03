@@ -22,6 +22,7 @@ describe("loginNoticeFromSearch", () => {
   // Signed out by the server (stream SSO, SSO-U4): the page says why.
   it("says why the server ended the session, for known reasons only", () => {
     expect(loginNoticeFromSearch("?signedOut=sso_required")).toBe("Your organization signs in with Google. Sign in with Google to continue.");
+    expect(loginNoticeFromSearch("?signedOut=directory_inactive")).toContain("Google Workspace doesn't list this account");
     expect(loginNoticeFromSearch("?signedOut=account_disabled")).toContain("disabled this account");
     expect(loginNoticeFromSearch("?signedOut=<script>")).toBeNull();
     expect(loginNoticeFromSearch("?signedOut=toString")).toBeNull();

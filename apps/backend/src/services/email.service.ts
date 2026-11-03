@@ -76,7 +76,8 @@ export type EmailKind =
   | "invitation"
   | "waitlist_approved"
   | "organization_joined"
-  | "organization_domain";
+  | "organization_domain"
+  | "organization_directory";
 
 async function sendLoggedMail(
   kind: EmailKind,
@@ -240,6 +241,21 @@ export async function sendOrganizationJoinNotice(
  */
 export async function sendOrganizationDomainEmail(email: string, mail: { subject: string; text: string }): Promise<void> {
   await sendLoggedMail("organization_domain", {
+    to: email,
+    subject: mail.subject,
+    text: mail.text,
+    html: `<div style="font-family: Georgia, serif; max-width: 480px; margin: 0 auto; padding: 2rem;"><p>${escHtml(mail.text)}</p></div>`,
+  });
+}
+
+/**
+ * To an organization's active owners and admins: its Google Workspace
+ * directory connection has failed for hours and will switch members off
+ * (stream Offboarding, OB-C8). The copy is from @soupnet/domain and names no
+ * credential.
+ */
+export async function sendOrganizationDirectoryEmail(email: string, mail: { subject: string; text: string }): Promise<void> {
+  await sendLoggedMail("organization_directory", {
     to: email,
     subject: mail.subject,
     text: mail.text,

@@ -99,7 +99,7 @@ googleAuthRoutes.get("/callback", callbackIpRateLimit, callbackStateRateLimit, a
     code: c.req.query("code"),
     googleError: c.req.query("error"),
   });
-  const fragment = outcome.ok ? `handoff=${outcome.handoff}` : `error=${outcome.error}`;
+  const fragment = !outcome.ok ? `error=${outcome.error}` : "handoff" in outcome ? `handoff=${outcome.handoff}` : "directory=connected";
   c.header("Cache-Control", "no-store");
   c.header("Referrer-Policy", "no-referrer");
   return c.redirect(`${frontendUrl()}/auth/google/complete#${fragment}`, 302);

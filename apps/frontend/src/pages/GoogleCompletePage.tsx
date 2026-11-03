@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { API_BASE, setToken, setEmailVerified } from "../auth.js";
-import { readCompleteFragment, takeTabSecret, googleSignInMessage } from "../lib/google-sign-in.js";
+import { readCompleteFragment, takeTabSecret, googleSignInMessage, isDirectoryConnectError } from "../lib/google-sign-in.js";
 import { safeReturnTarget } from "../lib/return-target.js";
 
 /**
@@ -21,6 +21,8 @@ import { safeReturnTarget } from "../lib/return-target.js";
 export function GoogleCompletePage() {
   const queryClient = useQueryClient();
   const [message, setMessage] = useState<string | null>(null);
+  const [connected, setConnected] = useState(false);
+  const [connectFailed, setConnectFailed] = useState(false);
   const ran = useRef(false);
 
   useEffect(() => {
@@ -35,7 +37,13 @@ export function GoogleCompletePage() {
       clearFragment();
       return;
     }
+    if ("directoryConnected" in fragment) {
+      setConnected(true);
+      clearFragment();
+      return;
+    }
     if ("error" in fragment) {
+      setConnectFailed(isDirectoryConnectError(fragment.error));
       setMessage(googleSignInMessage(fragment.error));
       clearFragment();
       return;
@@ -83,11 +91,20 @@ export function GoogleCompletePage() {
 
   return (
     <div style={{ maxWidth: 420, margin: "var(--space-2xl, 4rem) auto", padding: "0 var(--space-md)" }}>
-      {message ? (
+      {connected ? (
         <div className="card">
-          <h1 style={{ fontSize: "1.25rem", marginBottom: "var(--space-md)" }}>Couldn't sign you in</h1>
+          <h1 style={{ fontSize: "1.25rem", marginBottom: "var(--space-md)" }}>Directory connected</h1>
+          <p style={{ marginBottom: "var(--space-md)" }}>
+            Your organization's Google Workspace directory is connected. Members who are suspended or removed in Google lose access to Soup.net within the hour.
+          </p>
+          {/* The directory section lives on the org console's Members page (stream Console). */}
+          <a href="/org#directory">Back to your organization's members</a>
+        </div>
+      ) : message ? (
+        <div className="card">
+          <h1 style={{ fontSize: "1.25rem", marginBottom: "var(--space-md)" }}>{connectFailed ? "Couldn't connect the directory" : "Couldn't sign you in"}</h1>
           <p role="alert" style={{ marginBottom: "var(--space-md)" }}>{message}</p>
-          <Link to="/auth/login">Back to sign in</Link>
+          {connectFailed ? <a href="/org#directory">Back to your organization's members</a> : <Link to="/auth/login">Back to sign in</Link>}
         </div>
       ) : (
         <p style={{ color: "var(--color-on-surface-variant)" }}>Signing you in…</p>

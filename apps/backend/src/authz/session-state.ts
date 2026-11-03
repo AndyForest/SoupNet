@@ -17,6 +17,8 @@ import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { accountDisabledReason } from "./account-state";
 import type { AccountDisabledReason } from "./account-state";
 import { ssoRequired } from "./sso-policy";
+import { directoryCheckDueFor } from "./directory-sql";
+import { checkDirectoryIfDue } from "./directory-check";
 
 /** Why a presented session can't be used, or null when it can. */
 export type SessionRefusal =
@@ -49,6 +51,7 @@ export async function sessionState(
   userId: string,
   issuedAtSeconds: number | undefined,
   identityProvider?: string | undefined,
+  directoryChecked = false,
 ): Promise<SessionState> {
   const iat = typeof issuedAtSeconds === "number" && Number.isFinite(issuedAtSeconds) ? Math.floor(issuedAtSeconds) : null;
   const rows = await db.execute(sql`
@@ -56,12 +59,18 @@ export async function sessionState(
            ${accountDisabledReason()} AS disabled,
            (u.sessions_valid_after IS NOT NULL
              AND (${iat}::bigint IS NULL OR ${iat}::bigint < floor(extract(epoch FROM u.sessions_valid_after))::bigint)) AS expired,
-           (${identityProvider ?? null}::text IS DISTINCT FROM 'google' AND ${ssoRequired()}) AS sso_required
+           (${identityProvider ?? null}::text IS DISTINCT FROM 'google' AND ${ssoRequired()}) AS sso_required,
+           ${directoryCheckDueFor(sql`u.id`)} AS directory_due
     FROM claimnet.users u
     WHERE u.id = ${userId}::uuid
   `);
-  const row = (rows as unknown as Array<{ verified: boolean; disabled: AccountDisabledReason | null; expired: boolean; sso_required: boolean }>)[0];
+  const row = (rows as unknown as Array<{ verified: boolean; disabled: AccountDisabledReason | null; expired: boolean; sso_required: boolean; directory_due: boolean }>)[0];
   if (!row) return { refusal: "unknown_account", emailVerified: false };
+  // A Workspace directory check that is due runs before the answer (stream
+  // Offboarding); when it recorded a status, judge again, once.
+  if (row.directory_due && !directoryChecked && (await checkDirectoryIfDue(db, userId))) {
+    return sessionState(db, userId, issuedAtSeconds, identityProvider, true);
+  }
   if (row.expired) return { refusal: "session_expired", emailVerified: row.verified };
   if (row.disabled) return { refusal: row.disabled, emailVerified: row.verified };
   if (row.sso_required) return { refusal: "sso_required", emailVerified: row.verified };
@@ -73,6 +82,8 @@ export async function sessionState(
  * Login issues no session to one that is (the waitlist precedent).
  */
 export async function accountRefusal(db: PostgresJsDatabase, userId: string): Promise<AccountDisabledReason | null> {
+  // Sign-in is a credential use too: a due directory check runs first.
+  await checkDirectoryIfDue(db, userId);
   const rows = await db.execute(sql`
     SELECT ${accountDisabledReason()} AS disabled FROM claimnet.users u WHERE u.id = ${userId}::uuid
   `);

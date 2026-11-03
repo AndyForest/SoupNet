@@ -23,14 +23,16 @@
 
 import { sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
+import { directoryInactive, directoryUnconfirmed } from "./directory-sql";
 
 /**
- * Is this `organization_members` row (aliased `om`) switched off? Today: an
- * org admin's disable. The documented extension point for the directory
- * check.
+ * Is this `organization_members` row (aliased `om`) switched off? An org
+ * admin's disable, or, for a member checked against the company's Google
+ * Workspace directory, a directory that says they aren't active or a check
+ * that hasn't succeeded for a day (stream Offboarding, directory-sql.ts).
  */
 export function orgMembershipDisabled(): SQL {
-  return sql`om.disabled_at IS NOT NULL`;
+  return sql`(om.disabled_at IS NOT NULL OR ${directoryInactive()} OR ${directoryUnconfirmed()})`;
 }
 
 /**
@@ -47,16 +49,21 @@ export function accountDisabled(): SQL {
 /**
  * Which switch is off, for copy that tells a person the cause: 'suspended'
  * (the site operator's) wins over 'org_disabled', since an org admin's
- * re-enable can't lift it. NULL when the account is on. Against `u`.
+ * re-enable can't lift it, and an admin's disable wins over the directory's
+ * two reasons, 'directory_inactive' and 'directory_unconfirmed' (recipe
+ * efa4bbca). NULL when the account is on. Against `u`.
  */
 export function accountDisabledReason(): SQL {
+  const member = (condition: SQL) => sql`EXISTS (
+      SELECT 1 FROM claimnet.organization_members om
+      WHERE om.user_id = u.id AND ${condition}
+    )`;
   return sql`(CASE
     WHEN u.suspended_at IS NOT NULL THEN 'suspended'
-    WHEN EXISTS (
-      SELECT 1 FROM claimnet.organization_members om
-      WHERE om.user_id = u.id AND ${orgMembershipDisabled()}
-    ) THEN 'org_disabled'
+    WHEN ${member(sql`om.disabled_at IS NOT NULL`)} THEN 'org_disabled'
+    WHEN ${member(directoryInactive())} THEN 'directory_inactive'
+    WHEN ${member(directoryUnconfirmed())} THEN 'directory_unconfirmed'
   END)`;
 }
 
-export type AccountDisabledReason = "suspended" | "org_disabled";
+export type AccountDisabledReason = "suspended" | "org_disabled" | "directory_inactive" | "directory_unconfirmed";

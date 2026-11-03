@@ -28,7 +28,17 @@ import { DOMAIN_FRESHNESS_HOURS } from "@soupnet/domain";
  * expression.
  */
 export function domainClaimCurrentFor(organizationId: string, domain: string): SQL {
-  return claimExists(organizationId, domain, sql``);
+  return claimExists(sql`${organizationId}::uuid`, sql`${domain}`, sql``);
+}
+
+/**
+ * The same test against columns of the enclosing statement, for stream
+ * Offboarding's directory check: a connection's checks run only while its
+ * domain claim is current, so a lapsed claim stops them rather than
+ * switching anyone off (offboarding.md OB-C9).
+ */
+export function domainClaimCurrentAt(organizationIdColumn: SQL, domainColumn: SQL): SQL {
+  return claimExists(organizationIdColumn, domainColumn, sql``);
 }
 
 /**
@@ -38,14 +48,14 @@ export function domainClaimCurrentFor(organizationId: string, domain: string): S
  * off. The authority for every automatic join. A boolean SQL expression.
  */
 export function domainVerifiedFor(organizationId: string, domain: string): SQL {
-  return claimExists(organizationId, domain, sql` AND d.auto_join`);
+  return claimExists(sql`${organizationId}::uuid`, sql`${domain}`, sql` AND d.auto_join`);
 }
 
 // The freshness clause leads: it is what makes a daily re-check safe.
-function claimExists(organizationId: string, domain: string, extra: SQL): SQL {
+function claimExists(organizationId: SQL, domain: SQL, extra: SQL): SQL {
   return sql`EXISTS (
     SELECT 1 FROM claimnet.organization_domains d
-    WHERE d.organization_id = ${organizationId}::uuid
+    WHERE d.organization_id = ${organizationId}
       AND d.domain = ${domain}
       AND d.last_checked_at > NOW() - make_interval(hours => ${DOMAIN_FRESHNESS_HOURS})
       AND d.verified_at IS NOT NULL

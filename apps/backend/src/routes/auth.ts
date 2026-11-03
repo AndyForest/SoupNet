@@ -11,8 +11,9 @@ import { deleteUserCascade } from "../services/user-delete.service";
 import { sendVerificationEmail, sendPasswordResetEmail } from "../services/email.service";
 import { rateLimit } from "../middleware/rate-limit";
 import { normalizeEmail } from "../lib/normalize-email";
+import type { AccountDisabledReason } from "../authz/account-state";
 import { credentialsStillRunning, onBehalfSubjectOf, feedbackOwnedBy, intentOwnedBy, invalidateSessions, managedOrganizationOf, ssoRequired } from "../authz";
-import { ACCOUNT_DISABLED_MESSAGE, ACCOUNT_SUSPENDED_MESSAGE, MANAGED_ACCOUNT_DELETE_MESSAGE, SSO_REQUIRED_MESSAGE, googleSignInErrorMessage, ORGANIZATION_FULL_MESSAGE, DOMAIN_JOIN_FULL_RETRY, DOMAIN_RESET_FULL_RETRY, domainJoinedNotice } from "@soupnet/domain";
+import { ACCOUNT_DISABLED_MESSAGE, ACCOUNT_SUSPENDED_MESSAGE, MANAGED_ACCOUNT_DELETE_MESSAGE, SSO_REQUIRED_MESSAGE, googleSignInErrorMessage, ORGANIZATION_FULL_MESSAGE, DOMAIN_JOIN_FULL_RETRY, DOMAIN_RESET_FULL_RETRY, domainJoinedNotice, directoryDisabledMessage } from "@soupnet/domain";
 import { googleOidcConfig } from "../services/google-oidc.service";
 import { settleGoogleIdentityOnVerify } from "../services/google-sign-in.service";
 import { verifyTurnstile } from "../lib/turnstile";
@@ -406,6 +407,9 @@ auth.post("/login", authRateLimit, async (c) => {
   }
   if (result.disabled === "org_disabled") {
     return c.json({ ok: false, error: "account_disabled", message: ACCOUNT_DISABLED_MESSAGE }, 403);
+  }
+  if (result.disabled === "directory_inactive" || result.disabled === "directory_unconfirmed") {
+    return c.json({ ok: false, error: result.disabled, message: directoryDisabledMessage(result.disabled) }, 403);
   }
   if (result.disabled === "sso_required") {
     return c.json({ ok: false, error: "sso_required", message: SSO_REQUIRED_MESSAGE }, 403);
@@ -827,9 +831,18 @@ async function sendVerification(email: string, token: string, waitlisted: boolea
 /** Thrown inside the verify transaction to roll the verification back at the seat limit. */
 class OrganizationFull extends Error {}
 
-function signInRefusalMessage(refusal: "suspended" | "org_disabled" | "sso_required"): string {
-  if (refusal === "suspended") return ACCOUNT_SUSPENDED_MESSAGE;
-  return refusal === "org_disabled" ? ACCOUNT_DISABLED_MESSAGE : SSO_REQUIRED_MESSAGE;
+function signInRefusalMessage(refusal: AccountDisabledReason | "sso_required"): string {
+  switch (refusal) {
+    case "suspended":
+      return ACCOUNT_SUSPENDED_MESSAGE;
+    case "org_disabled":
+      return ACCOUNT_DISABLED_MESSAGE;
+    case "sso_required":
+      return SSO_REQUIRED_MESSAGE;
+    case "directory_inactive":
+    case "directory_unconfirmed":
+      return directoryDisabledMessage(refusal);
+  }
 }
 
 // POST /auth/verify — verify email with token.

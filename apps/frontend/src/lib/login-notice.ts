@@ -15,6 +15,8 @@ const SIGNED_OUT_NOTICES: Record<string, string> = {
   account_disabled: "Your organization has disabled this account. Ask one of its admins to turn it back on.",
   account_suspended: "This account is suspended. Contact Soup.net support.",
   sso_required: "Your organization signs in with Google. Sign in with Google to continue.",
+  directory_inactive: "Your organization's Google Workspace doesn't list this account as active. Ask one of your organization's admins.",
+  directory_unconfirmed: "Soup.net couldn't confirm this account with your organization's Google Workspace. Ask one of your organization's admins to check the directory connection.",
 };
 
 /** Where to land after the server ended the session: sign-in, with the reason when it is a known one. */

@@ -330,6 +330,13 @@
       "when": 1793027844892,
       "tag": "0046_organization_domains",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1793477905188,
+      "tag": "0047_organization_directory",
+      "breakpoints": true
     }
   ]
 }

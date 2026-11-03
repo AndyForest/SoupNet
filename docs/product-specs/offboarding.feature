@@ -1,0 +1,185 @@
+Feature: Offboarding through the company's Google Workspace directory
+  # Plan: docs/planning/org-accounts-program.md (§0 offboarding ruling
+  # 3650aed9 and the settled simplifications, §3.9) and
+  # docs/planning/org-accounts-round-1.md. Rubric and build notes:
+  # docs/planning/org-accounts-build/offboarding.md (stream Offboarding).
+  # User stories: docs/design-thinking.md archetype 6 (The Organization
+  # Member) and archetype 7 (The Org Admin).
+  # Realized as Layer 3 tests in apps/backend/src/routes/directory.test.ts,
+  # against a fake Google Directory (apps/backend/src/test-google-issuer.ts).
+  #
+  # Vocabulary used below:
+  #   "Acme"   a company organization with a verified domain, acme.example
+  #   "Olive"  Acme's owner, a Workspace admin
+  #   "Max"    an Acme member on max@acme.example
+  #   "Rae"    an Acme member the operator added on another address
+  #   "Mal"    someone on the domain whom the directory doesn't know
+  #   "due"    Max's last successful check is more than an hour old
+  #   "stale"  no successful check for a day
+
+  # ─────────────────────────────────────────────────────────────────────────
+  Rule: A company connects its directory once
+    # Guards: recipe 1a22971a.
+
+    @OFF-CON-01
+    Scenario: An owner connects by consenting as a Workspace admin
+      # Requirement: C01-R03
+      Given Olive has signed in with Google
+      When Olive connects Acme's directory for acme.example
+      Then Google asks her for read-only access to the directory
+      And the connection is stored once a test lookup through it succeeds
+
+    @OFF-CON-02
+    Scenario: The consent completes only for the right Google account
+      When the consent comes back for another Google account, another domain, or without lasting access
+      Then nothing is stored and Olive is told which
+
+    @OFF-CON-05
+    Scenario: A consent that outlasts its starter's role
+      # Guards: audit F182.
+      Given Ann, an admin, started a consent
+      When Olive demotes or disables Ann before it completes
+      Then nothing is stored, the connection stays as it was, and Ann is told why
+
+    @OFF-CON-03
+    Scenario: An owner connects with the company's own service account
+      When Olive gives Acme's service-account key and her admin address on acme.example
+      Then the connection is stored once a test lookup through it succeeds
+      And a malformed key, an address off the domain, or a key Google won't honour is refused without the key being repeated
+
+    @OFF-CON-04
+    Scenario: Only the organization's owners and admins see the connection
+      Then a member, or anyone outside Acme, gets the uniform 404
+      And nobody ever sees the credential
+
+  # ─────────────────────────────────────────────────────────────────────────
+  Rule: A member the directory switches off loses access within the hour
+    # Guards: recipes 3650aed9, 88b1b328, 6214370b; the account-state join
+    # (92b866ee), never a sweep of keys.
+
+    @OFF-DIR-01
+    Scenario: Suspended in Google
+      # Requirement: C01-R03, C01-R09
+      Given Acme's admin suspends Max in Google
+      When Max's agent uses his key and Max is due a check
+      Then the key is refused, and so is his session, with "Your organization's Google Workspace doesn't list this account as active."
+      And none of his keys is changed
+
+    @OFF-DIR-02
+    Scenario: Restored in Google
+      Given Max was switched off by the directory
+      When Acme's admin restores him and he is due a check
+      Then the same keys and session work again
+
+    @OFF-DIR-03
+    Scenario: Removed from the directory, archived, or renamed
+      Then a member the directory doesn't know, by address or by their Google account, is switched off
+      And an archived member is switched off
+      And a renamed member is not, and the rename is shown to Acme's admins
+
+    @OFF-DIR-04
+    Scenario: At most one question an hour
+      Given Max was checked a minute ago
+      Then twenty more requests ask Google nothing
+
+    @OFF-DIR-05
+    Scenario: A burst asks once
+      Given Max is due
+      When twenty requests arrive together
+      Then Google is asked once and every request is answered
+
+    @OFF-DIR-06
+    Scenario: Google slow or down
+      Then Max is answered from his last status
+      And Google isn't asked about him again for thirty seconds
+
+    @OFF-DIR-07
+    Scenario: No successful check for a day
+      Given Google has been unreachable for a day
+      Then Max is switched off with "Soup.net couldn't confirm this account with your organization's Google Workspace."
+      And one successful check restores him
+
+    @OFF-DIR-12
+    Scenario: An answer that isn't a whole record of the person
+      # Guards: audit F183.
+      Given Max was switched off by the directory
+      When a check gets an empty or cut-off reply, a page that isn't a record, someone else's record, or a reply that stalls
+      Then Max stays switched off, and no success is recorded
+      And Acme's admins see the error, unless nothing came back at all
+
+    @OFF-DIR-13
+    Scenario: A not-found that can't be trusted
+      # Guards: audit F184.
+      When a check gets a 404 that isn't Google's own, or Google can't find the admin the connection acts as either
+      Then nobody is switched off, and Acme's admins see the error
+
+    @OFF-DIR-08
+    Scenario: Google refuses the connection
+      Given the connection's credential stops working
+      Then Acme's admins see the error, and six hours after the last success they get one email naming when it was and the hour everyone will be switched off by
+      And a successful check means the next outage warns again
+
+    @OFF-DIR-09
+    Scenario: Only people on the domain are checked
+      Then Rae is never checked, and nor is someone on a subdomain of acme.example
+      And Mal is switched off
+
+    @OFF-DIR-11
+    Scenario: The domain claim stops being current
+      # Requirement: C01-R03, C01-R09
+      # Guards: audit F113.
+      Given Max was switched off by the directory
+      When acme.example's DNS check fails, its TXT record is removed, or its re-check stalls
+      Then Google is asked about nobody and nobody goes stale
+      And Max stays switched off
+
+    @OFF-DIR-15
+    Scenario: Several members found removed within the hour
+      # Guards: audit F184.
+      When a third member of Acme is found removed from the directory within an hour
+      Then all of them are refused at once, none held back
+      And Acme's owners and admins get one email saying so, and what to do if it's wrong
+
+    @OFF-DIR-14
+    Scenario: A switched-off member keeps their seat
+      # Guards: audit F190, ruled.
+      Given Max was switched off by the directory and Acme is at its seat limit
+      Then Max keeps the seat, so restoring Max in Google can't overflow the limit
+      And it frees only when an owner or admin disables Max
+
+    @OFF-DIR-10
+    Scenario: Disconnecting
+      When Olive disconnects the directory
+      Then no one is checked, and anyone the directory switched off works again
+      And Acme's other owners and admins are told by email
+
+    @OFF-CON-06
+    Scenario: Someone suspended in Google tries to end the checks
+      # Guards: audit F185.
+      Given Ann, an admin, is suspended in Google, and Ann's status was last checked minutes ago
+      When Ann disconnects the directory, or replaces it with a service-account key Ann holds
+      Then the directory is asked about Ann first, and Ann is refused
+      And the connection and everyone's status stay as they were
+
+    @OFF-CON-09
+    Scenario: Replacing with a key when the directory can't answer about the person
+      # Guards: audit F197.
+      Given Acme is connected and the directory can't answer about Bea through her new key
+      When Bea replaces the connection
+      Then the same hold applies as for a disconnect, and nobody's refusal is lifted
+
+    @OFF-CON-08
+    Scenario: A manager no check has reached yet repairs a broken connection
+      # Guards: audit F194.
+      Given Ann's consent gave Acme its connection, and Ann has left, so the token is dead
+      And Bea, an admin, has never had a successful check
+      When Bea reconnects by consent, or with a service-account key
+      Then the connection is saved
+
+    @OFF-CON-07
+    Scenario: Disconnecting when the directory can't answer
+      # Guards: audit F185, F196.
+      Given Google can't answer about Ann, whether the last success was minutes or hours ago
+      When Ann disconnects the directory
+      Then it stays connected, Acme's owners and admins are warned now if they haven't been already, and Ann is told to reconnect, ask support, or wait six hours from that warning
+      And six hours after the warning the disconnect goes through and the others are told

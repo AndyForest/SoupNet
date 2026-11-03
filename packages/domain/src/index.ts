@@ -20,4 +20,5 @@ export * from "./unknown-params";
 export * from "./organizations";
 export * from "./org-domains";
 export * from "./google-sign-in";
+export * from "./directory";
 export * from "./mcp-server-instructions";
