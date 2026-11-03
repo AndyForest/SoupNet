@@ -352,6 +352,9 @@ Stream Console (`org/console`, PR #156; rubric [planning/org-accounts-build/cons
 - ~~A phone layout for the admin kit. `AdminLayout`'s fixed 200px nav column squeezes both consoles' tables to about 200px at phone width; the browser verification of `org/console` recorded it at 412px (X3, open). The pages work, but they are hard to read. Stacking the nav above the content below the app shell's 768px breakpoint, as `SettingsLayout` does, would fix both consoles.~~
 - Bad paging on `GET /admin/queues/jobs`: it still parses `limit` and `offset` with bare `parseInt`, so a bad value reaches Postgres. It is operator-only, so it wasn't part of this round; use `parseListPaging`.
 - "Contact Soup.net support" reads wrong on a self-hosted server in the other places that say it: the suspended-account message, the taken-domain refusal, and the directory's hold messages and emails. The Domains failure message now names both; these need the same wording.
+- A held directory replacement (`directory_replace_held`) reads as a plain "Couldn't connect" in the org console's Activity, because Activity doesn't show service-account reasons. Show why the replacement was held, as the directory section already does.
+- Untested against real Google: the service-account route's `client_email` pattern has only met test addresses, and the org console's Google sign-in return (`/org#directory`, E24) has only run against the fake issuer. Check both on the first real directory connection.
+- The org console's browser spec (`tests/e2e/org-console.spec.ts`) doesn't run in CI, so its sign-in return tests (E23, E24) and member-page copy checks (E13) only run by hand. E24 also signs in as a new account rather than a manager, so it proves the landing, not that a manager sees the directory section.
 
 ### `[DESIGN]` Derived API keys — an orchestrator mints scoped-down keys for its sub-agents (direction decided 2026-09-19; optional, separate track)
 
